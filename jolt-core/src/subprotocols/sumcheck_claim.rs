@@ -10,41 +10,33 @@ use crate::{
         eq_poly::EqPolynomial,
         identity_poly::UnmapRamAddressPolynomial,
         multilinear_polynomial::PolynomialEvaluation as _,
-        opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN},
+        opening_proof::{OpeningAccumulator, OpeningPoint, PolynomialId, SumcheckId, BIG_ENDIAN},
     },
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum OpeningRef {
-    Committed(CommittedPolynomial),
-    Virtual(VirtualPolynomial),
+fn get_cached_opening<F: JoltField>(
+    polynomial_id: PolynomialId,
+    sumcheck_id: SumcheckId,
+    acc: &impl OpeningAccumulator<F>,
+) -> F {
+    match polynomial_id {
+        PolynomialId::Committed(poly) => acc.get_committed_polynomial_opening(poly, sumcheck_id),
+        PolynomialId::Virtual(poly) => acc.get_virtual_polynomial_opening(poly, sumcheck_id),
+    }
+    .1
 }
 
-impl OpeningRef {
-    fn get_cached_opening<F: JoltField>(
-        &self,
-        sumcheck_id: SumcheckId,
-        acc: &impl OpeningAccumulator<F>,
-    ) -> F {
-        match self {
-            Self::Committed(poly) => acc.get_committed_polynomial_opening(*poly, sumcheck_id),
-            Self::Virtual(poly) => acc.get_virtual_polynomial_opening(*poly, sumcheck_id),
-        }
-        .1
+fn get_point<F: JoltField>(
+    polynomial_id: PolynomialId,
+    sumcheck_id: SumcheckId,
+    acc: &impl OpeningAccumulator<F>,
+) -> OpeningPoint<BIG_ENDIAN, F> {
+    match polynomial_id {
+        PolynomialId::Committed(poly) => acc.get_committed_polynomial_opening(poly, sumcheck_id),
+        PolynomialId::Virtual(poly) => acc.get_virtual_polynomial_opening(poly, sumcheck_id),
     }
-
-    fn get_point<F: JoltField>(
-        &self,
-        sumcheck_id: SumcheckId,
-        acc: &impl OpeningAccumulator<F>,
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        match self {
-            Self::Committed(poly) => acc.get_committed_polynomial_opening(*poly, sumcheck_id),
-            Self::Virtual(poly) => acc.get_virtual_polynomial_opening(*poly, sumcheck_id),
-        }
-        .0
-    }
+    .0
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,7 +48,7 @@ pub enum ChallengePart {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CachedPointRef {
-    pub opening: OpeningRef,
+    pub opening: PolynomialId,
     pub sumcheck: SumcheckId,
     pub part: ChallengePart,
 }
@@ -67,7 +59,7 @@ impl CachedPointRef {
         n_vars: usize,
         acc: &impl OpeningAccumulator<F>,
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let point = self.opening.get_point(self.sumcheck, acc);
+        let point = get_point(self.opening, self.sumcheck, acc);
         match self.part {
             // Take address part to be initial elements of challenge point
             ChallengePart::Address if point.len() > n_vars => point.split_at(n_vars).0,
@@ -146,7 +138,7 @@ impl VerifierEvaluablePolynomial {
 #[derive(Debug, Clone)]
 pub enum ClaimExpr<F> {
     Constant(F),
-    Var(OpeningRef),
+    Var(PolynomialId),
     Add(Box<ClaimExpr<F>>, Box<ClaimExpr<F>>),
     Mul(Box<ClaimExpr<F>>, Box<ClaimExpr<F>>),
     Sub(Box<ClaimExpr<F>>, Box<ClaimExpr<F>>),
@@ -154,17 +146,17 @@ pub enum ClaimExpr<F> {
 
 impl<F: JoltField> ClaimExpr<F> {
     pub fn committed_var(poly: CommittedPolynomial) -> Self {
-        Self::Var(OpeningRef::Committed(poly))
+        Self::Var(PolynomialId::Committed(poly))
     }
 
     pub fn virtual_var(poly: VirtualPolynomial) -> Self {
-        Self::Var(OpeningRef::Virtual(poly))
+        Self::Var(PolynomialId::Virtual(poly))
     }
 
     fn evaluate(&self, sumcheck_id: SumcheckId, acc: &impl OpeningAccumulator<F>) -> F {
         match self {
             ClaimExpr::Constant(f) => *f,
-            ClaimExpr::Var(opening_ref) => opening_ref.get_cached_opening(sumcheck_id, acc),
+            ClaimExpr::Var(poly) => get_cached_opening(*poly, sumcheck_id, acc),
             ClaimExpr::Add(e1, e2) => {
                 F::add(e1.evaluate(sumcheck_id, acc), e2.evaluate(sumcheck_id, acc))
             }

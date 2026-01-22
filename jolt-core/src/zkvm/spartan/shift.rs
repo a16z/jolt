@@ -13,13 +13,13 @@ use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_claim::{
     VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
-    OpeningRef, SumcheckFrontend,
+    SumcheckFrontend,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
@@ -412,12 +412,12 @@ impl<F: JoltField> SumcheckFrontend<F> for ShiftSumcheckVerifier<F> {
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop).into();
 
         let outer_sumcheck_r = VerifierEvaluablePolynomial::EqPlusOne(CachedPointRef {
-            opening: OpeningRef::Virtual(VirtualPolynomial::NextPC),
+            opening: PolynomialId::Virtual(VirtualPolynomial::NextPC),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
         });
         let product_sumcheck_r = VerifierEvaluablePolynomial::EqPlusOne(CachedPointRef {
-            opening: OpeningRef::Virtual(VirtualPolynomial::NextIsNoop),
+            opening: PolynomialId::Virtual(VirtualPolynomial::NextIsNoop),
             sumcheck: SumcheckId::SpartanProductVirtualization,
             part: ChallengePart::Cycle,
         });

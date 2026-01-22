@@ -4,7 +4,7 @@ use num_traits::Zero;
 
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-use crate::poly::opening_proof::OpeningAccumulator;
+use crate::poly::opening_proof::{OpeningAccumulator, PolynomialId};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::poly::unipoly::UniPoly;
@@ -14,7 +14,7 @@ use crate::subprotocols::read_write_matrix::{
 };
 use crate::subprotocols::sumcheck_claim::{
     VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
-    OpeningRef, SumcheckFrontend,
+    SumcheckFrontend,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
@@ -760,7 +760,7 @@ impl<F: JoltField> SumcheckFrontend<F> for RamReadWriteCheckingVerifier<F> {
         let ram_inc: ClaimExpr<F> = CommittedPolynomial::RamInc.into();
 
         let eq_cycle_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
-            opening: OpeningRef::Virtual(VirtualPolynomial::RamReadValue),
+            opening: PolynomialId::Virtual(VirtualPolynomial::RamReadValue),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
         });

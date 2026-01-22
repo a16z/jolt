@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use jolt_core::{
     field::JoltField,
-    poly::opening_proof::SumcheckId,
+    poly::opening_proof::{PolynomialId, SumcheckId},
     subprotocols::sumcheck_claim::{
-        VerifierEvaluablePolynomial, Claim, ClaimExpr, InputOutputClaims, OpeningRef, SumcheckFrontend,
+        VerifierEvaluablePolynomial, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
     },
     zkvm::{
         ram::read_write_checking::RamReadWriteCheckingVerifier,
@@ -65,7 +65,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
                 self.insert_vars_from_claim_expr(sumcheck_id, e1);
                 self.insert_vars_from_claim_expr(sumcheck_id, e2);
             }
-            ClaimExpr::Var(OpeningRef::Committed(committed_polynomial)) => {
+            ClaimExpr::Var(PolynomialId::Committed(committed_polynomial)) => {
                 let var_name = committed_var_ident(committed_polynomial);
                 self.sumchecks
                     .entry(sumcheck_id)
@@ -75,7 +75,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
                         vars: vec![var_name],
                     });
             }
-            ClaimExpr::Var(OpeningRef::Virtual(virtual_polynomial)) => {
+            ClaimExpr::Var(PolynomialId::Virtual(virtual_polynomial)) => {
                 let var_name = virtual_var_ident(virtual_polynomial);
                 self.sumchecks
                     .entry(sumcheck_id)
@@ -326,15 +326,15 @@ fn pretty_print_opening_ref(
     f: &mut impl std::io::Write,
     vars_ident: &str,
     sumcheck_id: &SumcheckId,
-    opening_ref: &OpeningRef,
+    opening_ref: &PolynomialId,
 ) -> std::io::Result<()> {
     let vars_type = sumcheck_ident(sumcheck_id);
     match opening_ref {
-        OpeningRef::Committed(committed_polynomial) => {
+        PolynomialId::Committed(committed_polynomial) => {
             let var_name = committed_var_ident(committed_polynomial);
             write!(f, "{vars_ident}.{vars_type}.{var_name}")?;
         }
-        OpeningRef::Virtual(virtual_polynomial) => {
+        PolynomialId::Virtual(virtual_polynomial) => {
             let var_name = virtual_var_ident(virtual_polynomial);
             write!(f, "{vars_ident}.{vars_type}.{var_name}")?;
         }

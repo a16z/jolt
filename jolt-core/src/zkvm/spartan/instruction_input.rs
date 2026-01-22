@@ -9,7 +9,7 @@ use crate::{
     poly::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         split_eq_poly::GruenSplitEqPolynomial,
@@ -18,7 +18,7 @@ use crate::{
     subprotocols::{
         sumcheck_claim::{
             VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
-            OpeningRef, SumcheckFrontend,
+            SumcheckFrontend,
         },
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
@@ -665,12 +665,12 @@ impl<F: JoltField> SumcheckFrontend<F> for InstructionInputSumcheckVerifier<F> {
         let right_instruction_input_eval = right_is_rs2 * rs2_value + right_is_imm * imm;
 
         let eq_r_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
-            opening: OpeningRef::Virtual(VirtualPolynomial::LeftInstructionInput),
+            opening: PolynomialId::Virtual(VirtualPolynomial::LeftInstructionInput),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
         });
         let eq_r_stage2 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
-            opening: OpeningRef::Virtual(VirtualPolynomial::LeftInstructionInput),
+            opening: PolynomialId::Virtual(VirtualPolynomial::LeftInstructionInput),
             sumcheck: SumcheckId::SpartanProductVirtualization,
             part: ChallengePart::Cycle,
         });

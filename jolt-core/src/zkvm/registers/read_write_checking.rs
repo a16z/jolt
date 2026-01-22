@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+use crate::poly::opening_proof::PolynomialId;
 use crate::subprotocols::read_write_matrix::{
     AddressMajorMatrixEntry, ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
     RegistersAddressMajorEntry, RegistersCycleMajorEntry,
 };
 use crate::subprotocols::sumcheck_claim::{
     VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
-    OpeningRef, SumcheckFrontend,
+    SumcheckFrontend,
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::ReadWriteConfig;
@@ -953,7 +954,7 @@ impl<F: JoltField> SumcheckFrontend<F> for RegistersReadWriteCheckingVerifier<F>
         let rd_inc: ClaimExpr<F> = CommittedPolynomial::RdInc.into();
 
         let eq_r_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
-            opening: OpeningRef::Virtual(VirtualPolynomial::RdWriteValue),
+            opening: PolynomialId::Virtual(VirtualPolynomial::RdWriteValue),
             sumcheck: SumcheckId::RegistersClaimReduction,
             part: ChallengePart::Cycle,
         });

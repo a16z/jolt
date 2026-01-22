@@ -1,14 +1,14 @@
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_claim::{
     VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
-    OpeningRef, SumcheckFrontend,
+    SumcheckFrontend,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
@@ -240,7 +240,7 @@ impl<F: JoltField> SumcheckFrontend<F> for HammingBooleanitySumcheckVerifier<F> 
         let ram_hamming_weight_squared = ram_hamming_weight.clone() * ram_hamming_weight.clone();
 
         let eq_r_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
-            opening: OpeningRef::Virtual(VirtualPolynomial::LookupOutput),
+            opening: PolynomialId::Virtual(VirtualPolynomial::LookupOutput),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
         });
