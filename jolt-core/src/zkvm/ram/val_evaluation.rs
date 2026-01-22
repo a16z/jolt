@@ -136,8 +136,11 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
 
         // Compute the public part of val_init evaluation (bytecode + inputs) without
         // materializing the full length-K initial RAM state.
-        let val_init_public_eval =
-            super::evaluate_public_initial_ram_evaluation::<F>(ram_preprocessing, program_io, &r_address.r);
+        let val_init_public_eval = super::evaluate_public_initial_ram_evaluation::<F>(
+            ram_preprocessing,
+            program_io,
+            &r_address.r,
+        );
 
         // Combine all contributions: untrusted + trusted + public
         let init_eval = untrusted_contribution + trusted_contribution + val_init_public_eval;

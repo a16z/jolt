@@ -466,9 +466,11 @@ fn evaluate_public_initial_ram_evaluation<F: JoltField>(
 
     // Inputs region (packed into u64 words in little-endian)
     if !program_io.inputs.is_empty() {
-        let input_start =
-            remap_address(program_io.memory_layout.input_start, &program_io.memory_layout)
-                .unwrap() as usize;
+        let input_start = remap_address(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
         let input_words: Vec<u64> = program_io
             .inputs
             .chunks(8)
@@ -674,9 +676,9 @@ pub fn gen_ram_initial_memory_state<F: JoltField>(
 mod tests {
     use super::*;
     use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+    use ark_ff::UniformRand;
     use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::MemoryConfig;
-    use ark_ff::UniformRand;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
 
     #[test]
@@ -708,9 +710,11 @@ mod tests {
         // Choose ram_K large enough to cover both bytecode and inputs placements.
         let bytecode_start =
             remap_address(ram_pp.min_bytecode_address, &program_io.memory_layout).unwrap() as usize;
-        let input_start =
-            remap_address(program_io.memory_layout.input_start, &program_io.memory_layout)
-                .unwrap() as usize;
+        let input_start = remap_address(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
         let input_words_len = (program_io.inputs.len() + 7) / 8;
         let needed = (bytecode_start + ram_pp.bytecode_words.len())
             .max(input_start + input_words_len)
@@ -721,8 +725,9 @@ mod tests {
 
         // Random evaluation point over address vars (big-endian convention).
         let n_vars = ram_K.log_2();
-        let r: Vec<<F as JoltField>::Challenge> =
-            (0..n_vars).map(|_| <F as JoltField>::Challenge::rand(&mut rng)).collect();
+        let r: Vec<<F as JoltField>::Challenge> = (0..n_vars)
+            .map(|_| <F as JoltField>::Challenge::rand(&mut rng))
+            .collect();
 
         let dense_eval = MultilinearPolynomial::<F>::from(dense).evaluate(&r);
         let fast_eval = evaluate_public_initial_ram_evaluation::<F>(&ram_pp, &program_io, &r);

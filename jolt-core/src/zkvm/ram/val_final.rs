@@ -4,9 +4,7 @@ use crate::{
     field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
@@ -112,13 +110,15 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
 
         // Compute the public part of val_init evaluation (bytecode + inputs) without
         // materializing the full length-K initial RAM state.
-        let val_init_public_eval =
-            super::evaluate_public_initial_ram_evaluation::<F>(ram_preprocessing, program_io, &r_address);
+        let val_init_public_eval = super::evaluate_public_initial_ram_evaluation::<F>(
+            ram_preprocessing,
+            program_io,
+            &r_address,
+        );
 
         // Combine all contributions: untrusted + trusted + public
-        let val_init_eval = untrusted_advice_contribution
-            + trusted_advice_contribution
-            + val_init_public_eval;
+        let val_init_eval =
+            untrusted_advice_contribution + trusted_advice_contribution + val_init_public_eval;
 
         ValFinalSumcheckParams {
             T: trace_len,
