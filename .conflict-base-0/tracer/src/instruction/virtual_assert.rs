@@ -17,8 +17,7 @@ impl VirtualAssert {
         // Check that rs1 is non-zero (the condition being asserted)
         // If rs1 is zero, panic to indicate assertion failure
         assert_ne!(
-            cpu.x[self.operands.rs1 as usize],
-            0,
+            cpu.x[self.operands.rs1 as usize], 0,
             "Advice assertion failed at PC: 0x{:x}",
             self.address
         );

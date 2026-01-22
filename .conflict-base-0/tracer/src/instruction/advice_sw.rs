@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen, advice_tape_read},
+    emulator::cpu::{advice_tape_read, Cpu, Xlen},
     instruction::{ori::ORI, srli::SRLI},
     utils::inline_helpers::InstrAssembler,
 };

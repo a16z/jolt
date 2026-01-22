@@ -87,7 +87,7 @@ impl AdviceSB {
         asm.emit_u::<LUI>(*v_mask, 0xff);
         asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
         // Read byte from advice tape into v_byte register (imm=1 means 1 byte)
-        asm.emit_i::<VirtualAdviceLoad>(*v_byte, 0, 1);
+        asm.emit_j::<VirtualAdviceLoad>(*v_byte, 1);
         asm.emit_r::<SLL>(*v_byte, *v_byte, *v_shift);
         asm.emit_r::<XOR>(*v_byte, *v_word, *v_byte);
         asm.emit_r::<AND>(*v_byte, *v_byte, *v_mask);
@@ -112,7 +112,7 @@ impl AdviceSB {
         asm.emit_u::<LUI>(*v_mask, 0xff);
         asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
         // Read byte from advice tape into v_byte register (imm=1 means 1 byte)
-        asm.emit_i::<VirtualAdviceLoad>(*v_byte, 0, 1);
+        asm.emit_j::<VirtualAdviceLoad>(*v_byte, 1);
         asm.emit_r::<SLL>(*v_byte, *v_byte, *v_shift);
         asm.emit_r::<XOR>(*v_byte, *v_dword, *v_byte);
         asm.emit_r::<AND>(*v_byte, *v_byte, *v_mask);
