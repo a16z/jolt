@@ -7,10 +7,12 @@ mod e2e_test;
 #[cfg(test)]
 mod is_jagged;
 #[cfg(test)]
-mod jagged_test;
-#[cfg(test)]
 mod jagged_assist_test;
 #[cfg(test)]
-mod sumcheck_relation_test;
+mod jagged_test;
 #[cfg(test)]
 mod matrix_definition_test;
+#[cfg(test)]
+mod shift_rho_test;
+#[cfg(test)]
+mod sumcheck_relation_test;

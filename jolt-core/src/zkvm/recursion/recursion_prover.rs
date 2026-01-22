@@ -15,7 +15,9 @@ use crate::{
         },
         dense_mlpoly::DensePolynomial,
         multilinear_polynomial::MultilinearPolynomial,
-        opening_proof::{OpeningAccumulator, Openings, ProverOpeningAccumulator, SumcheckId},
+        opening_proof::{
+            OpeningAccumulator, OpeningId, Openings, ProverOpeningAccumulator, SumcheckId,
+        },
     },
     transcripts::Transcript,
     zkvm::{
@@ -37,7 +39,7 @@ use super::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulProver},
         gt_mul::{GtMulParams, GtMulProver},
         packed_gt_exp::{PackedGtExpParams, PackedGtExpProver, PackedGtExpPublicInputs},
-        shift_rho::{ShiftRhoParams, ShiftRhoProver, ShiftClaim},
+        shift_rho::{ShiftRhoParams, ShiftRhoProver},
     },
     stage2::virtualization::{
         DirectEvaluationParams, DirectEvaluationProver,
@@ -714,16 +716,26 @@ impl<F: JoltField> RecursionProver<F> {
         let rho_polys = rho_polynomials_for_shift
             .expect("GT exp constraints should always exist in recursion SNARK");
 
-        // Create shift claims
-        let shift_claims: Vec<ShiftClaim> = (0..num_packed_witnesses)
-            .map(|w| ShiftClaim { constraint_idx: w })
+        // Create shift claims from accumulator to avoid ordering mismatches.
+        let mut shift_claim_indices: Vec<usize> = accumulator
+            .openings
+            .keys()
+            .filter_map(|opening_id| match opening_id {
+                OpeningId::Virtual(
+                    VirtualPolynomial::PackedGtExpRhoNext(idx),
+                    SumcheckId::PackedGtExp,
+                ) => Some(*idx),
+                _ => None,
+            })
             .collect();
+        shift_claim_indices.sort_unstable();
+        debug_assert_eq!(shift_claim_indices.len(), num_packed_witnesses);
 
         // Create shift prover
         let mut shift_prover = ShiftRhoProver::new(
-            ShiftRhoParams::new(shift_claims.len()),
+            ShiftRhoParams::new(shift_claim_indices.len()),
             rho_polys,
-            shift_claims,
+            shift_claim_indices,
             accumulator,
             transcript,
         );

@@ -10,7 +10,7 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{OpeningAccumulator, SumcheckId, VerifierOpeningAccumulator},
+        opening_proof::{OpeningAccumulator, OpeningId, SumcheckId, VerifierOpeningAccumulator},
     },
     transcripts::Transcript,
     zkvm::witness::VirtualPolynomial,
@@ -25,7 +25,7 @@ use super::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulVerifier},
         gt_mul::{GtMulParams, GtMulVerifier},
         packed_gt_exp::{PackedGtExpParams, PackedGtExpPublicInputs, PackedGtExpVerifier},
-        shift_rho::{ShiftRhoParams, ShiftRhoVerifier, ShiftClaim},
+        shift_rho::{ShiftRhoParams, ShiftRhoVerifier},
     },
     stage2::virtualization::{
         extract_virtual_claims_from_accumulator, DirectEvaluationParams, DirectEvaluationVerifier,
@@ -263,18 +263,31 @@ impl<F: JoltField> RecursionVerifier<F> {
     ) -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("[Stage 1b] Verifying shift sumcheck for {} GT exp witnesses", num_packed_witnesses);
 
-        // Create shift claims
-        let shift_claims: Vec<ShiftClaim> = (0..num_packed_witnesses)
-            .map(|w| ShiftClaim { constraint_idx: w })
+        let mut shift_claim_indices: Vec<usize> = accumulator
+            .openings
+            .keys()
+            .filter_map(|opening_id| match opening_id {
+                OpeningId::Virtual(
+                    VirtualPolynomial::PackedGtExpRhoNext(idx),
+                    SumcheckId::PackedGtExp,
+                ) => Some(*idx),
+                _ => None,
+            })
             .collect();
+        shift_claim_indices.sort_unstable();
+        debug_assert_eq!(shift_claim_indices.len(), num_packed_witnesses);
 
         #[cfg(debug_assertions)]
-        eprintln!("Verifier creating {} shift claims for {} packed witnesses", shift_claims.len(), num_packed_witnesses);
+        eprintln!(
+            "Verifier creating {} shift claims for {} packed witnesses",
+            shift_claim_indices.len(),
+            num_packed_witnesses
+        );
 
         // Create shift verifier
         let shift_verifier = ShiftRhoVerifier::new(
-            ShiftRhoParams::new(shift_claims.len()),
-            shift_claims,
+            ShiftRhoParams::new(shift_claim_indices.len()),
+            shift_claim_indices,
             transcript,
         );
 

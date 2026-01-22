@@ -37,8 +37,8 @@ use crate::{
     },
     transcripts::Transcript,
     zkvm::{
-        recursion::{stage1::shift_rho::ShiftClaim, utils::virtual_polynomial_utils::*},
-        witness::VirtualPolynomial
+        recursion::utils::virtual_polynomial_utils::*,
+        witness::VirtualPolynomial,
     },
     virtual_claims,
 };
@@ -227,7 +227,7 @@ impl PackedGtExpWitness {
         base2_mle: &[Fq],            // base^2[x] - 16 values
         base3_mle: &[Fq],            // base^3[x] - 16 values
     ) -> Self {
-        let digits = digits_from_bits_msb(bits);
+        let mut digits = digits_from_bits_msb(bits);
         let num_steps = digits.len();
         assert_eq!(rho_mles.len(), num_steps + 1, "Need num_steps + 1 rho MLEs");
         assert_eq!(quotient_mles.len(), num_steps, "Need num_steps quotient MLEs");
@@ -238,13 +238,29 @@ impl PackedGtExpWitness {
         let step_size = 1 << NUM_STEP_VARS;   // 128
         let elem_size = 1 << NUM_ELEMENT_VARS; // 16
         let total_size = 1 << NUM_TOTAL_VARS;  // 2048
+        let num_steps_padded = (num_steps + 1).min(step_size);
+
+        let mut quotient_mles_padded = quotient_mles.to_vec();
+        if num_steps_padded > num_steps {
+            use jolt_optimizations::get_g_mle;
+            let g_mle = get_g_mle();
+            let rho_prev = &rho_mles[num_steps];
+            let mut dummy_q = vec![Fq::zero(); elem_size];
+            for j in 0..elem_size {
+                let rho4 = rho_prev[j].square().square();
+                if !g_mle[j].is_zero() {
+                    dummy_q[j] = -rho4 / g_mle[j];
+                }
+            }
+            quotient_mles_padded.push(dummy_q);
+            digits.push((false, false));
+        }
 
         // Pack rho: rho_packed[x * 128 + s] = rho_mles[s][x]
         // s in low 7 bits, x in high 4 bits
-        // NOTE: Only populate for s < num_steps (not s = num_steps) to ensure
-        // the constraint at s = num_steps is zero (since rho_next[num_steps] = 0)
+        // NOTE: Populate through num_steps_padded so rho_next is a pure shift of rho.
         let mut rho_packed = vec![Fq::zero(); total_size];
-        for s in 0..num_steps.min(step_size) {
+        for s in 0..num_steps_padded.min(step_size) {
             for x in 0..elem_size {
                 if s < rho_mles.len() && x < rho_mles[s].len() {
                     rho_packed[x * step_size + s] = rho_mles[s][x];
@@ -254,7 +270,7 @@ impl PackedGtExpWitness {
 
         // Pack rho_next: rho_next_packed[x * 128 + s] = rho_mles[s+1][x]
         let mut rho_next_packed = vec![Fq::zero(); total_size];
-        for s in 0..num_steps.min(step_size) {
+        for s in 0..num_steps_padded.min(step_size) {
             for x in 0..elem_size {
                 if s + 1 < rho_mles.len() && x < rho_mles[s + 1].len() {
                     rho_next_packed[x * step_size + s] = rho_mles[s + 1][x];
@@ -264,10 +280,10 @@ impl PackedGtExpWitness {
 
         // Pack quotient: quotient_packed[x * 128 + s] = quotient_mles[s][x]
         let mut quotient_packed = vec![Fq::zero(); total_size];
-        for s in 0..num_steps.min(step_size) {
+        for s in 0..num_steps_padded.min(step_size) {
             for x in 0..elem_size {
-                if s < quotient_mles.len() && x < quotient_mles[s].len() {
-                    quotient_packed[x * step_size + s] = quotient_mles[s][x];
+                if s < quotient_mles_padded.len() && x < quotient_mles_padded[s].len() {
+                    quotient_packed[x * step_size + s] = quotient_mles_padded[s][x];
                 }
             }
         }
@@ -275,7 +291,7 @@ impl PackedGtExpWitness {
         // Pack digit_lo and digit_hi: replicated across x
         let mut digit_lo_packed = vec![Fq::zero(); total_size];
         let mut digit_hi_packed = vec![Fq::zero(); total_size];
-        for s in 0..num_steps.min(step_size) {
+        for s in 0..num_steps_padded.min(step_size) {
             let (digit_hi, digit_lo) = digits[s];
             let lo_val = if digit_lo { Fq::from(1u64) } else { Fq::zero() };
             let hi_val = if digit_hi { Fq::from(1u64) } else { Fq::zero() };
@@ -319,7 +335,7 @@ impl PackedGtExpWitness {
             base_packed,
             base2_packed,
             base3_packed,
-            num_steps,
+            num_steps: num_steps_padded,
         };
 
         // Debug: verify all constraints are zero over the Boolean hypercube
@@ -551,6 +567,11 @@ pub struct PackedGtExpProver<F: JoltField> {
     pub rho_claims: Vec<F>,
     pub rho_next_claims: Vec<F>,
     pub quotient_claims: Vec<F>,
+
+    #[cfg(test)]
+    pub rho_packed_raw: Vec<Vec<F>>,
+    #[cfg(test)]
+    pub rho_next_packed_raw: Vec<Vec<F>>,
 }
 
 impl<F: JoltField> PackedGtExpProver<F> {
@@ -596,6 +617,7 @@ impl<F: JoltField> PackedGtExpProver<F> {
         };
 
         let num_witnesses = witnesses.len();
+
         let mut rho_polys = Vec::with_capacity(num_witnesses);
         let mut rho_next_polys = Vec::with_capacity(num_witnesses);
         let mut quotient_polys = Vec::with_capacity(num_witnesses);
@@ -604,6 +626,11 @@ impl<F: JoltField> PackedGtExpProver<F> {
         let mut base_polys = Vec::with_capacity(num_witnesses);
         let mut base2_polys = Vec::with_capacity(num_witnesses);
         let mut base3_polys = Vec::with_capacity(num_witnesses);
+
+        #[cfg(test)]
+        let mut rho_packed_raw = Vec::with_capacity(num_witnesses);
+        #[cfg(test)]
+        let mut rho_next_packed_raw = Vec::with_capacity(num_witnesses);
 
         for witness in witnesses {
             rho_polys.push(MultilinearPolynomial::from(convert_vec(&witness.rho_packed)));
@@ -614,6 +641,12 @@ impl<F: JoltField> PackedGtExpProver<F> {
             base_polys.push(MultilinearPolynomial::from(convert_vec(&witness.base_packed)));
             base2_polys.push(MultilinearPolynomial::from(convert_vec(&witness.base2_packed)));
             base3_polys.push(MultilinearPolynomial::from(convert_vec(&witness.base3_packed)));
+
+            #[cfg(test)]
+            {
+                rho_packed_raw.push(convert_vec(&witness.rho_packed));
+                rho_next_packed_raw.push(convert_vec(&witness.rho_next_packed));
+            }
         }
 
         Self {
@@ -637,6 +670,10 @@ impl<F: JoltField> PackedGtExpProver<F> {
             rho_claims: vec![F::zero(); num_witnesses],
             rho_next_claims: vec![F::zero(); num_witnesses],
             quotient_claims: vec![F::zero(); num_witnesses],
+            #[cfg(test)]
+            rho_packed_raw,
+            #[cfg(test)]
+            rho_next_packed_raw,
         }
     }
 
@@ -645,19 +682,6 @@ impl<F: JoltField> PackedGtExpProver<F> {
     /// With LowToHigh binding: rounds 0-6 bind s (step), rounds 7-10 bind x (element)
     fn in_step_phase(&self) -> bool {
         self.round < self.params.num_step_vars
-    }
-
-    /// Get shift claims for the shift sumcheck
-    pub fn get_shift_claims(&self) -> Vec<ShiftClaim> {
-        let mut claims = Vec::with_capacity(self.num_witnesses);
-
-        for w in 0..self.num_witnesses {
-            claims.push(ShiftClaim {
-                constraint_idx: w,
-            });
-        }
-
-        claims
     }
 
     /// Get rho polynomials for shift sumcheck
