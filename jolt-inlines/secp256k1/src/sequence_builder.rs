@@ -349,6 +349,19 @@ enum MulqType {
 // inline for secp256k1 base field multiplication/squaring/division
 // does not handle checking that the result is canonical mod q,
 // merely that it is correct and fits in 4 limbs
+// multiplication followed by modulus can be represented as: ab = wq + c
+// for some w and c in [0, q) where w is provided as advice
+// here we do not explicitly check that c is in [0, q), but rather that c fits in 256 bits
+// the fastest possible check uses branching and thus appears after invocations of this inline
+// let p = (2^256 - q), the equation above can be rearranged to: ab + wp = 2^256 w + c
+// Thus, for multiplication, squaring and division, this inline checks the following:
+// For multiplication, this inline checks that ab + wp =  2^256 w + c
+// For division, this inline checks that cb + wp = 2^256 w + a
+// For squaring, this inline checks that a^2 + wp = 2^256 w + c
+// The core structure is the same for all three operations, with only minor differences in loading inputs and storing outputs
+// To minimize the use of virtual registers, the LHS is never fully constructed.
+// Rather, the implementation considers 2 limbs at a time, one that is the main focus
+// And one that accumulates carries. The algorithm ping-pongs between these two limbs as it computes the LHS.
 struct Secp256k1Mulq {
     asm: InstrAssembler,
     a: [VirtualRegisterGuard; 4],
@@ -357,7 +370,7 @@ struct Secp256k1Mulq {
     p: VirtualRegisterGuard,
     aux: VirtualRegisterGuard,
     aux2: Option<VirtualRegisterGuard>, // only allocated if Square
-    r: [VirtualRegisterGuard; 8],
+    r: [VirtualRegisterGuard; 2],
     operands: FormatInline,
     op_type: MulqType,
 }
@@ -465,12 +478,14 @@ impl Secp256k1Mulq {
         for i in 0..4 {
             match self.op_type {
                 MulqType::Mul => {
-                    let b_reg = *self.b.as_ref().unwrap()[i];
                     // if mul, load a and b
                     self.asm
                         .emit_ld::<LD>(*self.a[i], self.operands.rs1, i as i64 * 8);
-                    self.asm
-                        .emit_ld::<LD>(b_reg, self.operands.rs2, i as i64 * 8);
+                    self.asm.emit_ld::<LD>(
+                        *self.b.as_ref().unwrap()[i],
+                        self.operands.rs2,
+                        i as i64 * 8,
+                    );
                 }
                 MulqType::Square => {
                     // if square load only a
@@ -478,12 +493,14 @@ impl Secp256k1Mulq {
                         .emit_ld::<LD>(*self.a[i], self.operands.rs1, i as i64 * 8);
                 }
                 MulqType::Div => {
-                    let b_reg = *self.b.as_ref().unwrap()[i];
                     // if div load b and
-                    self.asm
-                        .emit_ld::<LD>(b_reg, self.operands.rs2, i as i64 * 8);
+                    self.asm.emit_ld::<LD>(
+                        *self.b.as_ref().unwrap()[i],
+                        self.operands.rs2,
+                        i as i64 * 8,
+                    );
                     // load c into a, immediately copy it to memory
-                    // the inline will error out if a != b * c mod q and will overwrite c in registers with a later
+                    // the inline will error out if a != b * c mod q later, ensuring correctness
                     self.asm.emit_j::<VirtualAdvice>(*self.a[i], 0);
                     self.asm
                         .emit_s::<SD>(self.operands.rs3, *self.a[i], i as i64 * 8);
@@ -505,27 +522,34 @@ impl Secp256k1Mulq {
             }
         }
         self.mac_low(*self.r[1], *self.r[0], *self.w[0], *self.p, *self.aux);
+        // if mul or square, store the lowest limb in rs3
+        // if div, verify that the lowest limb matches the lowest limbs of the actual argument a
+        match self.op_type {
+            MulqType::Div => {
+                self.asm.emit_ld::<LD>(*self.aux, self.operands.rs1, 0);
+                self.asm.emit_b::<VirtualAssertEQ>(*self.r[0], *self.aux, 0);
+            }
+            _ => {
+                self.asm.emit_s::<SD>(self.operands.rs3, *self.r[0], 0);
+            }
+        }
         // loop over output limbs 1 through 6
+        // here we ping-pong between r[0] and r[1] as the main limb and carry limb
         for k in 1..7 {
             // For each output limb r[k]
             // add in relevant products
             // if r[k+1] has not be written to yet, the carry goes directly into it
             let mut first = true;
+            let rk = *self.r[k % 2];
+            let rk_next = *self.r[(k + 1) % 2];
             // add all lower(w[i] * p) where i = k
             if k < 4 {
-                self.mac_low(*self.r[k + 1], *self.r[k], *self.w[k], *self.p, *self.aux);
+                self.mac_low(rk_next, rk, *self.w[k], *self.p, *self.aux);
                 first = false;
             }
             // add all upper(w[i] * p) where i = k-1
             if k > 0 && k - 1 < 4 {
-                self.mac_high_conditional(
-                    !first,
-                    *self.r[k + 1],
-                    *self.r[k],
-                    *self.w[k - 1],
-                    *self.p,
-                    *self.aux,
-                );
+                self.mac_high_conditional(!first, rk_next, rk, *self.w[k - 1], *self.p, *self.aux);
                 first = false;
             }
             // add all lower(a[i] * b[j]) where i+j = k
@@ -538,19 +562,14 @@ impl Secp256k1Mulq {
                                 break;
                             } else if i == j {
                                 self.mac_low_conditional(
-                                    !first,
-                                    *self.r[k + 1],
-                                    *self.r[k],
-                                    *self.a[i],
-                                    *self.a[j],
-                                    *self.aux,
+                                    !first, rk_next, rk, *self.a[i], *self.a[j], *self.aux,
                                 );
                                 first = false;
                             } else {
                                 self.m2ac_low_conditional(
                                     !first,
-                                    *self.r[k + 1],
-                                    *self.r[k],
+                                    rk_next,
+                                    rk,
                                     *self.a[i],
                                     *self.a[j],
                                     *self.aux,
@@ -562,8 +581,8 @@ impl Secp256k1Mulq {
                         _ => {
                             self.mac_low_conditional(
                                 !first,
-                                *self.r[k + 1],
-                                *self.r[k],
+                                rk_next,
+                                rk,
                                 *self.a[i],
                                 *self.b.as_ref().unwrap()[j],
                                 *self.aux,
@@ -583,19 +602,14 @@ impl Secp256k1Mulq {
                                 break;
                             } else if i == j {
                                 self.mac_high_conditional(
-                                    !first,
-                                    *self.r[k + 1],
-                                    *self.r[k],
-                                    *self.a[i],
-                                    *self.a[j],
-                                    *self.aux,
+                                    !first, rk_next, rk, *self.a[i], *self.a[j], *self.aux,
                                 );
                                 first = false;
                             } else {
                                 self.m2ac_high_conditional(
                                     !first,
-                                    *self.r[k + 1],
-                                    *self.r[k],
+                                    rk_next,
+                                    rk,
                                     *self.a[i],
                                     *self.a[j],
                                     *self.aux,
@@ -607,8 +621,8 @@ impl Secp256k1Mulq {
                         _ => {
                             self.mac_high_conditional(
                                 !first,
-                                *self.r[k + 1],
-                                *self.r[k],
+                                rk_next,
+                                rk,
                                 *self.a[i],
                                 *self.b.as_ref().unwrap()[j],
                                 *self.aux,
@@ -618,8 +632,26 @@ impl Secp256k1Mulq {
                     }
                 }
             }
+            // handle the lower limbs
+            if k < 4 {
+                // if mul or square, store the limb in rs3
+                // if div, verify that the lower limbs match the the actual argument a
+                match self.op_type {
+                    MulqType::Div => {
+                        self.asm
+                            .emit_ld::<LD>(*self.aux, self.operands.rs1, k as i64 * 8);
+                        self.asm.emit_b::<VirtualAssertEQ>(rk, *self.aux, 0);
+                    }
+                    _ => {
+                        self.asm.emit_s::<SD>(self.operands.rs3, rk, k as i64 * 8);
+                    }
+                }
+                // verify that the upper limbs match w
+            } else if k >= 4 {
+                self.asm.emit_b::<VirtualAssertEQ>(rk, *self.w[k - 4], 0);
+            }
         }
-        // special handling for top limb r[7]
+        // special handling for top limb
         match self.op_type {
             MulqType::Square => {
                 self.asm.emit_r::<MULHU>(*self.aux, *self.a[3], *self.a[3]);
@@ -629,31 +661,13 @@ impl Secp256k1Mulq {
                     .emit_r::<MULHU>(*self.aux, *self.a[3], *self.b.as_ref().unwrap()[3]);
             }
         }
-        self.asm.emit_r::<ADD>(*self.r[7], *self.r[7], *self.aux);
+        self.asm.emit_r::<ADD>(*self.r[1], *self.r[1], *self.aux);
+        // verify that w[4] matches top limb
+        self.asm
+            .emit_b::<VirtualAssertEQ>(*self.r[1], *self.w[3], 0);
         // ensure no overflow
         self.asm
-            .emit_b::<VirtualAssertLTE>(*self.aux, *self.r[7], 0);
-        // verify that the top 4 limbs match w
-        for i in 0..4 {
-            self.asm
-                .emit_b::<VirtualAssertEQ>(*self.r[i + 4], *self.w[i], 0);
-        }
-        // either store reduced product (lower 4 limbs) in rs3 if mul or square,
-        // or verify that the lower 4 limbs match the the actual argument a
-        for i in 0..4 {
-            match self.op_type {
-                MulqType::Div => {
-                    self.asm
-                        .emit_ld::<LD>(*self.a[i], self.operands.rs1, i as i64 * 8);
-                    self.asm
-                        .emit_b::<VirtualAssertEQ>(*self.r[i], *self.a[i], 0);
-                }
-                _ => {
-                    self.asm
-                        .emit_s::<SD>(self.operands.rs3, *self.r[i], i as i64 * 8);
-                }
-            }
-        }
+            .emit_b::<VirtualAssertLTE>(*self.aux, *self.r[1], 0);
         // clean up inline
         drop(self.a);
         match self.op_type {
