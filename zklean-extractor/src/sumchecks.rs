@@ -118,7 +118,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
         f: &mut impl std::io::Write,
         mut indent_level: usize,
     ) -> std::io::Result<()> {
-        let sumcheck_vars_typ = "SumcheckVars";
+        let sumcheck_vars_ty = "SumcheckVars";
         let single_step_claims_fun_name = "uniform_claims";
         let cross_step_claims_fun_name = "non_uniform_claims";
 
@@ -149,7 +149,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
 
         writeln!(
             f,
-            "{}structure {sumcheck_vars_typ} (f : Type) : Type where",
+            "{}structure {sumcheck_vars_ty} (f : Type) : Type where",
             indent(indent_level)
         )?;
         indent_level += 1;
@@ -158,8 +158,8 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
             "{}JoltR1CSInputs : JoltR1CSInputs f",
             indent(indent_level)
         )?;
-        for typ in vars_types {
-            writeln!(f, "{}{typ} : {typ} f", indent(indent_level))?;
+        for ty in vars_types {
+            writeln!(f, "{}{ty} : {ty} f", indent(indent_level))?;
         }
         indent_level -= 1;
         writeln!(f)?;
@@ -190,7 +190,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
                     pretty_print_claims_fun(
                         f,
                         &fun_name,
-                        sumcheck_vars_typ,
+                        sumcheck_vars_ty,
                         &single_step_claims,
                         &claims.output_sumcheck_id,
                         false,
@@ -207,7 +207,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
                     pretty_print_claims_fun(
                         f,
                         &fun_name,
-                        sumcheck_vars_typ,
+                        sumcheck_vars_ty,
                         &cross_step_claims,
                         &claims.output_sumcheck_id,
                         true,
@@ -220,7 +220,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
 
         writeln!(
             f,
-            "{}def {single_step_claims_fun_name} [Field f] (cycle : {sumcheck_vars_typ} f) : ZKBuilder f PUnit := do",
+            "{}def {single_step_claims_fun_name} [Field f] (cycle : {sumcheck_vars_ty} f) : ZKBuilder f PUnit := do",
             indent(indent_level)
         )?;
         indent_level += 1;
@@ -232,7 +232,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
 
         writeln!(
             f,
-            "{}def {cross_step_claims_fun_name} [Field f] (cycle next_cycle : {sumcheck_vars_typ} f) : ZKBuilder f PUnit := do",
+            "{}def {cross_step_claims_fun_name} [Field f] (cycle next_cycle : {sumcheck_vars_ty} f) : ZKBuilder f PUnit := do",
             indent(indent_level)
         )?;
         indent_level += 1;
@@ -278,7 +278,7 @@ fn virtual_var_ident(var: &VirtualPolynomial) -> String {
 fn pretty_print_claims_fun<F: JoltField>(
     f: &mut impl std::io::Write,
     fun_name: &str,
-    sumcheck_vars_typ: &str,
+    sumcheck_vars_ty: &str,
     claims: &[&Claim<F>],
     output_sumcheck_id: &SumcheckId,
     is_offset: bool,
@@ -291,7 +291,7 @@ fn pretty_print_claims_fun<F: JoltField>(
     };
     writeln!(
         f,
-        "{}def {fun_name} [Field f] ({cycle_vars} : {sumcheck_vars_typ} f) : ZKBuilder f PUnit := do",
+        "{}def {fun_name} [Field f] ({cycle_vars} : {sumcheck_vars_ty} f) : ZKBuilder f PUnit := do",
         indent(indent_level)
     )?;
     indent_level += 1;
