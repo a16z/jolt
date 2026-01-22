@@ -1,3 +1,4 @@
+use std::array;
 use std::collections::VecDeque;
 
 use ark_ff::{BigInt, Field, PrimeField};
@@ -6,10 +7,13 @@ use num_bigint::BigInt as NBigInt;
 use num_bigint::BigUint as NBigUint;
 use num_bigint::Sign;
 use num_integer::Integer;
+use tracer::instruction::virtual_assert_lte::VirtualAssertLTE;
 use tracer::{
     emulator::cpu::Cpu,
     instruction::{
-        format::format_inline::FormatInline, sd::SD, virtual_advice::VirtualAdvice, Instruction,
+        add::ADD, format::format_inline::FormatInline, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU,
+        sd::SD, sltu::SLTU, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
+        Instruction,
     },
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterGuard},
 };
@@ -333,5 +337,559 @@ pub fn secp256k1_unnamed_advice(
     cpu: &mut Cpu,
 ) -> VecDeque<u64> {
     let builder = Secp256k1Unnamed::new(asm, operands);
+    builder.advice(cpu)
+}
+
+enum MulqType {
+    Mul,
+    Square,
+    Div,
+}
+
+// inline for secp256k1 base field multiplication/squaring/division
+// does not handle checking that the result is canonical mod q,
+// merely that it is correct and fits in 4 limbs
+struct Secp256k1Mulq {
+    asm: InstrAssembler,
+    a: [VirtualRegisterGuard; 4],
+    b: Option<[VirtualRegisterGuard; 4]>, // only allocated if Mul or Div
+    w: [VirtualRegisterGuard; 4],
+    p: VirtualRegisterGuard,
+    aux: VirtualRegisterGuard,
+    aux2: Option<VirtualRegisterGuard>, // only allocated if Square
+    r: [VirtualRegisterGuard; 8],
+    operands: FormatInline,
+    op_type: MulqType,
+}
+
+impl Secp256k1Mulq {
+    fn new(asm: InstrAssembler, operands: FormatInline, op_type: MulqType) -> Self {
+        let a = array::from_fn(|_| asm.allocator.allocate_for_inline());
+        let b = match op_type {
+            MulqType::Square => None,
+            _ => Some(array::from_fn(|_| asm.allocator.allocate_for_inline())),
+        };
+        let w = array::from_fn(|_| asm.allocator.allocate_for_inline());
+        let p = asm.allocator.allocate_for_inline();
+        let aux = asm.allocator.allocate_for_inline();
+        let aux2 = match op_type {
+            MulqType::Square => Some(asm.allocator.allocate_for_inline()),
+            _ => None,
+        };
+        let r = array::from_fn(|_| asm.allocator.allocate_for_inline());
+        Secp256k1Mulq {
+            asm,
+            a,
+            b,
+            w,
+            p,
+            aux,
+            aux2,
+            r,
+            operands,
+            op_type,
+        }
+    }
+    // Custom advice function
+    fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
+        // read memory directly to get inputs
+        let a_addr = cpu.x[self.operands.rs1 as usize] as u64;
+        let a = [
+            cpu.mmu.load_doubleword(a_addr).unwrap().0,
+            cpu.mmu.load_doubleword(a_addr + 8).unwrap().0,
+            cpu.mmu.load_doubleword(a_addr + 16).unwrap().0,
+            cpu.mmu.load_doubleword(a_addr + 24).unwrap().0,
+        ];
+        let b_addr = match self.op_type {
+            MulqType::Square => a_addr,
+            _ => cpu.x[self.operands.rs2 as usize] as u64,
+        };
+        let b = [
+            cpu.mmu.load_doubleword(b_addr).unwrap().0,
+            cpu.mmu.load_doubleword(b_addr + 8).unwrap().0,
+            cpu.mmu.load_doubleword(b_addr + 16).unwrap().0,
+            cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
+        ];
+        // convert inputs to bigints
+        let a_big: NBigUint = limbs_to_nbiguint(&a);
+        let b_big: NBigUint = limbs_to_nbiguint(&b);
+        let q_big: NBigUint = Fq::MODULUS.into();
+        // compute advice based on operation type
+        match self.op_type {
+            MulqType::Div => {
+                // compute a / b in the field
+                let arr_to_fq = |a: &[u64; 4]| Fq::new(BigInt(*a));
+                let c_big = limbs_to_nbiguint(
+                    &((arr_to_fq(&b)
+                        .inverse()
+                        .expect("Attempted to invert zero in secp256k1 base field")
+                        * arr_to_fq(&a))
+                    .into_bigint()
+                    .0),
+                );
+                let c_limbs = nbiguint_to_limbs(&c_big);
+                let quotient = (b_big * c_big).div_floor(&q_big);
+                // convert back to limbs
+                let quotient_limbs = nbiguint_to_limbs(&quotient);
+                // assert that limbs fits in 4 u64s
+                assert!(quotient_limbs.len() <= 4, "Result does not fit in 4 limbs");
+                // pad limbs to 4 u64s each, interleave, and return as VecDeque
+                let mut padded_limbs = vec![0u64; 8];
+                for i in 0..c_limbs.len() {
+                    padded_limbs[2 * i] = c_limbs[i];
+                }
+                for i in 0..quotient_limbs.len() {
+                    padded_limbs[2 * i + 1] = quotient_limbs[i];
+                }
+                VecDeque::from(padded_limbs)
+            }
+            _ => {
+                // compute floor(a * b / q)
+                let quotient = (a_big * b_big).div_floor(&q_big);
+                // convert back to limbs
+                let limbs = nbiguint_to_limbs(&quotient);
+                // assert that limbs fits in 4 u64s
+                assert!(limbs.len() <= 4, "Result does not fit in 4 limbs");
+                // pad limbs to 4 u64s and return as VecDeque
+                let mut padded_limbs = vec![0u64; 4];
+                for i in 0..limbs.len() {
+                    padded_limbs[i] = limbs[i];
+                }
+                VecDeque::from(padded_limbs)
+            }
+        }
+    }
+    // inline sequence function
+    fn inline_sequence(mut self) -> Vec<Instruction> {
+        // load a, b, and w
+        for i in 0..4 {
+            match self.op_type {
+                MulqType::Mul => {
+                    let b_reg = *self.b.as_ref().unwrap()[i];
+                    // if mul, load a and b
+                    self.asm
+                        .emit_ld::<LD>(*self.a[i], self.operands.rs1, i as i64 * 8);
+                    self.asm
+                        .emit_ld::<LD>(b_reg, self.operands.rs2, i as i64 * 8);
+                }
+                MulqType::Square => {
+                    // if square load only a
+                    self.asm
+                        .emit_ld::<LD>(*self.a[i], self.operands.rs1, i as i64 * 8);
+                }
+                MulqType::Div => {
+                    let b_reg = *self.b.as_ref().unwrap()[i];
+                    // if div load b and
+                    self.asm
+                        .emit_ld::<LD>(b_reg, self.operands.rs2, i as i64 * 8);
+                    // load c into a, immediately copy it to memory
+                    // the inline will error out if a != b * c mod q and will overwrite c in registers with a later
+                    self.asm.emit_j::<VirtualAdvice>(*self.a[i], 0);
+                    self.asm
+                        .emit_s::<SD>(self.operands.rs3, *self.a[i], i as i64 * 8);
+                }
+            }
+            self.asm.emit_j::<VirtualAdvice>(*self.w[i], 0);
+        }
+        // constant (1u64 << 32) + 977 lives in [12]
+        self.asm.emit_u::<LUI>(*self.p, (1u64 << 32) + 977);
+        // compute ab + wp into [14..22]
+        // special handling for bottom limb r[0]
+        match self.op_type {
+            MulqType::Square => {
+                self.asm.emit_r::<MUL>(*self.r[0], *self.a[0], *self.a[0]);
+            }
+            _ => {
+                self.asm
+                    .emit_r::<MUL>(*self.r[0], *self.a[0], *self.b.as_ref().unwrap()[0]);
+            }
+        }
+        self.mac_low(*self.r[1], *self.r[0], *self.w[0], *self.p, *self.aux);
+        // loop over output limbs 1 through 6
+        for k in 1..7 {
+            // For each output limb r[k]
+            // add in relevant products
+            // if r[k+1] has not be written to yet, the carry goes directly into it
+            let mut first = true;
+            // add all lower(w[i] * p) where i = k
+            if k < 4 {
+                self.mac_low(*self.r[k + 1], *self.r[k], *self.w[k], *self.p, *self.aux);
+                first = false;
+            }
+            // add all upper(w[i] * p) where i = k-1
+            if k > 0 && k - 1 < 4 {
+                self.mac_high_conditional(
+                    !first,
+                    *self.r[k + 1],
+                    *self.r[k],
+                    *self.w[k - 1],
+                    *self.p,
+                    *self.aux,
+                );
+                first = false;
+            }
+            // add all lower(a[i] * b[j]) where i+j = k
+            for i in 0..=k {
+                let j = k - i;
+                if i < 4 && j < 4 {
+                    match self.op_type {
+                        MulqType::Square => {
+                            if i > j {
+                                break;
+                            } else if i == j {
+                                self.mac_low_conditional(
+                                    !first,
+                                    *self.r[k + 1],
+                                    *self.r[k],
+                                    *self.a[i],
+                                    *self.a[j],
+                                    *self.aux,
+                                );
+                                first = false;
+                            } else {
+                                self.m2ac_low_conditional(
+                                    !first,
+                                    *self.r[k + 1],
+                                    *self.r[k],
+                                    *self.a[i],
+                                    *self.a[j],
+                                    *self.aux,
+                                    **self.aux2.as_ref().unwrap(),
+                                );
+                                first = false;
+                            }
+                        }
+                        _ => {
+                            self.mac_low_conditional(
+                                !first,
+                                *self.r[k + 1],
+                                *self.r[k],
+                                *self.a[i],
+                                *self.b.as_ref().unwrap()[j],
+                                *self.aux,
+                            );
+                            first = false;
+                        }
+                    }
+                }
+            }
+            // add all upper(a[i] * b[j]) where i+j = k-1
+            for i in 0..=k - 1 {
+                let j = k - 1 - i;
+                if i < 4 && j < 4 {
+                    match self.op_type {
+                        MulqType::Square => {
+                            if i > j {
+                                break;
+                            } else if i == j {
+                                self.mac_high_conditional(
+                                    !first,
+                                    *self.r[k + 1],
+                                    *self.r[k],
+                                    *self.a[i],
+                                    *self.a[j],
+                                    *self.aux,
+                                );
+                                first = false;
+                            } else {
+                                self.m2ac_high_conditional(
+                                    !first,
+                                    *self.r[k + 1],
+                                    *self.r[k],
+                                    *self.a[i],
+                                    *self.a[j],
+                                    *self.aux,
+                                    **self.aux2.as_ref().unwrap(),
+                                );
+                                first = false;
+                            }
+                        }
+                        _ => {
+                            self.mac_high_conditional(
+                                !first,
+                                *self.r[k + 1],
+                                *self.r[k],
+                                *self.a[i],
+                                *self.b.as_ref().unwrap()[j],
+                                *self.aux,
+                            );
+                            first = false;
+                        }
+                    }
+                }
+            }
+        }
+        // special handling for top limb r[7]
+        match self.op_type {
+            MulqType::Square => {
+                self.asm.emit_r::<MULHU>(*self.aux, *self.a[3], *self.a[3]);
+            }
+            _ => {
+                self.asm
+                    .emit_r::<MULHU>(*self.aux, *self.a[3], *self.b.as_ref().unwrap()[3]);
+            }
+        }
+        self.asm.emit_r::<ADD>(*self.r[7], *self.r[7], *self.aux);
+        // ensure no overflow
+        self.asm
+            .emit_b::<VirtualAssertLTE>(*self.aux, *self.r[7], 0);
+        // verify that the top 4 limbs match w
+        for i in 0..4 {
+            self.asm
+                .emit_b::<VirtualAssertEQ>(*self.r[i + 4], *self.w[i], 0);
+        }
+        // either store reduced product (lower 4 limbs) in rs3 if mul or square,
+        // or verify that the lower 4 limbs match the the actual argument a
+        for i in 0..4 {
+            match self.op_type {
+                MulqType::Div => {
+                    self.asm
+                        .emit_ld::<LD>(*self.a[i], self.operands.rs1, i as i64 * 8);
+                    self.asm
+                        .emit_b::<VirtualAssertEQ>(*self.r[i], *self.a[i], 0);
+                }
+                _ => {
+                    self.asm
+                        .emit_s::<SD>(self.operands.rs3, *self.r[i], i as i64 * 8);
+                }
+            }
+        }
+        // clean up inline
+        drop(self.a);
+        match self.op_type {
+            MulqType::Square => {}
+            _ => {
+                drop(self.b.unwrap());
+            }
+        }
+        drop(self.w);
+        drop(self.p);
+        drop(self.aux);
+        match self.op_type {
+            MulqType::Square => drop(self.aux2.unwrap()),
+            _ => {}
+        }
+        drop(self.r);
+        self.asm.finalize_inline()
+    }
+    // (c2, c1) = lower(a * b) + c1
+    // clobbers aux
+    fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        // mul aux, a, b
+        self.asm.emit_r::<MUL>(aux, a, b);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu c2, c1, aux
+        self.asm.emit_r::<SLTU>(c2, c1, aux);
+    }
+    // (c2, c1) = upper(a * b) + c1
+    // clobbers aux
+    fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        // mulhu aux, a, b
+        self.asm.emit_r::<MULHU>(aux, a, b);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu c2, c1, aux
+        self.asm.emit_r::<SLTU>(c2, c1, aux);
+    }
+    // (c2, c1) += lower(a * b)
+    // clobbers aux
+    fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        // mulhu aux, a, b
+        self.asm.emit_r::<MUL>(aux, a, b);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu aux, c1, aux
+        self.asm.emit_r::<SLTU>(aux, c1, aux);
+        // add c2, c2, aux
+        self.asm.emit_r::<ADD>(c2, c2, aux);
+    }
+    // (c2, c1) += upper(a * b)
+    // clobbers aux
+    fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        // mulhu aux, a, b
+        self.asm.emit_r::<MULHU>(aux, a, b);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu aux, c1, aux
+        self.asm.emit_r::<SLTU>(aux, c1, aux);
+        // add c2, c2, aux
+        self.asm.emit_r::<ADD>(c2, c2, aux);
+    }
+    // if carry flag is true, mac_low_w_carry, otherwise mac_low
+    fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        if carry_exists {
+            self.mac_low_w_carry(c2, c1, a, b, aux);
+        } else {
+            self.mac_low(c2, c1, a, b, aux);
+        }
+    }
+    // if carry flag is true, mac_high_w_carry, otherwise mac_high
+    fn mac_high_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        if carry_exists {
+            self.mac_high_w_carry(c2, c1, a, b, aux);
+        } else {
+            self.mac_high(c2, c1, a, b, aux);
+        }
+    }
+    // mac-like functions for the square case where one wants to add 2*a*b
+    // (c2, c1) = 2*lower(a * b) + c1
+    // clobbers aux
+    fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        // mul aux, a, b
+        self.asm.emit_r::<MUL>(aux, a, b);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu c2, c1, aux
+        self.asm.emit_r::<SLTU>(c2, c1, aux);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu aux, c1, aux
+        self.asm.emit_r::<SLTU>(aux, c1, aux);
+        // add c2, c2, aux
+        self.asm.emit_r::<ADD>(c2, c2, aux);
+    }
+    // (c2, c1) = 2*upper(a * b) + c1
+    // clobbers aux
+    fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
+        // mulhu aux, a, b
+        self.asm.emit_r::<MULHU>(aux, a, b);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu c2, c1, aux
+        self.asm.emit_r::<SLTU>(c2, c1, aux);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu aux, c1, aux
+        self.asm.emit_r::<SLTU>(aux, c1, aux);
+        // add c2, c2, aux
+        self.asm.emit_r::<ADD>(c2, c2, aux);
+    }
+    // (c2, c1) += 2*lower(a * b)
+    // clobbers aux
+    fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
+        // mulhu aux, a, b
+        self.asm.emit_r::<MUL>(aux, a, b);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu aux2, c1, aux2
+        self.asm.emit_r::<SLTU>(aux2, c1, aux);
+        // add c2, c2, aux2
+        self.asm.emit_r::<ADD>(c2, c2, aux2);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu aux, c1, aux2
+        self.asm.emit_r::<SLTU>(aux2, c1, aux);
+        // add c2, c2, aux2
+        self.asm.emit_r::<ADD>(c2, c2, aux2);
+    }
+    // (c2, c1) += 2*upper(a * b)
+    // clobbers aux
+    fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
+        // mulhu aux, a, b
+        self.asm.emit_r::<MULHU>(aux, a, b);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu aux2, c1, aux
+        self.asm.emit_r::<SLTU>(aux2, c1, aux);
+        // add c2, c2, aux
+        self.asm.emit_r::<ADD>(c2, c2, aux2);
+        // add c1, c1, aux
+        self.asm.emit_r::<ADD>(c1, c1, aux);
+        // sltu aux2, c1, aux
+        self.asm.emit_r::<SLTU>(aux2, c1, aux);
+        // add c2, c2, aux
+        self.asm.emit_r::<ADD>(c2, c2, aux2);
+    }
+    // if carry flag is true, m2ac_low_w_carry, otherwise m2ac_low
+    fn m2ac_low_conditional(
+        &mut self,
+        carry_exists: bool,
+        c2: u8,
+        c1: u8,
+        a: u8,
+        b: u8,
+        aux: u8,
+        aux2: u8,
+    ) {
+        if carry_exists {
+            self.m2ac_low_w_carry(c2, c1, a, b, aux, aux2);
+        } else {
+            self.m2ac_low(c2, c1, a, b, aux);
+        }
+    }
+    // if carry flag is true, m2ac_high_w_carry, otherwise m2ac_high
+    fn m2ac_high_conditional(
+        &mut self,
+        carry_exists: bool,
+        c2: u8,
+        c1: u8,
+        a: u8,
+        b: u8,
+        aux: u8,
+        aux2: u8,
+    ) {
+        if carry_exists {
+            self.m2ac_high_w_carry(c2, c1, a, b, aux, aux2);
+        } else {
+            self.m2ac_high(c2, c1, a, b, aux);
+        }
+    }
+}
+
+/// Virtual instruction builder for unchecked secp256k1 base field modular multiplication
+pub fn secp256k1_mulq_sequence_builder(
+    asm: InstrAssembler,
+    operands: FormatInline,
+) -> Vec<Instruction> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul);
+    builder.inline_sequence()
+}
+
+/// Custom trace function for unchecked secp256k1 base field modular multiplication
+pub fn secp256k1_mulq_advice(
+    asm: InstrAssembler,
+    operands: FormatInline,
+    cpu: &mut Cpu,
+) -> VecDeque<u64> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul);
+    builder.advice(cpu)
+}
+
+/// Virtual instruction builder for unchecked secp256k1 base field modular squaring
+pub fn secp256k1_squareq_sequence_builder(
+    asm: InstrAssembler,
+    operands: FormatInline,
+) -> Vec<Instruction> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square);
+    builder.inline_sequence()
+}
+
+/// Custom trace function for unchecked secp256k1 base field modular squaring
+pub fn secp256k1_squareq_advice(
+    asm: InstrAssembler,
+    operands: FormatInline,
+    cpu: &mut Cpu,
+) -> VecDeque<u64> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square);
+    builder.advice(cpu)
+}
+
+/// Virtual instruction builder for unchecked secp256k1 base field modular division
+pub fn secp256k1_divq_sequence_builder(
+    asm: InstrAssembler,
+    operands: FormatInline,
+) -> Vec<Instruction> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div);
+    builder.inline_sequence()
+}
+
+/// Custom trace function for unchecked secp256k1 base field modular division
+pub fn secp256k1_divq_advice(
+    asm: InstrAssembler,
+    operands: FormatInline,
+    cpu: &mut Cpu,
+) -> VecDeque<u64> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div);
     builder.advice(cpu)
 }

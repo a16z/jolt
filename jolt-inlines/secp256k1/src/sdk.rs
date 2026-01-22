@@ -297,6 +297,26 @@ impl Secp256k1Fq {
     ))]
     #[inline(always)]
     pub fn mul(&self, other: &Secp256k1Fq) -> Self {
+        let mut e = [0u64; 4];
+        unsafe {
+            use crate::{INLINE_OPCODE, SECP256K1_FUNCT7, SECP256K1_MULQ_FUNCT3};
+            core::arch::asm!(
+                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
+                opcode = const INLINE_OPCODE,
+                funct3 = const SECP256K1_MULQ_FUNCT3,
+                funct7 = const SECP256K1_FUNCT7,
+                rd = in(reg) e.as_mut_ptr(),
+                rs1 = in(reg) self.e.as_ptr(),
+                rs2 = in(reg) other.e.as_ptr(),
+                options(nostack)
+            );
+        }
+        if is_fq_non_canonical(&e) {
+            hcf();
+        }
+        Secp256k1Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
+    }
+    /*pub fn mul(&self, other: &Secp256k1Fq) -> Self {
         // get w from inline
         let mut w = [0u64; 4];
         unsafe {
@@ -390,12 +410,15 @@ impl Secp256k1Fq {
             hcf();
         }
         // return bottom 4 limbs as result after checking that c is canonical
-        let c = Secp256k1Fq::from_u64_arr(&s[0..4].try_into().unwrap());
-        if c.is_err() {
+        if is_fq_non_canonical(&s[0..4].try_into().unwrap()) {
             hcf();
         }
-        c.unwrap()
-    }
+        Secp256k1Fq::from_u64_arr_unchecked(&s[0..4].try_into().unwrap())
+        /*if c.is_err() {
+            hcf();
+        }
+        c.unwrap()*/
+    }*/
     #[cfg(all(
         not(feature = "host"),
         not(any(target_arch = "riscv32", target_arch = "riscv64"))
@@ -419,7 +442,7 @@ impl Secp256k1Fq {
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn square(&self) -> Self {
+    /*pub fn square(&self) -> Self {
         // get w from inline
         let mut w = [0u64; 4];
         unsafe {
@@ -507,6 +530,25 @@ impl Secp256k1Fq {
             hcf();
         }
         c.unwrap()
+    }*/
+    pub fn square(&self) -> Self {
+        let mut e = [0u64; 4];
+        unsafe {
+            use crate::{INLINE_OPCODE, SECP256K1_FUNCT7, SECP256K1_SQUAREQ_FUNCT3};
+            core::arch::asm!(
+                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, x0",
+                opcode = const INLINE_OPCODE,
+                funct3 = const SECP256K1_SQUAREQ_FUNCT3,
+                funct7 = const SECP256K1_FUNCT7,
+                rd = in(reg) e.as_mut_ptr(),
+                rs1 = in(reg) self.e.as_ptr(),
+                options(nostack)
+            );
+        }
+        if is_fq_non_canonical(&e) {
+            hcf();
+        }
+        Secp256k1Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
     #[cfg(all(
         not(feature = "host"),
@@ -532,7 +574,7 @@ impl Secp256k1Fq {
     #[inline(always)]
     fn div_assume_nonzero(&self, other: &Secp256k1Fq) -> Self {
         // get inverse as pure advice
-        let mut c = Secp256k1Fq::zero();
+        /*let mut c = Secp256k1Fq::zero();
         unsafe {
             use crate::{INLINE_OPCODE, SECP256K1_DIVQ_ADV_FUNCT3, SECP256K1_FUNCT7};
             core::arch::asm!(
@@ -555,7 +597,25 @@ impl Secp256k1Fq {
             // spoil the proof
             hcf();
         }
-        c
+        c*/
+        let mut e = [0u64; 4];
+        unsafe {
+            use crate::{INLINE_OPCODE, SECP256K1_DIVQ_FUNCT3, SECP256K1_FUNCT7};
+            core::arch::asm!(
+                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
+                opcode = const INLINE_OPCODE,
+                funct3 = const SECP256K1_DIVQ_FUNCT3,
+                funct7 = const SECP256K1_FUNCT7,
+                rd = in(reg) e.as_mut_ptr(),
+                rs1 = in(reg) self.e.as_ptr(),
+                rs2 = in(reg) other.e.as_ptr(),
+                options(nostack)
+            );
+        }
+        if is_fq_non_canonical(&e) {
+            hcf();
+        }
+        Secp256k1Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
     /// returns self / other
     /// uses custom inline for performance
@@ -890,7 +950,7 @@ impl Secp256k1Point {
     #[inline(always)]
     pub fn is_on_curve(&self) -> bool {
         self.is_infinity()
-            || self.y.mul(&self.y) == (self.x.mul(&self.x).mul(&self.x).add(&Secp256k1Fq::seven()))
+            || self.y.square() == (self.x.square().mul(&self.x).add(&Secp256k1Fq::seven()))
     }
     /// negates a point on the secp256k1 curve
     #[inline(always)]
@@ -960,12 +1020,10 @@ impl Secp256k1Point {
         // note that (self + other) cannot equal infinity or self here
         // so no special cases needed
         } else {
-            let s = (self.y.sub(&other.y)).div_assume_nonzero(&self.x.sub(&other.x));
-            //let nx2 = &self.x.add(&other.x).sub(&s.square());
-            let nx2 = self.x.add(&other.x).sub(&s.mul(&s));
-            let t = self.y.dbl().div_assume_nonzero(&self.x.add(&nx2)).sub(&s);
-            //let x3 = t.square().sub(&self.x).add(&nx2);
-            let x3 = t.mul(&t).sub(&self.x).add(&nx2);
+            let ns = (self.y.sub(&other.y)).div_assume_nonzero(&other.x.sub(&self.x));
+            let nx2 = self.x.add(&other.x).sub(&ns.square());
+            let t = self.y.dbl().div_assume_nonzero(&self.x.add(&nx2)).add(&ns);
+            let x3 = t.square().sub(&self.x).add(&nx2);
             let y3 = t.mul(&(self.x.sub(&x3))).sub(&self.y);
             Secp256k1Point { x: x3, y: y3 }
         }

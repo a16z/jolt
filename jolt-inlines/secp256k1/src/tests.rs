@@ -1,7 +1,8 @@
 mod sequence_tests {
     use crate::sdk::Secp256k1Point;
     use crate::{
-        Secp256k1Fq, Secp256k1Fr, INLINE_OPCODE, SECP256K1_DIVQ_ADV_FUNCT3, SECP256K1_FUNCT7,
+        Secp256k1Fq, Secp256k1Fr, INLINE_OPCODE, SECP256K1_DIVQ_ADV_FUNCT3, SECP256K1_DIVQ_FUNCT3,
+        SECP256K1_FUNCT7, SECP256K1_MULQ_FUNCT3, SECP256K1_SQUAREQ_FUNCT3,
     };
     use ark_ff::{BigInt, Field, PrimeField};
     use ark_secp256k1::Fq;
@@ -27,13 +28,13 @@ mod sequence_tests {
         harness.load_input2_64(b);
         harness.execute_inline(InlineTestHarness::create_default_instruction(
             INLINE_OPCODE,
-            SECP256K1_DIVQ_ADV_FUNCT3,
+            SECP256K1_DIVQ_FUNCT3,
             SECP256K1_FUNCT7,
         ));
         let result_vec = harness.read_output64(4);
         let mut result = [0u64; 4];
         result.copy_from_slice(&result_vec);
-        assert_eq!(result, expected, "secp256k1_divq_adv result mismatch");
+        assert_eq!(result, expected, "secp256k1_divq result mismatch");
     }
 
     #[test]
@@ -58,6 +59,92 @@ mod sequence_tests {
         let a = [1u64, 1u64, 1u64, 1u64];
         let b = [1u64, 1u64, 1u64, 1u64];
         assert_divq_trace_equiv(&a, &b);
+    }
+
+    fn assert_mulq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
+        // get expected value
+        let arr_to_fq = |arr: &[u64; 4]| Fq::new(BigInt(*arr));
+        let expected = (arr_to_fq(a) * arr_to_fq(b)).into_bigint().0;
+        // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
+        let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        harness.setup_registers();
+        harness.load_input64(a);
+        harness.load_input2_64(b);
+        harness.execute_inline(InlineTestHarness::create_default_instruction(
+            INLINE_OPCODE,
+            SECP256K1_MULQ_FUNCT3,
+            SECP256K1_FUNCT7,
+        ));
+        let result_vec = harness.read_output64(4);
+        let mut result = [0u64; 4];
+        result.copy_from_slice(&result_vec);
+        assert_eq!(result, expected, "secp256k1_mulq result mismatch");
+    }
+
+    #[test]
+    fn test_secp256k1_mulq_direct_execution() {
+        // arbitrary test vectors for direct execution
+        let a = [0u64, 0u64, 0u64, 1u64];
+        let b = [0u64, 1u64, 0u64, 0u64];
+        assert_mulq_trace_equiv(&a, &b);
+        let a = [
+            0x123456789ABCDEF0,
+            0x0FEDCBA987654321,
+            0x1111111111111111,
+            0x2222222222222222,
+        ];
+        let b = [
+            0x0FEDCBA987654321,
+            0x123456789ABCDEF0,
+            0x3333333333333333,
+            0x4444444444444444,
+        ];
+        assert_mulq_trace_equiv(&a, &b);
+        let a = [1u64, 2u64, 3u64, 4u64];
+        let b = [5u64, 6u64, 7u64, 8u64];
+        assert_mulq_trace_equiv(&a, &b);
+        let a = [1u64, 1u64, 1u64, 1u64];
+        let b = [1u64, 1u64, 1u64, 1u64];
+        assert_mulq_trace_equiv(&a, &b);
+    }
+
+    fn assert_squareq_trace_equiv(a: &[u64; 4]) {
+        // get expected value
+        let arr_to_fq = |arr: &[u64; 4]| Fq::new(BigInt(*arr));
+        let expected = (arr_to_fq(a) * arr_to_fq(a)).into_bigint().0;
+        // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
+        let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+        let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
+        harness.setup_registers();
+        harness.load_input64(a);
+        harness.execute_inline(InlineTestHarness::create_default_instruction(
+            INLINE_OPCODE,
+            SECP256K1_SQUAREQ_FUNCT3,
+            SECP256K1_FUNCT7,
+        ));
+        let result_vec = harness.read_output64(4);
+        let mut result = [0u64; 4];
+        result.copy_from_slice(&result_vec);
+        assert_eq!(result, expected, "secp256k1_squareq result mismatch");
+    }
+
+    #[test]
+    fn test_secp256k1_squareq_direct_execution() {
+        // arbitrary test vectors for direct execution
+        let a = [0u64, 0u64, 0u64, 1u64];
+        assert_squareq_trace_equiv(&a);
+        let a = [
+            0x123456789ABCDEF0,
+            0x0FEDCBA987654321,
+            0x1111111111111111,
+            0x2222222222222222,
+        ];
+        assert_squareq_trace_equiv(&a);
+        let a = [1u64, 2u64, 3u64, 4u64];
+        assert_squareq_trace_equiv(&a);
+        let a = [1u64, 1u64, 1u64, 1u64];
+        assert_squareq_trace_equiv(&a);
     }
 
     fn u128_point_mul(scalar: u128, point: &Secp256k1Point) -> Secp256k1Point {
@@ -331,8 +418,8 @@ mod sequence_tests {
             panic!("secp256k1_fq::mul: result non-canonical");
         }
         // check that output matches expected
-        println!("expected: {:?}", expected);
-        println!("computed: {:?}", c.clone().unwrap().e());
+        //println!("expected: {:?}", expected);
+        //println!("computed: {:?}", c.clone().unwrap().e());
         assert!(
             expected == c.unwrap().e(),
             "secp256k1_fq::mul: result mismatch"
@@ -465,8 +552,8 @@ mod sequence_tests {
             panic!("secp256k1_fq::mul: result non-canonical");
         }
         // check that output matches expected
-        println!("expected: {:?}", expected);
-        println!("computed: {:?}", c.clone().unwrap().e());
+        //println!("expected: {:?}", expected);
+        //println!("computed: {:?}", c.clone().unwrap().e());
         assert!(
             expected == c.unwrap().e(),
             "secp256k1_fq::mul: result mismatch"
@@ -565,8 +652,8 @@ mod sequence_tests {
             panic!("secp256k1_fq::square: result non-canonical");
         }
         // check that output matches expected
-        println!("expected: {:?}", expected);
-        println!("computed: {:?}", c.clone().unwrap().e());
+        //println!("expected: {:?}", expected);
+        //println!("computed: {:?}", c.clone().unwrap().e());
         assert!(
             expected == c.unwrap().e(),
             "secp256k1_fq::square: result mismatch"

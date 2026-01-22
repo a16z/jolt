@@ -23,6 +23,21 @@ pub const SECP256K1_DIVQ_ADV_NAME: &str = "SECP256K1_DIVQ_ADV";
 pub const SECP256K1_UNNAMED_FUNCT3: u32 = 0x03;
 pub const SECP256K1_UNNAMED_NAME: &str = "SECP256K1_UNNAMED";
 
+// base field (q) multiplication helper
+// that is, given a and b in Fq, compute a 256-bit c such that ab - wq = c
+pub const SECP256K1_MULQ_FUNCT3: u32 = 0x04;
+pub const SECP256K1_MULQ_NAME: &str = "SECP256K1_MULQ";
+
+// base field (q) square helper
+// that is, given a in Fq, compute a 256-bit c such that a^2 - wq = c
+pub const SECP256K1_SQUAREQ_FUNCT3: u32 = 0x05;
+pub const SECP256K1_SQUAREQ_NAME: &str = "SECP256K1_SQUAREQ";
+
+// base field (q) division helper
+// that is, given a and b in Fq, compute a 256-bit c such that cb - wq = a
+pub const SECP256K1_DIVQ_FUNCT3: u32 = 0x06;
+pub const SECP256K1_DIVQ_NAME: &str = "SECP256K1_DIVQ";
+
 // scalar field (r) division (pure non-deterministic advice, no checks)
 // that is, given a and b in Fr, compute c = a / b
 pub const SECP256K1_DIVR_ADV_FUNCT3: u32 = 0x01;
