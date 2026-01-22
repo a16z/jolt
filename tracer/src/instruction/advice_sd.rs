@@ -66,7 +66,7 @@ impl AdviceSD {
         let v_dword = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
         // Read 8 bytes from advice tape into v_dword register
-        asm.emit_i::<VirtualAdviceLoad>(*v_dword, 0, 8);
+        asm.emit_j::<VirtualAdviceLoad>(*v_dword, 8);
         // Store v_dword to memory at rs1 + imm
         asm.emit_s::<SD>(self.operands.rs1, *v_dword, self.operands.imm);
         asm.finalize()

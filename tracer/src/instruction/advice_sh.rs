@@ -90,7 +90,7 @@ impl AdviceSH {
         asm.emit_u::<LUI>(*v_mask, 0xffff);
         asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
         // Read halfword from advice tape into v_halfword register (imm=2 means 2 bytes)
-        asm.emit_i::<VirtualAdviceLoad>(*v_halfword, 0, 2);
+        asm.emit_j::<VirtualAdviceLoad>(*v_halfword, 2);
         asm.emit_r::<SLL>(*v_halfword, *v_halfword, *v_shift);
         asm.emit_r::<XOR>(*v_halfword, *v_word, *v_halfword);
         asm.emit_r::<AND>(*v_halfword, *v_halfword, *v_mask);
@@ -116,7 +116,7 @@ impl AdviceSH {
         asm.emit_u::<LUI>(*v_mask, 0xffff);
         asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
         // Read halfword from advice tape into v_halfword register (imm=2 means 2 bytes)
-        asm.emit_i::<VirtualAdviceLoad>(*v_halfword, 0, 2);
+        asm.emit_j::<VirtualAdviceLoad>(*v_halfword, 2);
         asm.emit_r::<SLL>(*v_halfword, *v_halfword, *v_shift);
         asm.emit_r::<XOR>(*v_halfword, *v_dword, *v_halfword);
         asm.emit_r::<AND>(*v_halfword, *v_halfword, *v_mask);
