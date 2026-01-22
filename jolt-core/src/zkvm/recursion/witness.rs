@@ -116,11 +116,6 @@ impl G1ScalarMulWitness {
             t_is_infinity_mles: Vec::new(),
         }
     }
-
-    /// Compute witness values (placeholder - actual implementation in Dory)
-    pub fn compute_witness(&mut self) {
-        // This would normally be populated by Dory's witness generation
-    }
 }
 
 /// Witness for homomorphic combination of GT commitments.

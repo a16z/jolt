@@ -177,8 +177,12 @@ impl<F: JoltField, T: Transcript> JaggedAssistProver<F, T> {
                 let zd = Point::from_usize(eval_point.t_curr, num_bits);
 
                 let v_k = branching_program.eval_multilinear(&za, &zb, &zc, &zd);
-                let backward =
-                    branching_program.precompute_backward(&r_x, &r_dense, eval_point.t_prev, eval_point.t_curr);
+                let backward = branching_program.precompute_backward(
+                    &r_x,
+                    &r_dense,
+                    eval_point.t_prev,
+                    eval_point.t_curr,
+                );
 
                 (v_k, backward)
             })
@@ -240,11 +244,6 @@ impl<F: JoltField, T: Transcript> JaggedAssistProver<F, T> {
             .zip(&self.claimed_evaluations)
             .map(|(r_k, v_k)| *r_k * *v_k)
             .sum()
-    }
-
-    /// Extract the claimed evaluations (for inclusion in proof)
-    pub fn get_claimed_evaluations(&self) -> &[F] {
-        &self.claimed_evaluations
     }
 }
 
@@ -342,7 +341,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for JaggedAssistP
                             .unwrap_or(F::zero())
                     };
 
-                    let t = self.branching_program.transition_matrix_full(za, zb, zc, zd);
+                    let t = self
+                        .branching_program
+                        .transition_matrix_full(za, zb, zc, zd);
                     t_matrices_by_lambda[lambda_idx][zc_idx][zd_idx] = t;
                 }
             }
@@ -425,8 +426,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for JaggedAssistP
                         .get(layer)
                         .cloned()
                         .unwrap_or(F::zero()),
-                    CoordType::C => bit_to_field((self.params.evaluation_points[k].t_prev >> layer) & 1),
-                    CoordType::D => bit_to_field((self.params.evaluation_points[k].t_curr >> layer) & 1),
+                    CoordType::C => {
+                        bit_to_field((self.params.evaluation_points[k].t_prev >> layer) & 1)
+                    }
+                    CoordType::D => {
+                        bit_to_field((self.params.evaluation_points[k].t_curr >> layer) & 1)
+                    }
                 };
                 let eq_factor = r * x_k_coord + (F::one() - r) * (F::one() - x_k_coord);
                 *eq_val *= eq_factor;
@@ -644,7 +649,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedAssis
         // This matches the paper's Theorem 1.5 cost: O(m · K) field operations
         // instead of O(2^m) table precomputation + O(K) lookups.
         let eq_cd_sum: F = {
-            let _span = tracing::info_span!("jagged_assist_eq_cd_sum", k = self.params.num_polynomials, num_bits).entered();
+            let _span = tracing::info_span!(
+                "jagged_assist_eq_cd_sum",
+                k = self.params.num_polynomials,
+                num_bits
+            )
+            .entered();
             self.r_powers
                 .iter()
                 .zip(&self.params.evaluation_points)

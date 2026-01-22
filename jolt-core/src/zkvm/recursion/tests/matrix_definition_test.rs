@@ -3,11 +3,11 @@
 
 use crate::{
     poly::{
+        dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        dense_mlpoly::DensePolynomial,
     },
-    zkvm::recursion::stage2::virtualization::{virtual_claim_index, matrix_s_index},
+    zkvm::recursion::stage2::virtualization::{matrix_s_index, virtual_claim_index},
 };
 use ark_bn254::Fq;
 use ark_ff::{UniformRand, Zero};
@@ -72,7 +72,10 @@ fn test_matrix_mle_definition_direct() {
 
     // Test at random points
     println!("Testing matrix MLE definition at random points...");
-    println!("Matrix has {} s variables, {} total evaluations", num_s_vars, mu_size);
+    println!(
+        "Matrix has {} s variables, {} total evaluations",
+        num_s_vars, mu_size
+    );
 
     for test_idx in 0..5 {
         // Sample random r_s
@@ -89,7 +92,10 @@ fn test_matrix_mle_definition_direct() {
             .map(|(eq_val, mu_val)| *eq_val * *mu_val)
             .sum();
 
-        println!("Test {}: Direct eval = {:?}, From eq computation = {:?}", test_idx, m_direct, m_from_eq);
+        println!(
+            "Test {}: Direct eval = {:?}, From eq computation = {:?}",
+            test_idx, m_direct, m_from_eq
+        );
         assert_eq!(
             m_direct, m_from_eq,
             "M evaluation doesn't match expected MLE computation! Test index: {}",

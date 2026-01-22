@@ -560,13 +560,7 @@ impl JaggedBranchingProgram {
     ///
     /// Returns T as a [[F; 4]; 4] where T[s][s'] = probability of s -> s' transition.
     #[inline]
-    pub fn transition_matrix_full<F: JoltField>(
-        &self,
-        za: F,
-        zb: F,
-        zc: F,
-        zd: F,
-    ) -> [[F; 4]; 4] {
+    pub fn transition_matrix_full<F: JoltField>(&self, za: F, zb: F, zc: F, zd: F) -> [[F; 4]; 4] {
         let mut t_matrix = [[F::zero(); 4]; 4];
 
         // Precompute eq values for each bit
@@ -894,14 +888,9 @@ mod tests {
 
         // Final result: forward · accept_indicator
         // backward[num_bits] has accept state = 1, others = 0
-        let result: Fq = (0..4)
-            .map(|s| forward[s] * backward[3][s])
-            .sum();
+        let result: Fq = (0..4).map(|s| forward[s] * backward[3][s]).sum();
 
-        assert_eq!(
-            result, expected,
-            "Forward-backward decomposition mismatch"
-        );
+        assert_eq!(result, expected, "Forward-backward decomposition mismatch");
     }
 
     #[test]

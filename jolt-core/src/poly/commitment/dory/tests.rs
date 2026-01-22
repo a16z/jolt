@@ -683,8 +683,7 @@ mod tests {
         let direct_result = DoryCommitmentScheme::combine_commitments(&commitments, &coeffs);
 
         // Compute via witness generation
-        let (witness, hint) =
-            DoryCommitmentScheme::generate_combine_witness(&commitments, &coeffs);
+        let (witness, hint) = DoryCommitmentScheme::generate_combine_witness(&commitments, &coeffs);
         let witness_result = DoryCommitmentScheme::combine_with_hint(&hint);
 
         // Results should match
@@ -757,7 +756,8 @@ mod tests {
 
             // RHS should be the next exp result
             assert_eq!(
-                mul_wit.rhs, witness.exp_witnesses[i + 1].result,
+                mul_wit.rhs,
+                witness.exp_witnesses[i + 1].result,
                 "mul_witness[{i}].rhs should equal exp_witness[{}].result",
                 i + 1
             );

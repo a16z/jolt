@@ -2,6 +2,7 @@
 mod recursion_tests {
     use super::super::recursion::{JoltWitness, JoltWitnessGenerator};
     use super::super::{DoryCommitmentScheme, DoryGlobals, BN254};
+    use crate::poly::commitment::dory::gt_exp_witness::Base4ExponentiationSteps;
     use crate::{
         field::JoltField,
         poly::{
@@ -14,7 +15,6 @@ mod recursion_tests {
     use ark_bn254::{Fq12, Fr};
     use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
     use dory::{backends::arkworks::ArkGT, recursion::WitnessGenerator};
-    use crate::poly::commitment::dory::gt_exp_witness::Base4ExponentiationSteps;
     use rand::thread_rng;
     use serial_test::serial;
 

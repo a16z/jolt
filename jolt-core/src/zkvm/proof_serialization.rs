@@ -177,9 +177,13 @@ impl<F: JoltField, PCS: RecursionExt<F>, FS: Transcript> CanonicalSerialize
     fn serialized_size(&self, compress: Compress) -> usize {
         self.opening_claims.serialized_size(compress)
             + self.commitments.serialized_size(compress)
-            + self.stage1_uni_skip_first_round_proof.serialized_size(compress)
+            + self
+                .stage1_uni_skip_first_round_proof
+                .serialized_size(compress)
             + self.stage1_sumcheck_proof.serialized_size(compress)
-            + self.stage2_uni_skip_first_round_proof.serialized_size(compress)
+            + self
+                .stage2_uni_skip_first_round_proof
+                .serialized_size(compress)
             + self.stage2_sumcheck_proof.serialized_size(compress)
             + self.stage3_sumcheck_proof.serialized_size(compress)
             + self.stage4_sumcheck_proof.serialized_size(compress)
@@ -191,10 +195,18 @@ impl<F: JoltField, PCS: RecursionExt<F>, FS: Transcript> CanonicalSerialize
             + self.stage9_pcs_hint.serialized_size(compress)
             + self.stage10_recursion_metadata.serialized_size(compress)
             + self.recursion_proof.serialized_size(compress)
-            + self.trusted_advice_val_evaluation_proof.serialized_size(compress)
-            + self.trusted_advice_val_final_proof.serialized_size(compress)
-            + self.untrusted_advice_val_evaluation_proof.serialized_size(compress)
-            + self.untrusted_advice_val_final_proof.serialized_size(compress)
+            + self
+                .trusted_advice_val_evaluation_proof
+                .serialized_size(compress)
+            + self
+                .trusted_advice_val_final_proof
+                .serialized_size(compress)
+            + self
+                .untrusted_advice_val_evaluation_proof
+                .serialized_size(compress)
+            + self
+                .untrusted_advice_val_final_proof
+                .serialized_size(compress)
             + self.untrusted_advice_commitment.serialized_size(compress)
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
@@ -204,9 +216,7 @@ impl<F: JoltField, PCS: RecursionExt<F>, FS: Transcript> CanonicalSerialize
     }
 }
 
-impl<F: JoltField, PCS: RecursionExt<F>, FS: Transcript> Valid
-    for JoltProof<F, PCS, FS>
-{
+impl<F: JoltField, PCS: RecursionExt<F>, FS: Transcript> Valid for JoltProof<F, PCS, FS> {
     fn check(&self) -> Result<(), SerializationError> {
         Ok(())
     }
@@ -672,8 +682,7 @@ impl CanonicalSerialize for VirtualPolynomial {
             Self::PackedGtExpQuotient(i) => {
                 59u8.serialize_with_mode(&mut writer, compress)?;
                 (*i as u32).serialize_with_mode(&mut writer, compress)
-            }
-            // Note: PackedGtExpBit and PackedGtExpBase removed - they are public inputs
+            } // Note: PackedGtExpBit and PackedGtExpBase removed - they are public inputs
         }
     }
 

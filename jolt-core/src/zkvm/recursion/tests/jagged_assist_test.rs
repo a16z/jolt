@@ -27,7 +27,10 @@ fn create_test_bijection(sizes: &[usize]) -> VarCountJaggedBijection {
     let polynomials: Vec<JaggedPolynomial> = sizes
         .iter()
         .map(|&size| {
-            assert!(size > 0 && size.is_power_of_two(), "Test sizes must be powers of 2");
+            assert!(
+                size > 0 && size.is_power_of_two(),
+                "Test sizes must be powers of 2"
+            );
             let num_vars = size.trailing_zeros() as usize;
             JaggedPolynomial::new(num_vars)
         })
@@ -146,7 +149,11 @@ fn test_sumcheck_degree() {
     );
 
     // Degree should be 2 (product of g and eq, both multilinear)
-    assert_eq!(prover.degree(), 2, "Sumcheck polynomial should have degree 2");
+    assert_eq!(
+        prover.degree(),
+        2,
+        "Sumcheck polynomial should have degree 2"
+    );
 }
 
 /// Test that the sumcheck round messages sum correctly

@@ -276,10 +276,7 @@ fn test_constraint_mapping_consistency() {
             ConstraintType::PackedGtExp => {
                 // Base and Bit are public inputs, not committed polynomials
                 assert!(
-                    matches!(
-                        poly_type,
-                        PolyType::RhoPrev | PolyType::Quotient
-                    ),
+                    matches!(poly_type, PolyType::RhoPrev | PolyType::Quotient),
                     "Invalid poly type {:?} for GT exp constraint",
                     poly_type
                 );
@@ -727,10 +724,7 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
 
         let poly_types = match constraint_type {
             // Base and Bit are public inputs, not committed polynomials
-            ConstraintType::PackedGtExp => vec![
-                PolyType::RhoPrev,
-                PolyType::Quotient,
-            ],
+            ConstraintType::PackedGtExp => vec![PolyType::RhoPrev, PolyType::Quotient],
             ConstraintType::GtMul => vec![
                 PolyType::MulLhs,
                 PolyType::MulRhs,
@@ -789,7 +783,8 @@ fn test_sparse_dense_bijection_with_real_dory_witness() {
 
     // Only test GtMul constraints for zero padding (PackedGtExp uses full 11-var, no padding)
     for constraint_idx in 0..3.min(constraint_system.constraints.len()) {
-        if let ConstraintType::GtMul = &constraint_system.constraints[constraint_idx].constraint_type
+        if let ConstraintType::GtMul =
+            &constraint_system.constraints[constraint_idx].constraint_type
         {
             let matrix_row = constraint_system
                 .matrix

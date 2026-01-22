@@ -42,12 +42,7 @@ pub fn append_virtual_openings<F: JoltField, T: Transcript>(
     polynomials: &[VirtualPolynomial],
 ) {
     for polynomial in polynomials {
-        accumulator.append_virtual(
-            transcript,
-            *polynomial,
-            sumcheck_id,
-            opening_point.clone(),
-        );
+        accumulator.append_virtual(transcript, *polynomial, sumcheck_id, opening_point.clone());
     }
 }
 

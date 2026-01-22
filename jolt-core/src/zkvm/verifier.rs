@@ -11,7 +11,6 @@ use crate::poly::commitment::{
     commitment_scheme::{CommitmentScheme, RecursionExt},
     hyrax::{Hyrax, PedersenGenerators},
 };
-use crate::poly::opening_proof::OpeningId;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
@@ -651,7 +650,8 @@ where
 
         // 2. Sample gamma and compute powers for RLC
         let gamma_powers: Vec<F> = {
-            let _span = tracing::info_span!("stage8_gamma_powers", num_claims = claims.len()).entered();
+            let _span =
+                tracing::info_span!("stage8_gamma_powers", num_claims = claims.len()).entered();
             self.transcript.append_scalars(&claims);
             self.transcript.challenge_scalar_powers(claims.len())
         };
@@ -753,85 +753,8 @@ where
             self.verify_stage8_with_pcs_hint(&hint)?;
         }
 
-        // 2. Extract data for RecursionVerifier
+        // 2. Build recursion verifier input
         let recursion_proof = &self.proof.recursion_proof;
-
-        // Build RecursionVerifierInput from proof data
-        // Note: This is a simplified version. In practice, this data would come from preprocessing
-        // or be computed from the proof structure
-
-        // Extract constraint counts from the opening claims in recursion_proof
-        // We can infer the structure from the types of virtual polynomials
-        let (_num_gt_exp, _num_gt_mul, _num_g1_scalar_mul) = {
-            let _span = tracing::info_span!("stage8_count_constraint_types", num_claims = recursion_proof.opening_claims.len()).entered();
-            let mut num_gt_exp = 0;
-            let mut num_gt_mul = 0;
-            let mut num_g1_scalar_mul = 0;
-
-        // Count constraint types based on the virtual polynomial types in opening claims
-        for (key, _) in &recursion_proof.opening_claims {
-            match key {
-                OpeningId::Virtual(poly, _) => {
-                    match poly {
-                        crate::zkvm::witness::VirtualPolynomial::RecursionBase(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionRhoPrev(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionRhoCurr(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionQuotient(_) => {
-                            // These are GT exp constraints
-                            num_gt_exp = num_gt_exp.max(match poly {
-                                crate::zkvm::witness::VirtualPolynomial::RecursionBase(i)
-                                | crate::zkvm::witness::VirtualPolynomial::RecursionRhoPrev(i)
-                                | crate::zkvm::witness::VirtualPolynomial::RecursionRhoCurr(i)
-                                | crate::zkvm::witness::VirtualPolynomial::RecursionQuotient(i) => {
-                                    *i + 1
-                                }
-                                _ => 0,
-                            });
-                        }
-                        crate::zkvm::witness::VirtualPolynomial::RecursionMulLhs(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionMulRhs(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionMulResult(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionMulQuotient(_) => {
-                            // These are GT mul constraints
-                            num_gt_mul = num_gt_mul.max(match poly {
-                                crate::zkvm::witness::VirtualPolynomial::RecursionMulLhs(i)
-                                | crate::zkvm::witness::VirtualPolynomial::RecursionMulRhs(i)
-                                | crate::zkvm::witness::VirtualPolynomial::RecursionMulResult(i)
-                                | crate::zkvm::witness::VirtualPolynomial::RecursionMulQuotient(
-                                    i,
-                                ) => *i + 1,
-                                _ => 0,
-                            });
-                        }
-                        crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXA(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYA(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXT(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYT(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXANext(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYANext(_)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulIndicator(
-                            _,
-                        ) => {
-                            // These are G1 scalar mul constraints
-                            num_g1_scalar_mul = num_g1_scalar_mul.max(match poly {
-                        crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXA(i)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYA(i)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXT(i)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYT(i)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulXANext(i)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulYANext(i)
-                        | crate::zkvm::witness::VirtualPolynomial::RecursionG1ScalarMulIndicator(i) => *i + 1,
-                        _ => 0,
-                    });
-                        }
-                        _ => {} // Ignore other virtual polynomial types
-                    }
-                }
-                _ => {} // Ignore non-virtual openings
-            }
-        }
-            (num_gt_exp, num_gt_mul, num_g1_scalar_mul)
-        };
 
         // Use metadata from proof instead of placeholders
         let metadata = &self.proof.stage10_recursion_metadata;
@@ -1172,7 +1095,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
         type HyraxPCS = Hyrax<1, GrumpkinProjective>;
         let hyrax_prover_setup =
             <HyraxPCS as CommitmentScheme>::setup_prover(MAX_RECURSION_DENSE_NUM_VARS);
-        let hyrax_recursion_setup = <HyraxPCS as CommitmentScheme>::setup_verifier(&hyrax_prover_setup);
+        let hyrax_recursion_setup =
+            <HyraxPCS as CommitmentScheme>::setup_verifier(&hyrax_prover_setup);
 
         Self {
             generators,

@@ -13,7 +13,7 @@ pub struct ConstraintSystemConfig {
     pub packed_vars: usize, // 11
 
     /// Derived power-of-2 sizes
-    pub max_steps: usize,    // 128 (2^7)
+    pub max_steps: usize, // 128 (2^7)
     pub element_size: usize, // 16 (2^4)
     pub g1_size: usize,      // 256 (2^8)
     pub packed_size: usize,  // 2048 (2^11)
@@ -26,25 +26,20 @@ impl Default for ConstraintSystemConfig {
             element_vars: 4,
             g1_vars: 8,
             packed_vars: 11,
-            max_steps: 1 << 7,       // 128
-            element_size: 1 << 4,    // 16
-            g1_size: 1 << 8,         // 256
-            packed_size: 1 << 11,    // 2048
+            max_steps: 1 << 7,    // 128
+            element_size: 1 << 4, // 16
+            g1_size: 1 << 8,      // 256
+            packed_size: 1 << 11, // 2048
         }
     }
 }
 
 impl ConstraintSystemConfig {
-    /// Get the size for a given number of constraint variables
-    pub fn constraint_size(&self, num_vars: usize) -> usize {
-        1 << num_vars
-    }
-
     /// Check if the number of constraint variables matches expected values
     pub fn validate_constraint_vars(&self, num_vars: usize) -> Result<(), String> {
         match num_vars {
-            4 => Ok(()), // Element vars
-            8 => Ok(()), // G1 vars
+            4 => Ok(()),  // Element vars
+            8 => Ok(()),  // G1 vars
             11 => Ok(()), // Packed vars
             _ => Err(format!(
                 "Invalid number of constraint variables: {}. Expected 4, 8, or 11.",
@@ -60,10 +55,10 @@ pub const CONFIG: ConstraintSystemConfig = ConstraintSystemConfig {
     element_vars: 4,
     g1_vars: 8,
     packed_vars: 11,
-    max_steps: 1 << 7,       // 128
-    element_size: 1 << 4,    // 16
-    g1_size: 1 << 8,         // 256
-    packed_size: 1 << 11,    // 2048
+    max_steps: 1 << 7,    // 128
+    element_size: 1 << 4, // 16
+    g1_size: 1 << 8,      // 256
+    packed_size: 1 << 11, // 2048
 };
 
 #[cfg(test)]

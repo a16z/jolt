@@ -2,7 +2,7 @@
 //! Proves: 0 = Σ_x eq(r_x, x) * Σ_i γ^i * (Σ_j δ^j * C_{i,j}(x))
 //! Where C_{i,j} are the 4 constraints (C1-C4) for each scalar multiplication instance
 //!
-//! This follows the same pattern as square_and_multiply.rs but with two-level batching:
+//! This follows the packed GT exp pattern but with two-level batching:
 //! - Delta (δ) batches the 4 constraints within each scalar multiplication
 //! - Gamma (γ) batches multiple scalar multiplication instances
 
@@ -13,8 +13,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
         unipoly::UniPoly,
     },
@@ -22,8 +22,8 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
-    zkvm::{recursion::utils::virtual_polynomial_utils::*, witness::VirtualPolynomial},
     virtual_claims,
+    zkvm::{recursion::utils::virtual_polynomial_utils::*, witness::VirtualPolynomial},
 };
 use ark_bn254::Fq;
 use ark_ff::One;
@@ -72,7 +72,9 @@ fn get_g1_scalar_mul_virtual_claims<F: JoltField>(
         VirtualPolynomial::RecursionG1ScalarMulIndicator(constraint_idx),
     ];
     let claims = get_virtual_claims(accumulator, sumcheck_id, &polynomials);
-    (claims[0], claims[1], claims[2], claims[3], claims[4], claims[5], claims[6])
+    (
+        claims[0], claims[1], claims[2], claims[3], claims[4], claims[5], claims[6],
+    )
 }
 
 /// Helper to append virtual opening points for a G1 scalar mul constraint (verifier side)
@@ -92,7 +94,13 @@ fn append_g1_scalar_mul_virtual_openings<F: JoltField, T: Transcript>(
         VirtualPolynomial::RecursionG1ScalarMulYANext(constraint_idx),
         VirtualPolynomial::RecursionG1ScalarMulIndicator(constraint_idx),
     ];
-    append_virtual_openings(accumulator, transcript, sumcheck_id, opening_point, &polynomials);
+    append_virtual_openings(
+        accumulator,
+        transcript,
+        sumcheck_id,
+        opening_point,
+        &polynomials,
+    );
 }
 
 // Helper functions for computing constraints
@@ -517,7 +525,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for G1ScalarMulPr
             append_g1_scalar_mul_virtual_claims(
                 accumulator,
                 transcript,
-                i,  // Use local index, not global constraint index
+                i, // Use local index, not global constraint index
                 self.params.sumcheck_id,
                 &opening_point,
                 self.x_a_claims[i],
@@ -612,7 +620,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for G1ScalarMul
                 t_is_infinity_claim,
             ) = get_g1_scalar_mul_virtual_claims(
                 accumulator,
-                i,  // Use local index, not global constraint index
+                i, // Use local index, not global constraint index
                 self.params.sumcheck_id,
             );
 
@@ -687,7 +695,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for G1ScalarMul
             append_g1_scalar_mul_virtual_openings(
                 accumulator,
                 transcript,
-                i,  // Use local index, not global constraint index
+                i, // Use local index, not global constraint index
                 self.params.sumcheck_id,
                 &opening_point,
             );

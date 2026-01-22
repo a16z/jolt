@@ -180,8 +180,7 @@ fn test_packed_gt_rho_next_relation_from_dory() {
             }
 
             assert_eq!(
-                sum,
-                sum_next,
+                sum, sum_next,
                 "PackedGtExp rho_next shift relation failed for witness {witness_idx}"
             );
         }

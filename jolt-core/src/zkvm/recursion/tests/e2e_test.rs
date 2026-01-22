@@ -123,10 +123,7 @@ fn test_recursion_snark_e2e_with_dory() {
         .collect();
 
     // Extract packed GT exp public inputs for verifier
-    let packed_gt_exp_public_inputs = prover
-        .constraint_system
-        .packed_gt_exp_public_inputs
-        .clone();
+    let packed_gt_exp_public_inputs = prover.constraint_system.packed_gt_exp_public_inputs.clone();
 
     let _ = (num_constraints, num_vars, num_s_vars);
 

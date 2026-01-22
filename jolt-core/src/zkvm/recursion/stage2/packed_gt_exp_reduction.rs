@@ -55,10 +55,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for PackedGtExpClaimReductionParams
         self.num_vars
     }
 
-    fn normalize_opening_point(
-        &self,
-        challenges: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
 }

@@ -1,8 +1,11 @@
-//! Unified prover for the two-stage recursion SNARK protocol
+//! Unified prover for the recursion SNARK protocol
 //!
 //! This module provides a high-level prover that orchestrates:
-//! - Stage 1: Constraint sumchecks (GT exp, GT mul, G1 scalar mul)
-//! - Stage 2: Virtualization sumcheck
+//! - Stage 1: Constraint sumchecks (GT exp)
+//! - Stage 2: Batched constraint sumchecks (shift + reduction + GT mul + G1 scalar mul)
+//! - Stage 3: Virtualization direct evaluation
+//! - Stage 4: Jagged transform sumcheck
+//! - Stage 5: Jagged assist sumcheck
 //!
 //! The prover returns a proof and opening accumulator for PCS verification.
 
@@ -34,6 +37,7 @@ use std::collections::HashMap;
 use crate::zkvm::recursion::DoryMatrixBuilder;
 
 use super::{
+    bijection::VarCountJaggedBijection,
     constraints_sys::{ConstraintSystem, ConstraintType},
     stage1::{
         g1_scalar_mul::{G1ScalarMulParams, G1ScalarMulProver},
@@ -46,8 +50,7 @@ use super::{
             PackedGtExpClaimReductionParams, PackedGtExpClaimReductionProver,
         },
         virtualization::{
-            DirectEvaluationParams, DirectEvaluationProver,
-            extract_virtual_claims_from_accumulator,
+            extract_virtual_claims_from_accumulator, DirectEvaluationParams, DirectEvaluationProver,
         },
     },
     stage3::{
@@ -62,14 +65,14 @@ use crate::subprotocols::{sumcheck::BatchedSumcheck, sumcheck_prover::SumcheckIn
 pub struct RecursionProof<F: JoltField, T: Transcript, PCS: CommitmentScheme<Field = F>> {
     /// Stage 1 constraint sumcheck proof
     pub stage1_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
-    /// Stage 2b shift + reduction sumcheck proof for packed GT exp
-    pub stage1b_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
-    /// Stage 2 direct evaluation result M(r_s, r_x)
-    pub stage2_m_eval: F,
-    /// Stage 3 jagged transform sumcheck proof
-    pub stage3_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
-    /// Stage 3b jagged assist proof (batch MLE verification)
-    pub stage3b_proof: JaggedAssistProof<F, T>,
+    /// Stage 2 batched sumcheck proof (shift + reduction + GT mul + G1 scalar mul)
+    pub stage2_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+    /// Stage 3 direct evaluation result M(r_s, r_x)
+    pub stage3_m_eval: F,
+    /// Stage 4 jagged transform sumcheck proof
+    pub stage4_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+    /// Stage 5 jagged assist proof (batch MLE verification)
+    pub stage5_proof: JaggedAssistProof<F, T>,
     /// PCS opening proof for the constraint matrix
     pub opening_proof: PCS::Proof,
     /// Gamma value used for batching constraints
@@ -94,6 +97,11 @@ pub struct RecursionProver<F: JoltField = Fq> {
     pub delta: F,
 }
 
+pub(crate) struct JaggedContext<F: JoltField> {
+    bijection: VarCountJaggedBijection,
+    r_x_prev: Vec<F>,
+}
+
 impl RecursionProver<Fq> {
     /// Create a new recursion prover from pre-generated witnesses
     pub fn new_from_witnesses(
@@ -111,7 +119,8 @@ impl RecursionProver<Fq> {
         );
 
         // Convert witness collection to DoryRecursionWitness
-        let recursion_witness = Self::witnesses_to_dory_recursion(&witness_collection, combine_witness.clone())?;
+        let recursion_witness =
+            Self::witnesses_to_dory_recursion(&witness_collection, combine_witness.clone())?;
 
         // Build constraint system from witness collection using DoryMatrixBuilder
         let build_cs_span = tracing::info_span!("build_constraint_system").entered();
@@ -377,7 +386,8 @@ impl RecursionProver<Fq> {
             // Convert base ArkGT to 4-var MLE
             let base_mle = fq12_to_multilinear_evals(&witness.base);
             let base2_mle = fq12_to_multilinear_evals(&(witness.base * witness.base));
-            let base3_mle = fq12_to_multilinear_evals(&(witness.base * witness.base * witness.base));
+            let base3_mle =
+                fq12_to_multilinear_evals(&(witness.base * witness.base * witness.base));
 
             // Create packed witness
             let packed = PackedGtExpWitness::from_steps(
@@ -473,7 +483,7 @@ impl RecursionProver<Fq> {
 }
 
 impl<F: JoltField> RecursionProver<F> {
-    /// Run the full two-stage recursion prover and generate PCS opening proof
+    /// Run the full recursion prover and generate PCS opening proof
     pub fn prove<T: Transcript, PCS: CommitmentScheme<Field = F> + RecursionExt<F>>(
         self,
         transcript: &mut T,
@@ -483,7 +493,7 @@ impl<F: JoltField> RecursionProver<F> {
         self.prove_with_pcs(transcript, prover_setup)
     }
 
-    /// Run the full two-stage recursion prover for any PCS (without requiring RecursionExt)
+    /// Run the full recursion prover for any PCS (without requiring RecursionExt)
     #[tracing::instrument(skip_all, name = "RecursionProver::prove_with_pcs")]
     pub fn prove_with_pcs<T: Transcript, PCS: CommitmentScheme<Field = F>>(
         self,
@@ -504,28 +514,34 @@ impl<F: JoltField> RecursionProver<F> {
         tracing::info_span!("recursion_stage1_sumchecks").in_scope(|| {
             tracing::info!("Starting Stage 1: Constraint sumchecks");
         });
-        let (stage1_proof, r_stage1) = self.prove_stage1(transcript, &mut accumulator)?;
+        let (stage1_proof, _r_stage1) = self.prove_stage1(transcript, &mut accumulator)?;
 
-        // ============ STAGE 2b: PackedGtExp Claim Reduction + Shift ============
-        tracing::info_span!("recursion_stage2b_packed_gt_exp_reduction").in_scope(|| {
-            tracing::info!("Starting Stage 2b: PackedGtExp claim reduction");
+        // ============ STAGE 2: Batched constraint sumchecks ============
+        tracing::info_span!("recursion_stage2_batched_constraints").in_scope(|| {
+            tracing::info!("Starting Stage 2: Batched constraint sumchecks");
         });
-        let (stage1b_proof, r_stage2) =
-            self.prove_stage2b(transcript, &mut accumulator)?;
+        let (stage2_proof, r_stage2) = self.prove_stage2(transcript, &mut accumulator)?;
 
-        // ============ STAGE 2: Virtualization Sumcheck ============
-        tracing::info_span!("recursion_stage2_virtualization").in_scope(|| {
-            tracing::info!("Starting Stage 2: Virtualization sumcheck");
+        // ============ STAGE 3: Virtualization (direct evaluation) ============
+        tracing::info_span!("recursion_stage3_virtualization").in_scope(|| {
+            tracing::info!("Starting Stage 3: Virtualization direct evaluation");
         });
-        let (stage2_m_eval, r_stage2_s) =
-            self.prove_stage2(transcript, &mut accumulator, &r_stage2)?;
+        let (stage3_m_eval, r_stage3_s) =
+            self.prove_stage3(transcript, &mut accumulator, &r_stage2)?;
 
-        // ============ STAGE 3: Jagged Transform Sumcheck + Stage 3b: Jagged Assist ============
-        tracing::info_span!("recursion_stage3_jagged").in_scope(|| {
-            tracing::info!("Starting Stage 3: Jagged transform sumcheck");
+        // ============ STAGE 4: Jagged Transform Sumcheck ============
+        tracing::info_span!("recursion_stage4_jagged").in_scope(|| {
+            tracing::info!("Starting Stage 4: Jagged transform sumcheck");
         });
-        let (stage3_proof, stage3b_proof, _r_stage3) =
-            self.prove_stage3(transcript, &mut accumulator, &r_stage2_s, &r_stage2)?;
+        let (stage4_proof, r_stage4, jagged_ctx) =
+            self.prove_stage4(transcript, &mut accumulator, &r_stage3_s, &r_stage2)?;
+
+        // ============ STAGE 5: Jagged Assist ============
+        tracing::info_span!("recursion_stage5_jagged_assist").in_scope(|| {
+            tracing::info!("Starting Stage 5: Jagged assist");
+        });
+        let stage5_proof =
+            self.prove_stage5(transcript, &mut accumulator, jagged_ctx, &r_stage4)?;
 
         // ============ PCS OPENING PROOF ============
         tracing::info_span!("recursion_pcs_opening_proof").in_scope(|| {
@@ -557,10 +573,10 @@ impl<F: JoltField> RecursionProver<F> {
         // Create final proof
         let proof = RecursionProof {
             stage1_proof,
-            stage1b_proof,
-            stage2_m_eval,
-            stage3_proof,
-            stage3b_proof,
+            stage2_proof,
+            stage3_m_eval,
+            stage4_proof,
+            stage5_proof,
             opening_proof,
             gamma: self.gamma,
             delta: self.delta,
@@ -632,9 +648,9 @@ impl<F: JoltField> RecursionProver<F> {
         Ok((stage1_proof, r_stage1))
     }
 
-    /// Run Stage 2b: PackedGtExp claim reduction + shift sumcheck (shared challenges)
-    #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage2b")]
-    pub(crate) fn prove_stage2b<T: Transcript>(
+    /// Run Stage 2: Batched constraint sumchecks (shift + reduction + GT mul + G1 scalar mul)
+    #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage2")]
+    pub(crate) fn prove_stage2<T: Transcript>(
         &self,
         transcript: &mut T,
         accumulator: &mut ProverOpeningAccumulator<F>,
@@ -677,7 +693,9 @@ impl<F: JoltField> RecursionProver<F> {
         }
 
         let convert_vec = |v: &[Fq]| -> Vec<F> {
-            v.iter().map(|x| unsafe { std::mem::transmute_copy::<Fq, F>(x) }).collect()
+            v.iter()
+                .map(|x| unsafe { std::mem::transmute_copy::<Fq, F>(x) })
+                .collect()
         };
 
         let rho_raw: Vec<Vec<F>> = packed_witnesses
@@ -807,16 +825,16 @@ impl<F: JoltField> RecursionProver<F> {
         Ok((proof, r_stage2))
     }
 
-    /// Run Stage 2: Direct evaluation protocol
-    #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage2")]
-    pub(crate) fn prove_stage2<T: Transcript>(
+    /// Run Stage 3: Direct evaluation protocol
+    #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage3")]
+    pub(crate) fn prove_stage3<T: Transcript>(
         &self,
         transcript: &mut T,
         accumulator: &mut ProverOpeningAccumulator<F>,
         r_stage2: &[<F as JoltField>::Challenge],
     ) -> Result<
         (
-            F, // m_eval
+            F,                                // m_eval
             Vec<<F as JoltField>::Challenge>, // r_s challenges
         ),
         Box<dyn std::error::Error>,
@@ -829,7 +847,8 @@ impl<F: JoltField> RecursionProver<F> {
         }
 
         // Since we know F = Fq, we can work directly with Fq types
-        let accumulator_fq: &mut ProverOpeningAccumulator<Fq> = unsafe { std::mem::transmute(accumulator) };
+        let accumulator_fq: &mut ProverOpeningAccumulator<Fq> =
+            unsafe { std::mem::transmute(accumulator) };
 
         // Convert r_stage2 challenges to Fq field elements
         // SAFETY: We verified F = Fq above, so F::Challenge = Fq::Challenge
@@ -839,7 +858,9 @@ impl<F: JoltField> RecursionProver<F> {
         };
 
         // Extract virtual claims from Stage 1
-        let constraint_types: Vec<ConstraintType> = self.constraint_system.constraints
+        let constraint_types: Vec<ConstraintType> = self
+            .constraint_system
+            .constraints
             .iter()
             .map(|c| c.constraint_type.clone())
             .collect();
@@ -870,12 +891,9 @@ impl<F: JoltField> RecursionProver<F> {
             .collect();
         let (_r_s, m_eval) = prover.prove(transcript, accumulator_fq, r_s.clone());
 
-        let r_stage2_s: Vec<<F as JoltField>::Challenge> = unsafe {
-            let r_s_challenges: Vec<<Fq as JoltField>::Challenge> = r_s
-                .into_iter()
-                .rev()
-                .map(|f| f.into())
-                .collect();
+        let r_stage3_s: Vec<<F as JoltField>::Challenge> = unsafe {
+            let r_s_challenges: Vec<<Fq as JoltField>::Challenge> =
+                r_s.into_iter().rev().map(|f| f.into()).collect();
             std::mem::transmute(r_s_challenges)
         };
 
@@ -883,22 +901,22 @@ impl<F: JoltField> RecursionProver<F> {
         // SAFETY: We verified F = Fq above
         let m_eval_f: F = unsafe { std::mem::transmute_copy(&m_eval) };
 
-        Ok((m_eval_f, r_stage2_s))
+        Ok((m_eval_f, r_stage3_s))
     }
 
-    /// Run Stage 3: Jagged Transform Sumcheck + Stage 3b: Jagged Assist
-    #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage3")]
-    pub(crate) fn prove_stage3<T: Transcript>(
+    /// Run Stage 4: Jagged Transform Sumcheck
+    #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage4")]
+    pub(crate) fn prove_stage4<T: Transcript>(
         &self,
         transcript: &mut T,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        r_stage2_s: &[<F as JoltField>::Challenge],
+        r_stage3_s: &[<F as JoltField>::Challenge],
         r_stage2_x: &[<F as JoltField>::Challenge],
     ) -> Result<
         (
             crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
-            JaggedAssistProof<F, T>,
             Vec<<F as JoltField>::Challenge>,
+            JaggedContext<F>,
         ),
         Box<dyn std::error::Error>,
     > {
@@ -925,8 +943,8 @@ impl<F: JoltField> RecursionProver<F> {
             Z: unsafe { std::mem::transmute(dense_poly_fq.Z) },
         };
 
-        // Convert r_stage2 (s challenges) and r_stage2 (x challenges) to F
-        let r_s_final: Vec<F> = r_stage2_s.iter().map(|c| (*c).into()).collect();
+        // Convert r_stage3 (s challenges) and r_stage2 (x challenges) to F
+        let r_s_final: Vec<F> = r_stage3_s.iter().map(|c| (*c).into()).collect();
         let r_x_prev: Vec<F> = r_stage2_x.iter().map(|c| (*c).into()).collect();
 
         // Precompute matrix row indices for all polynomial indices
@@ -958,34 +976,46 @@ impl<F: JoltField> RecursionProver<F> {
         let (stage3_proof, r_stage3) =
             BatchedSumcheck::prove(vec![&mut jagged_prover], accumulator, transcript);
 
-        // ============ STAGE 3b: Jagged Assist (Batch MLE Verification) ============
-        tracing::info_span!("recursion_stage3b_jagged_assist").in_scope(|| {
-            tracing::info!("Starting Stage 3b: Jagged Assist batch MLE verification");
-        });
+        Ok((
+            stage3_proof,
+            r_stage3,
+            JaggedContext {
+                bijection,
+                r_x_prev,
+            },
+        ))
+    }
 
-        // Convert r_stage3 (dense challenges) to F
-        let r_dense: Vec<F> = r_stage3.iter().map(|c| (*c).into()).collect();
+    /// Run Stage 5: Jagged Assist (Batch MLE Verification)
+    #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage5")]
+    pub(crate) fn prove_stage5<T: Transcript>(
+        &self,
+        transcript: &mut T,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        ctx: JaggedContext<F>,
+        r_stage4: &[<F as JoltField>::Challenge],
+    ) -> Result<JaggedAssistProof<F, T>, Box<dyn std::error::Error>> {
+        let r_dense: Vec<F> = r_stage4.iter().map(|c| (*c).into()).collect();
 
-        // Compute num_bits for branching program
         let num_constraint_vars = self.constraint_system.matrix.num_constraint_vars;
-        let dense_size = <super::bijection::VarCountJaggedBijection as super::bijection::JaggedTransform<Fq>>::dense_size(&bijection);
+        let dense_size =
+            <super::bijection::VarCountJaggedBijection as super::bijection::JaggedTransform<Fq>>::dense_size(&ctx.bijection);
         let num_dense_vars = dense_size.next_power_of_two().trailing_zeros() as usize;
         let num_bits = std::cmp::max(num_constraint_vars, num_dense_vars);
 
-        // Create Jagged Assist prover - iterates over K polynomials (not rows!)
-        let mut assist_prover =
-            JaggedAssistProver::<F, T>::new(r_x_prev, r_dense, &bijection, num_bits, transcript);
-
-        // Run Jagged Assist sumcheck
-        let (stage3b_sumcheck_proof, _r_assist) =
+        let mut assist_prover = JaggedAssistProver::<F, T>::new(
+            ctx.r_x_prev,
+            r_dense,
+            &ctx.bijection,
+            num_bits,
+            transcript,
+        );
+        let (sumcheck_proof, _r_assist) =
             BatchedSumcheck::prove(vec![&mut assist_prover], accumulator, transcript);
 
-        // Create the JaggedAssistProof
-        let stage3b_proof = JaggedAssistProof {
+        Ok(JaggedAssistProof {
             claimed_evaluations: assist_prover.claimed_evaluations.clone(),
-            sumcheck_proof: stage3b_sumcheck_proof,
-        };
-
-        Ok((stage3_proof, stage3b_proof, r_stage3))
+            sumcheck_proof,
+        })
     }
 }

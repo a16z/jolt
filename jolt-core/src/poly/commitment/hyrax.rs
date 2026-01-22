@@ -1,8 +1,6 @@
 //! This file implements the Hyrax polynomial commitment scheme used in snark composition
 use super::commitment_scheme::CommitmentScheme;
 use crate::field::JoltField;
-use ark_bn254;
-use ark_grumpkin;
 use crate::msm::VariableBaseMSM;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -11,7 +9,9 @@ use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::{compute_dotproduct, mul_0_1_optimized};
+use ark_bn254;
 use ark_ec::CurveGroup;
+use ark_grumpkin;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::vec::Vec;
 use num_integer::Roots;
@@ -148,13 +148,19 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
                         let scalar_ref = &*(scalar_ptr as *const dyn core::any::Any);
 
                         // Try Grumpkin first, then BN254
-                        if let Some(grumpkin_scalar) = scalar_ref.downcast_ref::<ark_grumpkin::Fr>() {
+                        if let Some(grumpkin_scalar) = scalar_ref.downcast_ref::<ark_grumpkin::Fr>()
+                        {
                             grumpkin_scalar.into_bigint()
-                        } else if let Some(bn254_scalar) = scalar_ref.downcast_ref::<ark_bn254::Fr>() {
+                        } else if let Some(bn254_scalar) =
+                            scalar_ref.downcast_ref::<ark_bn254::Fr>()
+                        {
                             bn254_scalar.into_bigint()
                         } else {
                             // Fallback: assume it implements PrimeField
-                            core::mem::transmute_copy::<G::ScalarField, ark_grumpkin::Fr>(&scalars[i]).into_bigint()
+                            core::mem::transmute_copy::<G::ScalarField, ark_grumpkin::Fr>(
+                                &scalars[i],
+                            )
+                            .into_bigint()
                         }
                     };
 
@@ -323,7 +329,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
                 } else if scalar_ref.is::<ark_bn254::Fr>() {
                     254 // BN254 scalar field
                 } else {
-                    254// Default fallback
+                    254 // Default fallback
                 }
             };
             let num_windows = (scalar_bits + window_size - 1) / window_size;
@@ -345,13 +351,19 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
                         let scalar_ref = &*(scalar_ptr as *const dyn core::any::Any);
 
                         // Try Grumpkin first, then BN254
-                        if let Some(grumpkin_scalar) = scalar_ref.downcast_ref::<ark_grumpkin::Fr>() {
+                        if let Some(grumpkin_scalar) = scalar_ref.downcast_ref::<ark_grumpkin::Fr>()
+                        {
                             grumpkin_scalar.into_bigint()
-                        } else if let Some(bn254_scalar) = scalar_ref.downcast_ref::<ark_bn254::Fr>() {
+                        } else if let Some(bn254_scalar) =
+                            scalar_ref.downcast_ref::<ark_bn254::Fr>()
+                        {
                             bn254_scalar.into_bigint()
                         } else {
                             // Fallback: assume it implements PrimeField
-                            core::mem::transmute_copy::<G::ScalarField, ark_grumpkin::Fr>(&scalars[i]).into_bigint()
+                            core::mem::transmute_copy::<G::ScalarField, ark_grumpkin::Fr>(
+                                &scalars[i],
+                            )
+                            .into_bigint()
                         }
                     };
 
@@ -393,7 +405,9 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
         };
 
         // In ZKVM guest environment, use serial Pippenger MSM to avoid rayon issues
-        let homomorphically_derived_commitment: G = if cfg!(target_arch = "riscv64") || cfg!(target_arch = "riscv32") {
+        let homomorphically_derived_commitment: G = if cfg!(target_arch = "riscv64")
+            || cfg!(target_arch = "riscv32")
+        {
             let poly = MultilinearPolynomial::from(L);
             let scalars = match &poly {
                 MultilinearPolynomial::LargeScalars(p) => p.evals_ref(),
@@ -409,7 +423,10 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
         );
 
         let product_commitment = if cfg!(target_arch = "riscv64") || cfg!(target_arch = "riscv32") {
-            pippenger_msm(&pedersen_generators.generators[..R_size], &self.vector_matrix_product)
+            pippenger_msm(
+                &pedersen_generators.generators[..R_size],
+                &self.vector_matrix_product,
+            )
         } else {
             VariableBaseMSM::msm_field_elements(
                 &pedersen_generators.generators[..R_size],

@@ -289,7 +289,7 @@ pub enum VirtualPolynomial {
     DorySparseConstraintMatrix,
     // Packed GT exponentiation virtual polynomials (12-var packed) - indexed by witness/instance
     // Note: Bit and Base are public inputs computed by verifier, not committed polynomials
-    PackedGtExpRho(usize),     // ρ(s, x) - all intermediate results packed for witness i
+    PackedGtExpRho(usize), // ρ(s, x) - all intermediate results packed for witness i
     PackedGtExpRhoNext(usize), // ρ_next(s, x) = ρ(s+1, x) - shifted intermediates for witness i
     PackedGtExpQuotient(usize), // Q(s, x) - all quotients packed for witness i
 }

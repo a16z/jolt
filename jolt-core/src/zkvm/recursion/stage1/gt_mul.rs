@@ -12,8 +12,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
         unipoly::UniPoly,
     },
@@ -21,8 +21,8 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
-    zkvm::{recursion::utils::virtual_polynomial_utils::*, witness::VirtualPolynomial},
     virtual_claims,
+    zkvm::{recursion::utils::virtual_polynomial_utils::*, witness::VirtualPolynomial},
 };
 use rayon::prelude::*;
 
@@ -77,7 +77,13 @@ fn append_gt_mul_virtual_openings<F: JoltField, T: Transcript>(
         VirtualPolynomial::RecursionMulResult(constraint_idx),
         VirtualPolynomial::RecursionMulQuotient(constraint_idx),
     ];
-    append_virtual_openings(accumulator, transcript, sumcheck_id, opening_point, &polynomials);
+    append_virtual_openings(
+        accumulator,
+        transcript,
+        sumcheck_id,
+        opening_point,
+        &polynomials,
+    );
 }
 
 /// Individual polynomial data for a single GT mul constraint
@@ -342,7 +348,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for GtMulProver<F
             append_gt_mul_virtual_claims(
                 accumulator,
                 transcript,
-                i,  // Use local index, not global constraint index
+                i, // Use local index, not global constraint index
                 self.params.sumcheck_id,
                 &opening_point,
                 self.lhs_claims[i],
@@ -455,7 +461,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for GtMulVerifi
         for i in 0..self.num_constraints {
             let (lhs_claim, rhs_claim, result_claim, quotient_claim) = get_gt_mul_virtual_claims(
                 accumulator,
-                i,  // Use local index, not global constraint index
+                i, // Use local index, not global constraint index
                 self.params.sumcheck_id,
             );
 
@@ -481,7 +487,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for GtMulVerifi
             append_gt_mul_virtual_openings(
                 accumulator,
                 transcript,
-                i,  // Use local index, not global constraint index
+                i, // Use local index, not global constraint index
                 self.params.sumcheck_id,
                 &opening_point,
             );

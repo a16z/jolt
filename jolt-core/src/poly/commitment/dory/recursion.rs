@@ -371,7 +371,7 @@ impl RecursionExt<Fr> for DoryCommitmentScheme {
             .zip(coeffs.iter())
             .map(|(comm, coeff)| {
                 let comm_fq12 = comm.borrow().0;
-                    let exp_steps = Base4ExponentiationSteps::new(comm_fq12, *coeff);
+                let exp_steps = Base4ExponentiationSteps::new(comm_fq12, *coeff);
 
                 GTExpOpWitness {
                     base: exp_steps.base,

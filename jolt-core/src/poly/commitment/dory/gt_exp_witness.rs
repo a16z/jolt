@@ -50,13 +50,7 @@ impl Base4ExponentiationSteps {
 
             let rho_next = rho4 * mul;
             let q_i = compute_step_quotient_base4(
-                rho_prev,
-                rho_next,
-                &base_mle,
-                &base2_mle,
-                &base3_mle,
-                digit_lo,
-                digit_hi,
+                rho_prev, rho_next, &base_mle, &base2_mle, &base3_mle, digit_lo, digit_hi,
             );
 
             quotient_mles.push(q_i);

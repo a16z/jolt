@@ -344,10 +344,12 @@ impl<F: JoltField> JaggedSumcheckVerifier<F> {
         params: JaggedSumcheckParams,
         claimed_evaluations: Vec<F>,
     ) -> Self {
-        let _new_span = tracing::info_span!("JaggedSumcheckVerifier::new",
+        let _new_span = tracing::info_span!(
+            "JaggedSumcheckVerifier::new",
             num_polys = bijection.num_polynomials(),
             num_s_vars = params.num_s_vars
-        ).entered();
+        )
+        .entered();
 
         let (r_s_final, r_x_prev) = sparse_opening_point;
 
@@ -420,13 +422,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for JaggedSumch
         // Note: EqPolynomial::evals uses big-endian bit ordering, but index_to_binary_vec
         // uses little-endian, so we reverse the point to match.
         let eq_evals = {
-            let _span = tracing::info_span!("jagged_eq_evals", num_vars = self.sparse_opening_point_s.len()).entered();
+            let _span = tracing::info_span!(
+                "jagged_eq_evals",
+                num_vars = self.sparse_opening_point_s.len()
+            )
+            .entered();
             let r_s_reversed: Vec<F> = self.sparse_opening_point_s.iter().rev().cloned().collect();
             EqPolynomial::<F>::evals(&r_s_reversed)
         };
 
         let f_jagged_at_r_dense: F = {
-            let _span = tracing::info_span!("jagged_inner_product", k = self.claimed_evaluations.len()).entered();
+            let _span =
+                tracing::info_span!("jagged_inner_product", k = self.claimed_evaluations.len())
+                    .entered();
             eq_evals
                 .iter()
                 .zip(self.claimed_evaluations.iter())

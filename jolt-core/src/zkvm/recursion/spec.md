@@ -37,25 +37,37 @@ The expensive operations (from Dory PCS verification):
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Stage 1: Constraint Sum-Checks                                     │
+│  Stage 1: Packed GT Exp Sum-Check                                   │
 │  ─────────────────────────────                                      │
-│  GT Exp, GT Mul, G1 Scalar Mul → virtual polynomial claims at r_x   │
+│  Packed GT exp → virtual polynomial claims at r_x                   │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Stage 2: Virtualization Sum-Check                                  │
+│  Stage 2: Batched Constraint Sum-Checks                             │
 │  ─────────────────────────────────                                  │
-│  Combine all claims into matrix M(s,x) → claim M(r_s, r_x)          │
+│  Shift + reduction + GT mul + G1 → claims at r_x                    │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Stage 3: Jagged Transform Sum-Check                                │
+│  Stage 3: Direct Evaluation                                         │
 │  ────────────────────────────────────                               │
-│  Sparse M → Dense q → claim q(r_dense)                              │
+│  Combine all claims into M(s,x) → claim M(r_s, r_x)                 │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Stage 4: Opening Proof (Hyrax over Grumpkin)                       │
+│  Stage 4: Jagged Transform Sum-Check                                │
+│  ────────────────────────────────────────────                       │
+│  Sparse M → Dense q → claim q(r_dense)                              │
+└─────────────────────────────────────────────────────────────────────┘
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Stage 5: Jagged Assist Sum-Check                                   │
+│  ────────────────────────────────────────────                       │
+│  Batch MLE verification for jagged                                 │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PCS Opening (Hyrax over Grumpkin)                                  │
 │  ────────────────────────────────────────────                       │
 │  Prove q(r_dense) = v_dense → final verification                    │
 └─────────────────────────────────────────────────────────────────────┘
@@ -71,7 +83,7 @@ All SNARK arithmetic is over $\mathbb{F}_q$ (BN254 base field), which equals the
 
 ## 2. Stage 1: Constraint Sum-Checks
 
-Stage 1 proves correctness of each expensive operation via constraint-specific sum-checks. Each produces virtual polynomial claims that feed into Stage 2.
+Stage 1 proves correctness of packed GT exponentiation via constraint-specific sum-checks. The output claims feed into Stage 2.
 
 ### 2.1 Ring Switching & Quotient Technique
 
@@ -89,7 +101,7 @@ This transforms high-degree $\mathbb{F}_{q^{12}}$ operations into low-degree con
 
 ### 2.2 GT Exponentiation
 
-Computes $b = a^k$ using square-and-multiply.
+Computes $b = a^k$ using a packed base-4 square-and-multiply.
 
 #### Inputs / Outputs
 
@@ -103,91 +115,56 @@ Computes $b = a^k$ using square-and-multiply.
 
 | Symbol | Description |
 |--------|-------------|
-| $(b_0, \ldots, b_{t-1})$ | Binary representation of $k$ |
-| $\rho_0, \ldots, \rho_t$ | Intermediate values: $\rho_0 = 1$, $\rho_t = a^k$ |
-| $Q_0, \ldots, Q_{t-1}$ | Quotient polynomials |
+| $(u_0, v_0), \ldots, (u_{s-1}, v_{s-1})$ | Base-4 digits of $k$ (lo/hi bits) |
+| $\rho_0, \ldots, \rho_s$ | Intermediate values: $\rho_0 = 1$, $\rho_s = a^k$ |
+| $Q_0, \ldots, Q_{s-1}$ | Quotient polynomials |
 
-Recurrence:
-$$\rho_{i+1} = \begin{cases} \rho_i^2 & \text{if } b_i = 0 \\ \rho_i^2 \cdot a & \text{if } b_i = 1 \end{cases}$$
-
-#### Constraint
-
-For each bit $i$:
-$$C_i(x) = \rho_{i+1}(x) - \rho_i(x)^2 \cdot a(x)^{b_i} - Q_i(x) \cdot g(x) = 0$$
-
-where $a(x)^{b_i} = 1 + (a(x) - 1) \cdot b_i$ (linearization).
-
-#### Sum-Check
-
-$$0 = \sum_{x \in \{0,1\}^4} \text{eq}(r_x, x) \cdot \sum_{i=0}^{t-1} \gamma^i \cdot C_i(x)$$
-
-- 4 rounds (one per variable)
-- Batching coefficient $\gamma$ combines all $t$ constraints
-
-#### Output Claims
-
-After final challenge $r_x'$:
-- `RecursionBase(i)`: $\tilde{a}(r_x')$
-- `RecursionRhoPrev(i)`: $\tilde{\rho}_i(r_x')$
-- `RecursionRhoCurr(i)`: $\tilde{\rho}_{i+1}(r_x')$
-- `RecursionQuotient(i)`: $\tilde{Q}_i(r_x')$
+Recurrence (base-4):
+$$\rho_{i+1} = \rho_i^4 \cdot a^{d_i}, \quad d_i \in \{0,1,2,3\}$$
 
 #### Packed Witness Structure
 
-Instead of creating separate polynomials for each step, we pack all 254 steps into unified 12-variable MLEs:
+We pack all 128 base-4 steps into unified 11-variable MLEs:
 
 | Symbol | Description | Layout |
 |--------|-------------|--------|
-| $\rho(s, x)$ | Intermediate values | $\rho[x \cdot 256 + s] = \rho_s[x]$ |
-| $\rho_{\text{next}}(s, x)$ | Shifted intermediate values | $\rho_{\text{next}}[x \cdot 256 + s] = \rho_{s+1}[x]$ |
-| $Q(s, x)$ | Quotient polynomials | $Q[x \cdot 256 + s] = Q_s[x]$ |
-| $\text{bit}(s)$ | Binary representation of $k$ | Replicated across $x$ |
-| $\text{base}(x)$ | Base element | Replicated across $s$ |
+| $\rho(s, x)$ | Intermediate values | $\rho[x \cdot 128 + s] = \rho_s[x]$ |
+| $\rho_{\text{next}}(s, x)$ | Shifted intermediate values | $\rho_{\text{next}}[x \cdot 128 + s] = \rho_{s+1}[x]$ |
+| $Q(s, x)$ | Quotient polynomials | $Q[x \cdot 128 + s] = Q_s[x]$ |
+| $\text{digit}_{\text{lo}}(s)$ | Low digit bit | Replicated across $x$ |
+| $\text{digit}_{\text{hi}}(s)$ | High digit bit | Replicated across $x$ |
+| $\text{base}(x), \text{base}^2(x), \text{base}^3(x)$ | Base powers | Replicated across $s$ |
 
 Where:
-- $s \in \{0,1\}^8$ indexes the step (0 to 255)
+- $s \in \{0,1\}^7$ indexes the step (0 to 127)
 - $x \in \{0,1\}^4$ indexes the field element (0 to 15)
-- Layout formula: `index = x * 256 + s` (s in low bits)
+- Layout formula: `index = x * 128 + s` (s in low bits)
 
 #### Unified Constraint
 
-$$C(s, x) = \rho_{\text{next}}(s, x) - \rho(s, x)^2 \cdot \text{base}(x)^{\text{bit}(s)} - Q(s, x) \cdot g(x) = 0$$
+Let $d(s)$ be the base-4 digit from $(u_s, v_s)$ and
+$$\text{base}^{d(s)} = w_0 + w_1 \cdot \text{base}(x) + w_2 \cdot \text{base}^2(x) + w_3 \cdot \text{base}^3(x)$$
+with $w_0=(1-u)(1-v)$, $w_1=u(1-v)$, $w_2=(1-u)v$, $w_3=uv$.
+
+Then the packed constraint is:
+$$C(s, x) = \rho_{\text{next}}(s, x) - \rho(s, x)^4 \cdot \text{base}(x)^{d(s)} - Q(s, x) \cdot g(x) = 0$$
 
 #### Two-Phase Sum-Check
 
-$$0 = \sum_{s \in \{0,1\}^8} \sum_{x \in \{0,1\}^4} \text{eq}(r_s, s) \cdot \text{eq}(r_x, x) \cdot C(s, x)$$
+$$0 = \sum_{s \in \{0,1\}^7} \sum_{x \in \{0,1\}^4} \text{eq}(r_s, s) \cdot \text{eq}(r_x, x) \cdot C(s, x)$$
 
-- **Phase 1** (rounds 0-7): Bind step variables $s$
-- **Phase 2** (rounds 8-11): Bind element variables $x$
-- Total: 12 rounds, degree 4
+- **Phase 1** (rounds 0-6): Bind step variables $s$
+- **Phase 2** (rounds 7-10): Bind element variables $x$
+- Total: 11 rounds, degree 7
 
 #### Output Claims
 
 After final challenges $(r_s^*, r_x^*)$:
-- `PackedGtExpBase(i)`: $\text{base}(r_x^*)$
 - `PackedGtExpRho(i)`: $\rho(r_s^*, r_x^*)$
 - `PackedGtExpRhoNext(i)`: $\rho_{\text{next}}(r_s^*, r_x^*)$
 - `PackedGtExpQuotient(i)`: $Q(r_s^*, r_x^*)$
-- `PackedGtExpBit(i)`: $\text{bit}(r_s^*)$
 
-#### Mathematical Correctness
-
-**Theorem**: The packed representation maintains constraint satisfaction equivalence.
-
-**Proof**: For each step $i \in [0, 254]$ and element $x \in [0, 15]$:
-- Original: $C_i(x) = \rho_{i+1}(x) - \rho_i(x)^2 \cdot a(x)^{b_i} - Q_i(x) \cdot g(x) = 0$
-- Packed: $C(i, x) = \rho_{\text{next}}(i, x) - \rho(i, x)^2 \cdot \text{base}(x)^{\text{bit}(i)} - Q(i, x) \cdot g(x) = 0$
-
-The packed constraint at $(i, x)$ equals the original constraint $C_i(x)$ by construction:
-- $\rho(i, x) = \rho_i(x)$ (by definition of packing)
-- $\rho_{\text{next}}(i, x) = \rho_{i+1}(x)$ (shifted index)
-- $\text{base}(x) = a(x)$ (replicated across steps)
-- $\text{bit}(i) = b_i$ (scalar bit at step $i$)
-
-Therefore, constraint satisfaction is preserved. □
-
-**Security Analysis**:
-- Soundness error: Unchanged at $\text{deg}/|\mathbb{F}| = 4/p \approx 2^{-252}$
+The base and digit MLE evaluations are derived from public inputs (not committed).
 - The two-phase sumcheck maintains the same security as 254 individual sumchecks
 - Batching with $\gamma$ preserves zero-knowledge properties
 
@@ -224,61 +201,18 @@ Where:
 - `EqPlusOne(r_s*, s)` = 1 if `s = r_s* + 1`, 0 otherwise
 - The sum evaluates to exactly `rho(r_s*+1, r_x*)` = `rho_next(r_s*, r_x*)`
 
-#### Modified Protocol Flow
+#### Protocol Flow
 
 ```
-Stage 1a: Packed GT Constraint Sumcheck
-  - Commits only to rho and quotient (NOT rho_next)
-  - Outputs: virtual claims for rho, quotient
-  - Outputs: unverified claim v = rho_next(r_s*, r_x*)
+Stage 1: Packed GT exp sumcheck
+  - Outputs: virtual claims for rho, rho_next, quotient at r1
   ↓
-Stage 1b: Shift Sumcheck (NEW)
-  - Proves that v = rho(r_s*+1, r_x*)
-  - 12 rounds, degree 2
-  - Outputs: verified rho_next claim
+Stage 2: Batched constraints
+  - Includes shift sumcheck and claim reduction to r2
   ↓
-Stage 2: Direct Evaluation Protocol
-  - Uses all virtual claims (including verified rho_next)
-  - No changes needed
+Stage 3: Direct Evaluation Protocol
+  - Uses all virtual claims at r2
 ```
-
-#### Accumulator Communication
-
-The shift sumcheck integrates seamlessly with the existing virtual polynomial infrastructure:
-
-```rust
-// Stage 1a: After constraint sumcheck
-accumulator.append_virtual(
-    VirtualPolynomial::PackedGtExpRho(i),
-    SumcheckId::PackedGtExp,
-    (r_s_star, r_x_star),
-    rho_claim,
-);
-
-// Stage 1b: After shift sumcheck verification
-accumulator.append_virtual(
-    VirtualPolynomial::PackedGtExpRhoNext(i),
-    SumcheckId::ShiftSumcheck,  // Different sumcheck ID
-    (r_s_star, r_x_star),
-    verified_rho_next_claim,
-);
-```
-
-Stage 2 treats both virtual claims uniformly, regardless of their verification method.
-
-#### Benefits and Trade-offs
-
-**Benefits**:
-- Reduces committed polynomials from 5 to 4 per GT exp
-- Saves ~160 bytes per GT exp in proof size
-- Reduces memory requirements (no rho_next storage)
-
-**Trade-offs**:
-- Adds 12 sumcheck rounds
-- Slightly more complex verifier (+24 field ops per round)
-- Additional proof elements (+12 field elements)
-
-**Security**: Maintains same soundness guarantees with error ≤ 12 × 2^{-254} ≈ 2^{-250}
 
 ---
 
@@ -395,9 +329,9 @@ Computes $T = \prod_{i=1}^m e(P_i, Q_i)$ via:
 
 ---
 
-## 3. Stage 2: Direct Evaluation Protocol
+## 3. Stage 3: Direct Evaluation Protocol
 
-After Stage 1, we have many virtual polynomial claims $(v_0, v_1, \ldots, v_{n-1})$ at point $r_x$. Stage 2 verifies these claims directly without sumcheck.
+After Stage 2, we have many virtual polynomial claims $(v_0, v_1, \ldots, v_{n-1})$ at point $r_x$. Stage 3 verifies these claims directly without sumcheck.
 
 ### 3.1 Why Direct Evaluation
 
@@ -413,7 +347,7 @@ This allows direct computation without sumcheck rounds.
 
 Define matrix $M : \{0,1\}^s \times \{0,1\}^x \to \mathbb{F}_q$ where:
 - Row index $s$ selects polynomial type and constraint index
-- Column index $x$ selects evaluation point (4 or 8 bits)
+- Column index $x$ selects evaluation point (11 bits)
 
 Row indexing:
 ```
@@ -424,27 +358,21 @@ Polynomial types:
 
 | Type | Index | Source |
 |------|-------|--------|
-| RecursionBase | 0 | GT Exp (unpacked) |
-| RecursionRhoPrev | 1 | GT Exp (unpacked) |
-| RecursionRhoCurr | 2 | GT Exp (unpacked) |
-| RecursionQuotient | 3 | GT Exp (unpacked) |
-| RecursionMulLhs | 4 | GT Mul |
-| RecursionMulRhs | 5 | GT Mul |
-| RecursionMulResult | 6 | GT Mul |
-| RecursionMulQuotient | 7 | GT Mul |
-| RecursionG1ScalarMulXA | 8 | G1 Scalar Mul |
-| RecursionG1ScalarMulYA | 9 | G1 Scalar Mul |
-| RecursionG1ScalarMulXT | 10 | G1 Scalar Mul |
-| RecursionG1ScalarMulYT | 11 | G1 Scalar Mul |
-| RecursionG1ScalarMulXANext | 12 | G1 Scalar Mul |
-| RecursionG1ScalarMulYANext | 13 | G1 Scalar Mul |
-| RecursionG1ScalarMulIndicator | 14 | G1 Scalar Mul |
-| PackedGtExpBase | 15 | GT Exp (packed) |
-| PackedGtExpRho | 16 | GT Exp (packed) |
-| PackedGtExpRhoNext | 17 | GT Exp (packed) |
-| PackedGtExpQuotient | 18 | GT Exp (packed) |
+| RhoPrev | 0 | Packed GT exp |
+| Quotient | 1 | Packed GT exp |
+| MulLhs | 2 | GT Mul |
+| MulRhs | 3 | GT Mul |
+| MulResult | 4 | GT Mul |
+| MulQuotient | 5 | GT Mul |
+| G1ScalarMulXA | 6 | G1 Scalar Mul |
+| G1ScalarMulYA | 7 | G1 Scalar Mul |
+| G1ScalarMulXT | 8 | G1 Scalar Mul |
+| G1ScalarMulYT | 9 | G1 Scalar Mul |
+| G1ScalarMulXANext | 10 | G1 Scalar Mul |
+| G1ScalarMulYANext | 11 | G1 Scalar Mul |
+| G1ScalarMulIndicator | 12 | G1 Scalar Mul |
 
-**Total**: 19 polynomial types (15 original + 4 packed)
+**Total**: 13 polynomial types
 
 ### 3.3 Direct Evaluation Protocol
 
@@ -489,22 +417,22 @@ The verifier computes exactly this sum, so the protocol is perfectly sound. □
 
 ---
 
-## 4. Stage 3: Jagged Transform Sum-Check
+## 4. Stage 4: Jagged Transform Sum-Check
 
-The matrix $M$ is sparse: 4-variable polynomials (GT) are zero-padded to 8 variables. Stage 3 compresses to a dense representation.
+The matrix $M$ is sparse: 11-variable polynomials (GT exp/GT mul) and 8-variable polynomials (G1) are zero-padded to a common width. Stage 4 compresses to a dense representation.
 
 ### 4.1 Why Jaggedness
 
 | Operation | Native Variables | Native Size | Padded Size |
 |-----------|-----------------|-------------|-------------|
-| GT Exp/Mul | 4 | 16 | 256 (zero-padded) |
-| G1 Scalar Mul | 8 | 256 | 256 (native) |
+| GT Exp/Mul | 11 | 2048 | 2048 (native) |
+| G1 Scalar Mul | 8 | 256 | 2048 (zero-padded) |
 
 The jagged transform eliminates redundant zeros, reducing commitment size.
 
 ### 4.2 Sparse-to-Dense Bijection
 
-**Sparse**: $M(s, x)$ with row $s$ and column $x \in \{0,1\}^8$
+**Sparse**: $M(s, x)$ with row $s$ and column $x \in \{0,1\}^{11}$
 
 **Dense**: $q(i)$ containing only non-redundant entries
 
@@ -540,7 +468,7 @@ This avoids naive $O(2^{4n})$ computation.
 
 ### 4.6 Sum-Check Protocol
 
-**Input**: $M(r_{s,\text{final}}, r_x) = v_{\text{sparse}}$ from Stage 2
+**Input**: $M(r_{s,\text{final}}, r_x) = v_{\text{sparse}}$ from Stage 3
 
 **Relation**:
 $$v_{\text{sparse}} = \sum_{i \in \{0,1\}^{\ell_{\text{dense}}}} q(i) \cdot \hat{f}_{\text{jagged}}(r_s, r_x, i)$$
@@ -554,9 +482,9 @@ $$v_{\text{sparse}} = \sum_{i \in \{0,1\}^{\ell_{\text{dense}}}} q(i) \cdot \hat
 
 **Output**: $(q, r_{\text{dense}}, v_{\text{dense}})$
 
-### 4.7 Stage 3b: Jagged Assist
+### 4.7 Stage 5: Jagged Assist
 
-After Stage 3's sumcheck, the verifier must compute:
+After Stage 4's sumcheck, the verifier must compute:
 $$\hat{f}_{\text{jagged}}(r_s, r_x, r_{\text{dense}}) = \sum_{y \in [K]} \text{eq}(r_s, y) \cdot \hat{g}(r_x, r_{\text{dense}}, t_{y-1}, t_y)$$
 
 where $K$ is the number of polynomials. For large systems, this requires $K \times O(\text{bits})$ field operations.
@@ -605,9 +533,9 @@ The protocol leverages Lemma 4.6 (forward-backward decomposition) for efficient 
 
 ---
 
-## 5. Stage 4: Opening Proof (Hyrax over Grumpkin)
+## 5. PCS Opening Proof (Hyrax over Grumpkin)
 
-Stage 4 proves the dense polynomial claim using Hyrax.
+The PCS proves the dense polynomial claim using Hyrax.
 
 ### 5.1 Why Hyrax
 
@@ -635,7 +563,7 @@ For polynomial $q$ with $2^n$ evaluations:
 ### 5.4 Final Verification
 
 The verifier accepts iff all checks pass:
-- Stage 1-3 sum-check verifications
+- Stage 1-5 sum-check verifications
 - Hyrax opening verification
 
 ---
@@ -648,13 +576,11 @@ This section provides analytical formulas for proof sizes, constraint counts, an
 
 | Stage | Protocol | Degree | Rounds | Elements/Round |
 |-------|----------|--------|--------|----------------|
-| 1 | GT Exponentiation (unpacked) | 4 | 4 | 5 |
-| 1 | GT Exponentiation (packed) | 4 | 12 | 5 |
-| 1 | GT Multiplication | 3 | 4 | 4 |
-| 1 | G1 Scalar Multiplication | 6 | $\ell$ | 7 |
-| 2 | Direct Evaluation | - | 0 | 1 |
-| 3 | Jagged Transform | 2 | $d$ | 3 |
-| 3b | Jagged Assist | 2 | $2m$ | 3 |
+| 1 | Packed GT Exponentiation | 7 | 11 | 8 |
+| 2 | Batched constraints (shift + reduction + GT mul + G1) | $\leq 6$ | 11 | 8 |
+| 3 | Direct Evaluation | - | 0 | 1 |
+| 4 | Jagged Transform | 2 | $d$ | 3 |
+| 5 | Jagged Assist | 2 | $2m$ | 3 |
 
 Where:
 - $\ell = \lceil \log_2 n \rceil$ for $n$-bit scalar
@@ -667,38 +593,33 @@ Where:
 
 | Operation | Constraints | Poly Types | Total Polynomials |
 |-----------|-------------|------------|-------------------|
-| GT Exp (unpacked, $t$-bit) | $t$ | 4 | $4t$ |
-| GT Exp (packed, $t$-bit) | 1 | 5 | 5 |
+| GT Exp (packed, $t$-bit) | 1 | 2 | 2 |
 | GT Mul | 1 | 4 | 4 |
 | G1 Scalar Mul ($n$-bit) | 1 | 7 | 7 |
 
 **Typical Dory verification** (256-bit scalars):
-- GT exponentiations (unpacked): 256 constraints each
-- GT exponentiations (packed): 1 unified constraint covering all 256 steps
+- GT exponentiations (packed): 1 unified constraint covering all 128 base-4 steps
 - GT multiplications: 1 constraint each
 - G1 scalar multiplications: 1 constraint each (but 256 rows in trace)
 
 ### 6.3 Matrix Dimensions
 
 **Row count**:
-$$\text{num\_rows} = 19 \times c_{\text{pad}}$$
+$$\text{num\_rows} = 13 \times c_{\text{pad}}$$
 
 where $c_{\text{pad}} = 2^{\lceil \log_2 c \rceil}$ and $c$ = total constraints.
 
-**Note**: The count 19 includes both unpacked (15 types) and packed GT exp types (4 additional).
-
 **Column count**:
-- $2^4 = 16$ for GT operations (4-variable MLEs)
-- $2^8 = 256$ for G1 operations (8-variable MLEs)
-- Sparse matrix uses $2^8 = 256$ (zero-padded)
+- $2^{11} = 2048$ for packed GT exp / GT mul constraints (11-variable MLEs)
+- $2^8 = 256$ for G1 operations (8-variable MLEs, zero-padded to 11 vars)
 
 **Example** ($c = 10$ constraints):
 
 | Parameter | Formula | Value |
 |-----------|---------|-------|
 | $c_{\text{pad}}$ | $2^{\lceil \log_2 10 \rceil}$ | 16 |
-| num\_rows | $19 \times 16$ | 304 |
-| num\_s\_vars | $\lceil \log_2 304 \rceil$ | 9 |
+| num\_rows | $13 \times 16$ | 208 |
+| num\_s\_vars | $\lceil \log_2 208 \rceil$ | 8 |
 
 ### 6.4 Dense Size Computation
 
@@ -707,170 +628,93 @@ The jagged transform compresses the sparse matrix by removing zero-padding:
 $$\text{dense\_size} = \sum_{\text{poly } p} 2^{\text{num\_vars}(p)}$$
 
 where:
-- GT polynomials: $\text{num\_vars} = 4 \Rightarrow 16$ evaluations
+- GT polynomials: $\text{num\_vars} = 11 \Rightarrow 2048$ evaluations
 - G1 polynomials: $\text{num\_vars} = 8 \Rightarrow 256$ evaluations
 
 **Example** (3 GT exp + 2 GT mul + 1 G1 scalar mul):
 
 | Source | Polys | Evals/Poly | Total |
 |--------|-------|------------|-------|
-| GT Exp (3 constraints × 4 types) | 12 | 16 | 192 |
-| GT Mul (2 constraints × 4 types) | 8 | 16 | 128 |
+| GT Exp (3 constraints × 2 types) | 6 | 2048 | 12,288 |
+| GT Mul (2 constraints × 4 types) | 8 | 2048 | 16,384 |
 | G1 Scalar Mul (1 constraint × 7 types) | 7 | 256 | 1,792 |
-| **Total** | 27 | — | **2,112** |
+| **Total** | 21 | — | **30,464** |
 
-$\Rightarrow d = \lceil \log_2 2112 \rceil = 12$ rounds for Stage 3.
+$\Rightarrow d = \lceil \log_2 30464 \rceil = 15$ rounds for Stage 4.
 
 ### 6.5 Proof Size Formulas
 
-**Stage 1** (sumcheck messages):
-$$|P_1| = \sum_{\text{type } t} (\text{degree}_t + 1) \times \text{rounds}_t$$
+**Stage 1** (packed GT exp sumcheck):
+$$|P_1| = (\text{degree} + 1) \times \text{rounds}$$
 
 | Type | Degree | Rounds | Elements |
 |------|--------|--------|----------|
-| GT Exp (unpacked) | 4 | 4 | 20 |
-| GT Exp (packed) | 4 | 12 | 60 |
-| GT Mul | 3 | 4 | 16 |
-| G1 Scalar Mul | 6 | $\ell$ | $7\ell$ |
+| Packed GT Exp | 7 | 11 | 88 |
 
-**Stage 2** (direct evaluation):
-$$|P_2| = 1 \text{ element}$$
+**Stage 2** (batched constraint sumcheck):
+$$|P_2| = (\text{degree} + 1) \times \text{rounds}$$
 
-**Stage 3** (jagged transform):
-$$|P_3| = 3d \text{ elements}$$
+| Type | Degree | Rounds | Elements |
+|------|--------|--------|----------|
+| Batched constraints | $\leq 6$ | 11 | $\leq 77$ |
 
-**Stage 3b** (jagged assist):
-$$|P_{3b}| = K + 3(2m) \text{ elements}$$
+**Stage 3** (direct evaluation):
+$$|P_3| = 1 \text{ element}$$
+
+**Stage 4** (jagged transform):
+$$|P_4| = 3d \text{ elements}$$
+
+**Stage 5** (jagged assist):
+$$|P_5| = K + 3(2m) \text{ elements}$$
 where $K$ is the number of $\hat{g}$ evaluations sent
 
-**Stage 4** (Hyrax opening):
-$$|P_4| = O(\sqrt{\text{dense\_size}}) \text{ group elements}$$
+**PCS opening** (Hyrax):
+$$|P_{\text{pcs}}| = O(\sqrt{\text{dense\_size}}) \text{ group elements}$$
 
 **Total proof size** (field elements, excluding PCS):
-$$|P| = |P_1| + |P_2| + |P_3| + |P_{3b}| + \text{virtual claims}$$
+$$|P| = |P_1| + |P_2| + |P_3| + |P_4| + |P_5| + \text{virtual claims}$$
 
-### 6.6 Concrete Example: Single 256-bit GT Exponentiation
-
-**Unpacked version**:
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| Constraints ($c$) | 256 | One per bit |
-| $c_{\text{pad}}$ | 256 | Already power of 2 |
-| Polynomials | 1,024 | $256 \times 4$ types |
-| num\_s\_vars ($s$) | 12 | $\lceil \log_2(19 \times 256) \rceil$ |
-| dense\_size | 16,384 | $1024 \times 16$ |
-| num\_dense\_vars ($d$) | 14 | $\lceil \log_2 16384 \rceil$ |
-| Virtual claims | 1,024 | $4 \times 256$ |
-
-**Packed version**:
+### 6.6 Concrete Example: Single 256-bit GT Exponentiation (packed)
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | Constraints ($c$) | 1 | Single unified constraint |
 | $c_{\text{pad}}$ | 1 | Already power of 2 |
-| Polynomials | 5 | PackedGtExp* types |
-| num\_s\_vars ($s$) | 5 | $\lceil \log_2(19 \times 1) \rceil$ |
-| dense\_size | 65,536 | $4 \times 16^4$ (12-var MLEs) |
-| num\_dense\_vars ($d$) | 16 | $\lceil \log_2 65536 \rceil$ |
-| Virtual claims | 5 | One per packed type |
-
-**Proof size comparison**:
-
-| Stage | Unpacked | Packed | Improvement |
-|-------|----------|--------|-------------|
-| Stage 1 | 20 | 60 | 3× larger |
-| Stage 2 | 1 | 1 | Same |
-| Stage 3 | $3 \times 14 = 42$ | $3 \times 16 = 48$ | Slightly larger |
-| Virtual claims | 1,024 | 5 | **204.8× smaller** |
-| **Total** | 1,087 | 114 | **9.5× smaller** |
+| Polynomials | 2 | RhoPrev + Quotient |
+| num\_s\_vars ($s$) | 4 | $\lceil \log_2(13 \times 1) \rceil$ |
+| dense\_size | 4,096 | $2 \times 2048$ (11-var MLEs) |
+| num\_dense\_vars ($d$) | 12 | $\lceil \log_2 4096 \rceil$ |
+| Virtual claims | 3 | Rho, RhoNext, Quotient |
 
 At 32 bytes per $\mathbb{F}_q$ element:
-- Unpacked: $1,087 \times 32 = 34.8$ KB
-- Packed: $114 \times 32 = 3.6$ KB
-(excluding PCS proof)
+- Virtual claims: $3 \times 32 = 96$ bytes (excluding PCS proof)
 
 ### 6.7 Prover Complexity
 
 | Stage | Operation | Complexity |
 |-------|-----------|------------|
-| Stage 1 | Sumcheck per round | $O(2^{\text{vars}} \cdot \text{degree})$ |
-| Stage 2 | Virtualization | $O(2^s)$ |
-| Stage 3 | Jagged transform | $O(\text{dense\_size})$ |
-| Stage 4 | Hyrax commitment | $O(\text{dense\_size})$ MSMs |
+| Stage 1 | Packed GT exp sumcheck | $O(2^{11} \cdot \text{degree})$ |
+| Stage 2 | Batched constraints | $O(2^{11} \cdot \text{degree})$ |
+| Stage 3 | Direct evaluation | $O(2^s)$ |
+| Stage 4 | Jagged transform | $O(\text{dense\_size})$ |
+| Stage 5 | Jagged assist | $O(K \cdot \text{bits})$ |
+| PCS | Hyrax commitment | $O(\text{dense\_size})$ MSMs |
 
 **Dominant cost**: Stage 1 sumcheck computation scales with constraint count.
 
-**Parallelization**: Stage 1's three constraint types run in parallel.
+**Parallelization**: Stage 2 batches multiple constraint types under a shared transcript.
 
 ### 6.8 Verifier Complexity
 
 | Stage | Operation | Complexity |
 |-------|-----------|------------|
 | Stage 1 | Sumcheck verification | $O(\text{rounds} \cdot \text{degree})$ |
-| Stage 2 | Claim aggregation | $O(c)$ |
-| Stage 3 | Branching program | $O(\text{num\_polys} \cdot \text{bits})$ |
-| Stage 4 | Hyrax verification | $O(\sqrt{\text{dense\_size}})$ |
+| Stage 2 | Sumcheck verification | $O(\text{rounds} \cdot \text{degree})$ |
+| Stage 3 | Claim aggregation | $O(c)$ |
+| Stage 4 | Branching program | $O(\text{num\_polys} \cdot \text{bits})$ |
+| PCS | Hyrax verification | $O(\sqrt{\text{dense\_size}})$ |
 
-**Key efficiency**: Stage 3 verifier uses $O(n)$ branching program instead of naive $O(2^{4n})$ MLE evaluation.
-
-### 6.9 Comparison: Sparse vs Dense
-
-Without jagged transform (sparse):
-- Matrix size: $15 \cdot c_{\text{pad}} \times 256$
-- For 256 GT exp constraints: $3,840 \times 256 = 983,040$ entries
-
-With jagged transform (dense):
-- Dense size: $1,024 \times 16 = 16,384$ entries
-- **Compression ratio**: $60\times$
-
-This compression directly reduces:
-- PCS commitment size
-- Stage 3 prover work
-- Hyrax opening proof size
-
-### 6.10 Scaling Summary
-
-| Metric | Formula | 256-bit GT Exp |
-|--------|---------|----------------|
-| Constraints | $t$ (bit-length) | 256 |
-| Stage 1 rounds | 4 (fixed for GT) | 4 |
-| Stage 2 rounds | $\lceil \log_2(15c) \rceil$ | 12 |
-| Stage 3 rounds | $\lceil \log_2(4tc \cdot 16) \rceil$ | 14 |
-| Proof elements | $O(c + \log c)$ | ~1,100 |
-| Prover time | $O(c \cdot 2^4)$ | ~4,000 ops |
-| Verifier time | $O(c + \text{polys} \cdot \text{bits})$ | ~15,000 ops |
-
-The protocol achieves **logarithmic scaling** in proof size relative to constraint count, with linear prover work and near-linear verifier work.
-
-### 6.11 Unified Polynomial Cost Analysis
-
-The packed GT exponentiation optimization dramatically reduces system costs:
-
-**Memory Requirements**:
-
-| Approach | Polynomials | Memory (256-bit exp) | Formula |
-|----------|-------------|---------------------|---------|
-| Unpacked | $4t$ | ~32 MB | $4t \times 2^4 \times 32$ bytes |
-| Packed | 5 | ~10 MB | $5 \times 2^{12} \times 32$ bytes |
-
-**Stage 2 Virtual Claims**:
-
-| Approach | Virtual Claims | Verifier Work |
-|----------|---------------|---------------|
-| Unpacked | 1,024 | $O(1024)$ field ops |
-| Packed | 5 | $O(5)$ field ops |
-
-**Impact on Later Stages**:
-- Stage 3 processes fewer polynomials (5 vs 1,024)
-- Stage 3b benefits from reduced $K$ in batch verification
-- Hyrax commitment is more efficient with fewer polynomials
-
-**Trade-offs**:
-- Packed approach uses 12-round sumcheck vs 4-round
-- Slightly larger Stage 1 proof (60 vs 20 elements)
-- Prover computes over larger domain ($2^{12}$ vs $2^4$)
-- Net benefit: ~9.5× smaller total proof, ~200× fewer virtual claims
+**Key efficiency**: Stage 4 verifier uses $O(n)$ branching program instead of naive $O(2^{4n})$ MLE evaluation.
 
 ---
 
@@ -889,13 +733,16 @@ jolt-core/src/zkvm/recursion/
 ├── recursion_prover.rs       # RecursionProver orchestrating all stages
 ├── recursion_verifier.rs     # RecursionVerifier
 ├── stage1/
-│   ├── square_and_multiply.rs   # GT exponentiation sumcheck
+│   ├── packed_gt_exp.rs         # Packed GT exponentiation sumcheck
+│   ├── shift_rho.rs             # Shift sumcheck for rho(s+1,x)
 │   ├── gt_mul.rs                # GT multiplication sumcheck
 │   └── g1_scalar_mul.rs         # G1 scalar mul sumcheck
 ├── stage2/
+│   ├── packed_gt_exp_reduction.rs # Reduction from r1 to r2 for rho/quotient
 │   └── virtualization.rs        # Direct evaluation protocol
 └── stage3/
     ├── jagged.rs                # Jagged transform sumcheck
+    ├── jagged_assist.rs         # Jagged assist (batch MLE verification)
     └── branching_program.rs     # O(n) MLE evaluation for g function
 ```
 
@@ -985,9 +832,9 @@ struct G1ScalarMulWitness {
 }
 ```
 
-**Packed GT Exponentiation** (Used when optimization enabled):
+**Packed GT Exponentiation**:
 
-The packed representation combines all 256 steps into unified 12-variable polynomials:
+The packed representation combines all 128 base-4 steps into unified 11-variable polynomials:
 
 ```rust
 struct PackedGTExpWitness {
@@ -995,19 +842,22 @@ struct PackedGTExpWitness {
     exponent: Fr,                  // Scalar k
     result: Fq12,                  // Result a^k
 
-    // Packed polynomials (12 variables each)
-    packed_base_mle: Vec<Fq>,      // base(x) replicated across steps
-    packed_rho_mle: Vec<Fq>,       // ρ(s,x) for all steps
-    packed_rho_next_mle: Vec<Fq>,  // ρ_next(s,x) shifted by 1
-    packed_quotient_mle: Vec<Fq>,  // Q(s,x) for all steps
-    packed_bit_mle: Vec<Fq>,       // bit(s) replicated across x
+    // Packed polynomials (11 variables each)
+    rho_packed: Vec<Fq>,           // ρ(s,x) for all steps
+    rho_next_packed: Vec<Fq>,      // ρ_next(s,x) shifted by 1
+    quotient_packed: Vec<Fq>,      // Q(s,x) for all steps
+    digit_lo_packed: Vec<Fq>,      // low digit bit replicated across x
+    digit_hi_packed: Vec<Fq>,      // high digit bit replicated across x
+    base_packed: Vec<Fq>,          // base(x) replicated across s
+    base2_packed: Vec<Fq>,         // base^2(x) replicated across s
+    base3_packed: Vec<Fq>,         // base^3(x) replicated across s
 }
 ```
 
-Layout: For 12-variable MLEs with `s ∈ {0,1}^8` and `x ∈ {0,1}^4`:
-- Index formula: `index = x * 256 + s` (s in low bits)
-- `packed_rho_mle[x * 256 + s] = ρ_s[x]`
-- Each MLE has 2^12 = 4,096 evaluations
+Layout: For 11-variable MLEs with `s ∈ {0,1}^7` and `x ∈ {0,1}^4`:
+- Index formula: `index = x * 128 + s` (s in low bits)
+- `rho_packed[x * 128 + s] = ρ_s[x]`
+- Each MLE has 2^11 = 2,048 evaluations
 
 ### 7.4 Constraint System Construction
 
@@ -1018,13 +868,13 @@ let mut builder = DoryMatrixBuilder::new();
 
 // Add witnesses (each becomes one or more constraints)
 for witness in gt_exp_witnesses {
-    builder.add_gt_exp_witness(witness);  // t constraints per exponentiation
+    builder.add_packed_gt_exp_witness(witness);  // 1 constraint per exponentiation
 }
 for witness in gt_mul_witnesses {
     builder.add_gt_mul_witness(witness);  // 1 constraint per multiplication
 }
 for witness in g1_scalar_mul_witnesses {
-    builder.add_g1_scalar_mul_witness(witness);  // n constraints per scalar mul
+    builder.add_g1_scalar_mul_witness(witness);  // 1 constraint per scalar mul
 }
 
 let constraint_system: ConstraintSystem = builder.build();
@@ -1037,7 +887,7 @@ M : {0,1}^num_s_vars × {0,1}^num_x_vars → Fq
 
 where:
   num_s_vars = ⌈log₂(15 × num_constraints_padded)⌉
-  num_x_vars = 8  (max of 4-var GT and 8-var G1 polynomials)
+  num_x_vars = 11 (packed constraint vars for GT exp/GT mul/G1)
 ```
 
 ### 7.5 Prover Flow
@@ -1049,38 +899,53 @@ impl RecursionProver {
         witnesses: &WitnessCollection,
         transcript: &mut Transcript,
     ) -> RecursionProof {
-        // Stage 1: Run three sumchecks in parallel
-        let stage1_provers = vec![
-            SquareAndMultiplyProver::new(...),
-            GtMulProver::new(...),
-            G1ScalarMulProver::new(...),
-        ];
-        let (stage1_proof, stage1_claims) = BatchedSumcheck::prove(
-            stage1_provers,
+        // Stage 1: Packed GT exp sumcheck
+        let (stage1_proof, r_stage1) = BatchedSumcheck::prove(
+            vec![PackedGtExpProver::new(...)],
             &mut accumulator,
             transcript,
         );
 
-        // Stage 2: Virtualization
-        let stage2_prover = RecursionVirtualizationProver::new(
-            constraint_system,
-            &stage1_claims,
+        // Stage 2: Batched constraint sumchecks
+        // (shift rho + GT exp reduction + GT mul + G1 scalar mul)
+        let (stage2_proof, r_stage2) = BatchedSumcheck::prove(
+            vec![ShiftRhoProver::new(...),
+                 PackedGtExpClaimReductionProver::new(...),
+                 GtMulProver::new(...),
+                 G1ScalarMulProver::new(...)],
+            &mut accumulator,
             transcript,
         );
-        let (stage2_proof, stage2_claim) = stage2_prover.prove(...);
 
-        // Stage 3: Jagged transform
-        let stage3_prover = JaggedSumcheckProver::new(
-            &bijection,
-            &stage2_claim,
+        // Stage 3: Virtualization (direct evaluation)
+        let (stage3_m_eval, r_stage3_s) = DirectEvaluationProver::new(...)
+            .prove(transcript, &mut accumulator, r_s);
+
+        // Stage 4: Jagged transform sumcheck
+        let (stage4_proof, r_stage4) = BatchedSumcheck::prove(
+            vec![JaggedSumcheckProver::new(...)],
+            &mut accumulator,
             transcript,
         );
-        let (stage3_proof, dense_claim) = stage3_prover.prove(...);
+
+        // Stage 5: Jagged assist
+        let stage5_proof = BatchedSumcheck::prove(
+            vec![JaggedAssistProver::new(...)],
+            &mut accumulator,
+            transcript,
+        );
 
         // PCS opening
         let opening_proof = accumulator.prove_openings(pcs, transcript);
 
-        RecursionProof { stage1_proof, stage2_proof, stage3_proof, opening_proof }
+        RecursionProof {
+            stage1_proof,
+            stage2_proof,
+            stage3_m_eval,
+            stage4_proof,
+            stage5_proof,
+            opening_proof,
+        }
     }
 }
 ```
@@ -1094,30 +959,45 @@ impl RecursionVerifier {
         verifier_input: &RecursionVerifierInput,
         transcript: &mut Transcript,
     ) -> Result<()> {
-        // Stage 1: Verify batched sumcheck
-        let stage1_verifiers = vec![
-            SquareAndMultiplyVerifier::new(...),
-            GtMulVerifier::new(...),
-            G1ScalarMulVerifier::new(...),
-        ];
-        let stage1_claims = BatchedSumcheck::verify(
-            stage1_verifiers,
+        // Stage 1: Verify packed GT exp sumcheck
+        let r_stage1 = BatchedSumcheck::verify(
+            vec![PackedGtExpVerifier::new(...)],
             &proof.stage1_proof,
             &mut accumulator,
             transcript,
         )?;
 
-        // Stage 2: Verify virtualization
-        let stage2_verifier = RecursionVirtualizationVerifier::new(...);
-        let stage2_claim = stage2_verifier.verify(&proof.stage2_proof, ...)?;
+        // Stage 2: Verify batched constraints
+        let r_stage2 = BatchedSumcheck::verify(
+            vec![ShiftRhoVerifier::new(...),
+                 PackedGtExpClaimReductionVerifier::new(...),
+                 GtMulVerifier::new(...),
+                 G1ScalarMulVerifier::new(...)],
+            &proof.stage2_proof,
+            &mut accumulator,
+            transcript,
+        )?;
 
-        // Stage 3: Verify jagged transform
+        // Stage 3: Verify virtualization
+        DirectEvaluationVerifier::new(...)
+            .verify(transcript, &mut accumulator, proof.stage3_m_eval, r_s)?;
+
+        // Stage 4: Verify jagged transform
         // Verifier computes f_jagged using branching program (O(n) time)
-        let stage3_verifier = JaggedSumcheckVerifier::new(
-            &verifier_input.bijection,
-            &verifier_input.matrix_rows,  // Precomputed
-        );
-        let dense_claim = stage3_verifier.verify(&proof.stage3_proof, ...)?;
+        let r_stage4 = BatchedSumcheck::verify(
+            vec![JaggedSumcheckVerifier::new(...)],
+            &proof.stage4_proof,
+            &mut accumulator,
+            transcript,
+        )?;
+
+        // Stage 5: Verify jagged assist
+        BatchedSumcheck::verify(
+            vec![JaggedAssistVerifier::new(...)],
+            &proof.stage5_proof.sumcheck_proof,
+            &mut accumulator,
+            transcript,
+        )?;
 
         // PCS verification
         accumulator.verify_openings(pcs, &proof.opening_proof, transcript)?;
@@ -1132,23 +1012,23 @@ impl RecursionVerifier {
 The `OpeningAccumulator` tracks virtual polynomial claims across stages:
 
 ```rust
-// Stage 1 appends virtual claims
+// Stage 1 appends virtual claims (rho, rho_next, quotient at r1)
 accumulator.append_virtual(
-    VirtualPolynomial::RecursionBase(constraint_idx),
-    SumcheckId::SquareAndMultiply,
+    VirtualPolynomial::PackedGtExpRhoNext(w),
+    SumcheckId::PackedGtExp,
     opening_point,
     claimed_value,
 );
 
-// Stage 2 reads Stage 1 claims
+// Stage 2 reads Stage 1 claims and writes reduced claims at r2
 let (point, value) = accumulator.get_virtual_polynomial_opening(
-    VirtualPolynomial::RecursionBase(i),
-    SumcheckId::SquareAndMultiply,
+    VirtualPolynomial::PackedGtExpRhoNext(w),
+    SumcheckId::PackedGtExp,
 );
 
-// Stage 3 outputs committed polynomial claim
+// Stage 4 outputs committed polynomial claim (dense matrix)
 accumulator.append_committed(
-    CommittedPolynomial::DenseMatrix,
+    CommittedPolynomial::DoryDenseMatrix,
     opening_point,
     claimed_value,
 );
@@ -1214,35 +1094,27 @@ let matrix_rows: Vec<usize> = (0..num_polynomials)
 ```rust
 #[repr(usize)]
 pub enum PolyType {
-    // GT Exponentiation (4-var MLEs)
-    Base = 0,
-    RhoPrev = 1,
-    RhoCurr = 2,
-    Quotient = 3,
+    // Packed GT Exponentiation (11-var MLEs)
+    RhoPrev = 0,
+    Quotient = 1,
 
-    // GT Multiplication (4-var MLEs)
-    MulLhs = 4,
-    MulRhs = 5,
-    MulResult = 6,
-    MulQuotient = 7,
+    // GT Multiplication (11-var MLEs)
+    MulLhs = 2,
+    MulRhs = 3,
+    MulResult = 4,
+    MulQuotient = 5,
 
-    // G1 Scalar Multiplication (8-var MLEs)
-    G1ScalarMulXA = 8,
-    G1ScalarMulYA = 9,
-    G1ScalarMulXT = 10,
-    G1ScalarMulYT = 11,
-    G1ScalarMulXANext = 12,
-    G1ScalarMulYANext = 13,
-    G1ScalarMulIndicator = 14,
-
-    // Packed GT Exponentiation (12-var MLEs)
-    PackedGtExpBase = 15,
-    PackedGtExpRho = 16,
-    PackedGtExpRhoNext = 17,
-    PackedGtExpQuotient = 18,
+    // G1 Scalar Multiplication (8-var MLEs, zero-padded)
+    G1ScalarMulXA = 6,
+    G1ScalarMulYA = 7,
+    G1ScalarMulXT = 8,
+    G1ScalarMulYT = 9,
+    G1ScalarMulXANext = 10,
+    G1ScalarMulYANext = 11,
+    G1ScalarMulIndicator = 12,
 }
 
-pub const NUM_POLY_TYPES: usize = 19;
+pub const NUM_POLY_TYPES: usize = 13;
 ```
 
 ### 7.11 Dory Integration: Witness Extraction and Hints
@@ -1322,22 +1194,28 @@ impl WitnessGenerator<JoltWitness, BN254> for JoltWitnessGenerator {
     fn generate_packed_gt_exp(base: &GT, scalar: &Fr, result: &GT) -> PackedGtExpWitness {
         let steps = ExponentiationSteps::new(base.0, ark_to_jolt(scalar));
 
-        // Pack 256 4-var MLEs into 5 12-var MLEs
-        let packed_base_mle = pack_replicated_base(&steps.base, 256, 16);
-        let packed_rho_mle = pack_sequential_mles(&steps.rho_mles);
-        let packed_rho_next_mle = pack_shifted_mles(&steps.rho_mles);
-        let packed_quotient_mle = pack_sequential_mles(&steps.quotient_mles);
-        let packed_bit_mle = pack_replicated_bits(&steps.bits, 16);
+        // Pack 128 base-4 steps into 11-var MLEs
+        let rho_packed = pack_sequential_mles(&steps.rho_mles);
+        let rho_next_packed = pack_shifted_mles(&steps.rho_mles);
+        let quotient_packed = pack_sequential_mles(&steps.quotient_mles);
+        let digit_lo_packed = pack_digit_lo_bits(&steps.bits);
+        let digit_hi_packed = pack_digit_hi_bits(&steps.bits);
+        let base_packed = pack_replicated_base(&steps.base, 128, 16);
+        let base2_packed = pack_replicated_base(&steps.base2, 128, 16);
+        let base3_packed = pack_replicated_base(&steps.base3, 128, 16);
 
         PackedGtExpWitness {
             base: steps.base,
             exponent: steps.exponent,
             result: steps.result,
-            packed_base_mle,
-            packed_rho_mle,
-            packed_rho_next_mle,
-            packed_quotient_mle,
-            packed_bit_mle,
+            rho_packed,
+            rho_next_packed,
+            quotient_packed,
+            digit_lo_packed,
+            digit_hi_packed,
+            base_packed,
+            base2_packed,
+            base3_packed,
         }
     }
 
@@ -1493,9 +1371,11 @@ The recursion prover has a clear separation between orchestration logic (Rust) a
 
 | Component | Operation | Why GPU |
 |-----------|-----------|---------|
-| Stage 1 Sumcheck | Polynomial evaluations over hypercube | Parallel evaluation of $2^n$ points |
-| Stage 2 Direct Eval | Direct polynomial evaluation | Efficient dot product computation |
-| Stage 3 Sumcheck | Jagged transform sumcheck | Dense polynomial operations |
+| Stage 1 Sumcheck | Packed GT exp evaluations | Parallel evaluation of $2^n$ points |
+| Stage 2 Sumcheck | Batched constraints | Parallel evaluation of $2^n$ points |
+| Stage 3 Direct Eval | Direct polynomial evaluation | Efficient dot product computation |
+| Stage 4 Sumcheck | Jagged transform sumcheck | Dense polynomial operations |
+| Stage 5 Sumcheck | Jagged assist sumcheck | Batched MLE verification |
 | Hyrax Commit | Multi-scalar multiplication (MSM) | $O(\sqrt{N})$ group operations |
 | Hyrax VMP | Vector-matrix product | Parallelizable linear algebra |
 
@@ -1524,15 +1404,17 @@ The following remain on the CPU/Rust side:
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                         GPU KERNELS                              │   │
 │  ├─────────────────────────────────────────────────────────────────┤   │
-│  │  Stage 1: sumcheck_prove(polys, eq_evals) → round_polys         │   │
-│  │  Stage 2: direct_eval(virtual_claims, eq_evals) → evaluation    │   │
-│  │  Stage 3: sumcheck_prove(dense, f_jagged) → round_polys         │   │
+│  │  Stage 1: sumcheck_prove(PackedGtExp) → round_polys            │   │
+│  │  Stage 2: sumcheck_prove(shift+reduction+gtmul+g1) → round_polys│   │
+│  │  Stage 3: direct_eval(virtual_claims, eq_evals) → evaluation   │   │
+│  │  Stage 4: sumcheck_prove(dense, f_jagged) → round_polys        │   │
+│  │  Stage 5: sumcheck_prove(jagged_assist) → round_polys          │   │
 │  │  Hyrax:   msm(scalars, bases) → commitments                     │   │
 │  │           vmp(matrix, vector) → result                          │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │       │                                                                 │
 │       ▼                                                                 │
-│  RecursionProof { stage1, stage2, stage3, opening }                    │
+│  RecursionProof { stage1, stage2, stage3, stage4, stage5, opening }    │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1568,12 +1450,13 @@ trait HyraxGpuKernel {
 
 | Stage | GPU Memory | Notes |
 |-------|------------|-------|
-| Stage 1 | $O(c \cdot 2^4)$ | Small per-constraint polynomials |
-| Stage 2 | $O(2^s)$ | Full virtualized matrix |
-| Stage 3 | $O(\text{dense\_size})$ | Compressed representation |
+| Stage 1 | $O(c \cdot 2^{11})$ | Packed GT exp polynomials |
+| Stage 2 | $O(c \cdot 2^{11})$ | Batched constraint polynomials |
+| Stage 3 | $O(2^s)$ | Full virtualized matrix |
+| Stage 4 | $O(\text{dense\_size})$ | Compressed representation |
 | Hyrax | $O(\sqrt{N})$ bases + scalars | MSM working set |
 
-The jagged transform (Stage 3) reduces GPU memory pressure by ~60× compared to operating on the sparse matrix directly.
+The jagged transform (Stage 4) reduces GPU memory pressure by compressing sparse rows into dense storage.
 
 ---
 

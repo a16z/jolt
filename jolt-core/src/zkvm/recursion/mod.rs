@@ -55,11 +55,10 @@ pub use recursion_verifier::{RecursionVerifier, RecursionVerifierInput};
 pub use stage1::{
     g1_scalar_mul::{G1ScalarMulProver, G1ScalarMulVerifier},
     gt_mul::{GtMulProver, GtMulVerifier},
-    square_and_multiply::{SquareAndMultiplyProver, SquareAndMultiplyVerifier},
 };
 pub use stage2::virtualization::{
-    DirectEvaluationParams, DirectEvaluationProver, DirectEvaluationVerifier,
-    extract_virtual_claims_from_accumulator,
+    extract_virtual_claims_from_accumulator, DirectEvaluationParams, DirectEvaluationProver,
+    DirectEvaluationVerifier,
 };
 pub use stage3::jagged::{JaggedSumcheckParams, JaggedSumcheckProver, JaggedSumcheckVerifier};
 pub use witness::{
