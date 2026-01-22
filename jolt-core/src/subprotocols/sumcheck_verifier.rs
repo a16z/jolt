@@ -66,11 +66,6 @@ pub trait SumcheckInstanceParams<F: JoltField> {
         Vec::new()
     }
 
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        None
-    }
-
-    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        Vec::new()
-    }
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint>;
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F>;
 }

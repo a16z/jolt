@@ -135,6 +135,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> 
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         challenges.to_vec().into()
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        None
+    }
+
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
+    }
 }
 
 /// Uni-skip instance for product virtualization, computing the first-round polynomial only.

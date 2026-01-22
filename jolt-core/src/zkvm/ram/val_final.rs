@@ -164,6 +164,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ValFinalSumcheckParams<F> {
             ValueSource::Opening(wa_opening),
         ]))
     }
+
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
+    }
 }
 
 #[derive(Allocative)]

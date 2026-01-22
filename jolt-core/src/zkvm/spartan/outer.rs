@@ -113,6 +113,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterUniSkipParams<F> {
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         challenges.to_vec().into()
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        None
+    }
+
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
+    }
 }
 
 /// Uni-skip instance for Spartan outer sumcheck, computing the first-round polynomial only.
@@ -378,6 +386,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F>
             SumcheckId::SpartanOuter,
         );
         uni_skip_claim
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        None
+    }
+
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
     }
 }
 
