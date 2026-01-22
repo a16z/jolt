@@ -47,7 +47,7 @@
 
 use crate::zkvm::config::OneHotParams;
 use crate::{
-    field::{self, JoltField},
+    field::{self, BarrettReduce, FMAdd, JoltField},
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
@@ -57,7 +57,7 @@ use crate::{
         },
     },
     transcripts::Transcript,
-    utils::math::Math,
+    utils::{accumulation::Acc6U, math::Math},
     zkvm::witness::VirtualPolynomial,
 };
 use std::vec;
@@ -452,40 +452,17 @@ fn evaluate_public_initial_ram_evaluation<F: JoltField>(
     program_io: &JoltDevice,
     r_address: &[F::Challenge],
 ) -> F {
-    fn eval_range<F: JoltField>(start_index: usize, values: &[u64], r: &[F::Challenge]) -> F {
-        if values.is_empty() {
-            return F::zero();
-        }
-        let mut acc = F::zero();
-
-        let mut idx = start_index;
-        let mut off = 0usize;
-        while off < values.len() {
-            let remaining = values.len() - off;
-            let (block_size, block_evals) =
-                EqPolynomial::<F>::evals_for_max_aligned_block(r, idx, remaining);
-            debug_assert_eq!(block_evals.len(), block_size);
-
-            for j in 0..block_size {
-                let coeff = values[off + j];
-                if coeff != 0 {
-                    acc += F::from_u64(coeff) * block_evals[j];
-                }
-            }
-
-            idx += block_size;
-            off += block_size;
-        }
-        acc
-    }
-
     // Bytecode region
     let bytecode_start = remap_address(
         ram_preprocessing.min_bytecode_address,
         &program_io.memory_layout,
     )
     .unwrap() as usize;
-    let mut acc = eval_range::<F>(bytecode_start, &ram_preprocessing.bytecode_words, r_address);
+    let mut acc = eval_public_init_u64_range::<F>(
+        bytecode_start,
+        &ram_preprocessing.bytecode_words,
+        r_address,
+    );
 
     // Inputs region (packed into u64 words in little-endian)
     if !program_io.inputs.is_empty() {
@@ -503,9 +480,51 @@ fn evaluate_public_initial_ram_evaluation<F: JoltField>(
                 u64::from_le_bytes(word)
             })
             .collect();
-        acc += eval_range::<F>(input_start, &input_words, r_address);
+        acc += eval_public_init_u64_range::<F>(input_start, &input_words, r_address);
     }
 
+    acc
+}
+
+/// Evaluate a shifted slice of `u64` coefficients as a multilinear polynomial at `r`.
+///
+/// Conceptually computes:
+/// \[
+///   \sum_{j=0}^{len-1} values[j] \cdot eq(r, start_index + j)
+/// \]
+/// without materializing a full length-\(K\) vector or a full `eq(r, ·)` table.
+///
+/// Uses aligned power-of-two block decomposition with `EqPolynomial::evals_for_max_aligned_block`,
+/// and accumulates using unreduced limb arithmetic via `Acc6U`.
+fn eval_public_init_u64_range<F: JoltField>(
+    start_index: usize,
+    values: &[u64],
+    r: &[F::Challenge],
+) -> F {
+    if values.is_empty() {
+        return F::zero();
+    }
+
+    let mut acc = F::zero();
+    let mut idx = start_index;
+    let mut off = 0usize;
+    while off < values.len() {
+        let remaining = values.len() - off;
+        let (block_size, block_evals) =
+            EqPolynomial::<F>::evals_for_max_aligned_block(r, idx, remaining);
+        debug_assert_eq!(block_evals.len(), block_size);
+
+        // Accumulate this block in unreduced form, then reduce once.
+        let mut block_acc: Acc6U<F> = Acc6U::default();
+        for j in 0..block_size {
+            // FMAdd implementation skips zeros internally.
+            block_acc.fmadd(&block_evals[j], &values[off + j]);
+        }
+        acc += block_acc.barrett_reduce();
+
+        idx += block_size;
+        off += block_size;
+    }
     acc
 }
 
