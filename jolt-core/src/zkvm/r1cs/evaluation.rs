@@ -48,10 +48,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::univariate_skip::uniskip_targets;
-use crate::utils::{
-    accumulation::{Acc5U, Acc6S, Acc6U, Acc7S, Acc7U, S128Sum, S192Sum},
-    math::s64_from_diff_u64s,
-};
+use crate::utils::accumulation::{Acc5U, Acc6S, Acc6U, Acc7S, Acc7U, S128Sum, S192Sum};
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use crate::zkvm::r1cs::inputs::ProductCycleInputs;
@@ -318,29 +315,29 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     pub fn eval_bz_first_group(&self) -> BzFirstGroup {
         BzFirstGroup {
             ram_addr: self.row.ram_addr,
-            ram_read_minus_ram_write: s64_from_diff_u64s(
+            ram_read_minus_ram_write: S64::from_diff_u64s(
                 self.row.ram_read_value,
                 self.row.ram_write_value,
             ),
-            ram_read_minus_rd_write: s64_from_diff_u64s(
+            ram_read_minus_rd_write: S64::from_diff_u64s(
                 self.row.ram_read_value,
                 self.row.rd_write_value,
             ),
-            rs2_minus_ram_write: s64_from_diff_u64s(
+            rs2_minus_ram_write: S64::from_diff_u64s(
                 self.row.rs2_read_value,
                 self.row.ram_write_value,
             ),
             left_lookup: self.row.left_lookup,
-            left_lookup_minus_left_input: s64_from_diff_u64s(
+            left_lookup_minus_left_input: S64::from_diff_u64s(
                 self.row.left_lookup,
                 self.row.left_input,
             ),
-            lookup_output_minus_one: s64_from_diff_u64s(self.row.lookup_output, 1),
-            next_unexp_pc_minus_lookup_output: s64_from_diff_u64s(
+            lookup_output_minus_one: S64::from_diff_u64s(self.row.lookup_output, 1),
+            next_unexp_pc_minus_lookup_output: S64::from_diff_u64s(
                 self.row.next_unexpanded_pc,
                 self.row.lookup_output,
             ),
-            next_pc_minus_pc_plus_one: s64_from_diff_u64s(
+            next_pc_minus_pc_plus_one: S64::from_diff_u64s(
                 self.row.next_pc,
                 self.row.pc.wrapping_add(1),
             ),
@@ -591,7 +588,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
 
         // Rd write checks (fit in i64 range by construction)
         let rd_write_minus_lookup_output =
-            s64_from_diff_u64s(self.row.rd_write_value, self.row.lookup_output);
+            S64::from_diff_u64s(self.row.rd_write_value, self.row.lookup_output);
         let const_term = 4 - if self.row.flags[CircuitFlags::IsCompressed] {
             2
         } else {
@@ -599,7 +596,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         };
         let expected_pc_plus_const = self.row.unexpanded_pc.wrapping_add(const_term as u64);
         let rd_write_minus_pc_plus_const =
-            s64_from_diff_u64s(self.row.rd_write_value, expected_pc_plus_const);
+            S64::from_diff_u64s(self.row.rd_write_value, expected_pc_plus_const);
 
         // Next unexpanded PC checks
         let next_unexp_pc_minus_pc_plus_imm = (self.row.next_unexpanded_pc as i128)
@@ -616,7 +613,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             };
         let expected_next = self.row.unexpanded_pc.wrapping_add(const_term_next as u64);
         let next_unexp_pc_minus_expected =
-            s64_from_diff_u64s(self.row.next_unexpanded_pc, expected_next);
+            S64::from_diff_u64s(self.row.next_unexpanded_pc, expected_next);
 
         BzSecondGroup {
             ram_addr_minus_rs1_plus_imm,

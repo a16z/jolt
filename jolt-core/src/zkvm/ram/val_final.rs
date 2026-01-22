@@ -18,6 +18,7 @@ use crate::{
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
+    utils::errors::ProofVerifyError,
     utils::math::Math,
     zkvm::{
         bytecode::BytecodePreprocessing,
@@ -49,10 +50,12 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
         trace_len: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let (r_address, val_init_eval) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamValInit,
-            SumcheckId::RamOutputCheck,
-        );
+        let (r_address, val_init_eval) = opening_accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamValInit,
+                SumcheckId::RamOutputCheck,
+            )
+            .expect("prover should have RamValInit opening");
 
         Self {
             T: trace_len,
@@ -68,12 +71,12 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
         ram_K: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         rw_config: &ReadWriteConfig,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let r_address = opening_accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
-            )
+            )?
             .0
             .r;
 
@@ -89,7 +92,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
         };
 
         let untrusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_advice_opening(AdviceKind::Untrusted, advice_sumcheck_id),
+            opening_accumulator.get_advice_opening(AdviceKind::Untrusted, advice_sumcheck_id)?,
             (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -100,7 +103,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
         );
 
         let trusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_advice_opening(AdviceKind::Trusted, advice_sumcheck_id),
+            opening_accumulator.get_advice_opening(AdviceKind::Trusted, advice_sumcheck_id)?,
             (program_io.memory_layout.max_trusted_advice_size as usize / 8)
                 .next_power_of_two()
                 .log_2(),
@@ -119,11 +122,11 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
             + trusted_advice_contribution
             + val_init_public.evaluate(&r_address);
 
-        ValFinalSumcheckParams {
+        Ok(ValFinalSumcheckParams {
             T: trace_len,
             val_init_eval,
             r_address,
-        }
+        })
     }
 }
 
@@ -136,12 +139,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ValFinalSumcheckParams<F> {
         self.T.log_2()
     }
 
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
         let (_, val_final_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamValFinal,
             SumcheckId::RamOutputCheck,
-        );
-        val_final_claim - self.val_init_eval
+        )?;
+        Ok(val_final_claim - self.val_init_eval)
     }
 
     fn normalize_opening_point(
@@ -275,6 +278,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValFinalSumch
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
             )
+            .expect("prover should have RamValFinal opening")
             .0;
         let wa_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle_prime.r].concat());
 
@@ -312,7 +316,7 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
         ram_K: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         rw_config: &ReadWriteConfig,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let params = ValFinalSumcheckParams::new_from_verifier(
             initial_ram_state,
             program_io,
@@ -320,8 +324,8 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
             ram_K,
             opening_accumulator,
             rw_config,
-        );
-        Self { params }
+        )?;
+        Ok(Self { params })
     }
 }
 
@@ -334,20 +338,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ValFinalSum
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         _sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let inc_claim = accumulator
             .get_committed_polynomial_opening(
                 CommittedPolynomial::RamInc,
                 SumcheckId::RamValFinalEvaluation,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
         let wa_claim = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamRa,
                 SumcheckId::RamValFinalEvaluation,
             )
-            .1;
-        inc_claim * wa_claim
+            .map(|(_, claim)| claim)?;
+        Ok(inc_claim * wa_claim)
     }
 
     fn cache_openings(
@@ -355,14 +359,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ValFinalSum
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let r_cycle_prime = self.params.normalize_opening_point(sumcheck_challenges);
         let r_address = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
             )
-            .0;
+            .map(|(point, _)| point)?;
         let wa_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle_prime.r].concat());
 
         accumulator.append_dense(
@@ -370,12 +374,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ValFinalSum
             CommittedPolynomial::RamInc,
             SumcheckId::RamValFinalEvaluation,
             r_cycle_prime.r,
-        );
+        )?;
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamValFinalEvaluation,
             wa_opening_point,
-        );
+        )?;
+        Ok(())
     }
 }

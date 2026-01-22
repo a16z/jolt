@@ -37,7 +37,7 @@ pub fn verify_stage2_uni_skip<F: JoltField, T: Transcript>(
     opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     transcript: &mut T,
 ) -> Result<ProductVirtualUniSkipParams<F>, anyhow::Error> {
-    let verifier = ProductVirtualUniSkipVerifier::new(opening_accumulator, transcript);
+    let verifier = ProductVirtualUniSkipVerifier::new(opening_accumulator, transcript)?;
     UniSkipFirstRoundProof::verify::<
         PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
         PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,

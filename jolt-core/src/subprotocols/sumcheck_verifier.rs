@@ -1,7 +1,10 @@
 use crate::poly::opening_proof::{OpeningAccumulator, OpeningPoint, BIG_ENDIAN};
 use crate::transcripts::Transcript;
 
-use crate::{field::JoltField, poly::opening_proof::VerifierOpeningAccumulator};
+use crate::{
+    field::JoltField, poly::opening_proof::VerifierOpeningAccumulator,
+    utils::errors::ProofVerifyError,
+};
 
 pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -30,7 +33,10 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
     }
 
     /// Returns the initial claim of this sumcheck instance.
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+    fn input_claim(
+        &self,
+        accumulator: &VerifierOpeningAccumulator<F>,
+    ) -> Result<F, ProofVerifyError> {
         self.get_params().input_claim(accumulator)
     }
 
@@ -39,7 +45,7 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F;
+    ) -> Result<F, ProofVerifyError>;
 
     /// Enqueue any openings needed after sumcheck completes.
     /// r is the instance-local slice; instance normalizes internally.
@@ -48,7 +54,7 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
-    );
+    ) -> Result<(), ProofVerifyError>;
 }
 
 pub trait SumcheckInstanceParams<F: JoltField> {
@@ -59,7 +65,7 @@ pub trait SumcheckInstanceParams<F: JoltField> {
     fn num_rounds(&self) -> usize;
 
     /// Returns the initial claim of this sumcheck instance.
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F;
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError>;
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F>;
 }

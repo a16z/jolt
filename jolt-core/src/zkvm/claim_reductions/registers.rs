@@ -16,6 +16,7 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
+use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::witness::VirtualPolynomial;
@@ -38,33 +39,37 @@ impl<F: JoltField> RegistersClaimReductionSumcheckParams<F> {
         trace_len: usize,
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_sqr = gamma.square();
         let (r_spartan, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
-        );
-        Self {
+        )?;
+        Ok(Self {
             gamma,
             gamma_sqr,
             n_cycle_vars: trace_len.log_2(),
             r_spartan,
-        }
+        })
     }
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for RegistersClaimReductionSumcheckParams<F> {
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
         let (_, rd_write_value_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWriteValue,
             SumcheckId::SpartanOuter,
-        );
-        let (_, rs1_value_claim) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let (_, rs2_value_claim) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
-        rd_write_value_claim + self.gamma * rs1_value_claim + self.gamma_sqr * rs2_value_claim
+        )?;
+        let (_, rs1_value_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::SpartanOuter,
+        )?;
+        let (_, rs2_value_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::SpartanOuter,
+        )?;
+        Ok(rd_write_value_claim + self.gamma * rs1_value_claim + self.gamma_sqr * rs2_value_claim)
     }
 
     fn degree(&self) -> usize {
@@ -426,9 +431,10 @@ impl<F: JoltField> RegistersClaimReductionSumcheckVerifier<F> {
         trace_len: usize,
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
-        let params = RegistersClaimReductionSumcheckParams::new(trace_len, accumulator, transcript);
-        Self { params }
+    ) -> Result<Self, ProofVerifyError> {
+        let params =
+            RegistersClaimReductionSumcheckParams::new(trace_len, accumulator, transcript)?;
+        Ok(Self { params })
     }
 }
 
@@ -443,32 +449,32 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         let (r_spartan, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWriteValue,
             SumcheckId::SpartanOuter,
-        );
+        )?;
 
         let (_, rd_write_value_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWriteValue,
             SumcheckId::RegistersClaimReduction,
-        );
+        )?;
         let (_, rs1_read_value_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs1Value,
             SumcheckId::RegistersClaimReduction,
-        );
+        )?;
         let (_, rs2_read_value_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs2Value,
             SumcheckId::RegistersClaimReduction,
-        );
+        )?;
 
-        EqPolynomial::mle(&opening_point.r, &r_spartan.r)
+        Ok(EqPolynomial::mle(&opening_point.r, &r_spartan.r)
             * (rd_write_value_claim
                 + self.params.gamma * rs1_read_value_claim
-                + self.params.gamma_sqr * rs2_read_value_claim)
+                + self.params.gamma_sqr * rs2_read_value_claim))
     }
 
     fn cache_openings(
@@ -476,7 +482,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
@@ -485,18 +491,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             VirtualPolynomial::RdWriteValue,
             SumcheckId::RegistersClaimReduction,
             opening_point.clone(),
-        );
+        )?;
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::Rs1Value,
             SumcheckId::RegistersClaimReduction,
             opening_point.clone(),
-        );
+        )?;
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::Rs2Value,
             SumcheckId::RegistersClaimReduction,
             opening_point,
-        );
+        )?;
+        Ok(())
     }
 }

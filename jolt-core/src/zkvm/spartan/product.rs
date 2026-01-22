@@ -22,6 +22,7 @@ use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckIns
 use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
 use crate::transcripts::Transcript;
 use crate::utils::accumulation::Acc8S;
+use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -85,10 +86,10 @@ impl<F: JoltField> ProductVirtualUniSkipParams<F> {
     pub fn new<T: Transcript>(
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut T,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         // Reuse r_cycle from Stage 1 (outer) for τ_low, and sample τ_high
         let r_cycle = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter)
+            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter)?
             .0
             .r;
         let tau_high = transcript.challenge_scalar_optimized::<F>();
@@ -98,15 +99,15 @@ impl<F: JoltField> ProductVirtualUniSkipParams<F> {
         let mut base_evals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
         for (i, cons) in PRODUCT_CONSTRAINTS.iter().enumerate() {
             let (_, eval) = opening_accumulator
-                .get_virtual_polynomial_opening(cons.output, SumcheckId::SpartanOuter);
+                .get_virtual_polynomial_opening(cons.output, SumcheckId::SpartanOuter)?;
             base_evals[i] = eval;
         }
-        Self { tau, base_evals }
+        Ok(Self { tau, base_evals })
     }
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> {
-    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
         // claim = \sum_i L_i(tau_high) * base_evals[i]
         let tau_high = self.tau[self.tau.len() - 1];
         let w = LagrangePolynomial::<F>::evals::<
@@ -117,7 +118,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> 
         for i in 0..NUM_PRODUCT_VIRTUAL {
             acc += w[i] * self.base_evals[i];
         }
-        acc
+        Ok(acc)
     }
 
     fn degree(&self) -> usize {
@@ -301,9 +302,9 @@ impl<F: JoltField> ProductVirtualUniSkipVerifier<F> {
     pub fn new<T: Transcript>(
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut T,
-    ) -> Self {
-        let params = ProductVirtualUniSkipParams::new(opening_accumulator, transcript);
-        Self { params }
+    ) -> Result<Self, ProofVerifyError> {
+        let params = ProductVirtualUniSkipParams::new(opening_accumulator, transcript)?;
+        Ok(Self { params })
     }
 }
 
@@ -318,8 +319,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self,
         _accumulator: &VerifierOpeningAccumulator<F>,
         _sumcheck_challenges: &[<F as JoltField>::Challenge],
-    ) -> F {
-        unimplemented!("Unused for univariate skip")
+    ) -> Result<F, ProofVerifyError> {
+        Err(ProofVerifyError::InternalError)
     }
 
     fn cache_openings(
@@ -327,7 +328,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         debug_assert_eq!(opening_point.len(), 1);
         accumulator.append_virtual(
@@ -335,7 +336,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanProductVirtualization,
             opening_point,
-        );
+        )?;
+        Ok(())
     }
 }
 
@@ -354,19 +356,19 @@ impl<F: JoltField> ProductVirtualRemainderParams<F> {
         trace_len: usize,
         uni_skip_params: ProductVirtualUniSkipParams<F>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let (r_uni_skip, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanProductVirtualization,
-        );
+        )?;
         debug_assert_eq!(r_uni_skip.len(), 1);
         let r0 = r_uni_skip[0];
 
-        Self {
+        Ok(Self {
             n_cycle_vars: trace_len.log_2(),
             tau: uni_skip_params.tau,
             r0,
-        }
+        })
     }
 }
 
@@ -379,12 +381,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
         PRODUCT_VIRTUAL_REMAINDER_DEGREE
     }
 
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
         let (_, uni_skip_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanProductVirtualization,
-        );
-        uni_skip_claim
+        )?;
+        Ok(uni_skip_claim)
     }
 
     fn normalize_opening_point(
@@ -649,10 +651,10 @@ impl<F: JoltField> ProductVirtualRemainderVerifier<F> {
         trace_len: usize,
         uni_skip_params: ProductVirtualUniSkipParams<F>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let params =
-            ProductVirtualRemainderParams::new(trace_len, uni_skip_params, opening_accumulator);
-        Self { params }
+            ProductVirtualRemainderParams::new(trace_len, uni_skip_params, opening_accumulator)?;
+        Ok(Self { params })
     }
 }
 
@@ -667,7 +669,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         // Lagrange weights at r0
         let w = LagrangePolynomial::<F>::evals::<
             F::Challenge,
@@ -680,49 +682,49 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 VirtualPolynomial::LeftInstructionInput,
                 SumcheckId::SpartanProductVirtualization,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
         let r_inst = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RightInstructionInput,
                 SumcheckId::SpartanProductVirtualization,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
         let is_rd_not_zero = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
                 SumcheckId::SpartanProductVirtualization,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
         let wl_flag = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
                 SumcheckId::SpartanProductVirtualization,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
         let j_flag = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::OpFlags(CircuitFlags::Jump),
                 SumcheckId::SpartanProductVirtualization,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
         let lookup_out = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupOutput,
                 SumcheckId::SpartanProductVirtualization,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
         let branch_flag = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
                 SumcheckId::SpartanProductVirtualization,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
         let next_is_noop = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::NextIsNoop,
                 SumcheckId::SpartanProductVirtualization,
             )
-            .1;
+            .map(|(_, claim)| claim)?;
 
         let fused_left = w[0] * l_inst
             + w[1] * is_rd_not_zero
@@ -746,7 +748,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             sumcheck_challenges.iter().rev().copied().collect();
         let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
 
-        tau_high_bound_r0 * tau_bound_r_tail_reversed * fused_left * fused_right
+        Ok(tau_high_bound_r0 * tau_bound_r_tail_reversed * fused_left * fused_right)
     }
 
     fn cache_openings(
@@ -754,7 +756,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         for vp in PRODUCT_UNIQUE_FACTOR_VIRTUALS.iter() {
             accumulator.append_virtual(
@@ -762,7 +764,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 *vp,
                 SumcheckId::SpartanProductVirtualization,
                 opening_point.clone(),
-            );
+            )?;
         }
+        Ok(())
     }
 }

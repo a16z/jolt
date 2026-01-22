@@ -418,7 +418,8 @@ impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscript<'a, T> {
             .transcript
             .as_mut()
             .expect("Transcript not initialized");
-        jolt_to_ark(&transcript.challenge_scalar::<Fr>())
+        let scalar = transcript.challenge_scalar::<Fr>();
+        jolt_to_ark(&scalar)
     }
 
     fn reset(&mut self, _domain_label: &[u8]) {

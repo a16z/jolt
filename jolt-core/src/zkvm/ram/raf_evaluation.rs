@@ -26,7 +26,7 @@ use crate::{
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec},
+    utils::{errors::ProofVerifyError, math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{config::OneHotParams, ram::remap_address, witness::VirtualPolynomial},
 };
 
@@ -56,18 +56,18 @@ impl<F: JoltField> RafEvaluationSumcheckParams<F> {
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let start_address = memory_layout.get_lowest_address();
         let log_K = one_hot_params.ram_k.log_2();
         let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamAddress,
             SumcheckId::SpartanOuter,
-        );
-        Self {
+        )?;
+        Ok(Self {
             log_K,
             start_address,
             r_cycle,
-        }
+        })
     }
 }
 
@@ -80,12 +80,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> 
         self.log_K
     }
 
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
         let (_, raf_input_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamAddress,
             SumcheckId::SpartanOuter,
-        );
-        raf_input_claim
+        )?;
+        Ok(raf_input_claim)
     }
 
     fn normalize_opening_point(
@@ -253,10 +253,10 @@ impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let params =
-            RafEvaluationSumcheckParams::new(memory_layout, one_hot_params, opening_accumulator);
-        Self { params }
+            RafEvaluationSumcheckParams::new(memory_layout, one_hot_params, opening_accumulator)?;
+        Ok(Self { params })
     }
 }
 
@@ -271,18 +271,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         // Compute unmap evaluation at r
         let unmap_eval =
             UnmapRamAddressPolynomial::<F>::new(self.params.log_K, self.params.start_address)
                 .evaluate(&r.r);
 
-        let (_, ra_input_claim) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
+        let (_, ra_input_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamRafEvaluation,
+        )?;
 
         // Return unmap(r) * ra(r)
-        unmap_eval * ra_input_claim
+        Ok(unmap_eval * ra_input_claim)
     }
 
     fn cache_openings(
@@ -290,7 +292,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let r_address = self.params.normalize_opening_point(sumcheck_challenges);
         let r_cycle = &self.params.r_cycle;
         let ra_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle.r].concat());
@@ -299,6 +301,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             VirtualPolynomial::RamRa,
             SumcheckId::RamRafEvaluation,
             ra_opening_point,
-        );
+        )?;
+        Ok(())
     }
 }

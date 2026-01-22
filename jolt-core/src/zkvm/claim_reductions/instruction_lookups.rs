@@ -17,6 +17,7 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
+use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::instruction::LookupQuery;
@@ -40,37 +41,39 @@ impl<F: JoltField> InstructionLookupsClaimReductionSumcheckParams<F> {
         trace_len: usize,
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
+    ) -> Result<Self, ProofVerifyError> {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_sqr = gamma.square();
         let (r_spartan, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
-        );
-        Self {
+        )?;
+        Ok(Self {
             gamma,
             gamma_sqr,
             n_cycle_vars: trace_len.log_2(),
             r_spartan,
-        }
+        })
     }
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductionSumcheckParams<F> {
-    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> Result<F, ProofVerifyError> {
         let (_, lookup_output_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
-        );
+        )?;
         let (_, left_operand_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::SpartanOuter,
-        );
+        )?;
         let (_, right_operand_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::SpartanOuter,
-        );
-        lookup_output_claim + self.gamma * left_operand_claim + self.gamma_sqr * right_operand_claim
+        )?;
+        Ok(lookup_output_claim
+            + self.gamma * left_operand_claim
+            + self.gamma_sqr * right_operand_claim)
     }
 
     fn degree(&self) -> usize {
@@ -443,10 +446,13 @@ impl<F: JoltField> InstructionLookupsClaimReductionSumcheckVerifier<F> {
         trace_len: usize,
         accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
-        let params =
-            InstructionLookupsClaimReductionSumcheckParams::new(trace_len, accumulator, transcript);
-        Self { params }
+    ) -> Result<Self, ProofVerifyError> {
+        let params = InstructionLookupsClaimReductionSumcheckParams::new(
+            trace_len,
+            accumulator,
+            transcript,
+        )?;
+        Ok(Self { params })
     }
 }
 
@@ -461,32 +467,32 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         &self,
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    ) -> Result<F, ProofVerifyError> {
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         let (r_spartan, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
-        );
+        )?;
 
         let (_, lookup_output_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
-        );
+        )?;
         let (_, left_lookup_operand_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::InstructionClaimReduction,
-        );
+        )?;
         let (_, right_lookup_operand_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
-        );
+        )?;
 
-        EqPolynomial::mle(&opening_point.r, &r_spartan.r)
+        Ok(EqPolynomial::mle(&opening_point.r, &r_spartan.r)
             * (lookup_output_claim
                 + self.params.gamma * left_lookup_operand_claim
-                + self.params.gamma_sqr * right_lookup_operand_claim)
+                + self.params.gamma_sqr * right_lookup_operand_claim))
     }
 
     fn cache_openings(
@@ -494,7 +500,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
-    ) {
+    ) -> Result<(), ProofVerifyError> {
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
@@ -503,18 +509,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
             opening_point.clone(),
-        );
+        )?;
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::InstructionClaimReduction,
             opening_point.clone(),
-        );
+        )?;
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
             opening_point,
-        );
+        )?;
+        Ok(())
     }
 }

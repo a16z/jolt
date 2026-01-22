@@ -25,6 +25,7 @@ use rand_core::SeedableRng;
 use rayon::prelude::*;
 use sha3::{Digest, Sha3_256};
 use std::borrow::Borrow;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use tracing::trace_span;
 
 #[derive(Clone)]
@@ -169,15 +170,34 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
-        dory::verify::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _>(
-            *commitment,
-            ark_eval,
-            &ark_point,
-            proof,
-            setup.clone().into_inner(),
-            &mut dory_transcript,
-        )
-        .map_err(|_| ProofVerifyError::InternalError)?;
+        // dory-pcs is an external dependency and still contains some `assert!/expect!/panic!`
+        // sites on malformed inputs. Wrap in catch_unwind to keep the Jolt verifier panic-free.
+        let verify_result = catch_unwind(AssertUnwindSafe(|| {
+            dory::verify::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _>(
+                *commitment,
+                ark_eval,
+                &ark_point,
+                proof,
+                setup.clone().into_inner(),
+                &mut dory_transcript,
+            )
+        }));
+        match verify_result {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => return Err(ProofVerifyError::DoryError(err.to_string())),
+            Err(panic_payload) => {
+                let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic payload".to_string()
+                };
+                return Err(ProofVerifyError::DoryError(format!(
+                    "dory-pcs verifier panicked: {msg}"
+                )));
+            }
+        }
 
         Ok(())
     }

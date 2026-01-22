@@ -25,6 +25,29 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge;
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge>;
     fn challenge_scalar_powers_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F>;
+
+    /// Returns exactly 32 bytes of challenge data from the transcript.
+    fn challenge_bytes32(&mut self) -> [u8; 32];
+
+    /// Fills `out` with challenge bytes. Uses `ceil(out.len()/32)` hash calls.
+    /// Empty `out` returns immediately without advancing transcript.
+    fn challenge_bytes(&mut self, out: &mut [u8]) {
+        let mut remaining = out;
+        while remaining.len() > 32 {
+            let rand = self.challenge_bytes32();
+            let (chunk, rest) = remaining.split_at_mut(32);
+            for (dst, src) in chunk.iter_mut().zip(rand.iter()) {
+                *dst = *src;
+            }
+            remaining = rest;
+        }
+        if !remaining.is_empty() {
+            let rand = self.challenge_bytes32();
+            for (dst, src) in remaining.iter_mut().zip(rand.iter()) {
+                *dst = *src;
+            }
+        }
+    }
 }
 
 pub trait AppendToTranscript {

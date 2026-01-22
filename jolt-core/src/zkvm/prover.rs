@@ -746,7 +746,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Stage 2a: Prove univariate-skip first round for product virtualization
         let uni_skip_params =
-            ProductVirtualUniSkipParams::new(&self.opening_accumulator, &mut self.transcript);
+            ProductVirtualUniSkipParams::new(&self.opening_accumulator, &mut self.transcript)
+                .expect("prover should have univariate skip opening");
         let mut uni_skip =
             ProductVirtualUniSkipProver::initialize(uni_skip_params.clone(), &self.trace);
         let first_round_proof = prove_uniskip_round(
@@ -760,19 +761,22 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.trace.len(),
             uni_skip_params,
             &self.opening_accumulator,
-        );
+        )
+        .expect("prover should have univariate skip opening");
         let ram_raf_evaluation_params = RafEvaluationSumcheckParams::new(
             &self.program_io.memory_layout,
             &self.one_hot_params,
             &self.opening_accumulator,
-        );
+        )
+        .expect("prover should have RamAddress opening");
         let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
             &self.opening_accumulator,
             &mut self.transcript,
             &self.one_hot_params,
             self.trace.len(),
             &self.rw_config,
-        );
+        )
+        .expect("prover should have RamReadValue opening");
         let ram_output_check_params = OutputSumcheckParams::new(
             self.one_hot_params.ram_k,
             &self.program_io,
@@ -783,7 +787,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 self.trace.len(),
                 &self.opening_accumulator,
                 &mut self.transcript,
-            );
+            )
+            .expect("prover should have instruction lookups claim reduction openings");
 
         // Initialization
         let spartan_product_virtual_remainder = ProductVirtualRemainderProver::initialize(
@@ -862,14 +867,17 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.trace.len().log_2(),
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        )
+        .expect("prover should have Spartan openings");
         let spartan_instruction_input_params =
-            InstructionInputParams::new(&self.opening_accumulator, &mut self.transcript);
+            InstructionInputParams::new(&self.opening_accumulator, &mut self.transcript)
+                .expect("prover should have instruction input openings");
         let spartan_registers_claim_reduction_params = RegistersClaimReductionSumcheckParams::new(
             self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        )
+        .expect("prover should have registers claim reduction openings");
 
         // Initialize
         let spartan_shift = ShiftSumcheckProver::initialize(
@@ -942,7 +950,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.opening_accumulator,
             &mut self.transcript,
             &self.rw_config,
-        );
+        )
+        .expect("prover should have register openings");
         let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -1007,19 +1016,22 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
         let registers_val_evaluation_params =
-            RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
+            RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator)
+                .expect("prover should have RegistersVal opening");
         let ram_ra_reduction_params = RaReductionParams::new(
             self.trace.len(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        )
+        .expect("prover should have RAM RA reduction openings");
         let lookups_read_raf_params = InstructionReadRafSumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        )
+        .expect("prover should have lookup reduction opening");
 
         let registers_val_evaluation = RegistersValEvaluationSumcheckProver::initialize(
             registers_val_evaluation_params,
@@ -1080,33 +1092,39 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        )
+        .expect("prover should have bytecode openings");
 
         let ram_hamming_booleanity_params =
-            HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
+            HammingBooleanitySumcheckParams::new(&self.opening_accumulator)
+                .expect("prover should have RAM hamming booleanity openings");
 
         let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        )
+        .expect("prover should have booleanity openings");
 
         let ram_ra_virtual_params = RamRaVirtualParams::new(
             self.trace.len(),
             &self.one_hot_params,
             &self.opening_accumulator,
-        );
+        )
+        .expect("prover should have RamRa reduction opening");
         let lookups_ra_virtual_params = InstructionRaSumcheckParams::new(
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        )
+        .expect("prover should have lookups RA virtual openings");
         let inc_reduction_params = IncClaimReductionSumcheckParams::new(
             self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        )
+        .expect("prover should have inc claim reduction openings");
 
         // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
         if self.advice.trusted_advice_polynomial.is_some() {
@@ -1118,7 +1136,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &mut self.transcript,
                 self.rw_config
                     .needs_single_advice_opening(self.trace.len().log_2()),
-            );
+            )
+            .expect("prover should have trusted advice opening");
             // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
             // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.
             self.advice_reduction_prover_trusted = {
@@ -1143,7 +1162,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &mut self.transcript,
                 self.rw_config
                     .needs_single_advice_opening(self.trace.len().log_2()),
-            );
+            )
+            .expect("prover should have untrusted advice opening");
             // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
             // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.
             self.advice_reduction_prover_untrusted = {
@@ -1248,7 +1268,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        )
+        .expect("prover should have hamming weight claim reduction openings");
         let hw_prover = HammingWeightClaimReductionProver::initialize(
             hw_params,
             &self.trace,
@@ -1324,10 +1345,13 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Get the unified opening point from HammingWeightClaimReduction
         // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
-        let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::InstructionRa(0),
-            SumcheckId::HammingWeightClaimReduction,
-        );
+        let (opening_point, _) = self
+            .opening_accumulator
+            .get_committed_polynomial_opening(
+                CommittedPolynomial::InstructionRa(0),
+                SumcheckId::HammingWeightClaimReduction,
+            )
+            .expect("prover should have HammingWeightClaimReduction openings");
         let log_k_chunk = self.one_hot_params.log_k_chunk;
         let r_address_stage7 = &opening_point.r[..log_k_chunk];
 
@@ -1336,16 +1360,20 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
         // These are at r_cycle_stage6 only (length log_T)
-        let (_ram_inc_point, ram_inc_claim) =
-            self.opening_accumulator.get_committed_polynomial_opening(
+        let (_ram_inc_point, ram_inc_claim) = self
+            .opening_accumulator
+            .get_committed_polynomial_opening(
                 CommittedPolynomial::RamInc,
                 SumcheckId::IncClaimReduction,
-            );
-        let (_rd_inc_point, rd_inc_claim) =
-            self.opening_accumulator.get_committed_polynomial_opening(
+            )
+            .expect("prover should have RamInc opening");
+        let (_rd_inc_point, rd_inc_claim) = self
+            .opening_accumulator
+            .get_committed_polynomial_opening(
                 CommittedPolynomial::RdInc,
                 SumcheckId::IncClaimReduction,
-            );
+            )
+            .expect("prover should have RdInc opening");
 
         #[cfg(test)]
         {
@@ -1375,24 +1403,33 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
         // These are at (r_address_stage7, r_cycle_stage6)
         for i in 0..self.one_hot_params.instruction_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::InstructionRa(i),
-                SumcheckId::HammingWeightClaimReduction,
-            );
+            let (_, claim) = self
+                .opening_accumulator
+                .get_committed_polynomial_opening(
+                    CommittedPolynomial::InstructionRa(i),
+                    SumcheckId::HammingWeightClaimReduction,
+                )
+                .expect("prover should have InstructionRa opening");
             polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
         }
         for i in 0..self.one_hot_params.bytecode_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::BytecodeRa(i),
-                SumcheckId::HammingWeightClaimReduction,
-            );
+            let (_, claim) = self
+                .opening_accumulator
+                .get_committed_polynomial_opening(
+                    CommittedPolynomial::BytecodeRa(i),
+                    SumcheckId::HammingWeightClaimReduction,
+                )
+                .expect("prover should have BytecodeRa opening");
             polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
         }
         for i in 0..self.one_hot_params.ram_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::RamRa(i),
-                SumcheckId::HammingWeightClaimReduction,
-            );
+            let (_, claim) = self
+                .opening_accumulator
+                .get_committed_polynomial_opening(
+                    CommittedPolynomial::RamRa(i),
+                    SumcheckId::HammingWeightClaimReduction,
+                )
+                .expect("prover should have RamRa opening");
             polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
         }
 
@@ -1402,6 +1439,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         if let Some((advice_point, advice_claim)) = self
             .opening_accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
+            .expect("prover should have trusted advice opening lookup")
         {
             #[cfg(test)]
             {
@@ -1420,6 +1458,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         if let Some((advice_point, advice_claim)) = self
             .opening_accumulator
             .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
+            .expect("prover should have untrusted advice opening lookup")
         {
             #[cfg(test)]
             {
@@ -2076,7 +2115,8 @@ mod tests {
             .get_committed_polynomial_opening(
                 CommittedPolynomial::InstructionRa(0),
                 SumcheckId::HammingWeightClaimReduction,
-            );
+            )
+            .expect("test should have HammingWeightClaimReduction opening");
         let mut point_dory_le = opening_point.r.clone();
         point_dory_le.reverse();
 
@@ -2100,7 +2140,8 @@ mod tests {
         ] {
             let get_fn = debug_info
                 .opening_accumulator
-                .get_advice_opening(kind, SumcheckId::AdviceClaimReduction);
+                .get_advice_opening(kind, SumcheckId::AdviceClaimReduction)
+                .expect("test should have advice opening lookup");
             assert!(
                 get_fn.is_some(),
                 "{name} advice opening missing for AdviceClaimReductionPhase2"
