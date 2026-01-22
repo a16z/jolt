@@ -26,6 +26,96 @@ pub struct RLCStreamingData {
     pub memory_layout: MemoryLayout,
 }
 
+/// Computes the bytecode chunk polynomial contribution to a vector-matrix product.
+///
+/// This is a standalone version of the bytecode VMP computation that can be used
+/// by external callers (e.g., GPU prover) without needing a full `StreamingRLCContext`.
+///
+/// # Arguments
+/// * `result` - Output buffer to accumulate contributions into
+/// * `left_vec` - Left vector for the vector-matrix product (length >= num_rows)
+/// * `num_columns` - Number of columns in the Dory matrix
+/// * `bytecode_polys` - List of (chunk_index, coefficient) pairs for the RLC
+/// * `bytecode` - Bytecode preprocessing data
+/// * `one_hot_params` - One-hot parameters (contains k_chunk)
+pub fn compute_bytecode_vmp_contribution<F: JoltField>(
+    result: &mut [F],
+    left_vec: &[F],
+    num_columns: usize,
+    bytecode_polys: &[(usize, F)],
+    bytecode: &BytecodePreprocessing,
+    one_hot_params: &OneHotParams,
+) {
+    if bytecode_polys.is_empty() {
+        return;
+    }
+
+    let layout = DoryGlobals::get_layout();
+    let k_chunk = one_hot_params.k_chunk;
+    let bytecode_len = bytecode.bytecode.len();
+    let (sigma_bc, _nu_bc) = DoryGlobals::balanced_sigma_nu((k_chunk * bytecode_len).log_2());
+    let bytecode_cols = 1usize << sigma_bc;
+    let total = total_lanes();
+
+    debug_assert!(
+        bytecode_cols <= num_columns,
+        "Bytecode columns (2^{{sigma_bc}}={bytecode_cols}) must fit in main num_columns={num_columns}; \
+guardrail in gen_from_trace should ensure sigma_main >= sigma_bc."
+    );
+
+    for (chunk_idx, coeff) in bytecode_polys.iter() {
+        if coeff.is_zero() {
+            continue;
+        }
+        for (cycle, instr) in bytecode.bytecode.iter().enumerate().take(bytecode_len) {
+            let normalized = instr.normalize();
+            let circuit_flags = <Instruction as Flags>::circuit_flags(instr);
+            let instr_flags = <Instruction as Flags>::instruction_flags(instr);
+            let lookup_idx = <Instruction as InstructionLookup<XLEN>>::lookup_table(instr)
+                .map(|t| LookupTables::<XLEN>::enum_index(&t));
+            let raf_flag =
+                !crate::zkvm::instruction::InterleavedBitsMarker::is_interleaved_operands(
+                    &circuit_flags,
+                );
+
+            let unexpanded_pc = F::from_u64(normalized.address as u64);
+            let imm = F::from_i128(normalized.operands.imm);
+            let rs1 = normalized.operands.rs1;
+            let rs2 = normalized.operands.rs2;
+            let rd = normalized.operands.rd;
+
+            for lane in 0..k_chunk {
+                let global_lane = chunk_idx * k_chunk + lane;
+                if global_lane >= total {
+                    break;
+                }
+                let value = lane_value::<F>(
+                    global_lane,
+                    rs1,
+                    rs2,
+                    rd,
+                    unexpanded_pc,
+                    imm,
+                    &circuit_flags,
+                    &instr_flags,
+                    lookup_idx,
+                    raf_flag,
+                );
+                if value.is_zero() {
+                    continue;
+                }
+                let global_index =
+                    layout.address_cycle_to_index(lane, cycle, k_chunk, bytecode_len);
+                let row_index = global_index / bytecode_cols;
+                let col_index = global_index % bytecode_cols;
+                if row_index < left_vec.len() {
+                    result[col_index] += left_vec[row_index] * (*coeff) * value;
+                }
+            }
+        }
+    }
+}
+
 /// Source of trace data for streaming VMV computation.
 #[derive(Clone, Debug)]
 pub enum TraceSource {
