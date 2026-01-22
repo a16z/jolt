@@ -7,8 +7,8 @@ use crate::subprotocols::read_write_matrix::{
     RegistersAddressMajorEntry, RegistersCycleMajorEntry,
 };
 use crate::subprotocols::sumcheck_claim::{
-    VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
-    SumcheckFrontend,
+    CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
+    VerifierEvaluablePolynomial,
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::ReadWriteConfig;

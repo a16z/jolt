@@ -23,8 +23,8 @@ use crate::{
     },
     subprotocols::{
         sumcheck_claim::{
-            VerifierEvaluationParams, VerifierEvaluablePolynomial, Claim, ClaimExpr, InputOutputClaims,
-            SumcheckFrontend,
+            Claim, InputOutputClaims, SumcheckFrontend, VerifierEvaluablePolynomial,
+            VerifierEvaluationParams,
         },
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
@@ -339,8 +339,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
 impl<F: JoltField> SumcheckFrontend<F> for RafEvaluationSumcheckVerifier<F> {
     fn input_output_claims() -> InputOutputClaims<F> {
-        let ram_address = ClaimExpr::virtual_var(VirtualPolynomial::RamAddress);
-        let ram_ra = ClaimExpr::virtual_var(VirtualPolynomial::RamRa);
+        let ram_address = VirtualPolynomial::RamAddress.into();
+        let ram_ra = VirtualPolynomial::RamRa.into();
 
         InputOutputClaims {
             claims: vec![Claim {

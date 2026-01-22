@@ -303,15 +303,17 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck))
+            .get(&OpeningId::Polynomial(
+                PolynomialId::Virtual(polynomial),
+                sumcheck,
+            ))
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         #[cfg(test)]
         {
             let mut virtual_openings = self.appended_virtual_openings.borrow_mut();
-            if let Some(index) = virtual_openings
-                .iter()
-                .position(|id| id == &OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck))
-            {
+            if let Some(index) = virtual_openings.iter().position(|id| {
+                id == &OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck)
+            }) {
                 virtual_openings.remove(index);
             }
         }
@@ -325,7 +327,10 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck))
+            .get(&OpeningId::Polynomial(
+                PolynomialId::Committed(polynomial),
+                sumcheck,
+            ))
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         (point.clone(), *claim)
     }
@@ -449,7 +454,10 @@ where
         #[cfg(test)]
         self.appended_virtual_openings
             .borrow_mut()
-            .push(OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck));
+            .push(OpeningId::Polynomial(
+                PolynomialId::Virtual(polynomial),
+                sumcheck,
+            ));
     }
 
     pub fn append_untrusted_advice<T: Transcript>(
@@ -498,7 +506,10 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck))
+            .get(&OpeningId::Polynomial(
+                PolynomialId::Virtual(polynomial),
+                sumcheck,
+            ))
             .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
@@ -510,7 +521,10 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck))
+            .get(&OpeningId::Polynomial(
+                PolynomialId::Committed(polynomial),
+                sumcheck,
+            ))
             .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }

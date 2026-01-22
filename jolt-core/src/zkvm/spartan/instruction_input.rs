@@ -17,8 +17,8 @@ use crate::{
     },
     subprotocols::{
         sumcheck_claim::{
-            VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
-            SumcheckFrontend,
+            CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
+            VerifierEvaluablePolynomial,
         },
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},

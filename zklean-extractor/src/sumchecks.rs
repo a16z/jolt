@@ -4,7 +4,7 @@ use jolt_core::{
     field::JoltField,
     poly::opening_proof::{PolynomialId, SumcheckId},
     subprotocols::sumcheck_claim::{
-        VerifierEvaluablePolynomial, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
+        Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend, VerifierEvaluablePolynomial,
     },
     zkvm::{
         ram::read_write_checking::RamReadWriteCheckingVerifier,

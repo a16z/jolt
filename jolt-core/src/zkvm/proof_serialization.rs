@@ -9,7 +9,6 @@ use ark_serialize::{
 use num::FromPrimitive;
 use strum::EnumCount;
 
-use crate::{poly::opening_proof::PolynomialId, subprotocols::univariate_skip::UniSkipFirstRoundProof};
 use crate::{
     field::JoltField,
     poly::{
@@ -23,6 +22,9 @@ use crate::{
         instruction::{CircuitFlags, InstructionFlags},
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
+};
+use crate::{
+    poly::opening_proof::PolynomialId, subprotocols::univariate_skip::UniSkipFirstRoundProof,
 };
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
