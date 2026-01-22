@@ -17,7 +17,7 @@ use crate::{
     },
     subprotocols::{
         sumcheck_claim::{
-            BatchingPolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
+            VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
             OpeningRef, SumcheckFrontend,
         },
         sumcheck_prover::SumcheckInstanceProver,
@@ -664,12 +664,12 @@ impl<F: JoltField> SumcheckFrontend<F> for InstructionInputSumcheckVerifier<F> {
         let left_instruction_input_eval = left_is_rs1 * rs1_value + left_is_pc * unexpanded_pc;
         let right_instruction_input_eval = right_is_rs2 * rs2_value + right_is_imm * imm;
 
-        let eq_r_stage1 = BatchingPolynomial::Eq(CachedPointRef {
+        let eq_r_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
             opening: OpeningRef::Virtual(VirtualPolynomial::LeftInstructionInput),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
         });
-        let eq_r_stage2 = BatchingPolynomial::Eq(CachedPointRef {
+        let eq_r_stage2 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
             opening: OpeningRef::Virtual(VirtualPolynomial::LeftInstructionInput),
             sumcheck: SumcheckId::SpartanProductVirtualization,
             part: ChallengePart::Cycle,

@@ -13,7 +13,7 @@ use crate::subprotocols::read_write_matrix::{
     ReadWriteMatrixCycleMajor,
 };
 use crate::subprotocols::sumcheck_claim::{
-    BatchingPolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
+    VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
     OpeningRef, SumcheckFrontend,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
@@ -759,7 +759,7 @@ impl<F: JoltField> SumcheckFrontend<F> for RamReadWriteCheckingVerifier<F> {
         let ram_val: ClaimExpr<F> = VirtualPolynomial::RamVal.into();
         let ram_inc: ClaimExpr<F> = CommittedPolynomial::RamInc.into();
 
-        let eq_cycle_stage1 = BatchingPolynomial::Eq(CachedPointRef {
+        let eq_cycle_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
             opening: OpeningRef::Virtual(VirtualPolynomial::RamReadValue),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,

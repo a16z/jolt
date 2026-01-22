@@ -4,7 +4,7 @@ use jolt_core::{
     field::JoltField,
     poly::opening_proof::SumcheckId,
     subprotocols::sumcheck_claim::{
-        BatchingPolynomial, Claim, ClaimExpr, InputOutputClaims, OpeningRef, SumcheckFrontend,
+        VerifierEvaluablePolynomial, Claim, ClaimExpr, InputOutputClaims, OpeningRef, SumcheckFrontend,
     },
     zkvm::{
         ram::read_write_checking::RamReadWriteCheckingVerifier,
@@ -173,12 +173,12 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
                         // TODO This function currently only handles constraints quantified by Eq
                         // and EqPlusOne. We should handle the rest.
                         match c.batching_poly {
-                            BatchingPolynomial::Eq(_cached_point_ref) => false,
-                            BatchingPolynomial::EqPlusOne(_cached_point_ref) => true,
-                            BatchingPolynomial::Lt(_cached_point_ref) => todo!(),
-                            BatchingPolynomial::Identity => todo!(),
-                            BatchingPolynomial::UnmapRamAddress => todo!(),
-                            BatchingPolynomial::NoBatching => todo!(),
+                            VerifierEvaluablePolynomial::Eq(_cached_point_ref) => false,
+                            VerifierEvaluablePolynomial::EqPlusOne(_cached_point_ref) => true,
+                            VerifierEvaluablePolynomial::Lt(_cached_point_ref) => todo!(),
+                            VerifierEvaluablePolynomial::Identity => todo!(),
+                            VerifierEvaluablePolynomial::UnmapRamAddress => todo!(),
+                            VerifierEvaluablePolynomial::One => todo!(),
                         }
                     });
                 if !single_step_claims.is_empty() {

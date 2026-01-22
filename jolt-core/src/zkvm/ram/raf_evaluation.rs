@@ -23,7 +23,7 @@ use crate::{
     },
     subprotocols::{
         sumcheck_claim::{
-            BatchingEvaluationParams, BatchingPolynomial, Claim, ClaimExpr, InputOutputClaims,
+            VerifierEvaluationParams, VerifierEvaluablePolynomial, Claim, ClaimExpr, InputOutputClaims,
             SumcheckFrontend,
         },
         sumcheck_prover::SumcheckInstanceProver,
@@ -291,7 +291,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         let eval_params =
-            BatchingEvaluationParams::new(self.params.log_K, self.params.start_address);
+            VerifierEvaluationParams::new(self.params.log_K, self.params.start_address);
         let result = Self::input_output_claims().expected_output_claim_with_batching_parameters(
             &eval_params,
             &r,
@@ -346,7 +346,7 @@ impl<F: JoltField> SumcheckFrontend<F> for RafEvaluationSumcheckVerifier<F> {
             claims: vec![Claim {
                 input_sumcheck_id: SumcheckId::SpartanOuter,
                 input_claim_expr: ram_address,
-                batching_poly: BatchingPolynomial::UnmapRamAddress,
+                batching_poly: VerifierEvaluablePolynomial::UnmapRamAddress,
                 expected_output_claim_expr: ram_ra,
             }],
             output_sumcheck_id: SumcheckId::RamRafEvaluation,

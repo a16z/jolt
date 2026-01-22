@@ -6,7 +6,7 @@ use crate::subprotocols::read_write_matrix::{
     RegistersAddressMajorEntry, RegistersCycleMajorEntry,
 };
 use crate::subprotocols::sumcheck_claim::{
-    BatchingPolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
+    VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
     OpeningRef, SumcheckFrontend,
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
@@ -952,7 +952,7 @@ impl<F: JoltField> SumcheckFrontend<F> for RegistersReadWriteCheckingVerifier<F>
         let rd_wa: ClaimExpr<F> = VirtualPolynomial::RdWa.into();
         let rd_inc: ClaimExpr<F> = CommittedPolynomial::RdInc.into();
 
-        let eq_r_stage1 = BatchingPolynomial::Eq(CachedPointRef {
+        let eq_r_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
             opening: OpeningRef::Virtual(VirtualPolynomial::RdWriteValue),
             sumcheck: SumcheckId::RegistersClaimReduction,
             part: ChallengePart::Cycle,

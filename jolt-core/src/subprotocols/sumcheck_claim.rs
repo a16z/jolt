@@ -78,25 +78,25 @@ impl CachedPointRef {
     }
 }
 
-/// These are parameters needed to evaluate some batching polynomials, but not all. They're
-/// available in only some sumcheck verifier instances, so we allow them to be options.
+/// These are parameters needed to evaluate some verifier evaluable polynomials, but not all.
+/// They're available in only some sumcheck verifier instances, so we allow them to be options.
 // TODO: Find a better way to do this
 #[derive(Debug, Clone)]
-pub struct BatchingEvaluationParams {
+pub struct VerifierEvaluationParams {
     ram_k: Option<usize>,
     ram_start_address: Option<u64>,
 }
 
-impl BatchingEvaluationParams {
+impl VerifierEvaluationParams {
     pub fn new(ram_k: usize, ram_start_address: u64) -> Self {
-        BatchingEvaluationParams {
+        VerifierEvaluationParams {
             ram_k: Some(ram_k),
             ram_start_address: Some(ram_start_address),
         }
     }
 
     pub fn empty() -> Self {
-        BatchingEvaluationParams {
+        VerifierEvaluationParams {
             ram_k: None,
             ram_start_address: None,
         }
@@ -104,7 +104,7 @@ impl BatchingEvaluationParams {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BatchingPolynomial {
+pub enum VerifierEvaluablePolynomial {
     Eq(CachedPointRef),
     EqPlusOne(CachedPointRef),
     Lt(CachedPointRef),
@@ -112,33 +112,33 @@ pub enum BatchingPolynomial {
     // TODO: We could handle this using Identity, but we would need to add binary ops and constants
     // within this struct.
     UnmapRamAddress,
-    NoBatching,
+    One,
 }
 
-impl BatchingPolynomial {
+impl VerifierEvaluablePolynomial {
     fn evaluate<F: JoltField>(
         &self,
-        eval_params: &BatchingEvaluationParams,
+        eval_params: &VerifierEvaluationParams,
         r: &OpeningPoint<BIG_ENDIAN, F>,
         acc: &impl OpeningAccumulator<F>,
     ) -> F {
         match self {
-            BatchingPolynomial::Eq(point_ref) => {
+            VerifierEvaluablePolynomial::Eq(point_ref) => {
                 let tau = point_ref.get_point(r.len(), acc);
                 EqPolynomial::mle_endian(&tau, r)
             }
-            BatchingPolynomial::EqPlusOne(point_ref) => {
+            VerifierEvaluablePolynomial::EqPlusOne(point_ref) => {
                 let tau = point_ref.get_point(r.len(), acc);
                 EqPlusOnePolynomial::new(tau.r).evaluate(&r.r)
             }
-            BatchingPolynomial::Lt(_opening_ref) => todo!(),
-            BatchingPolynomial::Identity => todo!(),
-            BatchingPolynomial::UnmapRamAddress => UnmapRamAddressPolynomial::<F>::new(
+            VerifierEvaluablePolynomial::Lt(_opening_ref) => todo!(),
+            VerifierEvaluablePolynomial::Identity => todo!(),
+            VerifierEvaluablePolynomial::UnmapRamAddress => UnmapRamAddressPolynomial::<F>::new(
                 eval_params.ram_k.unwrap(),
                 eval_params.ram_start_address.unwrap(),
             )
             .evaluate(&r.r),
-            BatchingPolynomial::NoBatching => F::one(),
+            VerifierEvaluablePolynomial::One => F::one(),
         }
     }
 }
@@ -225,7 +225,7 @@ impl<F> Sub for ClaimExpr<F> {
 pub struct Claim<F: JoltField> {
     pub input_sumcheck_id: SumcheckId,
     pub input_claim_expr: ClaimExpr<F>,
-    pub batching_poly: BatchingPolynomial,
+    pub batching_poly: VerifierEvaluablePolynomial,
     pub expected_output_claim_expr: ClaimExpr<F>,
 }
 
@@ -255,18 +255,18 @@ impl<F: JoltField> InputOutputClaims<F> {
         gamma_pows: &[F],
         acc: &impl OpeningAccumulator<F>,
     ) -> F {
-        let eval_params = BatchingEvaluationParams::empty();
+        let eval_params = VerifierEvaluationParams::empty();
         self.expected_output_claim_with_batching_parameters(&eval_params, r, gamma_pows, acc)
     }
 
     pub fn expected_output_claim_with_batching_parameters(
         &self,
-        eval_params: &BatchingEvaluationParams,
+        eval_params: &VerifierEvaluationParams,
         r: &OpeningPoint<BIG_ENDIAN, F>,
         gamma_pows: &[F],
         acc: &impl OpeningAccumulator<F>,
     ) -> F {
-        let mut batching_poly_eval_cache: HashMap<BatchingPolynomial, F> = HashMap::new();
+        let mut batching_poly_eval_cache: HashMap<VerifierEvaluablePolynomial, F> = HashMap::new();
 
         self.claims
             .iter()

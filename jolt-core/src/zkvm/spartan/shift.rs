@@ -18,7 +18,7 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_claim::{
-    BatchingPolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
+    VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
     OpeningRef, SumcheckFrontend,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
@@ -411,12 +411,12 @@ impl<F: JoltField> SumcheckFrontend<F> for ShiftSumcheckVerifier<F> {
         let is_noop: ClaimExpr<F> =
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop).into();
 
-        let outer_sumcheck_r = BatchingPolynomial::EqPlusOne(CachedPointRef {
+        let outer_sumcheck_r = VerifierEvaluablePolynomial::EqPlusOne(CachedPointRef {
             opening: OpeningRef::Virtual(VirtualPolynomial::NextPC),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
         });
-        let product_sumcheck_r = BatchingPolynomial::EqPlusOne(CachedPointRef {
+        let product_sumcheck_r = VerifierEvaluablePolynomial::EqPlusOne(CachedPointRef {
             opening: OpeningRef::Virtual(VirtualPolynomial::NextIsNoop),
             sumcheck: SumcheckId::SpartanProductVirtualization,
             part: ChallengePart::Cycle,

@@ -7,7 +7,7 @@ use crate::poly::opening_proof::{
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_claim::{
-    BatchingPolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
+    VerifierEvaluablePolynomial, CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims,
     OpeningRef, SumcheckFrontend,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
@@ -239,7 +239,7 @@ impl<F: JoltField> SumcheckFrontend<F> for HammingBooleanitySumcheckVerifier<F> 
         let ram_hamming_weight: ClaimExpr<F> = VirtualPolynomial::RamHammingWeight.into();
         let ram_hamming_weight_squared = ram_hamming_weight.clone() * ram_hamming_weight.clone();
 
-        let eq_r_stage1 = BatchingPolynomial::Eq(CachedPointRef {
+        let eq_r_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
             opening: OpeningRef::Virtual(VirtualPolynomial::LookupOutput),
             sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
