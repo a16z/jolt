@@ -345,26 +345,32 @@ impl BatchedSumcheck {
         // Collect output constraints and challenge values from each sumcheck instance
         let output_constraints: Vec<_> = sumcheck_instances
             .iter()
-            .map(|sumcheck| sumcheck.output_claim_constraint())
+            .map(|sumcheck| sumcheck.get_params().output_claim_constraint())
             .collect();
 
         let constraint_challenge_values: Vec<Vec<F>> = sumcheck_instances
             .iter()
             .map(|sumcheck| {
                 let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
-                sumcheck.output_constraint_challenge_values(r_slice)
+                sumcheck
+                    .get_params()
+                    .output_constraint_challenge_values(r_slice)
             })
             .collect();
 
         // Collect input constraints and challenge values from each sumcheck instance
         let input_constraints: Vec<_> = sumcheck_instances
             .iter()
-            .map(|sumcheck| sumcheck.input_claim_constraint())
+            .map(|sumcheck| sumcheck.get_params().input_claim_constraint())
             .collect();
 
         let input_constraint_challenge_values: Vec<Vec<F>> = sumcheck_instances
             .iter()
-            .map(|sumcheck| sumcheck.input_constraint_challenge_values(opening_accumulator))
+            .map(|sumcheck| {
+                sumcheck
+                    .get_params()
+                    .input_constraint_challenge_values(opening_accumulator)
+            })
             .collect();
 
         // Store ZK data in accumulator for BlindFold to retrieve later

@@ -191,46 +191,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let ra_opening =
-            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRaClaimReduction);
-
-        let terms = vec![ProductTerm::scaled(
-            ValueSource::Challenge(0),
-            vec![ValueSource::Opening(ra_opening)],
-        )];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        let r_address_reduced: Vec<_> = sumcheck_challenges[..self.params.log_K]
-            .iter()
-            .rev()
-            .copied()
-            .collect();
-        let r_cycle_reduced: Vec<_> = sumcheck_challenges[self.params.log_K..]
-            .iter()
-            .rev()
-            .copied()
-            .collect();
-
-        let eq_addr_1 = EqPolynomial::<F>::mle(&self.params.r_address_1, &r_address_reduced);
-        let eq_addr_2 = EqPolynomial::<F>::mle(&self.params.r_address_2, &r_address_reduced);
-
-        let eq_cycle_raf = EqPolynomial::<F>::mle(&self.params.r_cycle_raf, &r_cycle_reduced);
-        let eq_cycle_rw = EqPolynomial::<F>::mle(&self.params.r_cycle_rw, &r_cycle_reduced);
-        let eq_cycle_val = EqPolynomial::<F>::mle(&self.params.r_cycle_val, &r_cycle_reduced);
-
-        let eq_cycle_A = eq_cycle_raf + self.params.gamma * eq_cycle_val;
-        let eq_cycle_B = eq_cycle_rw + self.params.gamma * eq_cycle_val;
-
-        let eq_combined =
-            eq_addr_1 * eq_cycle_A + self.params.gamma_squared * eq_addr_2 * eq_cycle_B;
-
-        vec![eq_combined]
-    }
 }
 
 /// State for address rounds (first log_K rounds).
@@ -1057,6 +1017,45 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
 
         OpeningPoint::<BIG_ENDIAN, F>::new([r_address_be, r_cycle_be].concat())
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let ra_opening =
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRaClaimReduction);
+
+        let terms = vec![ProductTerm::scaled(
+            ValueSource::Challenge(0),
+            vec![ValueSource::Opening(ra_opening)],
+        )];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r_address_reduced: Vec<_> = sumcheck_challenges[..self.log_K]
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+        let r_cycle_reduced: Vec<_> = sumcheck_challenges[self.log_K..]
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+
+        let eq_addr_1 = EqPolynomial::<F>::mle(&self.r_address_1, &r_address_reduced);
+        let eq_addr_2 = EqPolynomial::<F>::mle(&self.r_address_2, &r_address_reduced);
+
+        let eq_cycle_raf = EqPolynomial::<F>::mle(&self.r_cycle_raf, &r_cycle_reduced);
+        let eq_cycle_rw = EqPolynomial::<F>::mle(&self.r_cycle_rw, &r_cycle_reduced);
+        let eq_cycle_val = EqPolynomial::<F>::mle(&self.r_cycle_val, &r_cycle_reduced);
+
+        let eq_cycle_A = eq_cycle_raf + self.gamma * eq_cycle_val;
+        let eq_cycle_B = eq_cycle_rw + self.gamma * eq_cycle_val;
+
+        let eq_combined = eq_addr_1 * eq_cycle_A + self.gamma_squared * eq_addr_2 * eq_cycle_B;
+
+        vec![eq_combined]
+    }
 }
 
 /// RAM RA reduction sumcheck verifier.
@@ -1148,49 +1147,5 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RamRaClaimReduction,
             opening_point,
         );
-    }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        // expected_output_claim = eq_combined * ra_claim_reduced
-        let ra_opening =
-            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRaClaimReduction);
-
-        // output = Challenge(0) * Opening(ra)
-        // where Challenge(0) = eq_combined
-        let terms = vec![ProductTerm::scaled(
-            ValueSource::Challenge(0),
-            vec![ValueSource::Opening(ra_opening)],
-        )];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        // Compute eq_combined - same as in expected_output_claim
-        let r_address_reduced: Vec<_> = sumcheck_challenges[..self.params.log_K]
-            .iter()
-            .rev()
-            .copied()
-            .collect();
-        let r_cycle_reduced: Vec<_> = sumcheck_challenges[self.params.log_K..]
-            .iter()
-            .rev()
-            .copied()
-            .collect();
-
-        let eq_addr_1 = EqPolynomial::<F>::mle(&self.params.r_address_1, &r_address_reduced);
-        let eq_addr_2 = EqPolynomial::<F>::mle(&self.params.r_address_2, &r_address_reduced);
-
-        let eq_cycle_raf = EqPolynomial::<F>::mle(&self.params.r_cycle_raf, &r_cycle_reduced);
-        let eq_cycle_rw = EqPolynomial::<F>::mle(&self.params.r_cycle_rw, &r_cycle_reduced);
-        let eq_cycle_val = EqPolynomial::<F>::mle(&self.params.r_cycle_val, &r_cycle_reduced);
-
-        let eq_cycle_A = eq_cycle_raf + self.params.gamma * eq_cycle_val;
-        let eq_cycle_B = eq_cycle_rw + self.params.gamma * eq_cycle_val;
-
-        let eq_combined =
-            eq_addr_1 * eq_cycle_A + self.params.gamma_squared * eq_addr_2 * eq_cycle_B;
-
-        vec![eq_combined]
     }
 }

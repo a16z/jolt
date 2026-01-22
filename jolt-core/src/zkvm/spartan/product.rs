@@ -394,6 +394,80 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let left_openings = [
+            OpeningId::Virtual(
+                VirtualPolynomial::LeftInstructionInput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::Virtual(
+                VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::Virtual(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::Virtual(
+                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ];
+
+        let right_openings = [
+            OpeningId::Virtual(
+                VirtualPolynomial::RightInstructionInput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::Virtual(
+                VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::Virtual(
+                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::Virtual(
+                VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::Virtual(
+                VirtualPolynomial::NextIsNoop,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ];
+
+        let mut terms = Vec::with_capacity(24);
+        let mut challenge_idx = 0;
+
+        for left_opening in &left_openings {
+            for right_opening in &right_openings {
+                terms.push(ProductTerm::scaled(
+                    ValueSource::Challenge(challenge_idx),
+                    vec![
+                        ValueSource::Opening(*left_opening),
+                        ValueSource::Opening(*right_opening),
+                    ],
+                ));
+                challenge_idx += 1;
+            }
+        }
+
+        for left_opening in &left_openings {
+            terms.push(ProductTerm::scaled(
+                ValueSource::Challenge(challenge_idx),
+                vec![ValueSource::Opening(*left_opening)],
+            ));
+            challenge_idx += 1;
+        }
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        self.constraint_challenge_values(sumcheck_challenges)
+    }
 }
 
 impl<F: JoltField> ProductVirtualRemainderParams<F> {
@@ -680,89 +754,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         }
     }
 
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        // Same constraint structure as verifier - describes the algebraic relationship
-        // expected_output_claim = λ * fused_left * fused_right
-        //
-        // Challenge layout (24 total):
-        //   0..19: λ*α_i*β_j for (i,j) product terms
-        //   20..23: λ*w[4]*α_i for constant contribution to left factors
-
-        let left_openings = [
-            OpeningId::Virtual(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-                SumcheckId::SpartanProductVirtualization,
-            ),
-        ];
-
-        let right_openings = [
-            OpeningId::Virtual(
-                VirtualPolynomial::RightInstructionInput,
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::NextIsNoop,
-                SumcheckId::SpartanProductVirtualization,
-            ),
-        ];
-
-        let mut terms = Vec::with_capacity(24);
-        let mut challenge_idx = 0;
-
-        // Product terms: λ*α_i*β_j * L_i * R_j
-        for left_opening in &left_openings {
-            for right_opening in &right_openings {
-                terms.push(ProductTerm::scaled(
-                    ValueSource::Challenge(challenge_idx),
-                    vec![
-                        ValueSource::Opening(*left_opening),
-                        ValueSource::Opening(*right_opening),
-                    ],
-                ));
-                challenge_idx += 1;
-            }
-        }
-
-        // Constant contribution: λ*w[4]*α_i * L_i
-        for left_opening in &left_openings {
-            terms.push(ProductTerm::scaled(
-                ValueSource::Challenge(challenge_idx),
-                vec![ValueSource::Opening(*left_opening)],
-            ));
-            challenge_idx += 1;
-        }
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        self.params.constraint_challenge_values(sumcheck_challenges)
-    }
-
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
@@ -893,95 +884,5 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 opening_point.clone(),
             );
         }
-    }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        // expected_output_claim = λ * fused_left * fused_right
-        //
-        // fused_left = w[0]*l_inst + (w[1]+w[2])*is_rd_not_zero + w[3]*lookup_out + w[4]*j_flag
-        // fused_right = w[0]*r_inst + w[1]*wl_flag + w[2]*j_flag + w[3]*branch_flag + w[4] - w[4]*next_is_noop
-        //
-        // This expands to: λ * (Σ_i α_i*L_i) * (Σ_j β_j*R_j + w[4])
-        //
-        // Left factors (4): l_inst, is_rd_not_zero, lookup_out, j_flag
-        // Right factors (5): r_inst, wl_flag, j_flag, branch_flag, next_is_noop
-        //
-        // Challenge layout (24 total):
-        //   0..19: λ*α_i*β_j for (i,j) product terms
-        //   20..23: λ*w[4]*α_i for constant contribution to left factors
-
-        let left_openings = [
-            OpeningId::Virtual(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-                SumcheckId::SpartanProductVirtualization,
-            ),
-        ];
-
-        let right_openings = [
-            OpeningId::Virtual(
-                VirtualPolynomial::RightInstructionInput,
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
-                SumcheckId::SpartanProductVirtualization,
-            ),
-            OpeningId::Virtual(
-                VirtualPolynomial::NextIsNoop,
-                SumcheckId::SpartanProductVirtualization,
-            ),
-        ];
-
-        let mut terms = Vec::with_capacity(24);
-        let mut challenge_idx = 0;
-
-        // Product terms: λ*α_i*β_j * L_i * R_j
-        for left_opening in &left_openings {
-            for right_opening in &right_openings {
-                terms.push(ProductTerm::scaled(
-                    ValueSource::Challenge(challenge_idx),
-                    vec![
-                        ValueSource::Opening(*left_opening),
-                        ValueSource::Opening(*right_opening),
-                    ],
-                ));
-                challenge_idx += 1;
-            }
-        }
-
-        // Constant contribution: λ*w[4]*α_i * L_i
-        for left_opening in &left_openings {
-            terms.push(ProductTerm::scaled(
-                ValueSource::Challenge(challenge_idx),
-                vec![ValueSource::Opening(*left_opening)],
-            ));
-            challenge_idx += 1;
-        }
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        self.params.constraint_challenge_values(sumcheck_challenges)
     }
 }

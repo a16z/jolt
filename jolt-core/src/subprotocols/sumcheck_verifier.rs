@@ -44,35 +44,6 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     );
-
-    /// Returns the output claim constraint for this sumcheck instance.
-    /// This describes how the final sumcheck claim relates to polynomial evaluations.
-    /// Returns None if this instance has no output constraint (e.g., round verification only).
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        self.get_params().output_claim_constraint()
-    }
-
-    /// Returns the challenge values needed to evaluate the output constraint.
-    /// These are the values for Challenge(0), Challenge(1), etc. in the constraint.
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        self.get_params()
-            .output_constraint_challenge_values(sumcheck_challenges)
-    }
-
-    /// Returns the input claim constraint for this sumcheck instance.
-    /// Describes how the input claim relates to polynomial openings from previous sumchecks.
-    fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
-        self.get_params().input_claim_constraint()
-    }
-
-    /// Returns the challenge values needed to evaluate the input constraint.
-    fn input_constraint_challenge_values(
-        &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
-    ) -> Vec<F> {
-        self.get_params()
-            .input_constraint_challenge_values(accumulator)
-    }
 }
 
 pub trait SumcheckInstanceParams<F: JoltField> {
@@ -93,14 +64,6 @@ pub trait SumcheckInstanceParams<F: JoltField> {
         _accumulator: &dyn OpeningAccumulator<F>,
     ) -> Vec<F> {
         Vec::new()
-    }
-
-    fn expected_output_claim(
-        &self,
-        _accumulator: &dyn OpeningAccumulator<F>,
-        _sumcheck_challenges: &[F::Challenge],
-    ) -> F {
-        F::zero()
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

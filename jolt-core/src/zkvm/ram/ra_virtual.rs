@@ -144,6 +144,28 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamRaVirtualParams<F> {
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let factors: Vec<ValueSource> = (0..self.d)
+            .map(|i| {
+                let opening = OpeningId::Committed(
+                    CommittedPolynomial::RamRa(i),
+                    SumcheckId::RamRaVirtualization,
+                );
+                ValueSource::Opening(opening)
+            })
+            .collect();
+
+        let terms = vec![ProductTerm::scaled(ValueSource::Challenge(0), factors)];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r_cycle_final = self.normalize_opening_point(sumcheck_challenges);
+        let eq_eval: F = EqPolynomial::<F>::mle_endian(&self.r_cycle, &r_cycle_final);
+        vec![eq_eval]
+    }
 }
 
 /// RAM RA virtualization sumcheck prover.
@@ -245,28 +267,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaVirtualS
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let factors: Vec<ValueSource> = (0..self.params.d)
-            .map(|i| {
-                let opening = OpeningId::Committed(
-                    CommittedPolynomial::RamRa(i),
-                    SumcheckId::RamRaVirtualization,
-                );
-                ValueSource::Opening(opening)
-            })
-            .collect();
-
-        let terms = vec![ProductTerm::scaled(ValueSource::Challenge(0), factors)];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        let r_cycle_final = self.params.normalize_opening_point(sumcheck_challenges);
-        let eq_eval: F = EqPolynomial::<F>::mle_endian(&self.params.r_cycle, &r_cycle_final);
-        vec![eq_eval]
-    }
 }
 
 /// RAM RA virtualization sumcheck verifier.
@@ -335,34 +335,5 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 opening_point,
             );
         }
-    }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        // expected_output = eq_eval * ∏_{i=0}^{d-1} ra_i_claim
-        //                 = Challenge(0) * ∏_i Opening(RamRa(i), RamRaVirtualization)
-        //
-        // Challenge(0) = eq_eval
-        let factors: Vec<ValueSource> = (0..self.params.d)
-            .map(|i| {
-                let opening = OpeningId::Committed(
-                    CommittedPolynomial::RamRa(i),
-                    SumcheckId::RamRaVirtualization,
-                );
-                ValueSource::Opening(opening)
-            })
-            .collect();
-
-        let terms = vec![ProductTerm::scaled(ValueSource::Challenge(0), factors)];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        let r_cycle_final = self.params.normalize_opening_point(sumcheck_challenges);
-
-        // Challenge(0) = eq(r_cycle_reduced, r_cycle_final)
-        let eq_eval: F = EqPolynomial::<F>::mle_endian(&self.params.r_cycle, &r_cycle_final);
-
-        vec![eq_eval]
     }
 }

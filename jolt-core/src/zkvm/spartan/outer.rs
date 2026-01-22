@@ -752,15 +752,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterSharedState<F> {
         self.params.input_constraint_challenge_values(accumulator)
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &dyn OpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
-        self.params
-            .expected_output_claim(accumulator, sumcheck_challenges)
-    }
-
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         self.params.output_claim_constraint()
     }

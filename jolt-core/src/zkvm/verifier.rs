@@ -112,7 +112,7 @@ fn batch_constraints<F: JoltField, T: Transcript>(
 ) -> Option<OutputClaimConstraint> {
     let constraints: Vec<Option<OutputClaimConstraint>> = instances
         .iter()
-        .map(|instance| instance.output_claim_constraint())
+        .map(|instance| instance.get_params().output_claim_constraint())
         .collect();
     OutputClaimConstraint::batch(&constraints, instances.len())
 }
@@ -414,8 +414,11 @@ impl<
         let mut constraint_challenge_values: Vec<F> = batching_coefficients.clone();
         for instance in &instances {
             let r_slice = &r_stage2[max_num_rounds - instance.num_rounds()..];
-            constraint_challenge_values
-                .extend(instance.output_constraint_challenge_values(r_slice));
+            constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .output_constraint_challenge_values(r_slice),
+            );
         }
 
         let stage_result = StageVerifyResult::with_constraint_and_values(
@@ -474,7 +477,9 @@ impl<
         let mut constraint_challenge_values: Vec<F> = batching_coefficients;
         for instance in &instances {
             let r_slice = &r_stage3[max_num_rounds - instance.num_rounds()..];
-            let instance_challenges = instance.output_constraint_challenge_values(r_slice);
+            let instance_challenges = instance
+                .get_params()
+                .output_constraint_challenge_values(r_slice);
             constraint_challenge_values.extend(instance_challenges);
         }
 
@@ -559,7 +564,9 @@ impl<
         let mut constraint_challenge_values: Vec<F> = batching_coefficients;
         for instance in &instances {
             let r_slice = &r_stage4[max_num_rounds - instance.num_rounds()..];
-            let instance_challenges = instance.output_constraint_challenge_values(r_slice);
+            let instance_challenges = instance
+                .get_params()
+                .output_constraint_challenge_values(r_slice);
             constraint_challenge_values.extend(instance_challenges);
         }
 
@@ -620,7 +627,9 @@ impl<
         let mut constraint_challenge_values: Vec<F> = batching_coefficients;
         for instance in &instances {
             let r_slice = &r_stage5[max_num_rounds - instance.num_rounds()..];
-            let instance_challenges = instance.output_constraint_challenge_values(r_slice);
+            let instance_challenges = instance
+                .get_params()
+                .output_constraint_challenge_values(r_slice);
             constraint_challenge_values.extend(instance_challenges);
         }
 
@@ -738,7 +747,9 @@ impl<
         let mut constraint_challenge_values: Vec<F> = batching_coefficients;
         for instance in &instances {
             let r_slice = &r_stage6[max_num_rounds - instance.num_rounds()..];
-            let instance_challenges = instance.output_constraint_challenge_values(r_slice);
+            let instance_challenges = instance
+                .get_params()
+                .output_constraint_challenge_values(r_slice);
             constraint_challenge_values.extend(instance_challenges);
         }
 
@@ -1063,7 +1074,9 @@ impl<
         let mut constraint_challenge_values: Vec<F> = batching_coefficients;
         for instance in &instances {
             let r_slice = &r_stage7[max_num_rounds - instance.num_rounds()..];
-            let instance_challenges = instance.output_constraint_challenge_values(r_slice);
+            let instance_challenges = instance
+                .get_params()
+                .output_constraint_challenge_values(r_slice);
             constraint_challenge_values.extend(instance_challenges);
         }
 

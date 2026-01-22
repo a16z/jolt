@@ -95,10 +95,17 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> 
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
-}
 
-impl<F: JoltField> RafEvaluationSumcheckParams<F> {
-    pub fn constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let ra_opening = OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
+        let terms = vec![ProductTerm::scaled(
+            ValueSource::Challenge(0),
+            vec![ValueSource::Opening(ra_opening)],
+        )];
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         let r = self.normalize_opening_point(sumcheck_challenges);
         let unmap_eval =
             UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(&r.r);
@@ -248,24 +255,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
         );
     }
 
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        // expected_output_claim = unmap_eval * ra_claim
-        let ra_opening = OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
-
-        // output = Challenge(0) * Opening(ra)
-        // where Challenge(0) = unmap_eval
-        let terms = vec![ProductTerm::scaled(
-            ValueSource::Challenge(0),
-            vec![ValueSource::Opening(ra_opening)],
-        )];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        self.params.constraint_challenge_values(sumcheck_challenges)
-    }
-
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
@@ -328,23 +317,5 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RamRafEvaluation,
             ra_opening_point,
         );
-    }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        // expected_output_claim = unmap_eval * ra_claim
-        let ra_opening = OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
-
-        // output = Challenge(0) * Opening(ra)
-        // where Challenge(0) = unmap_eval
-        let terms = vec![ProductTerm::scaled(
-            ValueSource::Challenge(0),
-            vec![ValueSource::Opening(ra_opening)],
-        )];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        self.params.constraint_challenge_values(sumcheck_challenges)
     }
 }

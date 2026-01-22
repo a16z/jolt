@@ -318,22 +318,24 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
         // Stage 5: gamma^4 * (Val_5)
         // Which matches with the input claim:
         // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^6 * raf_3
-        self.bound_val_evals = Some(
-            self.params
-                .val_polys
-                .iter()
-                .zip([
-                    int_poly * self.params.gamma_powers[5],
-                    F::zero(),
-                    int_poly * self.params.gamma_powers[4],
-                    F::zero(),
-                    F::zero(),
-                ])
-                .map(|(poly, int_poly)| poly.final_sumcheck_claim() + int_poly)
-                .collect::<Vec<F>>()
-                .try_into()
-                .unwrap(),
-        );
+        let bound_val_evals: [F; N_STAGES] = self
+            .params
+            .val_polys
+            .iter()
+            .zip([
+                int_poly * self.params.gamma_powers[5],
+                F::zero(),
+                int_poly * self.params.gamma_powers[4],
+                F::zero(),
+                F::zero(),
+            ])
+            .map(|(poly, int_poly)| poly.final_sumcheck_claim() + int_poly)
+            .collect::<Vec<F>>()
+            .try_into()
+            .unwrap();
+        self.bound_val_evals = Some(bound_val_evals);
+        self.params.bound_val_polys = Some(bound_val_evals);
+        self.params.bound_int_poly = Some(int_poly);
 
         // Reverse r_address_prime to get the correct order (it was built low-to-high)
         let mut r_address = std::mem::take(&mut self.r_address_prime);
@@ -583,42 +585,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let factors: Vec<ValueSource> = (0..self.params.d)
-            .map(|i| {
-                let opening = OpeningId::Committed(
-                    CommittedPolynomial::BytecodeRa(i),
-                    SumcheckId::BytecodeReadRaf,
-                );
-                ValueSource::Opening(opening)
-            })
-            .collect();
-
-        let terms = vec![ProductTerm::scaled(ValueSource::Challenge(0), factors)];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
-        let (_, r_cycle_prime) = opening_point.split_at(self.params.log_K);
-
-        // bound_val_evals contains (val_s.evaluate(r_address) + int_poly_contrib_s)
-        // computed during init_log_t_rounds before val_polys were cleared
-        let bound_val_evals = self.bound_val_evals.as_ref().unwrap();
-
-        let val: F = bound_val_evals
-            .iter()
-            .zip(&self.params.r_cycles)
-            .zip(&self.params.gamma_powers)
-            .map(|((bound_val, r_cycle), gamma)| {
-                *bound_val * EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime.r) * gamma
-            })
-            .sum();
-
-        vec![val]
-    }
 }
 
 pub struct BytecodeReadRafSumcheckVerifier<F: JoltField> {
@@ -730,57 +696,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             );
         });
     }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        // expected_output = val * ∏_i ra_i_claim
-        //                 = Challenge(0) * ∏_i Opening(BytecodeRa(i))
-        //
-        // Challenge(0) = val (computed from val_polys, int_poly, eq evals, gamma powers)
-        let factors: Vec<ValueSource> = (0..self.params.d)
-            .map(|i| {
-                let opening = OpeningId::Committed(
-                    CommittedPolynomial::BytecodeRa(i),
-                    SumcheckId::BytecodeReadRaf,
-                );
-                ValueSource::Opening(opening)
-            })
-            .collect();
-
-        let terms = vec![ProductTerm::scaled(ValueSource::Challenge(0), factors)];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
-        let (r_address_prime, r_cycle_prime) = opening_point.split_at(self.params.log_K);
-
-        let int_poly = self.params.int_poly.evaluate(&r_address_prime.r);
-
-        // Compute val = sum over stages
-        let val: F = self
-            .params
-            .val_polys
-            .iter()
-            .zip(&self.params.r_cycles)
-            .zip(&self.params.gamma_powers)
-            .zip([
-                int_poly * self.params.gamma_powers[5], // RAF for Stage1
-                F::zero(),                              // There's no raf for Stage2
-                int_poly * self.params.gamma_powers[4], // RAF for Stage3
-                F::zero(),                              // There's no raf for Stage4
-                F::zero(),                              // There's no raf for Stage5
-            ])
-            .map(|(((val, r_cycle), gamma), int_poly_contrib)| {
-                (val.evaluate(&r_address_prime.r) + int_poly_contrib)
-                    * EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime.r)
-                    * gamma
-            })
-            .sum();
-
-        // Challenge(0) = val
-        vec![val]
-    }
 }
 
 #[derive(Allocative, Clone)]
@@ -807,6 +722,9 @@ pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
     /// Identity polynomial over address vars used to inject RAF contributions.
     pub int_poly: IdentityPolynomial<F>,
     pub r_cycles: [Vec<F::Challenge>; N_STAGES],
+    /// Bound values after log_K rounds (set by prover for output_constraint_challenge_values)
+    pub bound_int_poly: Option<F>,
+    pub bound_val_polys: Option<[F; N_STAGES]>,
 }
 
 impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
@@ -934,6 +852,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             raf_shift_claim,
             int_poly,
             r_cycles,
+            bound_int_poly: None,
+            bound_val_polys: None,
         }
     }
 
@@ -1303,5 +1223,59 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         r[0..self.log_K].reverse();
         r[self.log_K..].reverse();
         OpeningPoint::new(r)
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let factors: Vec<ValueSource> = (0..self.d)
+            .map(|i| {
+                let opening = OpeningId::Committed(
+                    CommittedPolynomial::BytecodeRa(i),
+                    SumcheckId::BytecodeReadRaf,
+                );
+                ValueSource::Opening(opening)
+            })
+            .collect();
+
+        let terms = vec![ProductTerm::scaled(ValueSource::Challenge(0), factors)];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let opening_point = self.normalize_opening_point(sumcheck_challenges);
+        let (r_address_prime, r_cycle_prime) = opening_point.split_at(self.log_K);
+
+        // Prover stores bound values before clearing polys; verifier evaluates directly
+        let val: F = if let Some(bound_val_polys) = &self.bound_val_polys {
+            bound_val_polys
+                .iter()
+                .zip(&self.r_cycles)
+                .zip(&self.gamma_powers)
+                .map(|((bound_val, r_cycle), gamma)| {
+                    *bound_val * EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime.r) * gamma
+                })
+                .sum()
+        } else {
+            let int_poly = self.int_poly.evaluate(&r_address_prime.r);
+            self.val_polys
+                .iter()
+                .zip(&self.r_cycles)
+                .zip(&self.gamma_powers)
+                .zip([
+                    int_poly * self.gamma_powers[5],
+                    F::zero(),
+                    int_poly * self.gamma_powers[4],
+                    F::zero(),
+                    F::zero(),
+                ])
+                .map(|(((val, r_cycle), gamma), int_poly_contrib)| {
+                    (val.evaluate(&r_address_prime.r) + int_poly_contrib)
+                        * EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime.r)
+                        * gamma
+                })
+                .sum()
+        };
+
+        vec![val]
     }
 }

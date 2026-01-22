@@ -92,6 +92,40 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersValEvaluationSumcheckP
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let inc_opening = OpeningId::Committed(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersValEvaluation,
+        );
+        let wa_opening =
+            OpeningId::Virtual(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation);
+
+        let terms = vec![ProductTerm::scaled(
+            ValueSource::Challenge(0),
+            vec![
+                ValueSource::Opening(inc_opening),
+                ValueSource::Opening(wa_opening),
+            ],
+        )];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r_cycle = self.r_cycle.r.to_vec();
+
+        let mut lt_eval = F::zero();
+        let mut eq_term = F::one();
+
+        let r: OpeningPoint<BIG_ENDIAN, F> = self.normalize_opening_point(sumcheck_challenges);
+        for (x, y) in r.r.iter().zip(r_cycle.iter()) {
+            lt_eval += (F::one() - *x) * *y * eq_term;
+            eq_term *= F::one() - *x - *y + *x * *y + *x * *y;
+        }
+
+        vec![lt_eval]
+    }
 }
 
 #[derive(Allocative)]
@@ -228,41 +262,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let inc_opening = OpeningId::Committed(
-            CommittedPolynomial::RdInc,
-            SumcheckId::RegistersValEvaluation,
-        );
-        let wa_opening =
-            OpeningId::Virtual(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation);
-
-        let terms = vec![ProductTerm::scaled(
-            ValueSource::Challenge(0),
-            vec![
-                ValueSource::Opening(inc_opening),
-                ValueSource::Opening(wa_opening),
-            ],
-        )];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        let r_cycle = self.params.r_cycle.r.to_vec();
-
-        let mut lt_eval = F::zero();
-        let mut eq_term = F::one();
-
-        let r: OpeningPoint<BIG_ENDIAN, F> =
-            self.params.normalize_opening_point(sumcheck_challenges);
-        for (x, y) in r.r.iter().zip(r_cycle.iter()) {
-            lt_eval += (F::one() - *x) * *y * eq_term;
-            eq_term *= F::one() - *x - *y + *x * *y + *x * *y;
-        }
-
-        vec![lt_eval]
-    }
 }
 
 pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
@@ -347,50 +346,5 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),
         );
-    }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        // expected_output_claim = lt_eval * inc_claim * wa_claim
-        let inc_opening = OpeningId::Committed(
-            CommittedPolynomial::RdInc,
-            SumcheckId::RegistersValEvaluation,
-        );
-        let wa_opening =
-            OpeningId::Virtual(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation);
-
-        // output = Challenge(0) * Opening(inc) * Opening(wa)
-        // where Challenge(0) = lt_eval
-        let terms = vec![ProductTerm::scaled(
-            ValueSource::Challenge(0),
-            vec![
-                ValueSource::Opening(inc_opening),
-                ValueSource::Opening(wa_opening),
-            ],
-        )];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        let registers_val_input_sample = self
-            .params
-            .r_address
-            .r
-            .iter()
-            .chain(self.params.r_cycle.r.iter());
-        let r_cycle: Vec<_> = registers_val_input_sample.skip(LOG_K).copied().collect();
-
-        // Compute LT(r_cycle', r_cycle) - same as in expected_output_claim
-        let mut lt_eval = F::zero();
-        let mut eq_term = F::one();
-
-        let r: OpeningPoint<BIG_ENDIAN, F> =
-            self.params.normalize_opening_point(sumcheck_challenges);
-        for (x, y) in r.r.iter().zip(r_cycle.iter()) {
-            lt_eval += (F::one() - *x) * *y * eq_term;
-            eq_term *= F::one() - *x - *y + *x * *y + *x * *y;
-        }
-
-        vec![lt_eval]
     }
 }

@@ -177,6 +177,42 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let ram_inc_opening =
+            OpeningId::Committed(CommittedPolynomial::RamInc, SumcheckId::IncClaimReduction);
+        let rd_inc_opening =
+            OpeningId::Committed(CommittedPolynomial::RdInc, SumcheckId::IncClaimReduction);
+
+        let terms = vec![
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(ram_inc_opening)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![ValueSource::Opening(rd_inc_opening)],
+            ),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let [gamma, gamma_sqr, _] = self.gamma_powers;
+
+        let opening_point = self.normalize_opening_point(sumcheck_challenges);
+
+        let eq_r2: F = EqPolynomial::mle(&opening_point.r, &self.r_cycle_stage2.r);
+        let eq_r4: F = EqPolynomial::mle(&opening_point.r, &self.r_cycle_stage4.r);
+        let eq_s4: F = EqPolynomial::mle(&opening_point.r, &self.s_cycle_stage4.r);
+        let eq_s5: F = EqPolynomial::mle(&opening_point.r, &self.s_cycle_stage5.r);
+
+        let eq_ram_combined = eq_r2 + gamma * eq_r4;
+        let eq_rd_combined = eq_s4 + gamma * eq_s5;
+
+        vec![eq_ram_combined, gamma_sqr * eq_rd_combined]
+    }
 }
 
 #[derive(Allocative)]
@@ -276,42 +312,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
-    }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let ram_inc_opening =
-            OpeningId::Committed(CommittedPolynomial::RamInc, SumcheckId::IncClaimReduction);
-        let rd_inc_opening =
-            OpeningId::Committed(CommittedPolynomial::RdInc, SumcheckId::IncClaimReduction);
-
-        let terms = vec![
-            ProductTerm::scaled(
-                ValueSource::Challenge(0),
-                vec![ValueSource::Opening(ram_inc_opening)],
-            ),
-            ProductTerm::scaled(
-                ValueSource::Challenge(1),
-                vec![ValueSource::Opening(rd_inc_opening)],
-            ),
-        ];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        let [gamma, gamma_sqr, _] = self.params.gamma_powers;
-
-        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
-
-        let eq_r2: F = EqPolynomial::mle(&opening_point.r, &self.params.r_cycle_stage2.r);
-        let eq_r4: F = EqPolynomial::mle(&opening_point.r, &self.params.r_cycle_stage4.r);
-        let eq_s4: F = EqPolynomial::mle(&opening_point.r, &self.params.s_cycle_stage4.r);
-        let eq_s5: F = EqPolynomial::mle(&opening_point.r, &self.params.s_cycle_stage5.r);
-
-        let eq_ram_combined = eq_r2 + gamma * eq_r4;
-        let eq_rd_combined = eq_s4 + gamma * eq_s5;
-
-        vec![eq_ram_combined, gamma_sqr * eq_rd_combined]
     }
 }
 
@@ -750,49 +750,5 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::IncClaimReduction,
             opening_point.r,
         );
-    }
-
-    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        // expected_output = ram_inc_claim * eq_ram_combined + γ² * rd_inc_claim * eq_rd_combined
-        //                 = Challenge(0) * Opening(RamInc) + Challenge(1) * Opening(RdInc)
-        //
-        // Challenge(0) = eq_ram_combined = eq_r2 + γ * eq_r4
-        // Challenge(1) = γ² * eq_rd_combined = γ² * (eq_s4 + γ * eq_s5)
-        let ram_inc_opening =
-            OpeningId::Committed(CommittedPolynomial::RamInc, SumcheckId::IncClaimReduction);
-        let rd_inc_opening =
-            OpeningId::Committed(CommittedPolynomial::RdInc, SumcheckId::IncClaimReduction);
-
-        let terms = vec![
-            ProductTerm::scaled(
-                ValueSource::Challenge(0),
-                vec![ValueSource::Opening(ram_inc_opening)],
-            ),
-            ProductTerm::scaled(
-                ValueSource::Challenge(1),
-                vec![ValueSource::Opening(rd_inc_opening)],
-            ),
-        ];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
-    }
-
-    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        let [gamma, gamma_sqr, _] = self.params.gamma_powers;
-
-        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
-
-        // Compute eq evaluations at final point
-        let eq_r2: F = EqPolynomial::mle(&opening_point.r, &self.params.r_cycle_stage2.r);
-        let eq_r4: F = EqPolynomial::mle(&opening_point.r, &self.params.r_cycle_stage4.r);
-        let eq_s4: F = EqPolynomial::mle(&opening_point.r, &self.params.s_cycle_stage4.r);
-        let eq_s5: F = EqPolynomial::mle(&opening_point.r, &self.params.s_cycle_stage5.r);
-
-        let eq_ram_combined = eq_r2 + gamma * eq_r4;
-        let eq_rd_combined = eq_s4 + gamma * eq_s5;
-
-        // Challenge(0) = eq_ram_combined
-        // Challenge(1) = γ² * eq_rd_combined
-        vec![eq_ram_combined, gamma_sqr * eq_rd_combined]
     }
 }
