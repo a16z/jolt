@@ -112,8 +112,11 @@ fn cycle_phase_round_schedule(
             // column index
             let col_binding_rounds = 0..advice_col_vars.saturating_sub(log_k_chunk);
             // High-order cycle variables correspond to the bits of the row index
-            let row_binding_rounds =
-                col_binding_rounds.end..min(log_T, col_binding_rounds.end + advice_row_vars);
+            let row_binding_rounds = main_col_vars.saturating_sub(log_k_chunk)
+                ..min(
+                    log_T,
+                    main_col_vars.saturating_sub(log_k_chunk) + advice_row_vars,
+                );
             (col_binding_rounds, row_binding_rounds)
         }
     }
@@ -259,24 +262,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
                 [self.cycle_var_challenges.as_slice(), challenges].concat(),
             )
             .match_endianness(),
-            DoryLayout::AddressMajor => {
-                let (col_binding_rounds, row_binding_rounds) = cycle_phase_round_schedule(
-                    self.log_t,
-                    self.log_k_chunk,
-                    self.main_col_vars,
-                    self.advice_row_vars,
-                    self.advice_col_vars,
-                );
-                OpeningPoint::<LITTLE_ENDIAN, F>::new(
-                    [
-                        challenges,
-                        &self.cycle_var_challenges[col_binding_rounds],
-                        &self.cycle_var_challenges[row_binding_rounds],
-                    ]
-                    .concat(),
-                )
-                .match_endianness()
-            }
+            DoryLayout::AddressMajor => OpeningPoint::<LITTLE_ENDIAN, F>::new(
+                [challenges, self.cycle_var_challenges.as_slice()].concat(),
+            )
+            .match_endianness(),
         }
     }
 }
