@@ -71,7 +71,6 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
     pub fn new_from_prover(
         one_hot_params: &OneHotParams,
         opening_accumulator: &ProverOpeningAccumulator<F>,
-        initial_ram_state: &[u64],
         trace_len: usize,
     ) -> Self {
         let K = one_hot_params.ram_k;
@@ -80,12 +79,9 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
             SumcheckId::RamReadWriteChecking,
         );
         let (r_address, r_cycle) = r.split_at(K.log_2());
-        let val_init: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let init_eval = val_init.evaluate(&r_address.r);
 
         Self {
-            init_eval,
+            init_eval: F::zero(), // Placeholder, will be set in initialize
             T: trace_len,
             K,
             r_address,
@@ -188,10 +184,11 @@ pub struct ValEvaluationSumcheckProver<F: JoltField> {
 impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheckProver::initialize")]
     pub fn initialize(
-        params: ValEvaluationSumcheckParams<F>,
+        mut params: ValEvaluationSumcheckParams<F>,
         trace: &[Cycle],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
+        initial_ram_state: &[u64],
     ) -> Self {
         // Compute the size-K table storing all eq(r_address, k) evaluations for
         // k \in {0, 1}^log(K)
@@ -220,6 +217,10 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
             None,
         );
         let lt = LtPolynomial::new(&params.r_cycle);
+
+        let val_init: MultilinearPolynomial<F> =
+            MultilinearPolynomial::from(initial_ram_state.to_vec());
+        params.init_eval = val_init.evaluate(&params.r_address.r);
 
         Self {
             inc,

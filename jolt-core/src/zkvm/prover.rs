@@ -946,7 +946,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
             &self.one_hot_params,
             &self.opening_accumulator,
-            &self.initial_ram_state,
             self.trace.len(),
         );
         let ram_val_final_params =
@@ -963,6 +962,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.trace,
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
+            &self.initial_ram_state,
         );
         let ram_val_final = ValFinalSumcheckProver::initialize(
             ram_val_final_params,
