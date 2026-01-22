@@ -76,7 +76,7 @@ impl AdviceSW {
         let v_word = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
         // Read 4 bytes from advice tape into v_word register
-        asm.emit_i::<VirtualAdviceLoad>(*v_word, 0, 4);
+        asm.emit_j::<VirtualAdviceLoad>(*v_word, 4);
         // Store v_word to memory at rs1 + imm
         asm.emit_s::<VirtualSW>(self.operands.rs1, *v_word, self.operands.imm);
         asm.finalize()
@@ -100,7 +100,7 @@ impl AdviceSW {
         asm.emit_i::<SRLI>(*v_mask, *v_mask, 32);
         asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
         // Read word from advice tape into v_word register (imm=4 means 4 bytes)
-        asm.emit_i::<VirtualAdviceLoad>(*v_word, 0, 4);
+        asm.emit_j::<VirtualAdviceLoad>(*v_word, 4);
         asm.emit_r::<SLL>(*v_word, *v_word, *v_shift);
         asm.emit_r::<XOR>(*v_word, *v_dword, *v_word);
         asm.emit_r::<AND>(*v_word, *v_word, *v_mask);

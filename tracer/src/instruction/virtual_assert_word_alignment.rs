@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{format::format_assert_align::AssertAlignFormat, RISCVInstruction, RISCVTrace};
+use super::{format::format_assert_align::FormatAssert, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualAssertWordAlignment,
     mask = 0,
     match = 0,
-    format = AssertAlignFormat,
+    format = FormatAssert,
     ram = ()
 );
 
