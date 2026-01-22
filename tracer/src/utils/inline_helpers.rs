@@ -254,30 +254,6 @@ impl InstrAssembler {
         }));
     }
 
-    /// Emit any advice store instruction (rs1, imm) - stores advice tape data to memory.
-    #[track_caller]
-    #[inline]
-    pub fn emit_advice_s<Op: RISCVInstruction<Format = FormatAdviceS> + RISCVTrace>(
-        &mut self,
-        rs1: u8,
-        imm: i64,
-    ) where
-        RISCVCycle<Op>: Into<Cycle>,
-    {
-        self.add_to_sequence(Op::from(NormalizedInstruction {
-            address: self.address as usize,
-            operands: NormalizedOperands {
-                rd: None,
-                rs1: Some(rs1),
-                rs2: None,
-                imm: imm as i128,
-            },
-            is_compressed: false,
-            is_first_in_sequence: false,
-            virtual_sequence_remaining: Some(0),
-        }));
-    }
-
     /// Emit any Load-type instruction (rd, rs1, imm) - like FormatI but with signed imm.
     #[track_caller]
     #[inline]
