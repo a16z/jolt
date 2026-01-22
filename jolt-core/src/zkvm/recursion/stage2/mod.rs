@@ -4,3 +4,4 @@
 //! all Stage 1 claims into a unified proof.
 
 pub mod virtualization;
+pub mod packed_gt_exp_reduction;

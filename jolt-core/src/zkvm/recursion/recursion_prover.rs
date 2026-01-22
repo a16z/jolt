@@ -41,9 +41,14 @@ use super::{
         packed_gt_exp::{PackedGtExpParams, PackedGtExpProver, PackedGtExpPublicInputs},
         shift_rho::{ShiftRhoParams, ShiftRhoProver},
     },
-    stage2::virtualization::{
-        DirectEvaluationParams, DirectEvaluationProver,
-        extract_virtual_claims_from_accumulator,
+    stage2::{
+        packed_gt_exp_reduction::{
+            PackedGtExpClaimReductionParams, PackedGtExpClaimReductionProver,
+        },
+        virtualization::{
+            DirectEvaluationParams, DirectEvaluationProver,
+            extract_virtual_claims_from_accumulator,
+        },
     },
     stage3::{
         jagged::JaggedSumcheckProver,
@@ -57,7 +62,7 @@ use crate::subprotocols::{sumcheck::BatchedSumcheck, sumcheck_prover::SumcheckIn
 pub struct RecursionProof<F: JoltField, T: Transcript, PCS: CommitmentScheme<Field = F>> {
     /// Stage 1 constraint sumcheck proof
     pub stage1_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
-    /// Stage 1b shift sumcheck proof for rho_next verification
+    /// Stage 2b shift + reduction sumcheck proof for packed GT exp
     pub stage1b_proof: crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
     /// Stage 2 direct evaluation result M(r_s, r_x)
     pub stage2_m_eval: F,
@@ -499,21 +504,28 @@ impl<F: JoltField> RecursionProver<F> {
         tracing::info_span!("recursion_stage1_sumchecks").in_scope(|| {
             tracing::info!("Starting Stage 1: Constraint sumchecks");
         });
-        let (stage1_proof, stage1b_proof, r_stage1) = self.prove_stage1(transcript, &mut accumulator)?;
+        let (stage1_proof, r_stage1) = self.prove_stage1(transcript, &mut accumulator)?;
+
+        // ============ STAGE 2b: PackedGtExp Claim Reduction + Shift ============
+        tracing::info_span!("recursion_stage2b_packed_gt_exp_reduction").in_scope(|| {
+            tracing::info!("Starting Stage 2b: PackedGtExp claim reduction");
+        });
+        let (stage1b_proof, r_stage2) =
+            self.prove_stage2b(transcript, &mut accumulator)?;
 
         // ============ STAGE 2: Virtualization Sumcheck ============
         tracing::info_span!("recursion_stage2_virtualization").in_scope(|| {
             tracing::info!("Starting Stage 2: Virtualization sumcheck");
         });
-        let (stage2_m_eval, r_stage2) =
-            self.prove_stage2(transcript, &mut accumulator, &r_stage1)?;
+        let (stage2_m_eval, r_stage2_s) =
+            self.prove_stage2(transcript, &mut accumulator, &r_stage2)?;
 
         // ============ STAGE 3: Jagged Transform Sumcheck + Stage 3b: Jagged Assist ============
         tracing::info_span!("recursion_stage3_jagged").in_scope(|| {
             tracing::info!("Starting Stage 3: Jagged transform sumcheck");
         });
         let (stage3_proof, stage3b_proof, _r_stage3) =
-            self.prove_stage3(transcript, &mut accumulator, &r_stage1, &r_stage2)?;
+            self.prove_stage3(transcript, &mut accumulator, &r_stage2_s, &r_stage2)?;
 
         // ============ PCS OPENING PROOF ============
         tracing::info_span!("recursion_pcs_opening_proof").in_scope(|| {
@@ -568,7 +580,6 @@ impl<F: JoltField> RecursionProver<F> {
     ) -> Result<
         (
             crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
-            crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
             Vec<<F as JoltField>::Challenge>,
         ),
         Box<dyn std::error::Error>,
@@ -580,19 +591,8 @@ impl<F: JoltField> RecursionProver<F> {
             panic!("Recursion SNARK constraint system requires F = Fq");
         }
 
-        // Convert g_poly for GT mul (uses zero padding layout: s * 16 + x)
-        let g_poly_f = unsafe {
-            std::mem::transmute::<DensePolynomial<Fq>, DensePolynomial<F>>(
-                self.constraint_system.g_poly.clone(),
-            )
-        };
-
         // Create provers for each constraint type
         let mut provers: Vec<Box<dyn SumcheckInstanceProver<F, T>>> = Vec::new();
-
-        // Store data needed for shift sumcheck later
-        let mut rho_polynomials_for_shift = None;
-        let mut num_packed_witnesses = 0;
 
         // Add packed GT exp prover (single prover handles all witnesses with gamma batching)
         let packed_witnesses = &self.constraint_system.packed_gt_exp_witnesses;
@@ -615,19 +615,109 @@ impl<F: JoltField> RecursionProver<F> {
             let prover =
                 PackedGtExpProver::new(params, packed_witnesses, g_poly_replicated_f, transcript);
 
-            // Extract rho polynomials before moving the prover
-            rho_polynomials_for_shift = Some(prover.get_rho_polynomials());
-            num_packed_witnesses = prover.num_witnesses;
-
             provers.push(Box::new(prover));
         }
 
+        if provers.is_empty() {
+            return Err("No constraints to prove in Stage 1".into());
+        }
+
+        // Run batched sumcheck for all provers
+        let (stage1_proof, r_stage1) = BatchedSumcheck::prove(
+            provers.iter_mut().map(|p| &mut **p as _).collect(),
+            accumulator,
+            transcript,
+        );
+
+        Ok((stage1_proof, r_stage1))
+    }
+
+    /// Run Stage 2b: PackedGtExp claim reduction + shift sumcheck (shared challenges)
+    #[tracing::instrument(skip_all, name = "RecursionProver::prove_stage2b")]
+    pub(crate) fn prove_stage2b<T: Transcript>(
+        &self,
+        transcript: &mut T,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+    ) -> Result<
+        (
+            crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
+            Vec<<F as JoltField>::Challenge>,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        use std::any::TypeId;
+
+        if TypeId::of::<F>() != TypeId::of::<Fq>() {
+            panic!("Recursion SNARK constraint system requires F = Fq");
+        }
+
+        let mut claim_indices: Vec<usize> = accumulator
+            .openings
+            .keys()
+            .filter_map(|opening_id| match opening_id {
+                OpeningId::Virtual(
+                    VirtualPolynomial::PackedGtExpRhoNext(idx),
+                    SumcheckId::PackedGtExp,
+                ) => Some(*idx),
+                _ => None,
+            })
+            .collect();
+        claim_indices.sort_unstable();
+
+        // Convert g_poly for GT mul (uses zero padding layout: s * 16 + x)
+        let g_poly_f = unsafe {
+            std::mem::transmute::<DensePolynomial<Fq>, DensePolynomial<F>>(
+                self.constraint_system.g_poly.clone(),
+            )
+        };
+
+        let packed_witnesses = &self.constraint_system.packed_gt_exp_witnesses;
+        if packed_witnesses.is_empty() {
+            return Err("PackedGtExp claim reduction requires packed witnesses".into());
+        }
+
+        let convert_vec = |v: &[Fq]| -> Vec<F> {
+            v.iter().map(|x| unsafe { std::mem::transmute_copy::<Fq, F>(x) }).collect()
+        };
+
+        let rho_raw: Vec<Vec<F>> = packed_witnesses
+            .iter()
+            .map(|w| convert_vec(&w.rho_packed))
+            .collect();
+        let rho_polys: Vec<MultilinearPolynomial<F>> = rho_raw
+            .iter()
+            .map(|v| MultilinearPolynomial::from(v.clone()))
+            .collect();
+        let quotient_polys: Vec<MultilinearPolynomial<F>> = packed_witnesses
+            .iter()
+            .map(|w| MultilinearPolynomial::from(convert_vec(&w.quotient_packed)))
+            .collect();
+
+        let mut shift_prover = ShiftRhoProver::new(
+            ShiftRhoParams::new(claim_indices.len()),
+            rho_raw,
+            claim_indices.clone(),
+            accumulator,
+            transcript,
+        );
+
+        let mut reduction_prover = PackedGtExpClaimReductionProver::new(
+            PackedGtExpClaimReductionParams::new(claim_indices.len() * 2),
+            &claim_indices,
+            rho_polys,
+            quotient_polys,
+            accumulator,
+            transcript,
+        );
+
+        let mut provers: Vec<&mut dyn SumcheckInstanceProver<F, T>> =
+            vec![&mut shift_prover, &mut reduction_prover];
+
         // Add GT mul prover if we have GT mul constraints
         let gt_mul_constraints_tuples = self.constraint_system.extract_gt_mul_constraints();
-        if !gt_mul_constraints_tuples.is_empty() {
+        let mut gt_mul_prover = if !gt_mul_constraints_tuples.is_empty() {
             use super::stage1::gt_mul::GtMulConstraintPolynomials;
 
-            // Convert tuples to structured type
             let gt_mul_constraints_fq: Vec<GtMulConstraintPolynomials<Fq>> =
                 gt_mul_constraints_tuples
                     .into_iter()
@@ -643,8 +733,6 @@ impl<F: JoltField> RecursionProver<F> {
                     .collect();
 
             let params = GtMulParams::new(gt_mul_constraints_fq.len());
-
-            // Convert Fq constraints to F (safe because we checked F = Fq)
             let gt_mul_constraints_f = unsafe {
                 std::mem::transmute::<
                     Vec<GtMulConstraintPolynomials<Fq>>,
@@ -652,18 +740,25 @@ impl<F: JoltField> RecursionProver<F> {
                 >(gt_mul_constraints_fq)
             };
 
-            let prover =
-                GtMulProver::new(params, gt_mul_constraints_f, g_poly_f.clone(), transcript);
-            provers.push(Box::new(prover));
+            Some(GtMulProver::new(
+                params,
+                gt_mul_constraints_f,
+                g_poly_f.clone(),
+                transcript,
+            ))
+        } else {
+            None
+        };
+        if let Some(ref mut prover) = gt_mul_prover {
+            provers.push(prover);
         }
 
         // Add G1 scalar mul prover if we have G1 scalar mul constraints
         let g1_scalar_mul_constraints_tuples =
             self.constraint_system.extract_g1_scalar_mul_constraints();
-        if !g1_scalar_mul_constraints_tuples.is_empty() {
+        let mut g1_scalar_mul_prover = if !g1_scalar_mul_constraints_tuples.is_empty() {
             use super::stage1::g1_scalar_mul::G1ScalarMulConstraintPolynomials;
 
-            // Convert tuples to structured type
             let g1_scalar_mul_constraints: Vec<G1ScalarMulConstraintPolynomials> =
                 g1_scalar_mul_constraints_tuples
                     .into_iter()
@@ -695,59 +790,21 @@ impl<F: JoltField> RecursionProver<F> {
                     .collect();
 
             let params = G1ScalarMulParams::new(g1_scalar_mul_constraints.len());
-            let prover = G1ScalarMulProver::new(params, g1_scalar_mul_constraints, transcript);
-            provers.push(Box::new(prover));
+            Some(G1ScalarMulProver::new(
+                params,
+                g1_scalar_mul_constraints,
+                transcript,
+            ))
+        } else {
+            None
+        };
+        if let Some(ref mut prover) = g1_scalar_mul_prover {
+            provers.push(prover);
         }
 
-        if provers.is_empty() {
-            return Err("No constraints to prove in Stage 1".into());
-        }
+        let (proof, r_stage2) = BatchedSumcheck::prove(provers, accumulator, transcript);
 
-        // Run batched sumcheck for all provers
-        let (stage1_proof, r_stage1) = BatchedSumcheck::prove(
-            provers.iter_mut().map(|p| &mut **p as _).collect(),
-            accumulator,
-            transcript,
-        );
-
-        // Stage 1b: Run shift sumcheck for packed GT exp constraints
-        tracing::info!("[Stage 1b] Running shift sumcheck for {} GT exp constraints", num_packed_witnesses);
-
-        let rho_polys = rho_polynomials_for_shift
-            .expect("GT exp constraints should always exist in recursion SNARK");
-
-        // Create shift claims from accumulator to avoid ordering mismatches.
-        let mut shift_claim_indices: Vec<usize> = accumulator
-            .openings
-            .keys()
-            .filter_map(|opening_id| match opening_id {
-                OpeningId::Virtual(
-                    VirtualPolynomial::PackedGtExpRhoNext(idx),
-                    SumcheckId::PackedGtExp,
-                ) => Some(*idx),
-                _ => None,
-            })
-            .collect();
-        shift_claim_indices.sort_unstable();
-        debug_assert_eq!(shift_claim_indices.len(), num_packed_witnesses);
-
-        // Create shift prover
-        let mut shift_prover = ShiftRhoProver::new(
-            ShiftRhoParams::new(shift_claim_indices.len()),
-            rho_polys,
-            shift_claim_indices,
-            accumulator,
-            transcript,
-        );
-
-        // Run shift sumcheck
-        let (stage1b_proof, _) = BatchedSumcheck::prove(
-            vec![&mut shift_prover],
-            accumulator,
-            transcript,
-        );
-
-        Ok((stage1_proof, stage1b_proof, r_stage1))
+        Ok((proof, r_stage2))
     }
 
     /// Run Stage 2: Direct evaluation protocol
@@ -756,11 +813,11 @@ impl<F: JoltField> RecursionProver<F> {
         &self,
         transcript: &mut T,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        r_stage1: &[<F as JoltField>::Challenge],
+        r_stage2: &[<F as JoltField>::Challenge],
     ) -> Result<
         (
-            F, // Return m_eval instead of sumcheck proof
-            Vec<<F as JoltField>::Challenge>,
+            F, // m_eval
+            Vec<<F as JoltField>::Challenge>, // r_s challenges
         ),
         Box<dyn std::error::Error>,
     > {
@@ -774,11 +831,11 @@ impl<F: JoltField> RecursionProver<F> {
         // Since we know F = Fq, we can work directly with Fq types
         let accumulator_fq: &mut ProverOpeningAccumulator<Fq> = unsafe { std::mem::transmute(accumulator) };
 
-        // Convert r_stage1 challenges to Fq field elements
+        // Convert r_stage2 challenges to Fq field elements
         // SAFETY: We verified F = Fq above, so F::Challenge = Fq::Challenge
         let r_x: Vec<Fq> = unsafe {
-            let r_stage1_fq: &[<Fq as JoltField>::Challenge] = std::mem::transmute(r_stage1);
-            r_stage1_fq.iter().map(|c| (*c).into()).collect()
+            let r_stage2_fq: &[<Fq as JoltField>::Challenge] = std::mem::transmute(r_stage2);
+            r_stage2_fq.iter().map(|c| (*c).into()).collect()
         };
 
         // Extract virtual claims from Stage 1
@@ -808,12 +865,12 @@ impl<F: JoltField> RecursionProver<F> {
             r_x.clone(),
         );
 
-        let (r_s, m_eval) = prover.prove(transcript, accumulator_fq);
+        let r_s: Vec<Fq> = (0..self.constraint_system.num_s_vars())
+            .map(|_| transcript.challenge_scalar::<Fq>())
+            .collect();
+        let (_r_s, m_eval) = prover.prove(transcript, accumulator_fq, r_s.clone());
 
-        // Convert r_s to challenges for Stage 3 compatibility
-        // Stage 3 expects them in reverse order
-        // SAFETY: We verified F = Fq above
-        let r_stage2: Vec<<F as JoltField>::Challenge> = unsafe {
+        let r_stage2_s: Vec<<F as JoltField>::Challenge> = unsafe {
             let r_s_challenges: Vec<<Fq as JoltField>::Challenge> = r_s
                 .into_iter()
                 .rev()
@@ -826,7 +883,7 @@ impl<F: JoltField> RecursionProver<F> {
         // SAFETY: We verified F = Fq above
         let m_eval_f: F = unsafe { std::mem::transmute_copy(&m_eval) };
 
-        Ok((m_eval_f, r_stage2))
+        Ok((m_eval_f, r_stage2_s))
     }
 
     /// Run Stage 3: Jagged Transform Sumcheck + Stage 3b: Jagged Assist
@@ -835,8 +892,8 @@ impl<F: JoltField> RecursionProver<F> {
         &self,
         transcript: &mut T,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        r_stage1: &[<F as JoltField>::Challenge],
-        r_stage2: &[<F as JoltField>::Challenge],
+        r_stage2_s: &[<F as JoltField>::Challenge],
+        r_stage2_x: &[<F as JoltField>::Challenge],
     ) -> Result<
         (
             crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
@@ -868,9 +925,9 @@ impl<F: JoltField> RecursionProver<F> {
             Z: unsafe { std::mem::transmute(dense_poly_fq.Z) },
         };
 
-        // Convert r_stage2 (s challenges) and r_stage1 (x challenges) to F
-        let r_s_final: Vec<F> = r_stage2.iter().map(|c| (*c).into()).collect();
-        let r_x_prev: Vec<F> = r_stage1.iter().map(|c| (*c).into()).collect();
+        // Convert r_stage2 (s challenges) and r_stage2 (x challenges) to F
+        let r_s_final: Vec<F> = r_stage2_s.iter().map(|c| (*c).into()).collect();
+        let r_x_prev: Vec<F> = r_stage2_x.iter().map(|c| (*c).into()).collect();
 
         // Precompute matrix row indices for all polynomial indices
         let num_polynomials = bijection.num_polynomials();

@@ -921,6 +921,7 @@ impl DoryMatrixBuilder {
 
         // Pad num_rows to next power of 2 for the matrix
         let num_s_vars = (num_rows_unpadded as f64).log2().ceil() as usize;
+        let num_s_vars = num_s_vars.max(11);
         let num_rows = 1 << num_s_vars;
 
         // Sanity checks
@@ -2016,8 +2017,9 @@ mod tests {
                 assert_eq!(
                     eval,
                     Fq::zero(),
-                    "Constraint {} should evaluate to 0 at boolean points",
-                    idx
+                    "Constraint {} ({:?}) should evaluate to 0 at boolean points",
+                    idx,
+                    constraint.constraint_type
                 );
             }
         }

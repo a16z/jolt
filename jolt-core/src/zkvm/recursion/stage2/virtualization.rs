@@ -173,16 +173,14 @@ impl DirectEvaluationProver {
         }
     }
 
-    /// Run the prover protocol
+    /// Run the prover protocol at a provided r_s.
     pub fn prove<T: Transcript>(
         &self,
         transcript: &mut T,
         accumulator: &mut ProverOpeningAccumulator<Fq>,
+        r_s: Vec<Fq>,
     ) -> (Vec<Fq>, Fq) {
-        // Sample r_s from the transcript
-        let r_s: Vec<Fq> = (0..self.params.num_s_vars)
-            .map(|_| transcript.challenge_scalar::<Fq>())
-            .collect();
+        debug_assert_eq!(r_s.len(), self.params.num_s_vars);
 
         // Evaluate M(r_s, r_x)
         let m_eval = PolynomialEvaluation::evaluate(&self.matrix_bound, &r_s);
@@ -240,17 +238,15 @@ impl DirectEvaluationVerifier {
         }
     }
 
-    /// Run the verifier protocol
+    /// Run the verifier protocol at a provided r_s.
     pub fn verify<T: Transcript>(
         &self,
         transcript: &mut T,
         accumulator: &mut VerifierOpeningAccumulator<Fq>,
         m_eval_claimed: Fq,
+        r_s: Vec<Fq>,
     ) -> Result<Vec<Fq>, Stage2Error> {
-        // Sample the same r_s as the prover
-        let r_s: Vec<Fq> = (0..self.params.num_s_vars)
-            .map(|_| transcript.challenge_scalar::<Fq>())
-            .collect();
+        debug_assert_eq!(r_s.len(), self.params.num_s_vars);
 
         // Compute the expected value: Σ_i eq(r_s, i) · v_i
         let eq_evals = EqPolynomial::<Fq>::evals(&r_s);
@@ -364,11 +360,11 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
                 // Get committed polynomial claims
                 let (_, rho_prev) = accumulator.get_virtual_polynomial_opening(
                     VirtualPolynomial::PackedGtExpRho(packed_gt_exp_idx),
-                    SumcheckId::PackedGtExp,
+                    SumcheckId::PackedGtExpClaimReduction,
                 );
                 let (_, quotient) = accumulator.get_virtual_polynomial_opening(
                     VirtualPolynomial::PackedGtExpQuotient(packed_gt_exp_idx),
-                    SumcheckId::PackedGtExp,
+                    SumcheckId::PackedGtExpClaimReduction,
                 );
 
                 // New PolyType values after removing RhoCurr: RhoPrev=0, Quotient=1
@@ -454,4 +450,3 @@ pub fn extract_virtual_claims_from_accumulator<F: JoltField, A: OpeningAccumulat
 
     claims
 }
-

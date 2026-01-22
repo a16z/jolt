@@ -1555,7 +1555,7 @@ where
         });
 
         // Stage 1: Constraint sumchecks
-        let (stage1_proof, stage1b_proof, r_stage1) = tracing::info_span!("recursion_stage11_1_constraints")
+        let (stage1_proof, r_stage1) = tracing::info_span!("recursion_stage11_1_constraints")
             .in_scope(|| {
                 tracing::info!(
                     "Running Stage 11.1: Constraint sumchecks (GT exp, GT mul, G1 scalar mul)"
@@ -1565,12 +1565,21 @@ where
                     .expect("Failed to run stage 1 sumchecks")
             });
 
-        // Stage 2: Virtualization direct evaluation
-        let (stage2_m_eval, r_stage2) = tracing::info_span!("recursion_stage11_2_virtualization")
+        // Stage 2b: PackedGtExp claim reduction + shift
+        let (stage1b_proof, r_stage2) = tracing::info_span!("recursion_stage11_2b_packed_gt_exp")
             .in_scope(|| {
+                tracing::info!("Running Stage 11.2b: PackedGtExp claim reduction");
+                recursion_prover
+                    .prove_stage2b(&mut self.transcript, &mut accumulator)
+                    .expect("Failed to run stage 2b reduction")
+            });
+
+        // Stage 2: Virtualization direct evaluation
+        let (stage2_m_eval, r_stage2_s) =
+            tracing::info_span!("recursion_stage11_2_virtualization").in_scope(|| {
                 tracing::info!("Running Stage 11.2: Virtualization direct evaluation");
                 recursion_prover
-                    .prove_stage2(&mut self.transcript, &mut accumulator, &r_stage1)
+                    .prove_stage2(&mut self.transcript, &mut accumulator, &r_stage2)
                     .expect("Failed to run stage 2 evaluation")
             });
 
@@ -1579,7 +1588,7 @@ where
             tracing::info_span!("recursion_stage11_3_jagged").in_scope(|| {
                 tracing::info!("Running Stage 11.3: Jagged transform sumcheck + Jagged Assist");
                 recursion_prover
-                    .prove_stage3(&mut self.transcript, &mut accumulator, &r_stage1, &r_stage2)
+                    .prove_stage3(&mut self.transcript, &mut accumulator, &r_stage2_s, &r_stage2)
                     .expect("Failed to run stage 3 sumcheck")
             });
 
@@ -1588,7 +1597,7 @@ where
             stage1b_proof,
             stage2_m_eval,
             r_stage1,
-            r_stage2,
+            r_stage2_s,
             stage3_proof,
             stage3b_proof,
             accumulator,

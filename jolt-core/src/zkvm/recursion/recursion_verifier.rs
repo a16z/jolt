@@ -27,8 +27,13 @@ use super::{
         packed_gt_exp::{PackedGtExpParams, PackedGtExpPublicInputs, PackedGtExpVerifier},
         shift_rho::{ShiftRhoParams, ShiftRhoVerifier},
     },
-    stage2::virtualization::{
-        extract_virtual_claims_from_accumulator, DirectEvaluationParams, DirectEvaluationVerifier,
+    stage2::{
+        packed_gt_exp_reduction::{
+            PackedGtExpClaimReductionParams, PackedGtExpClaimReductionVerifier,
+        },
+        virtualization::{
+            extract_virtual_claims_from_accumulator, DirectEvaluationParams, DirectEvaluationVerifier,
+        },
     },
     stage3::{
         jagged::{JaggedSumcheckParams, JaggedSumcheckVerifier},
@@ -103,7 +108,7 @@ impl<F: JoltField> RecursionVerifier<F> {
         }
 
         // ============ STAGE 1: Verify Constraint Sumchecks ============
-        let (r_stage1, num_gt_exp) = tracing::info_span!("verify_recursion_stage1").in_scope(|| {
+        let (r_stage1, _num_gt_exp) = tracing::info_span!("verify_recursion_stage1").in_scope(|| {
             tracing::info!("Verifying Stage 1: Constraint sumchecks");
             self.verify_stage1(
                 &proof.stage1_proof,
@@ -114,12 +119,11 @@ impl<F: JoltField> RecursionVerifier<F> {
             )
         })?;
 
-        // ============ STAGE 1b: Verify Shift Sumcheck ============
-        tracing::info_span!("verify_recursion_stage1b").in_scope(|| {
-            tracing::info!("Verifying Stage 1b: Shift sumcheck");
-            // Use the number of packed witnesses (public inputs) not constraint types
+        // ============ STAGE 2b: Verify PackedGtExp Claim Reduction + Shift ============
+        let r_stage2 = tracing::info_span!("verify_recursion_stage2b").in_scope(|| {
+            tracing::info!("Verifying Stage 2b: PackedGtExp claim reduction");
             let num_packed_witnesses = self.input.packed_gt_exp_public_inputs.len();
-            self.verify_stage1b(
+            self.verify_stage2b(
                 &proof.stage1b_proof,
                 transcript,
                 &mut accumulator,
@@ -128,9 +132,14 @@ impl<F: JoltField> RecursionVerifier<F> {
         })?;
 
         // ============ STAGE 2: Verify Virtualization Sumcheck ============
-        let r_stage2 = tracing::info_span!("verify_recursion_stage2").in_scope(|| {
+        let r_stage2_s = tracing::info_span!("verify_recursion_stage2").in_scope(|| {
             tracing::info!("Verifying Stage 2: Direct evaluation");
-            self.verify_stage2(transcript, &mut accumulator, &r_stage1, proof.stage2_m_eval)
+            self.verify_stage2(
+                transcript,
+                &mut accumulator,
+                &r_stage2,
+                proof.stage2_m_eval,
+            )
         })?;
 
         // // ============ STAGE 3: Verify Jagged Transform Sumcheck + Stage 3b: Jagged Assist ============
@@ -141,7 +150,7 @@ impl<F: JoltField> RecursionVerifier<F> {
                 &proof.stage3b_proof,
                 transcript,
                 &mut accumulator,
-                &r_stage1,
+                &r_stage2_s,
                 &r_stage2,
             )
         })?;
@@ -182,29 +191,9 @@ impl<F: JoltField> RecursionVerifier<F> {
 
         // Count constraints by type
         let mut num_gt_exp = 0;
-        let mut num_gt_mul = 0;
-        let mut num_g1_scalar_mul = 0;
-
-        // Collect constraint information
-        let mut gt_mul_indices = Vec::new();
-        let mut g1_scalar_mul_base_points = Vec::new();
-        let mut g1_scalar_mul_indices = Vec::new();
-
-        // Use enumeration index as global constraint index (matches prover's indexing)
-        for (global_idx, constraint) in self.input.constraint_types.iter().enumerate() {
-            match constraint {
-                ConstraintType::PackedGtExp => {
-                    num_gt_exp += 1;
-                }
-                ConstraintType::GtMul => {
-                    gt_mul_indices.push(global_idx);
-                    num_gt_mul += 1;
-                }
-                ConstraintType::G1ScalarMul { base_point } => {
-                    g1_scalar_mul_base_points.push(*base_point);
-                    g1_scalar_mul_indices.push(global_idx);
-                    num_g1_scalar_mul += 1;
-                }
+        for constraint in &self.input.constraint_types {
+            if matches!(constraint, ConstraintType::PackedGtExp) {
+                num_gt_exp += 1;
             }
         }
 
@@ -215,25 +204,6 @@ impl<F: JoltField> RecursionVerifier<F> {
             let verifier = PackedGtExpVerifier::new(
                 params,
                 self.input.packed_gt_exp_public_inputs.clone(),
-                transcript,
-            );
-            verifiers.push(Box::new(verifier));
-        }
-
-        // Add GT mul verifier if we have GT mul constraints
-        if num_gt_mul > 0 {
-            let params = GtMulParams::new(num_gt_mul);
-            let verifier = GtMulVerifier::new(params, gt_mul_indices, transcript);
-            verifiers.push(Box::new(verifier));
-        }
-
-        // Add G1 scalar mul verifier if we have G1 scalar mul constraints
-        if num_g1_scalar_mul > 0 {
-            let params = G1ScalarMulParams::new(num_g1_scalar_mul);
-            let verifier = G1ScalarMulVerifier::new(
-                params,
-                g1_scalar_mul_base_points,
-                g1_scalar_mul_indices,
                 transcript,
             );
             verifiers.push(Box::new(verifier));
@@ -252,18 +222,21 @@ impl<F: JoltField> RecursionVerifier<F> {
         Ok((r_stage1, num_gt_exp))
     }
 
-    /// Verify Stage 1b: Shift sumcheck
-    #[tracing::instrument(skip_all, name = "RecursionVerifier::verify_stage1b")]
-    fn verify_stage1b<T: Transcript>(
+    /// Verify Stage 2b: PackedGtExp claim reduction + shift sumcheck
+    #[tracing::instrument(skip_all, name = "RecursionVerifier::verify_stage2b")]
+    fn verify_stage2b<T: Transcript>(
         &self,
         proof: &crate::subprotocols::sumcheck::SumcheckInstanceProof<F, T>,
         transcript: &mut T,
         accumulator: &mut VerifierOpeningAccumulator<F>,
         num_packed_witnesses: usize,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        tracing::info!("[Stage 1b] Verifying shift sumcheck for {} GT exp witnesses", num_packed_witnesses);
+    ) -> Result<Vec<<F as crate::field::JoltField>::Challenge>, Box<dyn std::error::Error>> {
+        tracing::info!(
+            "[Stage 2b] Verifying PackedGtExp claim reduction for {} GT exp witnesses",
+            num_packed_witnesses
+        );
 
-        let mut shift_claim_indices: Vec<usize> = accumulator
+        let mut claim_indices: Vec<usize> = accumulator
             .openings
             .keys()
             .filter_map(|opening_id| match opening_id {
@@ -274,32 +247,78 @@ impl<F: JoltField> RecursionVerifier<F> {
                 _ => None,
             })
             .collect();
-        shift_claim_indices.sort_unstable();
-        debug_assert_eq!(shift_claim_indices.len(), num_packed_witnesses);
-
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "Verifier creating {} shift claims for {} packed witnesses",
-            shift_claim_indices.len(),
-            num_packed_witnesses
-        );
+        claim_indices.sort_unstable();
+        debug_assert_eq!(claim_indices.len(), num_packed_witnesses);
 
         // Create shift verifier
         let shift_verifier = ShiftRhoVerifier::new(
-            ShiftRhoParams::new(shift_claim_indices.len()),
-            shift_claim_indices,
+            ShiftRhoParams::new(claim_indices.len()),
+            claim_indices.clone(),
             transcript,
         );
 
-        // Run shift sumcheck verification
-        BatchedSumcheck::verify(
-            proof,
-            vec![&shift_verifier],
-            accumulator,
+        let reduction_verifier = PackedGtExpClaimReductionVerifier::new(
+            PackedGtExpClaimReductionParams::new(claim_indices.len() * 2),
+            claim_indices,
             transcript,
-        )?;
+        );
 
-        Ok(())
+        // Collect constraint information for GT mul / G1 scalar mul
+        let mut num_gt_mul = 0;
+        let mut num_g1_scalar_mul = 0;
+        let mut gt_mul_indices = Vec::new();
+        let mut g1_scalar_mul_base_points = Vec::new();
+        let mut g1_scalar_mul_indices = Vec::new();
+
+        for (global_idx, constraint) in self.input.constraint_types.iter().enumerate() {
+            match constraint {
+                ConstraintType::GtMul => {
+                    gt_mul_indices.push(global_idx);
+                    num_gt_mul += 1;
+                }
+                ConstraintType::G1ScalarMul { base_point } => {
+                    g1_scalar_mul_base_points.push(*base_point);
+                    g1_scalar_mul_indices.push(global_idx);
+                    num_g1_scalar_mul += 1;
+                }
+                _ => {}
+            }
+        }
+
+        let mut verifier_refs: Vec<&dyn SumcheckInstanceVerifier<F, T>> =
+            vec![&shift_verifier, &reduction_verifier];
+
+        let mut gt_mul_verifier = if num_gt_mul > 0 {
+            Some(GtMulVerifier::new(
+                GtMulParams::new(num_gt_mul),
+                gt_mul_indices,
+                transcript,
+            ))
+        } else {
+            None
+        };
+        if let Some(ref verifier) = gt_mul_verifier {
+            verifier_refs.push(verifier);
+        }
+
+        let mut g1_scalar_mul_verifier = if num_g1_scalar_mul > 0 {
+            Some(G1ScalarMulVerifier::new(
+                G1ScalarMulParams::new(num_g1_scalar_mul),
+                g1_scalar_mul_base_points,
+                g1_scalar_mul_indices,
+                transcript,
+            ))
+        } else {
+            None
+        };
+        if let Some(ref verifier) = g1_scalar_mul_verifier {
+            verifier_refs.push(verifier);
+        }
+
+        // Run batched sumcheck verification with shared challenges
+        let r_stage2 = BatchedSumcheck::verify(proof, verifier_refs, accumulator, transcript)?;
+
+        Ok(r_stage2)
     }
 
     /// Verify Stage 2: Direct evaluation protocol
@@ -308,7 +327,7 @@ impl<F: JoltField> RecursionVerifier<F> {
         &self,
         transcript: &mut T,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        r_stage1: &[<F as crate::field::JoltField>::Challenge],
+        r_stage2: &[<F as crate::field::JoltField>::Challenge],
         stage2_m_eval: F,
     ) -> Result<Vec<<F as crate::field::JoltField>::Challenge>, Box<dyn std::error::Error>> {
         use std::any::TypeId;
@@ -322,11 +341,11 @@ impl<F: JoltField> RecursionVerifier<F> {
         let accumulator_fq: &mut VerifierOpeningAccumulator<Fq> =
             unsafe { std::mem::transmute(accumulator) };
 
-        // Convert r_stage1 challenges to Fq field elements
+        // Convert r_stage2 challenges to Fq field elements
         // SAFETY: We verified F = Fq above, so F::Challenge = Fq::Challenge
         let r_x: Vec<Fq> = unsafe {
-            let r_stage1_fq: &[<Fq as JoltField>::Challenge] = std::mem::transmute(r_stage1);
-            r_stage1_fq.iter().map(|c| (*c).into()).collect()
+            let r_stage2_fq: &[<Fq as JoltField>::Challenge] = std::mem::transmute(r_stage2);
+            r_stage2_fq.iter().map(|c| (*c).into()).collect()
         };
 
         // Extract virtual claims from Stage 1
@@ -351,20 +370,21 @@ impl<F: JoltField> RecursionVerifier<F> {
         // SAFETY: We verified F = Fq above
         let m_eval_fq: Fq = unsafe { std::mem::transmute_copy(&stage2_m_eval) };
 
-        let r_s = verifier
-            .verify(transcript, accumulator_fq, m_eval_fq)
+        let r_s: Vec<Fq> = (0..self.input.num_s_vars)
+            .map(|_| transcript.challenge_scalar::<Fq>())
+            .collect();
+
+        verifier
+            .verify(transcript, accumulator_fq, m_eval_fq, r_s.clone())
             .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
 
-        // Convert r_s to challenges for Stage 3 compatibility
-        // Stage 3 expects them in reverse order
-        // SAFETY: We verified F = Fq above
-        let r_stage2: Vec<<F as JoltField>::Challenge> = unsafe {
+        let r_stage2_s: Vec<<F as JoltField>::Challenge> = unsafe {
             let r_s_challenges: Vec<<Fq as JoltField>::Challenge> =
                 r_s.into_iter().rev().map(|f| f.into()).collect();
             std::mem::transmute(r_s_challenges)
         };
 
-        Ok(r_stage2)
+        Ok(r_stage2_s)
     }
 
     /// Verify Stage 3: Jagged transform sumcheck + Stage 3b: Jagged Assist
@@ -375,8 +395,8 @@ impl<F: JoltField> RecursionVerifier<F> {
         stage3b_proof: &super::stage3::jagged_assist::JaggedAssistProof<F, T>,
         transcript: &mut T,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        r_stage1: &[<F as crate::field::JoltField>::Challenge],
-        r_stage2: &[<F as crate::field::JoltField>::Challenge],
+        r_stage2_s: &[<F as crate::field::JoltField>::Challenge],
+        r_stage2_x: &[<F as crate::field::JoltField>::Challenge],
     ) -> Result<Vec<<F as crate::field::JoltField>::Challenge>, Box<dyn std::error::Error>> {
         use std::any::TypeId;
 
@@ -395,12 +415,12 @@ impl<F: JoltField> RecursionVerifier<F> {
 
         let _convert_challenges_span = tracing::info_span!("stage3_convert_challenges").entered();
         // Convert challenges to field elements
-        let r_s_final: Vec<F> = r_stage2
+        let r_s_final: Vec<F> = r_stage2_s
             .iter()
             .take(self.input.num_s_vars)
             .map(|c| (*c).into())
             .collect();
-        let r_x_prev: Vec<F> = r_stage1.iter().map(|c| (*c).into()).collect();
+        let r_x_prev: Vec<F> = r_stage2_x.iter().map(|c| (*c).into()).collect();
         drop(_convert_challenges_span);
 
         let _dense_size_span = tracing::info_span!("stage3_compute_dense_size").entered();
