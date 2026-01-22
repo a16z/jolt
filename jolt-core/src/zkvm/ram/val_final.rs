@@ -5,7 +5,7 @@ use crate::{
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+            BindingOrder, MultilinearPolynomial, PolynomialBinding,
         },
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -62,7 +62,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
     }
 
     pub fn new_from_verifier(
-        initial_ram_state: &[u64],
+        ram_preprocessing: &super::RAMPreprocessing,
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
@@ -110,14 +110,15 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
             n_memory_vars,
         );
 
-        // Compute the public part of val_init evaluation
-        let val_init_public: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
+        // Compute the public part of val_init evaluation (bytecode + inputs) without
+        // materializing the full length-K initial RAM state.
+        let val_init_public_eval =
+            super::evaluate_public_initial_ram_evaluation::<F>(ram_preprocessing, program_io, &r_address);
 
         // Combine all contributions: untrusted + trusted + public
         let val_init_eval = untrusted_advice_contribution
             + trusted_advice_contribution
-            + val_init_public.evaluate(&r_address);
+            + val_init_public_eval;
 
         ValFinalSumcheckParams {
             T: trace_len,
@@ -306,7 +307,7 @@ pub struct ValFinalSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> ValFinalSumcheckVerifier<F> {
     pub fn new(
-        initial_ram_state: &[u64],
+        ram_preprocessing: &super::RAMPreprocessing,
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
@@ -314,7 +315,7 @@ impl<F: JoltField> ValFinalSumcheckVerifier<F> {
         rw_config: &ReadWriteConfig,
     ) -> Self {
         let params = ValFinalSumcheckParams::new_from_verifier(
-            initial_ram_state,
+            ram_preprocessing,
             program_io,
             trace_len,
             ram_K,

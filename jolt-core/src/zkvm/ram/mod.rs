@@ -49,6 +49,7 @@ use crate::zkvm::config::OneHotParams;
 use crate::{
     field::{self, JoltField},
     poly::{
+        eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -436,6 +437,116 @@ fn calculate_advice_memory_evaluation<F: JoltField>(
     }
 }
 
+/// Evaluate the public portion of the initial RAM state at a random address point `r_address`
+/// without materializing the full length-`ram_K` initial memory vector.
+///
+/// Public initial memory consists of:
+/// - the program image (`ram_preprocessing.bytecode_words`) placed at `min_bytecode_address`
+/// - public inputs (`program_io.inputs`) placed at `memory_layout.input_start`
+///
+/// This function computes:
+///   \sum_k Val_init_public[k] * eq(r_address, k)
+/// but only over the (contiguous) regions that can be non-zero.
+fn evaluate_public_initial_ram_evaluation<F: JoltField>(
+    ram_preprocessing: &RAMPreprocessing,
+    program_io: &JoltDevice,
+    r_address: &[F::Challenge],
+) -> F {
+    fn eval_range<F: JoltField>(start_index: usize, values: &[u64], r: &[F::Challenge]) -> F {
+        if values.is_empty() {
+            return F::zero();
+        }
+        let total_vars = r.len();
+        let mut acc = F::zero();
+
+        let mut idx = start_index;
+        let mut off = 0usize;
+        while off < values.len() {
+            let remaining = values.len() - off;
+
+            // Largest power-of-two block size that both:
+            // - fits in the remaining range, and
+            // - is aligned at `idx`.
+            let max_len_pow = if remaining.is_power_of_two() {
+                remaining
+            } else {
+                remaining.next_power_of_two() >> 1
+            };
+            let align_pow = if idx == 0 {
+                // idx==0 is aligned to any power-of-two; cap by total domain size.
+                1usize << total_vars
+            } else {
+                1usize << idx.trailing_zeros()
+            };
+            let block_size = core::cmp::min(max_len_pow.max(1), align_pow);
+            debug_assert!(block_size.is_power_of_two());
+            debug_assert_eq!(idx % block_size, 0);
+
+            let b = block_size.log_2();
+            debug_assert!(b <= total_vars);
+            let prefix_len = total_vars - b;
+            let prefix_val = idx >> b;
+
+            // Compute eq over the fixed prefix bits.
+            let mut prefix_scale = F::one();
+            if prefix_len > 0 {
+                for i in 0..prefix_len {
+                    let bit = (prefix_val >> (prefix_len - 1 - i)) & 1;
+                    prefix_scale *= if bit == 1 {
+                        r[i].into()
+                    } else {
+                        F::one() - r[i]
+                    };
+                }
+            }
+
+            // Compute eq table over the suffix bits (size = block_size).
+            let suffix_evals = EqPolynomial::evals(&r[prefix_len..]);
+            debug_assert_eq!(suffix_evals.len(), block_size);
+
+            for j in 0..block_size {
+                let coeff = values[off + j];
+                if coeff != 0 {
+                    acc += F::from_u64(coeff) * (prefix_scale * suffix_evals[j]);
+                }
+            }
+
+            idx += block_size;
+            off += block_size;
+        }
+        acc
+    }
+
+    // Bytecode region
+    let bytecode_start = remap_address(
+        ram_preprocessing.min_bytecode_address,
+        &program_io.memory_layout,
+    )
+    .unwrap() as usize;
+    let mut acc = eval_range::<F>(bytecode_start, &ram_preprocessing.bytecode_words, r_address);
+
+    // Inputs region (packed into u64 words in little-endian)
+    if !program_io.inputs.is_empty() {
+        let input_start =
+            remap_address(program_io.memory_layout.input_start, &program_io.memory_layout)
+                .unwrap() as usize;
+        let input_words: Vec<u64> = program_io
+            .inputs
+            .chunks(8)
+            .map(|chunk| {
+                let mut word = [0u8; 8];
+                for (i, byte) in chunk.iter().enumerate() {
+                    word[i] = *byte;
+                }
+                u64::from_le_bytes(word)
+            })
+            .collect();
+        acc += eval_range::<F>(input_start, &input_words, r_address);
+    }
+
+    acc
+}
+
 /// Returns `(initial_memory_state, final_memory_state)`
 pub fn gen_ram_memory_states<F: JoltField>(
     ram_K: usize,
@@ -576,4 +687,65 @@ pub fn gen_ram_initial_memory_state<F: JoltField>(
     }
 
     initial_memory_state
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+    use common::constants::RAM_START_ADDRESS;
+    use common::jolt_device::MemoryConfig;
+    use ark_ff::UniformRand;
+    use rand::{rngs::StdRng, RngCore, SeedableRng};
+
+    #[test]
+    fn public_initial_ram_eval_matches_dense_mle() {
+        type F = ark_bn254::Fr;
+
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        // Build a MemoryConfig with a fixed program size so MemoryLayout is well-defined.
+        let memory_config = MemoryConfig {
+            program_size: Some(4096),
+            ..Default::default()
+        };
+        let mut program_io = JoltDevice::new(&memory_config);
+
+        // Random public inputs (not necessarily 8-byte aligned).
+        let mut inputs = vec![0u8; 37];
+        rng.fill_bytes(&mut inputs);
+        program_io.inputs = inputs;
+
+        // Fake "bytecode" bytes at RAM_START_ADDRESS.
+        let mut memory_init = Vec::new();
+        for i in 0..73u64 {
+            let b = (rng.next_u64() & 0xff) as u8;
+            memory_init.push((RAM_START_ADDRESS + i, b));
+        }
+        let ram_pp = RAMPreprocessing::preprocess(memory_init);
+
+        // Choose ram_K large enough to cover both bytecode and inputs placements.
+        let bytecode_start =
+            remap_address(ram_pp.min_bytecode_address, &program_io.memory_layout).unwrap() as usize;
+        let input_start =
+            remap_address(program_io.memory_layout.input_start, &program_io.memory_layout)
+                .unwrap() as usize;
+        let input_words_len = (program_io.inputs.len() + 7) / 8;
+        let needed = (bytecode_start + ram_pp.bytecode_words.len())
+            .max(input_start + input_words_len)
+            .max(1);
+        let ram_K = needed.next_power_of_two();
+
+        let dense = gen_ram_initial_memory_state::<F>(ram_K, &ram_pp, &program_io);
+
+        // Random evaluation point over address vars (big-endian convention).
+        let n_vars = ram_K.log_2();
+        let r: Vec<<F as JoltField>::Challenge> =
+            (0..n_vars).map(|_| <F as JoltField>::Challenge::rand(&mut rng)).collect();
+
+        let dense_eval = MultilinearPolynomial::<F>::from(dense).evaluate(&r);
+        let fast_eval = evaluate_public_initial_ram_evaluation::<F>(&ram_pp, &program_io, &r);
+
+        assert_eq!(dense_eval, fast_eval);
+    }
 }
