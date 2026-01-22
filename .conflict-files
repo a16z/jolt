@@ -1,3 +1,0 @@
-ancestorEntries = ["tracer/src/utils/inline_helpers.rs"]
-ourEntries = ["tracer/src/utils/inline_helpers.rs"]
-theirEntries = ["tracer/src/utils/inline_helpers.rs"]
