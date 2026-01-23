@@ -420,7 +420,12 @@ impl MacroBuilder {
                 program.set_func(#fn_name_str);
                 #set_std
                 #set_mem_size
-                program.build_with_channel(target_dir, #channel);
+
+                // Build the compute_advice version first
+                program.build_with_features(target_dir, #channel, &["compute_advice"]);
+
+                // Build the normal version (without compute_advice)
+                program.build_with_features(target_dir, #channel, &[]);
 
                 program
             }
@@ -685,6 +690,41 @@ impl MacroBuilder {
                 let mut trusted_advice_bytes = vec![];
                 #(#set_program_trusted_advice_args;)*
 
+                // Two-pass strategy: First run compute_advice version to populate advice tape
+                if let Some(compute_advice_elf_contents) = program.get_elf_compute_advice_contents() {
+                    use jolt::guest::program::{trace as guest_trace, decode as guest_decode};
+
+                    // Decode compute_advice ELF to get its program size
+                    let (_, _, compute_advice_program_size) = guest_decode(&compute_advice_elf_contents);
+
+                    let memory_config = MemoryConfig {
+                        max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
+                        max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
+                        max_input_size: preprocessing.shared.memory_layout.max_input_size,
+                        max_output_size: preprocessing.shared.memory_layout.max_output_size,
+                        stack_size: preprocessing.shared.memory_layout.stack_size,
+                        memory_size: preprocessing.shared.memory_layout.memory_size,
+                        program_size: Some(compute_advice_program_size),
+                    };
+
+                    // Clear advice tape before first pass
+                    jolt::advice_tape_clear();
+
+                    // First pass: run compute_advice version to populate advice tape
+                    let _ = guest_trace(
+                        &compute_advice_elf_contents,
+                        None,
+                        &input_bytes,
+                        &untrusted_advice_bytes,
+                        &trusted_advice_bytes,
+                        &memory_config,
+                    );
+
+                    // Reset read position for second pass
+                    jolt::advice_tape_reset();
+                }
+
+                // Second pass: run normal version with populated advice tape to generate proof
                 let elf_contents_opt = program.get_elf_contents();
                 let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
                 let prover = RV64IMACProver::gen_from_elf(&preprocessing,
@@ -894,6 +934,8 @@ impl MacroBuilder {
                 MemoryConfig,
                 MemoryLayout,
                 JoltDevice,
+                advice_tape_clear,
+                advice_tape_reset,
             };
             use jolt::{
                 JoltVerifierPreprocessing,

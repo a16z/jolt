@@ -35,6 +35,7 @@ impl Program {
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             std: false,
             elf: None,
+            elf_compute_advice: None,
         }
     }
 
@@ -85,6 +86,11 @@ impl Program {
 
     #[tracing::instrument(skip_all, name = "Program::build")]
     pub fn build_with_channel(&mut self, target_dir: &str, channel: &str) {
+        self.build_with_features(target_dir, channel, &[]);
+    }
+
+    #[tracing::instrument(skip_all, name = "Program::build_with_features")]
+    pub fn build_with_features(&mut self, target_dir: &str, channel: &str, extra_features: &[&str]) {
         if self.elf.is_none() {
             #[cfg(not(target_arch = "wasm32"))]
             install_toolchain().unwrap();
@@ -157,12 +163,23 @@ impl Program {
                 envs.push(("JOLT_FUNC_NAME", func.to_string()));
             }
 
-            let target = format!(
-                "{}/{}-{}",
-                target_dir,
-                self.guest,
-                self.func.as_ref().unwrap_or(&"".to_string())
-            );
+            // Add suffix to target dir if building with compute_advice feature
+            let is_compute_advice = extra_features.iter().any(|&f| f == "compute_advice");
+            let target = if is_compute_advice {
+                format!(
+                    "{}/{}-{}-compute-advice",
+                    target_dir,
+                    self.guest,
+                    self.func.as_ref().unwrap_or(&"".to_string())
+                )
+            } else {
+                format!(
+                    "{}/{}-{}",
+                    target_dir,
+                    self.guest,
+                    self.func.as_ref().unwrap_or(&"".to_string())
+                )
+            };
 
             let cc_env_var = format!("CC_{target_triple}");
             let cc_value = std::env::var(&cc_env_var).unwrap_or_else(|_| {
@@ -192,11 +209,16 @@ impl Program {
             });
             envs.push((&cc_env_var, cc_value));
 
-            let args = [
+            // Build features string combining "guest" with any extra features
+            let mut features = vec!["guest"];
+            features.extend_from_slice(extra_features);
+            let features_str = features.join(",");
+
+            let args = vec![
                 "build",
                 "--release",
                 "--features",
-                "guest",
+                &features_str,
                 "-p",
                 &self.guest,
                 "--target-dir",
@@ -223,13 +245,23 @@ impl Program {
 
             let elf_path = format!("{}/{}/release/{}", target, target_triple, self.guest);
 
-            // Store the main ELF path
-            self.elf = Some(PathBuf::from_str(&elf_path).unwrap());
-
-            if debug_symbols {
-                info!("Built guest binary with debug symbols: {elf_path}");
+            // If extra_features contains "compute_advice", store in elf_compute_advice
+            // Otherwise store in elf
+            let is_compute_advice = extra_features.iter().any(|&f| f == "compute_advice");
+            if is_compute_advice {
+                self.elf_compute_advice = Some(PathBuf::from_str(&elf_path).unwrap());
+                if debug_symbols {
+                    info!("Built compute_advice guest binary with debug symbols: {elf_path}");
+                } else {
+                    info!("Built compute_advice guest binary: {elf_path}");
+                }
             } else {
-                info!("Built guest binary: {elf_path}");
+                self.elf = Some(PathBuf::from_str(&elf_path).unwrap());
+                if debug_symbols {
+                    info!("Built guest binary with debug symbols: {elf_path}");
+                } else {
+                    info!("Built guest binary: {elf_path}");
+                }
             }
         }
     }
@@ -254,6 +286,18 @@ impl Program {
 
     pub fn get_elf_contents(&self) -> Option<Vec<u8>> {
         if let Some(elf) = &self.elf {
+            let mut elf_file =
+                File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+            let mut elf_contents = Vec::new();
+            elf_file.read_to_end(&mut elf_contents).unwrap();
+            Some(elf_contents)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>> {
+        if let Some(elf) = &self.elf_compute_advice {
             let mut elf_file =
                 File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
             let mut elf_contents = Vec::new();

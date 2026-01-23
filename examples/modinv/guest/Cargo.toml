@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 guest = []
+compute_advice = []
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
