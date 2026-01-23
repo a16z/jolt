@@ -13,41 +13,41 @@
 pub const INLINE_OPCODE: u32 = 0x0B;
 pub const SECP256K1_FUNCT7: u32 = 0x05;
 
-// base field (q) division (pure non-deterministic advice, no checks)
-// that is, given a and b in Fq, compute c = a / b
-pub const SECP256K1_DIVQ_ADV_FUNCT3: u32 = 0x00;
-pub const SECP256K1_DIVQ_ADV_NAME: &str = "SECP256K1_DIVQ_ADV";
-
-// base field (q) multiplication helper
-// that is, given a and b in Fq, compute w such that ab - wq = c with c in [0, q)
-pub const SECP256K1_UNNAMED_FUNCT3: u32 = 0x03;
-pub const SECP256K1_UNNAMED_NAME: &str = "SECP256K1_UNNAMED";
-
 // base field (q) multiplication helper
 // that is, given a and b in Fq, compute a 256-bit c such that ab - wq = c
-pub const SECP256K1_MULQ_FUNCT3: u32 = 0x04;
+pub const SECP256K1_MULQ_FUNCT3: u32 = 0x00;
 pub const SECP256K1_MULQ_NAME: &str = "SECP256K1_MULQ";
 
 // base field (q) square helper
 // that is, given a in Fq, compute a 256-bit c such that a^2 - wq = c
-pub const SECP256K1_SQUAREQ_FUNCT3: u32 = 0x05;
+pub const SECP256K1_SQUAREQ_FUNCT3: u32 = 0x01;
 pub const SECP256K1_SQUAREQ_NAME: &str = "SECP256K1_SQUAREQ";
 
 // base field (q) division helper
 // that is, given a and b in Fq, compute a 256-bit c such that cb - wq = a
-pub const SECP256K1_DIVQ_FUNCT3: u32 = 0x06;
+pub const SECP256K1_DIVQ_FUNCT3: u32 = 0x02;
 pub const SECP256K1_DIVQ_NAME: &str = "SECP256K1_DIVQ";
 
-// scalar field (r) division (pure non-deterministic advice, no checks)
-// that is, given a and b in Fr, compute c = a / b
-pub const SECP256K1_DIVR_ADV_FUNCT3: u32 = 0x01;
-pub const SECP256K1_DIVR_ADV_NAME: &str = "SECP256K1_DIVR_ADV";
+// scalar field (r) multiplication helper
+// that is, given a and b in Fr, compute a 256-bit c such that ab - wq = c
+pub const SECP256K1_MULR_FUNCT3: u32 = 0x04;
+pub const SECP256K1_MULR_NAME: &str = "SECP256K1_MULR";
+
+// scalar field (r) square helper
+// that is, given a in Fr, compute a 256-bit c such that a^2 - wq = c
+pub const SECP256K1_SQUARER_FUNCT3: u32 = 0x05;
+pub const SECP256K1_SQUARER_NAME: &str = "SECP256K1_SQUARER";
+
+// base field (r) division helper
+// that is, given a and b in Fr, compute a 256-bit c such that cb - wq = a
+pub const SECP256K1_DIVR_FUNCT3: u32 = 0x06;
+pub const SECP256K1_DIVR_NAME: &str = "SECP256K1_DIVR";
 
 // scalar field (r) glv decomposition (pure non-deterministic advice, no checks)
 // this is, given k in Fr, compute k1, k2 such that k = k1 + k2 * lambda (mod r)
 // and |k1|, |k2| <= 2^128
 // returns (s1, |k1|, s2, |k2|) where s1, s2 are the signs of k1, k2 respectively as 64-bit integers (0 for positive, 1 for negative)
-pub const SECP256K1_GLVR_ADV_FUNCT3: u32 = 0x02;
+pub const SECP256K1_GLVR_ADV_FUNCT3: u32 = 0x07;
 pub const SECP256K1_GLVR_ADV_NAME: &str = "SECP256K1_GLVR_ADV";
 
 pub mod sdk;

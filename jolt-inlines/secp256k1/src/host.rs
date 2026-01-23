@@ -2,11 +2,11 @@
 pub use crate::sequence_builder;
 
 use crate::{
-    INLINE_OPCODE, SECP256K1_DIVQ_ADV_FUNCT3, SECP256K1_DIVQ_ADV_NAME, SECP256K1_DIVQ_FUNCT3,
-    SECP256K1_DIVQ_NAME, SECP256K1_DIVR_ADV_FUNCT3, SECP256K1_DIVR_ADV_NAME, SECP256K1_FUNCT7,
-    SECP256K1_GLVR_ADV_FUNCT3, SECP256K1_GLVR_ADV_NAME, SECP256K1_MULQ_FUNCT3, SECP256K1_MULQ_NAME,
-    SECP256K1_SQUAREQ_FUNCT3, SECP256K1_SQUAREQ_NAME, SECP256K1_UNNAMED_FUNCT3,
-    SECP256K1_UNNAMED_NAME,
+    INLINE_OPCODE, SECP256K1_DIVQ_FUNCT3, SECP256K1_DIVQ_NAME, SECP256K1_DIVR_FUNCT3,
+    SECP256K1_DIVR_NAME, SECP256K1_FUNCT7, SECP256K1_GLVR_ADV_FUNCT3, SECP256K1_GLVR_ADV_NAME,
+    SECP256K1_MULQ_FUNCT3, SECP256K1_MULQ_NAME, SECP256K1_MULR_FUNCT3, SECP256K1_MULR_NAME,
+    SECP256K1_SQUAREQ_FUNCT3, SECP256K1_SQUAREQ_NAME, SECP256K1_SQUARER_FUNCT3,
+    SECP256K1_SQUARER_NAME,
 };
 use tracer::register_inline;
 
@@ -17,42 +17,12 @@ use tracer::utils::inline_sequence_writer::{
 pub fn init_inlines() -> Result<(), String> {
     register_inline(
         INLINE_OPCODE,
-        SECP256K1_DIVQ_ADV_FUNCT3,
-        SECP256K1_FUNCT7,
-        SECP256K1_DIVQ_ADV_NAME,
-        std::boxed::Box::new(sequence_builder::secp256k1_divq_adv_sequence_builder),
-        Some(std::boxed::Box::new(
-            sequence_builder::secp256k1_divq_adv_advice,
-        )),
-    )?;
-    register_inline(
-        INLINE_OPCODE,
-        SECP256K1_DIVR_ADV_FUNCT3,
-        SECP256K1_FUNCT7,
-        SECP256K1_DIVR_ADV_NAME,
-        std::boxed::Box::new(sequence_builder::secp256k1_divr_adv_sequence_builder),
-        Some(std::boxed::Box::new(
-            sequence_builder::secp256k1_divr_adv_advice,
-        )),
-    )?;
-    register_inline(
-        INLINE_OPCODE,
         SECP256K1_GLVR_ADV_FUNCT3,
         SECP256K1_FUNCT7,
         SECP256K1_GLVR_ADV_NAME,
         std::boxed::Box::new(sequence_builder::secp256k1_glvr_adv_sequence_builder),
         Some(std::boxed::Box::new(
             sequence_builder::secp256k1_glvr_adv_advice,
-        )),
-    )?;
-    register_inline(
-        INLINE_OPCODE,
-        SECP256K1_UNNAMED_FUNCT3,
-        SECP256K1_FUNCT7,
-        SECP256K1_UNNAMED_NAME,
-        std::boxed::Box::new(sequence_builder::secp256k1_unnamed_sequence_builder),
-        Some(std::boxed::Box::new(
-            sequence_builder::secp256k1_unnamed_advice,
         )),
     )?;
     register_inline(
@@ -85,82 +55,40 @@ pub fn init_inlines() -> Result<(), String> {
             sequence_builder::secp256k1_divq_advice,
         )),
     )?;
+    register_inline(
+        INLINE_OPCODE,
+        SECP256K1_MULR_FUNCT3,
+        SECP256K1_FUNCT7,
+        SECP256K1_MULR_NAME,
+        std::boxed::Box::new(sequence_builder::secp256k1_mulr_sequence_builder),
+        Some(std::boxed::Box::new(
+            sequence_builder::secp256k1_mulr_advice,
+        )),
+    )?;
+    register_inline(
+        INLINE_OPCODE,
+        SECP256K1_SQUARER_FUNCT3,
+        SECP256K1_FUNCT7,
+        SECP256K1_SQUARER_NAME,
+        std::boxed::Box::new(sequence_builder::secp256k1_squarer_sequence_builder),
+        Some(std::boxed::Box::new(
+            sequence_builder::secp256k1_squarer_advice,
+        )),
+    )?;
+    register_inline(
+        INLINE_OPCODE,
+        SECP256K1_DIVR_FUNCT3,
+        SECP256K1_FUNCT7,
+        SECP256K1_DIVR_NAME,
+        std::boxed::Box::new(sequence_builder::secp256k1_divr_sequence_builder),
+        Some(std::boxed::Box::new(
+            sequence_builder::secp256k1_divr_advice,
+        )),
+    )?;
     Ok(())
 }
 
 pub fn store_inlines() -> Result<(), String> {
-    // Store secp256k1 divq inline trace
-    let inline_info = InlineDescriptor::new(
-        SECP256K1_DIVQ_ADV_NAME.to_string(),
-        INLINE_OPCODE,
-        SECP256K1_DIVQ_ADV_FUNCT3,
-        SECP256K1_FUNCT7,
-    );
-    let inputs = SequenceInputs::default();
-    let instructions =
-        sequence_builder::secp256k1_divq_adv_sequence_builder((&inputs).into(), (&inputs).into());
-    write_inline_trace(
-        "secp256k1_trace.joltinline",
-        &inline_info,
-        &inputs,
-        &instructions,
-        AppendMode::Overwrite,
-    )
-    .map_err(|e| e.to_string())?;
-    // Append secp256k1 divr inline trace
-    let inline_info = InlineDescriptor::new(
-        SECP256K1_DIVR_ADV_NAME.to_string(),
-        INLINE_OPCODE,
-        SECP256K1_DIVR_ADV_FUNCT3,
-        SECP256K1_FUNCT7,
-    );
-    let inputs = SequenceInputs::default();
-    let instructions =
-        sequence_builder::secp256k1_divr_adv_sequence_builder((&inputs).into(), (&inputs).into());
-    write_inline_trace(
-        "secp256k1_trace.joltinline",
-        &inline_info,
-        &inputs,
-        &instructions,
-        AppendMode::Append,
-    )
-    .map_err(|e| e.to_string())?;
-    // Append secp256k1 glvr inline trace
-    let inline_info = InlineDescriptor::new(
-        SECP256K1_GLVR_ADV_NAME.to_string(),
-        INLINE_OPCODE,
-        SECP256K1_GLVR_ADV_FUNCT3,
-        SECP256K1_FUNCT7,
-    );
-    let inputs = SequenceInputs::default();
-    let instructions =
-        sequence_builder::secp256k1_glvr_adv_sequence_builder((&inputs).into(), (&inputs).into());
-    write_inline_trace(
-        "secp256k1_trace.joltinline",
-        &inline_info,
-        &inputs,
-        &instructions,
-        AppendMode::Append,
-    )
-    .map_err(|e| e.to_string())?;
-    // Append secp256k1 unnamed inline trace
-    let inline_info = InlineDescriptor::new(
-        SECP256K1_UNNAMED_NAME.to_string(),
-        INLINE_OPCODE,
-        SECP256K1_UNNAMED_FUNCT3,
-        SECP256K1_FUNCT7,
-    );
-    let inputs = SequenceInputs::default();
-    let instructions =
-        sequence_builder::secp256k1_unnamed_sequence_builder((&inputs).into(), (&inputs).into());
-    write_inline_trace(
-        "secp256k1_trace.joltinline",
-        &inline_info,
-        &inputs,
-        &instructions,
-        AppendMode::Append,
-    )
-    .map_err(|e| e.to_string())?;
     // Append secp256k1 mulq inline trace
     let inline_info = InlineDescriptor::new(
         SECP256K1_MULQ_NAME.to_string(),
@@ -207,6 +135,78 @@ pub fn store_inlines() -> Result<(), String> {
     let inputs = SequenceInputs::default();
     let instructions =
         sequence_builder::secp256k1_divq_sequence_builder((&inputs).into(), (&inputs).into());
+    write_inline_trace(
+        "secp256k1_trace.joltinline",
+        &inline_info,
+        &inputs,
+        &instructions,
+        AppendMode::Append,
+    )
+    .map_err(|e| e.to_string())?;
+    // Append secp256k1 mulr inline trace
+    let inline_info = InlineDescriptor::new(
+        SECP256K1_MULR_NAME.to_string(),
+        INLINE_OPCODE,
+        SECP256K1_MULR_FUNCT3,
+        SECP256K1_FUNCT7,
+    );
+    let inputs = SequenceInputs::default();
+    let instructions =
+        sequence_builder::secp256k1_mulr_sequence_builder((&inputs).into(), (&inputs).into());
+    write_inline_trace(
+        "secp256k1_trace.joltinline",
+        &inline_info,
+        &inputs,
+        &instructions,
+        AppendMode::Append,
+    )
+    .map_err(|e| e.to_string())?;
+    // Append secp256k1 squareq inline trace
+    let inline_info = InlineDescriptor::new(
+        SECP256K1_SQUARER_NAME.to_string(),
+        INLINE_OPCODE,
+        SECP256K1_SQUARER_FUNCT3,
+        SECP256K1_FUNCT7,
+    );
+    let inputs = SequenceInputs::default();
+    let instructions =
+        sequence_builder::secp256k1_squarer_sequence_builder((&inputs).into(), (&inputs).into());
+    write_inline_trace(
+        "secp256k1_trace.joltinline",
+        &inline_info,
+        &inputs,
+        &instructions,
+        AppendMode::Append,
+    )
+    .map_err(|e| e.to_string())?;
+    // Append secp256k1 divr inline trace
+    let inline_info = InlineDescriptor::new(
+        SECP256K1_DIVR_NAME.to_string(),
+        INLINE_OPCODE,
+        SECP256K1_DIVR_FUNCT3,
+        SECP256K1_FUNCT7,
+    );
+    let inputs = SequenceInputs::default();
+    let instructions =
+        sequence_builder::secp256k1_divr_sequence_builder((&inputs).into(), (&inputs).into());
+    write_inline_trace(
+        "secp256k1_trace.joltinline",
+        &inline_info,
+        &inputs,
+        &instructions,
+        AppendMode::Append,
+    )
+    .map_err(|e| e.to_string())?;
+    // Append secp256k1 glvr inline trace
+    let inline_info = InlineDescriptor::new(
+        SECP256K1_GLVR_ADV_NAME.to_string(),
+        INLINE_OPCODE,
+        SECP256K1_GLVR_ADV_FUNCT3,
+        SECP256K1_FUNCT7,
+    );
+    let inputs = SequenceInputs::default();
+    let instructions =
+        sequence_builder::secp256k1_glvr_adv_sequence_builder((&inputs).into(), (&inputs).into());
     write_inline_trace(
         "secp256k1_trace.joltinline",
         &inline_info,

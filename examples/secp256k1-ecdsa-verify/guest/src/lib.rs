@@ -1,6 +1,4 @@
 #![cfg_attr(feature = "guest", no_std)]
-
-use jolt::{end_cycle_tracking, start_cycle_tracking};
 use jolt_inlines_secp256k1::{ecdsa_verify, Secp256k1Error, Secp256k1Fr, Secp256k1Point};
 
 // verifies an secp256k1 ECDSA signature

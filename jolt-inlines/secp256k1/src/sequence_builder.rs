@@ -145,7 +145,7 @@ impl Secp256k1GlvrAdv {
             cpu.mmu.load_doubleword(k_addr + 24).unwrap().0,
         ];
         // convert k from montgomery form to normal form
-        let k: NBigInt = Fr::new_unchecked(BigInt(kr)).into_bigint().into();
+        let k: NBigInt = Fr::new(BigInt(kr)).into_bigint().into();
         // constants for glv decomposition
         let r = NBigInt::from_bytes_le(
             Sign::Plus,
@@ -346,7 +346,7 @@ enum MulqType {
     Div,
 }
 
-// inline for secp256k1 base field multiplication/squaring/division
+// inline for secp256k1 base and scalar field multiplication/squaring/division
 // does not handle checking that the result is canonical mod q,
 // merely that it is correct and fits in 4 limbs
 // multiplication followed by modulus can be represented as: ab = wq + c
@@ -368,15 +368,22 @@ struct Secp256k1Mulq {
     b: Option<[VirtualRegisterGuard; 4]>, // only allocated if Mul or Div
     w: [VirtualRegisterGuard; 4],
     p: VirtualRegisterGuard,
+    p2: Option<VirtualRegisterGuard>, // only allocated if scalar field
     aux: VirtualRegisterGuard,
     aux2: Option<VirtualRegisterGuard>, // only allocated if Square
     r: [VirtualRegisterGuard; 2],
     operands: FormatInline,
     op_type: MulqType,
+    is_scalar_field: bool,
 }
 
 impl Secp256k1Mulq {
-    fn new(asm: InstrAssembler, operands: FormatInline, op_type: MulqType) -> Self {
+    fn new(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        op_type: MulqType,
+        is_scalar_field: bool,
+    ) -> Self {
         let a = array::from_fn(|_| asm.allocator.allocate_for_inline());
         let b = match op_type {
             MulqType::Square => None,
@@ -384,6 +391,11 @@ impl Secp256k1Mulq {
         };
         let w = array::from_fn(|_| asm.allocator.allocate_for_inline());
         let p = asm.allocator.allocate_for_inline();
+        let p2 = if is_scalar_field {
+            Some(asm.allocator.allocate_for_inline())
+        } else {
+            None
+        };
         let aux = asm.allocator.allocate_for_inline();
         let aux2 = match op_type {
             MulqType::Square => Some(asm.allocator.allocate_for_inline()),
@@ -396,11 +408,13 @@ impl Secp256k1Mulq {
             b,
             w,
             p,
+            p2,
             aux,
             aux2,
             r,
             operands,
             op_type,
+            is_scalar_field,
         }
     }
     // Custom advice function
@@ -426,19 +440,32 @@ impl Secp256k1Mulq {
         // convert inputs to bigints
         let a_big: NBigUint = limbs_to_nbiguint(&a);
         let b_big: NBigUint = limbs_to_nbiguint(&b);
-        let q_big: NBigUint = Fq::MODULUS.into();
+        let q_big: NBigUint = if self.is_scalar_field {
+            Fr::MODULUS.into()
+        } else {
+            Fq::MODULUS.into()
+        };
         // compute advice based on operation type
         match self.op_type {
             MulqType::Div => {
                 // compute a / b in the field
                 let arr_to_fq = |a: &[u64; 4]| Fq::new(BigInt(*a));
+                let arr_to_fr = |a: &[u64; 4]| Fr::new(BigInt(*a));
                 let c_big = limbs_to_nbiguint(
-                    &((arr_to_fq(&b)
-                        .inverse()
-                        .expect("Attempted to invert zero in secp256k1 base field")
-                        * arr_to_fq(&a))
-                    .into_bigint()
-                    .0),
+                    &if self.is_scalar_field {
+                        (arr_to_fr(&b)
+                            .inverse()
+                            .expect("Attempted to invert zero in secp256k1 scalar field")
+                            * arr_to_fr(&a))
+                        .into_bigint()
+                    } else {
+                        (arr_to_fq(&b)
+                            .inverse()
+                            .expect("Attempted to invert zero in secp256k1 base field")
+                            * arr_to_fq(&a))
+                        .into_bigint()
+                    }
+                    .0,
                 );
                 let c_limbs = nbiguint_to_limbs(&c_big);
                 let quotient = (b_big * c_big).div_floor(&q_big);
@@ -508,8 +535,14 @@ impl Secp256k1Mulq {
             }
             self.asm.emit_j::<VirtualAdvice>(*self.w[i], 0);
         }
-        // constant (1u64 << 32) + 977 lives in [12]
-        self.asm.emit_u::<LUI>(*self.p, (1u64 << 32) + 977);
+        // load p (either as a single u64 or a pair of u64s
+        if self.is_scalar_field {
+            self.asm.emit_u::<LUI>(*self.p, 0x402da1732fc9bebf);
+            self.asm
+                .emit_u::<LUI>(**self.p2.as_ref().unwrap(), 0x4551231950b75fc4);
+        } else {
+            self.asm.emit_u::<LUI>(*self.p, (1u64 << 32) + 977);
+        }
         // compute ab + wp into [14..22]
         // special handling for bottom limb r[0]
         match self.op_type {
@@ -548,9 +581,40 @@ impl Secp256k1Mulq {
                 first = false;
             }
             // add all upper(w[i] * p) where i = k-1
-            if k > 0 && k - 1 < 4 {
+            if k - 1 < 4 {
                 self.mac_high_conditional(!first, rk_next, rk, *self.w[k - 1], *self.p, *self.aux);
                 first = false;
+            }
+            // if in the scalar field
+            if self.is_scalar_field {
+                // add all lower(w[i] * p2) where i = k-1
+                if k > 0 && k - 1 < 4 {
+                    self.mac_low_conditional(
+                        !first,
+                        rk_next,
+                        rk,
+                        *self.w[k - 1],
+                        **self.p2.as_ref().unwrap(),
+                        *self.aux,
+                    );
+                    first = false;
+                }
+                // add all upper(w[i] * p2) where i = k-2
+                // and add an additional w[i]
+                if k > 1 && k - 2 < 4 {
+                    self.mac_high_conditional(
+                        !first,
+                        rk_next,
+                        rk,
+                        *self.w[k - 2],
+                        **self.p2.as_ref().unwrap(),
+                        *self.aux,
+                    );
+                    first = false;
+                    self.asm.emit_r::<ADD>(rk, rk, *self.w[k - 2]);
+                    self.asm.emit_r::<SLTU>(*self.aux, rk, *self.w[k - 2]);
+                    self.asm.emit_r::<ADD>(rk_next, rk_next, *self.aux);
+                }
             }
             // add all lower(a[i] * b[j]) where i+j = k
             for i in 0..=k {
@@ -678,6 +742,9 @@ impl Secp256k1Mulq {
         }
         drop(self.w);
         drop(self.p);
+        if self.is_scalar_field {
+            drop(self.p2.unwrap());
+        }
         drop(self.aux);
         match self.op_type {
             MulqType::Square => drop(self.aux2.unwrap()),
@@ -851,59 +918,116 @@ impl Secp256k1Mulq {
     }
 }
 
-/// Virtual instruction builder for unchecked secp256k1 base field modular multiplication
+/// Virtual instruction builder for secp256k1 base field modular multiplication
 pub fn secp256k1_mulq_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul);
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul, false);
     builder.inline_sequence()
 }
 
-/// Custom trace function for unchecked secp256k1 base field modular multiplication
+/// Custom trace function for secp256k1 base field modular multiplication
 pub fn secp256k1_mulq_advice(
     asm: InstrAssembler,
     operands: FormatInline,
     cpu: &mut Cpu,
 ) -> VecDeque<u64> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul);
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul, false);
     builder.advice(cpu)
 }
 
-/// Virtual instruction builder for unchecked secp256k1 base field modular squaring
+/// Virtual instruction builder for secp256k1 base field modular squaring
 pub fn secp256k1_squareq_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square);
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square, false);
     builder.inline_sequence()
 }
 
-/// Custom trace function for unchecked secp256k1 base field modular squaring
+/// Custom trace function for secp256k1 base field modular squaring
 pub fn secp256k1_squareq_advice(
     asm: InstrAssembler,
     operands: FormatInline,
     cpu: &mut Cpu,
 ) -> VecDeque<u64> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square);
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square, false);
     builder.advice(cpu)
 }
 
-/// Virtual instruction builder for unchecked secp256k1 base field modular division
+/// Virtual instruction builder for secp256k1 base field modular division
 pub fn secp256k1_divq_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div);
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div, false);
     builder.inline_sequence()
 }
 
-/// Custom trace function for unchecked secp256k1 base field modular division
+/// Custom trace function for secp256k1 base field modular division
 pub fn secp256k1_divq_advice(
     asm: InstrAssembler,
     operands: FormatInline,
     cpu: &mut Cpu,
 ) -> VecDeque<u64> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div);
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div, false);
+    builder.advice(cpu)
+}
+
+/// Virtual instruction builder for secp256k1 scalar field modular multiplication
+pub fn secp256k1_mulr_sequence_builder(
+    asm: InstrAssembler,
+    operands: FormatInline,
+) -> Vec<Instruction> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul, true);
+    builder.inline_sequence()
+}
+
+/// Custom trace function for secp256k1 scalar field modular multiplication
+pub fn secp256k1_mulr_advice(
+    asm: InstrAssembler,
+    operands: FormatInline,
+    cpu: &mut Cpu,
+) -> VecDeque<u64> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul, true);
+    builder.advice(cpu)
+}
+
+/// Virtual instruction builder for secp256k1 scalar field modular squaring
+pub fn secp256k1_squarer_sequence_builder(
+    asm: InstrAssembler,
+    operands: FormatInline,
+) -> Vec<Instruction> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square, true);
+    builder.inline_sequence()
+}
+
+/// Custom trace function for secp256k1 scalar field modular squaring
+pub fn secp256k1_squarer_advice(
+    asm: InstrAssembler,
+    operands: FormatInline,
+    cpu: &mut Cpu,
+) -> VecDeque<u64> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square, true);
+    builder.advice(cpu)
+}
+
+/// Virtual instruction builder for secp256k1 scalar field modular division
+pub fn secp256k1_divr_sequence_builder(
+    asm: InstrAssembler,
+    operands: FormatInline,
+) -> Vec<Instruction> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div, true);
+    builder.inline_sequence()
+}
+
+/// Custom trace function for secp256k1 scalar field modular division
+pub fn secp256k1_divr_advice(
+    asm: InstrAssembler,
+    operands: FormatInline,
+    cpu: &mut Cpu,
+) -> VecDeque<u64> {
+    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div, true);
     builder.advice(cpu)
 }
