@@ -17,6 +17,8 @@ pub const FUNCT3_ADVICE_SH: u32 = 0b011; // Store halfword from advice tape
 pub const FUNCT3_ADVICE_SW: u32 = 0b100; // Store word from advice tape
 #[doc(hidden)]
 pub const FUNCT3_ADVICE_SD: u32 = 0b101; // Store doubleword from advice tape
+#[doc(hidden)]
+pub const FUNCT3_ADVICE_LEN: u32 = 0b110; // Get remaining bytes in advice tape
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub mod host_utils;
@@ -212,44 +214,35 @@ impl embedded_io::ErrorType for AdviceReader {
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 impl embedded_io::Read for AdviceReader {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        let len = buf.len();
-        let dst_ptr = buf.as_mut_ptr();
+        if buf.is_empty() {
+            return Ok(0);
+        }
 
+        // First, query how many bytes remain in the advice tape
+        let remaining: u64;
         unsafe {
-            if len >= 8 {
-                // Use ADVICE_SD (store doubleword) - reads 8 bytes from advice tape
-                // Format: .insn s opcode, funct3, rs2, imm(rs1)
-                // Since rs2 is unused (advice comes from tape), we use x0
-                core::arch::asm!(
-                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
-                    opcode = const CUSTOM_OPCODE,
-                    funct3 = const FUNCT3_ADVICE_SD,
-                    rs1 = in(reg) dst_ptr,
-                    options(nostack)
-                );
-                Ok(8)
-            } else if len >= 4 {
-                // Use ADVICE_SW (store word) - reads 4 bytes from advice tape
-                core::arch::asm!(
-                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
-                    opcode = const CUSTOM_OPCODE,
-                    funct3 = const FUNCT3_ADVICE_SW,
-                    rs1 = in(reg) dst_ptr,
-                    options(nostack)
-                );
-                Ok(4)
-            } else if len >= 2 {
-                // Use ADVICE_SH (store halfword) - reads 2 bytes from advice tape
-                core::arch::asm!(
-                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
-                    opcode = const CUSTOM_OPCODE,
-                    funct3 = const FUNCT3_ADVICE_SH,
-                    rs1 = in(reg) dst_ptr,
-                    options(nostack)
-                );
-                Ok(2)
-            } else if len == 1 {
-                // Use ADVICE_SB (store byte) - reads 1 byte from advice tape
+            // VirtualAdviceLen uses custom opcode with funct3 encoding
+            // Encode as I-format: opcode | rd | funct3 | rs1=x0 | imm=0
+            core::arch::asm!(
+                ".insn i {opcode}, {funct3}, {rd}, x0, 0",
+                opcode = const CUSTOM_OPCODE,
+                funct3 = const FUNCT3_ADVICE_LEN,
+                rd = out(reg) remaining,
+                options(nostack)
+            );
+        }
+
+        if remaining == 0 {
+            return Ok(0); // EOF
+        }
+
+        // Read up to min(buf.len(), remaining) bytes
+        let bytes_to_read = core::cmp::min(buf.len(), remaining as usize);
+
+        // Read byte by byte (could be optimized to use larger chunks)
+        for i in 0..bytes_to_read {
+            let dst_ptr = unsafe { buf.as_mut_ptr().add(i) };
+            unsafe {
                 core::arch::asm!(
                     ".insn s {opcode}, {funct3}, x0, 0({rs1})",
                     opcode = const CUSTOM_OPCODE,
@@ -257,11 +250,10 @@ impl embedded_io::Read for AdviceReader {
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );
-                Ok(1)
-            } else {
-                Ok(0)
             }
         }
+
+        Ok(bytes_to_read)
     }
 }
 

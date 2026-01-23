@@ -11,6 +11,7 @@ pub const FUNCT3_ADVICE_SB: u8 = 0b010; // Store byte from advice tape
 pub const FUNCT3_ADVICE_SH: u8 = 0b011; // Store halfword from advice tape
 pub const FUNCT3_ADVICE_SW: u8 = 0b100; // Store word from advice tape
 pub const FUNCT3_ADVICE_SD: u8 = 0b101; // Store doubleword from advice tape
+pub const FUNCT3_ADVICE_LEN: u8 = 0b110; // Get remaining bytes in advice tape
 
 use add::ADD;
 use addi::ADDI;
@@ -110,6 +111,7 @@ use xor::XOR;
 use xori::XORI;
 
 use virtual_advice::VirtualAdvice;
+use virtual_advice_len::VirtualAdviceLen;
 use virtual_advice_load::VirtualAdviceLoad;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
@@ -247,6 +249,7 @@ pub mod subw;
 pub mod sw;
 pub mod virtual_advice;
 pub mod virtual_advice_load;
+pub mod virtual_advice_len;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
@@ -658,7 +661,7 @@ define_rv32im_enums! {
         LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
         // Virtual
         AdviceSB, AdviceSD, AdviceSH, AdviceSW,
-        VirtualAdvice, VirtualAdviceLoad,
+        VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
         VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
@@ -974,6 +977,7 @@ impl Instruction {
                     FUNCT3_ADVICE_SH => Ok(AdviceSH::new(instr, address, true, compressed).into()),
                     FUNCT3_ADVICE_SW => Ok(AdviceSW::new(instr, address, true, compressed).into()),
                     FUNCT3_ADVICE_SD => Ok(AdviceSD::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_LEN => Ok(VirtualAdviceLen::new(instr, address, true, compressed).into()),
                     _ => Err("Invalid custom/virtual instruction (funct3 = {funct_3}"),
                 }
             }

@@ -64,6 +64,11 @@ impl AdviceTape {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
+
+    /// Get the number of bytes remaining to be read
+    pub fn remaining(&self) -> usize {
+        self.data.len().saturating_sub(self.read_position)
+    }
 }
 
 thread_local! {
@@ -73,6 +78,7 @@ thread_local! {
 
 /// Write data to the global advice tape
 pub fn advice_tape_write(bytes: &[u8]) {
+    eprintln!("advice_tape_write: writing {} bytes: {:?}", bytes.len(), bytes);
     ADVICE_TAPE.with(|tape| {
         tape.borrow_mut().write(bytes);
     });
@@ -80,7 +86,15 @@ pub fn advice_tape_write(bytes: &[u8]) {
 
 /// Read data from the global advice tape
 pub fn advice_tape_read(num_bytes: usize) -> Option<u64> {
-    ADVICE_TAPE.with(|tape| tape.borrow_mut().read(num_bytes))
+    ADVICE_TAPE.with(|tape| {
+        let remaining = tape.borrow().remaining();
+        eprintln!("advice_tape_read: requesting {} bytes, {} bytes remaining", num_bytes, remaining);
+        let result = tape.borrow_mut().read(num_bytes);
+        if result.is_none() {
+            eprintln!("advice_tape_read: FAILED - not enough bytes!");
+        }
+        result
+    })
 }
 
 /// Reset the advice tape read position
@@ -100,6 +114,11 @@ pub fn advice_tape_clear() {
 /// Get the length of the advice tape
 pub fn advice_tape_len() -> usize {
     ADVICE_TAPE.with(|tape| tape.borrow().len())
+}
+
+/// Get the number of bytes remaining to be read from the advice tape
+pub fn advice_tape_remaining() -> usize {
+    ADVICE_TAPE.with(|tape| tape.borrow().remaining())
 }
 
 use crate::instruction::format::NormalizedOperands;
