@@ -17,7 +17,7 @@ use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::zkvm::bytecode::chunks::total_lanes;
-use crate::zkvm::config::{BytecodeMode, ReadWriteConfig};
+use crate::zkvm::config::{ProgramMode, ReadWriteConfig};
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
 
@@ -173,7 +173,7 @@ pub struct JoltCpuProver<
     pub one_hot_params: OneHotParams,
     pub rw_config: ReadWriteConfig,
     /// First-class selection of full vs committed bytecode mode.
-    pub bytecode_mode: BytecodeMode,
+    pub program_mode: ProgramMode,
 }
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
@@ -187,7 +187,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
     ) -> Self {
-        Self::gen_from_elf_with_bytecode_mode(
+        Self::gen_from_elf_with_program_mode(
             preprocessing,
             elf_contents,
             inputs,
@@ -195,12 +195,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trusted_advice,
             trusted_advice_commitment,
             trusted_advice_hint,
-            BytecodeMode::Full,
+            ProgramMode::Full,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn gen_from_elf_with_bytecode_mode(
+    pub fn gen_from_elf_with_program_mode(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         elf_contents: &[u8],
         inputs: &[u8],
@@ -208,7 +208,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice: &[u8],
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
-        bytecode_mode: BytecodeMode,
+        program_mode: ProgramMode,
     ) -> Self {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
@@ -254,7 +254,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trace.len(),
         );
 
-        Self::gen_from_trace_with_bytecode_mode(
+        Self::gen_from_trace_with_program_mode(
             preprocessing,
             lazy_trace,
             trace,
@@ -262,7 +262,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trusted_advice_commitment,
             trusted_advice_hint,
             final_memory_state,
-            bytecode_mode,
+            program_mode,
         )
     }
 
@@ -361,7 +361,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
     ) -> Self {
-        Self::gen_from_trace_with_bytecode_mode(
+        Self::gen_from_trace_with_program_mode(
             preprocessing,
             lazy_trace,
             trace,
@@ -369,12 +369,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trusted_advice_commitment,
             trusted_advice_hint,
             final_memory_state,
-            BytecodeMode::Full,
+            ProgramMode::Full,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn gen_from_trace_with_bytecode_mode(
+    pub fn gen_from_trace_with_program_mode(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         lazy_trace: LazyTraceIterator,
         mut trace: Vec<Cycle>,
@@ -382,7 +382,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
-        bytecode_mode: BytecodeMode,
+        program_mode: ProgramMode,
     ) -> Self {
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
@@ -404,7 +404,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // In Committed mode, Stage 8 folds bytecode chunk openings into the *joint* opening.
         // That folding currently requires log_T >= log_K_bytecode, so we ensure the padded trace
         // length is at least the (power-of-two padded) bytecode size.
-        let padded_trace_len = if bytecode_mode == BytecodeMode::Committed {
+        let padded_trace_len = if program_mode == ProgramMode::Committed {
             padded_trace_len.max(preprocessing.shared.bytecode_size())
         } else {
             padded_trace_len
@@ -412,7 +412,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // In Committed mode, ProgramImageClaimReduction uses `m = log2(padded_len_words)` rounds and is
         // back-loaded into Stage 6b, so we require log_T >= m. A sufficient condition is T >= padded_len_words.
         let (has_program_image, program_image_len_words_padded) =
-            if bytecode_mode == BytecodeMode::Committed {
+            if program_mode == ProgramMode::Committed {
                 let trusted = preprocessing
                     .program_commitments
                     .as_ref()
@@ -489,7 +489,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let log_T = trace.len().log_2();
         let ram_log_K = ram_K.log_2();
         let rw_config = ReadWriteConfig::new(log_T, ram_log_K);
-        let one_hot_params = if bytecode_mode == BytecodeMode::Committed {
+        let one_hot_params = if program_mode == ProgramMode::Committed {
             let committed = preprocessing
                 .program_commitments
                 .as_ref()
@@ -524,7 +524,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             final_ram_state,
             one_hot_params,
             rw_config,
-            bytecode_mode,
+            program_mode,
         }
     }
 
@@ -555,7 +555,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
 
-        if self.bytecode_mode == BytecodeMode::Committed {
+        if self.program_mode == ProgramMode::Committed {
             if let Some(trusted) = &self.preprocessing.program_commitments {
                 // Append bytecode chunk commitments
                 for commitment in &trusted.bytecode_commitments {
@@ -618,7 +618,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         if let Some(hint) = self.advice.untrusted_advice_hint.take() {
             opening_proof_hints.insert(CommittedPolynomial::UntrustedAdvice, hint);
         }
-        if self.bytecode_mode == BytecodeMode::Committed {
+        if self.program_mode == ProgramMode::Committed {
             if let Some(hints) = self.preprocessing.program_hints.as_ref() {
                 for (idx, hint) in hints.bytecode_hints.iter().enumerate() {
                     opening_proof_hints
@@ -683,7 +683,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
             bytecode_K: self.one_hot_params.bytecode_k,
-            bytecode_mode: self.bytecode_mode,
+            program_mode: self.program_mode,
             rw_config: self.rw_config.clone(),
             one_hot_config: self.one_hot_params.to_config(),
             dory_layout: DoryGlobals::get_layout(),
@@ -708,7 +708,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         Vec<PCS::Commitment>,
         HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
     ) {
-        let _guard = if self.bytecode_mode == BytecodeMode::Committed {
+        let _guard = if self.program_mode == ProgramMode::Committed {
             let committed = self
                 .preprocessing
                 .program_commitments
@@ -1140,7 +1140,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.rw_config
                 .needs_single_advice_opening(self.trace.len().log_2()),
         );
-        if self.bytecode_mode == BytecodeMode::Committed {
+        if self.program_mode == ProgramMode::Committed {
             let trusted = self
                 .preprocessing
                 .program_commitments
@@ -1310,7 +1310,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
         bytecode_read_raf_params.use_staged_val_claims =
-            self.bytecode_mode == BytecodeMode::Committed;
+            self.program_mode == ProgramMode::Committed;
 
         let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
@@ -1387,7 +1387,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Bytecode claim reduction (Phase 1 in Stage 6b): consumes Val_s(r_bc) from Stage 6a and
         // caches an intermediate claim for Stage 7.
-        if self.bytecode_mode == BytecodeMode::Committed {
+        if self.program_mode == ProgramMode::Committed {
             let bytecode_reduction_params = BytecodeClaimReductionParams::new(
                 &bytecode_read_raf_params,
                 &self.opening_accumulator,
@@ -1523,7 +1523,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // Program-image claim reduction (Stage 6b): binds staged Stage 4 program-image scalar claims
         // to the trusted commitment via a degree-2 sumcheck, caching an opening of ProgramImageInit.
         let mut program_image_reduction: Option<ProgramImageClaimReductionProver<F>> = None;
-        if self.bytecode_mode == BytecodeMode::Committed {
+        if self.program_mode == ProgramMode::Committed {
             let trusted = self
                 .preprocessing
                 .program_commitments
@@ -1663,7 +1663,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     ) -> PCS::Proof {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
-        let _guard = if self.bytecode_mode == BytecodeMode::Committed {
+        let _guard = if self.program_mode == ProgramMode::Committed {
             let committed = self
                 .preprocessing
                 .program_commitments
@@ -1799,7 +1799,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Bytecode chunk polynomials: committed in Bytecode context and embedded into the
         // main opening point by fixing the extra cycle variables to 0.
-        if self.bytecode_mode == BytecodeMode::Committed {
+        if self.program_mode == ProgramMode::Committed {
             let (bytecode_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::BytecodeChunk(0),
                 SumcheckId::BytecodeClaimReduction,
@@ -1842,7 +1842,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Program-image polynomial: opened by ProgramImageClaimReduction in Stage 6b.
         // Embed into the top-left block of the main matrix (same trick as advice).
-        if self.bytecode_mode == BytecodeMode::Committed {
+        if self.program_mode == ProgramMode::Committed {
             let (prog_point, prog_claim) =
                 self.opening_accumulator.get_committed_polynomial_opening(
                     CommittedPolynomial::ProgramImageInit,
@@ -1881,7 +1881,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         if let Some(poly) = self.advice.untrusted_advice_polynomial.take() {
             advice_polys.insert(CommittedPolynomial::UntrustedAdvice, poly);
         }
-        if self.bytecode_mode == BytecodeMode::Committed {
+        if self.program_mode == ProgramMode::Committed {
             let trusted = self
                 .preprocessing
                 .program_commitments

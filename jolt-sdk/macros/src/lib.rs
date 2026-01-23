@@ -801,13 +801,13 @@ impl MacroBuilder {
 
                 let elf_contents_opt = program.get_elf_contents();
                 let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-                let prover = RV64IMACProver::gen_from_elf_with_bytecode_mode(&preprocessing,
+                let prover = RV64IMACProver::gen_from_elf_with_program_mode(&preprocessing,
                     &elf_contents,
                     &input_bytes,
                     &untrusted_advice_bytes,
                     &trusted_advice_bytes,
                     #commitment_arg,
-                    jolt::BytecodeMode::Full,
+                    jolt::ProgramMode::Full,
                 );
                 let io_device = prover.program_io.clone();
                 let (jolt_proof, _) = prover.prove();
@@ -898,13 +898,13 @@ impl MacroBuilder {
 
                 let elf_contents_opt = program.get_elf_contents();
                 let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-                let prover = RV64IMACProver::gen_from_elf_with_bytecode_mode(&preprocessing,
+                let prover = RV64IMACProver::gen_from_elf_with_program_mode(&preprocessing,
                     &elf_contents,
                     &input_bytes,
                     &untrusted_advice_bytes,
                     &trusted_advice_bytes,
                     #commitment_arg,
-                    jolt::BytecodeMode::Committed,
+                    jolt::ProgramMode::Committed,
                 );
                 let io_device = prover.program_io.clone();
                 let (jolt_proof, _) = prover.prove();

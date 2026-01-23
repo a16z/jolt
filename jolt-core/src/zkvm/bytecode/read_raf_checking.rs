@@ -29,7 +29,7 @@ use crate::{
         thread::unsafe_allocate_zero_vec,
     },
     zkvm::{
-        config::{BytecodeMode, OneHotParams},
+        config::{OneHotParams, ProgramMode},
         instruction::{
             CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
@@ -1266,19 +1266,19 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-        bytecode_mode: BytecodeMode,
+        program_mode: ProgramMode,
     ) -> Result<Self, ProofVerifyError> {
-        let mut params = match bytecode_mode {
+        let mut params = match program_mode {
             // Commitment mode: verifier MUST avoid O(K_bytecode) work here, and later stages will
             // relate staged Val claims to committed bytecode.
-            BytecodeMode::Committed => BytecodeReadRafSumcheckParams::gen_verifier(
+            ProgramMode::Committed => BytecodeReadRafSumcheckParams::gen_verifier(
                 n_cycle_vars,
                 one_hot_params,
                 opening_accumulator,
                 transcript,
             ),
             // Full mode: verifier materializes/evaluates bytecode-dependent polynomials (O(K_bytecode)).
-            BytecodeMode::Full => BytecodeReadRafSumcheckParams::gen(
+            ProgramMode::Full => BytecodeReadRafSumcheckParams::gen(
                 program.ok_or_else(|| {
                     ProofVerifyError::BytecodeTypeMismatch(
                         "expected Full bytecode preprocessing, got Committed".to_string(),
@@ -1290,7 +1290,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
                 transcript,
             ),
         };
-        params.use_staged_val_claims = bytecode_mode == BytecodeMode::Committed;
+        params.use_staged_val_claims = program_mode == ProgramMode::Committed;
         Ok(Self { params })
     }
 

@@ -26,8 +26,8 @@ use crate::{
     utils::math::Math,
     zkvm::{
         claim_reductions::AdviceKind,
-        config::BytecodeMode,
         config::OneHotParams,
+        config::ProgramMode,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -101,7 +101,7 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
     /// - `program_io`: Program I/O device
     /// - `trace_len`: Trace length
     /// - `ram_K`: RAM K parameter
-    /// - `bytecode_mode`: Bytecode mode (Full or Committed)
+    /// - `program_mode`: Bytecode mode (Full or Committed)
     /// - `opening_accumulator`: Verifier opening accumulator
     pub fn new_from_verifier(
         program_meta: &crate::zkvm::program::ProgramMetadata,
@@ -109,7 +109,7 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
-        bytecode_mode: BytecodeMode,
+        program_mode: ProgramMode,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -149,8 +149,8 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
         // Public part of val_init:
         // - Full mode: compute program-image+inputs directly using provided words.
         // - Committed mode: use staged scalar program-image claim + locally computed input contribution.
-        let val_init_public_eval = match bytecode_mode {
-            BytecodeMode::Full => {
+        let val_init_public_eval = match program_mode {
+            ProgramMode::Full => {
                 let words = program_image_words.expect("Full mode requires program_image_words");
                 super::evaluate_public_initial_ram_evaluation::<F>(
                     program_meta.min_bytecode_address,
@@ -159,7 +159,7 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
                     &r_address.r,
                 )
             }
-            BytecodeMode::Committed => {
+            ProgramMode::Committed => {
                 let (_, prog_img_claim) = opening_accumulator.get_virtual_polynomial_opening(
                     VirtualPolynomial::ProgramImageInitContributionRw,
                     SumcheckId::RamValEvaluation,
@@ -356,7 +356,7 @@ impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
-        bytecode_mode: crate::zkvm::config::BytecodeMode,
+        program_mode: crate::zkvm::config::ProgramMode,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let params = ValEvaluationSumcheckParams::new_from_verifier(
@@ -365,7 +365,7 @@ impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
             program_io,
             trace_len,
             ram_K,
-            bytecode_mode,
+            program_mode,
             opening_accumulator,
         );
         Self { params }

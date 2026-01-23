@@ -358,7 +358,7 @@ impl DoryGlobals {
 
     /// Initialize the **Main** context using an explicit `num_columns` (i.e. fixed sigma).
     ///
-    /// This is used in `BytecodeMode::Committed` so that the Main context uses the same column
+    /// This is used in `ProgramMode::Committed` so that the Main context uses the same column
     /// dimension as trusted bytecode commitments, which were derived under a sigma computed from a
     /// "max trace length" bound (to support batching/folding).
     ///

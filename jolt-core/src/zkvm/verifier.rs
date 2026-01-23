@@ -10,8 +10,8 @@ use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::chunks::total_lanes;
 use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
-use crate::zkvm::config::BytecodeMode;
 use crate::zkvm::config::OneHotParams;
+use crate::zkvm::config::ProgramMode;
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
@@ -172,7 +172,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let one_hot_params =
             OneHotParams::from_config(&proof.one_hot_config, proof.bytecode_K, proof.ram_K);
 
-        if proof.bytecode_mode == BytecodeMode::Committed {
+        if proof.program_mode == ProgramMode::Committed {
             let committed = preprocessing.program.as_committed()?;
             if committed.log_k_chunk != proof.one_hot_config.log_k_chunk {
                 return Err(ProofVerifyError::InvalidBytecodeConfig(format!(
@@ -237,7 +237,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.transcript
                 .append_serializable(trusted_advice_commitment);
         }
-        if self.proof.bytecode_mode == BytecodeMode::Committed {
+        if self.proof.program_mode == ProgramMode::Committed {
             let trusted = self.preprocessing.program.as_committed()?;
             for commitment in &trusted.bytecode_commitments {
                 self.transcript.append_serializable(commitment);
@@ -377,7 +377,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 .rw_config
                 .needs_single_advice_opening(self.proof.trace_length.log_2()),
         );
-        if self.proof.bytecode_mode == BytecodeMode::Committed {
+        if self.proof.program_mode == ProgramMode::Committed {
             crate::zkvm::ram::verifier_accumulate_program_image::<F>(
                 self.proof.ram_K,
                 &self.program_io,
@@ -402,7 +402,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
-            self.proof.bytecode_mode,
+            self.proof.program_mode,
             &self.opening_accumulator,
         );
         let ram_val_final = ValFinalSumcheckVerifier::new(
@@ -411,7 +411,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
-            self.proof.bytecode_mode,
+            self.proof.program_mode,
             &self.opening_accumulator,
             &self.proof.rw_config,
         );
@@ -473,13 +473,13 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         anyhow::Error,
     > {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let program_preprocessing = match self.proof.bytecode_mode {
-            BytecodeMode::Committed => {
+        let program_preprocessing = match self.proof.program_mode {
+            ProgramMode::Committed => {
                 // Ensure we have committed program commitments for committed mode.
                 let _ = self.preprocessing.program.as_committed()?;
                 None
             }
-            BytecodeMode::Full => self.preprocessing.program.full().map(|p| p.as_ref()),
+            ProgramMode::Full => self.preprocessing.program.full().map(|p| p.as_ref()),
         };
         let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
             program_preprocessing,
@@ -487,7 +487,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-            self.proof.bytecode_mode,
+            self.proof.program_mode,
         )?;
         let booleanity_params = BooleanitySumcheckParams::new(
             n_cycle_vars,
@@ -541,7 +541,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         //
         // IMPORTANT: This must be sampled *after* other Stage 6b params (e.g. lookup/inc gammas),
         // to match the prover's transcript order.
-        if self.proof.bytecode_mode == BytecodeMode::Committed {
+        if self.proof.program_mode == ProgramMode::Committed {
             let bytecode_reduction_params = BytecodeClaimReductionParams::new(
                 &bytecode_read_raf_params,
                 &self.opening_accumulator,
@@ -583,7 +583,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         // Program-image claim reduction (Stage 6b): binds staged Stage 4 scalar program-image claims
         // to the trusted commitment, caching an opening of ProgramImageInit.
-        let program_image_reduction = if self.proof.bytecode_mode == BytecodeMode::Committed {
+        let program_image_reduction = if self.proof.program_mode == ProgramMode::Committed {
             let trusted = self
                 .preprocessing
                 .program
@@ -702,7 +702,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         // Initialize DoryGlobals with the layout from the proof.
         // In committed mode, we must also match the Main-context sigma used to derive trusted
         // bytecode commitments, otherwise Stage 8 batching will be inconsistent.
-        let _guard = if self.proof.bytecode_mode == BytecodeMode::Committed {
+        let _guard = if self.proof.program_mode == ProgramMode::Committed {
             let committed = self.preprocessing.program.as_committed()?;
             DoryGlobals::initialize_main_context_with_num_columns(
                 1 << self.one_hot_params.log_k_chunk,
@@ -800,7 +800,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         // Bytecode chunk polynomials: committed in Bytecode context and embedded into the
         // main opening point by fixing the extra cycle variables to 0.
-        if self.proof.bytecode_mode == BytecodeMode::Committed {
+        if self.proof.program_mode == ProgramMode::Committed {
             let (bytecode_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::BytecodeChunk(0),
                 SumcheckId::BytecodeClaimReduction,
@@ -845,7 +845,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         // Program-image polynomial: opened by ProgramImageClaimReduction in Stage 6b.
         // Embed into the top-left block of the main matrix (same trick as advice).
-        if self.proof.bytecode_mode == BytecodeMode::Committed {
+        if self.proof.program_mode == ProgramMode::Committed {
             let (prog_point, prog_claim) =
                 self.opening_accumulator.get_committed_polynomial_opening(
                     CommittedPolynomial::ProgramImageInit,
@@ -900,7 +900,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             }
         }
 
-        if self.proof.bytecode_mode == BytecodeMode::Committed {
+        if self.proof.program_mode == ProgramMode::Committed {
             let committed = self.preprocessing.program.as_committed()?;
             for (idx, commitment) in committed.bytecode_commitments.iter().enumerate() {
                 commitments_map

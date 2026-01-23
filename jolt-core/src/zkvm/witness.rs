@@ -44,7 +44,7 @@ pub enum CommittedPolynomial {
     /// Length cannot exceed max_trace_length.
     UntrustedAdvice,
     /// Program image words polynomial (initial RAM image), committed in preprocessing for
-    /// `BytecodeMode::Committed` and opened via `ProgramImageClaimReduction`.
+    /// `ProgramMode::Committed` and opened via `ProgramImageClaimReduction`.
     ///
     /// This polynomial is NOT streamed from the execution trace (it is provided as an "extra"
     /// polynomial to the Stage 8 streaming RLC builder, similar to advice polynomials).

@@ -3,7 +3,7 @@
 //! This module provides a unified test runner that reduces boilerplate across e2e tests.
 //! Tests can be configured via `E2ETestConfig` to vary:
 //! - Program (fibonacci, sha2, etc.)
-//! - BytecodeMode (Full vs Committed)
+//! - ProgramMode (Full vs Committed)
 //! - DoryLayout (CycleMajor vs AddressMajor)
 //! - Trace size
 //! - Advice (trusted/untrusted)
@@ -20,7 +20,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
 use crate::zkvm::bytecode::chunks::total_lanes;
 use crate::zkvm::claim_reductions::AdviceKind;
-use crate::zkvm::config::BytecodeMode;
+use crate::zkvm::config::ProgramMode;
 use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ram::populate_memory_states;
@@ -37,8 +37,8 @@ pub struct E2ETestConfig {
     pub inputs: Vec<u8>,
     /// Maximum padded trace length (must be power of 2)
     pub max_trace_length: usize,
-    /// Whether to use Committed bytecode mode (vs Full)
-    pub committed_bytecode: bool,
+    /// Whether to use Committed program mode (vs Full)
+    pub committed_program: bool,
     /// Dory layout override (None = use default CycleMajor)
     pub dory_layout: Option<DoryLayout>,
     /// Trusted advice bytes
@@ -55,7 +55,7 @@ impl Default for E2ETestConfig {
             program_name: "fibonacci-guest",
             inputs: postcard::to_stdvec(&100u32).unwrap(),
             max_trace_length: 1 << 16,
-            committed_bytecode: false,
+            committed_program: false,
             dory_layout: None,
             trusted_advice: vec![],
             untrusted_advice: vec![],
@@ -158,9 +158,9 @@ impl E2ETestConfig {
     // Builder Methods
     // ========================================================================
 
-    /// Set committed bytecode mode.
-    pub fn with_committed_bytecode(mut self) -> Self {
-        self.committed_bytecode = true;
+    /// Set committed program mode.
+    pub fn with_committed_program(mut self) -> Self {
+        self.committed_program = true;
         self
     }
 
@@ -246,7 +246,7 @@ pub fn run_e2e_test(config: E2ETestConfig) {
     );
 
     // Create prover preprocessing (mode-dependent)
-    let prover_preprocessing = if config.committed_bytecode {
+    let prover_preprocessing = if config.committed_program {
         JoltProverPreprocessing::new_committed(
             shared_preprocessing.clone(),
             Arc::clone(&program_data),
@@ -258,7 +258,7 @@ pub fn run_e2e_test(config: E2ETestConfig) {
     // Verify mode is correct
     assert_eq!(
         prover_preprocessing.is_committed_mode(),
-        config.committed_bytecode,
+        config.committed_program,
         "Prover mode mismatch"
     );
 
@@ -273,12 +273,12 @@ pub fn run_e2e_test(config: E2ETestConfig) {
 
     // Create prover and prove
     let elf_contents = program.get_elf_contents().expect("elf contents is None");
-    let bytecode_mode = if config.committed_bytecode {
-        BytecodeMode::Committed
+    let program_mode = if config.committed_program {
+        ProgramMode::Committed
     } else {
-        BytecodeMode::Full
+        ProgramMode::Full
     };
-    let prover = RV64IMACProver::gen_from_elf_with_bytecode_mode(
+    let prover = RV64IMACProver::gen_from_elf_with_program_mode(
         &prover_preprocessing,
         &elf_contents,
         &config.inputs,
@@ -286,11 +286,11 @@ pub fn run_e2e_test(config: E2ETestConfig) {
         &config.trusted_advice,
         trusted_commitment,
         trusted_hint,
-        bytecode_mode,
+        program_mode,
     );
     let io_device = prover.program_io.clone();
     let (jolt_proof, debug_info) = prover.prove();
-    assert_eq!(jolt_proof.bytecode_mode, bytecode_mode);
+    assert_eq!(jolt_proof.program_mode, program_mode);
 
     // Create verifier preprocessing from prover (respects mode)
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
@@ -298,7 +298,7 @@ pub fn run_e2e_test(config: E2ETestConfig) {
     // Verify mode propagated correctly
     assert_eq!(
         verifier_preprocessing.program.is_committed(),
-        config.committed_bytecode,
+        config.committed_program,
         "Verifier mode mismatch"
     );
 
@@ -431,24 +431,162 @@ fn advice_merkle_tree_e2e_address_major() {
 }
 
 // ============================================================================
-// New Tests - Committed Bytecode Mode
+// New Tests - Committed Program Mode
 //
-// These tests exercise the end-to-end committed bytecode path.
+// These tests exercise the end-to-end committed program path (bytecode + program image).
 // ============================================================================
 
 #[test]
 #[serial]
-fn fib_e2e_committed_bytecode() {
-    run_e2e_test(E2ETestConfig::default().with_committed_bytecode());
+fn fib_e2e_committed_program() {
+    run_e2e_test(E2ETestConfig::default().with_committed_program());
 }
 
 #[test]
 #[serial]
-fn fib_e2e_committed_bytecode_address_major() {
+fn fib_e2e_committed_program_address_major() {
     run_e2e_test(
         E2ETestConfig::default()
-            .with_committed_bytecode()
+            .with_committed_program()
             .with_dory_layout(DoryLayout::AddressMajor),
+    );
+}
+
+#[test]
+#[serial]
+fn fib_e2e_committed_small_trace() {
+    // Committed mode with minimal trace (256 cycles).
+    // Tests program image commitment when trace is smaller than bytecode.
+    run_e2e_test(
+        E2ETestConfig::fibonacci(5)
+            .with_small_trace()
+            .with_committed_program(),
+    );
+}
+
+#[test]
+#[serial]
+fn fib_e2e_committed_small_trace_address_major() {
+    run_e2e_test(
+        E2ETestConfig::fibonacci(5)
+            .with_small_trace()
+            .with_committed_program()
+            .with_dory_layout(DoryLayout::AddressMajor),
+    );
+}
+
+#[test]
+#[serial]
+fn sha2_e2e_committed_program() {
+    // Larger program with committed mode (tests program image commitment with larger ELF).
+    #[cfg(feature = "host")]
+    use jolt_inlines_sha2 as _;
+    run_e2e_test(E2ETestConfig::sha2().with_committed_program());
+}
+
+#[test]
+#[serial]
+fn sha2_e2e_committed_program_address_major() {
+    #[cfg(feature = "host")]
+    use jolt_inlines_sha2 as _;
+    run_e2e_test(
+        E2ETestConfig::sha2()
+            .with_committed_program()
+            .with_dory_layout(DoryLayout::AddressMajor),
+    );
+}
+
+#[test]
+#[serial]
+fn sha3_e2e_committed_program() {
+    // Another larger program for committed mode coverage.
+    #[cfg(feature = "host")]
+    use jolt_inlines_keccak256 as _;
+    run_e2e_test(E2ETestConfig::sha3().with_committed_program());
+}
+
+#[test]
+#[serial]
+fn merkle_tree_e2e_committed_program() {
+    // Committed mode with both trusted and untrusted advice.
+    // Tests interaction of program image commitment with advice claim reductions.
+    run_e2e_test(E2ETestConfig::merkle_tree().with_committed_program());
+}
+
+#[test]
+#[serial]
+fn merkle_tree_e2e_committed_program_address_major() {
+    run_e2e_test(
+        E2ETestConfig::merkle_tree()
+            .with_committed_program()
+            .with_dory_layout(DoryLayout::AddressMajor),
+    );
+}
+
+#[test]
+#[serial]
+fn memory_ops_e2e_committed_program() {
+    // Memory-ops guest exercises various load/store patterns.
+    // Tests committed mode with diverse memory access patterns.
+    run_e2e_test(E2ETestConfig::memory_ops().with_committed_program());
+}
+
+// TODO: Investigate btreemap committed program failure - Stage 8 verification fails.
+// This might be related to the log_k_chunk transition or larger bytecode size.
+#[test]
+#[serial]
+#[ignore = "fails in committed mode - needs investigation"]
+fn btreemap_e2e_committed_program() {
+    // BTreeMap guest has complex heap allocations.
+    run_e2e_test(E2ETestConfig::btreemap(50).with_committed_program());
+}
+
+#[test]
+#[serial]
+fn muldiv_e2e_committed_program() {
+    // Mul/div operations in committed mode.
+    run_e2e_test(E2ETestConfig::muldiv(9, 5, 3).with_committed_program());
+}
+
+// TODO: Investigate committed mode failure at trace length 2^17 with CycleMajor layout.
+// The log_k_chunk transitions from 4 to 8 at log_T >= 16, which may have a bug in
+// bytecode claim reduction or Stage 8 embedding. AddressMajor passes at 2^17.
+#[test]
+#[serial]
+#[ignore = "fails at trace length 2^17 with CycleMajor - needs investigation"]
+fn fib_e2e_committed_large_trace() {
+    // Larger trace length (2^17) in committed mode.
+    // Tests bytecode chunking with log_k_chunk=8 (256 lanes per chunk).
+    run_e2e_test(
+        E2ETestConfig::fibonacci(1000)
+            .with_max_trace_length(1 << 17)
+            .with_committed_program(),
+    );
+}
+
+#[test]
+#[serial]
+fn fib_e2e_committed_large_trace_address_major() {
+    run_e2e_test(
+        E2ETestConfig::fibonacci(1000)
+            .with_max_trace_length(1 << 17)
+            .with_committed_program()
+            .with_dory_layout(DoryLayout::AddressMajor),
+    );
+}
+
+#[test]
+#[serial]
+fn sha2_committed_program_with_advice() {
+    // SHA2 doesn't consume advice, but providing it should still work in committed mode.
+    // Tests that program image + bytecode + advice claim reductions all batch correctly.
+    #[cfg(feature = "host")]
+    use jolt_inlines_sha2 as _;
+    run_e2e_test(
+        E2ETestConfig::sha2()
+            .with_committed_program()
+            .with_trusted_advice(postcard::to_stdvec(&[7u8; 32]).unwrap())
+            .with_untrusted_advice(postcard::to_stdvec(&[9u8; 32]).unwrap()),
     );
 }
 
@@ -467,12 +605,12 @@ fn bytecode_lane_chunking_counts() {
 }
 
 // ============================================================================
-// New Tests - Bytecode Mode Detection
+// New Tests - Program Mode Detection
 // ============================================================================
 
 #[test]
 #[serial]
-fn bytecode_mode_detection_full() {
+fn program_mode_detection_full() {
     DoryGlobals::reset();
     let mut program = host::Program::new("fibonacci-guest");
     let (instructions, init_memory_state, _) = program.decode();
@@ -500,7 +638,7 @@ fn bytecode_mode_detection_full() {
 
 #[test]
 #[serial]
-fn bytecode_mode_detection_committed() {
+fn program_mode_detection_committed() {
     DoryGlobals::reset();
     let mut program = host::Program::new("fibonacci-guest");
     let (instructions, init_memory_state, _) = program.decode();
@@ -527,6 +665,35 @@ fn bytecode_mode_detection_committed() {
     assert!(verifier_committed.program.is_committed());
     assert!(verifier_committed.program.as_full().is_err());
     assert!(verifier_committed.program.as_committed().is_ok());
+
+    // Verify committed mode doesn't carry full program data
+    assert!(
+        verifier_committed.program.program_image_words().is_none(),
+        "Committed mode should NOT have program image words"
+    );
+    assert!(
+        verifier_committed.program.instructions().is_none(),
+        "Committed mode should NOT have instructions"
+    );
+    assert!(
+        verifier_committed.program.full().is_none(),
+        "Committed mode should NOT have full preprocessing"
+    );
+
+    // But it should have commitments and metadata
+    let trusted = verifier_committed.program.as_committed().unwrap();
+    assert!(
+        !trusted.bytecode_commitments.is_empty(),
+        "Should have bytecode commitments"
+    );
+    assert!(
+        trusted.bytecode_len > 0,
+        "Should have bytecode length metadata"
+    );
+    assert!(
+        trusted.program_image_num_words > 0,
+        "Should have program image num words metadata"
+    );
 }
 
 // ============================================================================

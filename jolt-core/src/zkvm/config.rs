@@ -23,26 +23,28 @@ pub fn get_instruction_sumcheck_phases(log_t: usize) -> usize {
     }
 }
 
-/// Controls whether the prover/verifier use the **full** bytecode path (verifier may do O(K))
-/// or the **committed** bytecode path (staged Val claims + claim reduction + folded Stage 8
-/// opening for bytecode chunk commitments).
+/// Controls whether the prover/verifier use the **full** program path (verifier may do O(K))
+/// or the **committed** program path (staged Val claims + claim reduction + folded Stage 8
+/// opening for bytecode chunk + program image commitments).
+///
+/// "Program" encompasses both bytecode (instructions) and program image (initial RAM).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Allocative)]
-pub enum BytecodeMode {
-    /// Full mode: verifier may materialize bytecode-dependent polynomials (O(K_bytecode)).
+pub enum ProgramMode {
+    /// Full mode: verifier has full access to bytecode and program image.
     Full = 0,
-    /// Committed mode: use staged Val claims + `BytecodeClaimReduction`, and fold committed
-    /// bytecode chunk openings into the joint Stage 8 opening (Bytecode context embedding).
+    /// Committed mode: verifier only has commitments to bytecode chunks and program image.
+    /// Uses staged Val claims + claim reductions + folded Stage 8 joint opening.
     Committed = 1,
 }
 
-impl Default for BytecodeMode {
+impl Default for ProgramMode {
     fn default() -> Self {
         Self::Full
     }
 }
 
-impl CanonicalSerialize for BytecodeMode {
+impl CanonicalSerialize for ProgramMode {
     fn serialize_with_mode<W: Write>(
         &self,
         writer: W,
@@ -56,13 +58,13 @@ impl CanonicalSerialize for BytecodeMode {
     }
 }
 
-impl Valid for BytecodeMode {
+impl Valid for ProgramMode {
     fn check(&self) -> Result<(), SerializationError> {
         Ok(())
     }
 }
 
-impl CanonicalDeserialize for BytecodeMode {
+impl CanonicalDeserialize for ProgramMode {
     fn deserialize_with_mode<R: Read>(
         reader: R,
         compress: Compress,
