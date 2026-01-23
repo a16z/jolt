@@ -45,6 +45,7 @@ malloc-shim = ["jolt-platform/malloc-shim"]
 jolt-platform.workspace = true
 postcard.workspace = true
 serde = { version = "1.0", default-features = false, features = ["derive"] }
+embedded-io = { version = "0.6", default-features = false }
 ark-ec = { workspace = true, default-features = false, optional = true }
 ark-bn254 = { workspace = true, default-features = false, optional = true }
 

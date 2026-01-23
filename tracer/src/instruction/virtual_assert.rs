@@ -6,8 +6,8 @@ use super::{format::format_assert_align::FormatAssert, RISCVInstruction, RISCVTr
 
 declare_riscv_instr!(
     name = VirtualAssert,
-    mask = 0,
-    match = 0,
+    mask = 0x0000707f,
+    match = 0x0000005b,  // opcode=0x5B (virtual instruction), funct3=0
     format = FormatAssert,
     ram = ()
 );

@@ -27,8 +27,8 @@ use super::{format::format_advice_s::FormatAdviceS, Cycle, RISCVInstruction, RIS
 
 declare_riscv_instr!(
     name   = AdviceSH,
-    mask   = 0,
-    match  = 0,
+    mask   = 0x0000707f,
+    match  = 0x0000102b,  // opcode=0x2B (custom-1), funct3=1
     format = FormatAdviceS,
     ram    = RAMWrite
 );

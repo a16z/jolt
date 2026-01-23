@@ -1113,3 +1113,92 @@ impl MacroBuilder {
         }
     }
 }
+
+/// Proc macro for advice functions.
+///
+/// Generates two versions of the function:
+/// - With `compute_advice` feature: executes the original body and writes result to advice tape
+/// - Without `compute_advice` feature: reads result from advice tape
+///
+/// The return type must be wrapped in `UntrustedAdvice<T>`.
+#[proc_macro_attribute]
+pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let func = parse_macro_input!(item as ItemFn);
+
+    // Extract function components
+    let fn_name = &func.sig.ident;
+    let fn_vis = &func.vis;
+    let fn_inputs = &func.sig.inputs;
+    let fn_output = &func.sig.output;
+    let fn_body = &func.block;
+    let fn_attrs = &func.attrs;
+
+    // Validate return type is UntrustedAdvice<T>
+    let inner_type = match fn_output {
+        ReturnType::Type(_, ty) => {
+            // Check if type is UntrustedAdvice<T>
+            if let Type::Path(type_path) = &**ty {
+                if let Some(segment) = type_path.path.segments.last() {
+                    if segment.ident == "UntrustedAdvice" {
+                        // Extract T from UntrustedAdvice<T>
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                            if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                                inner.clone()
+                            } else {
+                                panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+                            }
+                        } else {
+                            panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+                        }
+                    } else {
+                        panic!(
+                            "#[jolt::advice] return type must be UntrustedAdvice<T>, found {}",
+                            segment.ident
+                        );
+                    }
+                } else {
+                    panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+                }
+            } else {
+                panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+            }
+        }
+        ReturnType::Default => {
+            panic!("#[jolt::advice] function must return UntrustedAdvice<T>");
+        }
+    };
+
+    // Generate the dual-mode function
+    let expanded = quote! {
+        // Version with compute_advice: execute body and write to advice tape
+        #[cfg(feature = "compute_advice")]
+        #(#fn_attrs)*
+        #fn_vis fn #fn_name(#fn_inputs) #fn_output {
+            let result: #inner_type = #fn_body;
+
+            // Serialize and write to advice tape
+            let mut writer = jolt::AdviceWriter::get();
+            jolt::postcard::to_eio(&result, &mut writer)
+                .expect("Failed to write advice to tape");
+
+            jolt::UntrustedAdvice::new(result)
+        }
+
+        // Version without compute_advice: read from advice tape
+        #[cfg(not(feature = "compute_advice"))]
+        #(#fn_attrs)*
+        #fn_vis fn #fn_name(#fn_inputs) #fn_output {
+            // Need a scratch buffer for postcard deserialization
+            // Using a reasonably sized buffer on the stack
+            let mut buffer = [0u8; 1024];
+            let mut reader = jolt::AdviceReader::get();
+
+            let (result, _) = jolt::postcard::from_eio(&mut reader, &mut buffer)
+                .expect("Failed to read advice from tape");
+
+            jolt::UntrustedAdvice::new(result)
+        }
+    };
+
+    TokenStream::from(expanded)
+}
