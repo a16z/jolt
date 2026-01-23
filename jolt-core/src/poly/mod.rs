@@ -11,7 +11,6 @@ pub mod multiquadratic_poly;
 pub mod one_hot_polynomial;
 pub mod opening_proof;
 pub mod prefix_suffix;
-pub mod program_io_polynomial;
 pub mod ra_poly;
 pub mod range_mask_polynomial;
 pub mod rlc_polynomial;
