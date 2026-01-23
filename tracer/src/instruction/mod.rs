@@ -963,14 +963,18 @@ impl Instruction {
             // 0x5B is reserved for custom/virtual instructions.
             0b1011011 => {
                 let funct3 = (instr >> 12) & 0x7;
-                match funct3 {
-                    f if f == FUNCT3_VIRTUAL_REV8W as u32 => Ok(VirtualRev8W::new(instr, address, true, compressed).into()),
-                    f if f == FUNCT3_VIRTUAL_ASSERT_EQ as u32 => Ok(VirtualAssertEQ::new(instr, address, true, compressed).into()),
-                    f if f == FUNCT3_ADVICE_SB as u32 => Ok(AdviceSB::new(instr, address, true, compressed).into()),
-                    f if f == FUNCT3_ADVICE_SH as u32 => Ok(AdviceSH::new(instr, address, true, compressed).into()),
-                    f if f == FUNCT3_ADVICE_SW as u32 => Ok(AdviceSW::new(instr, address, true, compressed).into()),
-                    f if f == FUNCT3_ADVICE_SD as u32 => Ok(AdviceSD::new(instr, address, true, compressed).into()),
-                    _ => Err("Invalid custom/virtual instruction"),
+                match funct3 as u8 {
+                    FUNCT3_VIRTUAL_REV8W => {
+                        Ok(VirtualRev8W::new(instr, address, true, compressed).into())
+                    }
+                    FUNCT3_VIRTUAL_ASSERT_EQ => {
+                        Ok(VirtualAssertEQ::new(instr, address, true, compressed).into())
+                    }
+                    FUNCT3_ADVICE_SB => Ok(AdviceSB::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_SH => Ok(AdviceSH::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_SW => Ok(AdviceSW::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_SD => Ok(AdviceSD::new(instr, address, true, compressed).into()),
+                    _ => Err("Invalid custom/virtual instruction (funct3 = {funct_3}"),
                 }
             }
             _ => Err("Unknown opcode"),
