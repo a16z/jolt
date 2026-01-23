@@ -1,5 +1,5 @@
 use crate::field::JoltField;
-use crate::poly::commitment::dory::DoryGlobals;
+use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::BytecodePreprocessing;
@@ -138,6 +138,95 @@ pub fn build_bytecode_chunks<F: JoltField>(
                         k_chunk,
                         bytecode_len,
                     );
+                    coeffs[idx] = value;
+                }
+            }
+            MultilinearPolynomial::from(coeffs)
+        })
+        .collect()
+}
+
+/// Build bytecode chunk polynomials with main-matrix dimensions for CycleMajor embedding.
+///
+/// This creates bytecode chunks with `k_chunk * padded_trace_len` coefficients, using
+/// main-matrix indexing (`lane * T + cycle`) instead of bytecode indexing (`lane * bytecode_len + cycle`).
+///
+/// **Why this is needed for CycleMajor:**
+/// - In CycleMajor, coefficients are ordered as: lane 0's cycles, lane 1's cycles, ...
+/// - Bytecode indexing gives: `lane * bytecode_len + cycle`
+/// - Main indexing gives: `lane * T + cycle`
+/// - When T > bytecode_len, these differ for lane > 0, causing row-commitment hint mismatch
+///
+/// **For AddressMajor, this is NOT needed** because both use `cycle * k_chunk + lane`,
+/// which gives the same index for cycle < bytecode_len.
+///
+/// The bytecode values are placed at positions (lane, cycle) for cycle < bytecode_len,
+/// with zeros for cycle >= bytecode_len (matching the "extra cycle vars fixed to 0" embedding).
+#[tracing::instrument(skip_all, name = "bytecode::build_bytecode_chunks_for_main_matrix")]
+pub fn build_bytecode_chunks_for_main_matrix<F: JoltField>(
+    bytecode: &BytecodePreprocessing,
+    log_k_chunk: usize,
+    padded_trace_len: usize,
+    layout: DoryLayout,
+) -> Vec<MultilinearPolynomial<F>> {
+    debug_assert_eq!(
+        layout,
+        DoryLayout::CycleMajor,
+        "build_bytecode_chunks_for_main_matrix should only be used for CycleMajor layout"
+    );
+
+    let k_chunk = 1usize << log_k_chunk;
+    let bytecode_len = bytecode.bytecode.len();
+    let total = total_lanes();
+    let num_chunks = total.div_ceil(k_chunk);
+
+    debug_assert!(
+        padded_trace_len >= bytecode_len,
+        "padded_trace_len ({padded_trace_len}) must be >= bytecode_len ({bytecode_len})"
+    );
+
+    (0..num_chunks)
+        .into_par_iter()
+        .map(|chunk_idx| {
+            // Use padded_trace_len for coefficient array size (main-matrix dimensions)
+            let mut coeffs = unsafe_allocate_zero_vec(k_chunk * padded_trace_len);
+            for k in 0..bytecode_len {
+                let instr = &bytecode.bytecode[k];
+                let normalized = instr.normalize();
+                let circuit_flags = <Instruction as Flags>::circuit_flags(instr);
+                let instr_flags = <Instruction as Flags>::instruction_flags(instr);
+                let lookup_idx = <Instruction as InstructionLookup<XLEN>>::lookup_table(instr)
+                    .map(|t| LookupTables::<XLEN>::enum_index(&t));
+                let raf_flag =
+                    !crate::zkvm::instruction::InterleavedBitsMarker::is_interleaved_operands(
+                        &circuit_flags,
+                    );
+
+                let unexpanded_pc = F::from_u64(normalized.address as u64);
+                let imm = F::from_i128(normalized.operands.imm);
+                let rs1 = normalized.operands.rs1;
+                let rs2 = normalized.operands.rs2;
+                let rd = normalized.operands.rd;
+
+                for lane in 0..k_chunk {
+                    let global_lane = chunk_idx * k_chunk + lane;
+                    if global_lane >= total {
+                        break;
+                    }
+                    let value = lane_value::<F>(
+                        global_lane,
+                        rs1,
+                        rs2,
+                        rd,
+                        unexpanded_pc,
+                        imm,
+                        &circuit_flags,
+                        &instr_flags,
+                        lookup_idx,
+                        raf_flag,
+                    );
+                    // Use padded_trace_len (main T) for indexing
+                    let idx = layout.address_cycle_to_index(lane, k, k_chunk, padded_trace_len);
                     coeffs[idx] = value;
                 }
             }

@@ -531,11 +531,8 @@ fn memory_ops_e2e_committed_program() {
     run_e2e_test(E2ETestConfig::memory_ops().with_committed_program());
 }
 
-// TODO: Investigate btreemap committed program failure - Stage 8 verification fails.
-// This might be related to the log_k_chunk transition or larger bytecode size.
 #[test]
 #[serial]
-#[ignore = "fails in committed mode - needs investigation"]
 fn btreemap_e2e_committed_program() {
     // BTreeMap guest has complex heap allocations.
     run_e2e_test(E2ETestConfig::btreemap(50).with_committed_program());
@@ -548,12 +545,8 @@ fn muldiv_e2e_committed_program() {
     run_e2e_test(E2ETestConfig::muldiv(9, 5, 3).with_committed_program());
 }
 
-// TODO: Investigate committed mode failure at trace length 2^17 with CycleMajor layout.
-// The log_k_chunk transitions from 4 to 8 at log_T >= 16, which may have a bug in
-// bytecode claim reduction or Stage 8 embedding. AddressMajor passes at 2^17.
 #[test]
 #[serial]
-#[ignore = "fails at trace length 2^17 with CycleMajor - needs investigation"]
 fn fib_e2e_committed_large_trace() {
     // Larger trace length (2^17) in committed mode.
     // Tests bytecode chunking with log_k_chunk=8 (256 lanes per chunk).

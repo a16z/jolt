@@ -405,8 +405,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         // In Committed mode, Stage 8 folds bytecode chunk openings into the *joint* opening.
         // That folding currently requires log_T >= log_K_bytecode, so we ensure the padded trace
         // length is at least the (power-of-two padded) bytecode size.
+        //
+        // For CycleMajor layout, bytecode chunks are committed with bytecode_T for coefficient
+        // indexing. The main context's T must be >= bytecode_T for row indices to align correctly
+        // during Stage 8 VMP computation.
         let padded_trace_len = if program_mode == ProgramMode::Committed {
-            padded_trace_len.max(preprocessing.shared.bytecode_size())
+            let trusted = preprocessing
+                .program_commitments
+                .as_ref()
+                .expect("program commitments missing in committed preprocessing");
+            padded_trace_len
+                .max(preprocessing.shared.bytecode_size())
+                .max(trusted.bytecode_T) // Ensure T >= bytecode_T for CycleMajor row alignment
         } else {
             padded_trace_len
         };
@@ -1900,12 +1910,27 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Build streaming RLC polynomial directly (no witness poly regeneration!)
         // Use materialized trace (default, single pass) instead of lazy trace
+        //
+        // bytecode_T: The T value used for bytecode coefficient indexing.
+        // In Committed mode, use the value stored in trusted commitments.
+        // In Full mode, use bytecode_len (original behavior).
+        let bytecode_T = if self.program_mode == ProgramMode::Committed {
+            let trusted = self
+                .preprocessing
+                .program_commitments
+                .as_ref()
+                .expect("program commitments missing in committed mode");
+            trusted.bytecode_T
+        } else {
+            self.preprocessing.program.bytecode_len()
+        };
         let (joint_poly, hint) = state.build_streaming_rlc::<PCS>(
             self.one_hot_params.clone(),
             TraceSource::Materialized(Arc::clone(&self.trace)),
             streaming_data,
             opening_proof_hints,
             advice_polys,
+            bytecode_T,
         );
 
         PCS::prove(

@@ -246,6 +246,52 @@ impl DoryGlobals {
         Some(())
     }
 
+    /// Initialize Bytecode context with MAIN-matrix dimensions for CycleMajor Stage 8 embedding.
+    ///
+    /// This is used when committing bytecode for CycleMajor layout with T > bytecode_len.
+    /// The bytecode polynomial is padded to `k_chunk * max_trace_len` coefficients so that
+    /// its row-commitment hints match the main matrix structure exactly.
+    ///
+    /// **Key difference from `initialize_bytecode_context_for_main_sigma`:**
+    /// - Uses `max_trace_len` (main T) for total size, not `bytecode_len`
+    /// - This ensures bytecode row indices match main row indices for CycleMajor
+    pub fn initialize_bytecode_context_with_main_dimensions(
+        k_chunk: usize,
+        max_trace_len: usize,
+        log_k_chunk: usize,
+    ) -> Option<()> {
+        let log_t = max_trace_len.log_2();
+        let (sigma_main, _) = Self::main_sigma_nu(log_k_chunk, log_t);
+        let num_columns = 1usize << sigma_main;
+        let total_size = k_chunk * max_trace_len;
+
+        assert!(
+            total_size % num_columns == 0,
+            "bytecode matrix width {num_columns} must divide total_size {total_size}"
+        );
+        let num_rows = total_size / num_columns;
+
+        // If already initialized, ensure it matches (avoid silently ignoring OnceCell::set failures).
+        #[allow(static_mut_refs)]
+        unsafe {
+            if let (Some(existing_cols), Some(existing_rows), Some(existing_t)) = (
+                BYTECODE_NUM_COLUMNS.get(),
+                BYTECODE_MAX_NUM_ROWS.get(),
+                BYTECODE_T.get(),
+            ) {
+                assert_eq!(*existing_cols, num_columns);
+                assert_eq!(*existing_rows, num_rows);
+                assert_eq!(*existing_t, max_trace_len);
+                return Some(());
+            }
+        }
+
+        Self::set_num_columns_for_context(num_columns, DoryContext::Bytecode);
+        Self::set_T_for_context(max_trace_len, DoryContext::Bytecode);
+        Self::set_max_num_rows_for_context(num_rows, DoryContext::Bytecode);
+        Some(())
+    }
+
     /// Initialize ProgramImage context so its `num_columns` matches Main's `sigma_main`.
     ///
     /// This is used so that tier-1 row-commitment hints can be combined into the Main-context

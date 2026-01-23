@@ -38,6 +38,7 @@ pub struct RLCStreamingData {
 /// * `bytecode_polys` - List of (chunk_index, coefficient) pairs for the RLC
 /// * `program` - Program preprocessing data
 /// * `one_hot_params` - One-hot parameters (contains k_chunk)
+/// * `bytecode_T` - The T value used for bytecode coefficient indexing (from TrustedProgramCommitments)
 pub fn compute_bytecode_vmp_contribution<F: JoltField>(
     result: &mut [F],
     left_vec: &[F],
@@ -45,6 +46,7 @@ pub fn compute_bytecode_vmp_contribution<F: JoltField>(
     bytecode_polys: &[(usize, F)],
     program: &crate::zkvm::program::ProgramPreprocessing,
     one_hot_params: &OneHotParams,
+    bytecode_T: usize,
 ) {
     if bytecode_polys.is_empty() {
         return;
@@ -55,6 +57,12 @@ pub fn compute_bytecode_vmp_contribution<F: JoltField>(
     let bytecode_len = program.bytecode_len();
     let bytecode_cols = num_columns;
     let total = total_lanes();
+
+    // Use the passed bytecode_T for coefficient indexing.
+    // This is the T value used when the bytecode was committed:
+    // - CycleMajor: max_trace_len (main-matrix dimensions)
+    // - AddressMajor: bytecode_len (bytecode dimensions)
+    let index_T = bytecode_T;
 
     debug_assert!(
         k_chunk * bytecode_len >= bytecode_cols,
@@ -104,8 +112,8 @@ pub fn compute_bytecode_vmp_contribution<F: JoltField>(
                 if value.is_zero() {
                     continue;
                 }
-                let global_index =
-                    layout.address_cycle_to_index(lane, cycle, k_chunk, bytecode_len);
+                // Use layout-conditional index_T: main T for CycleMajor, bytecode_len for AddressMajor
+                let global_index = layout.address_cycle_to_index(lane, cycle, k_chunk, index_T);
                 let row_index = global_index / bytecode_cols;
                 let col_index = global_index % bytecode_cols;
                 if row_index < left_vec.len() {
@@ -150,6 +158,10 @@ pub struct StreamingRLCContext<F: JoltField> {
     pub onehot_polys: Vec<(CommittedPolynomial, F)>,
     /// Bytecode chunk polynomials with their RLC coefficients.
     pub bytecode_polys: Vec<(usize, F)>,
+    /// The T value used for bytecode coefficient indexing (from TrustedProgramCommitments).
+    /// For CycleMajor: max_trace_len (main-matrix dimensions).
+    /// For AddressMajor: bytecode_len (bytecode dimensions).
+    pub bytecode_T: usize,
     /// Advice polynomials with their RLC coefficients and IDs.
     /// These are NOT streamed from trace - they're passed in directly.
     /// Format: (poly_id, coeff, polynomial) - ID is needed to determine
@@ -262,6 +274,7 @@ impl<F: JoltField> RLCPolynomial<F> {
     /// * `poly_ids` - List of polynomial identifiers
     /// * `coefficients` - RLC coefficients for each polynomial
     /// * `advice_poly_map` - Map of advice polynomial IDs to their actual polynomials
+    /// * `bytecode_T` - The T value used for bytecode coefficient indexing (from TrustedProgramCommitments)
     #[tracing::instrument(skip_all)]
     pub fn new_streaming(
         one_hot_params: OneHotParams,
@@ -270,6 +283,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         poly_ids: Vec<CommittedPolynomial>,
         coefficients: &[F],
         mut advice_poly_map: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        bytecode_T: usize,
     ) -> Self {
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
@@ -316,6 +330,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                 dense_polys,
                 onehot_polys,
                 bytecode_polys,
+                bytecode_T,
                 advice_polys,
                 trace_source,
                 preprocessing,
@@ -605,6 +620,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
             &ctx.bytecode_polys,
             &ctx.preprocessing.program,
             &ctx.one_hot_params,
+            ctx.bytecode_T,
         );
     }
 
