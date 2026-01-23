@@ -163,7 +163,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> 
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        None
+        // Uni-skip output = evaluation at challenge r0, stored as UnivariateSkip opening
+        let opening = OpeningId::Virtual(
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::SpartanProductVirtualization,
+        );
+        Some(OutputClaimConstraint::direct(opening))
     }
 
     fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {

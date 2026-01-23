@@ -181,9 +181,16 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParam
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
+        // LookupOutput from both InstructionClaimReduction and SpartanProductVirtualization
+        // must be equal. Include both to ensure both output constraint chains are consumed.
+        // input = 0.5*rv + 0.5*rv_branch + γ*left + γ²*right
         let rv = OpeningId::Virtual(
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
+        );
+        let rv_branch = OpeningId::Virtual(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanProductVirtualization,
         );
         let left = OpeningId::Virtual(
             VirtualPolynomial::LeftLookupOperand,
@@ -195,15 +202,20 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParam
         );
 
         let terms = vec![
-            ProductTerm::single(ValueSource::Opening(rv)),
-            ProductTerm::scaled(ValueSource::Challenge(0), vec![ValueSource::Opening(left)]),
-            ProductTerm::scaled(ValueSource::Challenge(1), vec![ValueSource::Opening(right)]),
+            ProductTerm::scaled(ValueSource::Challenge(0), vec![ValueSource::Opening(rv)]),
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(rv_branch)],
+            ),
+            ProductTerm::scaled(ValueSource::Challenge(1), vec![ValueSource::Opening(left)]),
+            ProductTerm::scaled(ValueSource::Challenge(2), vec![ValueSource::Opening(right)]),
         ];
         InputClaimConstraint::sum_of_products(terms)
     }
 
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
-        vec![self.gamma, self.gamma_sqr]
+        let half = F::from_u64(2).inverse().unwrap();
+        vec![half, self.gamma, self.gamma_sqr]
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
