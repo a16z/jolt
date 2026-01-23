@@ -51,7 +51,7 @@ impl RISCVTrace for LWU {
         }
     }
 
-    /// Load unsigned word (32-bit) with zero extension to 64-bit.    
+    /// Load unsigned word (32-bit) with zero extension to 64-bit.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -76,7 +76,7 @@ impl LWU {
         let v_shift = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-        asm.emit_halign::<VirtualAssertWordAlignment>(self.operands.rs1, self.operands.imm);
+        asm.emit_align::<VirtualAssertWordAlignment>(self.operands.rs1, self.operands.imm);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
         asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
