@@ -500,11 +500,8 @@ pub fn eval_initial_ram_mle<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
-    let mut acc = sparse_eval_u64_block::<F>(
-        bytecode_start,
-        &ram_preprocessing.bytecode_words,
-        r_address,
-    );
+    let mut acc =
+        sparse_eval_u64_block::<F>(bytecode_start, &ram_preprocessing.bytecode_words, r_address);
 
     // Inputs region (packed into u64 words in little-endian)
     if !program_io.inputs.is_empty() {
@@ -545,10 +542,7 @@ pub fn eval_initial_ram_mle<F: JoltField>(
 /// When `r_address` has more variables than the IO polynomial, we embed it into the larger
 /// domain by fixing the extra high-order variables to 0, which corresponds to multiplying
 /// by `∏(1 - r_hi[i])`.
-pub fn eval_io_mle<F: JoltField>(
-    program_io: &JoltDevice,
-    r_address: &[F::Challenge],
-) -> F {
+pub fn eval_io_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challenge]) -> F {
     // IO region size in words (power of two).
     let range_end_words =
         remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
