@@ -7,10 +7,10 @@ pub const INLINE_OPCODE: u8 = 0x2B; // Inline instructions
 // funct3 values for CUSTOM_OPCODE (0x5B)
 pub const FUNCT3_VIRTUAL_REV8W: u8 = 0b000;
 pub const FUNCT3_VIRTUAL_ASSERT_EQ: u8 = 0b001;
-pub const FUNCT3_ADVICE_SB: u8 = 0b100; // Store byte from advice tape
-pub const FUNCT3_ADVICE_SH: u8 = 0b101; // Store halfword from advice tape
-pub const FUNCT3_ADVICE_SW: u8 = 0b110; // Store word from advice tape
-pub const FUNCT3_ADVICE_SD: u8 = 0b111; // Store doubleword from advice tape
+pub const FUNCT3_ADVICE_SB: u8 = 0b010; // Store byte from advice tape
+pub const FUNCT3_ADVICE_SH: u8 = 0b011; // Store halfword from advice tape
+pub const FUNCT3_ADVICE_SW: u8 = 0b100; // Store word from advice tape
+pub const FUNCT3_ADVICE_SD: u8 = 0b101; // Store doubleword from advice tape
 
 use add::ADD;
 use addi::ADDI;
