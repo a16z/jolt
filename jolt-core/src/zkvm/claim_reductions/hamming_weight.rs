@@ -93,7 +93,7 @@ use crate::poly::{
     unipoly::UniPoly,
 };
 use crate::subprotocols::{
-    blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
+    blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
     sumcheck_prover::SumcheckInstanceProver,
     sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
 };
@@ -279,6 +279,77 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
             OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness();
         let full_point = [r_addr.r.as_slice(), self.r_cycle.as_slice()].concat();
         OpeningPoint::<BIG_ENDIAN, F>::new(full_point)
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let n = self.polynomial_types.len();
+        let mut terms = Vec::new();
+        let mut challenge_idx = 0;
+
+        for i in 0..n {
+            let poly_type = self.polynomial_types[i];
+
+            let virt_sumcheck_id = match poly_type {
+                CommittedPolynomial::InstructionRa(_) => SumcheckId::InstructionRaVirtualization,
+                CommittedPolynomial::BytecodeRa(_) => SumcheckId::BytecodeReadRaf,
+                CommittedPolynomial::RamRa(_) => SumcheckId::RamRaVirtualization,
+                _ => unreachable!(),
+            };
+
+            // HW claim term: γ^{3i} * hw_claim_i
+            // For RAM, hw_claim is RamHammingWeight opening; for others, it's F::one()
+            match poly_type {
+                CommittedPolynomial::RamRa(_) => {
+                    let hw_opening = OpeningId::Virtual(
+                        VirtualPolynomial::RamHammingWeight,
+                        SumcheckId::RamHammingBooleanity,
+                    );
+                    terms.push(ProductTerm::scaled(
+                        ValueSource::Challenge(challenge_idx),
+                        vec![ValueSource::Opening(hw_opening)],
+                    ));
+                }
+                _ => {
+                    // For instruction/bytecode, hw_claim = 1, so term is just γ^{3i}
+                    terms.push(ProductTerm::single(ValueSource::Challenge(challenge_idx)));
+                }
+            }
+            challenge_idx += 1;
+
+            // Bool claim term: γ^{3i+1} * bool_opening_i
+            let bool_opening = OpeningId::Committed(poly_type, SumcheckId::Booleanity);
+            terms.push(ProductTerm::scaled(
+                ValueSource::Challenge(challenge_idx),
+                vec![ValueSource::Opening(bool_opening)],
+            ));
+            challenge_idx += 1;
+
+            // Virt claim term: γ^{3i+2} * virt_opening_i
+            let virt_opening = OpeningId::Committed(poly_type, virt_sumcheck_id);
+            terms.push(ProductTerm::scaled(
+                ValueSource::Challenge(challenge_idx),
+                vec![ValueSource::Opening(virt_opening)],
+            ));
+            challenge_idx += 1;
+        }
+
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        let n = self.polynomial_types.len();
+        let mut values = Vec::with_capacity(3 * n);
+
+        for i in 0..n {
+            // γ^{3i} for hw term
+            values.push(self.gamma_powers[3 * i]);
+            // γ^{3i+1} for bool term
+            values.push(self.gamma_powers[3 * i + 1]);
+            // γ^{3i+2} for virt term
+            values.push(self.gamma_powers[3 * i + 2]);
+        }
+
+        values
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

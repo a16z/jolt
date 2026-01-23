@@ -91,7 +91,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
 
-    fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
         // input = LookupOutput + γ*LeftLookupOperand + γ²*RightLookupOperand
         // where openings are from SpartanOuter sumcheck
         let lookup_output =
@@ -117,7 +117,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
             ),
         ];
 
-        Some(InputClaimConstraint::sum_of_products(terms))
+        InputClaimConstraint::sum_of_products(terms)
     }
 
     fn input_constraint_challenge_values(

@@ -181,6 +181,12 @@ pub fn prove_uniskip_round_zk<
     let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
     instance.cache_openings(opening_accumulator, transcript, &[r0]);
 
+    // Get input constraint from the instance params
+    let input_constraint = instance.get_params().input_claim_constraint();
+    let input_constraint_challenge_values = instance
+        .get_params()
+        .input_constraint_challenge_values(opening_accumulator);
+
     // Store uni-skip data in accumulator for BlindFold
     opening_accumulator.push_uniskip_stage_data(UniSkipStageData {
         input_claim,
@@ -189,6 +195,8 @@ pub fn prove_uniskip_round_zk<
         challenge: r0,
         poly_degree,
         commitment_bytes,
+        input_constraint,
+        input_constraint_challenge_values,
     });
 
     ZkUniSkipFirstRoundProof::new(commitment, poly_degree)

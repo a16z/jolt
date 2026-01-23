@@ -17,7 +17,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
+        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -98,6 +98,48 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
         sumcheck_challenges: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let left_stage_1 = OpeningId::Virtual(
+            VirtualPolynomial::LeftInstructionInput,
+            SumcheckId::SpartanOuter,
+        );
+        let right_stage_1 = OpeningId::Virtual(
+            VirtualPolynomial::RightInstructionInput,
+            SumcheckId::SpartanOuter,
+        );
+        let left_stage_2 = OpeningId::Virtual(
+            VirtualPolynomial::LeftInstructionInput,
+            SumcheckId::SpartanProductVirtualization,
+        );
+        let right_stage_2 = OpeningId::Virtual(
+            VirtualPolynomial::RightInstructionInput,
+            SumcheckId::SpartanProductVirtualization,
+        );
+
+        let terms = vec![
+            ProductTerm::single(ValueSource::Opening(right_stage_1)),
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(left_stage_1)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![ValueSource::Opening(right_stage_2)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(2),
+                vec![ValueSource::Opening(left_stage_2)],
+            ),
+        ];
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        let gamma_sqr = self.gamma.square();
+        let gamma_cub = gamma_sqr * self.gamma;
+        vec![self.gamma, gamma_sqr, gamma_cub]
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

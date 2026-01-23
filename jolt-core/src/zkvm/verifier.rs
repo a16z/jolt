@@ -9,9 +9,11 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::subprotocols::blindfold::{
-    BlindFoldVerifier, FinalOutputConfig, OutputClaimConstraint, StageConfig, VerifierR1CSBuilder,
+    BlindFoldVerifier, FinalOutputConfig, InputClaimConstraint, OutputClaimConstraint, StageConfig,
+    VerifierR1CSBuilder,
 };
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
+use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
@@ -84,30 +86,61 @@ struct StageVerifyResult<F: JoltField> {
     /// Sumcheck challenges from this stage
     challenges: Vec<F::Challenge>,
     /// Batched output constraint (if any instances have constraints)
-    batched_constraint: Option<OutputClaimConstraint>,
-    /// Challenge values for the batched constraint (instance-specific challenges)
-    /// Layout: [instance0_challenges..., instance1_challenges..., ...]
-    /// Note: batching coefficients are NOT included here - they're derived from transcript
-    /// during BatchedSumcheck::verify and implicitly verified via R1CS constraint satisfaction.
-    constraint_challenge_values: Vec<F>,
+    batched_output_constraint: Option<OutputClaimConstraint>,
+    /// Challenge values for the batched output constraint (instance-specific challenges)
+    output_constraint_challenge_values: Vec<F>,
+    /// Batched input constraint (all instances have constraints now)
+    batched_input_constraint: InputClaimConstraint,
+    /// Challenge values for the batched input constraint
+    input_constraint_challenge_values: Vec<F>,
+    /// Uni-skip input constraint (only for stages 0-1)
+    uniskip_input_constraint: Option<InputClaimConstraint>,
+    /// Uni-skip input constraint challenge values
+    uniskip_input_constraint_challenge_values: Vec<F>,
 }
 
 impl<F: JoltField> StageVerifyResult<F> {
-    fn with_constraint_and_values(
+    fn new(
         challenges: Vec<F::Challenge>,
-        constraint: Option<OutputClaimConstraint>,
-        constraint_challenge_values: Vec<F>,
+        batched_output_constraint: Option<OutputClaimConstraint>,
+        output_constraint_challenge_values: Vec<F>,
+        batched_input_constraint: InputClaimConstraint,
+        input_constraint_challenge_values: Vec<F>,
     ) -> Self {
         Self {
             challenges,
-            batched_constraint: constraint,
-            constraint_challenge_values,
+            batched_output_constraint,
+            output_constraint_challenge_values,
+            batched_input_constraint,
+            input_constraint_challenge_values,
+            uniskip_input_constraint: None,
+            uniskip_input_constraint_challenge_values: Vec::new(),
+        }
+    }
+
+    fn with_uniskip(
+        challenges: Vec<F::Challenge>,
+        batched_output_constraint: Option<OutputClaimConstraint>,
+        output_constraint_challenge_values: Vec<F>,
+        batched_input_constraint: InputClaimConstraint,
+        input_constraint_challenge_values: Vec<F>,
+        uniskip_input_constraint: InputClaimConstraint,
+        uniskip_input_constraint_challenge_values: Vec<F>,
+    ) -> Self {
+        Self {
+            challenges,
+            batched_output_constraint,
+            output_constraint_challenge_values,
+            batched_input_constraint,
+            input_constraint_challenge_values,
+            uniskip_input_constraint: Some(uniskip_input_constraint),
+            uniskip_input_constraint_challenge_values,
         }
     }
 }
 
 /// Collect and batch output constraints from sumcheck verifier instances.
-fn batch_constraints<F: JoltField, T: Transcript>(
+fn batch_output_constraints<F: JoltField, T: Transcript>(
     instances: &[&dyn SumcheckInstanceVerifier<F, T>],
 ) -> Option<OutputClaimConstraint> {
     let constraints: Vec<Option<OutputClaimConstraint>> = instances
@@ -115,6 +148,35 @@ fn batch_constraints<F: JoltField, T: Transcript>(
         .map(|instance| instance.get_params().output_claim_constraint())
         .collect();
     OutputClaimConstraint::batch(&constraints, instances.len())
+}
+
+/// Collect and batch input constraints from sumcheck verifier instances.
+fn batch_input_constraints<F: JoltField, T: Transcript>(
+    instances: &[&dyn SumcheckInstanceVerifier<F, T>],
+) -> InputClaimConstraint {
+    let constraints: Vec<InputClaimConstraint> = instances
+        .iter()
+        .map(|instance| instance.get_params().input_claim_constraint())
+        .collect();
+    InputClaimConstraint::batch_required(&constraints, instances.len())
+}
+
+/// Scale batching coefficients by 2^(max_rounds - instance_rounds) to account for
+/// different-round sumchecks in a batch. This aligns with how BatchedSumcheck::prove_zk
+/// scales individual claims before batching.
+fn scale_batching_coefficients<F: JoltField, T: Transcript>(
+    batching_coefficients: &[F],
+    instances: &[&dyn SumcheckInstanceVerifier<F, T>],
+) -> Vec<F> {
+    let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap_or(0);
+    batching_coefficients
+        .iter()
+        .zip(instances.iter())
+        .map(|(coeff, instance)| {
+            let scale = max_num_rounds - instance.num_rounds();
+            coeff.mul_pow_2(scale)
+        })
+        .collect()
 }
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
@@ -262,7 +324,7 @@ impl<
                 .append_serializable(trusted_advice_commitment);
         }
 
-        let (r_stage1, uniskip_challenge1) = self.verify_stage1()?;
+        let (stage1_result, uniskip_challenge1) = self.verify_stage1()?;
         let (stage2_result, uniskip_challenge2) = self.verify_stage2()?;
         let stage3_result = self.verify_stage3()?;
         let stage4_result = self.verify_stage4()?;
@@ -270,52 +332,83 @@ impl<
         let stage6_result = self.verify_stage6()?;
         let stage7_result = self.verify_stage7()?;
         let sumcheck_challenges = [
-            r_stage1,
-            stage2_result.challenges,
-            stage3_result.challenges,
-            stage4_result.challenges,
-            stage5_result.challenges,
+            stage1_result.challenges.clone(),
+            stage2_result.challenges.clone(),
+            stage3_result.challenges.clone(),
+            stage4_result.challenges.clone(),
+            stage5_result.challenges.clone(),
             stage6_result.challenges.clone(),
             stage7_result.challenges.clone(),
         ];
         let uniskip_challenges = [uniskip_challenge1, uniskip_challenge2];
 
         // Collect batched constraints for each stage (indexed 0-6)
-        // Stages without constraints return None
-        let stage_constraints = [
-            None,                             // Stage 0 (outer remaining)
-            stage2_result.batched_constraint, // Stage 1 (product virtual + ram)
-            stage3_result.batched_constraint, // Stage 2 (shift + instruction input + registers claim reduction)
-            stage4_result.batched_constraint, // Stage 3 (registers rw + ram val eval + ram val final)
-            stage5_result.batched_constraint, // Stage 4 (registers val eval + ram ra reduction + lookups read raf)
-            stage6_result.batched_constraint, // Stage 5 (bytecode + booleanity + etc)
-            stage7_result.batched_constraint, // Stage 6 (hamming weight + advice phase 2)
+        let stage_output_constraints = [
+            stage1_result.batched_output_constraint, // Stage 0 (outer remaining)
+            stage2_result.batched_output_constraint, // Stage 1 (product virtual + ram)
+            stage3_result.batched_output_constraint, // Stage 2 (shift + instruction input + registers claim reduction)
+            stage4_result.batched_output_constraint, // Stage 3 (registers rw + ram val eval + ram val final)
+            stage5_result.batched_output_constraint, // Stage 4 (registers val eval + ram ra reduction + lookups read raf)
+            stage6_result.batched_output_constraint, // Stage 5 (bytecode + booleanity + etc)
+            stage7_result.batched_output_constraint, // Stage 6 (hamming weight + advice phase 2)
         ];
 
-        // Collect constraint challenge values per stage for explicit BlindFold verification
-        let constraint_challenge_values: [Vec<F>; 7] = [
-            Vec::new(),                                        // Stage 0
-            stage2_result.constraint_challenge_values.clone(), // Stage 1
-            stage3_result.constraint_challenge_values.clone(), // Stage 2
-            stage4_result.constraint_challenge_values.clone(), // Stage 3
-            stage5_result.constraint_challenge_values.clone(), // Stage 4
-            stage6_result.constraint_challenge_values.clone(), // Stage 5
-            stage7_result.constraint_challenge_values.clone(), // Stage 6
+        // For stages 0-1: use uni-skip input constraints (not regular round constraints)
+        // For stages 2-6: use batched input constraints from regular rounds
+        let stage_input_constraints = [
+            stage1_result.uniskip_input_constraint.clone().unwrap(), // Stage 0: uni-skip input
+            stage2_result.uniskip_input_constraint.clone().unwrap(), // Stage 1: uni-skip input
+            stage3_result.batched_input_constraint.clone(),          // Stage 2
+            stage4_result.batched_input_constraint.clone(),          // Stage 3
+            stage5_result.batched_input_constraint.clone(),          // Stage 4
+            stage6_result.batched_input_constraint.clone(),          // Stage 5
+            stage7_result.batched_input_constraint.clone(),          // Stage 6
+        ];
+
+        let stage_input_constraint_values = [
+            stage1_result
+                .uniskip_input_constraint_challenge_values
+                .clone(), // Stage 0: uni-skip
+            stage2_result
+                .uniskip_input_constraint_challenge_values
+                .clone(), // Stage 1: uni-skip
+            stage3_result.input_constraint_challenge_values.clone(), // Stage 2
+            stage4_result.input_constraint_challenge_values.clone(), // Stage 3
+            stage5_result.input_constraint_challenge_values.clone(), // Stage 4
+            stage6_result.input_constraint_challenge_values.clone(), // Stage 5
+            stage7_result.input_constraint_challenge_values.clone(), // Stage 6
+        ];
+
+        // Collect output constraint challenge values per stage for explicit BlindFold verification
+        let output_constraint_challenge_values: [Vec<F>; 7] = [
+            stage1_result.output_constraint_challenge_values.clone(), // Stage 0
+            stage2_result.output_constraint_challenge_values.clone(), // Stage 1
+            stage3_result.output_constraint_challenge_values.clone(), // Stage 2
+            stage4_result.output_constraint_challenge_values.clone(), // Stage 3
+            stage5_result.output_constraint_challenge_values.clone(), // Stage 4
+            stage6_result.output_constraint_challenge_values.clone(), // Stage 5
+            stage7_result.output_constraint_challenge_values.clone(), // Stage 6
         ];
 
         self.verify_blindfold(
             &sumcheck_challenges,
             uniskip_challenges,
-            &stage_constraints,
-            &constraint_challenge_values,
+            &stage_output_constraints,
+            &output_constraint_challenge_values,
+            &stage_input_constraints,
+            &stage_input_constraint_values,
+            &stage1_result.batched_input_constraint,
+            &stage2_result.batched_input_constraint,
+            &stage1_result.input_constraint_challenge_values,
+            &stage2_result.input_constraint_challenge_values,
         )?;
         self.verify_stage8()?;
 
         Ok(())
     }
 
-    /// Returns (sumcheck_challenges, uni_skip_challenge)
-    fn verify_stage1(&mut self) -> Result<(Vec<F::Challenge>, F::Challenge), anyhow::Error> {
+    /// Returns (StageVerifyResult, uni_skip_challenge)
+    fn verify_stage1(&mut self) -> Result<(StageVerifyResult<F>, F::Challenge), anyhow::Error> {
         let (uni_skip_params, uni_skip_challenge) = verify_stage1_uni_skip(
             &self.proof.stage1_uni_skip_first_round_proof,
             &self.spartan_key,
@@ -331,15 +424,77 @@ impl<
             &self.opening_accumulator,
         );
 
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
+            vec![&spartan_outer_remaining];
+
+        // Compute batching coefficients before verify
+        let batching_coefficients: Vec<F> = {
+            let mut transcript_clone = self.transcript.clone();
+            for instance in &instances {
+                let input_claim = instance.input_claim(&self.opening_accumulator);
+                transcript_clone.append_scalar(&input_claim);
+            }
+            transcript_clone.challenge_vector(instances.len())
+        };
+
         let r_stage1 = BatchedSumcheck::verify(
             &self.proof.stage1_sumcheck_proof,
-            vec![&spartan_outer_remaining],
+            instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 1")?;
 
-        Ok((r_stage1, uni_skip_challenge))
+        // Stage 1 (outer remaining) has no output constraint, but does have input constraint
+        let batched_output_constraint = batch_output_constraints(&instances);
+        let batched_input_constraint = batch_input_constraints(&instances);
+
+        let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
+
+        // Output constraint challenge values - only include batching coefficients if there's an output constraint
+        let output_constraint_challenge_values = if batched_output_constraint.is_some() {
+            let mut values = batching_coefficients.clone();
+            for instance in &instances {
+                let r_slice = &r_stage1[max_num_rounds - instance.num_rounds()..];
+                values.extend(
+                    instance
+                        .get_params()
+                        .output_constraint_challenge_values(r_slice),
+                );
+            }
+            values
+        } else {
+            Vec::new()
+        };
+
+        // Input constraint challenge values include scaled batching coefficients
+        // (scaled by 2^(max_rounds - instance_rounds) to match prover's claim scaling)
+        let mut input_constraint_challenge_values: Vec<F> =
+            scale_batching_coefficients(&batching_coefficients, &instances);
+        for instance in &instances {
+            input_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .input_constraint_challenge_values(&self.opening_accumulator),
+            );
+        }
+
+        // Get uni-skip's input constraint (for BlindFold - this is what constrains the uni-skip's initial claim)
+        let uniskip_input_constraint = uni_skip_params.input_claim_constraint();
+        let uniskip_input_constraint_challenge_values =
+            uni_skip_params.input_constraint_challenge_values(&self.opening_accumulator);
+
+        let stage_result = StageVerifyResult::with_uniskip(
+            r_stage1,
+            batched_output_constraint,
+            output_constraint_challenge_values,
+            batched_input_constraint,
+            input_constraint_challenge_values,
+            uniskip_input_constraint,
+            uniskip_input_constraint_challenge_values,
+        );
+
+        Ok((stage_result, uni_skip_challenge))
     }
 
     /// Returns (StageVerifyResult, uni_skip_challenge)
@@ -350,6 +505,11 @@ impl<
             &mut self.transcript,
         )
         .context("Stage 2 univariate skip first round")?;
+
+        // Extract uni-skip input constraint before uni_skip_params is moved
+        let uniskip_input_constraint = uni_skip_params.input_claim_constraint();
+        let uniskip_input_constraint_challenge_values =
+            uni_skip_params.input_constraint_challenge_values(&self.opening_accumulator);
 
         let spartan_product_virtual_remainder = ProductVirtualRemainderVerifier::new(
             self.proof.trace_length,
@@ -406,25 +566,40 @@ impl<
         .context("Stage 2")?;
 
         // Collect and batch output constraints from verifier instances
-        let batched_constraint = batch_constraints(&instances);
+        let batched_output_constraint = batch_output_constraints(&instances);
+
+        // Collect and batch input constraints from verifier instances
+        let batched_input_constraint = batch_input_constraints(&instances);
 
         // Build expected constraint challenge values for explicit verification
         // Pass instance-local challenges (same slice as expected_output_claim receives)
         let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-        let mut constraint_challenge_values: Vec<F> = batching_coefficients.clone();
+        let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
+        // Input constraint uses scaled batching coefficients (2^(max_rounds - instance_rounds))
+        let mut input_constraint_challenge_values: Vec<F> =
+            scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
             let r_slice = &r_stage2[max_num_rounds - instance.num_rounds()..];
-            constraint_challenge_values.extend(
+            output_constraint_challenge_values.extend(
                 instance
                     .get_params()
                     .output_constraint_challenge_values(r_slice),
             );
+            input_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .input_constraint_challenge_values(&self.opening_accumulator),
+            );
         }
 
-        let stage_result = StageVerifyResult::with_constraint_and_values(
+        let stage_result = StageVerifyResult::with_uniskip(
             r_stage2,
-            batched_constraint,
-            constraint_challenge_values,
+            batched_output_constraint,
+            output_constraint_challenge_values,
+            batched_input_constraint,
+            input_constraint_challenge_values,
+            uniskip_input_constraint,
+            uniskip_input_constraint_challenge_values,
         );
 
         Ok((stage_result, uni_skip_challenge))
@@ -469,24 +644,38 @@ impl<
         .context("Stage 3")?;
 
         // Collect and batch output constraints from verifier instances
-        let batched_constraint = batch_constraints(&instances);
+        let batched_output_constraint = batch_output_constraints(&instances);
+
+        // Collect and batch input constraints from verifier instances
+        let batched_input_constraint = batch_input_constraints(&instances);
 
         // Build expected constraint challenge values for explicit verification in verify_blindfold.
         // Pass instance-local challenges (same slice as expected_output_claim receives)
         let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-        let mut constraint_challenge_values: Vec<F> = batching_coefficients;
+        let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
+        // Input constraint uses scaled batching coefficients (2^(max_rounds - instance_rounds))
+        let mut input_constraint_challenge_values: Vec<F> =
+            scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
             let r_slice = &r_stage3[max_num_rounds - instance.num_rounds()..];
-            let instance_challenges = instance
-                .get_params()
-                .output_constraint_challenge_values(r_slice);
-            constraint_challenge_values.extend(instance_challenges);
+            output_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .output_constraint_challenge_values(r_slice),
+            );
+            input_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .input_constraint_challenge_values(&self.opening_accumulator),
+            );
         }
 
-        Ok(StageVerifyResult::with_constraint_and_values(
+        Ok(StageVerifyResult::new(
             r_stage3,
-            batched_constraint,
-            constraint_challenge_values,
+            batched_output_constraint,
+            output_constraint_challenge_values,
+            batched_input_constraint,
+            input_constraint_challenge_values,
         ))
     }
 
@@ -554,26 +743,37 @@ impl<
         .context("Stage 4")?;
 
         // Collect and batch output constraints from verifier instances
-        let batched_constraint = batch_constraints(&instances);
+        let batched_output_constraint = batch_output_constraints(&instances);
+
+        // Collect and batch input constraints from verifier instances
+        let batched_input_constraint = batch_input_constraints(&instances);
 
         // Build expected constraint challenge values for explicit verification in verify_blindfold.
-        // Layout: [batching_coefficients..., instance0_challenges..., instance1_challenges..., ...]
-        // This matches the prover's FinalOutputWitness.challenge_values and OutputClaimConstraint::batch layout.
-        // Pass instance-local challenges (same slice as expected_output_claim receives)
         let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-        let mut constraint_challenge_values: Vec<F> = batching_coefficients;
+        let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
+        // Input constraint uses scaled batching coefficients (2^(max_rounds - instance_rounds))
+        let mut input_constraint_challenge_values: Vec<F> =
+            scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
             let r_slice = &r_stage4[max_num_rounds - instance.num_rounds()..];
-            let instance_challenges = instance
-                .get_params()
-                .output_constraint_challenge_values(r_slice);
-            constraint_challenge_values.extend(instance_challenges);
+            output_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .output_constraint_challenge_values(r_slice),
+            );
+            input_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .input_constraint_challenge_values(&self.opening_accumulator),
+            );
         }
 
-        Ok(StageVerifyResult::with_constraint_and_values(
+        Ok(StageVerifyResult::new(
             r_stage4,
-            batched_constraint,
-            constraint_challenge_values,
+            batched_output_constraint,
+            output_constraint_challenge_values,
+            batched_input_constraint,
+            input_constraint_challenge_values,
         ))
     }
 
@@ -619,24 +819,37 @@ impl<
         .context("Stage 5")?;
 
         // Collect and batch output constraints from verifier instances
-        let batched_constraint = batch_constraints(&instances);
+        let batched_output_constraint = batch_output_constraints(&instances);
+
+        // Collect and batch input constraints from verifier instances
+        let batched_input_constraint = batch_input_constraints(&instances);
 
         // Build expected constraint challenge values for explicit verification
-        // Pass instance-local challenges (same slice as expected_output_claim receives)
         let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-        let mut constraint_challenge_values: Vec<F> = batching_coefficients;
+        let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
+        // Input constraint uses scaled batching coefficients (2^(max_rounds - instance_rounds))
+        let mut input_constraint_challenge_values: Vec<F> =
+            scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
             let r_slice = &r_stage5[max_num_rounds - instance.num_rounds()..];
-            let instance_challenges = instance
-                .get_params()
-                .output_constraint_challenge_values(r_slice);
-            constraint_challenge_values.extend(instance_challenges);
+            output_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .output_constraint_challenge_values(r_slice),
+            );
+            input_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .input_constraint_challenge_values(&self.opening_accumulator),
+            );
         }
 
-        Ok(StageVerifyResult::with_constraint_and_values(
+        Ok(StageVerifyResult::new(
             r_stage5,
-            batched_constraint,
-            constraint_challenge_values,
+            batched_output_constraint,
+            output_constraint_challenge_values,
+            batched_input_constraint,
+            input_constraint_challenge_values,
         ))
     }
 
@@ -739,24 +952,37 @@ impl<
         .context("Stage 6")?;
 
         // Collect and batch output constraints from verifier instances
-        let batched_constraint = batch_constraints(&instances);
+        let batched_output_constraint = batch_output_constraints(&instances);
+
+        // Collect and batch input constraints from verifier instances
+        let batched_input_constraint = batch_input_constraints(&instances);
 
         // Build expected constraint challenge values for explicit verification
-        // Pass instance-local challenges (same slice as expected_output_claim receives)
         let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-        let mut constraint_challenge_values: Vec<F> = batching_coefficients;
+        let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
+        // Input constraint uses scaled batching coefficients (2^(max_rounds - instance_rounds))
+        let mut input_constraint_challenge_values: Vec<F> =
+            scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
             let r_slice = &r_stage6[max_num_rounds - instance.num_rounds()..];
-            let instance_challenges = instance
-                .get_params()
-                .output_constraint_challenge_values(r_slice);
-            constraint_challenge_values.extend(instance_challenges);
+            output_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .output_constraint_challenge_values(r_slice),
+            );
+            input_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .input_constraint_challenge_values(&self.opening_accumulator),
+            );
         }
 
-        Ok(StageVerifyResult::with_constraint_and_values(
+        Ok(StageVerifyResult::new(
             r_stage6,
-            batched_constraint,
-            constraint_challenge_values,
+            batched_output_constraint,
+            output_constraint_challenge_values,
+            batched_input_constraint,
+            input_constraint_challenge_values,
         ))
     }
 
@@ -766,12 +992,20 @@ impl<
     /// The polynomial coefficients are hidden in the transcript - verifier only sees commitments.
     /// BlindFold verifies the uni-skip polynomial constraints (sum check + evaluation) using
     /// power sums for the symmetric domain.
+    #[allow(clippy::too_many_arguments)]
     fn verify_blindfold(
         &mut self,
         sumcheck_challenges: &[Vec<F::Challenge>; 7],
         uniskip_challenges: [F::Challenge; 2],
-        stage_constraints: &[Option<OutputClaimConstraint>; 7],
-        constraint_challenge_values: &[Vec<F>; 7],
+        stage_output_constraints: &[Option<OutputClaimConstraint>; 7],
+        output_constraint_challenge_values: &[Vec<F>; 7],
+        stage_input_constraints: &[InputClaimConstraint; 7],
+        input_constraint_challenge_values: &[Vec<F>; 7],
+        // For stages 0-1: batched input constraint for regular rounds (different from uni-skip)
+        stage1_batched_input: &InputClaimConstraint,
+        stage2_batched_input: &InputClaimConstraint,
+        stage1_batched_input_values: &[F],
+        stage2_batched_input_values: &[F],
     ) -> Result<(), anyhow::Error> {
         // Build stage configurations including uni-skip rounds.
         // Uni-skip rounds are the first round of stages 1 and 2 (indices 0 and 1).
@@ -797,7 +1031,9 @@ impl<
 
         let mut stage_configs = Vec::new();
         let mut total_rounds = 0usize;
-        // Track which stage_config index corresponds to the last round of each zk_stage
+        // Track which stage_config index corresponds to uni-skip and regular first rounds
+        let mut uniskip_indices: Vec<usize> = Vec::new(); // Only 2 elements for stages 0-1
+        let mut regular_first_round_indices: Vec<usize> = Vec::new(); // 7 elements for all stages
         let mut last_round_indices: Vec<usize> = Vec::new();
 
         for (stage_idx, proof) in stage_proofs.iter().enumerate() {
@@ -816,6 +1052,9 @@ impl<
                     product_power_sums.to_vec()
                 };
 
+                // Record uni-skip index for its input constraint
+                uniskip_indices.push(stage_configs.len());
+
                 let config = if stage_idx == 0 {
                     StageConfig::new_uniskip(poly_degree, power_sums)
                 } else {
@@ -824,6 +1063,9 @@ impl<
                 stage_configs.push(config);
                 total_rounds += 1;
             }
+
+            // Record first regular round index for its input constraint
+            regular_first_round_indices.push(stage_configs.len());
 
             // Add regular sumcheck rounds
             let num_rounds = proof.num_rounds();
@@ -838,9 +1080,8 @@ impl<
                         zk_proof.poly_degrees[round_idx]
                     }
                 };
-                // First regular round always starts a new chain
-                // For stages 0-1: separates regular rounds from uni-skip
-                // For stages 2-6: starts their independent chain
+                // First regular round ALWAYS starts a new chain
+                // (batched claims differ from uni-skip output due to batching coefficients)
                 let starts_new_chain = round_idx == 0;
                 let config = if starts_new_chain {
                     StageConfig::new_chain(1, poly_degree)
@@ -851,17 +1092,46 @@ impl<
                 total_rounds += 1;
             }
 
-            // Record the index of the last round for this stage
+            // Record the last round index for output constraint
             last_round_indices.push(stage_configs.len() - 1);
         }
 
         // Add final_output configurations using the batched constraints from verifier instances
-        for (stage_idx, constraint) in stage_constraints.iter().enumerate() {
+        for (stage_idx, constraint) in stage_output_constraints.iter().enumerate() {
             if let Some(batched) = constraint {
                 let last_round_idx = last_round_indices[stage_idx];
                 stage_configs[last_round_idx].final_output =
                     Some(FinalOutputConfig::with_constraint(batched.clone()));
             }
+        }
+
+        // Add initial_input configurations for uni-skip stages (stages 0-1)
+        // These use the uni-skip's own input constraints
+        let uniskip_constraints = [
+            stage_input_constraints[0].clone(), // Stage 0 uni-skip
+            stage_input_constraints[1].clone(), // Stage 1 uni-skip
+        ];
+        for (i, constraint) in uniskip_constraints.iter().enumerate() {
+            let idx = uniskip_indices[i];
+            stage_configs[idx].initial_input =
+                Some(FinalOutputConfig::with_constraint(constraint.clone()));
+        }
+
+        // Add initial_input configurations for regular first rounds (all 7 stages)
+        // These use the batched input constraints from the stage results
+        let regular_constraints = [
+            stage1_batched_input.clone(),       // Stage 0 regular
+            stage2_batched_input.clone(),       // Stage 1 regular
+            stage_input_constraints[2].clone(), // Stage 2
+            stage_input_constraints[3].clone(), // Stage 3
+            stage_input_constraints[4].clone(), // Stage 4
+            stage_input_constraints[5].clone(), // Stage 5
+            stage_input_constraints[6].clone(), // Stage 6
+        ];
+        for (i, constraint) in regular_constraints.iter().enumerate() {
+            let idx = regular_first_round_indices[i];
+            stage_configs[idx].initial_input =
+                Some(FinalOutputConfig::with_constraint(constraint.clone()));
         }
 
         // Build the verifier R1CS with the same structure as the prover
@@ -902,7 +1172,7 @@ impl<
 
         // Verify that the initial claims in the BlindFold proof match those in the Jolt proof.
         // Initial claims start at index total_rounds (after all challenges).
-        // 9 chains: 2 for stage 0 (uni-skip + regular), 2 for stage 1, 5 for stages 2-6
+        // 7 chains: 1 for stage 0 (uni-skip), 1 for stage 1 (uni-skip), 5 for stages 2-6
         let num_chains = 9;
         let initial_claims_in_blindfold =
             &self.proof.blindfold_proof.real_instance.x[total_rounds..total_rounds + num_chains];
@@ -940,14 +1210,44 @@ impl<
              total_rounds={total_rounds}, num_chains={num_chains}, total_batching_coeffs={total_batching_coeffs}"
         );
 
-        for (stage_idx, expected_values) in constraint_challenge_values.iter().enumerate() {
+        for (stage_idx, expected_values) in output_constraint_challenge_values.iter().enumerate() {
             for (value_idx, expected) in expected_values.iter().enumerate() {
                 let actual = self.proof.blindfold_proof.real_instance.x[constraint_challenge_idx];
                 if *expected != actual {
                     return Err(anyhow::anyhow!(
-                        "BlindFold constraint challenge mismatch at stage {stage_idx} index {value_idx}: \
+                        "BlindFold output constraint challenge mismatch at stage {stage_idx} index {value_idx}: \
                          expected {expected:?}, got {actual:?}. \
                          Stage has {} values total. constraint_challenge_idx={}",
+                        expected_values.len(),
+                        constraint_challenge_idx
+                    ));
+                }
+                constraint_challenge_idx += 1;
+            }
+        }
+
+        // Verify input constraint challenge values
+        // Order in R1CS: [stage0_uniskip, stage0_regular, stage1_uniskip, stage1_regular, stage2, ..., stage6]
+        // Total 9 chains with input constraints
+        let all_input_challenge_values: [&[F]; 9] = [
+            &input_constraint_challenge_values[0], // Stage 0 uni-skip
+            stage1_batched_input_values,           // Stage 0 regular
+            &input_constraint_challenge_values[1], // Stage 1 uni-skip
+            stage2_batched_input_values,           // Stage 1 regular
+            &input_constraint_challenge_values[2], // Stage 2
+            &input_constraint_challenge_values[3], // Stage 3
+            &input_constraint_challenge_values[4], // Stage 4
+            &input_constraint_challenge_values[5], // Stage 5
+            &input_constraint_challenge_values[6], // Stage 6
+        ];
+        for (chain_idx, expected_values) in all_input_challenge_values.iter().enumerate() {
+            for (value_idx, expected) in expected_values.iter().enumerate() {
+                let actual = self.proof.blindfold_proof.real_instance.x[constraint_challenge_idx];
+                if *expected != actual {
+                    return Err(anyhow::anyhow!(
+                        "BlindFold input constraint challenge mismatch at chain {chain_idx} index {value_idx}: \
+                         expected {expected:?}, got {actual:?}. \
+                         Chain has {} values total. constraint_challenge_idx={}",
                         expected_values.len(),
                         constraint_challenge_idx
                     ));
@@ -1066,24 +1366,37 @@ impl<
         .context("Stage 7")?;
 
         // Collect and batch output constraints from verifier instances
-        let batched_constraint = batch_constraints(&instances);
+        let batched_output_constraint = batch_output_constraints(&instances);
+
+        // Collect and batch input constraints from verifier instances
+        let batched_input_constraint = batch_input_constraints(&instances);
 
         // Build expected constraint challenge values for explicit verification
-        // Pass instance-local challenges (same slice as expected_output_claim receives)
         let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-        let mut constraint_challenge_values: Vec<F> = batching_coefficients;
+        let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
+        // Input constraint uses scaled batching coefficients (2^(max_rounds - instance_rounds))
+        let mut input_constraint_challenge_values: Vec<F> =
+            scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
             let r_slice = &r_stage7[max_num_rounds - instance.num_rounds()..];
-            let instance_challenges = instance
-                .get_params()
-                .output_constraint_challenge_values(r_slice);
-            constraint_challenge_values.extend(instance_challenges);
+            output_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .output_constraint_challenge_values(r_slice),
+            );
+            input_constraint_challenge_values.extend(
+                instance
+                    .get_params()
+                    .input_constraint_challenge_values(&self.opening_accumulator),
+            );
         }
 
-        Ok(StageVerifyResult::with_constraint_and_values(
+        Ok(StageVerifyResult::new(
             r_stage7,
-            batched_constraint,
-            constraint_challenge_values,
+            batched_output_constraint,
+            output_constraint_challenge_values,
+            batched_input_constraint,
+            input_constraint_challenge_values,
         ))
     }
 

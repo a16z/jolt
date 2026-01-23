@@ -22,7 +22,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
+        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -94,6 +94,15 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> 
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let opening = OpeningId::Virtual(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter);
+        InputClaimConstraint::direct(opening)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

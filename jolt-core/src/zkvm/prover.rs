@@ -1337,53 +1337,69 @@ impl<
 
         for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
             // For stages 0 and 1 (Jolt stages 1 and 2), add uni-skip round first
+            // Uni-skip gets its own input constraint; regular rounds continue from uni-skip output
             if stage_idx < 2 {
                 let uniskip = &uniskip_stages[stage_idx];
                 let coeffs = &uniskip.poly_coeffs;
                 let challenge: F = uniskip.challenge.into();
-
-                // Uni-skip uses full polynomial coefficients (not compressed)
                 let poly_degree = coeffs.len() - 1;
-
-                // The initial claim for uni-skip is stored in uniskip_data
                 let claimed_sum = uniskip.input_claim;
+
+                // One initial claim per Jolt stage (for the uni-skip)
                 initial_claims.push(claimed_sum);
 
-                // Create uni-skip stage config with power sums
                 let power_sums: Vec<i128> = if stage_idx == 0 {
                     outer_power_sums.to_vec()
                 } else {
                     product_power_sums.to_vec()
                 };
 
+                // Use uni-skip's own input constraint (not the regular rounds' constraints)
+                let input_constraint = uniskip.input_constraint.clone();
+                let input_challenge_values = uniskip.input_constraint_challenge_values.clone();
+                let input_opening_values: Vec<F> = input_constraint
+                    .required_openings
+                    .iter()
+                    .map(|id| self.opening_accumulator.get_opening(*id))
+                    .collect();
+                let initial_input =
+                    FinalOutputWitness::new_general(input_challenge_values, input_opening_values);
+
+                // Uni-skip config with its input constraint
                 let config = if stage_idx == 0 {
                     StageConfig::new_uniskip(poly_degree, power_sums)
+                        .with_input_constraint(input_constraint)
                 } else {
                     StageConfig::new_uniskip_chain(poly_degree, power_sums)
+                        .with_input_constraint(input_constraint)
                 };
                 stage_configs.push(config);
-                stage_witnesses.push(StageWitness::new(vec![RoundWitness::with_claimed_sum(
-                    coeffs.clone(),
-                    challenge,
-                    claimed_sum,
-                )]));
-
-                // For stages 0-1: push regular rounds initial claim (separate chain from uni-skip)
-                initial_claims.push(zk_data.initial_claim);
+                stage_witnesses.push(StageWitness::with_initial_input(
+                    vec![RoundWitness::with_claimed_sum(
+                        coeffs.clone(),
+                        challenge,
+                        claimed_sum,
+                    )],
+                    initial_input,
+                ));
             } else {
-                // Stages 2-6: no uni-skip, use ZK stage's initial claim
+                // Stages 2-6: no uni-skip, push initial claim for regular rounds
+                initial_claims.push(zk_data.initial_claim);
+            }
+
+            // For ALL stages, regular rounds start their own chain with batched initial claim
+            // (Even for stages 0-1, because the batched claim differs from uni-skip output)
+            if stage_idx < 2 {
                 initial_claims.push(zk_data.initial_claim);
             }
 
             // Process regular sumcheck rounds
-            // Regular rounds start their own chain with zk_data.initial_claim
             let mut current_claim = zk_data.initial_claim;
             let stage_challenges = &zk_data.challenges;
             let num_rounds = zk_data.poly_coeffs.len();
 
             for (round_idx, coeffs) in zk_data.poly_coeffs.iter().enumerate() {
                 let challenge: F = stage_challenges[round_idx].into();
-                // Degree = coefficient_count - 1
                 let poly_degree = coeffs.len() - 1;
                 let claimed_sum = current_claim;
 
@@ -1393,9 +1409,8 @@ impl<
                     next_claim = coeffs[i] + challenge * next_claim;
                 }
 
-                // First regular round starts a new chain
-                // For stages 0-1, this separates regular rounds from uni-skip
-                // For stages 2-6, this starts their independent chain
+                // First regular round ALWAYS starts a new chain (for all stages)
+                // This is because the regular rounds use batched claims which differ from uni-skip output
                 let starts_new_chain = round_idx == 0;
                 let is_last_round = round_idx == num_rounds - 1;
                 let is_first_round = round_idx == 0;
@@ -1406,33 +1421,38 @@ impl<
                     StageConfig::new(1, poly_degree)
                 };
 
-                // Handle input constraints for first round
+                // Handle input constraints for first round of ALL stages
+                // Regular rounds use batched claims which need proper input constraints
                 let (config, initial_input_witness) = if is_first_round {
-                    let batched_input = InputClaimConstraint::batch(
+                    let batched_constraint = InputClaimConstraint::batch_required(
                         &zk_data.input_constraints,
                         zk_data.batching_coefficients.len(),
                     );
 
-                    if let Some(batched_constraint) = batched_input {
-                        let mut challenge_values: Vec<F> = zk_data.batching_coefficients.clone();
-                        for cv in &zk_data.input_constraint_challenge_values {
-                            challenge_values.extend(cv.iter().cloned());
-                        }
-
-                        // Collect opening values from the accumulator
-                        let opening_values: Vec<F> = batched_constraint
-                            .required_openings
-                            .iter()
-                            .map(|id| self.opening_accumulator.get_opening(*id))
-                            .collect();
-
-                        let initial_input =
-                            FinalOutputWitness::new_general(challenge_values, opening_values);
-                        let config_with_input = config.with_input_constraint(batched_constraint);
-                        (config_with_input, Some(initial_input))
-                    } else {
-                        (config, None)
+                    // Scale batching coefficients by 2^exponent to account for different-round sumchecks
+                    // The initial_claim is computed as sum(alpha_i * 2^scale_i * raw_claim_i)
+                    // But the constraint evaluates to sum(alpha_i * raw_claim_i)
+                    // So we need scaled_alpha_i = alpha_i * 2^scale_i
+                    let mut challenge_values: Vec<F> = zk_data
+                        .batching_coefficients
+                        .iter()
+                        .zip(&zk_data.input_claim_scaling_exponents)
+                        .map(|(alpha, &scale)| alpha.mul_pow_2(scale))
+                        .collect();
+                    for cv in &zk_data.input_constraint_challenge_values {
+                        challenge_values.extend(cv.iter().cloned());
                     }
+
+                    let opening_values: Vec<F> = batched_constraint
+                        .required_openings
+                        .iter()
+                        .map(|id| self.opening_accumulator.get_opening(*id))
+                        .collect();
+
+                    let initial_input =
+                        FinalOutputWitness::new_general(challenge_values, opening_values);
+                    let config_with_input = config.with_input_constraint(batched_constraint);
+                    (config_with_input, Some(initial_input))
                 } else {
                     (config, None)
                 };
@@ -1450,7 +1470,6 @@ impl<
                             challenge_values.extend(cv.iter().cloned());
                         }
 
-                        // Collect opening values from the accumulator using the batched constraint's required_openings
                         let opening_values: Vec<F> = batched_constraint
                             .required_openings
                             .iter()
@@ -1472,7 +1491,6 @@ impl<
                 let round_witness =
                     RoundWitness::with_claimed_sum(coeffs.clone(), challenge, claimed_sum);
 
-                // Create stage witness with optional input/output constraints
                 let stage_witness = match (initial_input_witness, final_output_witness) {
                     (Some(ii), Some(fo)) => StageWitness::with_both(vec![round_witness], ii, fo),
                     (Some(ii), None) => StageWitness::with_initial_input(vec![round_witness], ii),
@@ -1489,13 +1507,12 @@ impl<
         let builder = VerifierR1CSBuilder::<F>::new(&stage_configs);
         let r1cs = builder.build();
 
-        // Convert initial claims to array
-        // 9 chains: 2 for stage 0 (uni-skip + regular), 2 for stage 1, 5 for stages 2-6
+        // Convert initial claims to array - 7 chains (one per Jolt stage)
         let initial_claims_array: [F; 9] = initial_claims
             .try_into()
-            .expect("Expected exactly 9 initial claims");
+            .expect("Expected exactly 7 initial claims");
 
-        // Use all 9 initial claims for the BlindFoldWitness
+        // Use all 7 initial claims for the BlindFoldWitness (one per Jolt stage)
         let blindfold_witness =
             BlindFoldWitness::with_multiple_claims(initial_claims_array.to_vec(), stage_witnesses);
 

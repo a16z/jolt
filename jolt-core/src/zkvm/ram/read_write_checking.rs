@@ -25,7 +25,9 @@ use crate::{
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
     },
-    subprotocols::blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
+    subprotocols::blindfold::{
+        InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+    },
     transcripts::Transcript,
     utils::math::Math,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
@@ -145,6 +147,26 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
             .collect();
 
         [r_address, r_cycle].concat().into()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let rv_opening =
+            OpeningId::Virtual(VirtualPolynomial::RamReadValue, SumcheckId::SpartanOuter);
+        let wv_opening =
+            OpeningId::Virtual(VirtualPolynomial::RamWriteValue, SumcheckId::SpartanOuter);
+
+        let terms = vec![
+            ProductTerm::single(ValueSource::Opening(rv_opening)),
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(wv_opening)],
+            ),
+        ];
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        vec![self.gamma]
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

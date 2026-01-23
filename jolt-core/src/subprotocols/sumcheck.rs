@@ -373,6 +373,13 @@ impl BatchedSumcheck {
             })
             .collect();
 
+        // Compute scaling exponents for batched sumcheck claim alignment
+        // Each instance's input claim is scaled by 2^(max_rounds - instance_rounds)
+        let input_claim_scaling_exponents: Vec<usize> = sumcheck_instances
+            .iter()
+            .map(|sumcheck| max_num_rounds - sumcheck.num_rounds())
+            .collect();
+
         // Store ZK data in accumulator for BlindFold to retrieve later
         let batching_coefficients_f: Vec<F> = batching_coeffs.to_vec();
         opening_accumulator.push_zk_stage_data(ZkStageData {
@@ -387,6 +394,7 @@ impl BatchedSumcheck {
             constraint_challenge_values,
             input_constraints,
             input_constraint_challenge_values,
+            input_claim_scaling_exponents,
         });
 
         (

@@ -62,7 +62,9 @@ use crate::poly::opening_proof::{
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::blindfold::{OutputClaimConstraint, ProductTerm, ValueSource};
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -176,6 +178,35 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let v_1 = OpeningId::Committed(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let v_2 = OpeningId::Committed(CommittedPolynomial::RamInc, SumcheckId::RamValEvaluation);
+        let w_1 = OpeningId::Committed(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let w_2 = OpeningId::Committed(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersValEvaluation,
+        );
+
+        let terms = vec![
+            ProductTerm::single(ValueSource::Opening(v_1)),
+            ProductTerm::scaled(ValueSource::Challenge(0), vec![ValueSource::Opening(v_2)]),
+            ProductTerm::scaled(ValueSource::Challenge(1), vec![ValueSource::Opening(w_1)]),
+            ProductTerm::scaled(ValueSource::Challenge(2), vec![ValueSource::Opening(w_2)]),
+        ];
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        let [gamma, gamma_sqr, gamma_cub] = self.gamma_powers;
+        vec![gamma, gamma_sqr, gamma_cub]
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

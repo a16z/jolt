@@ -13,6 +13,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::poly::multiquadratic_poly::MultiquadraticPolynomial;
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
@@ -112,6 +113,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterUniSkipParams<F> {
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         challenges.to_vec().into()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::default()
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
@@ -386,6 +395,16 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F>
             SumcheckId::SpartanOuter,
         );
         uni_skip_claim
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let opening =
+            OpeningId::Virtual(VirtualPolynomial::UnivariateSkip, SumcheckId::SpartanOuter);
+        InputClaimConstraint::direct(opening)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
@@ -760,7 +779,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterSharedState<F> {
         self.params.normalize_opening_point(challenges)
     }
 
-    fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
         self.params.input_claim_constraint()
     }
 

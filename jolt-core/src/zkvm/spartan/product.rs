@@ -17,7 +17,9 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::blindfold::{OutputClaimConstraint, ProductTerm, ValueSource};
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
@@ -134,6 +136,30 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> 
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         challenges.to_vec().into()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let terms: Vec<ProductTerm> = PRODUCT_CONSTRAINTS
+            .iter()
+            .enumerate()
+            .map(|(i, cons)| {
+                let opening = OpeningId::Virtual(cons.output, SumcheckId::SpartanOuter);
+                ProductTerm::scaled(
+                    ValueSource::Challenge(i),
+                    vec![ValueSource::Opening(opening)],
+                )
+            })
+            .collect();
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        let tau_high = self.tau[self.tau.len() - 1];
+        let w = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&tau_high);
+        w.to_vec()
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
@@ -401,6 +427,18 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let opening = OpeningId::Virtual(
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::SpartanProductVirtualization,
+        );
+        InputClaimConstraint::direct(opening)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

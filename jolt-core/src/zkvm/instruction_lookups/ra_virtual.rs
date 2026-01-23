@@ -14,7 +14,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
+        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         mles_product_sum::{
             compute_mles_product_sum_evals_sum_of_products_d16,
             compute_mles_product_sum_evals_sum_of_products_d4,
@@ -122,6 +122,26 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let terms: Vec<ProductTerm> = (0..self.n_virtual_ra_polys)
+            .map(|i| {
+                let opening = OpeningId::Virtual(
+                    VirtualPolynomial::InstructionRa(i),
+                    SumcheckId::InstructionReadRaf,
+                );
+                ProductTerm::scaled(
+                    ValueSource::Challenge(i),
+                    vec![ValueSource::Opening(opening)],
+                )
+            })
+            .collect();
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        self.gamma_powers.clone()
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

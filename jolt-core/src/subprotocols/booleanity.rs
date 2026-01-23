@@ -41,7 +41,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
+        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -100,6 +100,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BooleanitySumcheckParams<F> {
         opening_point[..self.log_k_chunk].reverse();
         opening_point[self.log_k_chunk..].reverse();
         opening_point.into()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::default()
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

@@ -21,7 +21,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
+        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -167,6 +167,38 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
             .collect();
 
         [r_address, r_cycle].concat().into()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let rd_wv = OpeningId::Virtual(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let rs1_rv = OpeningId::Virtual(
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let rs2_rv = OpeningId::Virtual(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+
+        let terms = vec![
+            ProductTerm::single(ValueSource::Opening(rd_wv)),
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(rs1_rv)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![ValueSource::Opening(rs2_rv)],
+            ),
+        ];
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        vec![self.gamma, self.gamma * self.gamma]
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

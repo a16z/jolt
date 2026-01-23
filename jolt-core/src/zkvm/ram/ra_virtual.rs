@@ -56,7 +56,9 @@ use crate::poly::opening_proof::{
 use crate::poly::ra_poly::RaPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::blindfold::{OutputClaimConstraint, ProductTerm, ValueSource};
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::mles_product_sum::compute_mles_product_sum;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
@@ -143,6 +145,15 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamRaVirtualParams<F> {
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let opening = OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRaClaimReduction);
+        InputClaimConstraint::direct(opening)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

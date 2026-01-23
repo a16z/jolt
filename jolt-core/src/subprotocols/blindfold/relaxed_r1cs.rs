@@ -280,21 +280,59 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
         r1cs: &VerifierR1CS<F>,
         final_output_info: &[super::protocol::FinalOutputInfo],
     ) -> Result<(), usize> {
+        use crate::poly::opening_proof::OpeningId;
+        use std::collections::HashSet;
+
         // Skip check if no round coefficients (unit tests without round commitment data)
         if self.round_coefficients.is_empty() {
             return Ok(());
         }
 
-        // Build a map of stage_idx -> num_variables for quick lookup
-        let fo_map: std::collections::HashMap<usize, usize> = final_output_info
-            .iter()
-            .map(|info| (info.stage_idx, info.num_variables))
-            .collect();
+        // Note: final_output_info is no longer used as we recompute from config
+        // to properly account for shared openings
+        let _ = final_output_info;
+
+        // Track allocated openings to match R1CS's global_opening_vars behavior
+        let mut allocated_openings: HashSet<OpeningId> = HashSet::new();
 
         let mut w_idx = 0;
         let mut round_idx = 0;
 
-        for (stage_idx, config) in r1cs.stage_configs.iter().enumerate() {
+        for config in r1cs.stage_configs.iter() {
+            // Skip past initial_input variables (if present) - BEFORE rounds
+            if let Some(ref ii_config) = config.initial_input {
+                if let Some(ref constraint) = ii_config.constraint {
+                    // Count only NEW openings (matching R1CS allocation)
+                    let num_new_openings = constraint
+                        .required_openings
+                        .iter()
+                        .filter(|id| {
+                            if allocated_openings.contains(id) {
+                                false
+                            } else {
+                                allocated_openings.insert(**id);
+                                true
+                            }
+                        })
+                        .count();
+
+                    fn estimate_aux_var_count(constraint: &super::OutputClaimConstraint) -> usize {
+                        let mut count = 0;
+                        for term in &constraint.terms {
+                            if term.factors.len() <= 1 {
+                                count += 1;
+                            } else {
+                                count += term.factors.len();
+                            }
+                        }
+                        count
+                    }
+
+                    let num_aux = estimate_aux_var_count(constraint);
+                    w_idx += num_new_openings + num_aux;
+                }
+            }
+
             for _round_in_stage in 0..config.num_rounds {
                 let num_coeffs = config.poly_degree + 1;
                 let num_intermediates = config.poly_degree.saturating_sub(1);
@@ -324,9 +362,48 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
                 round_idx += 1;
             }
 
-            // Skip past final_output variables if present (from proof's final_output_info)
-            if let Some(&skip_amount) = fo_map.get(&stage_idx) {
-                w_idx += skip_amount;
+            // Skip past final_output variables (if present)
+            // Recompute from config to properly account for shared openings
+            if let Some(ref fo_config) = config.final_output {
+                if let Some(ref constraint) = fo_config.constraint {
+                    // Count only NEW openings (matching R1CS allocation)
+                    let num_new_openings = constraint
+                        .required_openings
+                        .iter()
+                        .filter(|id| {
+                            if allocated_openings.contains(id) {
+                                false
+                            } else {
+                                allocated_openings.insert(**id);
+                                true
+                            }
+                        })
+                        .count();
+
+                    fn estimate_aux_var_count_for_constraint(
+                        constraint: &super::OutputClaimConstraint,
+                    ) -> usize {
+                        let mut count = 0;
+                        for term in &constraint.terms {
+                            if term.factors.len() <= 1 {
+                                count += 1;
+                            } else {
+                                count += term.factors.len();
+                            }
+                        }
+                        count
+                    }
+
+                    let num_aux = estimate_aux_var_count_for_constraint(constraint);
+                    w_idx += num_new_openings + num_aux;
+                } else {
+                    // Simple constraint: evaluation_vars + accumulator_vars
+                    let num_evals = fo_config.num_evaluations;
+                    w_idx += num_evals; // evaluation_vars
+                    if num_evals > 1 {
+                        w_idx += num_evals - 1; // accumulator_vars
+                    }
+                }
             }
         }
 

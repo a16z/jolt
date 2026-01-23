@@ -55,16 +55,9 @@ pub trait SumcheckInstanceParams<F: JoltField> {
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F>;
 
-    fn input_claim_constraint(&self) -> Option<InputClaimConstraint> {
-        None
-    }
+    fn input_claim_constraint(&self) -> InputClaimConstraint;
 
-    fn input_constraint_challenge_values(
-        &self,
-        _accumulator: &dyn OpeningAccumulator<F>,
-    ) -> Vec<F> {
-        Vec::new()
-    }
+    fn input_constraint_challenge_values(&self, accumulator: &dyn OpeningAccumulator<F>) -> Vec<F>;
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint>;
     fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F>;

@@ -19,7 +19,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
+        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         mles_product_sum::eval_linear_prod_assign,
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
@@ -1223,6 +1223,26 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         r[0..self.log_K].reverse();
         r[self.log_K..].reverse();
         OpeningPoint::new(r)
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        // The input_claim is a complex combination of openings from many sumchecks:
+        // - SpartanOuter (UnexpandedPC, Imm, CircuitFlags, PC)
+        // - SpartanProductVirtualization (Jump, Branch, etc.)
+        // - InstructionInputVirtualization (many flags)
+        // - SpartanShift (UnexpandedPC, PC)
+        // - RegistersReadWriteChecking (RdWa, Rs1Ra, Rs2Ra)
+        // - InstructionReadRaf (LookupOutput, flags)
+        // - RegistersValEvaluation (RdWa)
+        //
+        // For simplicity, express as constant term that holds the computed value.
+        // The value is verified externally through the standard sumcheck protocol.
+        let terms = vec![ProductTerm::single(ValueSource::Challenge(0))];
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        vec![self.input_claim]
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

@@ -3,6 +3,8 @@
 //! Provides structures for assigning witness values to the verifier R1CS
 //! from sumcheck proof transcripts.
 
+use std::collections::HashSet;
+
 use super::r1cs::VerifierR1CS;
 use super::{OutputClaimConstraint, StageConfig, ValueSource};
 use crate::field::JoltField;
@@ -310,6 +312,9 @@ impl<F: JoltField> BlindFoldWitness<F> {
         let mut input_constraint_challenge_idx = input_constraint_challenges_start;
         let mut witness_idx = witness_start;
 
+        // Track which openings have been assigned (mirrors R1CS's global_opening_vars)
+        let mut assigned_openings: HashSet<OpeningId> = HashSet::new();
+
         for (stage_idx, stage_witness) in self.stages.iter().enumerate() {
             let config = &r1cs.stage_configs[stage_idx];
             assert_eq!(
@@ -323,20 +328,24 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 if let Some(constraint) = &ii_config.constraint {
                     let ii_witness = stage_witness.initial_input.as_ref();
 
-                    let num_openings = constraint.required_openings.len();
                     let num_challenges = constraint.num_challenges;
                     let num_aux_vars = Self::estimate_aux_var_count(constraint);
 
                     if let Some(iw) = ii_witness {
-                        // Assign opening values (witness variables)
+                        // Assign opening values only for NEW openings (matching R1CS allocation)
                         debug_assert_eq!(
                             iw.opening_values.len(),
-                            num_openings,
+                            constraint.required_openings.len(),
                             "Input opening values count mismatch"
                         );
-                        for val in &iw.opening_values {
-                            z[witness_idx] = *val;
-                            witness_idx += 1;
+                        for (opening_id, val) in
+                            constraint.required_openings.iter().zip(&iw.opening_values)
+                        {
+                            if !assigned_openings.contains(opening_id) {
+                                z[witness_idx] = *val;
+                                witness_idx += 1;
+                                assigned_openings.insert(*opening_id);
+                            }
                         }
 
                         // Assign challenge values (public inputs)
@@ -367,7 +376,20 @@ impl<F: JoltField> BlindFoldWitness<F> {
                         }
                     } else {
                         // No witness provided - skip past allocated variables
-                        witness_idx += num_openings + num_aux_vars;
+                        // Count only NEW openings (matching R1CS allocation)
+                        let num_new_openings = constraint
+                            .required_openings
+                            .iter()
+                            .filter(|id| {
+                                if assigned_openings.contains(id) {
+                                    false
+                                } else {
+                                    assigned_openings.insert(**id);
+                                    true
+                                }
+                            })
+                            .count();
+                        witness_idx += num_new_openings + num_aux_vars;
                         input_constraint_challenge_idx += num_challenges;
                     }
                 }
@@ -417,20 +439,24 @@ impl<F: JoltField> BlindFoldWitness<F> {
                     // General constraint path
                     // R1CS allocates: opening_vars (witness) + aux_vars (witness)
                     // Challenge vars are public inputs (assigned separately)
-                    let num_openings = constraint.required_openings.len();
                     let num_challenges = constraint.num_challenges;
                     let num_aux_vars = Self::estimate_aux_var_count(constraint);
 
                     if let Some(fw) = fo_witness {
-                        // Assign opening values (witness variables)
+                        // Assign opening values only for NEW openings (matching R1CS allocation)
                         debug_assert_eq!(
                             fw.opening_values.len(),
-                            num_openings,
+                            constraint.required_openings.len(),
                             "Opening values count mismatch"
                         );
-                        for val in &fw.opening_values {
-                            z[witness_idx] = *val;
-                            witness_idx += 1;
+                        for (opening_id, val) in
+                            constraint.required_openings.iter().zip(&fw.opening_values)
+                        {
+                            if !assigned_openings.contains(opening_id) {
+                                z[witness_idx] = *val;
+                                witness_idx += 1;
+                                assigned_openings.insert(*opening_id);
+                            }
                         }
 
                         // Assign challenge values (public inputs)
@@ -463,7 +489,20 @@ impl<F: JoltField> BlindFoldWitness<F> {
                         }
                     } else {
                         // No witness provided - skip past allocated variables
-                        witness_idx += num_openings + num_aux_vars;
+                        // Count only NEW openings (matching R1CS allocation)
+                        let num_new_openings = constraint
+                            .required_openings
+                            .iter()
+                            .filter(|id| {
+                                if assigned_openings.contains(id) {
+                                    false
+                                } else {
+                                    assigned_openings.insert(**id);
+                                    true
+                                }
+                            })
+                            .count();
+                        witness_idx += num_new_openings + num_aux_vars;
                         constraint_challenge_idx += num_challenges;
                     }
                 } else {

@@ -212,9 +212,13 @@ pub struct ZkStageData<F: JoltField> {
     pub constraint_challenge_values: Vec<Vec<F>>,
     /// Input claim constraints from each sumcheck instance.
     /// Describes how each instance's input claim relates to polynomial openings.
-    pub input_constraints: Vec<Option<crate::subprotocols::blindfold::InputClaimConstraint>>,
+    pub input_constraints: Vec<crate::subprotocols::blindfold::InputClaimConstraint>,
     /// Challenge values for each instance's input constraint.
     pub input_constraint_challenge_values: Vec<Vec<F>>,
+    /// Scaling exponents for each instance's input claim.
+    /// Each instance's claim is scaled by 2^(max_rounds - instance_rounds) before batching.
+    /// This field stores these exponents to enable proper constraint evaluation.
+    pub input_claim_scaling_exponents: Vec<usize>,
 }
 
 /// ZK data for uni-skip first round (Stages 1-2).
@@ -233,6 +237,10 @@ pub struct UniSkipStageData<F: JoltField> {
     pub poly_degree: usize,
     /// Serialized commitment bytes
     pub commitment_bytes: Vec<u8>,
+    /// Input claim constraint for this uni-skip
+    pub input_constraint: crate::subprotocols::blindfold::InputClaimConstraint,
+    /// Challenge values for the input constraint
+    pub input_constraint_challenge_values: Vec<F>,
 }
 
 /// Accumulates openings computed by the prover over the course of Jolt,

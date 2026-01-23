@@ -84,7 +84,36 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     let mut round_blindings: Vec<F> = Vec::new();
     let mut round_commitments: Vec<C::G1> = Vec::new();
 
+    // Track allocated openings to match R1CS's global_opening_vars behavior
+    let mut allocated_openings: std::collections::HashSet<crate::poly::opening_proof::OpeningId> =
+        std::collections::HashSet::new();
+
     for config in &r1cs.stage_configs {
+        // Handle initial_input witness variables (if present) - BEFORE rounds
+        // NOTE: This must match the R1CS builder's variable allocation order
+        if let Some(ref ii_config) = config.initial_input {
+            if let Some(ref constraint) = ii_config.constraint {
+                // Count only NEW openings (matching R1CS allocation)
+                let num_new_openings = constraint
+                    .required_openings
+                    .iter()
+                    .filter(|id| {
+                        if allocated_openings.contains(id) {
+                            false
+                        } else {
+                            allocated_openings.insert(**id);
+                            true
+                        }
+                    })
+                    .count();
+                let num_aux = estimate_aux_var_count(constraint);
+
+                for _ in 0..(num_new_openings + num_aux) {
+                    W.push(F::random(rng));
+                }
+            }
+        }
+
         for _ in 0..config.num_rounds {
             let num_coeffs = config.poly_degree + 1;
             let num_intermediates = config.poly_degree.saturating_sub(1);
@@ -118,10 +147,22 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
             if let Some(ref constraint) = fo_config.constraint {
                 // General constraint: opening_vars (witness) + aux_vars (witness)
                 // Challenge vars are public inputs, not witness vars
-                let num_openings = constraint.required_openings.len();
+                // Count only NEW openings (matching R1CS allocation)
+                let num_new_openings = constraint
+                    .required_openings
+                    .iter()
+                    .filter(|id| {
+                        if allocated_openings.contains(id) {
+                            false
+                        } else {
+                            allocated_openings.insert(**id);
+                            true
+                        }
+                    })
+                    .count();
                 let num_aux = estimate_aux_var_count(constraint);
 
-                for _ in 0..(num_openings + num_aux) {
+                for _ in 0..(num_new_openings + num_aux) {
                     W.push(F::random(rng));
                 }
             } else {

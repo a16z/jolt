@@ -30,7 +30,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{OutputClaimConstraint, ProductTerm, ValueSource},
+        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         mles_product_sum::{eval_linear_prod_accumulate, finish_mles_product_sum_from_evals},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
@@ -178,6 +178,32 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParam
         let r_cycle_prime = r_cycle_prime.iter().copied().rev().collect::<Vec<_>>();
 
         OpeningPoint::new([r_address_prime.to_vec(), r_cycle_prime].concat())
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let rv = OpeningId::Virtual(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::InstructionClaimReduction,
+        );
+        let left = OpeningId::Virtual(
+            VirtualPolynomial::LeftLookupOperand,
+            SumcheckId::InstructionClaimReduction,
+        );
+        let right = OpeningId::Virtual(
+            VirtualPolynomial::RightLookupOperand,
+            SumcheckId::InstructionClaimReduction,
+        );
+
+        let terms = vec![
+            ProductTerm::single(ValueSource::Opening(rv)),
+            ProductTerm::scaled(ValueSource::Challenge(0), vec![ValueSource::Opening(left)]),
+            ProductTerm::scaled(ValueSource::Challenge(1), vec![ValueSource::Opening(right)]),
+        ];
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        vec![self.gamma, self.gamma_sqr]
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

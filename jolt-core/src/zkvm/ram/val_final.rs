@@ -14,7 +14,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{OutputClaimConstraint, ValueSource},
+        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -149,6 +149,20 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ValFinalSumcheckParams<F> {
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let opening =
+            OpeningId::Virtual(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck);
+        let terms = vec![
+            ProductTerm::single(ValueSource::Opening(opening)),
+            ProductTerm::single(ValueSource::Challenge(0)),
+        ];
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        vec![-self.val_init_eval]
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

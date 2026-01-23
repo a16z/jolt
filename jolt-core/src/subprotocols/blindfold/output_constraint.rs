@@ -135,6 +135,49 @@ impl OutputClaimConstraint {
         openings
     }
 
+    /// Evaluate the constraint given opening and challenge values.
+    /// opening_values are indexed by position in required_openings.
+    /// challenge_values are indexed by Challenge index.
+    pub fn evaluate<F: crate::field::JoltField>(
+        &self,
+        opening_values: &[F],
+        challenge_values: &[F],
+    ) -> F {
+        use std::collections::HashMap;
+
+        // Build a map from OpeningId to value index
+        let opening_map: HashMap<OpeningId, usize> = self
+            .required_openings
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (*id, i))
+            .collect();
+
+        // Helper to resolve a ValueSource to a field element
+        let resolve = |vs: &ValueSource| -> F {
+            match vs {
+                ValueSource::Opening(id) => {
+                    let idx = *opening_map.get(id).expect("Opening not found");
+                    opening_values[idx]
+                }
+                ValueSource::Challenge(idx) => challenge_values[*idx],
+                ValueSource::Constant(val) => F::from_i128(*val),
+            }
+        };
+
+        // Sum all terms
+        let mut result = F::zero();
+        for term in &self.terms {
+            let coeff = resolve(&term.coeff);
+            let mut term_value = coeff;
+            for factor in &term.factors {
+                term_value *= resolve(factor);
+            }
+            result += term_value;
+        }
+        result
+    }
+
     /// Simple product: output = a * b * c * ...
     pub fn product(factors: Vec<ValueSource>) -> Self {
         let terms = vec![ProductTerm::product(factors)];
@@ -258,6 +301,57 @@ impl OutputClaimConstraint {
 /// This alias clarifies intent when the constraint describes how an input claim
 /// relates to polynomial openings from a previous sumcheck.
 pub type InputClaimConstraint = OutputClaimConstraint;
+
+impl InputClaimConstraint {
+    /// Batches multiple required input constraints into a combined constraint.
+    /// Unlike `batch`, this takes non-optional constraints since input claims are now required.
+    ///
+    /// Given constraints C_j and coefficients α_j, produces a combined constraint:
+    /// `output = Σⱼ αⱼ * C_j`
+    ///
+    /// Challenge index layout:
+    /// - Challenge(0..num_instances) = batching coefficients α₀, α₁, ...
+    /// - Challenge(num_instances..) = individual constraint challenges, offset per constraint
+    pub fn batch_required(
+        constraints: &[InputClaimConstraint],
+        num_batching_coefficients: usize,
+    ) -> Self {
+        let num_instances = constraints.len();
+        assert_eq!(num_batching_coefficients, num_instances);
+
+        let mut combined_terms = Vec::new();
+        let mut combined_openings = Vec::new();
+        let mut challenge_offset = num_instances;
+
+        for (j, constraint) in constraints.iter().enumerate() {
+            let alpha_j = ValueSource::Challenge(j);
+
+            for term in &constraint.terms {
+                let offset_coeff = Self::offset_challenge(&term.coeff, challenge_offset);
+                let offset_factors: Vec<_> = term
+                    .factors
+                    .iter()
+                    .map(|f| Self::offset_challenge(f, challenge_offset))
+                    .collect();
+
+                let mut new_factors = vec![alpha_j.clone()];
+                new_factors.extend(offset_factors);
+
+                combined_terms.push(ProductTerm::new(offset_coeff, new_factors));
+            }
+
+            for opening in &constraint.required_openings {
+                if !combined_openings.contains(opening) {
+                    combined_openings.push(*opening);
+                }
+            }
+
+            challenge_offset += constraint.num_challenges;
+        }
+
+        Self::new(combined_terms, combined_openings)
+    }
+}
 
 #[cfg(test)]
 mod tests {

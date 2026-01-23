@@ -47,7 +47,9 @@ use crate::poly::opening_proof::{
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::blindfold::{OutputClaimConstraint, ProductTerm, ValueSource};
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -197,6 +199,40 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase1Param
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         // Instance-local rounds are interpreted as little-endian in time order.
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let val_eval_opening = match self.kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::RamValEvaluation),
+            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(SumcheckId::RamValEvaluation),
+        };
+
+        if self.single_opening {
+            InputClaimConstraint::direct(val_eval_opening)
+        } else {
+            let val_final_opening = match self.kind {
+                AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::RamValFinalEvaluation),
+                AdviceKind::Untrusted => {
+                    OpeningId::UntrustedAdvice(SumcheckId::RamValFinalEvaluation)
+                }
+            };
+            let terms = vec![
+                ProductTerm::single(ValueSource::Opening(val_eval_opening)),
+                ProductTerm::scaled(
+                    ValueSource::Challenge(0),
+                    vec![ValueSource::Opening(val_final_opening)],
+                ),
+            ];
+            InputClaimConstraint::sum_of_products(terms)
+        }
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        if self.single_opening {
+            Vec::new()
+        } else {
+            vec![self.gamma]
+        }
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
@@ -677,6 +713,20 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionPhase2Param
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let opening = match self.kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionPhase1),
+            AdviceKind::Untrusted => {
+                OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionPhase1)
+            }
+        };
+        InputClaimConstraint::direct(opening)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

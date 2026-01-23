@@ -17,7 +17,9 @@ use crate::poly::opening_proof::{
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::blindfold::{OutputClaimConstraint, ProductTerm, ValueSource};
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -120,6 +122,56 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         normalize_opening_point(challenges)
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let next_unexpanded_pc = OpeningId::Virtual(
+            VirtualPolynomial::NextUnexpandedPC,
+            SumcheckId::SpartanOuter,
+        );
+        let next_pc = OpeningId::Virtual(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
+        let next_is_virtual =
+            OpeningId::Virtual(VirtualPolynomial::NextIsVirtual, SumcheckId::SpartanOuter);
+        let next_is_first_in_sequence = OpeningId::Virtual(
+            VirtualPolynomial::NextIsFirstInSequence,
+            SumcheckId::SpartanOuter,
+        );
+        let next_is_noop = OpeningId::Virtual(
+            VirtualPolynomial::NextIsNoop,
+            SumcheckId::SpartanProductVirtualization,
+        );
+
+        let terms = vec![
+            ProductTerm::single(ValueSource::Opening(next_unexpanded_pc)),
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(next_pc)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![ValueSource::Opening(next_is_virtual)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(2),
+                vec![ValueSource::Opening(next_is_first_in_sequence)],
+            ),
+            ProductTerm::single(ValueSource::Challenge(3)), // gamma[4] constant term
+            ProductTerm::scaled(
+                ValueSource::Challenge(4),
+                vec![ValueSource::Opening(next_is_noop)],
+            ), // -gamma[4] * next_is_noop
+        ];
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        vec![
+            self.gamma_powers[1],
+            self.gamma_powers[2],
+            self.gamma_powers[3],
+            self.gamma_powers[4],
+            -self.gamma_powers[4],
+        ]
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
