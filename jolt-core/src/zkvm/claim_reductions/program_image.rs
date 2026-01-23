@@ -39,6 +39,7 @@ pub struct ProgramImageClaimReductionParams<F: JoltField> {
 }
 
 impl<F: JoltField> ProgramImageClaimReductionParams<F> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         program_io: &JoltDevice,
         ram_min_bytecode_address: u64,
@@ -305,7 +306,7 @@ fn eval_eq_slice_at_r_star_lsb_dp<F: JoltField>(
         if !dp0.is_zero() {
             if y_var {
                 // y=0
-                let sum0 = start_bit + 0 + 0;
+                let sum0 = start_bit;
                 let k_bit0 = sum0 & 1;
                 let carry0 = (sum0 >> 1) & 1;
                 let addr_factor0 = if k_bit0 == 1 { k1 } else { k0 };
@@ -316,7 +317,7 @@ fn eval_eq_slice_at_r_star_lsb_dp<F: JoltField>(
                     ndp1 += dp0 * addr_factor0 * y_factor0;
                 }
                 // y=1
-                let sum1 = start_bit + 1 + 0;
+                let sum1 = start_bit + 1;
                 let k_bit1 = sum1 & 1;
                 let carry1 = (sum1 >> 1) & 1;
                 let addr_factor1 = if k_bit1 == 1 { k1 } else { k0 };
@@ -328,7 +329,7 @@ fn eval_eq_slice_at_r_star_lsb_dp<F: JoltField>(
                 }
             } else {
                 // y is fixed 0
-                let sum0 = start_bit + 0 + 0;
+                let sum0 = start_bit;
                 let k_bit0 = sum0 & 1;
                 let carry0 = (sum0 >> 1) & 1;
                 let addr_factor0 = if k_bit0 == 1 { k1 } else { k0 };
@@ -344,7 +345,7 @@ fn eval_eq_slice_at_r_star_lsb_dp<F: JoltField>(
         if !dp1.is_zero() {
             if y_var {
                 // y=0
-                let sum0 = start_bit + 0 + 1;
+                let sum0 = start_bit + 1;
                 let k_bit0 = sum0 & 1;
                 let carry0 = (sum0 >> 1) & 1;
                 let addr_factor0 = if k_bit0 == 1 { k1 } else { k0 };
@@ -367,7 +368,7 @@ fn eval_eq_slice_at_r_star_lsb_dp<F: JoltField>(
                 }
             } else {
                 // y is fixed 0
-                let sum0 = start_bit + 0 + 1;
+                let sum0 = start_bit + 1;
                 let k_bit0 = sum0 & 1;
                 let carry0 = (sum0 >> 1) & 1;
                 let addr_factor0 = if k_bit0 == 1 { k1 } else { k0 };

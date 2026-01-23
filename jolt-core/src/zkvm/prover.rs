@@ -274,6 +274,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     /// - `nu_main >= max_nu_a`
     ///
     /// Panics if `max_padded_trace_length` is too small for the configured sizes.
+    #[allow(clippy::too_many_arguments)]
     fn adjust_trace_length_for_advice(
         mut padded_trace_len: usize,
         max_padded_trace_length: usize,
