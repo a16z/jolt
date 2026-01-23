@@ -19,6 +19,7 @@ impl VirtualAdviceLoad {
         // Read from advice tape and write to rd register
         // The imm field specifies how many bytes to read (1, 2, 4, or 8)
         let num_bytes = self.operands.imm as usize;
+        debug_assert!([1, 2, 4, 8].contains(&num_bytes));
         let advice_value = advice_tape_read(num_bytes).expect("Failed to read from advice tape");
         cpu.x[self.operands.rd as usize] = advice_value as i64;
     }

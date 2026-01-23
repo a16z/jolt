@@ -91,7 +91,7 @@ impl AdviceSW {
         let v_word = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
 
-        asm.emit_halign::<VirtualAssertWordAlignment>(self.operands.rs1, self.operands.imm);
+        asm.emit_align::<VirtualAssertWordAlignment>(self.operands.rs1, self.operands.imm);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
         asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
