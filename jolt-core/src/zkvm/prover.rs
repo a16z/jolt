@@ -13,13 +13,7 @@ use std::{
     time::Instant,
 };
 
-use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-
-use crate::zkvm::bytecode::chunks::total_lanes;
-use crate::zkvm::config::{ProgramMode, ReadWriteConfig};
-use crate::zkvm::verifier::JoltSharedPreprocessing;
-use crate::zkvm::Serializable;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
@@ -31,7 +25,7 @@ use crate::{
     poly::{
         commitment::{
             commitment_scheme::StreamingCommitmentScheme,
-            dory::{DoryGlobals, DoryLayout},
+            dory::{DoryContext, DoryGlobals, DoryLayout},
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
@@ -53,7 +47,7 @@ use crate::{
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
-        bytecode::read_raf_checking::BytecodeReadRafSumcheckParams,
+        bytecode::{chunks::total_lanes, read_raf_checking::BytecodeReadRafSumcheckParams},
         claim_reductions::{
             AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceKind,
             BytecodeClaimReductionParams, BytecodeClaimReductionProver, BytecodeReductionPhase,
@@ -64,18 +58,19 @@ use crate::{
             ProgramImageClaimReductionProver, RaReductionParams, RamRaClaimReductionSumcheckProver,
             RegistersClaimReductionSumcheckParams, RegistersClaimReductionSumcheckProver,
         },
-        config::OneHotParams,
+        config::{OneHotParams, ProgramMode, ReadWriteConfig},
         instruction_lookups::{
             ra_virtual::InstructionRaSumcheckParams,
             read_raf_checking::InstructionReadRafSumcheckParams,
         },
+        program::{ProgramPreprocessing, TrustedProgramCommitments, TrustedProgramHints},
         ram::{
             hamming_booleanity::HammingBooleanitySumcheckParams,
             output_check::OutputSumcheckParams,
-            populate_memory_states,
+            populate_memory_states, prover_accumulate_program_image,
             ra_virtual::RamRaVirtualParams,
             raf_evaluation::RafEvaluationSumcheckParams,
-            read_write_checking::RamReadWriteCheckingParams,
+            read_write_checking::RamReadWriteCheckingParams, remap_address,
             val_evaluation::{
                 ValEvaluationSumcheckParams,
                 ValEvaluationSumcheckProver as RamValEvaluationSumcheckProver,
@@ -95,7 +90,9 @@ use crate::{
             },
             shift::ShiftSumcheckParams,
         },
+        verifier::JoltSharedPreprocessing,
         witness::all_committed_polynomials,
+        Serializable,
     },
 };
 use crate::{
@@ -163,6 +160,10 @@ pub struct JoltCpuProver<
     /// The bytecode claim reduction sumcheck effectively spans two stages (6b and 7).
     /// Cache the prover state here between stages.
     bytecode_reduction_prover: Option<BytecodeClaimReductionProver<F>>,
+    /// Bytecode read RAF params, cached between Stage 6a and 6b.
+    bytecode_read_raf_params: Option<BytecodeReadRafSumcheckParams<F>>,
+    /// Booleanity params, cached between Stage 6a and 6b.
+    booleanity_params: Option<BooleanitySumcheckParams<F>>,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
     pub transcript: ProofTranscript,
@@ -459,7 +460,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let ram_K = trace
             .par_iter()
             .filter_map(|cycle| {
-                crate::zkvm::ram::remap_address(
+                remap_address(
                     cycle.ram_access().address() as u64,
                     &preprocessing.shared.memory_layout,
                 )
@@ -467,7 +468,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .max()
             .unwrap_or(0)
             .max(
-                crate::zkvm::ram::remap_address(
+                remap_address(
                     preprocessing.program.min_bytecode_address,
                     &preprocessing.shared.memory_layout,
                 )
@@ -526,6 +527,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             advice_reduction_prover_trusted: None,
             advice_reduction_prover_untrusted: None,
             bytecode_reduction_prover: None,
+            bytecode_read_raf_params: None,
+            booleanity_params: None,
             unpadded_trace_len,
             padded_trace_len,
             transcript,
@@ -579,7 +582,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 {
                     // Sanity: re-commit the program image polynomial and ensure it matches the trusted commitment.
                     // Must use the same padded size and context as TrustedProgramCommitments::derive().
-                    let poly = crate::zkvm::program::TrustedProgramCommitments::<PCS>::build_program_image_polynomial_padded::<F>(
+                    let poly = TrustedProgramCommitments::<PCS>::build_program_image_polynomial_padded::<F>(
                         &self.preprocessing.program,
                         trusted.program_image_num_words,
                     );
@@ -598,21 +601,21 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                         8
                     };
                     // Use the explicit context initialization to match TrustedProgramCommitments::derive()
-                    let (sigma_main, _) = crate::poly::commitment::dory::DoryGlobals::main_sigma_nu(
+                    let (sigma_main, _) = DoryGlobals::main_sigma_nu(
                         log_k_chunk,
                         max_log_t,
                     );
                     let main_num_columns = 1usize << sigma_main;
-                    crate::poly::commitment::dory::DoryGlobals::initialize_program_image_context_with_num_columns(
+                    DoryGlobals::initialize_program_image_context_with_num_columns(
                         1usize << log_k_chunk,
                         trusted.program_image_num_words,
                         main_num_columns,
                     );
-                    let _ctx = crate::poly::commitment::dory::DoryGlobals::with_context(
-                        crate::poly::commitment::dory::DoryContext::ProgramImage,
+                    let _ctx = DoryGlobals::with_context(
+                        DoryContext::ProgramImage,
                     );
                     let mle =
-                        crate::poly::multilinear_polynomial::MultilinearPolynomial::from(poly);
+                        MultilinearPolynomial::from(poly);
                     let (recommit, _hint) = PCS::commit(&mle, &self.preprocessing.generators);
                     assert_eq!(
                         recommit, trusted.program_image_commitment,
@@ -649,10 +652,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let stage3_sumcheck_proof = self.prove_stage3();
         let stage4_sumcheck_proof = self.prove_stage4();
         let stage5_sumcheck_proof = self.prove_stage5();
-        let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_params) =
-            self.prove_stage6a();
-        let stage6b_sumcheck_proof =
-            self.prove_stage6b(bytecode_read_raf_params, booleanity_params);
+        let stage6a_sumcheck_proof = self.prove_stage6a();
+        let stage6b_sumcheck_proof = self.prove_stage6b();
         let stage7_sumcheck_proof = self.prove_stage7();
 
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
@@ -1157,7 +1158,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 .program_commitments
                 .as_ref()
                 .expect("program commitments missing in committed mode");
-            crate::zkvm::ram::prover_accumulate_program_image::<F>(
+            prover_accumulate_program_image::<F>(
                 self.one_hot_params.ram_k,
                 self.preprocessing.program.min_bytecode_address,
                 &self.preprocessing.program.program_image_words,
@@ -1303,13 +1304,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_stage6a(
-        &mut self,
-    ) -> (
-        SumcheckInstanceProof<F, ProofTranscript>,
-        BytecodeReadRafSumcheckParams<F>,
-        BooleanitySumcheckParams<F>,
-    ) {
+    fn prove_stage6a(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6a baseline");
 
@@ -1365,17 +1360,26 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6a_end_flamechart.svg");
 
-        (sumcheck_proof, bytecode_read_raf_params, booleanity_params)
+        // Cache params for Stage 6b
+        self.bytecode_read_raf_params = Some(bytecode_read_raf_params);
+        self.booleanity_params = Some(booleanity_params);
+
+        sumcheck_proof
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_stage6b(
-        &mut self,
-        bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
-        booleanity_params: BooleanitySumcheckParams<F>,
-    ) -> SumcheckInstanceProof<F, ProofTranscript> {
+    fn prove_stage6b(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6b baseline");
+
+        let bytecode_read_raf_params = self
+            .bytecode_read_raf_params
+            .take()
+            .expect("bytecode_read_raf_params must be set by prove_stage6a");
+        let booleanity_params = self
+            .booleanity_params
+            .take()
+            .expect("booleanity_params must be set by prove_stage6a");
 
         let ram_hamming_booleanity_params =
             HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
@@ -1899,7 +1903,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 .as_ref()
                 .expect("program commitments missing in committed mode");
             // Use the padded size from the trusted commitments (may be larger than program's own padded size)
-            let program_image_poly = crate::zkvm::program::TrustedProgramCommitments::<PCS>::build_program_image_polynomial_padded::<
+            let program_image_poly = TrustedProgramCommitments::<PCS>::build_program_image_polynomial_padded::<
                     F,
                 >(&self.preprocessing.program, trusted.program_image_num_words);
             advice_polys.insert(
@@ -1982,14 +1986,14 @@ pub struct JoltProverPreprocessing<F: JoltField, PCS: CommitmentScheme<Field = F
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
     /// Full program preprocessing (prover always has full access for witness computation).
-    pub program: Arc<crate::zkvm::program::ProgramPreprocessing>,
+    pub program: Arc<ProgramPreprocessing>,
     /// Trusted program commitments (only in Committed mode).
     ///
     /// In Full mode: None (verifier has full program).
     /// In Committed mode: Some(trusted) for bytecode + program-image commitments.
-    pub program_commitments: Option<crate::zkvm::program::TrustedProgramCommitments<PCS>>,
+    pub program_commitments: Option<TrustedProgramCommitments<PCS>>,
     /// Opening proof hints for program commitments (only in Committed mode).
-    pub program_hints: Option<crate::zkvm::program::TrustedProgramHints<PCS>>,
+    pub program_hints: Option<TrustedProgramHints<PCS>>,
 }
 
 impl<F, PCS> JoltProverPreprocessing<F, PCS>
@@ -2017,7 +2021,7 @@ where
     /// - ProgramImage context up to the padded program-image word length
     fn setup_generators_committed(
         shared: &JoltSharedPreprocessing,
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
     ) -> PCS::ProverSetup {
         use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let prog_len_words_padded = program.program_image_len_words_padded();
@@ -2041,7 +2045,7 @@ where
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::new")]
     pub fn new(
         shared: JoltSharedPreprocessing,
-        program: Arc<crate::zkvm::program::ProgramPreprocessing>,
+        program: Arc<ProgramPreprocessing>,
     ) -> JoltProverPreprocessing<F, PCS> {
         let generators = Self::setup_generators(&shared);
         JoltProverPreprocessing {
@@ -2060,7 +2064,7 @@ where
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::new_committed")]
     pub fn new_committed(
         shared: JoltSharedPreprocessing,
-        program: Arc<crate::zkvm::program::ProgramPreprocessing>,
+        program: Arc<ProgramPreprocessing>,
     ) -> JoltProverPreprocessing<F, PCS> {
         let generators = Self::setup_generators_committed(&shared, &program);
         let max_t_any: usize = shared
@@ -2074,7 +2078,7 @@ where
             8
         };
         let (program_commitments, program_hints) =
-            crate::zkvm::program::TrustedProgramCommitments::derive(
+            TrustedProgramCommitments::derive(
                 &program,
                 &generators,
                 log_k_chunk,

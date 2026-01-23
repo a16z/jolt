@@ -12,6 +12,10 @@ use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::config::ProgramMode;
+use crate::zkvm::program::{
+    ProgramMetadata, ProgramPreprocessing, TrustedProgramCommitments, VerifierProgram,
+};
+use crate::zkvm::ram::verifier_accumulate_program_image;
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
@@ -378,7 +382,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 .needs_single_advice_opening(self.proof.trace_length.log_2()),
         );
         if self.proof.program_mode == ProgramMode::Committed {
-            crate::zkvm::ram::verifier_accumulate_program_image::<F>(
+            verifier_accumulate_program_image::<F>(
                 self.proof.ram_K,
                 &self.program_io,
                 &mut self.opening_accumulator,
@@ -978,7 +982,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltSharedPreprocessing {
     /// Program metadata (bytecode size, program image info).
-    pub program_meta: crate::zkvm::program::ProgramMetadata,
+    pub program_meta: ProgramMetadata,
     pub memory_layout: MemoryLayout,
     pub max_padded_trace_length: usize,
 }
@@ -992,7 +996,7 @@ impl JoltSharedPreprocessing {
     /// - `max_padded_trace_length`: Maximum trace length for generator sizing
     #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new")]
     pub fn new(
-        program_meta: crate::zkvm::program::ProgramMetadata,
+        program_meta: ProgramMetadata,
         memory_layout: MemoryLayout,
         max_padded_trace_length: usize,
     ) -> JoltSharedPreprocessing {
@@ -1034,7 +1038,7 @@ where
     ///
     /// In Full mode: contains full program preprocessing (bytecode + program image).
     /// In Committed mode: contains only commitments (succinct).
-    pub program: crate::zkvm::program::VerifierProgram<PCS>,
+    pub program: VerifierProgram<PCS>,
 }
 
 impl<F, PCS> CanonicalSerialize for JoltVerifierPreprocessing<F, PCS>
@@ -1086,7 +1090,7 @@ where
             PCS::VerifierSetup::deserialize_with_mode(&mut reader, compress, validate)?;
         let shared =
             JoltSharedPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
-        let program = crate::zkvm::program::VerifierProgram::deserialize_with_mode(
+        let program = VerifierProgram::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
@@ -1135,12 +1139,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
     pub fn new_full(
         shared: JoltSharedPreprocessing,
         generators: PCS::VerifierSetup,
-        program: Arc<crate::zkvm::program::ProgramPreprocessing>,
+        program: Arc<ProgramPreprocessing>,
     ) -> JoltVerifierPreprocessing<F, PCS> {
         Self {
             generators,
             shared,
-            program: crate::zkvm::program::VerifierProgram::Full(program),
+            program: VerifierProgram::Full(program),
         }
     }
 
@@ -1157,12 +1161,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
     pub fn new_committed(
         shared: JoltSharedPreprocessing,
         generators: PCS::VerifierSetup,
-        program_commitments: crate::zkvm::program::TrustedProgramCommitments<PCS>,
+        program_commitments: TrustedProgramCommitments<PCS>,
     ) -> JoltVerifierPreprocessing<F, PCS> {
         Self {
             generators,
             shared,
-            program: crate::zkvm::program::VerifierProgram::Committed(program_commitments),
+            program: VerifierProgram::Committed(program_commitments),
         }
     }
 }
@@ -1177,9 +1181,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessi
         // Choose VerifierProgram variant based on whether prover has program commitments
         let program = match &prover_preprocessing.program_commitments {
             Some(commitments) => {
-                crate::zkvm::program::VerifierProgram::Committed(commitments.clone())
+                VerifierProgram::Committed(commitments.clone())
             }
-            None => crate::zkvm::program::VerifierProgram::Full(Arc::clone(
+            None => VerifierProgram::Full(Arc::clone(
                 &prover_preprocessing.program,
             )),
         };
