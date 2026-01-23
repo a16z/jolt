@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
+use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{advice_tape_remaining, Cpu},
@@ -10,7 +10,7 @@ declare_riscv_instr!(
     name = VirtualAdviceLen,
     mask = 0,
     match = 0,
-    format = FormatJ,
+    format = FormatI,
     ram = ()
 );
 
