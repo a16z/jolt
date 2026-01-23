@@ -14,6 +14,8 @@ mod instruction;
 use crate::instruction::*;
 mod r1cs;
 use crate::r1cs::*;
+mod sumchecks;
+use crate::sumchecks::*;
 mod lean_tests;
 use crate::lean_tests::*;
 mod modules;
@@ -83,6 +85,7 @@ fn main() -> Result<(), FSError> {
     let modules: Vec<Box<dyn AsModule>> = vec![
         Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
         Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
+        Box::new(ZkLeanSumchecks::<ark_bn254::Fr>::extract()),
         match ParameterSet::XLEN {
             32 => Box::new(ZkLeanLookupTables::<32>::extract()),
             64 => Box::new(ZkLeanLookupTables::<64>::extract()),
