@@ -1,0 +1,19 @@
+[package]
+name = "jolt-build"
+version = "0.2.0"
+edition = "2021"
+description = "Build tool for Jolt zkVM"
+
+[[bin]]
+name = "cargo-jolt"
+path = "src/main.rs"
+
+[dependencies]
+# Build infrastructure from ZeroOS
+zeroos-build = { path = "../../ZeroOS/crates/zeroos-build" }
+
+# CLI and utilities
+clap = { version = "4.5", features = ["derive", "env"] }
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"

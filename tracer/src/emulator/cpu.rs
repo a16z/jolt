@@ -379,8 +379,6 @@ impl Cpu {
 
         let original_word = self.fetch()?;
         let instruction_address = normalize_u64(self.pc, &self.xlen);
-        // Track current guest PC in the MMU for improved invalid-access diagnostics.
-        self.mmu.set_current_pc(instruction_address);
         let is_compressed = (original_word & 0x3) != 0x3;
         let word = match is_compressed {
             false => {
@@ -563,9 +561,6 @@ impl Cpu {
                 let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
                 return false;
             }
-
-            // For non-Jolt ECALLs, fall through to normal trap delivery.
-            // ZeroOS handles syscalls in-guest via its trap handler.
         }
 
         let current_privilege_encoding = get_privilege_encoding(&self.privilege_mode) as u64;
@@ -741,8 +736,6 @@ impl Cpu {
         self.write_csr_raw(csr_epc_address, instruction_address);
         self.write_csr_raw(csr_cause_address, cause);
         self.write_csr_raw(csr_tval_address, trap.value);
-        let tvec_value = self.read_csr_raw(csr_tvec_address);
-        self.pc = tvec_value;
 
         // Add 4 * cause if tvec has vector type address
         if (self.pc & 0x3) != 0 {
