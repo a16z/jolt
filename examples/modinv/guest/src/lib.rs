@@ -47,11 +47,13 @@ fn compute_modinv(a: u64, m: u64) -> jolt::UntrustedAdvice<Option<u64>> {
 /// witness data (the modular inverse) which is then verified in the guest.
 #[jolt::provable(memory_size = 32768, max_trace_length = 65536)]
 fn modinv(a: u64, m: u64) -> u64 {
+    use core::ops::Deref;
+
     // Get the modular inverse from the advice tape (precomputed on first pass)
     let inv_advice = compute_modinv(a, m);
 
     // Extract the value from the UntrustedAdvice wrapper using Deref
-    let inv_option = &*inv_advice;
+    let inv_option = inv_advice.deref();
 
     // For this example, we assume the inverse exists
     let inv = inv_option.unwrap_or(0);
