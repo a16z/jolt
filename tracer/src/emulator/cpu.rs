@@ -121,6 +121,11 @@ pub fn advice_tape_remaining() -> usize {
     ADVICE_TAPE.with(|tape| tape.borrow().remaining())
 }
 
+/// Get all bytes from the advice tape (used to extract advice after compute_advice pass)
+pub fn advice_tape_get_all() -> Vec<u8> {
+    ADVICE_TAPE.with(|tape| tape.borrow().data.clone())
+}
+
 use crate::instruction::format::NormalizedOperands;
 use crate::utils::panic::CallFrame;
 #[cfg(not(feature = "std"))]
