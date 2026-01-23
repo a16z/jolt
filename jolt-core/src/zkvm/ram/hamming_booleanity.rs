@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
@@ -162,11 +163,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for HammingBooleanitySumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let result = Self::input_output_claims().input_claim(&[F::one()], accumulator);
+        let result = self.params.input_claim(accumulator);
 
         #[cfg(test)]
         {
-            let reference_result = self.params.input_claim(accumulator);
+            let reference_result =
+                Self::input_output_claims().input_claim(&[F::one()], accumulator);
             assert_eq!(result, reference_result);
         }
 
@@ -182,37 +184,35 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let r = self.params.normalize_opening_point(sumcheck_challenges);
-        let result =
-            Self::input_output_claims().expected_output_claim(&r, &[F::one()], accumulator);
+        let H_claim = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamHammingWeight,
+                SumcheckId::RamHammingBooleanity,
+            )
+            .1;
+
+        let (r_cycle, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+        );
+
+        let eq = EqPolynomial::<F>::mle(
+            sumcheck_challenges,
+            &r_cycle
+                .r
+                .iter()
+                .cloned()
+                .rev()
+                .collect::<Vec<F::Challenge>>(),
+        );
+
+        let result = (H_claim.square() - H_claim) * eq;
 
         #[cfg(test)]
         {
-            use crate::poly::eq_poly::EqPolynomial;
-
-            let H_claim = accumulator
-                .get_virtual_polynomial_opening(
-                    VirtualPolynomial::RamHammingWeight,
-                    SumcheckId::RamHammingBooleanity,
-                )
-                .1;
-
-            let (r_cycle, _) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            );
-
-            let eq = EqPolynomial::<F>::mle(
-                sumcheck_challenges,
-                &r_cycle
-                    .r
-                    .iter()
-                    .cloned()
-                    .rev()
-                    .collect::<Vec<F::Challenge>>(),
-            );
-
-            let reference_result = (H_claim.square() - H_claim) * eq;
+            let r = self.params.normalize_opening_point(sumcheck_challenges);
+            let reference_result =
+                Self::input_output_claims().expected_output_claim(&r, &[F::one()], accumulator);
             assert_eq!(result, reference_result);
         }
 

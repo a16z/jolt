@@ -7,6 +7,7 @@ use tracer::instruction::Cycle;
 use crate::{
     field::JoltField,
     poly::{
+        eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
@@ -494,16 +495,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for InstructionInputSumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let claims = Self::input_output_claims();
-        let gamma_pows: Vec<F> =
-            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
-                .take(claims.claims.len())
-                .collect();
-        let result = claims.input_claim(&gamma_pows, accumulator);
+        let result = self.params.input_claim(accumulator);
 
         #[cfg(test)]
         {
-            let reference_result = self.params.input_claim(accumulator);
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result = claims.input_claim(&gamma_pows, accumulator);
             assert_eq!(result, reference_result);
         }
 
@@ -521,63 +522,59 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
 
-        let claims = Self::input_output_claims();
-        let gamma_pows: Vec<F> =
-            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
-                .take(claims.claims.len())
-                .collect();
-        let result = claims.expected_output_claim(&r, &gamma_pows, accumulator);
+        let eq_eval_at_r_cycle_stage_1 = EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_1);
+        let eq_eval_at_r_cycle_stage_2 = EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_2);
+
+        let (_, rs1_value_eval) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let (_, left_is_rs1_eval) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let (_, unexpanded_pc_eval) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let (_, left_is_pc_eval) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let (_, rs2_value_eval) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let (_, right_is_rs2_eval) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let (_, imm_eval) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Imm,
+            SumcheckId::InstructionInputVirtualization,
+        );
+        let (_, right_is_imm_eval) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
+            SumcheckId::InstructionInputVirtualization,
+        );
+
+        let left_instruction_input =
+            left_is_rs1_eval * rs1_value_eval + left_is_pc_eval * unexpanded_pc_eval;
+        let right_instruction_input =
+            right_is_rs2_eval * rs2_value_eval + right_is_imm_eval * imm_eval;
+
+        let result = (eq_eval_at_r_cycle_stage_1
+            + self.params.gamma.square() * eq_eval_at_r_cycle_stage_2)
+            * (right_instruction_input + self.params.gamma * left_instruction_input);
 
         #[cfg(test)]
         {
-            use crate::poly::eq_poly::EqPolynomial;
-
-            let eq_eval_at_r_cycle_stage_1 =
-                EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_1);
-            let eq_eval_at_r_cycle_stage_2 =
-                EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_2);
-
-            let (_, rs1_value_eval) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::Rs1Value,
-                SumcheckId::InstructionInputVirtualization,
-            );
-            let (_, left_is_rs1_eval) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
-                SumcheckId::InstructionInputVirtualization,
-            );
-            let (_, unexpanded_pc_eval) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::UnexpandedPC,
-                SumcheckId::InstructionInputVirtualization,
-            );
-            let (_, left_is_pc_eval) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
-                SumcheckId::InstructionInputVirtualization,
-            );
-            let (_, rs2_value_eval) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::Rs2Value,
-                SumcheckId::InstructionInputVirtualization,
-            );
-            let (_, right_is_rs2_eval) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
-                SumcheckId::InstructionInputVirtualization,
-            );
-            let (_, imm_eval) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::Imm,
-                SumcheckId::InstructionInputVirtualization,
-            );
-            let (_, right_is_imm_eval) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
-                SumcheckId::InstructionInputVirtualization,
-            );
-
-            let left_instruction_input =
-                left_is_rs1_eval * rs1_value_eval + left_is_pc_eval * unexpanded_pc_eval;
-            let right_instruction_input =
-                right_is_rs2_eval * rs2_value_eval + right_is_imm_eval * imm_eval;
-
-            let reference_result = (eq_eval_at_r_cycle_stage_1
-                + self.params.gamma.square() * eq_eval_at_r_cycle_stage_2)
-                * (right_instruction_input + self.params.gamma * left_instruction_input);
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result = claims.expected_output_claim(&r, &gamma_pows, accumulator);
 
             assert_eq!(result, reference_result);
         }

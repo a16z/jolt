@@ -7,7 +7,7 @@ use itertools::chain;
 use tracer::instruction::Cycle;
 
 use crate::field::JoltField;
-use crate::poly::eq_plus_one_poly::EqPlusOnePrefixSuffixPoly;
+use crate::poly::eq_plus_one_poly::{EqPlusOnePolynomial, EqPlusOnePrefixSuffixPoly};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
@@ -275,12 +275,12 @@ impl<F: JoltField> ShiftSumcheckVerifier<F> {
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumcheckVerifier<F> {
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let result =
-            Self::input_output_claims().input_claim(&self.params.gamma_powers, accumulator);
+        let result = self.params.input_claim(accumulator);
 
         #[cfg(test)]
         {
-            let reference_result = self.params.input_claim(accumulator);
+            let reference_result =
+                Self::input_output_claims().input_claim(&self.params.gamma_powers, accumulator);
             assert_eq!(result, reference_result);
         }
 
@@ -297,55 +297,54 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let r = normalize_opening_point::<F>(sumcheck_challenges);
-        let result = Self::input_output_claims().expected_output_claim(
-            &r,
-            &self.params.gamma_powers,
-            accumulator,
+
+        // Get the shift evaluations from the accumulator
+        let (_, unexpanded_pc_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::SpartanShift,
         );
+        let (_, pc_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        let (_, is_virtual_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanShift,
+        );
+        let (_, is_first_in_sequence_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
+            SumcheckId::SpartanShift,
+        );
+        let (_, is_noop_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
+            SumcheckId::SpartanShift,
+        );
+
+        let eq_plus_one_r_outer_at_shift =
+            EqPlusOnePolynomial::<F>::new(self.params.r_outer.r.to_vec()).evaluate(&r.r);
+        let eq_plus_one_r_product_at_shift =
+            EqPlusOnePolynomial::<F>::new(self.params.r_product.r.to_vec()).evaluate(&r.r);
+
+        let result = [
+            unexpanded_pc_claim,
+            pc_claim,
+            is_virtual_claim,
+            is_first_in_sequence_claim,
+        ]
+        .iter()
+        .zip(&self.params.gamma_powers)
+        .map(|(eval, gamma)| *gamma * eval)
+        .sum::<F>()
+            * eq_plus_one_r_outer_at_shift
+            + self.params.gamma_powers[4]
+                * (F::one() - is_noop_claim)
+                * eq_plus_one_r_product_at_shift;
 
         #[cfg(test)]
         {
-            use crate::poly::eq_plus_one_poly::EqPlusOnePolynomial;
-
-            // Get the shift evaluations from the accumulator
-            let (_, unexpanded_pc_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::UnexpandedPC,
-                SumcheckId::SpartanShift,
+            let reference_result = Self::input_output_claims().expected_output_claim(
+                &r,
+                &self.params.gamma_powers,
+                accumulator,
             );
-            let (_, pc_claim) = accumulator
-                .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
-            let (_, is_virtual_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
-                SumcheckId::SpartanShift,
-            );
-            let (_, is_first_in_sequence_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
-                SumcheckId::SpartanShift,
-            );
-            let (_, is_noop_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
-                SumcheckId::SpartanShift,
-            );
-
-            let eq_plus_one_r_outer_at_shift =
-                EqPlusOnePolynomial::<F>::new(self.params.r_outer.r.to_vec()).evaluate(&r.r);
-            let eq_plus_one_r_product_at_shift =
-                EqPlusOnePolynomial::<F>::new(self.params.r_product.r.to_vec()).evaluate(&r.r);
-
-            let reference_result = [
-                unexpanded_pc_claim,
-                pc_claim,
-                is_virtual_claim,
-                is_first_in_sequence_claim,
-            ]
-            .iter()
-            .zip(&self.params.gamma_powers)
-            .map(|(eval, gamma)| *gamma * eval)
-            .sum::<F>()
-                * eq_plus_one_r_outer_at_shift
-                + self.params.gamma_powers[4]
-                    * (F::one() - is_noop_claim)
-                    * eq_plus_one_r_product_at_shift;
 
             assert_eq!(result, reference_result);
         }

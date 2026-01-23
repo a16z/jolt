@@ -807,39 +807,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RegistersReadWriteCheckingVerifier<F>
 {
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let claims = Self::input_output_claims();
-        let gamma_pows: Vec<F> =
-            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
-                .take(claims.claims.len())
-                .collect();
-        let result = claims.input_claim(&gamma_pows, accumulator);
+        let result = self.params.input_claim(accumulator);
 
         #[cfg(test)]
         {
-            let reference_result = self.params.input_claim(accumulator);
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result = claims.input_claim(&gamma_pows, accumulator);
             assert_eq!(result, reference_result);
         }
-
-        let (_, rs1_rv_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Value,
-            SumcheckId::RegistersClaimReduction,
-        );
-        let (_, rs1_rv_claim_instruction_input) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Value,
-            SumcheckId::InstructionInputVirtualization,
-        );
-        // TODO: Make error and move to more appropriate place.
-        assert_eq!(rs1_rv_claim, rs1_rv_claim_instruction_input);
-        let (_, rs2_rv_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs2Value,
-            SumcheckId::RegistersClaimReduction,
-        );
-        let (_, rs2_rv_claim_instruction_input) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs2Value,
-            SumcheckId::InstructionInputVirtualization,
-        );
-        // TODO: Make error and move to more appropriate place.
-        assert_eq!(rs2_rv_claim, rs2_rv_claim_instruction_input);
 
         result
     }
@@ -856,43 +835,44 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         let (_, r_cycle) = r.split_at(LOG_K);
 
-        let claims = Self::input_output_claims();
-        let gamma_pows: Vec<F> =
-            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
-                .take(claims.claims.len())
-                .collect();
-        let result = claims.expected_output_claim(&r_cycle, &gamma_pows, accumulator);
+        let (_, val_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (_, rs1_ra_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs1Ra,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (_, rs2_ra_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::Rs2Ra,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (_, rd_wa_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWa,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (_, inc_claim) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+
+        let rd_write_value_claim = rd_wa_claim * (inc_claim + val_claim);
+        let rs1_value_claim = rs1_ra_claim * val_claim;
+        let rs2_value_claim = rs2_ra_claim * val_claim;
+
+        let result = EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle)
+            * (rd_write_value_claim
+                + self.params.gamma * (rs1_value_claim + self.params.gamma * rs2_value_claim));
 
         #[cfg(test)]
         {
-            let (_, val_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RegistersVal,
-                SumcheckId::RegistersReadWriteChecking,
-            );
-            let (_, rs1_ra_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::Rs1Ra,
-                SumcheckId::RegistersReadWriteChecking,
-            );
-            let (_, rs2_ra_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::Rs2Ra,
-                SumcheckId::RegistersReadWriteChecking,
-            );
-            let (_, rd_wa_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RdWa,
-                SumcheckId::RegistersReadWriteChecking,
-            );
-            let (_, inc_claim) = accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::RdInc,
-                SumcheckId::RegistersReadWriteChecking,
-            );
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result = claims.expected_output_claim(&r_cycle, &gamma_pows, accumulator);
 
-            let rd_write_value_claim = rd_wa_claim * (inc_claim + val_claim);
-            let rs1_value_claim = rs1_ra_claim * val_claim;
-            let rs2_value_claim = rs2_ra_claim * val_claim;
-
-            let reference_result = EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle)
-                * (rd_write_value_claim
-                    + self.params.gamma * (rs1_value_claim + self.params.gamma * rs2_value_claim));
             assert_eq!(result, reference_result);
         }
 

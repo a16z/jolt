@@ -22,10 +22,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        sumcheck_claim::{
-            Claim, InputOutputClaims, SumcheckFrontend, VerifierEvaluablePolynomial,
-            VerifierEvaluationParams,
-        },
+        sumcheck_claim::{Claim, InputOutputClaims, SumcheckFrontend, VerifierEvaluablePolynomial},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -269,11 +266,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RafEvaluationSumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let result = Self::input_output_claims().input_claim(&[F::one()], accumulator);
+        let result = self.params.input_claim(accumulator);
 
         #[cfg(test)]
         {
-            let reference_result = self.params.input_claim(accumulator);
+            let reference_result =
+                Self::input_output_claims().input_claim(&[F::one()], accumulator);
             assert_eq!(result, reference_result);
         }
 
@@ -290,29 +288,32 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
-        let eval_params =
-            VerifierEvaluationParams::new(self.params.log_K, self.params.start_address);
-        let result = Self::input_output_claims().expected_output_claim_with_batching_parameters(
-            &eval_params,
-            &r,
-            &[F::one()],
-            accumulator,
-        );
+
+        // Compute unmap evaluation at r
+        let unmap_eval =
+            UnmapRamAddressPolynomial::<F>::new(self.params.log_K, self.params.start_address)
+                .evaluate(&r.r);
+
+        let (_, ra_input_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
+
+        // Return unmap(r) * ra(r)
+        let result = unmap_eval * ra_input_claim;
 
         #[cfg(test)]
         {
-            // Compute unmap evaluation at r
-            let unmap_eval =
-                UnmapRamAddressPolynomial::<F>::new(self.params.log_K, self.params.start_address)
-                    .evaluate(&r.r);
+            use crate::subprotocols::sumcheck_claim::VerifierEvaluationParams;
 
-            let (_, ra_input_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamRa,
-                SumcheckId::RamRafEvaluation,
-            );
+            let eval_params =
+                VerifierEvaluationParams::new(self.params.log_K, self.params.start_address);
+            let reference_result = Self::input_output_claims()
+                .expected_output_claim_with_batching_parameters(
+                    &eval_params,
+                    &r,
+                    &[F::one()],
+                    accumulator,
+                );
 
-            // Return unmap(r) * ra(r)
-            let reference_result = unmap_eval * ra_input_claim;
             assert_eq!(result, reference_result);
         }
 

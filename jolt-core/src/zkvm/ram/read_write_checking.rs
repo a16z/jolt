@@ -655,16 +655,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RamReadWriteCheckingVerifier<F>
 {
     fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let claims = Self::input_output_claims();
-        let gamma_pows: Vec<F> =
-            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
-                .take(claims.claims.len())
-                .collect();
-        let result = Self::input_output_claims().input_claim(&gamma_pows, accumulator);
+        let result = self.params.input_claim(accumulator);
 
         #[cfg(test)]
         {
-            let reference_result = self.params.input_claim(accumulator);
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result =
+                Self::input_output_claims().input_claim(&gamma_pows, accumulator);
             assert_eq!(result, reference_result);
         }
 
@@ -683,36 +684,35 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         let (_, r_cycle) = r.split_at(self.params.K.log_2());
 
-        let claims = Self::input_output_claims();
-        let gamma_pows: Vec<F> =
-            std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
-                .take(claims.claims.len())
-                .collect();
-        let result = claims.expected_output_claim(&r_cycle, &gamma_pows, accumulator);
+        let (r_cycle_stage_1, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamReadValue,
+            SumcheckId::SpartanOuter,
+        );
+        let eq_eval_cycle = EqPolynomial::mle_endian(&r_cycle_stage_1, &r_cycle);
+
+        let (_, ra_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (_, val_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamVal,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (_, inc_claim) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let result =
+            eq_eval_cycle * ra_claim * (val_claim + self.params.gamma * (val_claim + inc_claim));
 
         #[cfg(test)]
         {
-            let (r_cycle_stage_1, _) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamReadValue,
-                SumcheckId::SpartanOuter,
-            );
-            let eq_eval_cycle = EqPolynomial::mle_endian(&r_cycle_stage_1, &r_cycle);
-
-            let (_, ra_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamRa,
-                SumcheckId::RamReadWriteChecking,
-            );
-            let (_, val_claim) = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamVal,
-                SumcheckId::RamReadWriteChecking,
-            );
-            let (_, inc_claim) = accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::RamInc,
-                SumcheckId::RamReadWriteChecking,
-            );
-            let reference_result = eq_eval_cycle
-                * ra_claim
-                * (val_claim + self.params.gamma * (val_claim + inc_claim));
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result = claims.expected_output_claim(&r_cycle, &gamma_pows, accumulator);
 
             assert_eq!(result, reference_result);
         }
