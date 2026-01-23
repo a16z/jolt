@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1769110829322,
+  "lastUpdate": 1769186597927,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -47278,6 +47278,198 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 373512,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4633847+protoben@users.noreply.github.com",
+            "name": "Ben Hamlin",
+            "username": "protoben"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "29738ca51c894474f14519e773e7a0c57cf18a46",
+          "message": "Front-end API for Sumchecks (#1132)\n\n* Implement candidate API for an extractable sumcheck front-end\n\nThis defines the `FrontendSumcheck` trait and `InputOutputClaims` types,\nwhich allow defining compatible sumchecks in a high-level form suitable\nfor extraction.\n\n* Implement FrontendSumcheck for RamReadWriteChecking\n\n* Implement FrontendSumcheck for RegistersReadWriteChecking\n\n* Improve ergonomics and naming in SumcheckFrontend\n\nThis incorporates a few small improvements to the SumcheckFrontend trait:\n* input_output_claims now takes a &self parameter\n* expected_output_claim now borrows r, rather than moving it\n* some renaming for clarity\n\n* Implement SumcheckFrontend for SpartanShift\n\n* Implement SumcheckFrontend for InstructionInputVirtualization\n\n* Fix linter error\n\n* Make input_output_claims a static method to avoid instantiating sumchecks in extractor\n\n* Initial implementation of sumcheck extraction\n\n* Fix output expr printing in sumcheck extraction\n\nPreviously, we were erroneously printing input exprs in place of output\nexprs. This fixes that.\n\n* Make extracted sumchecks into a a working module\n\n* Special-case SpartanOuter vars to be R1CSInputs in sumcheck extraction\n\nThere's a direct mapping from the SpartanOuter vars to the R1CSInputs. We\ntie the rest of the sumchecks into the extraction by making the sumcheck\nclaims that would use SpartanOuter vars use R1CSInputs instead.\n\n* Implement SumcheckFrontend for ram hamming Booleanity check\n\n* Introduce an OpeningRef type to represent cached openings for SumcheckFrontend\n\n* Add a \"batching polynomial\" field to SumcheckFrontend\n\nThis captures polynomials such as Eq, EqPlusOne, Lt, Identity, etc., which\nare evaluated by the verifier on the challenge. This allows us to\nrepresent more of the sumchecks. The `batching_poly` field replaces the\nprior `is_offset` field, since that information is determined by whether\nthe batching polynomial is Eq or EqPlusOne.\n\n* Implement SumcheckFrontend for RAM RAF evaluation\n\nThis entails generalizing the batching polynomial. Whereas before, each\nclaim simply used a flag `is_offset` to determine whether the batching\npolynomial is Eq or EqPlusOne, now we use a general `batching_polynomial`\nfield.\n\n* Update jolt-core/src/subprotocols/sumcheck_claim.rs\n\nCo-authored-by: graphite-app[bot] <96075541+graphite-app[bot]@users.noreply.github.com>\n\n* More descriptive name for constant field elements in `ClaimExpr`\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\n\n* Remove unnecessary `reverse` field from `CachedPointRef`\n\nSince points are now normalized to big-endian representation, we don't\nneed to reverse points in the sumcheck frontend API.\n\n* Better name for sumcheck polynomials evaluated by verifier\n\n* Merge `OpeningId` and `OpeningRef` enums\n\nThe sumcheck frontend needs an enum that is simply a union of\n`VirtualPolynomial` and `CommittedPolynomial`, which we previously handled\nwith the `OpeningRef` enum. However, this is somewhat redundant with the\n`OpeningId` enum, which unions these, as well as the various advice types,\nand adds a sumcheck id. We eliminate this redundancy by separating the\nunion of the polynomial types into a separate enum, `PolynomialId`, and\nusing this within `OpeningId`.\n\n* Rename `typ` to `ty` in variable names to satisfy CI typo checker\n\n* Fix some formatting\n\n* Place slightly slower claim implementations from SumcheckFrontend in test blocks\n\n---------\n\nCo-authored-by: graphite-app[bot] <96075541+graphite-app[bot]@users.noreply.github.com>\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>",
+          "timestamp": "2026-01-23T10:57:59-05:00",
+          "tree_id": "899e414af504ba1787ee49320be59c4d45e3fe10",
+          "url": "https://github.com/a16z/jolt/commit/29738ca51c894474f14519e773e7a0c57cf18a46"
+        },
+        "date": 1769186596517,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.0261,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 383628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 414936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5896,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 385968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5612,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 383376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.7069,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 383352,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4859,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 385360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3455,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 385748,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7668,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 383732,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 389784,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 16.78,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 603428,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 83.0675,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2702968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4333,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 387532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4846,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 385644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 371640,
             "unit": "KB",
             "extra": ""
           }
