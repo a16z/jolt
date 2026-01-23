@@ -6,8 +6,8 @@ use super::{format::format_b::FormatB, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualAssertEQ,
-    mask = 0,
-    match = 0,
+    mask = 0x0000707f,
+    match = 0x0000405b,  // opcode=0x5B (custom instruction), funct3=4
     format = FormatB,
     ram = ()
 );

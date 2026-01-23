@@ -99,7 +99,6 @@ use xori::XORI;
 
 use virtual_advice::VirtualAdvice;
 use virtual_advice_load::VirtualAdviceLoad;
-use virtual_assert::VirtualAssert;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use virtual_assert_lte::VirtualAssertLTE;
@@ -236,7 +235,6 @@ pub mod subw;
 pub mod sw;
 pub mod virtual_advice;
 pub mod virtual_advice_load;
-pub mod virtual_assert;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
@@ -649,7 +647,7 @@ define_rv32im_enums! {
         // Virtual
         AdviceSB, AdviceSD, AdviceSH, AdviceSW,
         VirtualAdvice, VirtualAdviceLoad,
-        VirtualAssert, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
+        VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
         VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,

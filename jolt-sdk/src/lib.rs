@@ -82,7 +82,7 @@ pub static mut _HEAP_PTR: u8 = 0;
 ///
 /// Macro to assert that a condition holds, enforced by the prover.
 ///
-/// This macro generates a VirtualAssert instruction that ensures the given boolean expression
+/// This macro generates a VirtualAssertEQ instruction that ensures the given boolean expression
 /// evaluates to true. If the condition is false, the proof will fail.
 ///
 /// # Example
@@ -99,10 +99,14 @@ macro_rules! check_advice {
         ))]
         {
             let cond_value = if $cond { 1u64 } else { 0u64 };
+            let expected_value = 1u64;
             unsafe {
+                // VirtualAssertEQ: assert rs1 == rs2
+                // Use B-format encoding: opcode=0x5B, funct3=4
                 core::arch::asm!(
-                    ".insn i 0x5B, 0, {rs1}, {rs1}, 0",
+                    ".insn b 0x5B, 4, {rs1}, {rs2}, 0",
                     rs1 = in(reg) cond_value,
+                    rs2 = in(reg) expected_value,
                     options(nostack)
                 );
             }
@@ -193,7 +197,7 @@ impl embedded_io::Read for AdviceReader {
                 // Since rs2 is unused (advice comes from tape), we use x0
                 // funct3=3 for SD (doubleword)
                 core::arch::asm!(
-                    ".insn s 0x2B, 3, x0, 0({rs1})",
+                    ".insn s 0x5B, 3, x0, 0({rs1})",
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );
@@ -202,7 +206,7 @@ impl embedded_io::Read for AdviceReader {
                 // Use ADVICE_SW (store word) - reads 4 bytes from advice tape
                 // funct3=2 for SW (word)
                 core::arch::asm!(
-                    ".insn s 0x2B, 2, x0, 0({rs1})",
+                    ".insn s 0x5B, 2, x0, 0({rs1})",
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );
@@ -211,7 +215,7 @@ impl embedded_io::Read for AdviceReader {
                 // Use ADVICE_SH (store halfword) - reads 2 bytes from advice tape
                 // funct3=1 for SH (halfword)
                 core::arch::asm!(
-                    ".insn s 0x2B, 1, x0, 0({rs1})",
+                    ".insn s 0x5B, 1, x0, 0({rs1})",
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );
@@ -220,7 +224,7 @@ impl embedded_io::Read for AdviceReader {
                 // Use ADVICE_SB (store byte) - reads 1 byte from advice tape
                 // funct3=0 for SB (byte)
                 core::arch::asm!(
-                    ".insn s 0x2B, 0, x0, 0({rs1})",
+                    ".insn s 0x5B, 0, x0, 0({rs1})",
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );

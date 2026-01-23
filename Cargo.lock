@@ -2124,6 +2124,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "common",
+ "embedded-io 0.6.1",
  "hex-literal",
  "jolt-core",
  "jolt-platform",
