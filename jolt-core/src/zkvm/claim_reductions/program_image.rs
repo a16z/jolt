@@ -260,6 +260,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             claim,
         );
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
 pub struct ProgramImageClaimReductionVerifier<F: JoltField> {
