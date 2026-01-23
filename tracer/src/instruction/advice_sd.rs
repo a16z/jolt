@@ -16,8 +16,8 @@ use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 declare_riscv_instr!(
     name   = AdviceSD,
-    mask   = 0x0000707f,
-    match  = 0x0000505b,  // opcode=0x5B (custom instruction), funct3=5
+    mask   = 0,
+    match  = 0,
     format = FormatAdviceS,
     ram    = RAMWrite
 );

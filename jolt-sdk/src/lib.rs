@@ -3,19 +3,20 @@
 extern crate jolt_sdk_macros;
 
 // Instruction encoding constants for RISC-V custom instructions
-// These constants are used for documentation and validation purposes
+// Note: These are used in inline assembly via `const` keyword, but the compiler
+// doesn't recognize that usage, so we suppress the dead_code warning.
 #[allow(dead_code)]
-const CUSTOM_OPCODE: u8 = 0x5B; // Custom instructions opcode
+const CUSTOM_OPCODE: u32 = 0x5B; // Custom instructions opcode
 #[allow(dead_code)]
-const FUNCT3_VIRTUAL_ASSERT_EQ: u8 = 0b001; // VirtualAssertEQ funct3
+const FUNCT3_VIRTUAL_ASSERT_EQ: u32 = 0b001; // VirtualAssertEQ funct3
 #[allow(dead_code)]
-const FUNCT3_ADVICE_SB: u8 = 0b010; // Store byte from advice tape
+const FUNCT3_ADVICE_SB: u32 = 0b010; // Store byte from advice tape
 #[allow(dead_code)]
-const FUNCT3_ADVICE_SH: u8 = 0b011; // Store halfword from advice tape
+const FUNCT3_ADVICE_SH: u32 = 0b011; // Store halfword from advice tape
 #[allow(dead_code)]
-const FUNCT3_ADVICE_SW: u8 = 0b100; // Store word from advice tape
+const FUNCT3_ADVICE_SW: u32 = 0b100; // Store word from advice tape
 #[allow(dead_code)]
-const FUNCT3_ADVICE_SD: u8 = 0b101; // Store doubleword from advice tape
+const FUNCT3_ADVICE_SD: u32 = 0b101; // Store doubleword from advice tape
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub mod host_utils;
@@ -115,13 +116,13 @@ macro_rules! check_advice {
         {
             let cond_value = if $cond { 1u64 } else { 0u64 };
             let expected_value = 1u64;
-            const _OPCODE: u8 = $crate::CUSTOM_OPCODE;
-            const _FUNCT3: u8 = $crate::FUNCT3_VIRTUAL_ASSERT_EQ;
             unsafe {
                 // VirtualAssertEQ: assert rs1 == rs2
-                // Use B-format encoding with CUSTOM_OPCODE (0x5B) and FUNCT3_VIRTUAL_ASSERT_EQ (1)
+                // Use B-format encoding with CUSTOM_OPCODE and FUNCT3_VIRTUAL_ASSERT_EQ
                 core::arch::asm!(
-                    ".insn b 0x5B, 1, {rs1}, {rs2}, 0",
+                    ".insn b {opcode}, {funct3}, {rs1}, {rs2}, 0",
+                    opcode = const $crate::CUSTOM_OPCODE,
+                    funct3 = const $crate::FUNCT3_VIRTUAL_ASSERT_EQ,
                     rs1 = in(reg) cond_value,
                     rs2 = in(reg) expected_value,
                     options(nostack)
@@ -207,47 +208,45 @@ impl embedded_io::Read for AdviceReader {
         let len = buf.len();
         let dst_ptr = buf.as_mut_ptr();
 
-        const _OPCODE: u8 = CUSTOM_OPCODE;
-        const _FUNCT3_SB: u8 = FUNCT3_ADVICE_SB;
-        const _FUNCT3_SH: u8 = FUNCT3_ADVICE_SH;
-        const _FUNCT3_SW: u8 = FUNCT3_ADVICE_SW;
-        const _FUNCT3_SD: u8 = FUNCT3_ADVICE_SD;
-
         unsafe {
             if len >= 8 {
                 // Use ADVICE_SD (store doubleword) - reads 8 bytes from advice tape
                 // Format: .insn s opcode, funct3, rs2, imm(rs1)
                 // Since rs2 is unused (advice comes from tape), we use x0
-                // Uses CUSTOM_OPCODE (0x5B) with FUNCT3_ADVICE_SD (5)
                 core::arch::asm!(
-                    ".insn s 0x5B, 5, x0, 0({rs1})",
+                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+                    opcode = const CUSTOM_OPCODE,
+                    funct3 = const FUNCT3_ADVICE_SD,
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );
                 Ok(8)
             } else if len >= 4 {
                 // Use ADVICE_SW (store word) - reads 4 bytes from advice tape
-                // Uses CUSTOM_OPCODE (0x5B) with FUNCT3_ADVICE_SW (4)
                 core::arch::asm!(
-                    ".insn s 0x5B, 4, x0, 0({rs1})",
+                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+                    opcode = const CUSTOM_OPCODE,
+                    funct3 = const FUNCT3_ADVICE_SW,
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );
                 Ok(4)
             } else if len >= 2 {
                 // Use ADVICE_SH (store halfword) - reads 2 bytes from advice tape
-                // Uses CUSTOM_OPCODE (0x5B) with FUNCT3_ADVICE_SH (3)
                 core::arch::asm!(
-                    ".insn s 0x5B, 3, x0, 0({rs1})",
+                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+                    opcode = const CUSTOM_OPCODE,
+                    funct3 = const FUNCT3_ADVICE_SH,
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );
                 Ok(2)
             } else if len == 1 {
                 // Use ADVICE_SB (store byte) - reads 1 byte from advice tape
-                // Uses CUSTOM_OPCODE (0x5B) with FUNCT3_ADVICE_SB (2)
                 core::arch::asm!(
-                    ".insn s 0x5B, 2, x0, 0({rs1})",
+                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+                    opcode = const CUSTOM_OPCODE,
+                    funct3 = const FUNCT3_ADVICE_SB,
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );
