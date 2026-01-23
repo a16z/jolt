@@ -97,6 +97,11 @@ pub fn advice_tape_clear() {
     });
 }
 
+/// Get the length of the advice tape
+pub fn advice_tape_len() -> usize {
+    ADVICE_TAPE.with(|tape| tape.borrow().len())
+}
+
 use crate::instruction::format::NormalizedOperands;
 use crate::utils::panic::CallFrame;
 #[cfg(not(feature = "std"))]

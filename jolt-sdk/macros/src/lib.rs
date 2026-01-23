@@ -720,6 +720,10 @@ impl MacroBuilder {
                         &memory_config,
                     );
 
+                    // Check advice tape size for debugging
+                    let tape_size = jolt::advice_tape_len();
+                    eprintln!("Advice tape size after first pass: {} bytes", tape_size);
+
                     // Reset read position for second pass
                     jolt::advice_tape_reset();
                 }
@@ -935,6 +939,7 @@ impl MacroBuilder {
                 MemoryLayout,
                 JoltDevice,
                 advice_tape_clear,
+                advice_tape_len,
                 advice_tape_reset,
             };
             use jolt::{
