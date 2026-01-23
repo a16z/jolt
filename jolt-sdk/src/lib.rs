@@ -102,9 +102,9 @@ macro_rules! check_advice {
             let expected_value = 1u64;
             unsafe {
                 // VirtualAssertEQ: assert rs1 == rs2
-                // Use B-format encoding: opcode=0x5B, funct3=4
+                // Use B-format encoding: opcode=0x5B, funct3=1
                 core::arch::asm!(
-                    ".insn b 0x5B, 4, {rs1}, {rs2}, 0",
+                    ".insn b 0x5B, 1, {rs1}, {rs2}, 0",
                     rs1 = in(reg) cond_value,
                     rs2 = in(reg) expected_value,
                     options(nostack)
@@ -195,36 +195,36 @@ impl embedded_io::Read for AdviceReader {
                 // Use ADVICE_SD (store doubleword) - reads 8 bytes from advice tape
                 // Format: .insn s opcode, funct3, rs2, imm(rs1)
                 // Since rs2 is unused (advice comes from tape), we use x0
-                // funct3=3 for SD (doubleword)
+                // funct3=7 for ADVICE_SD (doubleword)
                 core::arch::asm!(
-                    ".insn s 0x5B, 3, x0, 0({rs1})",
+                    ".insn s 0x5B, 7, x0, 0({rs1})",
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );
                 Ok(8)
             } else if len >= 4 {
                 // Use ADVICE_SW (store word) - reads 4 bytes from advice tape
-                // funct3=2 for SW (word)
+                // funct3=6 for ADVICE_SW (word)
                 core::arch::asm!(
-                    ".insn s 0x5B, 2, x0, 0({rs1})",
+                    ".insn s 0x5B, 6, x0, 0({rs1})",
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );
                 Ok(4)
             } else if len >= 2 {
                 // Use ADVICE_SH (store halfword) - reads 2 bytes from advice tape
-                // funct3=1 for SH (halfword)
+                // funct3=5 for ADVICE_SH (halfword)
                 core::arch::asm!(
-                    ".insn s 0x5B, 1, x0, 0({rs1})",
+                    ".insn s 0x5B, 5, x0, 0({rs1})",
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );
                 Ok(2)
             } else if len == 1 {
                 // Use ADVICE_SB (store byte) - reads 1 byte from advice tape
-                // funct3=0 for SB (byte)
+                // funct3=4 for ADVICE_SB (byte)
                 core::arch::asm!(
-                    ".insn s 0x5B, 0, x0, 0({rs1})",
+                    ".insn s 0x5B, 4, x0, 0({rs1})",
                     rs1 = in(reg) dst_ptr,
                     options(nostack)
                 );

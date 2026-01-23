@@ -1,5 +1,17 @@
 #![allow(clippy::upper_case_acronyms)]
 
+// Opcode constants
+pub const CUSTOM_OPCODE: u8 = 0x5B; // Custom instructions (virtual sequences, advice, etc.)
+pub const INLINE_OPCODE: u8 = 0x2B; // Inline instructions
+
+// funct3 values for CUSTOM_OPCODE (0x5B)
+pub const FUNCT3_VIRTUAL_REV8W: u8 = 0b000;
+pub const FUNCT3_VIRTUAL_ASSERT_EQ: u8 = 0b001;
+pub const FUNCT3_ADVICE_SB: u8 = 0b100; // Store byte from advice tape
+pub const FUNCT3_ADVICE_SH: u8 = 0b101; // Store halfword from advice tape
+pub const FUNCT3_ADVICE_SW: u8 = 0b110; // Store word from advice tape
+pub const FUNCT3_ADVICE_SD: u8 = 0b111; // Store doubleword from advice tape
+
 use add::ADD;
 use addi::ADDI;
 use addiw::ADDIW;
@@ -948,13 +960,17 @@ impl Instruction {
             0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
-            // 0x5B is reserved for virtual instructions.
+            // 0x5B is reserved for custom/virtual instructions.
             0b1011011 => {
                 let funct3 = (instr >> 12) & 0x7;
                 match funct3 {
-                    0b000 => Ok(VirtualRev8W::new(instr, address, true, compressed).into()),
-                    0b001 => Ok(VirtualAssertEQ::new(instr, address, true, compressed).into()),
-                    _ => Err("Invalid virtual instruction"),
+                    f if f == FUNCT3_VIRTUAL_REV8W as u32 => Ok(VirtualRev8W::new(instr, address, true, compressed).into()),
+                    f if f == FUNCT3_VIRTUAL_ASSERT_EQ as u32 => Ok(VirtualAssertEQ::new(instr, address, true, compressed).into()),
+                    f if f == FUNCT3_ADVICE_SB as u32 => Ok(AdviceSB::new(instr, address, true, compressed).into()),
+                    f if f == FUNCT3_ADVICE_SH as u32 => Ok(AdviceSH::new(instr, address, true, compressed).into()),
+                    f if f == FUNCT3_ADVICE_SW as u32 => Ok(AdviceSW::new(instr, address, true, compressed).into()),
+                    f if f == FUNCT3_ADVICE_SD as u32 => Ok(AdviceSD::new(instr, address, true, compressed).into()),
+                    _ => Err("Invalid custom/virtual instruction"),
                 }
             }
             _ => Err("Unknown opcode"),
