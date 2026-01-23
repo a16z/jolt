@@ -164,10 +164,7 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
                     VirtualPolynomial::ProgramImageInitContributionRw,
                     SumcheckId::RamValEvaluation,
                 );
-                let input_eval = super::eval_inputs_mle::<F>(
-                    program_io,
-                    &r_address.r,
-                );
+                let input_eval = super::eval_inputs_mle::<F>(program_io, &r_address.r);
                 prog_img_claim + input_eval
             }
         };

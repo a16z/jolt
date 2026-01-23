@@ -629,10 +629,7 @@ pub fn eval_initial_ram_mle<F: JoltField>(
 ///
 /// Excludes program image, outputs, panic, and termination bits.
 /// For the full IO region, see [`eval_io_mle`].
-fn eval_inputs_mle<F: JoltField>(
-    program_io: &JoltDevice,
-    r_address: &[F::Challenge],
-) -> F {
+fn eval_inputs_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challenge]) -> F {
     if program_io.inputs.is_empty() {
         return F::zero();
     }
@@ -712,10 +709,7 @@ fn sparse_eval_u64_block<F: JoltField>(
 /// When `r_address` has more variables than the IO polynomial, we embed it into the larger
 /// domain by fixing the extra high-order variables to 0, which corresponds to multiplying
 /// by `∏(1 - r_hi[i])`.
-pub fn eval_io_mle<F: JoltField>(
-    program_io: &JoltDevice,
-    r_address: &[F::Challenge],
-) -> F {
+pub fn eval_io_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challenge]) -> F {
     // IO region size in words (power of two).
     let range_end_words =
         remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;

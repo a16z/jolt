@@ -148,9 +148,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
                 };
                 let (_, prog_img_claim) =
                     opening_accumulator.get_virtual_polynomial_opening(prog_poly, prog_sumcheck);
-                let input_eval = super::eval_inputs_mle::<F>(
-                    program_io, &r_address,
-                );
+                let input_eval = super::eval_inputs_mle::<F>(program_io, &r_address);
                 prog_img_claim + input_eval
             }
         };

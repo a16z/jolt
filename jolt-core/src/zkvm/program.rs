@@ -280,7 +280,8 @@ impl<PCS: CommitmentScheme> TrustedProgramCommitments<PCS> {
         // initialize and build/commit together for each layout branch.
         //
         // bytecode_T: The T value used for bytecode coefficient indexing (needed for Stage 8 VMP).
-        let (bytecode_commitments, bytecode_hints, bytecode_num_columns, bytecode_T) = match layout {
+        let (bytecode_commitments, bytecode_hints, bytecode_num_columns, bytecode_T) = match layout
+        {
             DoryLayout::CycleMajor => {
                 // For CycleMajor, commit bytecode with main-matrix dimensions.
                 // This ensures row-commitment hints match main matrix structure when T > bytecode_len.
