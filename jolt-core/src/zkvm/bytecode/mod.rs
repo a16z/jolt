@@ -9,8 +9,8 @@ use tracer::instruction::{Cycle, Instruction};
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
-use crate::utils::math::Math;
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
 use crate::zkvm::bytecode::chunks::{build_bytecode_chunks, total_lanes};
 use rayon::prelude::*;
 

@@ -16,7 +16,7 @@ pub fn preprocess(
     guest: &Program,
     max_trace_length: usize,
 ) -> JoltProverPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> {
-    use crate::zkvm::bytecode::BytecodePreprocessing;
+    use crate::zkvm::program::ProgramPreprocessing;
     use crate::zkvm::verifier::JoltSharedPreprocessing;
     use std::sync::Arc;
 
@@ -26,10 +26,9 @@ pub fn preprocess(
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
 
-    let bytecode = Arc::new(BytecodePreprocessing::preprocess(instructions));
-    let shared_preprocessing =
-        JoltSharedPreprocessing::new(&bytecode, memory_layout, memory_init, max_trace_length);
-    JoltProverPreprocessing::new(shared_preprocessing, bytecode)
+    let program = Arc::new(ProgramPreprocessing::preprocess(instructions, memory_init));
+    let shared = JoltSharedPreprocessing::new(program.meta(), memory_layout, max_trace_length);
+    JoltProverPreprocessing::new(shared, program)
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]

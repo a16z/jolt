@@ -32,7 +32,6 @@ use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::r1cs::constraints::OUTER_FIRST_ROUND_POLY_DEGREE_BOUND;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::r1cs::{
@@ -131,13 +130,9 @@ impl<F: JoltField> OuterUniSkipProver<F> {
     pub fn initialize(
         params: OuterUniSkipParams<F>,
         trace: &[Cycle],
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
     ) -> Self {
-        let extended = Self::compute_univariate_skip_extended_evals(
-            bytecode_preprocessing,
-            trace,
-            &params.tau,
-        );
+        let extended = Self::compute_univariate_skip_extended_evals(program, trace, &params.tau);
 
         let instance = Self {
             params,
@@ -166,7 +161,7 @@ impl<F: JoltField> OuterUniSkipProver<F> {
     /// \sum_{x_in'} eq(tau_in, (x_in', 0)) * Az(x_out, x_in', 0, y) * Bz(x_out, x_in', 0, y)
     ///     + eq(tau_in, (x_in', 1)) * Az(x_out, x_in', 1, y) * Bz(x_out, x_in', 1, y)
     fn compute_univariate_skip_extended_evals(
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
         trace: &[Cycle],
         tau: &[F::Challenge],
     ) -> [F; OUTER_UNIVARIATE_SKIP_DEGREE] {
@@ -191,11 +186,8 @@ impl<F: JoltField> OuterUniSkipProver<F> {
                     let x_in_prime = x_in >> 1;
                     let base_step_idx = (x_out << num_x_in_prime_bits) | x_in_prime;
 
-                    let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                        bytecode_preprocessing,
-                        trace,
-                        base_step_idx,
-                    );
+                    let row_inputs =
+                        R1CSCycleInputs::from_trace::<F>(program, trace, base_step_idx);
                     let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
 
                     let is_group1 = (x_in & 1) == 1;
@@ -499,7 +491,7 @@ pub type OuterRemainingStreamingSumcheck<F, S> =
 #[derive(Allocative)]
 pub struct OuterSharedState<F: JoltField> {
     #[allocative(skip)]
-    bytecode_preprocessing: BytecodePreprocessing,
+    program: crate::zkvm::program::ProgramPreprocessing,
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
     split_eq_poly: GruenSplitEqPolynomial<F>,
@@ -514,11 +506,11 @@ impl<F: JoltField> OuterSharedState<F> {
     #[tracing::instrument(skip_all, name = "OuterSharedState::new")]
     pub fn new(
         trace: Arc<Vec<Cycle>>,
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
         uni_skip_params: &OuterUniSkipParams<F>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
-        let bytecode_preprocessing = bytecode_preprocessing.clone();
+        let program = program.clone();
         let outer_params = OuterStreamingProverParams::new(uni_skip_params, opening_accumulator);
         let r0 = outer_params.r0_uniskip;
 
@@ -546,7 +538,7 @@ impl<F: JoltField> OuterSharedState<F> {
 
         Self {
             split_eq_poly,
-            bytecode_preprocessing,
+            program,
             trace,
             t_prime_poly: None,
             r_grid,
@@ -572,7 +564,7 @@ impl<F: JoltField> OuterSharedState<F> {
         offset: usize,
         scaled_w: &[[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]],
     ) {
-        let preprocess = &self.bytecode_preprocessing;
+        let preprocess = &self.program;
         let trace = &self.trace;
         debug_assert_eq!(scaled_w.len(), klen);
         debug_assert_eq!(grid_az.len(), jlen);
@@ -933,7 +925,7 @@ impl<F: JoltField> OuterLinearStage<F> {
                                 let selector = (full_idx & 1) == 1;
 
                                 let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                    &shared.bytecode_preprocessing,
+                                    &shared.program,
                                     &shared.trace,
                                     step_idx,
                                 );
@@ -1056,7 +1048,7 @@ impl<F: JoltField> OuterLinearStage<F> {
                             let time_step_idx = full_idx >> 1;
 
                             let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                &shared.bytecode_preprocessing,
+                                &shared.program,
                                 &shared.trace,
                                 time_step_idx,
                             );
@@ -1087,7 +1079,7 @@ impl<F: JoltField> OuterLinearStage<F> {
                             let selector = (full_idx & 1) == 1;
 
                             let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                &shared.bytecode_preprocessing,
+                                &shared.program,
                                 &shared.trace,
                                 time_step_idx,
                             );
@@ -1168,7 +1160,7 @@ impl<F: JoltField> OuterLinearStage<F> {
                                 let time_step_idx = full_idx >> 1;
 
                                 let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                    &shared.bytecode_preprocessing,
+                                    &shared.program,
                                     &shared.trace,
                                     time_step_idx,
                                 );
@@ -1200,7 +1192,7 @@ impl<F: JoltField> OuterLinearStage<F> {
                                 let selector = (full_idx & 1) == 1;
 
                                 let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                                    &shared.bytecode_preprocessing,
+                                    &shared.program,
                                     &shared.trace,
                                     time_step_idx,
                                 );
@@ -1445,11 +1437,8 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
     ) {
         let r_cycle = OuterStreamingProverParams::get_inputs_opening_point(sumcheck_challenges);
 
-        let claimed_witness_evals = R1CSEval::compute_claimed_inputs(
-            &shared.bytecode_preprocessing,
-            &shared.trace,
-            &r_cycle,
-        );
+        let claimed_witness_evals =
+            R1CSEval::compute_claimed_inputs(&shared.program, &shared.trace, &r_cycle);
 
         for (i, input) in ALL_R1CS_INPUTS.iter().enumerate() {
             accumulator.append_virtual(

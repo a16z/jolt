@@ -40,11 +40,11 @@ use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::chunks::{build_bytecode_chunks, total_lanes};
 use crate::zkvm::bytecode::read_raf_checking::BytecodeReadRafSumcheckParams;
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{
     CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 use crate::zkvm::lookup_table::LookupTables;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use common::constants::{REGISTER_COUNT, XLEN};
 use strum::EnumCount;
@@ -215,7 +215,7 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
     #[tracing::instrument(skip_all, name = "BytecodeClaimReductionProver::initialize")]
     pub fn initialize(
         params: BytecodeClaimReductionParams<F>,
-        bytecode: Arc<BytecodePreprocessing>,
+        program: Arc<ProgramPreprocessing>,
     ) -> Self {
         let log_k = params.log_k;
         let t_size = 1 << log_k;
@@ -248,8 +248,9 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
             .collect();
 
         // Build per-chunk bytecode polynomials B_i(lane, k).
-        let bytecode_len = bytecode.bytecode.len();
+        let bytecode_len = program.bytecode_len();
         debug_assert_eq!(bytecode_len, t_size);
+        let bytecode = program.as_bytecode();
         let mut bytecode_chunks = build_bytecode_chunks::<F>(&bytecode, params.log_k_chunk);
         if layout == DoryLayout::AddressMajor {
             // Permute committed AddressMajor coefficient order into CycleMajor for the reduction.

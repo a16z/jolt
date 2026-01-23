@@ -1,7 +1,7 @@
 //! Shared utilities for RA (read-address) polynomials across all families.
 //!
 //! This module provides efficient computation of RA indices and G evaluations
-//! that are shared across instruction, bytecode, and RAM polynomial families.
+//! that are shared across instruction, program, and RAM polynomial families.
 //!
 //! ## Design Goals
 //!
@@ -32,9 +32,9 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::ram::remap_address;
 use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
@@ -43,7 +43,7 @@ use tracer::instruction::Cycle;
 
 /// Maximum number of instruction RA chunks (lookup index splits into at most 32 chunks)
 pub const MAX_INSTRUCTION_D: usize = 32;
-/// Maximum number of bytecode RA chunks (PC splits into at most 6 chunks)
+/// Maximum number of program RA chunks (PC splits into at most 6 chunks)
 pub const MAX_BYTECODE_D: usize = 6;
 /// Maximum number of RAM RA chunks (address splits into at most 8 chunks)
 pub const MAX_RAM_D: usize = 8;
@@ -79,7 +79,7 @@ pub struct RaIndices {
     /// Instruction RA chunk indices (always present)
     pub instruction: [u8; MAX_INSTRUCTION_D],
     /// Bytecode RA chunk indices (always present)
-    pub bytecode: [u8; MAX_BYTECODE_D],
+    pub program: [u8; MAX_BYTECODE_D],
     /// RAM RA chunk indices (None for non-memory cycles)
     pub ram: [Option<u8>; MAX_RAM_D],
 }
@@ -108,7 +108,7 @@ impl Zero for RaIndices {
 
     fn is_zero(&self) -> bool {
         self.instruction.iter().all(|&x| x == 0)
-            && self.bytecode.iter().all(|&x| x == 0)
+            && self.program.iter().all(|&x| x == 0)
             && self.ram.iter().all(|x| x.is_none())
     }
 }
@@ -118,7 +118,7 @@ impl RaIndices {
     #[inline]
     pub fn from_cycle(
         cycle: &Cycle,
-        bytecode: &BytecodePreprocessing,
+        program: &ProgramPreprocessing,
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
     ) -> Self {
@@ -150,10 +150,10 @@ impl RaIndices {
         }
 
         // Bytecode indices from PC
-        let pc = bytecode.get_pc(cycle);
-        let mut bytecode_arr = [0u8; MAX_BYTECODE_D];
+        let pc = program.get_pc(cycle);
+        let mut program_arr = [0u8; MAX_BYTECODE_D];
         for i in 0..one_hot_params.bytecode_d {
-            bytecode_arr[i] = one_hot_params.bytecode_pc_chunk(pc, i);
+            program_arr[i] = one_hot_params.bytecode_pc_chunk(pc, i);
         }
 
         // RAM indices from remapped address (None for non-memory cycles)
@@ -166,13 +166,13 @@ impl RaIndices {
 
         Self {
             instruction,
-            bytecode: bytecode_arr,
+            program: program_arr,
             ram,
         }
     }
 
     /// Extract the index for polynomial `poly_idx` in the unified ordering:
-    /// [instruction_0..d, bytecode_0..d, ram_0..d]
+    /// [instruction_0..d, program_0..d, ram_0..d]
     #[inline]
     pub fn get_index(&self, poly_idx: usize, one_hot_params: &OneHotParams) -> Option<u8> {
         let instruction_d = one_hot_params.instruction_d;
@@ -181,7 +181,7 @@ impl RaIndices {
         if poly_idx < instruction_d {
             Some(self.instruction[poly_idx])
         } else if poly_idx < instruction_d + bytecode_d {
-            Some(self.bytecode[poly_idx - instruction_d])
+            Some(self.program[poly_idx - instruction_d])
         } else {
             self.ram[poly_idx - instruction_d - bytecode_d]
         }
@@ -198,24 +198,17 @@ impl RaIndices {
 /// Uses a two-table split-eq: split `r_cycle` into MSB/LSB halves, compute `E_hi` and `E_lo`,
 /// then `eq(r_cycle, c) = E_hi[c_hi] * E_lo[c_lo]` where `c = (c_hi << lo_bits) | c_lo`.
 ///
-/// Returns G in order: [instruction_0..d, bytecode_0..d, ram_0..d]
+/// Returns G in order: [instruction_0..d, program_0..d, ram_0..d]
 /// Each inner Vec has length k_chunk.
 #[tracing::instrument(skip_all, name = "shared_ra_polys::compute_all_G")]
 pub fn compute_all_G<F: JoltField>(
     trace: &[Cycle],
-    bytecode: &BytecodePreprocessing,
+    program: &ProgramPreprocessing,
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
 ) -> Vec<Vec<F>> {
-    compute_all_G_impl::<F>(
-        trace,
-        bytecode,
-        memory_layout,
-        one_hot_params,
-        r_cycle,
-        None,
-    )
+    compute_all_G_impl::<F>(trace, program, memory_layout, one_hot_params, r_cycle, None)
 }
 
 /// Compute all G evaluations AND RA indices in a single pass over the trace.
@@ -228,7 +221,7 @@ pub fn compute_all_G<F: JoltField>(
 #[tracing::instrument(skip_all, name = "shared_ra_polys::compute_all_G_and_ra_indices")]
 pub fn compute_all_G_and_ra_indices<F: JoltField>(
     trace: &[Cycle],
-    bytecode: &BytecodePreprocessing,
+    program: &ProgramPreprocessing,
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
@@ -239,7 +232,7 @@ pub fn compute_all_G_and_ra_indices<F: JoltField>(
 
     let G = compute_all_G_impl::<F>(
         trace,
-        bytecode,
+        program,
         memory_layout,
         one_hot_params,
         r_cycle,
@@ -256,7 +249,7 @@ pub fn compute_all_G_and_ra_indices<F: JoltField>(
 #[inline(always)]
 fn compute_all_G_impl<F: JoltField>(
     trace: &[Cycle],
-    bytecode: &BytecodePreprocessing,
+    program: &ProgramPreprocessing,
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
@@ -320,7 +313,7 @@ fn compute_all_G_impl<F: JoltField>(
                 (0..ram_d).map(|_| unsafe_allocate_zero_vec(K)).collect();
             let mut touched_instruction: Vec<FixedBitSet> =
                 vec![FixedBitSet::with_capacity(K); instruction_d];
-            let mut touched_bytecode: Vec<FixedBitSet> =
+            let mut touched_program: Vec<FixedBitSet> =
                 vec![FixedBitSet::with_capacity(K); bytecode_d];
             let mut touched_ram: Vec<FixedBitSet> = vec![FixedBitSet::with_capacity(K); ram_d];
 
@@ -337,10 +330,10 @@ fn compute_all_G_impl<F: JoltField>(
                     touched_instruction[i].clear();
                 }
                 for i in 0..bytecode_d {
-                    for k in touched_bytecode[i].ones() {
+                    for k in touched_program[i].ones() {
                         local_bytecode[i][k] = Default::default();
                     }
-                    touched_bytecode[i].clear();
+                    touched_program[i].clear();
                 }
                 for i in 0..ram_d {
                     for k in touched_ram[i].ones() {
@@ -360,7 +353,7 @@ fn compute_all_G_impl<F: JoltField>(
                     let add = *E_lo[c_lo].as_unreduced_ref();
 
                     let ra_idx =
-                        RaIndices::from_cycle(&trace[j], bytecode, memory_layout, one_hot_params);
+                        RaIndices::from_cycle(&trace[j], program, memory_layout, one_hot_params);
 
                     // Write ra_indices if collecting (disjoint write, each j visited once)
                     if ra_ptr_usize != 0 {
@@ -383,9 +376,9 @@ fn compute_all_G_impl<F: JoltField>(
 
                     // BytecodeRa contributions (unreduced accumulation)
                     for i in 0..bytecode_d {
-                        let k = ra_idx.bytecode[i] as usize;
-                        if !touched_bytecode[i].contains(k) {
-                            touched_bytecode[i].insert(k);
+                        let k = ra_idx.program[i] as usize;
+                        if !touched_program[i].contains(k) {
+                            touched_program[i].insert(k);
                         }
                         local_bytecode[i][k] += add;
                     }
@@ -410,7 +403,7 @@ fn compute_all_G_impl<F: JoltField>(
                     }
                 }
                 for i in 0..bytecode_d {
-                    for k in touched_bytecode[i].ones() {
+                    for k in touched_program[i].ones() {
                         let reduced = F::from_barrett_reduce::<5>(local_bytecode[i][k]);
                         partial_bytecode[i][k] += e_hi * reduced;
                     }
@@ -423,7 +416,7 @@ fn compute_all_G_impl<F: JoltField>(
                 }
             }
 
-            // Combine into single Vec<Vec<F>> in order: instruction, bytecode, ram
+            // Combine into single Vec<Vec<F>> in order: instruction, program, ram
             let mut result: Vec<Vec<F>> = Vec::with_capacity(N);
             result.extend(partial_instruction);
             result.extend(partial_bytecode);
@@ -906,12 +899,12 @@ impl<F: JoltField> SharedRaRound3<F> {
 #[tracing::instrument(skip_all, name = "shared_ra_polys::compute_ra_indices")]
 pub fn compute_ra_indices(
     trace: &[Cycle],
-    bytecode: &BytecodePreprocessing,
+    program: &ProgramPreprocessing,
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
 ) -> Vec<RaIndices> {
     trace
         .par_iter()
-        .map(|cycle| RaIndices::from_cycle(cycle, bytecode, memory_layout, one_hot_params))
+        .map(|cycle| RaIndices::from_cycle(cycle, program, memory_layout, one_hot_params))
         .collect()
 }

@@ -25,7 +25,6 @@ use crate::{
     transcripts::Transcript,
     utils::math::Math,
     zkvm::{
-        bytecode::BytecodePreprocessing,
         claim_reductions::AdviceKind,
         config::BytecodeMode,
         config::OneHotParams,
@@ -94,8 +93,19 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
         }
     }
 
+    /// Create params for verifier.
+    ///
+    /// # Arguments
+    /// - `program_meta`: RAM preprocessing metadata
+    /// - `program_image_words`: Program image words (only needed in Full mode, None for Committed mode)
+    /// - `program_io`: Program I/O device
+    /// - `trace_len`: Trace length
+    /// - `ram_K`: RAM K parameter
+    /// - `bytecode_mode`: Bytecode mode (Full or Committed)
+    /// - `opening_accumulator`: Verifier opening accumulator
     pub fn new_from_verifier(
-        ram_preprocessing: &super::RAMPreprocessing,
+        program_meta: &crate::zkvm::program::ProgramMetadata,
+        program_image_words: Option<&[u64]>,
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
@@ -137,21 +147,27 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
         );
 
         // Public part of val_init:
-        // - Full mode: compute program-image+inputs directly from RAM preprocessing (verifier has words).
+        // - Full mode: compute program-image+inputs directly using provided words.
         // - Committed mode: use staged scalar program-image claim + locally computed input contribution.
         let val_init_public_eval = match bytecode_mode {
-            BytecodeMode::Full => super::evaluate_public_initial_ram_evaluation::<F>(
-                ram_preprocessing,
-                program_io,
-                &r_address.r,
-            ),
+            BytecodeMode::Full => {
+                let words = program_image_words.expect("Full mode requires program_image_words");
+                super::evaluate_public_initial_ram_evaluation::<F>(
+                    program_meta.min_bytecode_address,
+                    words,
+                    program_io,
+                    &r_address.r,
+                )
+            }
             BytecodeMode::Committed => {
                 let (_, prog_img_claim) = opening_accumulator.get_virtual_polynomial_opening(
                     VirtualPolynomial::ProgramImageInitContributionRw,
                     SumcheckId::RamValEvaluation,
                 );
-                let input_eval =
-                    super::evaluate_public_input_initial_ram_evaluation::<F>(program_io, &r_address.r);
+                let input_eval = super::evaluate_public_input_initial_ram_evaluation::<F>(
+                    program_io,
+                    &r_address.r,
+                );
                 prog_img_claim + input_eval
             }
         };
@@ -207,7 +223,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     pub fn initialize(
         params: ValEvaluationSumcheckParams<F>,
         trace: &[Cycle],
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
         // Compute the size-K table storing all eq(r_address, k) evaluations for
@@ -230,12 +246,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         drop(_guard);
         drop(span);
 
-        let inc = CommittedPolynomial::RamInc.generate_witness(
-            bytecode_preprocessing,
-            memory_layout,
-            trace,
-            None,
-        );
+        let inc = CommittedPolynomial::RamInc.generate_witness(program, memory_layout, trace, None);
         let lt = LtPolynomial::new(&params.r_cycle);
 
         Self {
@@ -340,7 +351,8 @@ pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
     pub fn new(
-        ram_preprocessing: &super::RAMPreprocessing,
+        program_meta: &crate::zkvm::program::ProgramMetadata,
+        program_image_words: Option<&[u64]>,
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
@@ -348,7 +360,8 @@ impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let params = ValEvaluationSumcheckParams::new_from_verifier(
-            ram_preprocessing,
+            program_meta,
+            program_image_words,
             program_io,
             trace_len,
             ram_K,

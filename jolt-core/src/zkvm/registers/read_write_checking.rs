@@ -5,7 +5,6 @@ use crate::subprotocols::read_write_matrix::{
     AddressMajorMatrixEntry, ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
     RegistersAddressMajorEntry, RegistersCycleMajorEntry,
 };
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::ReadWriteConfig;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{
@@ -191,7 +190,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     pub fn initialize(
         params: RegistersReadWriteCheckingParams<F>,
         trace: Arc<Vec<Cycle>>,
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
         let r_prime = &params.r_cycle;
@@ -209,12 +208,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                 Some(MultilinearPolynomial::from(EqPolynomial::evals(&r_prime.r))),
             )
         };
-        let inc = CommittedPolynomial::RdInc.generate_witness(
-            bytecode_preprocessing,
-            memory_layout,
-            &trace,
-            None,
-        );
+        let inc = CommittedPolynomial::RdInc.generate_witness(program, memory_layout, &trace, None);
         let sparse_matrix =
             ReadWriteMatrixCycleMajor::<_, RegistersCycleMajorEntry<F>>::new(&trace, params.gamma);
         let phase1_rounds = params.phase1_num_rounds;

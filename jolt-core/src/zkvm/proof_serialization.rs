@@ -40,10 +40,6 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage6b_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub joint_opening_proof: PCS::Proof,
-    /// Optional separate opening proof for the committed program-image polynomial.
-    ///
-    /// (This is verified in Stage 8 when `bytecode_mode == Committed`.)
-    pub program_image_opening_proof: Option<PCS::Proof>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,
@@ -398,7 +394,9 @@ impl CanonicalSerialize for VirtualPolynomial {
                 44u8.serialize_with_mode(&mut writer, compress)
             }
             Self::ProgramImageInitContributionRw => 45u8.serialize_with_mode(&mut writer, compress),
-            Self::ProgramImageInitContributionRaf => 46u8.serialize_with_mode(&mut writer, compress),
+            Self::ProgramImageInitContributionRaf => {
+                46u8.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 

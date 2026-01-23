@@ -7,7 +7,6 @@ use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::InstructionFlags;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
@@ -73,7 +72,7 @@ impl CommittedPolynomial {
         &self,
         setup: &PCS::ProverSetup,
         preprocessing: &JoltSharedPreprocessing,
-        bytecode: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
         row_cycles: &[tracer::instruction::Cycle],
         one_hot_params: &OneHotParams,
     ) -> <PCS as StreamingCommitmentScheme>::ChunkState
@@ -118,7 +117,7 @@ impl CommittedPolynomial {
                 let row: Vec<Option<usize>> = row_cycles
                     .iter()
                     .map(|cycle| {
-                        let pc = bytecode.get_pc(cycle);
+                        let pc = program.get_pc(cycle);
                         Some(one_hot_params.bytecode_pc_chunk(pc, *idx) as usize)
                     })
                     .collect();
@@ -151,7 +150,7 @@ impl CommittedPolynomial {
     #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness")]
     pub fn generate_witness<F>(
         &self,
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
         memory_layout: &MemoryLayout,
         trace: &[Cycle],
         one_hot_params: Option<&OneHotParams>,
@@ -165,7 +164,7 @@ impl CommittedPolynomial {
                 let addresses: Vec<_> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let pc = bytecode_preprocessing.get_pc(cycle);
+                        let pc = program.get_pc(cycle);
                         Some(one_hot_params.bytecode_pc_chunk(pc, *i))
                     })
                     .collect();

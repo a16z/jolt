@@ -20,10 +20,7 @@ use crate::{
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
-    zkvm::{
-        bytecode::BytecodePreprocessing,
-        witness::{CommittedPolynomial, VirtualPolynomial},
-    },
+    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -106,15 +103,10 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     pub fn initialize(
         params: RegistersValEvaluationSumcheckParams<F>,
         trace: &[Cycle],
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
-        let inc = CommittedPolynomial::RdInc.generate_witness(
-            bytecode_preprocessing,
-            memory_layout,
-            trace,
-            None,
-        );
+        let inc = CommittedPolynomial::RdInc.generate_witness(program, memory_layout, trace, None);
 
         let eq_r_address = EqPolynomial::evals(&params.r_address.r);
         let wa: Vec<Option<u8>> = trace

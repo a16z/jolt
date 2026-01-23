@@ -528,14 +528,13 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                let bytecode = BytecodePreprocessing::preprocess(instructions);
+                let program_data = std::sync::Arc::new(jolt::ProgramPreprocessing::preprocess(instructions, memory_init));
                 let shared = JoltSharedPreprocessing::new(
-                    &bytecode,
+                    program_data.meta(),
                     memory_layout,
-                    memory_init,
                     #max_trace_length,
                 );
-                JoltProverPreprocessing::new(shared, std::sync::Arc::new(bytecode))
+                JoltProverPreprocessing::new(shared, program_data)
             }
         }
     }
@@ -575,14 +574,13 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                let bytecode = BytecodePreprocessing::preprocess(instructions);
+                let program_data = std::sync::Arc::new(jolt::ProgramPreprocessing::preprocess(instructions, memory_init));
                 let shared = JoltSharedPreprocessing::new(
-                    &bytecode,
+                    program_data.meta(),
                     memory_layout,
-                    memory_init,
                     #max_trace_length,
                 );
-                JoltProverPreprocessing::new_committed(shared, std::sync::Arc::new(bytecode))
+                JoltProverPreprocessing::new_committed(shared, program_data)
             }
         }
     }
@@ -606,7 +604,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_shared_fn_name(program: &mut jolt::host::Program)
-                -> (jolt::JoltSharedPreprocessing, jolt::BytecodePreprocessing)
+                -> (jolt::JoltSharedPreprocessing, std::sync::Arc<jolt::ProgramPreprocessing>)
             {
                 #imports
                 let (instructions, memory_init, program_size) = program.decode();
@@ -620,14 +618,13 @@ impl MacroBuilder {
                     program_size: Some(program_size),
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
-                let bytecode = BytecodePreprocessing::preprocess(instructions);
-                let preprocessing = JoltSharedPreprocessing::new(
-                    &bytecode,
+                let program_data = std::sync::Arc::new(jolt::ProgramPreprocessing::preprocess(instructions, memory_init));
+                let shared = JoltSharedPreprocessing::new(
+                    program_data.meta(),
                     memory_layout,
-                    memory_init,
                     #max_trace_length,
                 );
-                (preprocessing, bytecode)
+                (shared, program_data)
             }
         }
     }
@@ -1105,7 +1102,7 @@ impl MacroBuilder {
                 RV64IMACVerifier,
                 RV64IMACProof,
                 host::Program,
-                BytecodePreprocessing,
+                ProgramPreprocessing,
                 JoltProverPreprocessing,
                 MemoryConfig,
                 MemoryLayout,

@@ -257,13 +257,21 @@ impl DoryGlobals {
     ) -> Option<()> {
         let (sigma_main, _) = Self::main_sigma_nu(max_log_k_chunk, max_log_t_any);
         let num_columns = 1usize << sigma_main;
+        let k_chunk = 1usize << max_log_k_chunk;
 
         if num_columns <= padded_len_words {
             assert!(
                 padded_len_words % num_columns == 0,
                 "program-image matrix width {num_columns} must divide padded_len_words {padded_len_words}"
             );
-            let num_rows = padded_len_words / num_columns;
+            // Match the Main-context K so AddressMajor trace-dense embedding (stride-by-K columns)
+            // uses the correct `cycles_per_row`.
+            let total_size = k_chunk * padded_len_words;
+            debug_assert!(
+                total_size.is_power_of_two(),
+                "expected K*T to be power-of-two"
+            );
+            let num_rows = total_size / num_columns;
 
             // If already initialized, ensure it matches (avoid silently ignoring OnceCell::set failures).
             #[allow(static_mut_refs)]
@@ -290,6 +298,64 @@ impl DoryGlobals {
         Some(())
     }
 
+    /// Initialize the **ProgramImage** context using an explicit `num_columns` (i.e. fixed sigma)
+    /// and an explicit `k_chunk` (Main's lane/address chunk size).
+    ///
+    /// This is used so program-image tier-1 row-commitment hints can be combined into the
+    /// Main-context batch opening hint in Stage 8.
+    ///
+    /// **Important**: We intentionally size the ProgramImage context so that
+    /// `k_from_matrix_shape() == k_chunk`. This makes the AddressMajor "trace-dense" embedding
+    /// (which occupies evenly-spaced columns with stride K) consistent between ProgramImage and
+    /// Main contexts.
+    ///
+    /// Requirements:
+    /// - `k_chunk` must be a power of two
+    /// - `num_columns` must be a power of two
+    /// - `padded_len_words` must be a power of two
+    /// - `k_chunk * padded_len_words >= num_columns` (so `num_rows >= 1`)
+    pub fn initialize_program_image_context_with_num_columns(
+        k_chunk: usize,
+        padded_len_words: usize,
+        num_columns: usize,
+    ) -> Option<()> {
+        assert!(padded_len_words.is_power_of_two());
+        assert!(padded_len_words > 0);
+        assert!(k_chunk.is_power_of_two());
+        assert!(k_chunk > 0);
+        assert!(num_columns.is_power_of_two());
+        let total_size = k_chunk * padded_len_words;
+        assert!(
+            total_size >= num_columns,
+            "program-image K*T ({total_size}) must be >= num_columns ({num_columns})"
+        );
+        assert!(
+            total_size % num_columns == 0,
+            "program-image K*T ({total_size}) must be divisible by num_columns ({num_columns})"
+        );
+        let num_rows = total_size / num_columns;
+
+        // If already initialized, ensure it matches (avoid silently ignoring OnceCell::set failures).
+        #[allow(static_mut_refs)]
+        unsafe {
+            if let (Some(existing_cols), Some(existing_rows), Some(existing_t)) = (
+                PROGRAM_IMAGE_NUM_COLUMNS.get(),
+                PROGRAM_IMAGE_MAX_NUM_ROWS.get(),
+                PROGRAM_IMAGE_T.get(),
+            ) {
+                assert_eq!(*existing_cols, num_columns);
+                assert_eq!(*existing_rows, num_rows);
+                assert_eq!(*existing_t, padded_len_words);
+                return Some(());
+            }
+        }
+
+        Self::set_num_columns_for_context(num_columns, DoryContext::ProgramImage);
+        Self::set_T_for_context(padded_len_words, DoryContext::ProgramImage);
+        Self::set_max_num_rows_for_context(num_rows, DoryContext::ProgramImage);
+        Some(())
+    }
+
     /// Initialize the **Main** context using an explicit `num_columns` (i.e. fixed sigma).
     ///
     /// This is used in `BytecodeMode::Committed` so that the Main context uses the same column
@@ -307,7 +373,10 @@ impl DoryGlobals {
         num_columns: usize,
         layout: Option<DoryLayout>,
     ) -> Option<()> {
-        assert!(num_columns.is_power_of_two(), "num_columns must be a power of two");
+        assert!(
+            num_columns.is_power_of_two(),
+            "num_columns must be a power of two"
+        );
         let total_size = K * T;
         assert!(
             total_size % num_columns == 0,
@@ -318,11 +387,9 @@ impl DoryGlobals {
         // If already initialized, ensure it matches (avoid silently ignoring OnceCell::set failures).
         #[allow(static_mut_refs)]
         unsafe {
-            if let (Some(existing_cols), Some(existing_rows), Some(existing_t)) = (
-                NUM_COLUMNS.get(),
-                MAX_NUM_ROWS.get(),
-                GLOBAL_T.get(),
-            ) {
+            if let (Some(existing_cols), Some(existing_rows), Some(existing_t)) =
+                (NUM_COLUMNS.get(), MAX_NUM_ROWS.get(), GLOBAL_T.get())
+            {
                 assert_eq!(*existing_cols, num_columns);
                 assert_eq!(*existing_rows, num_rows);
                 assert_eq!(*existing_t, T);

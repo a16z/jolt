@@ -28,7 +28,8 @@ pub use instruction_lookups::{
     InstructionLookupsClaimReductionSumcheckVerifier,
 };
 pub use program_image::{
-    ProgramImageClaimReductionParams, ProgramImageClaimReductionProver, ProgramImageClaimReductionVerifier,
+    ProgramImageClaimReductionParams, ProgramImageClaimReductionProver,
+    ProgramImageClaimReductionVerifier,
 };
 pub use ram_ra::{
     RaReductionParams, RamRaClaimReductionSumcheckProver, RamRaClaimReductionSumcheckVerifier,

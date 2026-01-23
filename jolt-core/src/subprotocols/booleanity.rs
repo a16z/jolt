@@ -50,8 +50,8 @@ use crate::{
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, thread::drop_in_background_thread},
     zkvm::{
-        bytecode::BytecodePreprocessing,
         config::OneHotParams,
+        program::ProgramPreprocessing,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
@@ -245,13 +245,13 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
     pub fn initialize(
         params: BooleanitySumcheckParams<F>,
         trace: &[Cycle],
-        bytecode: &BytecodePreprocessing,
+        program: &ProgramPreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
         // Compute G and RA indices in a single pass over the trace
         let (G, ra_indices) = compute_all_G_and_ra_indices::<F>(
             trace,
-            bytecode,
+            program,
             memory_layout,
             &params.one_hot_params,
             &params.r_cycle,
@@ -522,13 +522,13 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
     pub fn initialize(
         params: BooleanitySumcheckParams<F>,
         trace: &[Cycle],
-        bytecode: &BytecodePreprocessing,
+        program: &ProgramPreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
         // Compute G in a single pass over the trace (witness-dependent).
         let G = compute_all_G::<F>(
             trace,
-            bytecode,
+            program,
             memory_layout,
             &params.one_hot_params,
             &params.r_cycle,
@@ -705,7 +705,7 @@ impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
     pub fn initialize(
         params: BooleanitySumcheckParams<F>,
         trace: &[Cycle],
-        bytecode: &BytecodePreprocessing,
+        program: &ProgramPreprocessing,
         memory_layout: &MemoryLayout,
         accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
@@ -736,7 +736,7 @@ impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
         let base_eq = F_table.clone_values();
 
         // Compute RA indices from witness (unfused with G computation).
-        let ra_indices = compute_ra_indices(trace, bytecode, memory_layout, &params.one_hot_params);
+        let ra_indices = compute_ra_indices(trace, program, memory_layout, &params.one_hot_params);
 
         // Compute prover-only batching coefficients rho_i = gamma^i and inverses.
         let num_polys = params.polynomial_types.len();

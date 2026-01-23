@@ -29,7 +29,6 @@ use crate::{
         thread::unsafe_allocate_zero_vec,
     },
     zkvm::{
-        bytecode::BytecodePreprocessing,
         config::{BytecodeMode, OneHotParams},
         instruction::{
             CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
@@ -134,7 +133,7 @@ pub struct BytecodeReadRafSumcheckProver<F: JoltField> {
     trace: Arc<Vec<Cycle>>,
     /// Bytecode preprocessing for computing PCs.
     #[allocative(skip)]
-    bytecode_preprocessing: Arc<BytecodePreprocessing>,
+    program: Arc<crate::zkvm::program::ProgramPreprocessing>,
     pub params: BytecodeReadRafSumcheckParams<F>,
 }
 
@@ -143,7 +142,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
     pub fn initialize(
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
-        bytecode_preprocessing: Arc<BytecodePreprocessing>,
+        program: Arc<crate::zkvm::program::ProgramPreprocessing>,
     ) -> Self {
         let claim_per_stage = [
             params.rv_claims[0] + params.gamma_powers[5] * params.raf_claim,
@@ -227,7 +226,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
                             break;
                         }
 
-                        let pc = bytecode_preprocessing.get_pc(&trace[c]);
+                        let pc = program.get_pc(&trace[c]);
 
                         // Track touched PCs (avoid duplicates with a simple check)
                         if inner[0][pc].is_zero() {
@@ -302,7 +301,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
             prev_round_polys: None,
             bound_val_evals: None,
             trace,
-            bytecode_preprocessing,
+            program,
             params,
         }
     }
@@ -363,7 +362,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
                     .trace
                     .par_iter()
                     .map(|cycle| {
-                        let pc = self.bytecode_preprocessing.get_pc(cycle);
+                        let pc = self.program.get_pc(cycle);
                         Some(self.params.one_hot_params.bytecode_pc_chunk(pc, i))
                     })
                     .collect();
@@ -627,7 +626,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
     pub fn initialize(
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
-        bytecode_preprocessing: Arc<BytecodePreprocessing>,
+        program: Arc<crate::zkvm::program::ProgramPreprocessing>,
     ) -> Self {
         let claim_per_stage = [
             params.rv_claims[0] + params.gamma_powers[5] * params.raf_claim,
@@ -692,7 +691,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
                             break;
                         }
 
-                        let pc = bytecode_preprocessing.get_pc(&trace[c]);
+                        let pc = program.get_pc(&trace[c]);
                         if inner[0][pc].is_zero() {
                             touched.push(pc);
                         }
@@ -914,7 +913,7 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
     pub fn initialize(
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
-        bytecode_preprocessing: Arc<BytecodePreprocessing>,
+        program: Arc<crate::zkvm::program::ProgramPreprocessing>,
         accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         // Recover Stage 6a address challenges from the accumulator.
@@ -934,7 +933,7 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
         let mut addr = BytecodeReadRafAddressSumcheckProver::initialize(
             params.clone(),
             Arc::clone(&trace),
-            Arc::clone(&bytecode_preprocessing),
+            Arc::clone(&program),
         );
         for (round, r_j) in r_address_low_to_high.iter().cloned().enumerate() {
             let _ = round; // replay is round-agnostic for this instance
@@ -972,7 +971,7 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
                 let ra_i: Vec<Option<u8>> = trace
                     .par_iter()
                     .map(|cycle| {
-                        let pc = bytecode_preprocessing.get_pc(cycle);
+                        let pc = program.get_pc(cycle);
                         Some(params.one_hot_params.bytecode_pc_chunk(pc, i))
                     })
                     .collect();
@@ -1151,7 +1150,7 @@ pub struct BytecodeReadRafSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
     pub fn gen(
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
@@ -1159,7 +1158,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
     ) -> Self {
         Self {
             params: BytecodeReadRafSumcheckParams::gen(
-                bytecode_preprocessing,
+                program,
                 n_cycle_vars,
                 one_hot_params,
                 opening_accumulator,
@@ -1262,7 +1261,7 @@ pub struct BytecodeReadRafAddressSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
     pub fn new(
-        bytecode_preprocessing: Option<&BytecodePreprocessing>,
+        program: Option<&crate::zkvm::program::ProgramPreprocessing>,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
@@ -1280,7 +1279,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
             ),
             // Full mode: verifier materializes/evaluates bytecode-dependent polynomials (O(K_bytecode)).
             BytecodeMode::Full => BytecodeReadRafSumcheckParams::gen(
-                bytecode_preprocessing.ok_or_else(|| {
+                program.ok_or_else(|| {
                     ProofVerifyError::BytecodeTypeMismatch(
                         "expected Full bytecode preprocessing, got Committed".to_string(),
                     )
@@ -1541,14 +1540,14 @@ pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
 impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckParams::gen")]
     pub fn gen(
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         Self::gen_impl(
-            Some(bytecode_preprocessing),
+            Some(program),
             n_cycle_vars,
             one_hot_params,
             opening_accumulator,
@@ -1577,7 +1576,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
     #[allow(clippy::too_many_arguments)]
     fn gen_impl(
-        bytecode_preprocessing: Option<&BytecodePreprocessing>,
+        program: Option<&crate::zkvm::program::ProgramPreprocessing>,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
@@ -1602,9 +1601,9 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         let rv_claims = [rv_claim_1, rv_claim_2, rv_claim_3, rv_claim_4, rv_claim_5];
 
         let val_polys = if compute_val_polys {
-            let bytecode = &bytecode_preprocessing
-                .expect("compute_val_polys requires bytecode preprocessing")
-                .bytecode;
+            let instructions = &program
+                .expect("compute_val_polys requires program preprocessing")
+                .instructions;
             // Pre-compute eq_r_register for stages 4 and 5 (they use different r_register points)
             let r_register_4 = opening_accumulator
                 .get_virtual_polynomial_opening(
@@ -1628,7 +1627,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
             // Fused pass: compute all val polynomials in a single parallel iteration
             Self::compute_val_polys(
-                bytecode,
+                instructions,
                 &eq_r_register_4,
                 &eq_r_register_5,
                 &stage1_gammas,

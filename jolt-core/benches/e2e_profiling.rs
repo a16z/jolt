@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
-use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 use jolt_core::zkvm::prover::JoltProverPreprocessing;
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifierPreprocessing};
 use jolt_core::zkvm::{RV64IMACProver, RV64IMACVerifier};
@@ -210,16 +209,18 @@ fn prove_example(
     drop(trace);
 
     let task = move || {
-        let bytecode: Arc<BytecodePreprocessing> =
-            BytecodePreprocessing::preprocess(instructions).into();
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            &bytecode,
-            program_io.memory_layout.clone(),
+        use jolt_core::zkvm::program::ProgramPreprocessing;
+        let program_data = Arc::new(ProgramPreprocessing::preprocess(
+            instructions,
             init_memory_state,
+        ));
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            program_data.meta(),
+            program_io.memory_layout.clone(),
             padded_trace_len,
         );
         let preprocessing =
-            JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&bytecode));
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&program_data));
 
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -238,7 +239,7 @@ fn prove_example(
         let verifier_preprocessing = JoltVerifierPreprocessing::new_full(
             shared_preprocessing,
             preprocessing.generators.to_verifier_setup(),
-            Arc::clone(&preprocessing.bytecode),
+            Arc::clone(&preprocessing.program),
         );
         let verifier =
             RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, program_io, None, None)
@@ -270,15 +271,18 @@ fn prove_example_with_trace(
         "Trace is longer than expected"
     );
 
-    let bytecode: Arc<BytecodePreprocessing> =
-        BytecodePreprocessing::preprocess(instructions).into();
-    let shared_preprocessing = JoltSharedPreprocessing::new(
-        &bytecode,
-        program_io.memory_layout.clone(),
+    use jolt_core::zkvm::program::ProgramPreprocessing;
+    let program_data = Arc::new(ProgramPreprocessing::preprocess(
+        instructions,
         init_memory_state,
+    ));
+    let shared_preprocessing = JoltSharedPreprocessing::new(
+        program_data.meta(),
+        program_io.memory_layout.clone(),
         trace.len().next_power_of_two(),
     );
-    let preprocessing = JoltProverPreprocessing::new(shared_preprocessing, Arc::clone(&bytecode));
+    let preprocessing =
+        JoltProverPreprocessing::new(shared_preprocessing, Arc::clone(&program_data));
 
     let elf_contents_opt = program.get_elf_contents();
     let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");

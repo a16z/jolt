@@ -248,12 +248,15 @@ where
         MultilinearPolynomial::OneHot(_) | MultilinearPolynomial::RLC(_) => false,
     };
 
-    let is_trace_dense_main_addr_major = dory_context == DoryContext::Main
-        && dory_layout == DoryLayout::AddressMajor
-        && is_trace_dense;
+    // Treat ProgramImage like Main here when its context is sized to match Main's K.
+    // This enables AddressMajor "trace-dense" embedding (stride-by-K columns) for the
+    // committed program-image polynomial.
+    let is_trace_dense_addr_major =
+        matches!(dory_context, DoryContext::Main | DoryContext::ProgramImage)
+            && dory_layout == DoryLayout::AddressMajor
+            && is_trace_dense;
 
-    let (dense_affine_bases, dense_chunk_size): (Vec<_>, usize) = if is_trace_dense_main_addr_major
-    {
+    let (dense_affine_bases, dense_chunk_size): (Vec<_>, usize) = if is_trace_dense_addr_major {
         let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
         let bases: Vec<_> = g1_slice
             .par_iter()

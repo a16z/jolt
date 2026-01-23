@@ -9,7 +9,7 @@ use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::{Flags, InstructionLookup, LookupQuery};
 use crate::zkvm::lookup_table::LookupTables;
 use crate::zkvm::ram::remap_address;
-use crate::zkvm::{bytecode::BytecodePreprocessing, witness::CommittedPolynomial};
+use crate::zkvm::witness::CommittedPolynomial;
 use allocative::Allocative;
 use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
@@ -22,7 +22,7 @@ use tracer::{instruction::Cycle, instruction::Instruction, LazyTraceIterator};
 
 #[derive(Clone, Debug)]
 pub struct RLCStreamingData {
-    pub bytecode: Arc<BytecodePreprocessing>,
+    pub program: Arc<crate::zkvm::program::ProgramPreprocessing>,
     pub memory_layout: MemoryLayout,
 }
 
@@ -36,14 +36,14 @@ pub struct RLCStreamingData {
 /// * `left_vec` - Left vector for the vector-matrix product (length >= num_rows)
 /// * `num_columns` - Number of columns in the Dory matrix
 /// * `bytecode_polys` - List of (chunk_index, coefficient) pairs for the RLC
-/// * `bytecode` - Bytecode preprocessing data
+/// * `program` - Program preprocessing data
 /// * `one_hot_params` - One-hot parameters (contains k_chunk)
 pub fn compute_bytecode_vmp_contribution<F: JoltField>(
     result: &mut [F],
     left_vec: &[F],
     num_columns: usize,
     bytecode_polys: &[(usize, F)],
-    bytecode: &BytecodePreprocessing,
+    program: &crate::zkvm::program::ProgramPreprocessing,
     one_hot_params: &OneHotParams,
 ) {
     if bytecode_polys.is_empty() {
@@ -52,7 +52,7 @@ pub fn compute_bytecode_vmp_contribution<F: JoltField>(
 
     let layout = DoryGlobals::get_layout();
     let k_chunk = one_hot_params.k_chunk;
-    let bytecode_len = bytecode.bytecode.len();
+    let bytecode_len = program.bytecode_len();
     let bytecode_cols = num_columns;
     let total = total_lanes();
 
@@ -67,7 +67,7 @@ pub fn compute_bytecode_vmp_contribution<F: JoltField>(
         if coeff.is_zero() {
             continue;
         }
-        for (cycle, instr) in bytecode.bytecode.iter().enumerate().take(bytecode_len) {
+        for (cycle, instr) in program.instructions.iter().enumerate().take(bytecode_len) {
             let normalized = instr.normalize();
             let circuit_flags = <Instruction as Flags>::circuit_flags(instr);
             let instr_flags = <Instruction as Flags>::instruction_flags(instr);
@@ -150,9 +150,11 @@ pub struct StreamingRLCContext<F: JoltField> {
     pub onehot_polys: Vec<(CommittedPolynomial, F)>,
     /// Bytecode chunk polynomials with their RLC coefficients.
     pub bytecode_polys: Vec<(usize, F)>,
-    /// Advice polynomials with their RLC coefficients.
+    /// Advice polynomials with their RLC coefficients and IDs.
     /// These are NOT streamed from trace - they're passed in directly.
-    pub advice_polys: Vec<(F, MultilinearPolynomial<F>)>,
+    /// Format: (poly_id, coeff, polynomial) - ID is needed to determine
+    /// commitment dimensions (ProgramImageInit uses Main's sigma).
+    pub advice_polys: Vec<(CommittedPolynomial, F, MultilinearPolynomial<F>)>,
     pub trace_source: TraceSource,
     pub preprocessing: Arc<RLCStreamingData>,
     pub one_hot_params: OneHotParams,
@@ -297,7 +299,11 @@ impl<F: JoltField> RLCPolynomial<F> {
                     // "Extra" polynomials are passed in directly (not streamed from trace).
                     // Today this includes advice polynomials and (in committed mode) the program-image polynomial.
                     if advice_poly_map.contains_key(poly_id) {
-                        advice_polys.push((*coeff, advice_poly_map.remove(poly_id).unwrap()));
+                        advice_polys.push((
+                            *poly_id,
+                            *coeff,
+                            advice_poly_map.remove(poly_id).unwrap(),
+                        ));
                     }
                 }
             }
@@ -457,9 +463,94 @@ impl<F: JoltField> RLCPolynomial<F> {
         // For each advice polynomial, compute its contribution to the result
         ctx.advice_polys
             .iter()
-            .filter(|(_, advice_poly)| advice_poly.original_len() > 0)
-            .for_each(|(coeff, advice_poly)| {
+            .filter(|(_, _, advice_poly)| advice_poly.original_len() > 0)
+            .for_each(|(poly_id, coeff, advice_poly)| {
                 let advice_len = advice_poly.original_len();
+                if *poly_id == CommittedPolynomial::ProgramImageInit {
+                    // ProgramImageInit is embedded like a trace-dense polynomial (missing lane variables).
+                    // In AddressMajor this occupies evenly-spaced columns (stride-by-K), not a contiguous block.
+                    match DoryGlobals::get_layout() {
+                        DoryLayout::CycleMajor => {
+                            // Contiguous prefix block: full columns, limited rows.
+                            debug_assert!(
+                                advice_len % num_columns == 0,
+                                "ProgramImageInit len ({advice_len}) must be divisible by num_columns ({num_columns})"
+                            );
+                            let advice_cols = num_columns;
+                            let advice_rows = advice_len / num_columns;
+                            let effective_rows = advice_rows.min(left_vec.len());
+
+                            let column_contributions: Vec<F> = (0..advice_cols)
+                                .into_par_iter()
+                                .map(|col_idx| {
+                                    left_vec[..effective_rows]
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(_, &left)| !left.is_zero())
+                                        .map(|(row_idx, &left)| {
+                                            let coeff_idx = row_idx * advice_cols + col_idx;
+                                            let advice_val = advice_poly.get_coeff(coeff_idx);
+                                            left * *coeff * advice_val
+                                        })
+                                        .sum()
+                                })
+                                .collect();
+
+                            result
+                                .par_iter_mut()
+                                .zip(column_contributions.par_iter())
+                                .for_each(|(res, &contrib)| {
+                                    *res += contrib;
+                                });
+                        }
+                        DoryLayout::AddressMajor => {
+                            // Strided columns: lane variables are the low bits, so selecting lane=0
+                            // hits columns {0, K, 2K, ...}.
+                            let k_chunk = DoryGlobals::k_from_matrix_shape();
+                            let cycles_per_row = DoryGlobals::address_major_cycles_per_row(); // == num_columns / K
+                            debug_assert_eq!(
+                                num_columns,
+                                k_chunk * cycles_per_row,
+                                "Expected num_columns == K * cycles_per_row in AddressMajor"
+                            );
+                            debug_assert!(
+                                advice_len % cycles_per_row == 0,
+                                "ProgramImageInit len ({advice_len}) must be divisible by cycles_per_row ({cycles_per_row})"
+                            );
+
+                            let num_rows_used = advice_len / cycles_per_row;
+                            let effective_rows = num_rows_used.min(left_vec.len());
+
+                            let column_contributions: Vec<F> = (0..cycles_per_row)
+                                .into_par_iter()
+                                .map(|offset| {
+                                    left_vec[..effective_rows]
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(_, &left)| !left.is_zero())
+                                        .map(|(row_idx, &left)| {
+                                            let coeff_idx = row_idx * cycles_per_row + offset;
+                                            let advice_val = advice_poly.get_coeff(coeff_idx);
+                                            left * *coeff * advice_val
+                                        })
+                                        .sum()
+                                })
+                                .collect();
+
+                            // Add contributions only to the occupied columns (stride-by-K).
+                            result
+                                .par_iter_mut()
+                                .step_by(k_chunk)
+                                .zip(column_contributions.par_iter())
+                                .for_each(|(res, &contrib)| {
+                                    *res += contrib;
+                                });
+                        }
+                    }
+                    return;
+                }
+
+                // Other advice polynomials use balanced dimensions and embed as a top-left block.
                 let advice_vars = advice_len.log_2();
                 let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(advice_vars);
                 let advice_cols = 1usize << sigma_a;
@@ -467,19 +558,14 @@ impl<F: JoltField> RLCPolynomial<F> {
 
                 debug_assert!(
                     advice_cols <= num_columns,
-                    "Advice columns (2^{{sigma_a}}={advice_cols}) must fit in main num_columns={num_columns}; \
+                    "Advice columns ({advice_cols}) must fit in main num_columns={num_columns}; \
 guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                 );
 
-                // Only the top-left block contributes: rows [0..advice_rows), cols [0..advice_cols)
                 let effective_rows = advice_rows.min(left_vec.len());
-
-                // Compute column contributions: for each column, sum contributions from all rows
-                // Note: advice_len is always advice_cols * advice_rows (advice size must be power of 2)
                 let column_contributions: Vec<F> = (0..advice_cols)
                     .into_par_iter()
                     .map(|col_idx| {
-                        // For this column, sum contributions from all non-zero rows
                         left_vec[..effective_rows]
                             .iter()
                             .enumerate()
@@ -493,7 +579,6 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                     })
                     .collect();
 
-                // Add column contributions to result in parallel
                 result[..advice_cols]
                     .par_iter_mut()
                     .zip(column_contributions.par_iter())
@@ -518,7 +603,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
             left_vec,
             num_columns,
             &ctx.bytecode_polys,
-            &ctx.preprocessing.bytecode,
+            &ctx.preprocessing.program,
             &ctx.one_hot_params,
         );
     }
@@ -592,7 +677,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
         // Materialize dense polynomials (RdInc, RamInc) into dense_rlc
         for (poly_id, coeff) in ctx.dense_polys.iter() {
             let poly: MultilinearPolynomial<F> = poly_id.generate_witness(
-                &ctx.preprocessing.bytecode,
+                &ctx.preprocessing.program,
                 &ctx.preprocessing.memory_layout,
                 trace,
                 Some(&ctx.one_hot_params),
@@ -613,7 +698,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
         let mut one_hot_rlc = Vec::new();
         for (poly_id, coeff) in ctx.onehot_polys.iter() {
             let poly = poly_id.generate_witness(
-                &ctx.preprocessing.bytecode,
+                &ctx.preprocessing.program,
                 &ctx.preprocessing.memory_layout,
                 trace,
                 Some(&ctx.one_hot_params),
@@ -779,8 +864,8 @@ struct VmvSetup<'a, F: JoltField> {
     row_factors: Vec<F>,
     /// Folded one-hot tables (coeff * eq_k pre-multiplied)
     folded_tables: FoldedOneHotTables<F>,
-    /// Reference to preprocessing data
-    bytecode: &'a BytecodePreprocessing,
+    /// Reference to program preprocessing data
+    program: &'a crate::zkvm::program::ProgramPreprocessing,
     memory_layout: &'a MemoryLayout,
     /// Reference to one-hot parameters
     one_hot_params: &'a OneHotParams,
@@ -821,7 +906,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
             ram_inc_coeff,
             row_factors,
             folded_tables,
-            bytecode: &ctx.preprocessing.bytecode,
+            program: &ctx.preprocessing.program,
             memory_layout: &ctx.preprocessing.memory_layout,
             one_hot_params,
         }
@@ -937,7 +1022,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         }
 
         // Bytecode RA chunks
-        let pc = self.bytecode.get_pc(cycle);
+        let pc = self.program.get_pc(cycle);
         for (i, table) in self.folded_tables.bytecode.iter().enumerate() {
             let k = self.one_hot_params.bytecode_pc_chunk(pc, i) as usize;
             inner_sum += *table[k].as_unreduced_ref();

@@ -19,9 +19,9 @@ use crate::poly::commitment::dory::{DoryCommitmentScheme, DoryContext, DoryGloba
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
 use crate::zkvm::bytecode::chunks::total_lanes;
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::AdviceKind;
 use crate::zkvm::config::BytecodeMode;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ram::populate_memory_states;
 use crate::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifier, JoltVerifierPreprocessing};
@@ -234,20 +234,25 @@ pub fn run_e2e_test(config: E2ETestConfig) {
         &config.trusted_advice,
     );
 
-    // Preprocess bytecode
-    let bytecode = Arc::new(BytecodePreprocessing::preprocess(instructions));
-    let shared_preprocessing = JoltSharedPreprocessing::new(
-        &bytecode,
-        io_device.memory_layout.clone(),
+    // Preprocess bytecode and program image
+    let program_data = Arc::new(ProgramPreprocessing::preprocess(
+        instructions,
         init_memory_state,
+    ));
+    let shared_preprocessing = JoltSharedPreprocessing::new(
+        program_data.meta(),
+        io_device.memory_layout.clone(),
         config.max_trace_length,
     );
 
     // Create prover preprocessing (mode-dependent)
     let prover_preprocessing = if config.committed_bytecode {
-        JoltProverPreprocessing::new_committed(shared_preprocessing.clone(), Arc::clone(&bytecode))
+        JoltProverPreprocessing::new_committed(
+            shared_preprocessing.clone(),
+            Arc::clone(&program_data),
+        )
     } else {
-        JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&bytecode))
+        JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&program_data))
     };
 
     // Verify mode is correct
@@ -292,7 +297,7 @@ pub fn run_e2e_test(config: E2ETestConfig) {
 
     // Verify mode propagated correctly
     assert_eq!(
-        verifier_preprocessing.bytecode.is_committed(),
+        verifier_preprocessing.program.is_committed(),
         config.committed_bytecode,
         "Verifier mode mismatch"
     );
@@ -473,25 +478,24 @@ fn bytecode_mode_detection_full() {
     let (instructions, init_memory_state, _) = program.decode();
     let (_, _, _, io_device) = program.trace(&[], &[], &[]);
 
-    let bytecode = Arc::new(BytecodePreprocessing::preprocess(instructions));
-    let shared = JoltSharedPreprocessing::new(
-        &bytecode,
-        io_device.memory_layout.clone(),
+    let program = Arc::new(ProgramPreprocessing::preprocess(
+        instructions,
         init_memory_state,
-        1 << 16,
-    );
+    ));
+    let shared =
+        JoltSharedPreprocessing::new(program.meta(), io_device.memory_layout.clone(), 1 << 16);
 
     // Full mode
     let prover_full: JoltProverPreprocessing<Fr, DoryCommitmentScheme> =
-        JoltProverPreprocessing::new(shared.clone(), Arc::clone(&bytecode));
+        JoltProverPreprocessing::new(shared.clone(), Arc::clone(&program));
     assert!(!prover_full.is_committed_mode());
-    assert!(prover_full.bytecode_commitments.is_none());
+    assert!(prover_full.program_commitments.is_none());
 
     let verifier_full = JoltVerifierPreprocessing::from(&prover_full);
-    assert!(verifier_full.bytecode.is_full());
-    assert!(!verifier_full.bytecode.is_committed());
-    assert!(verifier_full.bytecode.as_full().is_ok());
-    assert!(verifier_full.bytecode.as_committed().is_err());
+    assert!(verifier_full.program.is_full());
+    assert!(!verifier_full.program.is_committed());
+    assert!(verifier_full.program.as_full().is_ok());
+    assert!(verifier_full.program.as_committed().is_err());
 }
 
 #[test]
@@ -502,25 +506,27 @@ fn bytecode_mode_detection_committed() {
     let (instructions, init_memory_state, _) = program.decode();
     let (_, _, _, io_device) = program.trace(&[], &[], &[]);
 
-    let bytecode = Arc::new(BytecodePreprocessing::preprocess(instructions));
-    let shared = JoltSharedPreprocessing::new(
-        &bytecode,
-        io_device.memory_layout.clone(),
+    let program_data = Arc::new(ProgramPreprocessing::preprocess(
+        instructions,
         init_memory_state,
+    ));
+    let shared = JoltSharedPreprocessing::new(
+        program_data.meta(),
+        io_device.memory_layout.clone(),
         1 << 16,
     );
 
     // Committed mode
     let prover_committed: JoltProverPreprocessing<Fr, DoryCommitmentScheme> =
-        JoltProverPreprocessing::new_committed(shared.clone(), Arc::clone(&bytecode));
+        JoltProverPreprocessing::new_committed(shared.clone(), Arc::clone(&program_data));
     assert!(prover_committed.is_committed_mode());
-    assert!(prover_committed.bytecode_commitments.is_some());
+    assert!(prover_committed.program_commitments.is_some());
 
     let verifier_committed = JoltVerifierPreprocessing::from(&prover_committed);
-    assert!(!verifier_committed.bytecode.is_full());
-    assert!(verifier_committed.bytecode.is_committed());
-    assert!(verifier_committed.bytecode.as_full().is_err());
-    assert!(verifier_committed.bytecode.as_committed().is_ok());
+    assert!(!verifier_committed.program.is_full());
+    assert!(verifier_committed.program.is_committed());
+    assert!(verifier_committed.program.as_full().is_err());
+    assert!(verifier_committed.program.as_committed().is_ok());
 }
 
 // ============================================================================
@@ -546,16 +552,14 @@ fn max_advice_with_small_trace() {
     let (lazy_trace, trace, final_memory_state, io_device) =
         program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
-    let bytecode: Arc<BytecodePreprocessing> =
-        BytecodePreprocessing::preprocess(instructions).into();
-    let shared_preprocessing = JoltSharedPreprocessing::new(
-        &bytecode,
-        io_device.memory_layout.clone(),
+    let program = Arc::new(ProgramPreprocessing::preprocess(
+        instructions,
         init_memory_state,
-        256,
-    );
+    ));
+    let shared_preprocessing =
+        JoltSharedPreprocessing::new(program.meta(), io_device.memory_layout.clone(), 256);
     let prover_preprocessing: JoltProverPreprocessing<Fr, DoryCommitmentScheme> =
-        JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&bytecode));
+        JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&program));
     tracing::info!(
         "preprocessing.memory_layout.max_trusted_advice_size: {}",
         shared_preprocessing.memory_layout.max_trusted_advice_size
@@ -612,16 +616,14 @@ fn advice_opening_point_derives_from_unified_point() {
     let (lazy_trace, trace, final_memory_state, io_device) =
         program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
-    let bytecode: Arc<BytecodePreprocessing> =
-        BytecodePreprocessing::preprocess(instructions).into();
-    let shared_preprocessing = JoltSharedPreprocessing::new(
-        &bytecode,
-        io_device.memory_layout.clone(),
+    let program = Arc::new(ProgramPreprocessing::preprocess(
+        instructions,
         init_memory_state,
-        1 << 16,
-    );
+    ));
+    let shared_preprocessing =
+        JoltSharedPreprocessing::new(program.meta(), io_device.memory_layout.clone(), 1 << 16);
     let prover_preprocessing: JoltProverPreprocessing<Fr, DoryCommitmentScheme> =
-        JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&bytecode));
+        JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&program));
     let (trusted_commitment, trusted_hint) =
         commit_trusted_advice_preprocessing_only(&prover_preprocessing, &trusted_advice);
 
@@ -708,17 +710,15 @@ fn truncated_trace() {
     trace.truncate(100);
     program_io.outputs[0] = 0; // change the output to 0
 
-    let bytecode: Arc<BytecodePreprocessing> =
-        BytecodePreprocessing::preprocess(instructions).into();
-    let shared_preprocessing = JoltSharedPreprocessing::new(
-        &bytecode,
-        program_io.memory_layout.clone(),
+    let program = Arc::new(ProgramPreprocessing::preprocess(
+        instructions,
         init_memory_state,
-        1 << 16,
-    );
+    ));
+    let shared_preprocessing =
+        JoltSharedPreprocessing::new(program.meta(), program_io.memory_layout.clone(), 1 << 16);
 
     let prover_preprocessing: JoltProverPreprocessing<Fr, DoryCommitmentScheme> =
-        JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&bytecode));
+        JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&program));
 
     let prover = RV64IMACProver::gen_from_trace(
         &prover_preprocessing,
@@ -735,7 +735,7 @@ fn truncated_trace() {
     let verifier_preprocessing = JoltVerifierPreprocessing::new_full(
         prover_preprocessing.shared.clone(),
         prover_preprocessing.generators.to_verifier_setup(),
-        Arc::clone(&prover_preprocessing.bytecode),
+        Arc::clone(&prover_preprocessing.program),
     );
     let verifier =
         RV64IMACVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
@@ -751,18 +751,16 @@ fn malicious_trace() {
     let (instructions, init_memory_state, _) = program.decode();
     let (lazy_trace, trace, final_memory_state, mut program_io) = program.trace(&inputs, &[], &[]);
 
-    let bytecode: Arc<BytecodePreprocessing> =
-        BytecodePreprocessing::preprocess(instructions).into();
+    let program = Arc::new(ProgramPreprocessing::preprocess(
+        instructions,
+        init_memory_state,
+    ));
 
     // Since the preprocessing is done with the original memory layout, the verifier should fail
-    let shared_preprocessing = JoltSharedPreprocessing::new(
-        &bytecode,
-        program_io.memory_layout.clone(),
-        init_memory_state,
-        1 << 16,
-    );
+    let shared_preprocessing =
+        JoltSharedPreprocessing::new(program.meta(), program_io.memory_layout.clone(), 1 << 16);
     let prover_preprocessing: JoltProverPreprocessing<Fr, DoryCommitmentScheme> =
-        JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&bytecode));
+        JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&program));
 
     // change memory address of output & termination bit to the same address as input
     // changes here should not be able to spoof the verifier result
@@ -784,7 +782,7 @@ fn malicious_trace() {
     let verifier_preprocessing = JoltVerifierPreprocessing::new_full(
         prover_preprocessing.shared.clone(),
         prover_preprocessing.generators.to_verifier_setup(),
-        Arc::clone(&prover_preprocessing.bytecode),
+        Arc::clone(&prover_preprocessing.program),
     );
     let verifier =
         JoltVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();

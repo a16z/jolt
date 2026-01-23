@@ -98,8 +98,8 @@ use crate::subprotocols::{
 };
 use crate::transcripts::Transcript;
 use crate::zkvm::{
-    bytecode::BytecodePreprocessing,
     config::OneHotParams,
+    program::ProgramPreprocessing,
     verifier::JoltSharedPreprocessing,
     witness::{CommittedPolynomial, VirtualPolynomial},
 };
@@ -310,14 +310,14 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
         params: HammingWeightClaimReductionParams<F>,
         trace: &[Cycle],
         preprocessing: &JoltSharedPreprocessing,
-        bytecode: &BytecodePreprocessing,
+        program: &ProgramPreprocessing,
         one_hot_params: &OneHotParams,
     ) -> Self {
         // Compute all G_i polynomials via streaming.
         // `params.r_cycle` is in BIG_ENDIAN (OpeningPoint) convention.
         let G_vecs = compute_all_G::<F>(
             trace,
-            bytecode,
+            program,
             &preprocessing.memory_layout,
             one_hot_params,
             &params.r_cycle,

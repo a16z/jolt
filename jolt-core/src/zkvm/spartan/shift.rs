@@ -20,8 +20,8 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::r1cs::inputs::ShiftSumcheckCycleState;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
@@ -146,10 +146,9 @@ impl<F: JoltField> ShiftSumcheckProver<F> {
     pub fn initialize(
         params: ShiftSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
     ) -> Self {
-        let phase =
-            ShiftSumcheckPhase::Phase1(Phase1State::gen(trace, bytecode_preprocessing, &params));
+        let phase = ShiftSumcheckPhase::Phase1(Phase1State::gen(trace, program, &params));
         Self { phase, params }
     }
 }
@@ -180,7 +179,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
                     sumcheck_challenges.push(r_j);
                     self.phase = ShiftSumcheckPhase::Phase2(Phase2State::gen(
                         &state.trace,
-                        &state.bytecode_preprocessing,
+                        &state.program,
                         &sumcheck_challenges,
                         &self.params,
                     ));
@@ -371,14 +370,14 @@ struct Phase1State<F: JoltField> {
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
     #[allocative(skip)]
-    bytecode_preprocessing: BytecodePreprocessing,
+    program: ProgramPreprocessing,
     sumcheck_challenges: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> Phase1State<F> {
     fn gen(
         trace: Arc<Vec<Cycle>>,
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
         params: &ShiftSumcheckParams<F>,
     ) -> Self {
         let EqPlusOnePrefixSuffixPoly {
@@ -443,7 +442,7 @@ impl<F: JoltField> Phase1State<F> {
                                 is_virtual,
                                 is_first_in_sequence,
                                 is_noop,
-                            } = ShiftSumcheckCycleState::new(&trace[x], bytecode_preprocessing);
+                            } = ShiftSumcheckCycleState::new(&trace[x], program);
 
                             let mut v =
                                 F::from_u64(unexpanded_pc) + params.gamma_powers[1].mul_u64(pc);
@@ -493,7 +492,7 @@ impl<F: JoltField> Phase1State<F> {
         Self {
             prefix_suffix_pairs,
             trace,
-            bytecode_preprocessing: bytecode_preprocessing.clone(),
+            program: program.clone(),
             sumcheck_challenges: Vec::new(),
         }
     }
@@ -550,7 +549,7 @@ struct Phase2State<F: JoltField> {
 impl<F: JoltField> Phase2State<F> {
     fn gen(
         trace: &[Cycle],
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &crate::zkvm::program::ProgramPreprocessing,
         sumcheck_challenges: &[F::Challenge],
         params: &ShiftSumcheckParams<F>,
     ) -> Self {
@@ -624,7 +623,7 @@ impl<F: JoltField> Phase2State<F> {
                             is_virtual,
                             is_first_in_sequence,
                             is_noop,
-                        } = ShiftSumcheckCycleState::new(cycle, bytecode_preprocessing);
+                        } = ShiftSumcheckCycleState::new(cycle, program);
                         let eq_eval = eq_evals[i];
                         unexpanded_pc_eval_unreduced += eq_eval.mul_u64_unreduced(unexpanded_pc);
                         pc_eval_unreduced += eq_eval.mul_u64_unreduced(pc);

@@ -8,7 +8,6 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::bytecode::chunks::total_lanes;
-use crate::zkvm::bytecode::{BytecodePreprocessing, TrustedBytecodeCommitments, VerifierBytecode};
 use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::BytecodeMode;
@@ -16,7 +15,6 @@ use crate::zkvm::config::OneHotParams;
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
-use crate::zkvm::ram::RAMPreprocessing;
 use crate::zkvm::witness::all_committed_polynomials;
 use crate::zkvm::Serializable;
 use crate::zkvm::{
@@ -28,8 +26,8 @@ use crate::zkvm::{
         AdviceClaimReductionVerifier, AdviceKind, BytecodeClaimReductionParams,
         BytecodeClaimReductionVerifier, BytecodeReductionPhase,
         HammingWeightClaimReductionVerifier, IncClaimReductionSumcheckVerifier,
-        InstructionLookupsClaimReductionSumcheckVerifier, RamRaClaimReductionSumcheckVerifier,
-        ProgramImageClaimReductionParams, ProgramImageClaimReductionVerifier,
+        InstructionLookupsClaimReductionSumcheckVerifier, ProgramImageClaimReductionParams,
+        ProgramImageClaimReductionVerifier, RamRaClaimReductionSumcheckVerifier,
     },
     fiat_shamir_preamble,
     instruction_lookups::{
@@ -175,25 +173,26 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             OneHotParams::from_config(&proof.one_hot_config, proof.bytecode_K, proof.ram_K);
 
         if proof.bytecode_mode == BytecodeMode::Committed {
-            let committed = preprocessing.bytecode.as_committed()?;
+            let committed = preprocessing.program.as_committed()?;
             if committed.log_k_chunk != proof.one_hot_config.log_k_chunk {
                 return Err(ProofVerifyError::InvalidBytecodeConfig(format!(
                     "bytecode log_k_chunk mismatch: commitments={}, proof={}",
                     committed.log_k_chunk, proof.one_hot_config.log_k_chunk
                 )));
             }
-            if committed.bytecode_len != preprocessing.shared.bytecode_size {
+            if committed.bytecode_len != preprocessing.shared.bytecode_size() {
                 return Err(ProofVerifyError::InvalidBytecodeConfig(format!(
                     "bytecode length mismatch: commitments={}, shared={}",
-                    committed.bytecode_len, preprocessing.shared.bytecode_size
+                    committed.bytecode_len,
+                    preprocessing.shared.bytecode_size()
                 )));
             }
             let k_chunk = 1usize << (committed.log_k_chunk as usize);
             let expected_chunks = total_lanes().div_ceil(k_chunk);
-            if committed.commitments.len() != expected_chunks {
+            if committed.bytecode_commitments.len() != expected_chunks {
                 return Err(ProofVerifyError::InvalidBytecodeConfig(format!(
                     "expected {expected_chunks} bytecode commitments, got {}",
-                    committed.commitments.len()
+                    committed.bytecode_commitments.len()
                 )));
             }
         }
@@ -239,13 +238,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 .append_serializable(trusted_advice_commitment);
         }
         if self.proof.bytecode_mode == BytecodeMode::Committed {
-            let trusted = self.preprocessing.bytecode.as_committed()?;
-            for commitment in &trusted.commitments {
+            let trusted = self.preprocessing.program.as_committed()?;
+            for commitment in &trusted.bytecode_commitments {
                 self.transcript.append_serializable(commitment);
             }
-            if let Some(trusted_prog) = &self.preprocessing.program_image {
-                self.transcript.append_serializable(&trusted_prog.commitment);
-            }
+            self.transcript
+                .append_serializable(&trusted.program_image_commitment);
         }
 
         self.verify_stage1()?;
@@ -396,8 +394,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &mut self.transcript,
             &self.proof.rw_config,
         );
+        // In Full mode, get the program image words from the preprocessing
+        let program_image_words = self.preprocessing.program.program_image_words();
         let ram_val_evaluation = RamValEvaluationSumcheckVerifier::new(
-            &self.preprocessing.shared.ram,
+            &self.preprocessing.shared.program_meta,
+            program_image_words,
             &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
@@ -405,7 +406,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.opening_accumulator,
         );
         let ram_val_final = ValFinalSumcheckVerifier::new(
-            &self.preprocessing.shared.ram,
+            &self.preprocessing.shared.program_meta,
+            program_image_words,
             &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
@@ -471,16 +473,16 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         anyhow::Error,
     > {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let bytecode_preprocessing = match self.proof.bytecode_mode {
+        let program_preprocessing = match self.proof.bytecode_mode {
             BytecodeMode::Committed => {
-                // Ensure we have committed bytecode commitments for committed mode.
-                let _ = self.preprocessing.bytecode.as_committed()?;
+                // Ensure we have committed program commitments for committed mode.
+                let _ = self.preprocessing.program.as_committed()?;
                 None
             }
-            BytecodeMode::Full => Some(self.preprocessing.bytecode.as_full()?.as_ref()),
+            BytecodeMode::Full => self.preprocessing.program.full().map(|p| p.as_ref()),
         };
         let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
-            bytecode_preprocessing,
+            program_preprocessing,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -584,10 +586,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let program_image_reduction = if self.proof.bytecode_mode == BytecodeMode::Committed {
             let trusted = self
                 .preprocessing
-                .program_image
-                .as_ref()
-                .expect("program-image commitment missing in committed mode");
-            let padded_len_words = trusted.padded_len_words;
+                .program
+                .as_committed()
+                .expect("program commitments missing in committed mode");
+            let padded_len_words = trusted.program_image_num_words;
             let log_t = self.proof.trace_length.log_2();
             let m = padded_len_words.log_2();
             if m > log_t {
@@ -598,7 +600,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             }
             let params = ProgramImageClaimReductionParams::new(
                 &self.program_io,
-                self.preprocessing.shared.ram.min_bytecode_address,
+                self.preprocessing.shared.min_bytecode_address(),
                 padded_len_words,
                 self.proof.ram_K,
                 self.proof.trace_length,
@@ -701,11 +703,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         // In committed mode, we must also match the Main-context sigma used to derive trusted
         // bytecode commitments, otherwise Stage 8 batching will be inconsistent.
         let _guard = if self.proof.bytecode_mode == BytecodeMode::Committed {
-            let committed = self.preprocessing.bytecode.as_committed()?;
+            let committed = self.preprocessing.program.as_committed()?;
             DoryGlobals::initialize_main_context_with_num_columns(
                 1 << self.one_hot_params.log_k_chunk,
                 self.proof.trace_length.next_power_of_two(),
-                committed.num_columns,
+                committed.bytecode_num_columns,
                 Some(self.proof.dory_layout),
             )
         } else {
@@ -841,6 +843,22 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             }
         }
 
+        // Program-image polynomial: opened by ProgramImageClaimReduction in Stage 6b.
+        // Embed into the top-left block of the main matrix (same trick as advice).
+        if self.proof.bytecode_mode == BytecodeMode::Committed {
+            let (prog_point, prog_claim) =
+                self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::ProgramImageInit,
+                    SumcheckId::ProgramImageClaimReduction,
+                );
+            let lagrange_factor =
+                compute_advice_lagrange_factor::<F>(&opening_point.r, &prog_point.r);
+            polynomial_claims.push((
+                CommittedPolynomial::ProgramImageInit,
+                prog_claim * lagrange_factor,
+            ));
+        }
+
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         self.transcript.append_scalars(&claims);
@@ -883,11 +901,23 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         if self.proof.bytecode_mode == BytecodeMode::Committed {
-            let committed = self.preprocessing.bytecode.as_committed()?;
-            for (idx, commitment) in committed.commitments.iter().enumerate() {
+            let committed = self.preprocessing.program.as_committed()?;
+            for (idx, commitment) in committed.bytecode_commitments.iter().enumerate() {
                 commitments_map
                     .entry(CommittedPolynomial::BytecodeChunk(idx))
                     .or_insert_with(|| commitment.clone());
+            }
+
+            // Add trusted program-image commitment if it's part of the batch.
+            if state
+                .polynomial_claims
+                .iter()
+                .any(|(p, _)| *p == CommittedPolynomial::ProgramImageInit)
+            {
+                commitments_map.insert(
+                    CommittedPolynomial::ProgramImageInit,
+                    committed.program_image_commitment.clone(),
+                );
             }
         }
 
@@ -911,42 +941,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &joint_commitment,
         )
         .context("Stage 8 (joint)")?;
-
-        // Optional separate opening for committed program image.
-        if self.proof.bytecode_mode == BytecodeMode::Committed {
-            let trusted = self
-                .preprocessing
-                .program_image
-                .as_ref()
-                .expect("program-image commitment missing in committed mode");
-            let prog_proof = self
-                .proof
-                .program_image_opening_proof
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("missing program_image_opening_proof in committed mode"))?;
-            let (prog_point, prog_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::ProgramImageInit,
-                SumcheckId::ProgramImageClaimReduction,
-            );
-
-            let _guard = DoryGlobals::initialize_context(
-                1,
-                trusted.padded_len_words,
-                DoryContext::ProgramImage,
-                None,
-            );
-            let _ctx = DoryGlobals::with_context(DoryContext::ProgramImage);
-
-            PCS::verify(
-                prog_proof,
-                &self.preprocessing.generators,
-                &mut self.transcript,
-                &prog_point.r,
-                &prog_claim,
-                &trusted.commitment,
-            )
-            .context("Stage 8 (program image)")?;
-        }
 
         Ok(())
     }
@@ -978,37 +972,53 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
 /// Shared preprocessing between prover and verifier.
 ///
-/// **Note**: This struct does NOT contain the full bytecode data.
-/// - Bytecode size K is stored here as the single source of truth.
-/// - Full bytecode data is in `JoltProverPreprocessing.bytecode`.
-/// - Verifier bytecode (Full or Committed) is in `JoltVerifierPreprocessing.bytecode`.
+/// Contains O(1) metadata about the program. Does NOT contain the full program data.
+/// - Full program data is in `JoltProverPreprocessing.program`.
+/// - Verifier program (Full or Committed) is in `JoltVerifierPreprocessing.program`.
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltSharedPreprocessing {
-    pub bytecode_size: usize,
-    pub ram: RAMPreprocessing,
+    /// Program metadata (bytecode size, program image info).
+    pub program_meta: crate::zkvm::program::ProgramMetadata,
     pub memory_layout: MemoryLayout,
     pub max_padded_trace_length: usize,
 }
 
 impl JoltSharedPreprocessing {
-    /// Create shared preprocessing from bytecode.
+    /// Create shared preprocessing from program metadata.
     ///
-    /// Bytecode size K is derived from `bytecode.bytecode.len()` (already padded).
-    /// The caller is responsible for wrapping bytecode in `Arc` and passing to prover/verifier.
+    /// # Arguments
+    /// - `program_meta`: Program metadata (from `ProgramPreprocessing::meta()`)
+    /// - `memory_layout`: Memory layout configuration
+    /// - `max_padded_trace_length`: Maximum trace length for generator sizing
     #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new")]
     pub fn new(
-        bytecode: &BytecodePreprocessing,
+        program_meta: crate::zkvm::program::ProgramMetadata,
         memory_layout: MemoryLayout,
-        memory_init: Vec<(u64, u8)>,
         max_padded_trace_length: usize,
     ) -> JoltSharedPreprocessing {
-        let ram = RAMPreprocessing::preprocess(memory_init);
         Self {
-            bytecode_size: bytecode.bytecode.len(),
-            ram,
+            program_meta,
             memory_layout,
             max_padded_trace_length,
         }
+    }
+
+    /// Bytecode size (power-of-2 padded).
+    /// Legacy accessor - use `program_meta.bytecode_len` directly.
+    pub fn bytecode_size(&self) -> usize {
+        self.program_meta.bytecode_len
+    }
+
+    /// Minimum bytecode address.
+    /// Legacy accessor - use `program_meta.min_bytecode_address` directly.
+    pub fn min_bytecode_address(&self) -> u64 {
+        self.program_meta.min_bytecode_address
+    }
+
+    /// Program image length (unpadded words).
+    /// Legacy accessor - use `program_meta.program_image_len_words` directly.
+    pub fn program_image_len_words(&self) -> usize {
+        self.program_meta.program_image_len_words
     }
 }
 
@@ -1020,13 +1030,11 @@ where
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
-    /// Bytecode information for verification.
+    /// Program information for verification.
     ///
-    /// In Full mode: contains full bytecode preprocessing (O(K) data).
+    /// In Full mode: contains full program preprocessing (bytecode + program image).
     /// In Committed mode: contains only commitments (succinct).
-    pub bytecode: VerifierBytecode<PCS>,
-    /// Trusted program-image commitment (only in Committed mode).
-    pub program_image: Option<crate::zkvm::program_image::TrustedProgramImageCommitment<PCS>>,
+    pub program: crate::zkvm::program::VerifierProgram<PCS>,
 }
 
 impl<F, PCS> CanonicalSerialize for JoltVerifierPreprocessing<F, PCS>
@@ -1041,16 +1049,14 @@ where
     ) -> Result<(), ark_serialize::SerializationError> {
         self.generators.serialize_with_mode(&mut writer, compress)?;
         self.shared.serialize_with_mode(&mut writer, compress)?;
-        self.bytecode.serialize_with_mode(&mut writer, compress)?;
-        self.program_image.serialize_with_mode(&mut writer, compress)?;
+        self.program.serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
         self.generators.serialized_size(compress)
             + self.shared.serialized_size(compress)
-            + self.bytecode.serialized_size(compress)
-            + self.program_image.serialized_size(compress)
+            + self.program.serialized_size(compress)
     }
 }
 
@@ -1062,8 +1068,7 @@ where
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         self.generators.check()?;
         self.shared.check()?;
-        self.bytecode.check()?;
-        self.program_image.check()
+        self.program.check()
     }
 }
 
@@ -1081,8 +1086,7 @@ where
             PCS::VerifierSetup::deserialize_with_mode(&mut reader, compress, validate)?;
         let shared =
             JoltSharedPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
-        let bytecode = VerifierBytecode::deserialize_with_mode(&mut reader, compress, validate)?;
-        let program_image = Option::<crate::zkvm::program_image::TrustedProgramImageCommitment<PCS>>::deserialize_with_mode(
+        let program = crate::zkvm::program::VerifierProgram::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
@@ -1090,8 +1094,7 @@ where
         Ok(Self {
             generators,
             shared,
-            bytecode,
-            program_image,
+            program,
         })
     }
 }
@@ -1127,45 +1130,39 @@ where
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F, PCS> {
-    /// Create verifier preprocessing in Full mode (verifier has full bytecode).
+    /// Create verifier preprocessing in Full mode (verifier has full program).
     #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new_full")]
     pub fn new_full(
         shared: JoltSharedPreprocessing,
         generators: PCS::VerifierSetup,
-        bytecode: Arc<BytecodePreprocessing>,
+        program: Arc<crate::zkvm::program::ProgramPreprocessing>,
     ) -> JoltVerifierPreprocessing<F, PCS> {
         Self {
             generators,
             shared,
-            bytecode: VerifierBytecode::Full(bytecode),
-            program_image: None,
+            program: crate::zkvm::program::VerifierProgram::Full(program),
         }
     }
 
     /// Create verifier preprocessing in Committed mode with trusted commitments.
     ///
-    /// This is the "fast path" for online verification. The `TrustedBytecodeCommitments`
+    /// This is the "fast path" for online verification. The `TrustedProgramCommitments`
     /// type guarantees (at the type level) that these commitments were derived from
-    /// actual bytecode via `TrustedBytecodeCommitments::derive()`.
+    /// actual program via `TrustedProgramCommitments::derive()`.
     ///
     /// # Trust Model
     /// The caller must ensure the commitments were honestly derived (e.g., loaded from
     /// a trusted file or received from trusted preprocessing).
     #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new_committed")]
     pub fn new_committed(
-        mut shared: JoltSharedPreprocessing,
+        shared: JoltSharedPreprocessing,
         generators: PCS::VerifierSetup,
-        bytecode_commitments: TrustedBytecodeCommitments<PCS>,
-        program_image_commitment: crate::zkvm::program_image::TrustedProgramImageCommitment<PCS>,
+        program_commitments: crate::zkvm::program::TrustedProgramCommitments<PCS>,
     ) -> JoltVerifierPreprocessing<F, PCS> {
-        // In committed mode the verifier does not need the full program-image word vector.
-        // Keep only metadata (e.g. min_bytecode_address) and rely on the trusted commitment.
-        shared.ram.bytecode_words = vec![];
         Self {
             generators,
             shared,
-            bytecode: VerifierBytecode::Committed(bytecode_commitments),
-            program_image: Some(program_image_commitment),
+            program: crate::zkvm::program::VerifierProgram::Committed(program_commitments),
         }
     }
 }
@@ -1176,24 +1173,20 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessi
 {
     fn from(prover_preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
         let generators = PCS::setup_verifier(&prover_preprocessing.generators);
-        let mut shared = prover_preprocessing.shared.clone();
-        // Choose VerifierBytecode variant based on whether prover has bytecode commitments
-        let (bytecode, program_image) = match &prover_preprocessing.bytecode_commitments {
+        let shared = prover_preprocessing.shared.clone();
+        // Choose VerifierProgram variant based on whether prover has program commitments
+        let program = match &prover_preprocessing.program_commitments {
             Some(commitments) => {
-                // In committed mode, strip the program-image word vector from shared preprocessing.
-                shared.ram.bytecode_words = vec![];
-                (
-                    VerifierBytecode::Committed(commitments.clone()),
-                    prover_preprocessing.program_image_commitment.clone(),
-                )
+                crate::zkvm::program::VerifierProgram::Committed(commitments.clone())
             }
-            None => (VerifierBytecode::Full(Arc::clone(&prover_preprocessing.bytecode)), None),
+            None => crate::zkvm::program::VerifierProgram::Full(Arc::clone(
+                &prover_preprocessing.program,
+            )),
         };
         Self {
             generators,
             shared,
-            bytecode,
-            program_image,
+            program,
         }
     }
 }

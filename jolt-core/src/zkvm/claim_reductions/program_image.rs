@@ -11,8 +11,8 @@ use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
-    LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
@@ -50,8 +50,8 @@ impl<F: JoltField> ProgramImageClaimReductionParams<F> {
         transcript: &mut impl Transcript,
     ) -> Self {
         let ram_num_vars = ram_K.log_2();
-        let start_index = remap_address(ram_min_bytecode_address, &program_io.memory_layout)
-            .unwrap() as usize;
+        let start_index =
+            remap_address(ram_min_bytecode_address, &program_io.memory_layout).unwrap() as usize;
         let m = padded_len_words.log_2();
         debug_assert!(padded_len_words.is_power_of_two());
         debug_assert!(padded_len_words > 0);
@@ -148,7 +148,8 @@ fn build_eq_slice_table<F: JoltField>(
     let mut off = 0usize;
     while off < len {
         let remaining = len - off;
-        let (block_size, block_evals) = EqPolynomial::<F>::evals_for_max_aligned_block(r_addr, idx, remaining);
+        let (block_size, block_evals) =
+            EqPolynomial::<F>::evals_for_max_aligned_block(r_addr, idx, remaining);
         out.extend_from_slice(&block_evals);
         idx += block_size;
         off += block_size;
@@ -165,13 +166,19 @@ impl<F: JoltField> ProgramImageClaimReductionProver<F> {
         debug_assert_eq!(program_image_words_padded.len(), params.padded_len_words);
         debug_assert_eq!(params.padded_len_words, 1usize << params.m);
 
-        let program_word: MultilinearPolynomial<F> = MultilinearPolynomial::from(program_image_words_padded);
+        let program_word: MultilinearPolynomial<F> =
+            MultilinearPolynomial::from(program_image_words_padded);
 
-        let eq_rw = build_eq_slice_table::<F>(&params.r_addr_rw, params.start_index, params.padded_len_words);
+        let eq_rw = build_eq_slice_table::<F>(
+            &params.r_addr_rw,
+            params.start_index,
+            params.padded_len_words,
+        );
         let mut eq_comb = eq_rw;
         if !params.single_opening {
             let r_raf = params.r_addr_raf.as_ref().expect("missing raf address");
-            let eq_raf = build_eq_slice_table::<F>(r_raf, params.start_index, params.padded_len_words);
+            let eq_raf =
+                build_eq_slice_table::<F>(r_raf, params.start_index, params.padded_len_words);
             for (c, e) in eq_comb.iter_mut().zip(eq_raf.iter()) {
                 *c += params.gamma * *e;
             }
@@ -187,7 +194,9 @@ impl<F: JoltField> ProgramImageClaimReductionProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProgramImageClaimReductionProver<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for ProgramImageClaimReductionProver<F>
+{
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -230,7 +239,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProgramImageC
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
-        self.program_word.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.program_word
+            .bind_parallel(r_j, BindingOrder::LowToHigh);
         self.eq_slice.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
@@ -273,7 +283,11 @@ fn eval_eq_slice_at_r_star_lsb_dp<F: JoltField>(
     for i in 0..ell {
         let start_bit = ((start_index >> i) & 1) as u8;
         let y_var = i < m;
-        let r_y: F = if y_var { r_star_lsb[i].into() } else { F::zero() };
+        let r_y: F = if y_var {
+            r_star_lsb[i].into()
+        } else {
+            F::zero()
+        };
 
         let r_addr_bit: F = r_addr_be[ell - 1 - i].into(); // LSB-first mapping
         let k0 = F::one() - r_addr_bit;
@@ -368,7 +382,9 @@ fn eval_eq_slice_at_r_star_lsb_dp<F: JoltField>(
     dp0
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ProgramImageClaimReductionVerifier<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for ProgramImageClaimReductionVerifier<F>
+{
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -398,7 +414,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ProgramImag
         let eq_comb = if self.params.single_opening {
             eq_rw
         } else {
-            let r_raf = self.params.r_addr_raf.as_ref().expect("missing raf address");
+            let r_raf = self
+                .params
+                .r_addr_raf
+                .as_ref()
+                .expect("missing raf address");
             let eq_raf = eval_eq_slice_at_r_star_lsb_dp::<F>(
                 r_raf,
                 self.params.start_index,
@@ -426,4 +446,3 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ProgramImag
         );
     }
 }
-
