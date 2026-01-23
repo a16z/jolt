@@ -127,7 +127,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
         let val_init_public_eval = match program_mode {
             ProgramMode::Full => {
                 let words = program_image_words.expect("Full mode requires program_image_words");
-                super::evaluate_public_initial_ram_evaluation::<F>(
+                super::eval_initial_ram_mle::<F>(
                     program_meta.min_bytecode_address,
                     words,
                     program_io,
@@ -148,7 +148,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
                 };
                 let (_, prog_img_claim) =
                     opening_accumulator.get_virtual_polynomial_opening(prog_poly, prog_sumcheck);
-                let input_eval = super::evaluate_public_input_initial_ram_evaluation::<F>(
+                let input_eval = super::eval_inputs_mle::<F>(
                     program_io, &r_address,
                 );
                 prog_img_claim + input_eval
