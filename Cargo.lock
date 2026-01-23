@@ -2389,6 +2389,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "modinv"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "modinv-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "modinv-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "muldiv"
 version = "0.1.0"
 dependencies = [

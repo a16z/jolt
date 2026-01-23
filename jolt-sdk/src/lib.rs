@@ -5,18 +5,18 @@ extern crate jolt_sdk_macros;
 // Instruction encoding constants for RISC-V custom instructions
 // Note: These are used in inline assembly via `const` keyword, but the compiler
 // doesn't recognize that usage, so we suppress the dead_code warning.
-#[allow(dead_code)]
-const CUSTOM_OPCODE: u32 = 0x5B; // Custom instructions opcode
-#[allow(dead_code)]
-const FUNCT3_VIRTUAL_ASSERT_EQ: u32 = 0b001; // VirtualAssertEQ funct3
-#[allow(dead_code)]
-const FUNCT3_ADVICE_SB: u32 = 0b010; // Store byte from advice tape
-#[allow(dead_code)]
-const FUNCT3_ADVICE_SH: u32 = 0b011; // Store halfword from advice tape
-#[allow(dead_code)]
-const FUNCT3_ADVICE_SW: u32 = 0b100; // Store word from advice tape
-#[allow(dead_code)]
-const FUNCT3_ADVICE_SD: u32 = 0b101; // Store doubleword from advice tape
+#[doc(hidden)]
+pub const CUSTOM_OPCODE: u32 = 0x5B; // Custom instructions opcode
+#[doc(hidden)]
+pub const FUNCT3_VIRTUAL_ASSERT_EQ: u32 = 0b001; // VirtualAssertEQ funct3
+#[doc(hidden)]
+pub const FUNCT3_ADVICE_SB: u32 = 0b010; // Store byte from advice tape
+#[doc(hidden)]
+pub const FUNCT3_ADVICE_SH: u32 = 0b011; // Store halfword from advice tape
+#[doc(hidden)]
+pub const FUNCT3_ADVICE_SW: u32 = 0b100; // Store word from advice tape
+#[doc(hidden)]
+pub const FUNCT3_ADVICE_SD: u32 = 0b101; // Store doubleword from advice tape
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub mod host_utils;
@@ -142,10 +142,8 @@ macro_rules! check_advice {
 /// Writer for sending advice data to the host during the compute_advice phase.
 ///
 /// Implements `embedded_io::Write` to allow serialization of advice data via postcard.
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub struct AdviceWriter;
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 impl AdviceWriter {
     /// Get a reference to the global advice writer.
     #[inline(always)]
@@ -154,7 +152,6 @@ impl AdviceWriter {
     }
 }
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 impl embedded_io::ErrorType for AdviceWriter {
     type Error = core::convert::Infallible;
 }
@@ -167,7 +164,7 @@ impl embedded_io::Write for AdviceWriter {
             let len = buf.len() as u64;
             core::arch::asm!(
                 "ecall",
-                in("a0") $crate::JOLT_ADVICE_WRITE_ECALL_NUM,
+                in("a0") JOLT_ADVICE_WRITE_ECALL_NUM,
                 in("a1") src_ptr,
                 in("a2") len,
                 options(nostack)
@@ -182,13 +179,24 @@ impl embedded_io::Write for AdviceWriter {
     }
 }
 
+// Stub implementation for non-RISC-V targets (host builds)
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+impl embedded_io::Write for AdviceWriter {
+    fn write(&mut self, _buf: &[u8]) -> Result<usize, Self::Error> {
+        // This should never be called on the host
+        panic!("AdviceWriter::write() called on non-RISC-V target");
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
 /// Reader for receiving advice data from the host during the proving phase.
 ///
 /// Implements `embedded_io::Read` to allow deserialization of advice data via postcard.
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub struct AdviceReader;
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 impl AdviceReader {
     /// Get a reference to the global advice reader.
     #[inline(always)]
@@ -197,7 +205,6 @@ impl AdviceReader {
     }
 }
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 impl embedded_io::ErrorType for AdviceReader {
     type Error = core::convert::Infallible;
 }
@@ -255,5 +262,14 @@ impl embedded_io::Read for AdviceReader {
                 Ok(0)
             }
         }
+    }
+}
+
+// Stub implementation for non-RISC-V targets (host builds)
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+impl embedded_io::Read for AdviceReader {
+    fn read(&mut self, _buf: &mut [u8]) -> Result<usize, Self::Error> {
+        // This should never be called on the host
+        panic!("AdviceReader::read() called on non-RISC-V target");
     }
 }

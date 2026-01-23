@@ -1193,7 +1193,7 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut buffer = [0u8; 1024];
             let mut reader = jolt::AdviceReader::get();
 
-            let (result, _) = jolt::postcard::from_eio(&mut reader, &mut buffer)
+            let (result, _) = jolt::postcard::from_eio((&mut reader, &mut buffer))
                 .expect("Failed to read advice from tape");
 
             jolt::UntrustedAdvice::new(result)
