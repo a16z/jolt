@@ -16,6 +16,7 @@ edition = "2021"
 
 [features]
 default = ["jolt-platform/random"]
+debug = ["zeroos?/debug"]
 
 host = [
     "jolt-core/default",
@@ -39,6 +40,7 @@ guest-std = [
     "jolt-sdk-macros/guest-std",
     "serde/std",
     "zeroos-std",
+    "debug",
 ]
 
 guest-verifier = [
