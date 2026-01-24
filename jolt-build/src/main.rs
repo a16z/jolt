@@ -131,11 +131,18 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     let fully = args.base.mode == StdMode::Std || args.base.fully;
 
     let toolchain_paths = if args.base.mode == StdMode::Std || fully {
-        Some(zeroos_build::cmds::get_or_build_toolchain(
+        let tc_cfg = zeroos_build::toolchain::ToolchainConfig::default();
+        let install_cfg = zeroos_build::toolchain::InstallConfig::default();
+        let paths = zeroos_build::toolchain::get_or_install_or_build_toolchain(
             args.base.musl_lib_path.clone(),
             args.base.gcc_lib_path.clone(),
+            &tc_cfg,
+            &install_cfg,
             fully,
-        )?)
+        )
+        .map(|p| (p.musl_lib, p.gcc_lib))
+        .map_err(|e| anyhow::anyhow!("Toolchain setup failed: {}", e))?;
+        Some(paths)
     } else {
         None
     };
