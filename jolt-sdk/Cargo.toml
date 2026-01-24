@@ -53,6 +53,18 @@ guest-verifier = [
 
 malloc-shim = ["jolt-platform/malloc-shim"]
 
+# Jolt-SDK native features (optional capabilities)
+#
+# `zeroos-*` features are the canonical internal switches for ZeroOS-backed functionality in
+# `jolt-sdk` (and are referenced by `jolt-sdk` boot/wiring code via `cfg(feature = "zeroos-…")`).
+#
+# The short names below are user-facing aliases for convenience. They intentionally delegate to
+# `zeroos-*` so enabling a capability also enables the corresponding `jolt-sdk` wiring, not just
+# the dependency’s `zeroos?/…` features.
+thread = ["zeroos-thread"]
+random = ["zeroos-random"]
+stdout = ["zeroos-vfs-device-console"]
+
 zeroos-runtime-nostd = ["zeroos?/runtime-nostd"]
 zeroos-runtime-musl = ["zeroos?/runtime-musl"]
 zeroos-thread = ["zeroos?/scheduler-cooperative"]
@@ -68,10 +80,9 @@ zeroos-nostd = [
 zeroos-std = [
     "dep:zeroos",
     "zeroos-runtime-musl",
-    "zeroos-thread",
-    "zeroos-vfs",
-    "zeroos-random",
-    "zeroos-vfs-device-console",
+    "thread",
+    "stdout",
+    "random",
 ]
 
 [dependencies]

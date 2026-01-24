@@ -74,6 +74,8 @@ members = [
     "examples/merkle-tree/guest",
     "examples/hash-bench",
     "examples/hash-bench/guest",
+    "examples/sig-recovery/host",
+    "examples/sig-recovery/guest",
     "zklean-extractor",
 ]
 
@@ -250,3 +252,12 @@ jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false
 jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
 zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", branch = "gx/jolt", default-features = false }
 zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", branch = "gx/jolt" }
+
+# Ethereum/Alloy dependencies for sig-recovery example
+alloy-primitives = "1"
+alloy-consensus = "1"
+alloy-eips = "1"
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", features = ["rayon", "serde"] }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = ["serde"] }
+secp256k1 = { version = "0.30", features = ["recovery", "rand"] }
+hex = { version = "0.4", features = ["alloc"] }

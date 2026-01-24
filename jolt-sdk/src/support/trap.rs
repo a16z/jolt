@@ -54,7 +54,14 @@ pub unsafe extern "C" fn trap_handler(regs: *mut u8) {
             (*regs).mepc = pc + 4;
 
             #[cfg(feature = "debug")]
-            zeroos::debug::writeln!("[syscall] {}", zeroos::os::linux::syscall_name((*regs).a7));
+            {
+                let nr = (*regs).a7;
+                zeroos::debug::writeln!(
+                    "[syscall] {} ({})",
+                    zeroos::os::linux::syscall_name(nr),
+                    nr
+                );
+            }
 
             let ret = zeroos::foundation::kfn::trap::ksyscall(
                 (*regs).a0,

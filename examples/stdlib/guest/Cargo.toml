@@ -9,5 +9,7 @@ guest = []
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
     "guest-std",
+    "thread",
+    "stdout"
 ] }
 rayon = "1.10"
