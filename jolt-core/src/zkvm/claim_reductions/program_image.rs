@@ -162,6 +162,7 @@ fn build_eq_slice_table<F: JoltField>(
 }
 
 impl<F: JoltField> ProgramImageClaimReductionProver<F> {
+    #[tracing::instrument(skip_all, name = "ProgramImageClaimReductionProver::initialize")]
     pub fn initialize(
         params: ProgramImageClaimReductionParams<F>,
         program_image_words_padded: Vec<u64>,
@@ -214,6 +215,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         0
     }
 
+    #[tracing::instrument(skip_all, name = "ProgramImageClaimReductionProver::compute_message")]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let half = self.program_word.len() / 2;
         let program_word = &self.program_word;
@@ -250,6 +252,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 
+    #[tracing::instrument(skip_all, name = "ProgramImageClaimReductionProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.program_word
             .bind_parallel(r_j, BindingOrder::LowToHigh);
