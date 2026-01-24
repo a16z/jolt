@@ -127,9 +127,9 @@ ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
-# Use the local sibling ZeroOS repo when developing in this workspace.
 [patch."https://github.com/LayerZero-Labs/ZeroOS.git"]
 zeroos = { path = "../ZeroOS/crates/zeroos" }
+zeroos-build = { path = "../ZeroOS/crates/zeroos-build" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -210,6 +210,8 @@ tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 indicatif = { version = "0.17.8" }
 inferno = { version = "0.12.3" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+log = "0.4"
+env_logger = "0.11"
 
 # Parsing
 syn = { version = "1.0.0", features = ["full"] }
@@ -250,5 +252,5 @@ jolt-inlines-keccak256 = { path = "./jolt-inlines/keccak256", default-features =
 jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false }
 jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false }
 jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
-
 zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", branch = "gx/jolt", default-features = false }
+zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", branch = "gx/jolt" }

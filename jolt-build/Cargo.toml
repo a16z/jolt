@@ -10,10 +10,10 @@ path = "src/main.rs"
 
 [dependencies]
 # Build infrastructure from ZeroOS
-zeroos-build = { path = "../../ZeroOS/crates/zeroos-build" }
+zeroos-build.workspace = true
 
 # CLI and utilities
-clap = { version = "4.5", features = ["derive", "env"] }
-anyhow = "1.0"
-log = "0.4"
-env_logger = "0.11"
+clap = { workspace = true, features = ["env"] }
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
