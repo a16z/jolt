@@ -15,10 +15,10 @@ use crate::zkvm::config::ProgramMode;
 use crate::zkvm::program::{
     ProgramMetadata, ProgramPreprocessing, TrustedProgramCommitments, VerifierProgram,
 };
-use crate::zkvm::ram::verifier_accumulate_program_image;
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
+use crate::zkvm::ram::verifier_accumulate_program_image;
 use crate::zkvm::witness::all_committed_polynomials;
 use crate::zkvm::Serializable;
 use crate::zkvm::{
@@ -1090,11 +1090,7 @@ where
             PCS::VerifierSetup::deserialize_with_mode(&mut reader, compress, validate)?;
         let shared =
             JoltSharedPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
-        let program = VerifierProgram::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-        )?;
+        let program = VerifierProgram::deserialize_with_mode(&mut reader, compress, validate)?;
         Ok(Self {
             generators,
             shared,
@@ -1180,12 +1176,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessi
         let shared = prover_preprocessing.shared.clone();
         // Choose VerifierProgram variant based on whether prover has program commitments
         let program = match &prover_preprocessing.program_commitments {
-            Some(commitments) => {
-                VerifierProgram::Committed(commitments.clone())
-            }
-            None => VerifierProgram::Full(Arc::clone(
-                &prover_preprocessing.program,
-            )),
+            Some(commitments) => VerifierProgram::Committed(commitments.clone()),
+            None => VerifierProgram::Full(Arc::clone(&prover_preprocessing.program)),
         };
         Self {
             generators,

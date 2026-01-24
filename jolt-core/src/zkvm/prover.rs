@@ -70,7 +70,8 @@ use crate::{
             populate_memory_states, prover_accumulate_program_image,
             ra_virtual::RamRaVirtualParams,
             raf_evaluation::RafEvaluationSumcheckParams,
-            read_write_checking::RamReadWriteCheckingParams, remap_address,
+            read_write_checking::RamReadWriteCheckingParams,
+            remap_address,
             val_evaluation::{
                 ValEvaluationSumcheckParams,
                 ValEvaluationSumcheckProver as RamValEvaluationSumcheckProver,
@@ -582,10 +583,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 {
                     // Sanity: re-commit the program image polynomial and ensure it matches the trusted commitment.
                     // Must use the same padded size and context as TrustedProgramCommitments::derive().
-                    let poly = TrustedProgramCommitments::<PCS>::build_program_image_polynomial_padded::<F>(
-                        &self.preprocessing.program,
-                        trusted.program_image_num_words,
-                    );
+                    let poly =
+                        TrustedProgramCommitments::<PCS>::build_program_image_polynomial_padded::<F>(
+                            &self.preprocessing.program,
+                            trusted.program_image_num_words,
+                        );
                     // Recompute log_k_chunk and max_log_t to get Main's sigma.
                     let max_t_any: usize = self
                         .preprocessing
@@ -601,21 +603,15 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                         8
                     };
                     // Use the explicit context initialization to match TrustedProgramCommitments::derive()
-                    let (sigma_main, _) = DoryGlobals::main_sigma_nu(
-                        log_k_chunk,
-                        max_log_t,
-                    );
+                    let (sigma_main, _) = DoryGlobals::main_sigma_nu(log_k_chunk, max_log_t);
                     let main_num_columns = 1usize << sigma_main;
                     DoryGlobals::initialize_program_image_context_with_num_columns(
                         1usize << log_k_chunk,
                         trusted.program_image_num_words,
                         main_num_columns,
                     );
-                    let _ctx = DoryGlobals::with_context(
-                        DoryContext::ProgramImage,
-                    );
-                    let mle =
-                        MultilinearPolynomial::from(poly);
+                    let _ctx = DoryGlobals::with_context(DoryContext::ProgramImage);
+                    let mle = MultilinearPolynomial::from(poly);
                     let (recommit, _hint) = PCS::commit(&mle, &self.preprocessing.generators);
                     assert_eq!(
                         recommit, trusted.program_image_commitment,
@@ -1903,9 +1899,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 .as_ref()
                 .expect("program commitments missing in committed mode");
             // Use the padded size from the trusted commitments (may be larger than program's own padded size)
-            let program_image_poly = TrustedProgramCommitments::<PCS>::build_program_image_polynomial_padded::<
-                    F,
-                >(&self.preprocessing.program, trusted.program_image_num_words);
+            let program_image_poly =
+                TrustedProgramCommitments::<PCS>::build_program_image_polynomial_padded::<F>(
+                    &self.preprocessing.program,
+                    trusted.program_image_num_words,
+                );
             advice_polys.insert(
                 CommittedPolynomial::ProgramImageInit,
                 MultilinearPolynomial::from(program_image_poly),
@@ -2078,12 +2076,7 @@ where
             8
         };
         let (program_commitments, program_hints) =
-            TrustedProgramCommitments::derive(
-                &program,
-                &generators,
-                log_k_chunk,
-                max_t_any,
-            );
+            TrustedProgramCommitments::derive(&program, &generators, log_k_chunk, max_t_any);
         JoltProverPreprocessing {
             generators,
             shared,
