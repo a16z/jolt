@@ -1030,10 +1030,11 @@ impl Cpu {
             JOLT_CYCLE_MARKER_END => {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
-                    let virt = self.trace_len - mark.start_trace_len;
+                    let total = self.trace_len - mark.start_trace_len;
+                    let virtual_instrs = total - real as usize;
                     info!(
-                        "\"{}\": {} RV64IMAC cycles, {} virtual cycles",
-                        mark.label, real, virt
+                        "\"{}\": {} RV64IMAC cycles + {} virtual instructions = {} total cycles",
+                        mark.label, real, virtual_instrs, total
                     );
                 } else {
                     warn!("Attempt to end a marker (ptr: 0x{ptr:x}) that was never started");
