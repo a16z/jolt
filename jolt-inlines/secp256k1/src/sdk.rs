@@ -1,5 +1,6 @@
 //! secp256k1 operations optimized for Jolt zkVM.
 
+use ark_ff::AdditiveGroup;
 #[cfg(feature = "host")]
 use ark_ff::Field;
 use ark_ff::{BigInt, PrimeField};
@@ -231,7 +232,10 @@ impl Secp256k1Fq {
     /// returns 2*self
     #[inline(always)]
     pub fn dbl(&self) -> Self {
-        self.add(self)
+        //self.add(self)
+        Secp256k1Fq {
+            e: (Fq::new_unchecked(BigInt(self.e)).double()).0 .0,
+        }
     }
     /// returns 3*self
     #[inline(always)]
@@ -434,6 +438,13 @@ impl Secp256k1Fr {
     #[inline(always)]
     pub fn e(&self) -> [u64; 4] {
         self.e
+    }
+    /// as a pair of u128s (little-endian)
+    #[inline(always)]
+    pub fn as_u128_pair(&self) -> (u128, u128) {
+        let low = self.e[0] as u128 + ((self.e[1] as u128) << 64);
+        let high = self.e[2] as u128 + ((self.e[3] as u128) << 64);
+        (low, high)
     }
     /// returns the additive identity element (0)
     #[inline(always)]
@@ -724,6 +735,34 @@ impl Secp256k1Point {
             ]),
         }
     }
+    /// 2^128 * generator
+    #[inline(always)]
+    pub fn generator_times_2_pow_128() -> Self {
+        Secp256k1Point::from_u64_arr_unchecked(&[
+            1980251557031362778,
+            16756863388851544885,
+            10536665754535663150,
+            10333713660726959923,
+            17455036783537422210,
+            13540684701581249533,
+            16005107816708579677,
+            7361871559633811846,
+        ])
+    }
+    /// (2^128 + 1) * generator
+    #[inline(always)]
+    pub fn generator_times_2_pow_128_plus_1() -> Self {
+        Secp256k1Point::from_u64_arr_unchecked(&[
+            7189408038385401609,
+            3397911576708611646,
+            15755510341721275955,
+            10029532112266168108,
+            2794201169108470329,
+            645887947755712873,
+            4931174713096550634,
+            2084093948640608460,
+        ])
+    }
     /// generator with endomorphism applied
     #[inline(always)]
     pub fn generator_w_endomorphism() -> Self {
@@ -826,9 +865,13 @@ impl Secp256k1Point {
         // so no special cases needed
         } else {
             let ns = (self.y.sub(&other.y)).div_assume_nonzero(&other.x.sub(&self.x));
-            let nx2 = self.x.add(&other.x).sub(&ns.square());
-            let t = self.y.dbl().div_assume_nonzero(&self.x.add(&nx2)).add(&ns);
-            let x3 = t.square().sub(&self.x).add(&nx2);
+            let nx2 = other.x.sub(&ns.square());
+            let t = self
+                .y
+                .dbl()
+                .div_assume_nonzero(&self.x.dbl().add(&nx2))
+                .add(&ns);
+            let x3 = t.square().add(&nx2);
             let y3 = t.mul(&(self.x.sub(&x3))).sub(&self.y);
             Secp256k1Point { x: x3, y: y3 }
         }
@@ -972,30 +1015,40 @@ impl Secp256k1Point {
 
 // ECDSA signature verification function + helpers
 
-// performs a 4x128-bit scalar multiplication
 #[inline(always)]
-fn secp256k1_4x128_scalar_mul(scalars: [u128; 4], points: [Secp256k1Point; 4]) -> Secp256k1Point {
+fn scalars_to_index(scalars: &[u128; 4], bit_index: usize) -> usize {
+    let mut idx = 0;
+    for (j, scalar) in scalars.iter().enumerate() {
+        if (scalar >> bit_index) & 1 == 1 {
+            idx |= 1 << j;
+        }
+    }
+    idx
+}
+
+// performs a 4x128-bit scalar multiplication
+// first two points assumed to be generator and 2^128 * generator
+#[inline(always)]
+fn secp256k1_4x128_inner_scalar_mul(
+    scalars: [u128; 4],
+    points: [Secp256k1Point; 2],
+) -> Secp256k1Point {
     let mut lookup = Vec::<Secp256k1Point>::with_capacity(16);
     lookup.push(Secp256k1Point::infinity());
+    lookup.push(Secp256k1Point::generator());
+    lookup.push(Secp256k1Point::generator_times_2_pow_128());
+    lookup.push(Secp256k1Point::generator_times_2_pow_128_plus_1());
     lookup.push(points[0].clone());
-    lookup.push(points[1].clone());
-    lookup.push(lookup[1].add(&lookup[2]));
-    lookup.push(points[2].clone());
     lookup.push(lookup[1].add(&lookup[4]));
     lookup.push(lookup[2].add(&lookup[4]));
     lookup.push(lookup[1].add(&lookup[6]));
-    lookup.push(points[3].clone());
+    lookup.push(points[1].clone());
     for i in 1..8 {
         lookup.push(lookup[i].add(&lookup[8]));
     }
-    let mut res = Secp256k1Point::infinity();
-    for i in (0..128).rev() {
-        let mut idx = 0;
-        for (j, scalar) in scalars.iter().enumerate() {
-            if (scalar >> i) & 1 == 1 {
-                idx |= 1 << j;
-            }
-        }
+    let mut res = lookup[scalars_to_index(&scalars, 127)].clone();
+    for i in (0..127).rev() {
+        let idx = scalars_to_index(&scalars, i);
         if idx != 0 {
             res = res.double_and_add(&lookup[idx]);
         } else {
@@ -1041,19 +1094,18 @@ pub fn ecdsa_verify(
     let u2 = r.div_assume_nonzero(&s);
     // step 3: compute R = u1 * G + u2 * q
     // 3.1: perform the glv scalar decomposition
-    let decomp_u = Secp256k1Point::decompose_scalar(&u1);
+    let decomp_u = u1.as_u128_pair();
     let decomp_v = Secp256k1Point::decompose_scalar(&u2);
     // 3.2: get decomposed scalars as a 4x128-bit array
-    let scalars = [decomp_u[0].1, decomp_u[1].1, decomp_v[0].1, decomp_v[1].1];
-    // 3.3: get 4 points: G, lambda*G, Q, and lambda*Q, appropriately negated
+    //let scalars = [decomp_u[0].1, decomp_u[1].1, decomp_v[0].1, decomp_v[1].1];
+    let scalars = [decomp_u.0, decomp_u.1, decomp_v[0].1, decomp_v[1].1];
+    // 3.3: prepare Q, and lambda*Q, appropriately negated
     let points = [
-        conditional_negate(Secp256k1Point::generator(), decomp_u[0].0),
-        conditional_negate(Secp256k1Point::generator_w_endomorphism(), decomp_u[1].0),
         conditional_negate(q.clone(), decomp_v[0].0),
         conditional_negate(q.endomorphism(), decomp_v[1].0),
     ];
     // 3.4: perform the 4x128-bit scalar multiplication
-    let r_claim = secp256k1_4x128_scalar_mul(scalars, points);
+    let r_claim = secp256k1_4x128_inner_scalar_mul(scalars, points);
     // step 4: check that r == R.x mod n.
     // We implement the `mod n` as a single conditional subtraction on the bigint:
     // for secp256k1, `0 <= x_R < p` and `p < 2n`, so `x_R mod n` is either `x_R` or `x_R - n`.
