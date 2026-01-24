@@ -1003,7 +1003,7 @@ impl Cpu {
         &mut self.mmu
     }
 
-    fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
+    pub fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
         match event {
             JOLT_CYCLE_MARKER_START => {
                 let label = self.read_string(ptr, len)?; // guest NUL-string
@@ -1046,7 +1046,7 @@ impl Cpu {
         Ok(())
     }
 
-    fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u8) -> Result<(), Trap> {
+    pub fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u8) -> Result<(), Trap> {
         let message = self.read_string(ptr, len)?;
         if event_type == JOLT_PRINT_STRING as u8 {
             print!("{message}");
