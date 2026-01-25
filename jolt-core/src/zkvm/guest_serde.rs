@@ -6,6 +6,17 @@
 //! The goal of this module is to define a Jolt-owned encoding optimized for guest verification:
 //! - curve points are encoded in a form that avoids expensive decompression in-guest
 //! - field elements are encoded as Montgomery limbs to avoid Montgomery conversion in-guest
+//!
+//! # Trust model / security note
+//!
+//! This encoding is intended for **trusted** inputs produced by a trusted host pipeline (e.g.
+//! `jolt_sdk::decompress_transport_bytes_to_guest_bytes`) that has already decoded/validated the
+//! transport encoding.
+//!
+//! Some `GuestDeserialize` impls intentionally perform **unchecked** construction (e.g. using
+//! `new_unchecked` for field elements / curve points) to avoid expensive validation inside the
+//! zkVM. Do **not** feed prover-controlled bytes directly into `GuestDeserialize` unless you add
+//! your own validation layer.
 
 use std::io;
 use std::io::{Read, Write};
@@ -16,6 +27,16 @@ pub trait GuestSerialize {
     fn guest_serialize<W: Write>(&self, w: &mut W) -> io::Result<()>;
 }
 
+/// Guest-specific deserialization for zkVM programs.
+///
+/// # Trust model / SAFETY
+///
+/// This trait is designed for a **trusted aggregation pipeline** where the host is assumed
+/// honest. In particular, some implementations intentionally avoid validation (e.g. construct
+/// BN254 field elements / curve points via `new_unchecked`) for performance.
+///
+/// Only use `guest_deserialize` on bytes that originate from a trusted/validated producer (for
+/// example, the output of `jolt_sdk::decompress_transport_bytes_to_guest_bytes`).
 pub trait GuestDeserialize: Sized {
     fn guest_deserialize<R: Read>(r: &mut R) -> io::Result<Self>;
 }
@@ -137,7 +158,9 @@ impl GuestDeserialize for u64 {
 
 impl GuestSerialize for usize {
     fn guest_serialize<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        write_u64(w, *self as u64)
+        let v = u64::try_from(*self)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "usize overflow"))?;
+        write_u64(w, v)
     }
 }
 impl GuestDeserialize for usize {
@@ -184,7 +207,8 @@ impl<T: GuestDeserialize> GuestDeserialize for Option<T> {
 
 impl<T: GuestSerialize> GuestSerialize for Vec<T> {
     fn guest_serialize<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        let len: u64 = self.len() as u64;
+        let len = u64::try_from(self.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Vec length overflow"))?;
         write_u64(w, len)?;
         for v in self {
             v.guest_serialize(w)?;
@@ -220,7 +244,9 @@ impl<A: GuestDeserialize, B: GuestDeserialize> GuestDeserialize for (A, B) {
 /// Encode a raw byte slice as (u64 length) + bytes.
 #[inline(always)]
 pub fn guest_serialize_bytes<W: Write>(w: &mut W, bytes: &[u8]) -> io::Result<()> {
-    write_u64(w, bytes.len() as u64)?;
+    let len = u64::try_from(bytes.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "byte slice length overflow"))?;
+    write_u64(w, len)?;
     w.write_all(bytes)
 }
 

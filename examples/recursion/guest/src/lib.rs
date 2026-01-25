@@ -1,4 +1,13 @@
 // #![cfg_attr(feature = "guest", no_std)]
+//
+// Trust model:
+// This guest program expects its input bytes to be a **guest-optimized encoding** produced by a
+// trusted host pipeline (e.g. `jolt_sdk::decompress_transport_bytes_to_guest_bytes`) that has
+// already decoded and validated the transport encoding in native execution.
+//
+// As a result, `GuestDeserialize` is intentionally **unchecked** for performance and this example
+// uses `unwrap()` in a few hot deserialization paths. This is appropriate for the trusted
+// aggregation setting; do not treat the guest encoding as a general wire format.
 
 use jolt_sdk::{self as jolt};
 

@@ -159,7 +159,10 @@ where
     F: JoltField + GuestDeserialize,
 {
     fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
-        let size = u64::guest_deserialize(r)? as usize;
+        let size_u64 = u64::guest_deserialize(r)?;
+        let size = usize::try_from(size_u64).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "Claims length overflow")
+        })?;
         let mut claims = BTreeMap::new();
         for _ in 0..size {
             let key = OpeningId::deserialize_compressed(&mut *r)

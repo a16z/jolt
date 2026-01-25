@@ -14,6 +14,15 @@ use crate::host_utils::{JoltDevice, JoltVerifierPreprocessing, RV64IMACProof, F,
 ///
 /// - Transport decode: **validated** (`Validate::Yes` via `deserialize_compressed`)
 /// - Guest decode: **unvalidated** (trusted output of this function)
+///
+/// # Trust model
+///
+/// This runs in **native host execution** (`jolt-sdk` `host` feature) and is **not** part of the
+/// proved computation. It is intended for a trusted aggregation pipeline where the host is
+/// assumed honest.
+///
+/// Callers must not treat the output encoding as a wire format: feeding attacker-controlled bytes
+/// into `GuestDeserialize` bypasses cryptographic validity checks by design.
 pub fn decompress_transport_bytes_to_guest_bytes(transport: &[u8]) -> io::Result<Vec<u8>> {
     use jolt_core::zkvm::guest_serde::GuestSerialize as _;
 
