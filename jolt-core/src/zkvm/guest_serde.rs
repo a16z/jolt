@@ -194,7 +194,8 @@ impl<T: GuestSerialize> GuestSerialize for Vec<T> {
 }
 impl<T: GuestDeserialize> GuestDeserialize for Vec<T> {
     fn guest_deserialize<R: Read>(r: &mut R) -> io::Result<Self> {
-        let len = read_u64(r)? as usize;
+        let len = usize::try_from(read_u64(r)?)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Vec length overflow"))?;
         let mut out = Vec::with_capacity(len);
         for _ in 0..len {
             out.push(T::guest_deserialize(r)?);
@@ -226,7 +227,8 @@ pub fn guest_serialize_bytes<W: Write>(w: &mut W, bytes: &[u8]) -> io::Result<()
 /// Decode a raw byte vector as (u64 length) + bytes.
 #[inline(always)]
 pub fn guest_deserialize_bytes<R: Read>(r: &mut R) -> io::Result<Vec<u8>> {
-    let len = read_u64(r)? as usize;
+    let len = usize::try_from(read_u64(r)?)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "byte slice length overflow"))?;
     let mut out = vec![0u8; len];
     r.read_exact(&mut out)?;
     Ok(out)
