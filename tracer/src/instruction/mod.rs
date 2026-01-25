@@ -130,6 +130,7 @@ use self::inline::INLINE;
 use crate::emulator::cpu::{Cpu, Xlen};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use derive_more::From;
+use format::format_inline::FormatInline;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
 pub mod format;
@@ -308,7 +309,7 @@ impl From<()> for RAMAccess {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct NormalizedInstruction {
     pub address: usize,
     pub operands: NormalizedOperands,
@@ -385,6 +386,34 @@ macro_rules! define_rv32im_enums {
             )*
             /// Inline instruction from external crates
             INLINE(INLINE),
+        }
+
+        // Stable, compact tag for binary encoding. Discriminants are derived from the
+        // instruction list order:
+        // NoOp=0, UNIMPL=1, then `$instr` in the order passed to `define_rv32im_enums!`
+        // starts at 2, and INLINE is last.
+        #[repr(u16)]
+        #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+        enum InstructionTag {
+            NoOp = 0,
+            UNIMPL = 1,
+            $(
+                $instr,
+            )*
+            INLINE,
+        }
+
+        impl From<&Instruction> for InstructionTag {
+            fn from(i: &Instruction) -> Self {
+                match i {
+                    Instruction::NoOp => InstructionTag::NoOp,
+                    Instruction::UNIMPL => InstructionTag::UNIMPL,
+                    $(
+                        Instruction::$instr(_) => InstructionTag::$instr,
+                    )*
+                    Instruction::INLINE(_) => InstructionTag::INLINE,
+                }
+            }
         }
 
         #[derive(
@@ -591,6 +620,27 @@ macro_rules! define_rv32im_enums {
                     Instruction::INLINE(instr) => {instr.is_compressed = is_compressed;}
                 }
             }
+
+            // ---- Canonical binary encoding helpers (Jolt-wide breaking change) ----
+            pub const BINARY_TAG_INLINE: u16 = InstructionTag::INLINE as u16;
+
+            #[inline(always)]
+            pub fn binary_tag(&self) -> u16 {
+                InstructionTag::from(self) as u16
+            }
+
+            #[inline(always)]
+            pub fn from_binary_tag(tag: u16, ni: NormalizedInstruction) -> Result<Self, SerializationError> {
+                match tag {
+                    x if x == InstructionTag::NoOp as u16 => Ok(Instruction::NoOp),
+                    x if x == InstructionTag::UNIMPL as u16 => Ok(Instruction::UNIMPL),
+                    $(
+                        x if x == InstructionTag::$instr as u16 => Ok($instr::from(ni).into()),
+                    )*
+                    // INLINE is handled specially by the deserializer (it needs extra fields).
+                    _ => Err(SerializationError::InvalidData),
+                }
+            }
         }
 
         impl From<&Instruction> for NormalizedInstruction {
@@ -655,18 +705,67 @@ impl CanonicalSerialize for Instruction {
         mut writer: W,
         _compress: Compress,
     ) -> Result<(), SerializationError> {
-        let bytes = serde_json::to_vec(self).map_err(|_| SerializationError::InvalidData)?;
-        let len: u64 = bytes.len() as u64;
-        len.serialize_with_mode(&mut writer, _compress)?;
+        // Fixed-size binary encoding for `Instruction` (Jolt-wide breaking change).
+        //
+        // Layout (little-endian):
+        // - tag: u16
+        // - address: u64
+        // - rs1: u8 (0xFF = None)
+        // - rs2: u8 (0xFF = None)
+        // - rd:  u8 (0xFF = None)
+        // - imm: i128 (16 bytes LE)
+        // - virtual_sequence_remaining: u16 (0xFFFF = None)
+        // - is_first_in_sequence: u8 (0/1)
+        // - is_compressed: u8 (0/1)
+        // - if tag == INLINE: opcode:u8, funct3:u8, funct7:u8
+        let tag = self.binary_tag();
+        tag.serialize_with_mode(&mut writer, _compress)?;
+
+        let ni = self.normalize();
+        let address: u64 = ni.address as u64;
+        address.serialize_with_mode(&mut writer, _compress)?;
+
+        fn enc_opt_reg(x: Option<u8>) -> u8 {
+            x.unwrap_or(0xFF)
+        }
+        let rs1 = enc_opt_reg(ni.operands.rs1);
+        let rs2 = enc_opt_reg(ni.operands.rs2);
+        let rd = enc_opt_reg(ni.operands.rd);
         writer
-            .write_all(&bytes)
+            .write_all(&[rs1, rs2, rd])
             .map_err(|_| SerializationError::InvalidData)?;
+
+        writer
+            .write_all(&ni.operands.imm.to_le_bytes())
+            .map_err(|_| SerializationError::InvalidData)?;
+
+        let vsr: u16 = ni.virtual_sequence_remaining.unwrap_or(u16::MAX);
+        vsr.serialize_with_mode(&mut writer, _compress)?;
+
+        let is_first = u8::from(ni.is_first_in_sequence);
+        let is_compressed = u8::from(ni.is_compressed);
+        writer
+            .write_all(&[is_first, is_compressed])
+            .map_err(|_| SerializationError::InvalidData)?;
+
+        if let Instruction::INLINE(inl) = self {
+            let opcode = (inl.opcode & 0x7f) as u8;
+            let funct3 = (inl.funct3 & 0x7) as u8;
+            let funct7 = (inl.funct7 & 0x7f) as u8;
+            writer
+                .write_all(&[opcode, funct3, funct7])
+                .map_err(|_| SerializationError::InvalidData)?;
+        }
         Ok(())
     }
 
     fn serialized_size(&self, _compress: Compress) -> usize {
-        let bytes = serde_json::to_vec(self).expect("serialization failed");
-        bytes.len() + 8 // 8 bytes for length
+        // Base record is fixed-size; INLINE has 3 extra bytes.
+        const BASE: usize = 2 + 8 + 3 + 16 + 2 + 2;
+        match self {
+            Instruction::INLINE(_) => BASE + 3,
+            _ => BASE,
+        }
     }
 }
 
@@ -674,17 +773,77 @@ impl CanonicalDeserialize for Instruction {
     fn deserialize_with_mode<R: ark_serialize::Read>(
         mut reader: R,
         compress: Compress,
-        validate: Validate,
+        _validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let len = u64::deserialize_with_mode(&mut reader, compress, validate)?;
-        let mut bytes = vec![0u8; len as usize];
+        // Fixed-size binary decoding (see `serialize_with_mode`).
+        let tag: u16 = u16::deserialize_with_mode(&mut reader, compress, Validate::No)?;
+        let address_u64: u64 = u64::deserialize_with_mode(&mut reader, compress, Validate::No)?;
+
+        let mut regs = [0u8; 3];
         reader
-            .read_exact(&mut bytes)
+            .read_exact(&mut regs)
             .map_err(|_| SerializationError::InvalidData)?;
-        serde_json::from_slice(&bytes).map_err(|e| {
-            println!("Deserialization error: {e}");
-            SerializationError::InvalidData
-        })
+        fn dec_opt_reg(x: u8) -> Option<u8> {
+            if x == 0xFF {
+                None
+            } else {
+                Some(x)
+            }
+        }
+        let rs1 = dec_opt_reg(regs[0]);
+        let rs2 = dec_opt_reg(regs[1]);
+        let rd = dec_opt_reg(regs[2]);
+
+        let mut imm_bytes = [0u8; 16];
+        reader
+            .read_exact(&mut imm_bytes)
+            .map_err(|_| SerializationError::InvalidData)?;
+        let imm = i128::from_le_bytes(imm_bytes);
+
+        let vsr_enc: u16 = u16::deserialize_with_mode(&mut reader, compress, Validate::No)?;
+        let virtual_sequence_remaining = if vsr_enc == u16::MAX {
+            None
+        } else {
+            Some(vsr_enc)
+        };
+
+        let mut bools = [0u8; 2];
+        reader
+            .read_exact(&mut bools)
+            .map_err(|_| SerializationError::InvalidData)?;
+        let is_first_in_sequence = bools[0] != 0;
+        let is_compressed = bools[1] != 0;
+
+        let ni = NormalizedInstruction {
+            address: address_u64 as usize,
+            operands: NormalizedOperands { rs1, rs2, rd, imm },
+            virtual_sequence_remaining,
+            is_first_in_sequence,
+            is_compressed,
+        };
+
+        if tag == Instruction::BINARY_TAG_INLINE {
+            let mut key = [0u8; 3];
+            reader
+                .read_exact(&mut key)
+                .map_err(|_| SerializationError::InvalidData)?;
+            let opcode = (key[0] & 0x7f) as u32;
+            let funct3 = (key[1] & 0x7) as u32;
+            let funct7 = (key[2] & 0x7f) as u32;
+            let inl = INLINE {
+                opcode,
+                funct3,
+                funct7,
+                address: address_u64,
+                operands: FormatInline::from(ni.operands),
+                virtual_sequence_remaining: ni.virtual_sequence_remaining,
+                is_first_in_sequence: ni.is_first_in_sequence,
+                is_compressed: ni.is_compressed,
+            };
+            return Ok(Instruction::INLINE(inl));
+        }
+
+        Instruction::from_binary_tag(tag, ni)
     }
 }
 
