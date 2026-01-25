@@ -46,7 +46,12 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let hash_result = hasher.finalize();
         let seed: [u8; 32] = hash_result.into();
         let mut rng = ChaCha20Rng::from_seed(seed);
+        // `new_from_urs` is only available when `dory/disk-persistence` is enabled.
+        // For recursion/guest builds (no disk), fall back to deterministic generation.
+        #[cfg(feature = "host")]
         let setup = ArkworksProverSetup::new_from_urs(&mut rng, max_num_vars);
+        #[cfg(not(feature = "host"))]
+        let setup = ArkworksProverSetup::new(&mut rng, max_num_vars);
 
         // The prepared-point cache in dory-pcs is global and can only be initialized once.
         // In unit tests, multiple setups with different sizes are created, so initializing the

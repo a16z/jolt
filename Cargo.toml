@@ -151,7 +151,10 @@ sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", version = "0.1.0", features = ["backends", "cache", "disk-persistence"] }
+# Important: keep `dory-pcs` lean by default so it can compile for the zkVM guest target.
+# Host/prover builds enable the heavy features via `jolt-core`'s `prover` feature
+# (see `jolt-core/Cargo.toml`).
+dory = { package = "dory-pcs", version = "0.1.0", default-features = false }
 
 # Core Utilities
 clap = { version = "4.5.4", features = ["derive"] }
