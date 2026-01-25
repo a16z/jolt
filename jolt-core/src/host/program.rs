@@ -34,8 +34,16 @@ impl Program {
             max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             std: false,
+            guest_features: Vec::new(),
             elf: None,
         }
+    }
+
+    /// Add an extra cargo feature to enable when building the guest crate.
+    ///
+    /// The base guest build always includes the `guest` feature.
+    pub fn add_guest_feature(&mut self, feature: &str) {
+        self.guest_features.push(feature.to_string());
     }
 
     pub fn set_std(&mut self, std: bool) {
@@ -192,11 +200,20 @@ impl Program {
             });
             envs.push((&cc_env_var, cc_value));
 
+            let mut features = String::from("guest");
+            if !self.guest_features.is_empty() {
+                let mut extras = self.guest_features.clone();
+                extras.sort();
+                extras.dedup();
+                features.push(',');
+                features.push_str(&extras.join(","));
+            }
+
             let args = [
                 "build",
                 "--release",
                 "--features",
-                "guest",
+                &features,
                 "-p",
                 &self.guest,
                 "--target-dir",

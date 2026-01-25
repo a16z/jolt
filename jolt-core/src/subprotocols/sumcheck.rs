@@ -2,6 +2,7 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
+use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
@@ -242,6 +243,31 @@ impl BatchedSumcheck {
 pub struct SumcheckInstanceProof<F: JoltField, ProofTranscript: Transcript> {
     pub compressed_polys: Vec<CompressedUniPoly<F>>,
     _marker: PhantomData<ProofTranscript>,
+}
+
+impl<F, ProofTranscript> crate::zkvm::guest_serde::GuestSerialize
+    for SumcheckInstanceProof<F, ProofTranscript>
+where
+    F: JoltField + crate::zkvm::guest_serde::GuestSerialize,
+    ProofTranscript: Transcript,
+{
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        crate::zkvm::guest_serde::GuestSerialize::guest_serialize(&self.compressed_polys, w)
+    }
+}
+
+impl<F, ProofTranscript> crate::zkvm::guest_serde::GuestDeserialize
+    for SumcheckInstanceProof<F, ProofTranscript>
+where
+    F: JoltField + crate::zkvm::guest_serde::GuestDeserialize,
+    ProofTranscript: Transcript,
+{
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            compressed_polys: crate::zkvm::guest_serde::GuestDeserialize::guest_deserialize(r)?,
+            _marker: PhantomData,
+        })
+    }
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {

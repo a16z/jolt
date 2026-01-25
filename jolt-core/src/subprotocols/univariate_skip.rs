@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::field::JoltField;
+use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::unipoly::UniPoly;
@@ -146,6 +147,29 @@ pub fn prove_uniskip_round<F: JoltField, T: Transcript, I: SumcheckInstanceProve
 pub struct UniSkipFirstRoundProof<F: JoltField, T: Transcript> {
     pub uni_poly: UniPoly<F>,
     _marker: PhantomData<T>,
+}
+
+impl<F, T> crate::zkvm::guest_serde::GuestSerialize for UniSkipFirstRoundProof<F, T>
+where
+    F: JoltField + crate::zkvm::guest_serde::GuestSerialize,
+    T: Transcript,
+{
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        crate::zkvm::guest_serde::GuestSerialize::guest_serialize(&self.uni_poly, w)
+    }
+}
+
+impl<F, T> crate::zkvm::guest_serde::GuestDeserialize for UniSkipFirstRoundProof<F, T>
+where
+    F: JoltField + crate::zkvm::guest_serde::GuestDeserialize,
+    T: Transcript,
+{
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            uni_poly: crate::zkvm::guest_serde::GuestDeserialize::guest_deserialize(r)?,
+            _marker: PhantomData,
+        })
+    }
 }
 
 impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {

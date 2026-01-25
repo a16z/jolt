@@ -4,6 +4,8 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
+
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
 use crate::subprotocols::sumcheck::BatchedSumcheck;
@@ -767,6 +769,31 @@ impl CanonicalDeserialize for JoltSharedPreprocessing {
     }
 }
 
+impl crate::zkvm::guest_serde::GuestSerialize for JoltSharedPreprocessing {
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        self.bytecode.as_ref().guest_serialize(w)?;
+        self.ram.guest_serialize(w)?;
+        self.memory_layout.guest_serialize(w)?;
+        self.max_padded_trace_length.guest_serialize(w)?;
+        Ok(())
+    }
+}
+
+impl crate::zkvm::guest_serde::GuestDeserialize for JoltSharedPreprocessing {
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        let bytecode = BytecodePreprocessing::guest_deserialize(r)?;
+        let ram = RAMPreprocessing::guest_deserialize(r)?;
+        let memory_layout = MemoryLayout::guest_deserialize(r)?;
+        let max_padded_trace_length = usize::guest_deserialize(r)?;
+        Ok(Self {
+            bytecode: Arc::new(bytecode),
+            ram,
+            memory_layout,
+            max_padded_trace_length,
+        })
+    }
+}
+
 impl ark_serialize::Valid for JoltSharedPreprocessing {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         self.bytecode.check()?;
@@ -802,6 +829,33 @@ where
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
+}
+
+impl<F, PCS> crate::zkvm::guest_serde::GuestSerialize for JoltVerifierPreprocessing<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: crate::zkvm::guest_serde::GuestSerialize,
+{
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        self.generators.guest_serialize(w)?;
+        self.shared.guest_serialize(w)?;
+        Ok(())
+    }
+}
+
+impl<F, PCS> crate::zkvm::guest_serde::GuestDeserialize for JoltVerifierPreprocessing<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: crate::zkvm::guest_serde::GuestDeserialize,
+{
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            generators: PCS::VerifierSetup::guest_deserialize(r)?,
+            shared: JoltSharedPreprocessing::guest_deserialize(r)?,
+        })
+    }
 }
 
 impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>

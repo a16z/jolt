@@ -19,6 +19,7 @@ edition = "2021"
 std = ["random"]
 random = ["dep:getrandom_v02", "dep:getrandom_v03", "dep:rand"]
 malloc-shim = []
+cycle-tracking = []
 
 [dependencies]
 rand = { workspace = true, default-features = false, features = [

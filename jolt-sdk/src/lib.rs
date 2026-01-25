@@ -7,6 +7,11 @@ pub mod host_utils;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub use host_utils::*;
 
+#[cfg(feature = "host")]
+pub mod decompression;
+#[cfg(feature = "host")]
+pub use decompression::*;
+
 pub use jolt_platform::*;
 pub use jolt_sdk_macros::provable;
 pub use postcard;

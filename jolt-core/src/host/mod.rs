@@ -22,6 +22,7 @@ pub struct Program {
     max_trusted_advice_size: u64,
     max_output_size: u64,
     std: bool,
+    guest_features: Vec<String>,
     pub elf: Option<PathBuf>,
 }
 

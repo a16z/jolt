@@ -10,7 +10,10 @@ pub const JOLT_CYCLE_TRACK_ECALL_NUM: u32 = 0xC7C1E; // "C Y C L E"
 pub const JOLT_CYCLE_MARKER_START: u32 = 1;
 pub const JOLT_CYCLE_MARKER_END: u32 = 2;
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[cfg(all(
+    feature = "cycle-tracking",
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 mod riscv_specific {
     use super::{JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM};
 
@@ -52,13 +55,21 @@ mod riscv_specific {
 }
 
 #[allow(unused_variables)]
+#[inline(always)]
 pub fn start_cycle_tracking(marker_id: &str) {
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    #[cfg(all(
+        feature = "cycle-tracking",
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
     riscv_specific::start_cycle_tracking(marker_id);
 }
 
 #[allow(unused_variables)]
+#[inline(always)]
 pub fn end_cycle_tracking(marker_id: &str) {
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    #[cfg(all(
+        feature = "cycle-tracking",
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
     riscv_specific::end_cycle_tracking(marker_id);
 }

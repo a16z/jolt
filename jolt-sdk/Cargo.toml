@@ -16,6 +16,7 @@ edition = "2021"
 
 [features]
 default = ["jolt-platform/random"]
+cycle-tracking = ["jolt-platform/cycle-tracking"]
 host = [
     "jolt-core/default",
     "jolt-platform/std",
@@ -23,6 +24,7 @@ host = [
     "dep:common",
     "dep:ark-ec",
     "dep:ark-bn254",
+    "dep:ark-serialize",
     "postcard/use-std",
     "serde/std",
 ]
@@ -47,6 +49,7 @@ postcard.workspace = true
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 ark-ec = { workspace = true, default-features = false, optional = true }
 ark-bn254 = { workspace = true, default-features = false, optional = true }
+ark-serialize = { workspace = true, default-features = false, optional = true }
 
 jolt-sdk-macros.workspace = true
 # Host-only dependencies

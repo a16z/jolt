@@ -1,4 +1,5 @@
 use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
+use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
 use std::cmp::Ordering;
 use std::iter::zip;
 use std::ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
@@ -26,6 +27,47 @@ pub struct UniPoly<F: CanonicalSerialize + CanonicalDeserialize> {
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct CompressedUniPoly<F: JoltField> {
     pub coeffs_except_linear_term: Vec<F>,
+}
+
+// Guest-optimized encoding (Montgomery limbs for field elements).
+impl<F> GuestSerialize for UniPoly<F>
+where
+    F: GuestSerialize + CanonicalSerialize + CanonicalDeserialize,
+{
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        self.coeffs.guest_serialize(w)
+    }
+}
+
+impl<F> GuestDeserialize for UniPoly<F>
+where
+    F: GuestDeserialize + CanonicalSerialize + CanonicalDeserialize,
+{
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            coeffs: Vec::guest_deserialize(r)?,
+        })
+    }
+}
+
+impl<F> GuestSerialize for CompressedUniPoly<F>
+where
+    F: JoltField + GuestSerialize,
+{
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        self.coeffs_except_linear_term.guest_serialize(w)
+    }
+}
+
+impl<F> GuestDeserialize for CompressedUniPoly<F>
+where
+    F: JoltField + GuestDeserialize,
+{
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            coeffs_except_linear_term: Vec::guest_deserialize(r)?,
+        })
+    }
 }
 
 impl<F: JoltField> UniPoly<F> {

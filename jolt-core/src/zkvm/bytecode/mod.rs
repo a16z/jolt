@@ -2,6 +2,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use tracer::instruction::{Cycle, Instruction};
 
+use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
+
 pub mod read_raf_checking;
 
 #[derive(Default, Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -49,6 +51,56 @@ pub struct BytecodePCMapper {
     /// and the maximum number of the inline sequence
     /// Indexed by the address of instruction unmapped divided by 2
     indices: Vec<Option<(usize, u16)>>,
+}
+
+impl crate::zkvm::guest_serde::GuestSerialize for Instruction {
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        // Instruction canonical encoding is already the optimized binary encoding.
+        self.serialize_compressed(w)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Instruction"))
+    }
+}
+
+impl crate::zkvm::guest_serde::GuestDeserialize for Instruction {
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Instruction::deserialize_compressed(&mut *r)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Instruction"))
+    }
+}
+
+impl crate::zkvm::guest_serde::GuestSerialize for BytecodePreprocessing {
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        self.code_size.guest_serialize(w)?;
+        self.bytecode.guest_serialize(w)?;
+        self.pc_map.guest_serialize(w)?;
+        Ok(())
+    }
+}
+
+impl crate::zkvm::guest_serde::GuestDeserialize for BytecodePreprocessing {
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            code_size: usize::guest_deserialize(r)?,
+            bytecode: Vec::<Instruction>::guest_deserialize(r)?,
+            pc_map: BytecodePCMapper::guest_deserialize(r)?,
+        })
+    }
+}
+
+impl crate::zkvm::guest_serde::GuestSerialize for BytecodePCMapper {
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        // `indices` are small and contain no field elements; still encode with GuestSerialize
+        // to avoid `usize` ambiguity.
+        self.indices.guest_serialize(w)
+    }
+}
+
+impl crate::zkvm::guest_serde::GuestDeserialize for BytecodePCMapper {
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            indices: Vec::<Option<(usize, u16)>>::guest_deserialize(r)?,
+        })
+    }
 }
 
 impl BytecodePCMapper {

@@ -9,6 +9,8 @@ use ark_serialize::{
 use num::FromPrimitive;
 use strum::EnumCount;
 
+use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
+
 use crate::{
     field::JoltField,
     poly::{
@@ -131,6 +133,110 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
         }
 
         Ok(Claims(claims))
+    }
+}
+
+// Guest-optimized encoding for recursion/guest verification inputs.
+impl<F> crate::zkvm::guest_serde::GuestSerialize for Claims<F>
+where
+    F: JoltField + crate::zkvm::guest_serde::GuestSerialize,
+{
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        // Match canonical shape: len + (OpeningId, claim) pairs (opening point omitted).
+        (self.0.len() as u64).guest_serialize(w)?;
+        for (key, (_opening_point, claim)) in self.0.iter() {
+            // `OpeningId` is small; use its canonical encoding.
+            key.serialize_compressed(&mut *w)
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "OpeningId"))?;
+            claim.guest_serialize(w)?;
+        }
+        Ok(())
+    }
+}
+
+impl<F> crate::zkvm::guest_serde::GuestDeserialize for Claims<F>
+where
+    F: JoltField + crate::zkvm::guest_serde::GuestDeserialize,
+{
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        let size = u64::guest_deserialize(r)? as usize;
+        let mut claims = BTreeMap::new();
+        for _ in 0..size {
+            let key = OpeningId::deserialize_compressed(&mut *r)
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "OpeningId"))?;
+            let claim = F::guest_deserialize(r)?;
+            claims.insert(key, (OpeningPoint::default(), claim));
+        }
+        Ok(Claims(claims))
+    }
+}
+
+impl<F, PCS, FS> crate::zkvm::guest_serde::GuestSerialize for JoltProof<F, PCS, FS>
+where
+    F: JoltField + crate::zkvm::guest_serde::GuestSerialize,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Commitment: crate::zkvm::guest_serde::GuestSerialize,
+    PCS::Proof: crate::zkvm::guest_serde::GuestSerialize,
+    FS: Transcript,
+{
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        self.opening_claims.guest_serialize(w)?;
+        self.commitments.guest_serialize(w)?;
+        self.stage1_uni_skip_first_round_proof.guest_serialize(w)?;
+        self.stage1_sumcheck_proof.guest_serialize(w)?;
+        self.stage2_uni_skip_first_round_proof.guest_serialize(w)?;
+        self.stage2_sumcheck_proof.guest_serialize(w)?;
+        self.stage3_sumcheck_proof.guest_serialize(w)?;
+        self.stage4_sumcheck_proof.guest_serialize(w)?;
+        self.stage5_sumcheck_proof.guest_serialize(w)?;
+        self.stage6_sumcheck_proof.guest_serialize(w)?;
+        self.stage7_sumcheck_proof.guest_serialize(w)?;
+        self.joint_opening_proof.guest_serialize(w)?;
+        self.untrusted_advice_commitment.guest_serialize(w)?;
+        self.trace_length.guest_serialize(w)?;
+        self.ram_K.guest_serialize(w)?;
+        self.bytecode_K.guest_serialize(w)?;
+        self.rw_config.guest_serialize(w)?;
+        self.one_hot_config.guest_serialize(w)?;
+        self.dory_layout.guest_serialize(w)?;
+        Ok(())
+    }
+}
+
+impl<F, PCS, FS> crate::zkvm::guest_serde::GuestDeserialize for JoltProof<F, PCS, FS>
+where
+    F: JoltField + crate::zkvm::guest_serde::GuestDeserialize,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Commitment: crate::zkvm::guest_serde::GuestDeserialize,
+    PCS::Proof: crate::zkvm::guest_serde::GuestDeserialize,
+    FS: Transcript,
+{
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            opening_claims: Claims::<F>::guest_deserialize(r)?,
+            commitments: Vec::<PCS::Commitment>::guest_deserialize(r)?,
+            stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof::<F, FS>::guest_deserialize(
+                r,
+            )?,
+            stage1_sumcheck_proof: SumcheckInstanceProof::<F, FS>::guest_deserialize(r)?,
+            stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof::<F, FS>::guest_deserialize(
+                r,
+            )?,
+            stage2_sumcheck_proof: SumcheckInstanceProof::<F, FS>::guest_deserialize(r)?,
+            stage3_sumcheck_proof: SumcheckInstanceProof::<F, FS>::guest_deserialize(r)?,
+            stage4_sumcheck_proof: SumcheckInstanceProof::<F, FS>::guest_deserialize(r)?,
+            stage5_sumcheck_proof: SumcheckInstanceProof::<F, FS>::guest_deserialize(r)?,
+            stage6_sumcheck_proof: SumcheckInstanceProof::<F, FS>::guest_deserialize(r)?,
+            stage7_sumcheck_proof: SumcheckInstanceProof::<F, FS>::guest_deserialize(r)?,
+            joint_opening_proof: PCS::Proof::guest_deserialize(r)?,
+            untrusted_advice_commitment: Option::<PCS::Commitment>::guest_deserialize(r)?,
+            trace_length: usize::guest_deserialize(r)?,
+            ram_K: usize::guest_deserialize(r)?,
+            bytecode_K: usize::guest_deserialize(r)?,
+            rw_config: ReadWriteConfig::guest_deserialize(r)?,
+            one_hot_config: OneHotConfig::guest_deserialize(r)?,
+            dory_layout: DoryLayout::guest_deserialize(r)?,
+        })
     }
 }
 
