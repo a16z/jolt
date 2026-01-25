@@ -53,7 +53,7 @@ pub struct BytecodePCMapper {
     indices: Vec<Option<(usize, u16)>>,
 }
 
-impl crate::zkvm::guest_serde::GuestSerialize for Instruction {
+impl GuestSerialize for Instruction {
     fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         // Instruction canonical encoding is already the optimized binary encoding.
         self.serialize_compressed(w)
@@ -61,14 +61,14 @@ impl crate::zkvm::guest_serde::GuestSerialize for Instruction {
     }
 }
 
-impl crate::zkvm::guest_serde::GuestDeserialize for Instruction {
+impl GuestDeserialize for Instruction {
     fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
         Instruction::deserialize_compressed(&mut *r)
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Instruction"))
     }
 }
 
-impl crate::zkvm::guest_serde::GuestSerialize for BytecodePreprocessing {
+impl GuestSerialize for BytecodePreprocessing {
     fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         self.code_size.guest_serialize(w)?;
         self.bytecode.guest_serialize(w)?;
@@ -77,7 +77,7 @@ impl crate::zkvm::guest_serde::GuestSerialize for BytecodePreprocessing {
     }
 }
 
-impl crate::zkvm::guest_serde::GuestDeserialize for BytecodePreprocessing {
+impl GuestDeserialize for BytecodePreprocessing {
     fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
         Ok(Self {
             code_size: usize::guest_deserialize(r)?,
@@ -87,7 +87,7 @@ impl crate::zkvm::guest_serde::GuestDeserialize for BytecodePreprocessing {
     }
 }
 
-impl crate::zkvm::guest_serde::GuestSerialize for BytecodePCMapper {
+impl GuestSerialize for BytecodePCMapper {
     fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         // `indices` are small and contain no field elements; still encode with GuestSerialize
         // to avoid `usize` ambiguity.
@@ -95,7 +95,7 @@ impl crate::zkvm::guest_serde::GuestSerialize for BytecodePCMapper {
     }
 }
 
-impl crate::zkvm::guest_serde::GuestDeserialize for BytecodePCMapper {
+impl GuestDeserialize for BytecodePCMapper {
     fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
         Ok(Self {
             indices: Vec::<Option<(usize, u16)>>::guest_deserialize(r)?,

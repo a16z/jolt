@@ -2,8 +2,8 @@ use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::field::JoltField;
-use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
 use crate::utils::math::Math;
+use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
 use crate::zkvm::instruction_lookups::LOG_K;
 use common::constants::{
     INSTRUCTION_PHASES_THRESHOLD_LOG_T, ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT,
@@ -131,7 +131,7 @@ pub struct OneHotConfig {
     pub lookups_ra_virtual_log_k_chunk: u8,
 }
 
-impl crate::zkvm::guest_serde::GuestSerialize for ReadWriteConfig {
+impl GuestSerialize for ReadWriteConfig {
     fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         self.ram_rw_phase1_num_rounds.guest_serialize(w)?;
         self.ram_rw_phase2_num_rounds.guest_serialize(w)?;
@@ -141,7 +141,7 @@ impl crate::zkvm::guest_serde::GuestSerialize for ReadWriteConfig {
     }
 }
 
-impl crate::zkvm::guest_serde::GuestDeserialize for ReadWriteConfig {
+impl GuestDeserialize for ReadWriteConfig {
     fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
         Ok(Self {
             ram_rw_phase1_num_rounds: u8::guest_deserialize(r)?,
@@ -152,7 +152,7 @@ impl crate::zkvm::guest_serde::GuestDeserialize for ReadWriteConfig {
     }
 }
 
-impl crate::zkvm::guest_serde::GuestSerialize for OneHotConfig {
+impl GuestSerialize for OneHotConfig {
     fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         self.log_k_chunk.guest_serialize(w)?;
         self.lookups_ra_virtual_log_k_chunk.guest_serialize(w)?;
@@ -160,7 +160,7 @@ impl crate::zkvm::guest_serde::GuestSerialize for OneHotConfig {
     }
 }
 
-impl crate::zkvm::guest_serde::GuestDeserialize for OneHotConfig {
+impl GuestDeserialize for OneHotConfig {
     fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
         Ok(Self {
             log_k_chunk: u8::guest_deserialize(r)?,

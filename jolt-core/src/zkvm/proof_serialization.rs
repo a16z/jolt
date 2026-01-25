@@ -137,9 +137,9 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
 }
 
 // Guest-optimized encoding for recursion/guest verification inputs.
-impl<F> crate::zkvm::guest_serde::GuestSerialize for Claims<F>
+impl<F> GuestSerialize for Claims<F>
 where
-    F: JoltField + crate::zkvm::guest_serde::GuestSerialize,
+    F: JoltField + GuestSerialize,
 {
     fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         // Match canonical shape: len + (OpeningId, claim) pairs (opening point omitted).
@@ -154,9 +154,9 @@ where
     }
 }
 
-impl<F> crate::zkvm::guest_serde::GuestDeserialize for Claims<F>
+impl<F> GuestDeserialize for Claims<F>
 where
-    F: JoltField + crate::zkvm::guest_serde::GuestDeserialize,
+    F: JoltField + GuestDeserialize,
 {
     fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
         let size = u64::guest_deserialize(r)? as usize;
@@ -171,12 +171,12 @@ where
     }
 }
 
-impl<F, PCS, FS> crate::zkvm::guest_serde::GuestSerialize for JoltProof<F, PCS, FS>
+impl<F, PCS, FS> GuestSerialize for JoltProof<F, PCS, FS>
 where
-    F: JoltField + crate::zkvm::guest_serde::GuestSerialize,
+    F: JoltField + GuestSerialize,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Commitment: crate::zkvm::guest_serde::GuestSerialize,
-    PCS::Proof: crate::zkvm::guest_serde::GuestSerialize,
+    PCS::Commitment: GuestSerialize,
+    PCS::Proof: GuestSerialize,
     FS: Transcript,
 {
     fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
@@ -203,12 +203,12 @@ where
     }
 }
 
-impl<F, PCS, FS> crate::zkvm::guest_serde::GuestDeserialize for JoltProof<F, PCS, FS>
+impl<F, PCS, FS> GuestDeserialize for JoltProof<F, PCS, FS>
 where
-    F: JoltField + crate::zkvm::guest_serde::GuestDeserialize,
+    F: JoltField + GuestDeserialize,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Commitment: crate::zkvm::guest_serde::GuestDeserialize,
-    PCS::Proof: crate::zkvm::guest_serde::GuestDeserialize,
+    PCS::Commitment: GuestDeserialize,
+    PCS::Proof: GuestDeserialize,
     FS: Transcript,
 {
     fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {

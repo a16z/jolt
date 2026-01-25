@@ -769,7 +769,7 @@ impl CanonicalDeserialize for JoltSharedPreprocessing {
     }
 }
 
-impl crate::zkvm::guest_serde::GuestSerialize for JoltSharedPreprocessing {
+impl GuestSerialize for JoltSharedPreprocessing {
     fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         self.bytecode.as_ref().guest_serialize(w)?;
         self.ram.guest_serialize(w)?;
@@ -779,7 +779,7 @@ impl crate::zkvm::guest_serde::GuestSerialize for JoltSharedPreprocessing {
     }
 }
 
-impl crate::zkvm::guest_serde::GuestDeserialize for JoltSharedPreprocessing {
+impl GuestDeserialize for JoltSharedPreprocessing {
     fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
         let bytecode = BytecodePreprocessing::guest_deserialize(r)?;
         let ram = RAMPreprocessing::guest_deserialize(r)?;
@@ -831,11 +831,11 @@ where
     pub shared: JoltSharedPreprocessing,
 }
 
-impl<F, PCS> crate::zkvm::guest_serde::GuestSerialize for JoltVerifierPreprocessing<F, PCS>
+impl<F, PCS> GuestSerialize for JoltVerifierPreprocessing<F, PCS>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PCS::VerifierSetup: crate::zkvm::guest_serde::GuestSerialize,
+    PCS::VerifierSetup: GuestSerialize,
 {
     fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         self.generators.guest_serialize(w)?;
@@ -844,11 +844,11 @@ where
     }
 }
 
-impl<F, PCS> crate::zkvm::guest_serde::GuestDeserialize for JoltVerifierPreprocessing<F, PCS>
+impl<F, PCS> GuestDeserialize for JoltVerifierPreprocessing<F, PCS>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PCS::VerifierSetup: crate::zkvm::guest_serde::GuestDeserialize,
+    PCS::VerifierSetup: GuestDeserialize,
 {
     fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
         Ok(Self {
