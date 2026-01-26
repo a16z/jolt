@@ -1,8 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+    utils::inline_helpers::InstrAssembler,
+    utils::virtual_registers::VirtualRegisterAllocator,
+};
 
-use super::{format::format_r::FormatR, RAMWrite, RISCVInstruction, RISCVTrace};
+use super::addi::ADDI;
+use super::format::format_r::FormatR;
+use super::sw::SW;
+use super::virtual_assert_eq::VirtualAssertEQ;
+use super::{Cycle, Instruction, RAMWrite, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SCW,
@@ -39,4 +48,40 @@ impl SCW {
     }
 }
 
-impl RISCVTrace for SCW {}
+impl RISCVTrace for SCW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        // IMPORTANT: trace() and inline_sequence() must produce the SAME sequence.
+        // We always assume success - the constraint system verifies correctness.
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+
+        // Clear reservation in CPU state after SC
+        cpu.clear_reservation();
+    }
+
+    /// SC.W: Store Conditional Word
+    /// Always assumes success - the bytecode and trace must match.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_reservation = allocator.reservation_register();
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+
+        // SC.W sequence - if reservation doesn't match, proof is invalid
+        // 1. Assert reservation address matches rs1 (panics/invalidates proof if not)
+        asm.emit_b::<VirtualAssertEQ>(v_reservation, self.operands.rs1, 0);
+        // 2. Store the word (32-bit)
+        asm.emit_s::<SW>(self.operands.rs1, self.operands.rs2, 0);
+        // 3. Clear reservation (set v_reservation to 0)
+        asm.emit_i::<ADDI>(v_reservation, 0, 0);
+        // 4. Write 0 to rd to indicate success
+        asm.emit_i::<ADDI>(self.operands.rd, 0, 0);
+
+        asm.finalize()
+    }
+}

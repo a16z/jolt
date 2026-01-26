@@ -9,6 +9,19 @@ const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize =
     VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT as usize;
 const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 
+/// Layout of virtual registers:
+/// - Register 32: Reserved for LR/SC reservation address (persistent, never allocated)
+/// - Registers 33-39: Temporary registers for inline sequences (allocate())
+/// - Registers 40+: Registers for larger inlines (allocate_for_inline())
+///
+/// Register 32 is skipped by allocate() and allocate_for_inline() to ensure
+/// it persists across instructions for LR/SC atomic operations.
+const RESERVATION_REGISTER: u8 = RISCV_REGISTER_BASE; // register 32
+
+/// Number of reserved virtual registers that are NOT allocated.
+/// Currently just the reservation register (32).
+const NUM_RESERVED_VIRTUAL_REGISTERS: usize = 1;
+
 #[derive(Debug, Clone)]
 pub struct VirtualRegisterAllocator {
     allocated: Arc<Mutex<[bool; NUM_VIRTUAL_REGISTERS]>>,
@@ -27,8 +40,15 @@ impl VirtualRegisterAllocator {
         }
     }
 
+    /// Get the reservation register (register 32) used for LR/SC operations.
+    /// This register holds the memory address reserved by LR instructions
+    /// and is checked by SC instructions.
+    pub fn reservation_register(&self) -> u8 {
+        RESERVATION_REGISTER
+    }
+
     /// Allocate virtual register that can be used in the inline sequence of
-    /// an instruction
+    /// an instruction. Skips reserved registers (currently just register 32).
     pub(crate) fn allocate(&self) -> VirtualRegisterGuard {
         for (i, allocated) in self
             .allocated
@@ -36,6 +56,7 @@ impl VirtualRegisterAllocator {
             .expect("Failed to lock virtual register allocator")
             .iter_mut()
             .enumerate()
+            .skip(NUM_RESERVED_VIRTUAL_REGISTERS) // Skip reservation register (32)
             .take(NUM_VIRTUAL_INSTRUCTION_REGISTERS)
         {
             if !*allocated {
@@ -49,15 +70,18 @@ impl VirtualRegisterAllocator {
         panic!("Failed to allocate virtual register for instruction: No registers left");
     }
 
-    /// Allocate virtual register that can be used in an inline
+    /// Allocate virtual register that can be used in an inline.
+    /// Skips reserved registers (32) and instruction registers.
     pub fn allocate_for_inline(&self) -> VirtualRegisterGuard {
+        // Skip reserved registers and instruction registers
+        let skip_count = NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS;
         for (i, allocated) in self
             .allocated
             .lock()
             .expect("Failed to lock virtual register allocator")
             .iter_mut()
             .enumerate()
-            .skip(NUM_VIRTUAL_INSTRUCTION_REGISTERS)
+            .skip(skip_count)
         {
             if !*allocated {
                 *allocated = true;
@@ -74,13 +98,15 @@ impl VirtualRegisterAllocator {
     }
 
     pub fn get_registers_for_reset(&self) -> Vec<u8> {
-        // Assert that all registers have been dropped
+        // Assert that all inline registers have been dropped.
+        // Skip reserved registers and instruction registers.
+        let skip_count = NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS;
         assert!(
             self.allocated
                 .lock()
                 .expect("Failed to lock virtual register allocator")
                 .iter()
-                .skip(NUM_VIRTUAL_INSTRUCTION_REGISTERS)
+                .skip(skip_count)
                 .all(|allocated| !*allocated),
             "All allocated virtual registers have to be dropped before inline finalization"
         );
@@ -138,19 +164,33 @@ impl Drop for VirtualRegisterGuard {
 mod tests {
     use super::*;
 
+    // First allocatable register (after skipping reserved register 32)
+    const FIRST_ALLOC_REG: u8 = RISCV_REGISTER_BASE + NUM_RESERVED_VIRTUAL_REGISTERS as u8; // 33
+
+    // First inline register (after reserved + instruction registers)
+    const FIRST_INLINE_REG: u8 = RISCV_REGISTER_BASE
+        + NUM_RESERVED_VIRTUAL_REGISTERS as u8
+        + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8;
+
+    #[test]
+    fn test_reservation_register() {
+        let allocator = VirtualRegisterAllocator::new();
+        assert_eq!(allocator.reservation_register(), RISCV_REGISTER_BASE); // register 32
+    }
+
     #[test]
     fn test_allocate_deallocate() {
         let allocator = VirtualRegisterAllocator::new();
         {
             let guard1 = allocator.allocate();
-            assert_eq!(*guard1, RISCV_REGISTER_BASE);
+            assert_eq!(*guard1, FIRST_ALLOC_REG); // register 33
 
             let guard2 = allocator.allocate();
-            assert_eq!(*guard2, RISCV_REGISTER_BASE + 1);
+            assert_eq!(*guard2, FIRST_ALLOC_REG + 1); // register 34
         }
 
         let guard3 = allocator.allocate();
-        assert_eq!(*guard3, RISCV_REGISTER_BASE);
+        assert_eq!(*guard3, FIRST_ALLOC_REG); // register 33 (reused)
     }
 
     #[test]
@@ -158,7 +198,7 @@ mod tests {
         let allocator = VirtualRegisterAllocator::new();
         let guard = allocator.allocate();
         let index: u8 = *guard;
-        assert_eq!(index, RISCV_REGISTER_BASE);
+        assert_eq!(index, FIRST_ALLOC_REG); // register 33
     }
 
     #[test]
@@ -169,7 +209,7 @@ mod tests {
 
         for i in 0..NUM_VIRTUAL_INSTRUCTION_REGISTERS {
             let guard = allocator.allocate();
-            assert_eq!(*guard, RISCV_REGISTER_BASE + i as u8);
+            assert_eq!(*guard, FIRST_ALLOC_REG + i as u8);
             guards.push(guard);
         }
 
@@ -182,23 +222,14 @@ mod tests {
         let allocator = VirtualRegisterAllocator::new();
         {
             let guard1 = allocator.allocate_for_inline();
-            assert_eq!(
-                *guard1,
-                RISCV_REGISTER_BASE + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8
-            );
+            assert_eq!(*guard1, FIRST_INLINE_REG);
 
             let guard2 = allocator.allocate_for_inline();
-            assert_eq!(
-                *guard2,
-                RISCV_REGISTER_BASE + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8 + 1
-            );
+            assert_eq!(*guard2, FIRST_INLINE_REG + 1);
         }
 
         let guard3 = allocator.allocate_for_inline();
-        assert_eq!(
-            *guard3,
-            RISCV_REGISTER_BASE + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8
-        );
+        assert_eq!(*guard3, FIRST_INLINE_REG); // reused
     }
 
     #[test]
@@ -206,10 +237,7 @@ mod tests {
         let allocator = VirtualRegisterAllocator::new();
         let guard = allocator.allocate_for_inline();
         let index: u8 = *guard;
-        assert_eq!(
-            index,
-            RISCV_REGISTER_BASE + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8
-        );
+        assert_eq!(index, FIRST_INLINE_REG);
     }
 
     #[test]
@@ -218,13 +246,13 @@ mod tests {
         let allocator = VirtualRegisterAllocator::new();
         let mut guards = Vec::new();
 
-        let num_inline_registers = NUM_VIRTUAL_REGISTERS - NUM_VIRTUAL_INSTRUCTION_REGISTERS;
+        // Inline registers start after reserved + instruction registers
+        let num_inline_registers = NUM_VIRTUAL_REGISTERS
+            - NUM_RESERVED_VIRTUAL_REGISTERS
+            - NUM_VIRTUAL_INSTRUCTION_REGISTERS;
         for i in 0..num_inline_registers {
             let guard = allocator.allocate_for_inline();
-            assert_eq!(
-                *guard,
-                RISCV_REGISTER_BASE + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8 + i as u8
-            );
+            assert_eq!(*guard, FIRST_INLINE_REG + i as u8);
             guards.push(guard);
         }
 
@@ -235,29 +263,23 @@ mod tests {
     #[test]
     fn test_combined_allocate_and_inline() {
         let allocator = VirtualRegisterAllocator::new();
-        // Allocate some regular registers
+        // Allocate some instruction registers (33+)
         let guard1 = allocator.allocate();
-        assert_eq!(*guard1, RISCV_REGISTER_BASE);
+        assert_eq!(*guard1, FIRST_ALLOC_REG); // register 33
 
         let guard2 = allocator.allocate();
-        assert_eq!(*guard2, RISCV_REGISTER_BASE + 1);
+        assert_eq!(*guard2, FIRST_ALLOC_REG + 1); // register 34
 
         // Allocate some inline registers
         let inline_guard1 = allocator.allocate_for_inline();
-        assert_eq!(
-            *inline_guard1,
-            RISCV_REGISTER_BASE + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8
-        );
+        assert_eq!(*inline_guard1, FIRST_INLINE_REG);
 
         let inline_guard2 = allocator.allocate_for_inline();
-        assert_eq!(
-            *inline_guard2,
-            RISCV_REGISTER_BASE + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8 + 1
-        );
+        assert_eq!(*inline_guard2, FIRST_INLINE_REG + 1);
 
-        // Allocate more regular registers
+        // Allocate more instruction registers
         let guard3 = allocator.allocate();
-        assert_eq!(*guard3, RISCV_REGISTER_BASE + 2);
+        assert_eq!(*guard3, FIRST_ALLOC_REG + 2); // register 35
 
         // Drop some guards and reallocate
         drop(guard2);
@@ -265,12 +287,9 @@ mod tests {
 
         // Should reuse the freed slots
         let guard4 = allocator.allocate();
-        assert_eq!(*guard4, RISCV_REGISTER_BASE + 1);
+        assert_eq!(*guard4, FIRST_ALLOC_REG + 1); // register 34 (reused)
 
         let inline_guard3 = allocator.allocate_for_inline();
-        assert_eq!(
-            *inline_guard3,
-            RISCV_REGISTER_BASE + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8
-        );
+        assert_eq!(*inline_guard3, FIRST_INLINE_REG); // reused
     }
 }
