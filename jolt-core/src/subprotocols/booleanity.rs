@@ -834,10 +834,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             .1
     }
 
+    #[tracing::instrument(skip_all, name = "BooleanityCycleSumcheckProver::compute_message")]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         self.compute_message_impl(previous_claim)
     }
 
+    #[tracing::instrument(skip_all, name = "BooleanityCycleSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.ingest_challenge_impl(r_j)
     }
