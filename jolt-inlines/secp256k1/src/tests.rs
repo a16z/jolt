@@ -452,11 +452,5 @@ mod sequence_tests {
             u64::MAX,
             "Fr::MODULUS.0[3] should be u64::MAX"
         );
-        // limbs[2] should NOT be u64::MAX (it's 0xFFFFFFFFFFFFFFFE)
-        assert_ne!(
-            Fr::MODULUS.0[2],
-            u64::MAX,
-            "Fr::MODULUS.0[2] should NOT be u64::MAX"
-        );
     }
 }

@@ -1,12 +1,15 @@
 //! secp256k1 inline implementation module
-//! Contains 3 inlines for secp256k1, accessible through
-//! a wrapper around ark-secp256k1 types:
-//! the inlines are for
-//! 0x00: base field division
-//! 0x01: scalar field division
-//! 0x02: scalar field GLV decomposition
-//! 0x03: base field multiplication helper
-//! Additionally contains high-level SDK functions for ECDSA verification
+//! Contains several inlines for secp256k1:
+//! 0x00: base field multiplication
+//! 0x01: base field squaring
+//! 0x02: base field division
+//! 0x03: RESERVED FOR FUTURE USE
+//! 0x04: scalar field multiplication
+//! 0x05: scalar field squaring
+//! 0x06: scalar field division
+//! 0x07: scalar field GLV decomposition (advice only, no checks)
+//! These are accessible through a high-level SDK which includes
+//! ECDSA signature verification
 
 #![cfg_attr(not(feature = "host"), no_std)]
 

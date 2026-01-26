@@ -232,7 +232,6 @@ impl Secp256k1Fq {
     /// returns 2*self
     #[inline(always)]
     pub fn dbl(&self) -> Self {
-        //self.add(self)
         Secp256k1Fq {
             e: (Fq::new_unchecked(BigInt(self.e)).double()).0 .0,
         }
@@ -484,7 +483,9 @@ impl Secp256k1Fr {
     /// returns 2*self
     #[inline(always)]
     pub fn dbl(&self) -> Self {
-        self.add(self)
+        Secp256k1Fr {
+            e: (Fr::new_unchecked(BigInt(self.e)).double()).0 .0,
+        }
     }
     /// returns 3*self
     #[inline(always)]

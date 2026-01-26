@@ -17,111 +17,8 @@ use tracer::{
     },
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterGuard},
 };
-struct Secp256k1DivAdv {
-    asm: InstrAssembler,
-    vr: VirtualRegisterGuard, // only one register needed
-    operands: FormatInline,
-    is_base_field: bool, // true if base field (Fq), false if scalar field (Fr)
-}
 
-impl Secp256k1DivAdv {
-    fn new(asm: InstrAssembler, operands: FormatInline, is_base_field: bool) -> Self {
-        let vr = asm.allocator.allocate_for_inline();
-        Secp256k1DivAdv {
-            asm,
-            vr,
-            operands,
-            is_base_field,
-        }
-    }
-    // Custom advice function
-    fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
-        // read memory directly to get inputs
-        let a_addr = cpu.x[self.operands.rs1 as usize] as u64;
-        let a = [
-            cpu.mmu.load_doubleword(a_addr).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 24).unwrap().0,
-        ];
-        let b_addr = cpu.x[self.operands.rs2 as usize] as u64;
-        let b = [
-            cpu.mmu.load_doubleword(b_addr).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
-        ];
-        // compute c = a / b and return limbs as VecDeque
-        VecDeque::from(
-            if self.is_base_field {
-                let arr_to_fq = |a: &[u64; 4]| Fq::new(BigInt(*a));
-                (arr_to_fq(&b)
-                    .inverse()
-                    .expect("Attempted to invert zero in secp256k1 base field")
-                    * arr_to_fq(&a))
-                .into_bigint()
-            } else {
-                let arr_to_fr = |a: &[u64; 4]| Fr::new_unchecked(BigInt(*a));
-                (arr_to_fr(&b)
-                    .inverse()
-                    .expect("Attempted to invert zero in secp256k1 scalar field")
-                    * arr_to_fr(&a))
-                .0
-            }
-            .0
-            .to_vec(),
-        )
-    }
-    // inline sequence function
-    fn inline_sequence(mut self) -> Vec<Instruction> {
-        for i in 0..4 {
-            self.asm.emit_j::<VirtualAdvice>(*self.vr, 0);
-            self.asm
-                .emit_s::<SD>(self.operands.rs3, *self.vr, i as i64 * 8);
-        }
-        drop(self.vr);
-        self.asm.finalize_inline()
-    }
-}
-
-/// Virtual instruction builder for unchecked secp256k1 base field modular division
-pub fn secp256k1_divq_adv_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = Secp256k1DivAdv::new(asm, operands, true);
-    builder.inline_sequence()
-}
-
-/// Custom trace function for unchecked secp256k1 base field modular division
-pub fn secp256k1_divq_adv_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = Secp256k1DivAdv::new(asm, operands, true);
-    builder.advice(cpu)
-}
-
-/// Virtual instruction builder for unchecked secp256k1 scalar field modular division
-pub fn secp256k1_divr_adv_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = Secp256k1DivAdv::new(asm, operands, false);
-    builder.inline_sequence()
-}
-
-/// Custom trace function for unchecked secp256k1 scalar field modular division
-pub fn secp256k1_divr_adv_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = Secp256k1DivAdv::new(asm, operands, false);
-    builder.advice(cpu)
-}
-
+/// inline constructor for GLV decomposition in secp256k1 scalar field
 struct Secp256k1GlvrAdv {
     asm: InstrAssembler,
     vr: VirtualRegisterGuard, // only one register needed
@@ -249,97 +146,14 @@ fn limbs_to_nbiguint(limbs: &[u64]) -> NBigUint {
 // helper function to convert from NBigUint to vector of u64 limbs
 fn nbiguint_to_limbs(n: &NBigUint) -> Vec<u64> {
     let bytes = n.to_bytes_le();
-    let mut limbs = vec![0u64; (bytes.len() + 7) / 8];
+    let mut limbs = vec![0u64; bytes.len().div_ceil(8)];
     for (i, byte) in bytes.iter().enumerate() {
         limbs[i / 8] |= (*byte as u64) << ((i % 8) * 8);
     }
     limbs
 }
 
-// unnamed inline for secp256k1 base field multiplication helper
-struct Secp256k1Unnamed {
-    asm: InstrAssembler,
-    vr: VirtualRegisterGuard, // only one register needed
-    operands: FormatInline,
-}
-
-impl Secp256k1Unnamed {
-    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
-        let vr = asm.allocator.allocate_for_inline();
-        Secp256k1Unnamed { asm, vr, operands }
-    }
-    // Custom advice function
-    fn advice(self, cpu: &mut Cpu) -> VecDeque<u64> {
-        // read memory directly to get inputs
-        let a_addr = cpu.x[self.operands.rs1 as usize] as u64;
-        let a = [
-            cpu.mmu.load_doubleword(a_addr).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 24).unwrap().0,
-        ];
-        let b_addr = cpu.x[self.operands.rs2 as usize] as u64;
-        let b = [
-            cpu.mmu.load_doubleword(b_addr).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
-        ];
-        // convert inputs to bigints
-        let a_big: NBigUint = limbs_to_nbiguint(&a);
-        let b_big: NBigUint = limbs_to_nbiguint(&b);
-        let q_big: NBigUint = Fq::MODULUS.into();
-        // compute floor(a * b / q)
-        let quotient = (a_big * b_big).div_floor(&q_big);
-        // convert back to limbs
-        let limbs = nbiguint_to_limbs(&quotient);
-        /*println!("a: {:?}", a);
-        println!("b: {:?}", b);
-        println!("w: {:?}", limbs);*/
-        // assert that limbs fits in 4 u64s
-        assert!(limbs.len() <= 4, "Result does not fit in 4 limbs");
-        // pad limbs to 4 u64s and return as VecDeque
-        let mut padded_limbs = vec![0u64; 4];
-        for i in 0..limbs.len() {
-            padded_limbs[i] = limbs[i];
-        }
-        VecDeque::from(padded_limbs)
-        // shortcut code below. TO DO, remove
-        // simply computes a*b in fq and outputs the quotient limb-wise
-        //VecDeque::from((Fq::new(BigInt(a)) * Fq::new(BigInt(b))).into_bigint().0)
-    }
-    // inline sequence function
-    fn inline_sequence(mut self) -> Vec<Instruction> {
-        // get advice and store to rs3
-        for i in 0..4 {
-            self.asm.emit_j::<VirtualAdvice>(*self.vr, 0);
-            self.asm
-                .emit_s::<SD>(self.operands.rs3, *self.vr, i as i64 * 8);
-        }
-        drop(self.vr);
-        self.asm.finalize_inline()
-    }
-}
-
-/// Virtual instruction builder for unchecked secp256k1 base field modular division
-pub fn secp256k1_unnamed_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = Secp256k1Unnamed::new(asm, operands);
-    builder.inline_sequence()
-}
-
-/// Custom trace function for unchecked secp256k1 base field modular division
-pub fn secp256k1_unnamed_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = Secp256k1Unnamed::new(asm, operands);
-    builder.advice(cpu)
-}
-
+/// Enum for type of multiplication-style operation
 enum MulqType {
     Mul,
     Square,
@@ -359,7 +173,7 @@ enum MulqType {
 // For division, this inline checks that cb + wp = 2^256 w + a
 // For squaring, this inline checks that a^2 + wp = 2^256 w + c
 // The core structure is the same for all three operations, with only minor differences in loading inputs and storing outputs
-// To minimize the use of virtual registers, the LHS is never fully constructed.
+// Additionally, to minimize the use of virtual registers, the LHS is never fully constructed.
 // Rather, the implementation considers 2 limbs at a time, one that is the main focus
 // And one that accumulates carries. The algorithm ping-pongs between these two limbs as it computes the LHS.
 struct Secp256k1Mulq {
@@ -492,9 +306,7 @@ impl Secp256k1Mulq {
                 assert!(limbs.len() <= 4, "Result does not fit in 4 limbs");
                 // pad limbs to 4 u64s and return as VecDeque
                 let mut padded_limbs = vec![0u64; 4];
-                for i in 0..limbs.len() {
-                    padded_limbs[i] = limbs[i];
-                }
+                padded_limbs[..limbs.len()].copy_from_slice(&limbs[..]);
                 VecDeque::from(padded_limbs)
             }
         }
@@ -630,15 +442,18 @@ impl Secp256k1Mulq {
                                 );
                                 first = false;
                             } else {
-                                self.m2ac_low_conditional(
-                                    !first,
-                                    rk_next,
-                                    rk,
-                                    *self.a[i],
-                                    *self.a[j],
-                                    *self.aux,
-                                    **self.aux2.as_ref().unwrap(),
-                                );
+                                if !first {
+                                    self.m2ac_low_w_carry(
+                                        rk_next,
+                                        rk,
+                                        *self.a[i],
+                                        *self.a[j],
+                                        *self.aux,
+                                        **self.aux2.as_ref().unwrap(),
+                                    );
+                                } else {
+                                    self.m2ac_low(rk_next, rk, *self.a[i], *self.a[j], *self.aux);
+                                }
                                 first = false;
                             }
                         }
@@ -670,15 +485,18 @@ impl Secp256k1Mulq {
                                 );
                                 first = false;
                             } else {
-                                self.m2ac_high_conditional(
-                                    !first,
-                                    rk_next,
-                                    rk,
-                                    *self.a[i],
-                                    *self.a[j],
-                                    *self.aux,
-                                    **self.aux2.as_ref().unwrap(),
-                                );
+                                if !first {
+                                    self.m2ac_high_w_carry(
+                                        rk_next,
+                                        rk,
+                                        *self.a[i],
+                                        *self.a[j],
+                                        *self.aux,
+                                        **self.aux2.as_ref().unwrap(),
+                                    );
+                                } else {
+                                    self.m2ac_high(rk_next, rk, *self.a[i], *self.a[j], *self.aux);
+                                }
                                 first = false;
                             }
                         }
@@ -746,9 +564,8 @@ impl Secp256k1Mulq {
             drop(self.p2.unwrap());
         }
         drop(self.aux);
-        match self.op_type {
-            MulqType::Square => drop(self.aux2.unwrap()),
-            _ => {}
+        if let MulqType::Square = self.op_type {
+            drop(self.aux2.unwrap())
         }
         drop(self.r);
         self.asm.finalize_inline()
@@ -756,45 +573,31 @@ impl Secp256k1Mulq {
     // (c2, c1) = lower(a * b) + c1
     // clobbers aux
     fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        // mul aux, a, b
         self.asm.emit_r::<MUL>(aux, a, b);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu c2, c1, aux
         self.asm.emit_r::<SLTU>(c2, c1, aux);
     }
     // (c2, c1) = upper(a * b) + c1
     // clobbers aux
     fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        // mulhu aux, a, b
         self.asm.emit_r::<MULHU>(aux, a, b);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu c2, c1, aux
         self.asm.emit_r::<SLTU>(c2, c1, aux);
     }
     // (c2, c1) += lower(a * b)
     // clobbers aux
     fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        // mulhu aux, a, b
         self.asm.emit_r::<MUL>(aux, a, b);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu aux, c1, aux
         self.asm.emit_r::<SLTU>(aux, c1, aux);
-        // add c2, c2, aux
         self.asm.emit_r::<ADD>(c2, c2, aux);
     }
     // (c2, c1) += upper(a * b)
     // clobbers aux
     fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        // mulhu aux, a, b
         self.asm.emit_r::<MULHU>(aux, a, b);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu aux, c1, aux
         self.asm.emit_r::<SLTU>(aux, c1, aux);
-        // add c2, c2, aux
         self.asm.emit_r::<ADD>(c2, c2, aux);
     }
     // if carry flag is true, mac_low_w_carry, otherwise mac_low
@@ -817,104 +620,44 @@ impl Secp256k1Mulq {
     // (c2, c1) = 2*lower(a * b) + c1
     // clobbers aux
     fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        // mul aux, a, b
         self.asm.emit_r::<MUL>(aux, a, b);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu c2, c1, aux
         self.asm.emit_r::<SLTU>(c2, c1, aux);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu aux, c1, aux
         self.asm.emit_r::<SLTU>(aux, c1, aux);
-        // add c2, c2, aux
         self.asm.emit_r::<ADD>(c2, c2, aux);
     }
     // (c2, c1) = 2*upper(a * b) + c1
     // clobbers aux
     fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        // mulhu aux, a, b
         self.asm.emit_r::<MULHU>(aux, a, b);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu c2, c1, aux
         self.asm.emit_r::<SLTU>(c2, c1, aux);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu aux, c1, aux
         self.asm.emit_r::<SLTU>(aux, c1, aux);
-        // add c2, c2, aux
         self.asm.emit_r::<ADD>(c2, c2, aux);
     }
     // (c2, c1) += 2*lower(a * b)
     // clobbers aux
     fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        // mulhu aux, a, b
         self.asm.emit_r::<MUL>(aux, a, b);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu aux2, c1, aux2
         self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        // add c2, c2, aux2
         self.asm.emit_r::<ADD>(c2, c2, aux2);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu aux, c1, aux2
         self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        // add c2, c2, aux2
         self.asm.emit_r::<ADD>(c2, c2, aux2);
     }
     // (c2, c1) += 2*upper(a * b)
     // clobbers aux
     fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        // mulhu aux, a, b
         self.asm.emit_r::<MULHU>(aux, a, b);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu aux2, c1, aux
         self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        // add c2, c2, aux
         self.asm.emit_r::<ADD>(c2, c2, aux2);
-        // add c1, c1, aux
         self.asm.emit_r::<ADD>(c1, c1, aux);
-        // sltu aux2, c1, aux
         self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        // add c2, c2, aux
         self.asm.emit_r::<ADD>(c2, c2, aux2);
-    }
-    // if carry flag is true, m2ac_low_w_carry, otherwise m2ac_low
-    fn m2ac_low_conditional(
-        &mut self,
-        carry_exists: bool,
-        c2: u8,
-        c1: u8,
-        a: u8,
-        b: u8,
-        aux: u8,
-        aux2: u8,
-    ) {
-        if carry_exists {
-            self.m2ac_low_w_carry(c2, c1, a, b, aux, aux2);
-        } else {
-            self.m2ac_low(c2, c1, a, b, aux);
-        }
-    }
-    // if carry flag is true, m2ac_high_w_carry, otherwise m2ac_high
-    fn m2ac_high_conditional(
-        &mut self,
-        carry_exists: bool,
-        c2: u8,
-        c1: u8,
-        a: u8,
-        b: u8,
-        aux: u8,
-        aux2: u8,
-    ) {
-        if carry_exists {
-            self.m2ac_high_w_carry(c2, c1, a, b, aux, aux2);
-        } else {
-            self.m2ac_high(c2, c1, a, b, aux);
-        }
     }
 }
 
