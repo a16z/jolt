@@ -57,9 +57,8 @@ pub unsafe extern "C" fn trap_handler(regs: *mut u8) {
             {
                 let nr = (*regs).a7;
                 zeroos::debug::writeln!(
-                    "[syscall] {} ({})",
-                    zeroos::os::linux::syscall_name(nr),
-                    nr
+                    "[syscall] {}",
+                    zeroos::os::linux::syscall_name(nr)
                 );
             }
 

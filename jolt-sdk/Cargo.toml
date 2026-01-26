@@ -80,9 +80,6 @@ zeroos-nostd = [
 zeroos-std = [
     "dep:zeroos",
     "zeroos-runtime-musl",
-    "thread",
-    "stdout",
-    "random",
 ]
 
 [dependencies]
