@@ -7,7 +7,6 @@ use crate::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
-        program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
@@ -284,11 +283,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
             .unwrap() as u128,
             remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as u128,
         );
-        let val_io = ProgramIOPolynomial::new(program_io);
-
         let eq_eval: F = EqPolynomial::<F>::mle(r_address, &r_address_prime);
         let io_mask_eval = io_mask.evaluate_mle(&r_address_prime);
-        let val_io_eval: F = val_io.evaluate(&r_address_prime);
+        let val_io_eval: F = super::eval_io_mle::<F>(program_io, &r_address_prime);
 
         // Recall that the sumcheck expression is:
         //   0 = \sum_k eq(r_address, k) * io_range(k) * (Val_final(k) - Val_io(k))
