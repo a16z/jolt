@@ -423,7 +423,7 @@ impl Secp256k1Fr {
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, Secp256k1Error> {
         if is_fr_non_canonical(arr) {
-            return Err(Secp256k1Error::InvalidFqElement);
+            return Err(Secp256k1Error::InvalidFrElement);
         }
         Ok(Secp256k1Fr { e: *arr })
     }
