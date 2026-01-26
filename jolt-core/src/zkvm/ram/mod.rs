@@ -60,14 +60,13 @@ use crate::{
     utils::{accumulation::Acc6U, math::Math},
     zkvm::witness::VirtualPolynomial,
 };
-use std::vec;
-
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::{
     constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS},
     jolt_device::MemoryLayout,
 };
 use rayon::prelude::*;
+use std::vec;
 use tracer::emulator::memory::Memory;
 use tracer::JoltDevice;
 

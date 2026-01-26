@@ -354,12 +354,10 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
                         .map(|j| {
                             let lane = j / cycle_half;
                             let cycle_pair = j % cycle_half;
-                            let eq_evals = self
-                                .eq_r_bc
-                                .sumcheck_evals_array::<DEGREE_BOUND>(
-                                    cycle_pair,
-                                    BindingOrder::LowToHigh,
-                                );
+                            let eq_evals = self.eq_r_bc.sumcheck_evals_array::<DEGREE_BOUND>(
+                                cycle_pair,
+                                BindingOrder::LowToHigh,
+                            );
 
                             let mut out = [F::zero(); DEGREE_BOUND];
                             for (chunk_idx, b) in self.bytecode_chunks.iter().enumerate() {
@@ -453,8 +451,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeClaim
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         if self.params.phase == BytecodeReductionPhase::CycleVariables {
             self.params.cycle_var_challenges.push(r_j);
-            self.eq_r_bc
-                .bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.eq_r_bc.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
         if self.params.phase == BytecodeReductionPhase::LaneVariables {
             self.lane_weight_polys

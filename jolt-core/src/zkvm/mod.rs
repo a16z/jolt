@@ -12,6 +12,8 @@ use crate::{
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
+#[cfg(feature = "pprof")]
+use pprof::protos::Message;
 use proof_serialization::JoltProof;
 #[cfg(feature = "prover")]
 use prover::JoltCpuProver;
@@ -68,7 +70,6 @@ impl Drop for PprofGuard {
                 let _ = std::fs::create_dir_all(dir);
             }
             if let Ok(mut f) = std::fs::File::create(&filename) {
-                use pprof::protos::Message;
                 if let Ok(p) = report.pprof() {
                     let mut buf = Vec::new();
                     if p.encode(&mut buf).is_ok() {

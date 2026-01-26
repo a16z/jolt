@@ -25,6 +25,7 @@ use crate::zkvm::bytecode::chunks::{
     build_bytecode_chunks, build_bytecode_chunks_for_main_matrix, total_lanes,
 };
 pub use crate::zkvm::bytecode::BytecodePCMapper;
+use crate::zkvm::bytecode::BytecodePreprocessing;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ProgramPreprocessing - Full program data (prover + full-mode verifier)
@@ -431,7 +432,6 @@ fn build_bytecode_chunks_from_program<F: crate::field::JoltField>(
     log_k_chunk: usize,
 ) -> Vec<MultilinearPolynomial<F>> {
     // Use the existing chunk-building logic via a shim
-    use crate::zkvm::bytecode::BytecodePreprocessing;
     let legacy = BytecodePreprocessing {
         bytecode: program.instructions.clone(),
         pc_map: program.pc_map.clone(),
@@ -449,7 +449,6 @@ fn build_bytecode_chunks_for_main_matrix_from_program<F: crate::field::JoltField
     padded_trace_len: usize,
     layout: DoryLayout,
 ) -> Vec<MultilinearPolynomial<F>> {
-    use crate::zkvm::bytecode::BytecodePreprocessing;
     let legacy = BytecodePreprocessing {
         bytecode: program.instructions.clone(),
         pc_map: program.pc_map.clone(),

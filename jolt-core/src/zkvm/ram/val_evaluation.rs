@@ -26,8 +26,8 @@ use crate::{
     utils::math::Math,
     zkvm::{
         claim_reductions::AdviceKind,
-        config::OneHotParams,
-        config::ProgramMode,
+        config::{OneHotParams, ProgramMode},
+        program::{ProgramMetadata, ProgramPreprocessing},
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -104,7 +104,7 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
     /// - `program_mode`: Bytecode mode (Full or Committed)
     /// - `opening_accumulator`: Verifier opening accumulator
     pub fn new_from_verifier(
-        program_meta: &crate::zkvm::program::ProgramMetadata,
+        program_meta: &ProgramMetadata,
         program_image_words: Option<&[u64]>,
         program_io: &JoltDevice,
         trace_len: usize,
@@ -220,7 +220,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     pub fn initialize(
         params: ValEvaluationSumcheckParams<F>,
         trace: &[Cycle],
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
         // Compute the size-K table storing all eq(r_address, k) evaluations for
@@ -348,12 +348,12 @@ pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
     pub fn new(
-        program_meta: &crate::zkvm::program::ProgramMetadata,
+        program_meta: &ProgramMetadata,
         program_image_words: Option<&[u64]>,
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
-        program_mode: crate::zkvm::config::ProgramMode,
+        program_mode: ProgramMode,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let params = ValEvaluationSumcheckParams::new_from_verifier(

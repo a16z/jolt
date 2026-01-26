@@ -6,6 +6,7 @@ use crate::subprotocols::read_write_matrix::{
     RegistersAddressMajorEntry, RegistersCycleMajorEntry,
 };
 use crate::zkvm::config::ReadWriteConfig;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{
     field::JoltField,
@@ -194,7 +195,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     pub fn initialize(
         params: RegistersReadWriteCheckingParams<F>,
         trace: Arc<Vec<Cycle>>,
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
         let r_prime = &params.r_cycle;

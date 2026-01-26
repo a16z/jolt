@@ -19,6 +19,7 @@ use crate::subprotocols::sumcheck_claim::{
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::zkvm::config::{OneHotParams, ReadWriteConfig};
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::{
     field::JoltField,
     poly::{
@@ -169,7 +170,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     pub fn initialize(
         params: RamReadWriteCheckingParams<F>,
         trace: &[Cycle],
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
         memory_layout: &MemoryLayout,
         initial_ram_state: &[u64],
     ) -> Self {

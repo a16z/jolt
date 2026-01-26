@@ -4,6 +4,18 @@
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+use super::{BIGINT256_MUL_FUNCT3, BIGINT256_MUL_FUNCT7, INLINE_OPCODE};
+
+#[cfg(any(
+    feature = "host",
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+use crate::multiplication::exec;
+
 /// Performs 256-bit × 256-bit multiplication
 ///
 /// # Arguments
@@ -38,7 +50,6 @@ pub fn bigint256_mul(lhs: [u64; INPUT_LIMBS], rhs: [u64; INPUT_LIMBS]) -> [u64; 
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u64) {
-    use super::{BIGINT256_MUL_FUNCT3, BIGINT256_MUL_FUNCT7, INLINE_OPCODE};
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
         opcode = const INLINE_OPCODE,
@@ -67,8 +78,6 @@ pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u6
     not(any(target_arch = "riscv32", target_arch = "riscv64"))
 ))]
 pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u64) {
-    use crate::multiplication::exec;
-
     let a_array = *(a as *const [u64; INPUT_LIMBS]);
     let b_array = *(b as *const [u64; INPUT_LIMBS]);
     let result_array = exec::bigint_mul(a_array, b_array);

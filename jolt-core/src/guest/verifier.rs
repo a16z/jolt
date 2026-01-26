@@ -1,27 +1,24 @@
 use std::sync::Arc;
 
 use crate::field::JoltField;
+use crate::guest::program::Program;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
-
-use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::verifier::JoltVerifier;
 use crate::zkvm::verifier::JoltVerifierPreprocessing;
-use common::jolt_device::MemoryConfig;
-use common::jolt_device::MemoryLayout;
+use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 
 pub fn preprocess(
     guest: &Program,
     max_trace_length: usize,
     verifier_setup: <DoryCommitmentScheme as CommitmentScheme>::VerifierSetup,
 ) -> JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> {
-    use crate::zkvm::program::ProgramPreprocessing;
-
     let (instructions, memory_init, program_size) = guest.decode();
 
     let mut memory_config = guest.memory_config;
@@ -40,7 +37,6 @@ pub fn verify<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Trans
     proof: JoltProof<F, PCS, FS>,
     preprocessing: &JoltVerifierPreprocessing<F, PCS>,
 ) -> Result<(), ProofVerifyError> {
-    use common::jolt_device::JoltDevice;
     let memory_layout = &preprocessing.shared.memory_layout;
     let memory_config = MemoryConfig {
         max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,

@@ -463,12 +463,13 @@ impl TrackedFr {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::op_ref)]
+    use std::ops::MulAssign;
+
     use crate::field::tracked_ark::TrackedFr as Fr;
     use crate::field::{JoltField, OptimizedMul};
     use crate::utils::counters::{
         get_inverse_count, get_mult_count, reset_inverse_count, reset_mult_count,
     };
-    use std::ops::MulAssign;
 
     #[test]
     fn test_if_trackers_are_working() {

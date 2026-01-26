@@ -8,10 +8,11 @@ use crate::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
     transcripts::{AppendToTranscript, Transcript},
+    utils::small_scalar::SmallScalar,
 };
 use ark_bn254::Fr;
 use ark_ec::CurveGroup;
-use ark_ff::Zero;
+use ark_ff::{One, Zero};
 use dory::{
     error::DoryError,
     primitives::{
@@ -108,9 +109,6 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
 
 impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
     fn vector_matrix_product(&self, left_vec: &[ArkFr], nu: usize, sigma: usize) -> Vec<ArkFr> {
-        use crate::utils::small_scalar::SmallScalar;
-        use ark_ff::One;
-
         let num_cols = 1usize << sigma;
         let num_rows = 1usize << nu;
 

@@ -133,6 +133,7 @@ use crate::{
 
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
 use common::jolt_device::MemoryConfig;
 use itertools::{zip_eq, Itertools};
 use rayon::prelude::*;
@@ -1464,7 +1465,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             };
         }
 
-        // Initialize Stage 6b cycle provers from scratch (Option B).
+        // Initialize Stage 6b cycle provers from Stage 6a openings
         let mut bytecode_read_raf = BytecodeReadRafCycleSumcheckProver::initialize(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
@@ -2001,7 +2002,6 @@ where
 {
     /// Setup generators based on trace length (Main context).
     fn setup_generators(shared: &JoltSharedPreprocessing) -> PCS::ProverSetup {
-        use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let max_T: usize = shared.max_padded_trace_length.next_power_of_two();
         let max_log_T = max_T.log_2();
         // Use the maximum possible log_k_chunk for generator setup
@@ -2021,7 +2021,6 @@ where
         shared: &JoltSharedPreprocessing,
         program: &ProgramPreprocessing,
     ) -> PCS::ProverSetup {
-        use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let prog_len_words_padded = program.program_image_len_words_padded();
         let max_t_any: usize = shared
             .max_padded_trace_length

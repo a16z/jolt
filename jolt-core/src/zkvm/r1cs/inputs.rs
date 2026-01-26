@@ -17,6 +17,7 @@ use crate::poly::opening_proof::{OpeningId, PolynomialId, SumcheckId};
 use crate::zkvm::instruction::{
     CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
 };
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::witness::VirtualPolynomial;
 
 use crate::field::JoltField;
@@ -265,11 +266,7 @@ pub struct R1CSCycleInputs {
 impl R1CSCycleInputs {
     /// Build directly from the execution trace and preprocessing,
     /// mirroring the optimized semantics used in `compute_claimed_r1cs_input_evals`.
-    pub fn from_trace<F>(
-        program: &crate::zkvm::program::ProgramPreprocessing,
-        trace: &[Cycle],
-        t: usize,
-    ) -> Self
+    pub fn from_trace<F>(program: &ProgramPreprocessing, trace: &[Cycle], t: usize) -> Self
     where
         F: JoltField,
     {
@@ -539,7 +536,7 @@ pub struct ShiftSumcheckCycleState {
 }
 
 impl ShiftSumcheckCycleState {
-    pub fn new(cycle: &Cycle, program: &crate::zkvm::program::ProgramPreprocessing) -> Self {
+    pub fn new(cycle: &Cycle, program: &ProgramPreprocessing) -> Self {
         let instruction = cycle.instruction();
         let circuit_flags = instruction.circuit_flags();
         Self {

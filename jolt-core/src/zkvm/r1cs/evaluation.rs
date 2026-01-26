@@ -53,6 +53,7 @@ use crate::utils::{
     math::s64_from_diff_u64s,
 };
 use crate::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::r1cs::inputs::ProductCycleInputs;
 
 use super::constraints::{
@@ -816,7 +817,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     /// materializing P_i. Returns `[P_0(r_cycle), P_1(r_cycle), ...]` in input order.
     #[tracing::instrument(skip_all, name = "R1CSEval::compute_claimed_inputs")]
     pub fn compute_claimed_inputs(
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
         trace: &[Cycle],
         r_cycle: &OpeningPoint<BIG_ENDIAN, F>,
     ) -> [F; NUM_R1CS_INPUTS] {

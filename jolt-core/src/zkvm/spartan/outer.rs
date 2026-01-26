@@ -32,6 +32,7 @@ use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::r1cs::constraints::OUTER_FIRST_ROUND_POLY_DEGREE_BOUND;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::r1cs::{
@@ -130,7 +131,7 @@ impl<F: JoltField> OuterUniSkipProver<F> {
     pub fn initialize(
         params: OuterUniSkipParams<F>,
         trace: &[Cycle],
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
     ) -> Self {
         let extended = Self::compute_univariate_skip_extended_evals(program, trace, &params.tau);
 
@@ -161,7 +162,7 @@ impl<F: JoltField> OuterUniSkipProver<F> {
     /// \sum_{x_in'} eq(tau_in, (x_in', 0)) * Az(x_out, x_in', 0, y) * Bz(x_out, x_in', 0, y)
     ///     + eq(tau_in, (x_in', 1)) * Az(x_out, x_in', 1, y) * Bz(x_out, x_in', 1, y)
     fn compute_univariate_skip_extended_evals(
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
         trace: &[Cycle],
         tau: &[F::Challenge],
     ) -> [F; OUTER_UNIVARIATE_SKIP_DEGREE] {
@@ -491,7 +492,7 @@ pub type OuterRemainingStreamingSumcheck<F, S> =
 #[derive(Allocative)]
 pub struct OuterSharedState<F: JoltField> {
     #[allocative(skip)]
-    program: crate::zkvm::program::ProgramPreprocessing,
+    program: ProgramPreprocessing,
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
     split_eq_poly: GruenSplitEqPolynomial<F>,
@@ -506,7 +507,7 @@ impl<F: JoltField> OuterSharedState<F> {
     #[tracing::instrument(skip_all, name = "OuterSharedState::new")]
     pub fn new(
         trace: Arc<Vec<Cycle>>,
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
         uni_skip_params: &OuterUniSkipParams<F>,
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {

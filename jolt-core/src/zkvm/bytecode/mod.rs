@@ -239,7 +239,7 @@ impl BytecodePreprocessing {
 
     #[inline(always)]
     pub fn get_pc(&self, cycle: &Cycle) -> usize {
-        if matches!(cycle, tracer::instruction::Cycle::NoOp) {
+        if matches!(cycle, Cycle::NoOp) {
             return 0;
         }
         let instr = cycle.instruction().normalize();

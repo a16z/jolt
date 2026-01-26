@@ -150,7 +150,7 @@ impl<F: JoltField> ShiftSumcheckProver<F> {
     pub fn initialize(
         params: ShiftSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
     ) -> Self {
         let phase = ShiftSumcheckPhase::Phase1(Phase1State::gen(trace, program, &params));
         Self { phase, params }
@@ -475,7 +475,7 @@ struct Phase1State<F: JoltField> {
 impl<F: JoltField> Phase1State<F> {
     fn gen(
         trace: Arc<Vec<Cycle>>,
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
         params: &ShiftSumcheckParams<F>,
     ) -> Self {
         let EqPlusOnePrefixSuffixPoly {
@@ -647,7 +647,7 @@ struct Phase2State<F: JoltField> {
 impl<F: JoltField> Phase2State<F> {
     fn gen(
         trace: &[Cycle],
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
         sumcheck_challenges: &[F::Challenge],
         params: &ShiftSumcheckParams<F>,
     ) -> Self {

@@ -196,8 +196,8 @@ impl MacroBuilder {
             ) -> #return_type
             {
                 #imports
-                let program = std::sync::Arc::new(program);
-                let preprocessing = std::sync::Arc::new(preprocessing);
+                let program = Arc::new(program);
+                let preprocessing = Arc::new(preprocessing);
 
                 let prove_closure = move |#inputs #commitment_param_in_closure| {
                     let program = (*program).clone();
@@ -259,8 +259,8 @@ impl MacroBuilder {
             ) -> #return_type
             {
                 #imports
-                let program = std::sync::Arc::new(program);
-                let preprocessing = std::sync::Arc::new(preprocessing);
+                let program = Arc::new(program);
+                let preprocessing = Arc::new(preprocessing);
 
                 let prove_closure = move |#inputs #commitment_param_in_closure| {
                     let program = (*program).clone();
@@ -320,7 +320,7 @@ impl MacroBuilder {
             ) -> impl Fn(#(#input_types ,)* #output_type, bool, #commitment_param_in_signature jolt::RV64IMACProof) -> bool + Sync + Send
             {
                 #imports
-                let preprocessing = std::sync::Arc::new(preprocessing);
+                let preprocessing = Arc::new(preprocessing);
 
                 let verify_closure = move |#(#public_inputs,)* output, panic, #commitment_param_in_closure proof: jolt::RV64IMACProof| {
                     let preprocessing = (*preprocessing).clone();
@@ -394,7 +394,7 @@ impl MacroBuilder {
         quote! {
              #[cfg(not(target_arch = "wasm32"))]
              #[cfg(not(feature = "guest"))]
-             pub fn #analyze_fn_name(#inputs) -> jolt::host::analyze::ProgramSummary {
+             pub fn #analyze_fn_name(#inputs) -> ProgramSummary {
                 #imports
 
                 let mut program = Program::new(#guest_name);
@@ -446,7 +446,7 @@ impl MacroBuilder {
                 #imports
 
                 let mut program = Program::new(#guest_name);
-                let path = std::path::PathBuf::from(target_dir);
+                let path = PathBuf::from(target_dir);
                 program.set_func(#fn_name_str);
                 #set_std
                 #set_mem_size
@@ -528,7 +528,7 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                let program_data = std::sync::Arc::new(jolt::ProgramPreprocessing::preprocess(instructions, memory_init));
+                let program_data = Arc::new(ProgramPreprocessing::preprocess(instructions, memory_init));
                 let shared = JoltSharedPreprocessing::new(
                     program_data.meta(),
                     memory_layout,
@@ -574,7 +574,7 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                let program_data = std::sync::Arc::new(jolt::ProgramPreprocessing::preprocess(instructions, memory_init));
+                let program_data = Arc::new(ProgramPreprocessing::preprocess(instructions, memory_init));
                 let shared = JoltSharedPreprocessing::new(
                     program_data.meta(),
                     memory_layout,
@@ -618,7 +618,7 @@ impl MacroBuilder {
                     program_size: Some(program_size),
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
-                let program_data = std::sync::Arc::new(jolt::ProgramPreprocessing::preprocess(instructions, memory_init));
+                let program_data = Arc::new(ProgramPreprocessing::preprocess(instructions, memory_init));
                 let shared = JoltSharedPreprocessing::new(
                     program_data.meta(),
                     memory_layout,
@@ -1102,6 +1102,7 @@ impl MacroBuilder {
                 RV64IMACVerifier,
                 RV64IMACProof,
                 host::Program,
+                host::analyze::ProgramSummary,
                 ProgramPreprocessing,
                 JoltProverPreprocessing,
                 MemoryConfig,
@@ -1112,6 +1113,10 @@ impl MacroBuilder {
                 JoltVerifierPreprocessing,
                 JoltSharedPreprocessing
             };
+            #[cfg(not(feature = "guest"))]
+            use std::sync::Arc;
+            #[cfg(not(feature = "guest"))]
+            use std::path::PathBuf;
         }
     }
 
