@@ -21,6 +21,132 @@ pub const fn total_lanes() -> usize {
         + 1 // raf flag
 }
 
+/// Canonical lane layout for bytecode chunk polynomials.
+///
+/// The global lane order matches [`lane_value`] and the weights in
+/// `claim_reductions/bytecode.rs::compute_chunk_lane_weights`.
+#[derive(Clone, Copy, Debug)]
+pub struct BytecodeLaneLayout {
+    pub rs1_start: usize,
+    pub rs2_start: usize,
+    pub rd_start: usize,
+    pub unexp_pc_idx: usize,
+    pub imm_idx: usize,
+    pub circuit_start: usize,
+    pub instr_start: usize,
+    pub lookup_start: usize,
+    pub raf_flag_idx: usize,
+}
+
+impl BytecodeLaneLayout {
+    pub const fn new() -> Self {
+        let reg_count = REGISTER_COUNT as usize;
+        let rs1_start = 0usize;
+        let rs2_start = rs1_start + reg_count;
+        let rd_start = rs2_start + reg_count;
+        let unexp_pc_idx = rd_start + reg_count;
+        let imm_idx = unexp_pc_idx + 1;
+        let circuit_start = imm_idx + 1;
+        let instr_start = circuit_start + NUM_CIRCUIT_FLAGS;
+        let lookup_start = instr_start + NUM_INSTRUCTION_FLAGS;
+        let raf_flag_idx = lookup_start + <LookupTables<XLEN> as strum::EnumCount>::COUNT;
+        Self {
+            rs1_start,
+            rs2_start,
+            rd_start,
+            unexp_pc_idx,
+            imm_idx,
+            circuit_start,
+            instr_start,
+            lookup_start,
+            raf_flag_idx,
+        }
+    }
+
+    #[inline(always)]
+    #[allow(dead_code)]
+    pub const fn total_lanes(&self) -> usize {
+        self.raf_flag_idx + 1
+    }
+
+    /// True for all lanes except `unexpanded_pc` and `imm`.
+    #[inline(always)]
+    #[allow(dead_code)]
+    pub const fn is_boolean_lane(&self, global_lane: usize) -> bool {
+        global_lane != self.unexp_pc_idx && global_lane != self.imm_idx
+    }
+}
+
+pub const BYTECODE_LANE_LAYOUT: BytecodeLaneLayout = BytecodeLaneLayout::new();
+
+/// Evaluate the weighted lane sum for a single instruction:
+/// \( \sum_{\ell} weights[\ell] \cdot lane\_value(\ell, instr) \),
+/// without scanning all lanes (uses one-hot and boolean sparsity).
+#[inline(always)]
+pub fn weighted_lane_sum_for_instruction<F: JoltField>(weights: &[F], instr: &Instruction) -> F {
+    debug_assert_eq!(weights.len(), total_lanes());
+
+    let l = BYTECODE_LANE_LAYOUT;
+
+    let normalized = instr.normalize();
+    let circuit_flags = <Instruction as Flags>::circuit_flags(instr);
+    let instr_flags = <Instruction as Flags>::instruction_flags(instr);
+    let lookup_idx = <Instruction as InstructionLookup<XLEN>>::lookup_table(instr)
+        .map(|t| LookupTables::<XLEN>::enum_index(&t));
+    let raf_flag = !crate::zkvm::instruction::InterleavedBitsMarker::is_interleaved_operands(
+        &circuit_flags,
+    );
+
+    let unexpanded_pc = F::from_u64(normalized.address as u64);
+    let imm = F::from_i128(normalized.operands.imm);
+    let rs1 = normalized.operands.rs1.map(|r| r as usize);
+    let rs2 = normalized.operands.rs2.map(|r| r as usize);
+    let rd = normalized.operands.rd.map(|r| r as usize);
+
+    let mut acc = F::zero();
+
+    // One-hot register lanes: select weight at the active register (or 0 if None).
+    if let Some(r) = rs1 {
+        acc += weights[l.rs1_start + r];
+    }
+    if let Some(r) = rs2 {
+        acc += weights[l.rs2_start + r];
+    }
+    if let Some(r) = rd {
+        acc += weights[l.rd_start + r];
+    }
+
+    // Scalar lanes.
+    acc += weights[l.unexp_pc_idx] * unexpanded_pc;
+    acc += weights[l.imm_idx] * imm;
+
+    // Circuit flags (boolean): add weight when flag is true.
+    for i in 0..NUM_CIRCUIT_FLAGS {
+        if circuit_flags[i] {
+            acc += weights[l.circuit_start + i];
+        }
+    }
+
+    // Instruction flags (boolean): add weight when flag is true.
+    for i in 0..NUM_INSTRUCTION_FLAGS {
+        if instr_flags[i] {
+            acc += weights[l.instr_start + i];
+        }
+    }
+
+    // Lookup table selector (one-hot / zero-hot).
+    if let Some(t) = lookup_idx {
+        acc += weights[l.lookup_start + t];
+    }
+
+    // RAF flag.
+    if raf_flag {
+        acc += weights[l.raf_flag_idx];
+    }
+
+    acc
+}
+
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 pub fn lane_value<F: JoltField>(
@@ -83,13 +209,17 @@ pub fn lane_value<F: JoltField>(
     F::from_bool(raf_flag)
 }
 
-#[tracing::instrument(skip_all, name = "bytecode::build_bytecode_chunks")]
-pub fn build_bytecode_chunks<F: JoltField>(
-    bytecode: &BytecodePreprocessing,
+/// Build bytecode chunk polynomials from a preprocessed instruction slice.
+///
+/// This avoids constructing a `BytecodePreprocessing` wrapper (and its clones) when callers
+/// already have the padded instruction list.
+#[tracing::instrument(skip_all, name = "bytecode::build_bytecode_chunks_from_instructions")]
+pub fn build_bytecode_chunks_from_instructions<F: JoltField>(
+    instructions: &[Instruction],
     log_k_chunk: usize,
 ) -> Vec<MultilinearPolynomial<F>> {
     let k_chunk = 1usize << log_k_chunk;
-    let bytecode_len = bytecode.bytecode.len();
+    let bytecode_len = instructions.len();
     let total = total_lanes();
     let num_chunks = total.div_ceil(k_chunk);
 
@@ -98,7 +228,7 @@ pub fn build_bytecode_chunks<F: JoltField>(
         .map(|chunk_idx| {
             let mut coeffs = unsafe_allocate_zero_vec(k_chunk * bytecode_len);
             for k in 0..bytecode_len {
-                let instr = &bytecode.bytecode[k];
+                let instr = &instructions[k];
                 let normalized = instr.normalize();
                 let circuit_flags = <Instruction as Flags>::circuit_flags(instr);
                 let instr_flags = <Instruction as Flags>::instruction_flags(instr);
@@ -144,6 +274,14 @@ pub fn build_bytecode_chunks<F: JoltField>(
             MultilinearPolynomial::from(coeffs)
         })
         .collect()
+}
+
+#[tracing::instrument(skip_all, name = "bytecode::build_bytecode_chunks")]
+pub fn build_bytecode_chunks<F: JoltField>(
+    bytecode: &BytecodePreprocessing,
+    log_k_chunk: usize,
+) -> Vec<MultilinearPolynomial<F>> {
+    build_bytecode_chunks_from_instructions::<F>(&bytecode.bytecode, log_k_chunk)
 }
 
 /// Build bytecode chunk polynomials with main-matrix dimensions for CycleMajor embedding.
