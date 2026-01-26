@@ -1,0 +1,15 @@
+[package]
+name = "jolt-transcript"
+version = "0.1.0"
+edition = "2021"
+description = "Fiat-Shamir transcript implementations for Jolt"
+repository = "https://github.com/a16z/jolt"
+license = "MIT OR Apache-2.0"
+keywords = ["SNARK", "cryptography", "proofs", "fiat-shamir"]
+categories = ["cryptography", "no-std"]
+
+[dependencies]
+blake2.workspace = true
+digest = "0.10"
+hex = "0.4"
+sha3.workspace = true

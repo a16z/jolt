@@ -2145,6 +2145,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-transcript"
+version = "0.1.0"
+dependencies = [
+ "blake2",
+ "digest",
+ "hex",
+ "sha3",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
