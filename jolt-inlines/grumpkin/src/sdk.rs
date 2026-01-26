@@ -6,41 +6,53 @@ use ark_grumpkin::{Fq, Fr};
 use serde::{Deserialize, Serialize};
 
 /// Returns `true` iff `x >= p` (Fq modulus), i.e., `x` is non-canonical.
-/// Specialized: since p's upper 3 limbs are all u64::MAX, x >= p iff
-/// all upper 3 limbs are MAX and limb[0] >= Fq::MODULUS.0[0].
+/// Manually unrolled for performance.
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 #[inline(always)]
 fn is_fq_non_canonical(x: &[u64; 4]) -> bool {
-    x[3] == u64::MAX && x[2] == u64::MAX && x[1] == u64::MAX && x[0] >= Fq::MODULUS.0[0]
+    if x[3] < Fq::MODULUS.0[3] {
+        return false;
+    } else if x[3] > Fq::MODULUS.0[3] {
+        return true;
+    } else if x[2] < Fq::MODULUS.0[2] {
+        return false;
+    } else if x[2] > Fq::MODULUS.0[2] {
+        return true;
+    } else if x[1] < Fq::MODULUS.0[1] {
+        return false;
+    } else if x[1] > Fq::MODULUS.0[1] {
+        return true;
+    } else {
+        x[0] >= Fq::MODULUS.0[0]
+    }
 }
 
 /// Returns `true` iff `x >= n` (Fr modulus), i.e., `x` is non-canonical.
-/// Specialized: since n's limb[3] is u64::MAX, we short-circuit if x[3] < MAX.
+/// Manually unrolled for performance.
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 #[inline(always)]
 fn is_fr_non_canonical(x: &[u64; 4]) -> bool {
-    if x[3] != u64::MAX {
+    if x[3] < Fr::MODULUS.0[3] {
         return false;
-    }
-    if x[2] > Fr::MODULUS.0[2] {
+    } else if x[3] > Fr::MODULUS.0[3] {
         return true;
-    }
-    if x[2] < Fr::MODULUS.0[2] {
+    } else if x[2] < Fr::MODULUS.0[2] {
         return false;
-    }
-    if x[1] > Fr::MODULUS.0[1] {
+    } else if x[2] > Fr::MODULUS.0[2] {
         return true;
-    }
-    if x[1] < Fr::MODULUS.0[1] {
+    } else if x[1] < Fr::MODULUS.0[1] {
         return false;
+    } else if x[1] > Fr::MODULUS.0[1] {
+        return true;
+    } else {
+        x[0] >= Fr::MODULUS.0[0]
     }
-    x[0] >= Fr::MODULUS.0[0]
 }
 
 #[cfg(all(
@@ -265,12 +277,15 @@ impl GrumpkinFq {
     /// returns self / other
     /// uses custom inline for performance
     /// costs nearly the same as multiplication
+    /// two variants: one that assumes other != 0,
+    /// and one that panics if other == 0 (spoiling the proof)
+    /// then calling the former
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    fn div_impl(&self, other: &GrumpkinFq) -> Self {
+    pub fn div_assume_nonzero(&self, other: &GrumpkinFq) -> Self {
         // get inverse as pure advice
         let mut c = GrumpkinFq::zero();
         unsafe {
@@ -288,7 +303,7 @@ impl GrumpkinFq {
         }
         // compute tmp = other * c
         let tmp = other.mul(&c);
-        // if not canonical (>= p), or other * c is not equal to self, panic
+        // if not canonical (>= n), or other * c is not equal to self, panic
         if is_fq_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
             // literal assembly to induce a panic (spoils the proof)
             // merely using assert_eq! here is insufficient as it doesn't
@@ -297,34 +312,24 @@ impl GrumpkinFq {
         }
         c
     }
-    /// returns self / other
-    /// uses custom inline for performance
-    /// costs nearly the same as multiplication
-    ///
-    /// # Proof soundness
-    /// In guest builds, division uses a non-deterministic ("advice") inverse `c` and then checks
-    /// that `other * c == self` and that `c` is canonical. If `other == 0`, then `0/0` would pass
-    /// the multiplicative check for any canonical `c`, so we spoil the proof explicitly.
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
     pub fn div(&self, other: &GrumpkinFq) -> Self {
-        // 0/0 would pass the correctness check for any c, so reject it explicitly.
+        // panic and spoil the proof if dividing by zero
         if other.is_zero() {
             hcf();
         }
-        self.div_impl(other)
+        self.div_assume_nonzero(other)
     }
-    /// Same as [`Self::div`], but assumes `other != 0`.
     #[cfg(all(
         not(feature = "host"),
-        any(target_arch = "riscv32", target_arch = "riscv64")
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    #[inline(always)]
-    pub fn div_unchecked(&self, other: &GrumpkinFq) -> Self {
-        self.div_impl(other)
+    pub fn div_assume_nonzero(&self, _other: &GrumpkinFq) -> Self {
+        panic!("GrumpkinFq::div_assume_nonzero called on non-RISC-V target without host feature");
     }
     #[cfg(all(
         not(feature = "host"),
@@ -333,25 +338,20 @@ impl GrumpkinFq {
     pub fn div(&self, _other: &GrumpkinFq) -> Self {
         panic!("GrumpkinFq::div called on non-RISC-V target without host feature");
     }
-    #[cfg(all(
-        not(feature = "host"),
-        not(any(target_arch = "riscv32", target_arch = "riscv64"))
-    ))]
-    pub fn div_unchecked(&self, _other: &GrumpkinFq) -> Self {
-        panic!("GrumpkinFq::div_unchecked called on non-RISC-V target without host feature");
-    }
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn div(&self, other: &GrumpkinFq) -> Self {
+    pub fn div_assume_nonzero(&self, other: &GrumpkinFq) -> Self {
         GrumpkinFq {
             e: self.e / other.e,
         }
     }
-    /// Same as [`Self::div`], but assumes `other != 0`.
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn div_unchecked(&self, other: &GrumpkinFq) -> Self {
-        self.div(other)
+    pub fn div(&self, other: &GrumpkinFq) -> Self {
+        if other.is_zero() {
+            panic!("division by zero in GrumpkinFq::div");
+        }
+        self.div_assume_nonzero(other)
     }
 }
 
@@ -440,12 +440,15 @@ impl GrumpkinFr {
     /// returns self / other
     /// uses custom inline for performance
     /// costs nearly the same as multiplication
+    /// two variants: one that assumes other != 0,
+    /// and one that panics if other == 0 (spoiling the proof)
+    /// then calling the former
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    fn div_impl(&self, other: &GrumpkinFr) -> Self {
+    pub fn div_assume_nonzero(&self, other: &GrumpkinFr) -> Self {
         // get inverse as pure advice
         let mut c = GrumpkinFr::zero();
         unsafe {
@@ -472,34 +475,24 @@ impl GrumpkinFr {
         }
         c
     }
-    /// returns self / other
-    /// uses custom inline for performance
-    /// costs nearly the same as multiplication
-    ///
-    /// # Proof soundness
-    /// In guest builds, division uses a non-deterministic ("advice") inverse `c` and then checks
-    /// that `other * c == self` and that `c` is canonical. If `other == 0`, then `0/0` would pass
-    /// the multiplicative check for any canonical `c`, so we spoil the proof explicitly.
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
     pub fn div(&self, other: &GrumpkinFr) -> Self {
-        // 0/0 would pass the correctness check for any c, so reject it explicitly.
+        // panic and spoil the proof if dividing by zero
         if other.is_zero() {
             hcf();
         }
-        self.div_impl(other)
+        self.div_assume_nonzero(other)
     }
-    /// Same as [`Self::div`], but assumes `other != 0`.
     #[cfg(all(
         not(feature = "host"),
-        any(target_arch = "riscv32", target_arch = "riscv64")
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    #[inline(always)]
-    pub fn div_unchecked(&self, other: &GrumpkinFr) -> Self {
-        self.div_impl(other)
+    pub fn div_assume_nonzero(&self, _other: &GrumpkinFr) -> Self {
+        panic!("GrumpkinFr::div_assume_nonzero called on non-RISC-V target without host feature");
     }
     #[cfg(all(
         not(feature = "host"),
@@ -508,25 +501,20 @@ impl GrumpkinFr {
     pub fn div(&self, _other: &GrumpkinFr) -> Self {
         panic!("GrumpkinFr::div called on non-RISC-V target without host feature");
     }
-    #[cfg(all(
-        not(feature = "host"),
-        not(any(target_arch = "riscv32", target_arch = "riscv64"))
-    ))]
-    pub fn div_unchecked(&self, _other: &GrumpkinFr) -> Self {
-        panic!("GrumpkinFr::div_unchecked called on non-RISC-V target without host feature");
-    }
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn div(&self, other: &GrumpkinFr) -> Self {
+    pub fn div_assume_nonzero(&self, other: &GrumpkinFr) -> Self {
         GrumpkinFr {
             e: self.e / other.e,
         }
     }
-    /// Same as [`Self::div`], but assumes `other != 0`.
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn div_unchecked(&self, other: &GrumpkinFr) -> Self {
-        self.div(other)
+    pub fn div(&self, other: &GrumpkinFr) -> Self {
+        if other.is_zero() {
+            panic!("division by zero in GrumpkinFr::div");
+        }
+        self.div_assume_nonzero(other)
     }
 }
 
@@ -603,20 +591,6 @@ impl GrumpkinPoint {
             y: GrumpkinFq::new(ark_grumpkin::G_GENERATOR_Y),
         }
     }
-    /// generator with endomorphism applied
-    #[inline(always)]
-    pub fn generator_w_endomorphism() -> Self {
-        GrumpkinPoint::from_u64_arr_unchecked(&[
-            16173582788404280516,
-            5747022314874861025,
-            3849308819804808767,
-            12496950317914431610,
-            12780836216951778274,
-            10231155108014310989,
-            8121878653926228278,
-            14933801261141951190,
-        ])
-    }
     /// returns the point at infinity (0, 0)
     #[inline(always)]
     pub fn infinity() -> Self {
@@ -659,7 +633,7 @@ impl GrumpkinPoint {
         if self.y.is_zero() {
             GrumpkinPoint::infinity()
         } else {
-            let s = self.x.square().tpl().div_unchecked(&self.y.dbl());
+            let s = self.x.square().tpl().div_assume_nonzero(&self.y.dbl());
             let x2 = s.square().sub(&self.x.dbl());
             let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
             GrumpkinPoint { x: x2, y: y2 }
@@ -681,8 +655,8 @@ impl GrumpkinPoint {
             GrumpkinPoint::infinity()
         // if the x coordinates are not equal and not infinity, perform standard point addition
         } else {
-            let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
-            let x2 = s.square().sub(&self.x).sub(&other.x);
+            let s = (self.y.sub(&other.y)).div_assume_nonzero(&self.x.sub(&other.x));
+            let x2 = s.square().sub(&self.x.add(&other.x));
             let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
             GrumpkinPoint { x: x2, y: y2 }
         }
@@ -709,10 +683,14 @@ impl GrumpkinPoint {
         // note that (self + other) cannot equal infinity or self here
         // so no special cases needed
         } else {
-            let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
-            let x2 = s.square().sub(&self.x).sub(&other.x);
-            let t = self.y.dbl().div(&self.x.sub(&x2)).sub(&s);
-            let x3 = t.square().sub(&self.x).sub(&x2);
+            let ns = (self.y.sub(&other.y)).div_assume_nonzero(&other.x.sub(&self.x));
+            let nx2 = other.x.sub(&ns.square());
+            let t = self
+                .y
+                .dbl()
+                .div_assume_nonzero(&self.x.dbl().add(&nx2))
+                .add(&ns);
+            let x3 = t.square().add(&nx2);
             let y3 = t.mul(&(self.x.sub(&x3))).sub(&self.y);
             GrumpkinPoint { x: x3, y: y3 }
         }
