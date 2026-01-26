@@ -4,10 +4,10 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::accumulation::Acc6S;
 use crate::utils::math::{s64_from_diff_u64s, Math};
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::bytecode::chunks::{lane_value, total_lanes};
+use crate::zkvm::bytecode::chunks::{for_each_active_lane_value, total_lanes, ActiveLaneValue};
 use crate::zkvm::config::OneHotParams;
-use crate::zkvm::instruction::{Flags, InstructionLookup, LookupQuery};
-use crate::zkvm::lookup_table::LookupTables;
+use crate::zkvm::instruction::LookupQuery;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::CommittedPolynomial;
 use allocative::Allocative;
@@ -18,11 +18,11 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracer::ChunksIterator;
-use tracer::{instruction::Cycle, instruction::Instruction, LazyTraceIterator};
+use tracer::{instruction::Cycle, LazyTraceIterator};
 
 #[derive(Clone, Debug)]
 pub struct RLCStreamingData {
-    pub program: Arc<crate::zkvm::program::ProgramPreprocessing>,
+    pub program: Arc<ProgramPreprocessing>,
     pub memory_layout: MemoryLayout,
 }
 
@@ -44,7 +44,7 @@ pub fn compute_bytecode_vmp_contribution<F: JoltField>(
     left_vec: &[F],
     num_columns: usize,
     bytecode_polys: &[(usize, F)],
-    program: &crate::zkvm::program::ProgramPreprocessing,
+    program: &ProgramPreprocessing,
     one_hot_params: &OneHotParams,
     bytecode_T: usize,
 ) {
@@ -57,6 +57,13 @@ pub fn compute_bytecode_vmp_contribution<F: JoltField>(
     let bytecode_len = program.bytecode_len();
     let bytecode_cols = num_columns;
     let total = total_lanes();
+    let num_chunks = total.div_ceil(k_chunk);
+    debug_assert!(
+        bytecode_cols.is_power_of_two(),
+        "Dory num_columns must be power-of-two (got {bytecode_cols})"
+    );
+    let col_shift = bytecode_cols.trailing_zeros();
+    let col_mask = bytecode_cols - 1;
 
     // Use the passed bytecode_T for coefficient indexing.
     // This is the T value used when the bytecode was committed:
@@ -71,57 +78,78 @@ pub fn compute_bytecode_vmp_contribution<F: JoltField>(
         bytecode_cols
     );
 
+    // Build a dense coefficient table per chunk so we can invert the loops:
+    // iterate cycles once and only touch lanes that are nonzero for that instruction.
+    let mut coeff_by_chunk: Vec<F> = unsafe_allocate_zero_vec(num_chunks);
+    let mut any_nonzero = false;
     for (chunk_idx, coeff) in bytecode_polys.iter() {
-        if coeff.is_zero() {
-            continue;
-        }
-        for (cycle, instr) in program.instructions.iter().enumerate().take(bytecode_len) {
-            let normalized = instr.normalize();
-            let circuit_flags = <Instruction as Flags>::circuit_flags(instr);
-            let instr_flags = <Instruction as Flags>::instruction_flags(instr);
-            let lookup_idx = <Instruction as InstructionLookup<XLEN>>::lookup_table(instr)
-                .map(|t| LookupTables::<XLEN>::enum_index(&t));
-            let raf_flag =
-                !crate::zkvm::instruction::InterleavedBitsMarker::is_interleaved_operands(
-                    &circuit_flags,
-                );
-
-            let unexpanded_pc = F::from_u64(normalized.address as u64);
-            let imm = F::from_i128(normalized.operands.imm);
-            let rs1 = normalized.operands.rs1;
-            let rs2 = normalized.operands.rs2;
-            let rd = normalized.operands.rd;
-
-            for lane in 0..k_chunk {
-                let global_lane = chunk_idx * k_chunk + lane;
-                if global_lane >= total {
-                    break;
-                }
-                let value = lane_value::<F>(
-                    global_lane,
-                    rs1,
-                    rs2,
-                    rd,
-                    unexpanded_pc,
-                    imm,
-                    &circuit_flags,
-                    &instr_flags,
-                    lookup_idx,
-                    raf_flag,
-                );
-                if value.is_zero() {
-                    continue;
-                }
-                // Use layout-conditional index_T: main T for CycleMajor, bytecode_len for AddressMajor
-                let global_index = layout.address_cycle_to_index(lane, cycle, k_chunk, index_T);
-                let row_index = global_index / bytecode_cols;
-                let col_index = global_index % bytecode_cols;
-                if row_index < left_vec.len() {
-                    result[col_index] += left_vec[row_index] * (*coeff) * value;
-                }
-            }
+        if *chunk_idx < num_chunks && !coeff.is_zero() {
+            coeff_by_chunk[*chunk_idx] += *coeff;
+            any_nonzero = true;
         }
     }
+    if !any_nonzero {
+        return;
+    }
+
+    // Parallelize over cycles with thread-local accumulation.
+    let bytecode_contrib: Vec<F> = program.instructions[..bytecode_len]
+        .par_iter()
+        .enumerate()
+        .fold(
+            || unsafe_allocate_zero_vec(bytecode_cols),
+            |mut acc, (cycle, instr)| {
+                for_each_active_lane_value::<F>(instr, |global_lane, lane_val| {
+                    let chunk_idx = global_lane / k_chunk;
+                    if chunk_idx >= num_chunks {
+                        return;
+                    }
+                    let coeff = coeff_by_chunk[chunk_idx];
+                    if coeff.is_zero() {
+                        return;
+                    }
+                    let lane = global_lane % k_chunk;
+
+                    // Use layout-conditional indexing.
+                    let global_index = match layout {
+                        DoryLayout::CycleMajor => lane * index_T + cycle,
+                        DoryLayout::AddressMajor => cycle * k_chunk + lane,
+                    };
+                    let row_index = global_index >> col_shift;
+                    if row_index >= left_vec.len() {
+                        return;
+                    }
+                    let left = left_vec[row_index];
+                    if left.is_zero() {
+                        return;
+                    }
+                    let col_index = global_index & col_mask;
+
+                    let base = left * coeff;
+                    match lane_val {
+                        ActiveLaneValue::One => {
+                            acc[col_index] += base;
+                        }
+                        ActiveLaneValue::Scalar(v) => {
+                            acc[col_index] += base * v;
+                        }
+                    }
+                });
+                acc
+            },
+        )
+        .reduce(
+            || unsafe_allocate_zero_vec(bytecode_cols),
+            |mut a, b| {
+                a.iter_mut().zip(b.iter()).for_each(|(x, y)| *x += *y);
+                a
+            },
+        );
+
+    result
+        .par_iter_mut()
+        .zip(bytecode_contrib.par_iter())
+        .for_each(|(r, c)| *r += *c);
 }
 
 /// Source of trace data for streaming VMV computation.
@@ -881,7 +909,7 @@ struct VmvSetup<'a, F: JoltField> {
     /// Folded one-hot tables (coeff * eq_k pre-multiplied)
     folded_tables: FoldedOneHotTables<F>,
     /// Reference to program preprocessing data
-    program: &'a crate::zkvm::program::ProgramPreprocessing,
+    program: &'a ProgramPreprocessing,
     memory_layout: &'a MemoryLayout,
     /// Reference to one-hot parameters
     one_hot_params: &'a OneHotParams,

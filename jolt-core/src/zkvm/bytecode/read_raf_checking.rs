@@ -35,6 +35,7 @@ use crate::{
             NUM_CIRCUIT_FLAGS,
         },
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
+        program::ProgramPreprocessing,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
@@ -133,7 +134,7 @@ pub struct BytecodeReadRafSumcheckProver<F: JoltField> {
     trace: Arc<Vec<Cycle>>,
     /// Bytecode preprocessing for computing PCs.
     #[allocative(skip)]
-    program: Arc<crate::zkvm::program::ProgramPreprocessing>,
+    program: Arc<ProgramPreprocessing>,
     pub params: BytecodeReadRafSumcheckParams<F>,
 }
 
@@ -142,7 +143,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
     pub fn initialize(
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
-        program: Arc<crate::zkvm::program::ProgramPreprocessing>,
+        program: Arc<ProgramPreprocessing>,
     ) -> Self {
         let claim_per_stage = [
             params.rv_claims[0] + params.gamma_powers[5] * params.raf_claim,
@@ -626,7 +627,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
     pub fn initialize(
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
-        program: Arc<crate::zkvm::program::ProgramPreprocessing>,
+        program: Arc<ProgramPreprocessing>,
     ) -> Self {
         let claim_per_stage = [
             params.rv_claims[0] + params.gamma_powers[5] * params.raf_claim,
@@ -893,10 +894,6 @@ pub struct BytecodeReadRafCycleSumcheckProver<F: JoltField> {
     ra: Vec<RaPolynomial<u8, F>>,
     /// Per-stage Gruen-split eq polynomials over cycle vars.
     gruen_eq_polys: [GruenSplitEqPolynomial<F>; N_STAGES],
-    /// Previous-round claims s_i(0)+s_i(1) per stage.
-    prev_round_claims: [F; N_STAGES],
-    /// Round polynomials per stage.
-    prev_round_polys: Option<[UniPoly<F>; N_STAGES]>,
     /// Final sumcheck claims of stage Val polynomials (with RAF Int folded).
     bound_val_evals: [F; N_STAGES],
     /// Parameters.
@@ -904,16 +901,12 @@ pub struct BytecodeReadRafCycleSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
-    /// Initialize the cycle-phase prover from scratch (Option B).
-    ///
-    /// This recomputes the address-phase internal state (per-stage claims and bound value
-    /// evaluations) by replaying the address binding using the Stage 6a challenges from the
-    /// accumulator. This avoids passing prover state across stages at the cost of extra work.
+    /// Initialize the cycle-phase prover from Stage 6a openings (no replay).
     #[tracing::instrument(skip_all, name = "BytecodeReadRafCycleSumcheckProver::initialize")]
     pub fn initialize(
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
-        program: Arc<crate::zkvm::program::ProgramPreprocessing>,
+        program: Arc<ProgramPreprocessing>,
         accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         // Recover Stage 6a address challenges from the accumulator.
@@ -923,42 +916,40 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
             SumcheckId::BytecodeReadRafAddressPhase,
         );
 
-        // Sumcheck challenges were generated LowToHigh; recover that order for replay.
-        let mut r_address_low_to_high = r_address_point.r.clone();
-        r_address_low_to_high.reverse();
-
-        // Re-run the address prover deterministically (no transcript) to recover:
-        // - per-stage claims after binding all address variables
-        // - bound value evaluations (Val + RAF Int folds) as scalars
-        let mut addr = BytecodeReadRafAddressSumcheckProver::initialize(
-            params.clone(),
-            Arc::clone(&trace),
-            Arc::clone(&program),
-        );
-        for (round, r_j) in r_address_low_to_high.iter().cloned().enumerate() {
-            let _ = round; // replay is round-agnostic for this instance
-                           // previous_claim is ignored by this instance (it uses internal per-stage state).
-            let _ = addr.compute_message_impl(F::zero());
-            addr.ingest_challenge_impl(r_j);
-        }
-
-        // Compute bound_val_evals from the now-fully-bound val_polys and int_poly.
-        let int_poly = addr.params.int_poly.final_sumcheck_claim();
-        let bound_val_evals: [F; N_STAGES] = addr
-            .params
-            .val_polys
-            .iter()
-            .zip([
-                int_poly * addr.params.gamma_powers[5],
-                F::zero(),
-                int_poly * addr.params.gamma_powers[4],
-                F::zero(),
-                F::zero(),
-            ])
-            .map(|(poly, int_term)| poly.final_sumcheck_claim() + int_term)
-            .collect::<Vec<F>>()
-            .try_into()
-            .unwrap();
+        // Compute bound_val_evals at r_address (Val + RAF Int folds).
+        let int_eval = params.int_poly.evaluate(&r_address_point.r);
+        let int_terms = [
+            int_eval * params.gamma_powers[5], // RAF for Stage1
+            F::zero(),                         // No RAF for Stage2
+            int_eval * params.gamma_powers[4], // RAF for Stage3
+            F::zero(),                         // No RAF for Stage4
+            F::zero(),                         // No RAF for Stage5
+        ];
+        let bound_val_evals: [F; N_STAGES] = if params.use_staged_val_claims {
+            (0..N_STAGES)
+                .map(|stage| {
+                    let val_claim = accumulator
+                        .get_virtual_polynomial_opening(
+                            VirtualPolynomial::BytecodeValStage(stage),
+                            SumcheckId::BytecodeReadRafAddressPhase,
+                        )
+                        .1;
+                    val_claim + int_terms[stage]
+                })
+                .collect::<Vec<F>>()
+                .try_into()
+                .unwrap()
+        } else {
+            // Full mode: evaluate Val polynomials directly at r_address.
+            params
+                .val_polys
+                .iter()
+                .enumerate()
+                .map(|(stage, poly)| poly.evaluate(&r_address_point.r) + int_terms[stage])
+                .collect::<Vec<F>>()
+                .try_into()
+                .unwrap()
+        };
 
         // Build RA polynomials from witness using MSB-first address challenges.
         let r_address_chunks = params
@@ -987,8 +978,6 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
         Self {
             ra,
             gruen_eq_polys,
-            prev_round_claims: addr.prev_round_claims,
-            prev_round_polys: None,
             bound_val_evals,
             params,
         }
@@ -1001,12 +990,14 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
         let in_len = self.gruen_eq_polys[0].E_in_current().len();
         let in_n_vars = in_len.log_2();
 
-        let mut evals_per_stage: [Vec<F>; N_STAGES] = (0..out_len)
+        let (mut q0_per_stage, mut q_evals_per_stage): ([F; N_STAGES], [Vec<F>; N_STAGES]) = (0
+            ..out_len)
             .into_par_iter()
             .map(|j_hi| {
                 let mut ra_eval_pairs = vec![(F::zero(), F::zero()); self.ra.len()];
                 let mut ra_prod_evals = vec![F::zero(); degree - 1];
-                let mut evals_per_stage: [_; N_STAGES] =
+                let mut q0_unreduced: [_; N_STAGES] = array::from_fn(|_| F::Unreduced::zero());
+                let mut q_unreduced: [_; N_STAGES] =
                     array::from_fn(|_| vec![F::Unreduced::zero(); degree - 1]);
 
                 for j_lo in 0..in_len {
@@ -1017,56 +1008,74 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
                         let ra_i_eval_at_j_1 = ra_i.get_bound_coeff(j * 2 + 1);
                         ra_eval_pairs[i] = (ra_i_eval_at_j_0, ra_i_eval_at_j_1);
                     }
+
+                    // Product polynomial evaluations on U_d = [1, 2, ..., d-1, ∞].
                     eval_linear_prod_assign(&ra_eval_pairs, &mut ra_prod_evals);
+                    // Also compute P(0) = ∏_i ra_i(0) (needed to build q(0) directly).
+                    let prod_at_0 = ra_eval_pairs
+                        .iter()
+                        .fold(F::one(), |acc, (p0, _p1)| acc * *p0);
 
                     for stage in 0..N_STAGES {
                         let eq_in_eval = self.gruen_eq_polys[stage].E_in_current()[j_lo];
+                        q0_unreduced[stage] += eq_in_eval.mul_unreduced::<9>(prod_at_0);
                         for i in 0..degree - 1 {
-                            evals_per_stage[stage][i] +=
+                            q_unreduced[stage][i] +=
                                 eq_in_eval.mul_unreduced::<9>(ra_prod_evals[i]);
                         }
                     }
                 }
 
-                array::from_fn(|stage| {
+                let q0: [F; N_STAGES] = array::from_fn(|stage| {
                     let eq_out_eval = self.gruen_eq_polys[stage].E_out_current()[j_hi];
-                    evals_per_stage[stage]
+                    eq_out_eval * F::from_montgomery_reduce(q0_unreduced[stage])
+                });
+                let q_evals: [Vec<F>; N_STAGES] = array::from_fn(|stage| {
+                    let eq_out_eval = self.gruen_eq_polys[stage].E_out_current()[j_hi];
+                    q_unreduced[stage]
                         .iter()
                         .map(|v| eq_out_eval * F::from_montgomery_reduce(*v))
                         .collect()
-                })
+                });
+                (q0, q_evals)
             })
             .reduce(
-                || array::from_fn(|_| vec![F::zero(); degree - 1]),
-                |a, b| array::from_fn(|i| zip_eq(&a[i], &b[i]).map(|(a, b)| *a + *b).collect()),
+                || {
+                    (
+                        array::from_fn(|_| F::zero()),
+                        array::from_fn(|_| vec![F::zero(); degree - 1]),
+                    )
+                },
+                |mut a, b| {
+                    for stage in 0..N_STAGES {
+                        a.0[stage] += b.0[stage];
+                        a.1[stage]
+                            .iter_mut()
+                            .zip(b.1[stage].iter())
+                            .for_each(|(x, y)| *x += *y);
+                    }
+                    a
+                },
             );
 
-        // Multiply by bound values
-        for (stage, evals) in evals_per_stage.iter_mut().enumerate() {
-            evals
+        // Multiply by bound values (push into q).
+        for stage in 0..N_STAGES {
+            q0_per_stage[stage] *= self.bound_val_evals[stage];
+            q_evals_per_stage[stage]
                 .iter_mut()
                 .for_each(|v| *v *= self.bound_val_evals[stage]);
         }
 
-        let mut round_polys: [_; N_STAGES] = array::from_fn(|_| UniPoly::zero());
         let mut agg_round_poly = UniPoly::zero();
-
-        for (stage, evals) in evals_per_stage.iter().enumerate() {
-            let claim = self.prev_round_claims[stage];
-            let round_poly = self.gruen_eq_polys[stage].gruen_poly_from_evals(evals, claim);
+        for stage in 0..N_STAGES {
+            let round_poly = self.gruen_eq_polys[stage]
+                .gruen_poly_from_evals_with_q0(&q_evals_per_stage[stage], q0_per_stage[stage]);
             agg_round_poly += &(&round_poly * self.params.gamma_powers[stage]);
-            round_polys[stage] = round_poly;
         }
-
-        self.prev_round_polys = Some(round_polys);
         agg_round_poly
     }
 
     fn ingest_challenge_impl(&mut self, r_j: F::Challenge) {
-        if let Some(prev_round_polys) = self.prev_round_polys.take() {
-            self.prev_round_claims = prev_round_polys.map(|poly| poly.evaluate(&r_j));
-        }
-
         self.ra
             .iter_mut()
             .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh));
@@ -1150,7 +1159,7 @@ pub struct BytecodeReadRafSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
     pub fn gen(
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
@@ -1261,7 +1270,7 @@ pub struct BytecodeReadRafAddressSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
     pub fn new(
-        program: Option<&crate::zkvm::program::ProgramPreprocessing>,
+        program: Option<&ProgramPreprocessing>,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
@@ -1540,7 +1549,7 @@ pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
 impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckParams::gen")]
     pub fn gen(
-        program: &crate::zkvm::program::ProgramPreprocessing,
+        program: &ProgramPreprocessing,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
@@ -1576,7 +1585,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
     #[allow(clippy::too_many_arguments)]
     fn gen_impl(
-        program: Option<&crate::zkvm::program::ProgramPreprocessing>,
+        program: Option<&ProgramPreprocessing>,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,

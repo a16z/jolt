@@ -294,9 +294,6 @@ pub enum VirtualPolynomial {
     BytecodeReadRafAddrClaim,
     BooleanityAddrClaim,
     BytecodeClaimReductionIntermediate,
-    /// Staged scalar program-image contribution at `r_address_rw` (Stage 4).
     ProgramImageInitContributionRw,
-    /// Staged scalar program-image contribution at `r_address_raf` (Stage 4), when the two
-    /// address points differ.
     ProgramImageInitContributionRaf,
 }

@@ -4,7 +4,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{
-    Flags, InstructionLookup, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
+    Flags, InstructionLookup, InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 use crate::zkvm::lookup_table::LookupTables;
 use common::constants::{REGISTER_COUNT, XLEN};
@@ -79,6 +79,16 @@ impl BytecodeLaneLayout {
 
 pub const BYTECODE_LANE_LAYOUT: BytecodeLaneLayout = BytecodeLaneLayout::new();
 
+/// Active lane values for a single instruction.
+///
+/// Most lanes are boolean/one-hot, so we represent them as `One` to avoid
+/// unnecessary field multiplications at call sites (e.g. Dory VMV).
+#[derive(Clone, Copy, Debug)]
+pub enum ActiveLaneValue<F: JoltField> {
+    One,
+    Scalar(F),
+}
+
 /// Evaluate the weighted lane sum for a single instruction:
 /// \( \sum_{\ell} weights[\ell] \cdot lane\_value(\ell, instr) \),
 /// without scanning all lanes (uses one-hot and boolean sparsity).
@@ -93,9 +103,7 @@ pub fn weighted_lane_sum_for_instruction<F: JoltField>(weights: &[F], instr: &In
     let instr_flags = <Instruction as Flags>::instruction_flags(instr);
     let lookup_idx = <Instruction as InstructionLookup<XLEN>>::lookup_table(instr)
         .map(|t| LookupTables::<XLEN>::enum_index(&t));
-    let raf_flag = !crate::zkvm::instruction::InterleavedBitsMarker::is_interleaved_operands(
-        &circuit_flags,
-    );
+    let raf_flag = !InterleavedBitsMarker::is_interleaved_operands(&circuit_flags);
 
     let unexpanded_pc = F::from_u64(normalized.address as u64);
     let imm = F::from_i128(normalized.operands.imm);
@@ -145,6 +153,75 @@ pub fn weighted_lane_sum_for_instruction<F: JoltField>(weights: &[F], instr: &In
     }
 
     acc
+}
+
+/// Enumerate the non-zero lanes for a single instruction in canonical global-lane order.
+///
+/// This is the sparse counterpart to [`lane_value`]: instead of scanning all lanes and
+/// branching on zeros, we directly visit only lanes that are 1 (for boolean/one-hot lanes)
+/// or have a non-zero scalar value (for `unexpanded_pc` and `imm`).
+///
+/// This is useful for:
+/// - Streaming / VMV computations where the downstream logic needs to map lanes to matrix indices
+/// - Any place where per-lane work dominates and the instruction lane vector is sparse
+#[inline(always)]
+pub fn for_each_active_lane_value<F: JoltField>(
+    instr: &Instruction,
+    mut visit: impl FnMut(usize, ActiveLaneValue<F>),
+) {
+    let l = BYTECODE_LANE_LAYOUT;
+
+    let normalized = instr.normalize();
+    let circuit_flags = <Instruction as Flags>::circuit_flags(instr);
+    let instr_flags = <Instruction as Flags>::instruction_flags(instr);
+    let lookup_idx = <Instruction as InstructionLookup<XLEN>>::lookup_table(instr)
+        .map(|t| LookupTables::<XLEN>::enum_index(&t));
+    let raf_flag = !InterleavedBitsMarker::is_interleaved_operands(&circuit_flags);
+
+    // One-hot register lanes.
+    if let Some(r) = normalized.operands.rs1 {
+        visit(l.rs1_start + (r as usize), ActiveLaneValue::One);
+    }
+    if let Some(r) = normalized.operands.rs2 {
+        visit(l.rs2_start + (r as usize), ActiveLaneValue::One);
+    }
+    if let Some(r) = normalized.operands.rd {
+        visit(l.rd_start + (r as usize), ActiveLaneValue::One);
+    }
+
+    // Scalar lanes (skip if zero).
+    let unexpanded_pc = F::from_u64(normalized.address as u64);
+    if !unexpanded_pc.is_zero() {
+        visit(l.unexp_pc_idx, ActiveLaneValue::Scalar(unexpanded_pc));
+    }
+    let imm = F::from_i128(normalized.operands.imm);
+    if !imm.is_zero() {
+        visit(l.imm_idx, ActiveLaneValue::Scalar(imm));
+    }
+
+    // Circuit flags.
+    for i in 0..NUM_CIRCUIT_FLAGS {
+        if circuit_flags[i] {
+            visit(l.circuit_start + i, ActiveLaneValue::One);
+        }
+    }
+
+    // Instruction flags.
+    for i in 0..NUM_INSTRUCTION_FLAGS {
+        if instr_flags[i] {
+            visit(l.instr_start + i, ActiveLaneValue::One);
+        }
+    }
+
+    // Lookup selector.
+    if let Some(t) = lookup_idx {
+        visit(l.lookup_start + t, ActiveLaneValue::One);
+    }
+
+    // RAF flag.
+    if raf_flag {
+        visit(l.raf_flag_idx, ActiveLaneValue::One);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -234,10 +311,7 @@ pub fn build_bytecode_chunks_from_instructions<F: JoltField>(
                 let instr_flags = <Instruction as Flags>::instruction_flags(instr);
                 let lookup_idx = <Instruction as InstructionLookup<XLEN>>::lookup_table(instr)
                     .map(|t| LookupTables::<XLEN>::enum_index(&t));
-                let raf_flag =
-                    !crate::zkvm::instruction::InterleavedBitsMarker::is_interleaved_operands(
-                        &circuit_flags,
-                    );
+                let raf_flag = !InterleavedBitsMarker::is_interleaved_operands(&circuit_flags);
 
                 let unexpanded_pc = F::from_u64(normalized.address as u64);
                 let imm = F::from_i128(normalized.operands.imm);
@@ -335,10 +409,7 @@ pub fn build_bytecode_chunks_for_main_matrix<F: JoltField>(
                 let instr_flags = <Instruction as Flags>::instruction_flags(instr);
                 let lookup_idx = <Instruction as InstructionLookup<XLEN>>::lookup_table(instr)
                     .map(|t| LookupTables::<XLEN>::enum_index(&t));
-                let raf_flag =
-                    !crate::zkvm::instruction::InterleavedBitsMarker::is_interleaved_operands(
-                        &circuit_flags,
-                    );
+                let raf_flag = !InterleavedBitsMarker::is_interleaved_operands(&circuit_flags);
 
                 let unexpanded_pc = F::from_u64(normalized.address as u64);
                 let imm = F::from_i128(normalized.operands.imm);

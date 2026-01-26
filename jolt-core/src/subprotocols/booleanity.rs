@@ -695,12 +695,10 @@ pub struct BooleanityCycleSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
-    /// Initialize the cycle-phase prover from scratch (Option B).
+    /// Initialize the cycle-phase prover from the Stage 6a address opening point.
     ///
-    /// Reconstructs all cycle-phase state from:
-    /// - `params` (sampled in Stage 6a, must match verifier)
-    /// - witness inputs (`trace`, `bytecode`, `memory_layout`)
-    /// - Stage 6a address challenges (read from `accumulator`)
+    /// The only witness-dependent work performed here should be collecting `ra_indices`
+    /// (needed to materialize `SharedRaPolynomials` for the cycle phase).
     #[tracing::instrument(skip_all, name = "BooleanityCycleSumcheckProver::initialize")]
     pub fn initialize(
         params: BooleanitySumcheckParams<F>,
@@ -718,7 +716,7 @@ impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
         let mut r_address_low_to_high = r_address_point.r;
         r_address_low_to_high.reverse();
 
-        // Recompute eq_r_r = eq(params.r_address, r_address_challenges) using the same binding
+        // Derive eq_r_r = eq(params.r_address, r_address_challenges) via the same binding
         // progression as the address prover.
         let mut B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
         for r_j in r_address_low_to_high.iter().cloned() {
@@ -726,7 +724,7 @@ impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
         }
         let eq_r_r = B.get_current_scalar();
 
-        // Recompute base eq table over k_chunk addresses from the address challenges.
+        // Derive base eq table over k_chunk addresses from the address challenges.
         let k_chunk = 1 << params.log_k_chunk;
         let mut F_table = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
         F_table.reset(F::one());
