@@ -379,8 +379,6 @@ impl Cpu {
 
         let original_word = self.fetch()?;
         let instruction_address = normalize_u64(self.pc, &self.xlen);
-        // Track current guest PC in the MMU for improved invalid-access diagnostics.
-        self.mmu.set_current_pc(instruction_address);
         let is_compressed = (original_word & 0x3) != 0x3;
         let word = match is_compressed {
             false => {
@@ -563,9 +561,6 @@ impl Cpu {
                 let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
                 return false;
             }
-
-            // For non-Jolt ECALLs, fall through to normal trap delivery.
-            // ZeroOS handles syscalls in-guest via its trap handler.
         }
 
         let current_privilege_encoding = get_privilege_encoding(&self.privilege_mode) as u64;
@@ -741,8 +736,6 @@ impl Cpu {
         self.write_csr_raw(csr_epc_address, instruction_address);
         self.write_csr_raw(csr_cause_address, cause);
         self.write_csr_raw(csr_tval_address, trap.value);
-        let tvec_value = self.read_csr_raw(csr_tvec_address);
-        self.pc = tvec_value;
 
         // Add 4 * cause if tvec has vector type address
         if (self.pc & 0x3) != 0 {
@@ -1010,7 +1003,7 @@ impl Cpu {
         &mut self.mmu
     }
 
-    fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
+    pub fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
         match event {
             JOLT_CYCLE_MARKER_START => {
                 let label = self.read_string(ptr, len)?; // guest NUL-string
@@ -1037,10 +1030,11 @@ impl Cpu {
             JOLT_CYCLE_MARKER_END => {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
-                    let virt = self.trace_len - mark.start_trace_len;
+                    let total = self.trace_len - mark.start_trace_len;
+                    let virtual_instrs = total - real as usize;
                     info!(
-                        "\"{}\": {} RV64IMAC cycles, {} virtual cycles",
-                        mark.label, real, virt
+                        "\"{}\": {} RV64IMAC cycles + {} virtual instructions = {} total cycles",
+                        mark.label, real, virtual_instrs, total
                     );
                 } else {
                     warn!("Attempt to end a marker (ptr: 0x{ptr:x}) that was never started");
@@ -1053,7 +1047,7 @@ impl Cpu {
         Ok(())
     }
 
-    fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u8) -> Result<(), Trap> {
+    pub fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u8) -> Result<(), Trap> {
         let message = self.read_string(ptr, len)?;
         if event_type == JOLT_PRINT_STRING as u8 {
             print!("{message}");

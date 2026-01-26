@@ -22,9 +22,6 @@ pub struct Mmu {
     ppn: u64,
     addressing_mode: AddressingMode,
     privilege_mode: PrivilegeMode,
-    /// Best-effort PC of the currently executing guest instruction.
-    /// Set by the CPU before executing/tracing each real instruction.
-    current_pc: u64,
     pub memory: MemoryWrapper,
 
     pub jolt_device: Option<JoltDevice>,
@@ -71,16 +68,10 @@ impl Mmu {
             ppn: 0,
             addressing_mode: AddressingMode::None,
             privilege_mode: PrivilegeMode::Machine,
-            current_pc: 0,
             memory: MemoryWrapper::new(),
             jolt_device: None,
             mstatus: 0,
         }
-    }
-
-    /// Set the current guest PC for improved error reporting on invalid memory accesses.
-    pub fn set_current_pc(&mut self, pc: u64) {
-        self.current_pc = pc;
     }
 
     /// Updates XLEN, 32-bit or 64-bit
@@ -206,9 +197,8 @@ impl Mmu {
             };
             assert!(
                 ok,
-                "Illegal device {} at pc=0x{:X}: Unknown memory mapping: 0x{ea:X}\n{layout:#?}",
+                "Illegal device {}: Unknown memory mapping: 0x{ea:X}\n{layout:#?}",
                 action.to_lowercase(),
-                self.current_pc,
             );
         } else {
             // check within RAM
@@ -227,8 +217,7 @@ impl Mmu {
                 // allow reads across the whole designated memory region as long as the address is valid
                 assert!(
                     ea < layout.memory_end,
-                    "Illegal Memory Access at pc=0x{:X}: Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
-                    self.current_pc,
+                    "Illegal Memory Access: Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
                 );
             }
         }
@@ -381,14 +370,7 @@ impl Mmu {
     /// * `v_address` Virtual address
     pub fn load_doubleword(&mut self, v_address: u64) -> Result<(u64, RAMRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        assert_eq!(
-            effective_address % 8,
-            0,
-            "Unaligned load_doubleword at v_address=0x{:x} effective=0x{:x} pc=0x{:x}",
-            v_address,
-            effective_address,
-            self.current_pc
-        );
+        assert_eq!(effective_address % 8, 0, "Unaligned load_doubleword");
         let memory_read = self.trace_load(effective_address);
         match self.load_bytes(v_address, 8) {
             Ok(data) => Ok((data, memory_read)),

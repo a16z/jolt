@@ -1061,6 +1061,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bf3c259d255ca70051b30e2e95b5446cdb8949ac4cd22c0d7fd634d89f568e2"
 dependencies = [
  "log",
+ "regex",
 ]
 
 [[package]]
@@ -1069,7 +1070,10 @@ version = "0.11.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c863f0904021b108aa8b2f55046443e6b1ebde8fd4a15c399893aae4fa069f"
 dependencies = [
+ "anstream",
+ "anstyle",
  "env_filter",
+ "jiff",
  "log",
 ]
 
@@ -1917,6 +1921,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
+name = "jiff"
+version = "0.2.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e67e8da4c49d6d9909fe03361f9b620f58898859f5c7aded68351e85e71ecf50"
+dependencies = [
+ "jiff-static",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde_core",
+]
+
+[[package]]
+name = "jiff-static"
+version = "0.2.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0c84ee7f197eca9a86c6fd6cb771e55eb991632f15f2bc3ca6ec838929e6e78"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "jolt"
 version = "0.1.0"
 dependencies = [
@@ -1933,6 +1961,17 @@ dependencies = [
  "sysinfo 0.30.13",
  "toml_edit",
  "tracer",
+]
+
+[[package]]
+name = "jolt-build"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "env_logger",
+ "log",
+ "zeroos-build",
 ]
 
 [[package]]
@@ -1968,7 +2007,7 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
- "jolt-platform 0.1.0",
+ "jolt-platform",
  "lazy_static",
  "memory-stats",
  "num",
@@ -2084,29 +2123,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-platform"
-version = "0.2.0"
-dependencies = [
- "cfg-if",
- "libc",
- "riscv",
- "zeroos",
- "zeroos-debug",
- "zeroos-foundation",
- "zeroos-scheduler-cooperative",
-]
-
-[[package]]
 name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
+ "cfg-if",
  "common",
  "hex-literal",
  "jolt-core",
- "jolt-platform 0.1.0",
- "jolt-platform 0.2.0",
+ "jolt-platform",
  "jolt-sdk-macros",
  "postcard",
  "rand 0.8.5",
@@ -2358,6 +2384,10 @@ name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
+
+[[package]]
+name = "mini-template"
+version = "0.1.0"
 
 [[package]]
 name = "minimal-lexical"
@@ -2734,6 +2764,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "parse-size"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "487f2ccd1e17ce8c1bfab3a65c89525af41cfad4c8659021a1e9a2aacd73b89b"
+
+[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2812,6 +2848,15 @@ name = "portable-atomic"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
+
+[[package]]
+name = "portable-atomic-util"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8a2f0d8d040d7848a709caf78912debcc3f33ee4b3cac47d73d1e1069e83507"
+dependencies = [
+ "portable-atomic",
+]
 
 [[package]]
 name = "postcard"
@@ -4229,7 +4274,7 @@ dependencies = [
  "derive_more 2.0.1",
  "fnv",
  "itertools 0.10.5",
- "jolt-platform 0.1.0",
+ "jolt-platform",
  "lazy_static",
  "object 0.36.7",
  "paste",
@@ -5166,6 +5211,23 @@ dependencies = [
  "zeroos-debug",
  "zeroos-foundation",
  "zeroos-macros",
+]
+
+[[package]]
+name = "zeroos-build"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs",
+ "log",
+ "mini-template",
+ "parse-size",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

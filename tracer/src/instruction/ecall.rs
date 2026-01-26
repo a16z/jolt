@@ -151,9 +151,22 @@ impl RISCVTrace for ECALL {
         let return_addr = self.address + 4;
         let call_id = cpu.x[10] as u32; // a0
 
-        // Check if this is a Jolt-specific ECALL (these don't take trap)
-        let trap_taken = call_id != JOLT_CYCLE_TRACK_ECALL_NUM
-            && call_id != JOLT_PRINT_ECALL_NUM;
+        // Handle Jolt-specific ECALLs (these don't take trap)
+        let trap_taken = if call_id == JOLT_CYCLE_TRACK_ECALL_NUM {
+            let marker_ptr = cpu.x[11] as u32; // a1
+            let marker_len = cpu.x[12] as u32; // a2
+            let event_type = cpu.x[13] as u32; // a3
+            let _ = cpu.handle_jolt_cycle_marker(marker_ptr, marker_len, event_type);
+            false
+        } else if call_id == JOLT_PRINT_ECALL_NUM {
+            let string_ptr = cpu.x[11] as u32; // a1
+            let string_len = cpu.x[12] as u32; // a2
+            let event_type = cpu.x[13] as u32; // a3
+            let _ = cpu.handle_jolt_print(string_ptr, string_len, event_type as u8);
+            false
+        } else {
+            true
+        };
 
         // Compute target PC:
         // - Jolt ECALLs: return to next instruction (no trap)

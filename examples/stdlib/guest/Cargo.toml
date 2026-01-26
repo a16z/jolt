@@ -9,7 +9,7 @@ guest = []
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
     "guest-std",
+    "thread",
+    "stdout"
 ] }
 rayon = "1.10"
-# Boot code is now provided by jolt-sdk's guest_std_boot module
-# bolt = { path = "/Users/sdhawan/Work/ZeroKernel/crates/bolt", features = ["std", "boot-symbols"] }
