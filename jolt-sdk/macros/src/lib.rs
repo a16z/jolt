@@ -394,7 +394,7 @@ impl MacroBuilder {
         quote! {
              #[cfg(not(target_arch = "wasm32"))]
              #[cfg(not(feature = "guest"))]
-             pub fn #analyze_fn_name(#inputs) -> ProgramSummary {
+             pub fn #analyze_fn_name(#inputs) -> jolt::host::analyze::ProgramSummary {
                 #imports
 
                 let mut program = Program::new(#guest_name);
