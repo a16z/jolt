@@ -25,7 +25,7 @@ pub mod instruction;
 pub mod utils;
 
 pub use common::jolt_device::JoltDevice;
-pub use cpu::{advice_tape_clear, advice_tape_len, advice_tape_reset, advice_tape_write};
+pub use cpu::{AdviceTape, advice_tape_read, advice_tape_remaining, advice_tape_write};
 pub use instruction::inline::{list_registered_inlines, register_inline};
 
 use crate::{

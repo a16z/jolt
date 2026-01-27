@@ -71,59 +71,26 @@ impl AdviceTape {
     }
 }
 
-thread_local! {
-    /// Global advice tape that persists between first and second emulation passes
-    static ADVICE_TAPE: RefCell<AdviceTape> = RefCell::new(AdviceTape::new());
-}
-
-/// Write data to the global advice tape
-pub fn advice_tape_write(bytes: &[u8]) {
+/// Write data to the CPU's advice tape
+pub fn advice_tape_write(cpu: &mut Cpu, bytes: &[u8]) {
     eprintln!("advice_tape_write: writing {} bytes: {:?}", bytes.len(), bytes);
-    ADVICE_TAPE.with(|tape| {
-        tape.borrow_mut().write(bytes);
-    });
+    cpu.advice_tape.write(bytes);
 }
 
-/// Read data from the global advice tape
-pub fn advice_tape_read(num_bytes: usize) -> Option<u64> {
-    ADVICE_TAPE.with(|tape| {
-        let remaining = tape.borrow().remaining();
-        eprintln!("advice_tape_read: requesting {} bytes, {} bytes remaining", num_bytes, remaining);
-        let result = tape.borrow_mut().read(num_bytes);
-        if result.is_none() {
-            eprintln!("advice_tape_read: FAILED - not enough bytes!");
-        }
-        result
-    })
+/// Read data from the CPU's advice tape
+pub fn advice_tape_read(cpu: &mut Cpu, num_bytes: usize) -> Option<u64> {
+    let remaining = cpu.advice_tape.remaining();
+    eprintln!("advice_tape_read: requesting {} bytes, {} bytes remaining", num_bytes, remaining);
+    let result = cpu.advice_tape.read(num_bytes);
+    if result.is_none() {
+        eprintln!("advice_tape_read: FAILED - not enough bytes!");
+    }
+    result
 }
 
-/// Reset the advice tape read position
-pub fn advice_tape_reset() {
-    ADVICE_TAPE.with(|tape| {
-        tape.borrow_mut().reset_read_position();
-    });
-}
-
-/// Clear the entire advice tape
-pub fn advice_tape_clear() {
-    ADVICE_TAPE.with(|tape| {
-        *tape.borrow_mut() = AdviceTape::new();
-    });
-}
-
-/// Get the length of the advice tape
-pub fn advice_tape_len() -> usize {
-    ADVICE_TAPE.with(|tape| tape.borrow().len())
-}
-
-/// Get the number of bytes remaining to be read from the advice tape
-pub fn advice_tape_remaining() -> usize {
-    ADVICE_TAPE.with(|tape| tape.borrow().remaining())
-}
-
-/// Get all bytes from the advice tape (used to extract advice after compute_advice pass)
-pub fn advice_tape_get_all() -> Vec<u8> {
-    ADVICE_TAPE.with(|tape| tape.borrow().data.clone())
+/// Get the number of bytes remaining to be read from the CPU's advice tape
+pub fn advice_tape_remaining(cpu: &Cpu) -> usize {
+    cpu.advice_tape.remaining()
 }
 
 use crate::instruction::format::NormalizedOperands;
@@ -220,11 +187,13 @@ pub struct Cpu {
     unsigned_data_mask: u64,
     // pub trace: Vec<Cycle>,
     pub trace_len: usize,
-    executed_instrs: u64, // “real” RV64IMAC cycles
+    executed_instrs: u64, // "real" RV64IMAC cycles
     active_markers: FnvHashMap<u32, ActiveMarker>,
     pub vr_allocator: VirtualRegisterAllocator,
     /// Call stack tracking (circular buffer)
     call_stack: VecDeque<CallFrame>,
+    /// Advice tape for runtime advice system
+    pub advice_tape: AdviceTape,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -389,6 +358,7 @@ impl Cpu {
             active_markers: FnvHashMap::default(),
             vr_allocator: VirtualRegisterAllocator::new(),
             call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
+            advice_tape: AdviceTape::new(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -1171,7 +1141,7 @@ impl Cpu {
             let (b, _) = self.mmu.load(ptr + i)?;
             bytes.push(b);
         }
-        advice_tape_write(&bytes);
+        advice_tape_write(self, &bytes);
         Ok(())
     }
 
@@ -1230,6 +1200,7 @@ impl Cpu {
             active_markers: self.active_markers.clone(),
             vr_allocator: self.vr_allocator.clone(),
             call_stack: self.call_stack.clone(),
+            advice_tape: self.advice_tape.clone(),
         }
     }
 }

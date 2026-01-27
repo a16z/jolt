@@ -87,29 +87,6 @@ impl Program {
         )
     }
 
-    /// Run the compute_advice ELF to populate the advice tape, returning the tape contents
-    pub fn run_to_populate_advice(&self, inputs: &[u8], trusted_advice: &[u8]) -> Vec<u8> {
-        if let Some(elf_compute_advice_contents) = &self.elf_compute_advice_contents {
-            // Run the compute_advice version to populate the advice tape
-            let (_, _, _, _io_device) = tracer::trace(
-                elf_compute_advice_contents,
-                self.elf_compute_advice.as_ref(),
-                inputs,
-                &[], // No untrusted advice needed for the first pass
-                trusted_advice,
-                &self.memory_config,
-            );
-
-            // Extract the advice tape contents
-            // The advice tape is populated during emulation via ADVICE_WRITE calls
-            // We need to get those bytes from the tracer's advice tape
-            use tracer::emulator::cpu::advice_tape_get_all;
-            advice_tape_get_all()
-        } else {
-            // No compute_advice ELF, return empty advice
-            vec![]
-        }
-    }
 }
 
 pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {

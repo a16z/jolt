@@ -22,5 +22,5 @@ pub mod utils;
 pub mod zkvm;
 pub use ark_bn254;
 
-// Re-export advice tape functions for use in generated code
-pub use tracer::emulator::cpu::{advice_tape_clear, advice_tape_len, advice_tape_reset};
+// Re-export AdviceTape type for use in generated code
+pub use tracer::emulator::cpu::AdviceTape;

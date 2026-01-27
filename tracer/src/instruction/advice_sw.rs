@@ -35,7 +35,7 @@ declare_riscv_instr!(
 impl AdviceSW {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <AdviceSW as RISCVInstruction>::RAMAccess) {
         // Read 4 bytes (word) from the advice tape
-        let advice_value = advice_tape_read(4).expect("Failed to read from advice tape");
+        let advice_value = advice_tape_read(cpu, 4).expect("Failed to read from advice tape");
 
         // Store the advice value to memory at address rs1 + imm
         *ram_access = cpu
