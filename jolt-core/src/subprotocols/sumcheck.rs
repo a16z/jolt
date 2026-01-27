@@ -660,6 +660,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
     pub fn verify_transcript_only(
         &self,
         num_rounds: usize,
+        degree_bound: usize,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         if self.round_commitments.len() != num_rounds {
@@ -667,6 +668,12 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
                 num_rounds,
                 self.round_commitments.len(),
             ));
+        }
+
+        for &degree in &self.poly_degrees {
+            if degree > degree_bound {
+                return Err(ProofVerifyError::InvalidInputLength(degree_bound, degree));
+            }
         }
 
         let mut r: Vec<F::Challenge> = Vec::new();
@@ -786,7 +793,8 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
         match self {
             Self::Standard(proof) => proof.verify(claim, num_rounds, degree_bound, transcript),
             Self::Zk(proof) => {
-                let challenges = proof.verify_transcript_only(num_rounds, transcript)?;
+                let challenges =
+                    proof.verify_transcript_only(num_rounds, degree_bound, transcript)?;
                 // For ZK mode, we don't compute the final claim here
                 // BlindFold verification ensures the R1CS constraints are satisfied
                 Ok((F::zero(), challenges))
