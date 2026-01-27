@@ -1029,25 +1029,25 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         #[cfg(feature = "allocative")]
         {
+            print_data_structure_heap_usage("RamReadWriteCheckingProver", &ram_read_write_checking);
             print_data_structure_heap_usage(
                 "ProductVirtualRemainderProver",
                 &spartan_product_virtual_remainder,
             );
-            print_data_structure_heap_usage("RamRafEvaluationSumcheckProver", &ram_raf_evaluation);
-            print_data_structure_heap_usage("RamReadWriteCheckingProver", &ram_read_write_checking);
-            print_data_structure_heap_usage("OutputSumcheckProver", &ram_output_check);
             print_data_structure_heap_usage(
                 "InstructionLookupsClaimReductionSumcheckProver",
                 &instruction_claim_reduction,
             );
+            print_data_structure_heap_usage("RamRafEvaluationSumcheckProver", &ram_raf_evaluation);
+            print_data_structure_heap_usage("OutputSumcheckProver", &ram_output_check);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
-            Box::new(spartan_product_virtual_remainder),
-            Box::new(ram_raf_evaluation),
             Box::new(ram_read_write_checking),
-            Box::new(ram_output_check),
+            Box::new(spartan_product_virtual_remainder),
             Box::new(instruction_claim_reduction),
+            Box::new(ram_raf_evaluation),
+            Box::new(ram_output_check),
         ];
 
         #[cfg(feature = "allocative")]
@@ -1271,18 +1271,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         #[cfg(feature = "allocative")]
         {
+            print_data_structure_heap_usage("InstructionReadRafSumcheckProver", &lookups_read_raf);
+            print_data_structure_heap_usage("RamRaClaimReductionSumcheckProver", &ram_ra_reduction);
             print_data_structure_heap_usage(
                 "RegistersValEvaluationSumcheckProver",
                 &registers_val_evaluation,
             );
-            print_data_structure_heap_usage("RamRaClaimReductionSumcheckProver", &ram_ra_reduction);
-            print_data_structure_heap_usage("InstructionReadRafSumcheckProver", &lookups_read_raf);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
-            Box::new(registers_val_evaluation),
-            Box::new(ram_ra_reduction),
             Box::new(lookups_read_raf),
+            Box::new(ram_ra_reduction),
+            Box::new(registers_val_evaluation),
         ];
 
         #[cfg(feature = "allocative")]
@@ -1517,8 +1517,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let mut instances: Vec<&mut dyn SumcheckInstanceProver<_, _>> = vec![
             &mut bytecode_read_raf,
-            &mut ram_hamming_booleanity,
             &mut booleanity,
+            &mut ram_hamming_booleanity,
             &mut ram_ra_virtual,
             &mut lookups_ra_virtual,
             &mut inc_reduction,
@@ -1580,8 +1580,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6b_end_flamechart.svg");
         drop_in_background_thread(bytecode_read_raf);
-        drop_in_background_thread(ram_hamming_booleanity);
         drop_in_background_thread(booleanity);
+        drop_in_background_thread(ram_hamming_booleanity);
         drop_in_background_thread(ram_ra_virtual);
         drop_in_background_thread(lookups_ra_virtual);
         drop_in_background_thread(inc_reduction);
