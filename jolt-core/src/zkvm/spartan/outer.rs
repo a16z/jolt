@@ -20,7 +20,9 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::streaming_sumcheck::{
     LinearSumcheckStage, StreamingSumcheck, StreamingSumcheckWindow,
 };
@@ -35,7 +37,10 @@ use crate::utils::math::Math;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::r1cs::constraints::OUTER_FIRST_ROUND_POLY_DEGREE_BOUND;
+use crate::zkvm::r1cs::constraints::{
+    OUTER_FIRST_ROUND_POLY_DEGREE_BOUND, R1CS_CONSTRAINTS_FIRST_GROUP,
+    R1CS_CONSTRAINTS_SECOND_GROUP,
+};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::r1cs::{
     constraints::{
@@ -43,7 +48,7 @@ use crate::zkvm::r1cs::{
         OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
     evaluation::R1CSEval,
-    inputs::{R1CSCycleInputs, ALL_R1CS_INPUTS},
+    inputs::{R1CSCycleInputs, ALL_R1CS_INPUTS, NUM_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
 
@@ -411,11 +416,251 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F>
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        None
+        // output = tau_kernel * Az * Bz
+        // where Az = Σ_j az_coeff[j] * z[j] + az_const
+        //       Bz = Σ_j bz_coeff[j] * z[j] + bz_const
+        //
+        // Expanding: output = Σ_{i,j} (tau * az[i] * bz[j]) * z_i * z_j
+        //                   + Σ_i (tau * (az[i]*bz_c + az_c*bz[i])) * z_i
+        //                   + tau * az_c * bz_c
+        //
+        // Build structural template by iterating R1CS constraints to find
+        // which input indices appear in A-sides and B-sides.
+
+        use std::collections::BTreeSet;
+        let mut a_indices = BTreeSet::new();
+        let mut b_indices = BTreeSet::new();
+        let mut a_has_const = false;
+        let mut b_has_const = false;
+
+        for group in [
+            R1CS_CONSTRAINTS_FIRST_GROUP.as_slice(),
+            R1CS_CONSTRAINTS_SECOND_GROUP.as_slice(),
+        ] {
+            for constraint in group {
+                constraint.cons.a.for_each_term(|idx, _| {
+                    a_indices.insert(idx);
+                });
+                if constraint.cons.a.const_term().is_some() {
+                    a_has_const = true;
+                }
+                constraint.cons.b.for_each_term(|idx, _| {
+                    b_indices.insert(idx);
+                });
+                if constraint.cons.b.const_term().is_some() {
+                    b_has_const = true;
+                }
+            }
+        }
+
+        let a_indices: Vec<usize> = a_indices.into_iter().collect();
+        let b_indices: Vec<usize> = b_indices.into_iter().collect();
+
+        let mut terms = Vec::new();
+        let mut challenge_idx = 0;
+
+        // Quadratic terms: tau * az[i] * bz[j] * z_i * z_j
+        for &a_idx in &a_indices {
+            let a_opening = OpeningId::Virtual(
+                VirtualPolynomial::from(&ALL_R1CS_INPUTS[a_idx]),
+                SumcheckId::SpartanOuter,
+            );
+            for &b_idx in &b_indices {
+                let b_opening = OpeningId::Virtual(
+                    VirtualPolynomial::from(&ALL_R1CS_INPUTS[b_idx]),
+                    SumcheckId::SpartanOuter,
+                );
+                terms.push(ProductTerm::scaled(
+                    ValueSource::Challenge(challenge_idx),
+                    vec![
+                        ValueSource::Opening(a_opening),
+                        ValueSource::Opening(b_opening),
+                    ],
+                ));
+                challenge_idx += 1;
+            }
+        }
+
+        // Linear terms: tau * (az[i]*bz_c + az_c*bz[i]) * z_i
+        // Collect all unique indices from both sides
+        let mut all_indices = BTreeSet::new();
+        for &idx in &a_indices {
+            all_indices.insert(idx);
+        }
+        for &idx in &b_indices {
+            all_indices.insert(idx);
+        }
+        let all_indices: Vec<usize> = all_indices.into_iter().collect();
+
+        if a_has_const || b_has_const {
+            for &idx in &all_indices {
+                let opening = OpeningId::Virtual(
+                    VirtualPolynomial::from(&ALL_R1CS_INPUTS[idx]),
+                    SumcheckId::SpartanOuter,
+                );
+                terms.push(ProductTerm::scaled(
+                    ValueSource::Challenge(challenge_idx),
+                    vec![ValueSource::Opening(opening)],
+                ));
+                challenge_idx += 1;
+            }
+        }
+
+        // Constant term: tau * az_c * bz_c
+        if a_has_const && b_has_const {
+            terms.push(ProductTerm::single(ValueSource::Challenge(challenge_idx)));
+        }
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
     }
 
-    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        Vec::new()
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        use std::collections::BTreeSet;
+
+        let r_stream = sumcheck_challenges[0];
+
+        // Lagrange weights at r0
+        let w = LagrangePolynomial::<F>::evals::<F::Challenge, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE>(
+            &self.r0,
+        );
+
+        // Compute per-input-index coefficients for Az and Bz
+        let mut az_g0 = [F::zero(); NUM_R1CS_INPUTS];
+        let mut bz_g0 = [F::zero(); NUM_R1CS_INPUTS];
+        let mut az_g0_const = F::zero();
+        let mut bz_g0_const = F::zero();
+
+        for (i, constraint) in R1CS_CONSTRAINTS_FIRST_GROUP.iter().enumerate() {
+            constraint.cons.a.for_each_term(|idx, coeff| {
+                az_g0[idx] += w[i] * F::from_i128(coeff);
+            });
+            if let Some(c) = constraint.cons.a.const_term() {
+                az_g0_const += w[i] * F::from_i128(c);
+            }
+            constraint.cons.b.for_each_term(|idx, coeff| {
+                bz_g0[idx] += w[i] * F::from_i128(coeff);
+            });
+            if let Some(c) = constraint.cons.b.const_term() {
+                bz_g0_const += w[i] * F::from_i128(c);
+            }
+        }
+
+        let mut az_g1 = [F::zero(); NUM_R1CS_INPUTS];
+        let mut bz_g1 = [F::zero(); NUM_R1CS_INPUTS];
+        let mut az_g1_const = F::zero();
+        let mut bz_g1_const = F::zero();
+
+        let g2_len = core::cmp::min(
+            R1CS_CONSTRAINTS_SECOND_GROUP.len(),
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        );
+        for i in 0..g2_len {
+            let constraint = &R1CS_CONSTRAINTS_SECOND_GROUP[i];
+            constraint.cons.a.for_each_term(|idx, coeff| {
+                az_g1[idx] += w[i] * F::from_i128(coeff);
+            });
+            if let Some(c) = constraint.cons.a.const_term() {
+                az_g1_const += w[i] * F::from_i128(c);
+            }
+            constraint.cons.b.for_each_term(|idx, coeff| {
+                bz_g1[idx] += w[i] * F::from_i128(coeff);
+            });
+            if let Some(c) = constraint.cons.b.const_term() {
+                bz_g1_const += w[i] * F::from_i128(c);
+            }
+        }
+
+        // Blend groups: az = az_g0 + r_stream * (az_g1 - az_g0)
+        let r_stream_f: F = r_stream.into();
+        let mut az_coeff = [F::zero(); NUM_R1CS_INPUTS];
+        let mut bz_coeff = [F::zero(); NUM_R1CS_INPUTS];
+        for j in 0..NUM_R1CS_INPUTS {
+            az_coeff[j] = az_g0[j] + r_stream_f * (az_g1[j] - az_g0[j]);
+            bz_coeff[j] = bz_g0[j] + r_stream_f * (bz_g1[j] - bz_g0[j]);
+        }
+        let az_const = az_g0_const + r_stream_f * (az_g1_const - az_g0_const);
+        let bz_const = bz_g0_const + r_stream_f * (bz_g1_const - bz_g0_const);
+
+        // Compute tau_kernel
+        let tau = &self.tau;
+        let tau_high = &tau[tau.len() - 1];
+        let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
+            F::Challenge,
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(tau_high, &self.r0);
+        let tau_low = &tau[..tau.len() - 1];
+        let r_tail_reversed: Vec<F::Challenge> =
+            sumcheck_challenges.iter().rev().copied().collect();
+        let tau_kernel = tau_high_bound_r0 * EqPolynomial::mle(tau_low, &r_tail_reversed);
+
+        // Collect structural index sets (must match output_claim_constraint order)
+        let mut a_set = BTreeSet::new();
+        let mut b_set = BTreeSet::new();
+        let mut a_has_const = false;
+        let mut b_has_const = false;
+
+        for group in [
+            R1CS_CONSTRAINTS_FIRST_GROUP.as_slice(),
+            R1CS_CONSTRAINTS_SECOND_GROUP.as_slice(),
+        ] {
+            for constraint in group {
+                constraint.cons.a.for_each_term(|idx, _| {
+                    a_set.insert(idx);
+                });
+                if constraint.cons.a.const_term().is_some() {
+                    a_has_const = true;
+                }
+                constraint.cons.b.for_each_term(|idx, _| {
+                    b_set.insert(idx);
+                });
+                if constraint.cons.b.const_term().is_some() {
+                    b_has_const = true;
+                }
+            }
+        }
+
+        let a_indices: Vec<usize> = a_set.iter().copied().collect();
+        let b_indices: Vec<usize> = b_set.iter().copied().collect();
+
+        let mut challenges = Vec::new();
+
+        // Quadratic: tau * az[i] * bz[j]
+        for &a_idx in &a_indices {
+            for &b_idx in &b_indices {
+                challenges.push(tau_kernel * az_coeff[a_idx] * bz_coeff[b_idx]);
+            }
+        }
+
+        // Linear: tau * (az[i]*bz_const + az_const*bz[i])
+        if a_has_const || b_has_const {
+            let mut all_indices = BTreeSet::new();
+            for &idx in &a_indices {
+                all_indices.insert(idx);
+            }
+            for &idx in &b_indices {
+                all_indices.insert(idx);
+            }
+            for idx in all_indices {
+                let from_a = if b_has_const {
+                    az_coeff[idx] * bz_const
+                } else {
+                    F::zero()
+                };
+                let from_b = if a_has_const {
+                    az_const * bz_coeff[idx]
+                } else {
+                    F::zero()
+                };
+                challenges.push(tau_kernel * (from_a + from_b));
+            }
+        }
+
+        // Constant: tau * az_const * bz_const
+        if a_has_const && b_has_const {
+            challenges.push(tau_kernel * az_const * bz_const);
+        }
+
+        challenges
     }
 }
 
