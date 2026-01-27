@@ -73,3 +73,6 @@ impl<T> core::ops::Deref for UntrustedAdvice<T> {
 #[no_mangle]
 #[cfg(feature = "host")]
 pub static mut _HEAP_PTR: u8 = 0;
+
+#[cfg(target_arch = "riscv64")]
+pub mod support;

@@ -820,7 +820,7 @@ impl Cpu {
     }
 
     // SSTATUS, SIE, and SIP are subsets of MSTATUS, MIE, and MIP
-    fn read_csr_raw(&self, address: u16) -> u64 {
+    pub fn read_csr_raw(&self, address: u16) -> u64 {
         match address {
             // @TODO: Mask should consider of 32-bit mode
             CSR_FFLAGS_ADDRESS => self.csr[CSR_FCSR_ADDRESS as usize] & 0x1f,
@@ -833,7 +833,7 @@ impl Cpu {
         }
     }
 
-    fn write_csr_raw(&mut self, address: u16, value: u64) {
+    pub fn write_csr_raw(&mut self, address: u16, value: u64) {
         match address {
             CSR_FFLAGS_ADDRESS => {
                 self.csr[CSR_FCSR_ADDRESS as usize] &= !0x1f;
@@ -987,7 +987,7 @@ impl Cpu {
         &mut self.mmu
     }
 
-    fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
+    pub fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
         match event {
             JOLT_CYCLE_MARKER_START => {
                 let label = self.read_string(ptr, len)?; // guest NUL-string
@@ -1014,10 +1014,11 @@ impl Cpu {
             JOLT_CYCLE_MARKER_END => {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
-                    let virt = self.trace_len - mark.start_trace_len;
+                    let total = self.trace_len - mark.start_trace_len;
+                    let virtual_instrs = total - real as usize;
                     info!(
-                        "\"{}\": {} RV64IMAC cycles, {} virtual cycles",
-                        mark.label, real, virt
+                        "\"{}\": {} RV64IMAC cycles + {} virtual instructions = {} total cycles",
+                        mark.label, real, virtual_instrs, total
                     );
                 } else {
                     warn!("Attempt to end a marker (ptr: 0x{ptr:x}) that was never started");
@@ -1030,7 +1031,7 @@ impl Cpu {
         Ok(())
     }
 
-    fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u8) -> Result<(), Trap> {
+    pub fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u8) -> Result<(), Trap> {
         let message = self.read_string(ptr, len)?;
         if event_type == JOLT_PRINT_STRING as u8 {
             print!("{message}");

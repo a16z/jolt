@@ -1680,13 +1680,13 @@ mod tests {
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            256,
+            4096,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let log_chunk = 8; // Use default log_chunk for tests
+        let log_chunk = 12; // Use default log_chunk for tests
         let prover = RV64IMACProver::gen_from_elf(
             &prover_preprocessing,
             elf_contents,
@@ -1927,7 +1927,7 @@ mod tests {
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            256,
+            4096,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         tracing::info!(
@@ -1949,8 +1949,8 @@ mod tests {
         );
 
         // Trace is tiny but advice is max-sized
-        assert!(prover.unpadded_trace_len < 512);
-        assert_eq!(prover.padded_trace_len, 256);
+        assert!(prover.unpadded_trace_len < 8192);
+        assert_eq!(prover.padded_trace_len, 4096);
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2066,7 +2066,7 @@ mod tests {
             final_memory_state,
         );
 
-        assert_eq!(prover.padded_trace_len, 256, "test expects small trace");
+        assert_eq!(prover.padded_trace_len, 4096, "test expects small trace");
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2240,7 +2240,7 @@ mod tests {
         let prover = RV64IMACProver::gen_from_elf(
             &prover_preprocessing,
             elf_contents,
-            &[50],
+            &inputs,
             &[],
             &[],
             None,

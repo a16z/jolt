@@ -20,6 +20,7 @@ impl Flags for VirtualAssertEQ {
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsFirstInSequence] = self.is_first_in_sequence;
         flags[CircuitFlags::IsCompressed] = self.is_compressed;
+        flags[CircuitFlags::IsLastInSequence] = self.virtual_sequence_remaining == Some(0);
         flags
     }
 
