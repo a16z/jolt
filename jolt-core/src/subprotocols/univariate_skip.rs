@@ -8,7 +8,7 @@ use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumu
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::transcripts::{AppendToTranscript, Transcript};
+use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
 
 /// Returns the interleaved symmetric univariate-skip target indices outside the base window.
@@ -134,7 +134,7 @@ pub fn prove_uniskip_round<F: JoltField, T: Transcript, I: SumcheckInstanceProve
     let input_claim = instance.input_claim(opening_accumulator);
     let uni_poly = instance.compute_message(0, input_claim);
     // Append full polynomial and derive r0
-    uni_poly.append_to_transcript(transcript);
+    transcript.append_scalars(b"uniskip_poly", &uni_poly.coeffs);
     let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
     instance.cache_openings(opening_accumulator, transcript, &[r0]);
     UniSkipFirstRoundProof::new(uni_poly)
@@ -179,7 +179,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
         }
 
         // Append full polynomial and derive r0
-        proof.uni_poly.append_to_transcript(transcript);
+        transcript.append_scalars(b"uniskip_poly", &proof.uni_poly.coeffs);
         let r0 = transcript.challenge_scalar_optimized::<F>();
 
         // Check symmetric-domain sum equals zero (initial claim), and compute next claim s1(r0)
