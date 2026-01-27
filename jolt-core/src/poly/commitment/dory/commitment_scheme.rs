@@ -1,6 +1,6 @@
 //! Dory polynomial commitment scheme implementation
 
-use super::dory_globals::DoryGlobals;
+use super::dory_globals::{DoryGlobals, DoryLayout};
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 use super::wrappers::{
     jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
@@ -118,10 +118,12 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = num_cols.log_2();
         let nu = num_rows.log_2();
 
+        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
+
         // Dory uses the opposite endian-ness as Jolt
-        let ark_point: Vec<ArkFr> = opening_point
+        let ark_point: Vec<ArkFr> = reordered_point
             .iter()
-            .rev()  // Reverse the order for Dory
+            .rev() // Reverse the order for Dory
             .map(|p| {
                 let f_val: ark_bn254::Fr = (*p).into();
                 jolt_to_ark(&f_val)
@@ -152,10 +154,12 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> Result<(), ProofVerifyError> {
         let _span = trace_span!("DoryCommitmentScheme::verify").entered();
 
+        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
+
         // Dory uses the opposite endian-ness as Jolt
-        let ark_point: Vec<ArkFr> = opening_point
+        let ark_point: Vec<ArkFr> = reordered_point
             .iter()
-            .rev()  // Reverse the order for Dory
+            .rev()
             .map(|p| {
                 let f_val: ark_bn254::Fr = (*p).into();
                 jolt_to_ark(&f_val)
@@ -339,5 +343,26 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 
             (tier_2, row_commitments)
         }
+    }
+}
+
+/// Reorders opening_point for AddressMajor layout.
+///
+/// For AddressMajor layout, reorders opening_point from [r_address, r_cycle] to [r_cycle, r_address].
+/// This ensures that after Dory's reversal and splitting:
+/// - Column (right) vector gets address variables (matching AddressMajor column indexing)
+/// - Row (left) vector gets cycle variables (matching AddressMajor row indexing)
+///
+/// For CycleMajor layout, returns the point unchanged.
+fn reorder_opening_point_for_layout<F: JoltField>(
+    opening_point: &[F::Challenge],
+) -> Vec<F::Challenge> {
+    if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+        let log_T = DoryGlobals::get_T().log_2();
+        let log_K = opening_point.len().saturating_sub(log_T);
+        let (r_address, r_cycle) = opening_point.split_at(log_K);
+        [r_cycle, r_address].concat()
+    } else {
+        opening_point.to_vec()
     }
 }

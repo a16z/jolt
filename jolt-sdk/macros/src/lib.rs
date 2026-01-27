@@ -604,7 +604,7 @@ impl MacroBuilder {
                 let num_rows = 1usize << nu_a;
                 let num_cols = 1usize << sigma_a;
 
-                let _guard = jolt::DoryGlobals::initialize_context(num_rows, num_cols, jolt::DoryContext::TrustedAdvice);
+                let _guard = jolt::DoryGlobals::initialize_context(num_rows, num_cols, jolt::DoryContext::TrustedAdvice, None);
                 let _ctx = jolt::DoryGlobals::with_context(jolt::DoryContext::TrustedAdvice);
 
                 let poly = MultilinearPolynomial::<jolt::F>::from(trusted_advice_vec);

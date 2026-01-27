@@ -2,11 +2,15 @@ use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::sumcheck_claim::{
+    CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
+    VerifierEvaluablePolynomial,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -158,6 +162,19 @@ impl<F: JoltField> HammingBooleanitySumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for HammingBooleanitySumcheckVerifier<F>
 {
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        let result = self.params.input_claim(accumulator);
+
+        #[cfg(test)]
+        {
+            let reference_result =
+                Self::input_output_claims().input_claim(&[F::one()], accumulator);
+            assert_eq!(result, reference_result);
+        }
+
+        result
+    }
+
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -189,7 +206,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 .collect::<Vec<F::Challenge>>(),
         );
 
-        (H_claim.square() - H_claim) * eq
+        let result = (H_claim.square() - H_claim) * eq;
+
+        #[cfg(test)]
+        {
+            let r = self.params.normalize_opening_point(sumcheck_challenges);
+            let reference_result =
+                Self::input_output_claims().expected_output_claim(&r, &[F::one()], accumulator);
+            assert_eq!(result, reference_result);
+        }
+
+        result
     }
 
     fn cache_openings(
@@ -204,5 +231,30 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RamHammingBooleanity,
             self.params.normalize_opening_point(sumcheck_challenges),
         );
+    }
+}
+
+impl<F: JoltField> SumcheckFrontend<F> for HammingBooleanitySumcheckVerifier<F> {
+    fn input_output_claims() -> InputOutputClaims<F> {
+        let ram_hamming_weight: ClaimExpr<F> = VirtualPolynomial::RamHammingWeight.into();
+        let ram_hamming_weight_squared = ram_hamming_weight.clone() * ram_hamming_weight.clone();
+
+        let eq_r_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
+            opening: PolynomialId::Virtual(VirtualPolynomial::LookupOutput),
+            sumcheck: SumcheckId::SpartanOuter,
+            part: ChallengePart::Cycle,
+        });
+
+        InputOutputClaims {
+            claims: vec![Claim {
+                // NOTE: In this case, the input claim is 0, so this is just the sumcheck to
+                // take r_cycle from.
+                input_sumcheck_id: SumcheckId::SpartanOuter,
+                input_claim_expr: F::zero().into(),
+                batching_poly: eq_r_stage1,
+                expected_output_claim_expr: ram_hamming_weight_squared - ram_hamming_weight,
+            }],
+            output_sumcheck_id: SumcheckId::RamHammingBooleanity,
+        }
     }
 }

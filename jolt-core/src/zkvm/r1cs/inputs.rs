@@ -13,7 +13,7 @@
 //! Changes here affect `r1cs::constraints` (row shapes) and `r1cs::evaluation`
 //! (typed evaluators and claim computation).
 
-use crate::poly::opening_proof::{OpeningId, SumcheckId};
+use crate::poly::opening_proof::{OpeningId, PolynomialId, SumcheckId};
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{
     CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
@@ -188,7 +188,7 @@ impl From<&JoltR1CSInputs> for VirtualPolynomial {
 impl From<&JoltR1CSInputs> for OpeningId {
     fn from(input: &JoltR1CSInputs) -> Self {
         let poly = VirtualPolynomial::from(input);
-        OpeningId::Virtual(poly, SumcheckId::SpartanOuter)
+        OpeningId::Polynomial(PolynomialId::Virtual(poly), SumcheckId::SpartanOuter)
     }
 }
 
