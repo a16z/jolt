@@ -277,11 +277,11 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let _r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
             vec![
-                &spartan_product_virtual_remainder,
-                &ram_raf_evaluation,
                 &ram_read_write_checking,
-                &ram_output_check,
+                &spartan_product_virtual_remainder,
                 &instruction_claim_reduction,
+                &ram_raf_evaluation,
+                &ram_output_check,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -308,7 +308,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let _r_stage3 = BatchedSumcheck::verify(
             &self.proof.stage3_sumcheck_proof,
             vec![
-                &spartan_shift as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
+                &spartan_shift,
                 &spartan_instruction_input,
                 &spartan_registers_claim_reduction,
             ],
@@ -357,7 +357,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let _r_stage4 = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
             vec![
-                &registers_read_write_checking as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
+                &registers_read_write_checking,
                 &ram_val_evaluation,
                 &ram_val_final,
             ],
@@ -389,9 +389,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let _r_stage5 = BatchedSumcheck::verify(
             &self.proof.stage5_sumcheck_proof,
             vec![
-                &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
-                &ram_ra_reduction,
                 &lookups_read_raf,
+                &ram_ra_reduction,
+                &registers_val_evaluation,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -466,8 +466,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![
             &bytecode_read_raf,
-            &ram_hamming_booleanity,
             &booleanity,
+            &ram_hamming_booleanity,
             &ram_ra_virtual,
             &lookups_ra_virtual,
             &inc_reduction,
