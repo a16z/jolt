@@ -3,6 +3,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::field::JoltField;
 use crate::utils::math::Math;
+use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
 use crate::zkvm::instruction_lookups::LOG_K;
 use common::constants::{
     INSTRUCTION_PHASES_THRESHOLD_LOG_T, ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT,
@@ -128,6 +129,44 @@ pub struct OneHotConfig {
     /// Must be a multiple of `log_k_chunk` and divide LOG_K evenly.
     /// Valid range: [log_k_chunk, LOG_K] (e.g., 4-128 or 8-128 depending on log_k_chunk).
     pub lookups_ra_virtual_log_k_chunk: u8,
+}
+
+impl GuestSerialize for ReadWriteConfig {
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        self.ram_rw_phase1_num_rounds.guest_serialize(w)?;
+        self.ram_rw_phase2_num_rounds.guest_serialize(w)?;
+        self.registers_rw_phase1_num_rounds.guest_serialize(w)?;
+        self.registers_rw_phase2_num_rounds.guest_serialize(w)?;
+        Ok(())
+    }
+}
+
+impl GuestDeserialize for ReadWriteConfig {
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            ram_rw_phase1_num_rounds: u8::guest_deserialize(r)?,
+            ram_rw_phase2_num_rounds: u8::guest_deserialize(r)?,
+            registers_rw_phase1_num_rounds: u8::guest_deserialize(r)?,
+            registers_rw_phase2_num_rounds: u8::guest_deserialize(r)?,
+        })
+    }
+}
+
+impl GuestSerialize for OneHotConfig {
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        self.log_k_chunk.guest_serialize(w)?;
+        self.lookups_ra_virtual_log_k_chunk.guest_serialize(w)?;
+        Ok(())
+    }
+}
+
+impl GuestDeserialize for OneHotConfig {
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            log_k_chunk: u8::guest_deserialize(r)?,
+            lookups_ra_virtual_log_k_chunk: u8::guest_deserialize(r)?,
+        })
+    }
 }
 
 impl OneHotConfig {

@@ -45,7 +45,18 @@ prover = [
 ]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
-minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
+# Minimal feature set for recursion / verifier-only builds.
+# Note: we still need the Arkworks backend for Dory, but we avoid host-only Dory features
+# like `disk-persistence`.
+minimal = [
+    "ark-ec/std",
+    "ark-ff/std",
+    "ark-std/std",
+    "ark-ff/asm",
+    "rayon",
+    "dory/arkworks",
+    "dory/cache",
+]
 allocative = ["dep:inferno"]
 monitor = ["dep:sysinfo"]
 pprof = ["dep:pprof", "dep:prost"]
@@ -57,7 +68,7 @@ ark-bn254.workspace = true
 ark-grumpkin.workspace = true
 jolt-optimizations.workspace = true
 ark-ec.workspace = true
-ark-ff.workspace = true
+ark-ff = { workspace = true, default-features = true }
 ark-serialize.workspace = true
 ark-serialize-derive.workspace = true
 ark-std.workspace = true

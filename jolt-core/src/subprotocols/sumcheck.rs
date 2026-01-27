@@ -10,6 +10,7 @@ use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::errors::ProofVerifyError;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
+use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
 
 use ark_serialize::*;
 use std::marker::PhantomData;
@@ -242,6 +243,29 @@ impl BatchedSumcheck {
 pub struct SumcheckInstanceProof<F: JoltField, ProofTranscript: Transcript> {
     pub compressed_polys: Vec<CompressedUniPoly<F>>,
     _marker: PhantomData<ProofTranscript>,
+}
+
+impl<F, ProofTranscript> GuestSerialize for SumcheckInstanceProof<F, ProofTranscript>
+where
+    F: JoltField + GuestSerialize,
+    ProofTranscript: Transcript,
+{
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        self.compressed_polys.guest_serialize(w)
+    }
+}
+
+impl<F, ProofTranscript> GuestDeserialize for SumcheckInstanceProof<F, ProofTranscript>
+where
+    F: JoltField + GuestDeserialize,
+    ProofTranscript: Transcript,
+{
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            compressed_polys: Vec::guest_deserialize(r)?,
+            _marker: PhantomData,
+        })
+    }
 }
 
 impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {

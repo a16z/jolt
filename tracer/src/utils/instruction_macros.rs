@@ -74,8 +74,8 @@ macro_rules! declare_riscv_instr {
                 Self {
                     address: ni.address as u64,
                     operands: ni.operands.into(),
-                    virtual_sequence_remaining: None,
-                    is_first_in_sequence: false,
+                    virtual_sequence_remaining: ni.virtual_sequence_remaining,
+                    is_first_in_sequence: ni.is_first_in_sequence,
                     is_compressed: ni.is_compressed,
                 }
             }

@@ -23,6 +23,7 @@ use verifier::JoltVerifier;
 pub mod bytecode;
 pub mod claim_reductions;
 pub mod config;
+pub mod guest_serde;
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod lookup_table;

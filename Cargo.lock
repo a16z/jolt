@@ -2123,6 +2123,7 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
+ "ark-serialize",
  "common",
  "hex-literal",
  "jolt-core",

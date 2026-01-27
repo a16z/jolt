@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 guest = []
+cycle-tracking = ["jolt_sdk/cycle-tracking"]
 
 [dependencies]
 jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["guest-verifier"] }

@@ -1,6 +1,7 @@
 //! Global state management for Dory parameters
 
 use crate::utils::math::Math;
+use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
 use allocative::Allocative;
 use dory::backends::arkworks::{init_cache, is_cached, ArkG1, ArkG2};
 use std::sync::{
@@ -72,6 +73,29 @@ pub enum DoryLayout {
     ///      └────────┴────────┴────────┴────────┘
     /// ```
     AddressMajor,
+}
+
+impl GuestSerialize for DoryLayout {
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        let tag: u8 = match self {
+            DoryLayout::CycleMajor => 0,
+            DoryLayout::AddressMajor => 1,
+        };
+        tag.guest_serialize(w)
+    }
+}
+
+impl GuestDeserialize for DoryLayout {
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        match u8::guest_deserialize(r)? {
+            0 => Ok(DoryLayout::CycleMajor),
+            1 => Ok(DoryLayout::AddressMajor),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid DoryLayout tag",
+            )),
+        }
+    }
 }
 
 impl DoryLayout {

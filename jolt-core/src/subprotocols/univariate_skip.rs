@@ -10,6 +10,7 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::errors::ProofVerifyError;
+use crate::zkvm::guest_serde::{GuestDeserialize, GuestSerialize};
 
 /// Returns the interleaved symmetric univariate-skip target indices outside the base window.
 ///
@@ -146,6 +147,29 @@ pub fn prove_uniskip_round<F: JoltField, T: Transcript, I: SumcheckInstanceProve
 pub struct UniSkipFirstRoundProof<F: JoltField, T: Transcript> {
     pub uni_poly: UniPoly<F>,
     _marker: PhantomData<T>,
+}
+
+impl<F, T> GuestSerialize for UniSkipFirstRoundProof<F, T>
+where
+    F: JoltField + GuestSerialize,
+    T: Transcript,
+{
+    fn guest_serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        self.uni_poly.guest_serialize(w)
+    }
+}
+
+impl<F, T> GuestDeserialize for UniSkipFirstRoundProof<F, T>
+where
+    F: JoltField + GuestDeserialize,
+    T: Transcript,
+{
+    fn guest_deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self {
+            uni_poly: UniPoly::guest_deserialize(r)?,
+            _marker: PhantomData,
+        })
+    }
 }
 
 impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {

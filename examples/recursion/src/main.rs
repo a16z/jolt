@@ -368,18 +368,11 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     all_groups_data
 }
 
-fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_dir: &Path) {
+fn generate_embedded_bytes(guest: GuestProgram, guest_bytes: &[u8], n: u32, output_dir: &Path) {
     info!(
         "Generating embedded bytes for {} guest program...",
         guest.name()
     );
-
-    let (n, remaining_data_size) = check_data_integrity(all_groups_data);
-
-    if remaining_data_size > 0 {
-        info!("Warning: Remaining data is not empty ({remaining_data_size} bytes). This might indicate proofs are included.");
-        info!("For embedded mode, only verifier preprocessing should be included.");
-    }
 
     let mut output = String::new();
     output.push_str(&format!(
@@ -388,7 +381,7 @@ fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_d
     ));
     output.push_str("pub static EMBEDDED_BYTES: &[u8] = &[\n");
 
-    for (i, byte) in all_groups_data.iter().enumerate() {
+    for (i, byte) in guest_bytes.iter().enumerate() {
         if i > 0 && i % 16 == 0 {
             output.push('\n');
         }
@@ -396,10 +389,7 @@ fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_d
     }
 
     output.push_str("\n];\n");
-    output.push_str(&format!(
-        "// Total embedded bytes: {}\n",
-        all_groups_data.len()
-    ));
+    output.push_str(&format!("// Total embedded bytes: {}\n", guest_bytes.len()));
     output.push_str(&format!("// Number of proofs: {n}\n"));
 
     std::fs::create_dir_all(output_dir).unwrap();
@@ -475,6 +465,7 @@ fn run_recursion_proof(
     program.set_func("verify");
     program.set_std(true);
     program.set_memory_config(memory_config);
+    program.add_guest_feature("cycle-tracking");
     program.build(target_dir);
     let elf_contents = program.get_elf_contents().unwrap();
     let mut recursion = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
@@ -562,12 +553,16 @@ fn verify_proofs(
 
     let all_groups_data = load_proof_data(guest, workdir);
 
-    check_data_integrity(&all_groups_data);
+    let (n, _remaining) = check_data_integrity(&all_groups_data);
+
+    // Decompress+convert (native, validated) into guest-optimized encoding.
+    let guest_bytes = jolt_sdk::decompress_transport_bytes_to_guest_bytes(&all_groups_data)
+        .expect("decompress transport -> guest bytes");
 
     if use_embed {
         info!("Running {} recursion with embedded bytes...", guest.name());
 
-        generate_embedded_bytes(guest, &all_groups_data, output_dir);
+        generate_embedded_bytes(guest, &guest_bytes, n, output_dir);
 
         let memory_config = guest.get_memory_config(use_embed);
 
@@ -585,15 +580,13 @@ fn verify_proofs(
         info!("Running {} recursion with input data...", guest.name());
 
         info!("Testing basic serialization/deserialization...");
-        let test_input_bytes = postcard::to_stdvec(&all_groups_data).unwrap();
+        let test_input_bytes = postcard::to_stdvec(&guest_bytes).unwrap();
         let test_deserialized: Vec<u8> = postcard::from_bytes(&test_input_bytes).unwrap();
-        assert_eq!(all_groups_data, test_deserialized);
+        assert_eq!(guest_bytes, test_deserialized);
         info!("Basic serialization/deserialization test passed!");
 
-        check_data_integrity(&all_groups_data);
-
         let mut input_bytes = vec![];
-        input_bytes.append(&mut postcard::to_stdvec(&all_groups_data.as_slice()).unwrap());
+        input_bytes.append(&mut postcard::to_stdvec(&guest_bytes.as_slice()).unwrap());
 
         info!("Serialized input size: {} bytes", input_bytes.len());
         let memory_config = guest.get_memory_config(use_embed);
