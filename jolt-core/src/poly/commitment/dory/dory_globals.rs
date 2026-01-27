@@ -477,6 +477,20 @@ impl DoryGlobals {
         Self::balanced_sigma_nu(log_k_chunk + log_t)
     }
 
+    /// Returns the (sigma, nu) for the **initialized** Main context, if available.
+    ///
+    /// This is useful in committed mode where the Main context may be initialized with
+    /// an explicit `num_columns` override, making `(sigma, nu)` differ from the balanced
+    /// split implied by `log_k_chunk + log_t`.
+    pub fn try_get_main_sigma_nu() -> Option<(usize, usize)> {
+        #[allow(static_mut_refs)]
+        unsafe {
+            let num_columns = NUM_COLUMNS.get()?;
+            let num_rows = MAX_NUM_ROWS.get()?;
+            Some((num_columns.log_2(), num_rows.log_2()))
+        }
+    }
+
     /// Computes balanced `(sigma, nu)` dimensions directly from a max advice byte budget.
     ///
     /// - `max_advice_size_bytes` is interpreted as bytes of 64-bit words.
