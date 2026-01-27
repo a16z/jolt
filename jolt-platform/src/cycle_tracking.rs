@@ -34,14 +34,18 @@ mod riscv_specific {
         );
     }
 
-    // inserts an ECALL directly into the compiled code
+    // Inserts an ECALL directly into the compiled code.
+    //
+    // We use `inout` for a0 to force the compiler to reload the ECALL number for each
+    // invocation. Without it, a0 sometimes contains the wrong value.
     #[inline(always)]
     fn emit_jolt_cycle_marker_ecall(marker_id: u32, marker_len: u32, event_type: u32) {
         #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
         unsafe {
+            let mut _clobber: u32;
             core::arch::asm!(
                 ".word 0x00000073", // ECALL opcode
-                in("x10") JOLT_CYCLE_TRACK_ECALL_NUM, //
+                inout("x10") JOLT_CYCLE_TRACK_ECALL_NUM => _clobber,
                 in("x11") marker_id, // we store ptr address of the label &str to recover it during emulation
                 in("x12") marker_len, // length of the label &str
                 in("x13") event_type, // either start or end

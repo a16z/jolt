@@ -723,17 +723,25 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 SumcheckId::SpartanProductVirtualization,
             )
             .1;
+        let virtual_instr_flag = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+                SumcheckId::SpartanProductVirtualization,
+            )
+            .1;
 
         let fused_left = w[0] * l_inst
             + w[1] * is_rd_not_zero
             + w[2] * is_rd_not_zero
             + w[3] * lookup_out
-            + w[4] * j_flag;
+            + w[4] * j_flag
+            + w[5] * virtual_instr_flag;
         let fused_right = w[0] * r_inst
             + w[1] * wl_flag
             + w[2] * j_flag
             + w[3] * branch_flag
-            + w[4] * (F::one() - next_is_noop);
+            + w[4] * (F::one() - next_is_noop)
+            + w[5] * (F::one() - next_is_noop);
 
         // Multiply by L(τ_high, r0) and Eq(τ_low, r_tail^rev)
         let tau_high = &self.params.tau[self.params.tau.len() - 1];

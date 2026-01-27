@@ -23,14 +23,18 @@ mod riscv_specific {
         emit_jolt_print_ecall(text_ptr as u32, text_len as u32, JOLT_PRINT_LINE);
     }
 
-    // inserts an ECALL directly into the compiled code
+    // Inserts an ECALL directly into the compiled code.
+    //
+    // We use `inout` for a0 to force the compiler to reload the ECALL number for each
+    // invocation. Without it, a0 sometimes contains the wrong value.
     #[inline(always)]
     fn emit_jolt_print_ecall(text_ptr: u32, text_len: u32, print_type: u32) {
         #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
         unsafe {
+            let mut _clobber: u32;
             core::arch::asm!(
             ".word 0x00000073", // ECALL opcode
-            in("x10") JOLT_PRINT_ECALL_NUM,  // identifies this as a print syscall
+            inout("x10") JOLT_PRINT_ECALL_NUM => _clobber,
             in("x11") text_ptr,  // pointer to the string in memory
             in("x12") text_len,  // length of the string
             in("x13") print_type, // whether to add newline or not

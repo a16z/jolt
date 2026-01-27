@@ -1,6 +1,7 @@
 use super::{FieldOps, JoltField};
 #[cfg(feature = "challenge-254-bit")]
 use crate::field::challenge::Mont254BitChallenge;
+#[cfg(not(feature = "challenge-254-bit"))]
 use crate::field::challenge::MontU128Challenge;
 
 use crate::utils::counters::{
