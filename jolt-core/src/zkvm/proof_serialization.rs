@@ -490,6 +490,7 @@ impl CanonicalDeserialize for VirtualPolynomial {
                     let flag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::LookupTableFlag(flag as usize)
                 }
+                41 => Self::VirtualSequenceActive,
                 _ => return Err(SerializationError::InvalidData),
             },
         )

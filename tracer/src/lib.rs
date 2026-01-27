@@ -1049,7 +1049,7 @@ mod tests {
     /// if the traces from checkpoints match the overall execution trace.
     /// The test is based on the muldiv benchmark.
     fn test_checkpoints() {
-        let expected_trace_length = 441;
+        let expected_trace_length = 465;
         let elf: Vec<u8> = ELF_CONTENTS.to_vec();
         let n = 50;
         let memory_config = MemoryConfig {

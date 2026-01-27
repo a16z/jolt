@@ -2,8 +2,6 @@
 
 extern crate alloc;
 
-use core::option::Option::None;
-
 /// Fast hash function implementation using wyhash64 algorithm.
 ///
 /// This function provides a high-quality, fast hash suitable for hashmap operations.

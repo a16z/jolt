@@ -838,30 +838,15 @@ impl MacroBuilder {
         }
     }
 
+    /// Generate `jolt_panic()` function that writes to the panic address.
+    /// This is called by the support crate's `#[panic_handler]` to signal panics to jolt-core.
     fn make_panic(&self, panic_address: u64) -> TokenStream2 {
-        if self.std {
-            // In std mode, provide jolt_panic() which the runtime calls on panic.
-            quote! {
-                #[cfg(feature = "guest")]
-                #[no_mangle]
-                pub extern "C" fn jolt_panic() {
-                    unsafe {
-                        core::ptr::write_volatile(#panic_address as *mut u8, 1);
-                    }
-
-                    loop {}
-                }
-            }
-        } else {
-            // In no-std mode, ZeroOS jolt-platform provides the #[panic_handler].
-            // We still set the panic bit for jolt to detect panics.
-            quote! {
-                #[cfg(feature = "guest")]
-                #[no_mangle]
-                pub extern "C" fn jolt_panic() {
-                    unsafe {
-                        core::ptr::write_volatile(#panic_address as *mut u8, 1);
-                    }
+        quote! {
+            #[cfg(feature = "guest")]
+            #[no_mangle]
+            pub extern "C" fn jolt_panic() {
+                unsafe {
+                    core::ptr::write_volatile(#panic_address as *mut u8, 1);
                 }
             }
         }
