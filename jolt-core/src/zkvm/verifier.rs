@@ -338,7 +338,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         self.transcript.append_message(b"ram_val_fused_gamma");
         let ram_val_fused_gamma: F = self.transcript.challenge_scalar::<F>();
-        let initial_ram_state = ram::gen_ram_initial_memory_state::<F>(
+        let initial_ram_state = crate::zkvm::ram::gen_ram_initial_memory_state::<F>(
             self.proof.ram_K,
             &self.preprocessing.shared.ram,
             &self.program_io,
