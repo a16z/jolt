@@ -437,7 +437,9 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.preprocessing.shared.bytecode.code_size
         );
 
+        println!("Before generate_and_commit_witness_polynomials");
         let (commitments, mut opening_proof_hints) = self.generate_and_commit_witness_polynomials();
+        println!("After generate_and_commit_witness_polynomials");
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
 

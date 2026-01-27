@@ -8,4 +8,4 @@ guest = []
 compute_advice = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["guest-std"] }

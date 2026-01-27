@@ -88,11 +88,7 @@ impl Program {
     }
 
     /// Run the compute_advice ELF to populate the advice tape, returning the tape contents
-    pub fn run_to_populate_advice(
-        &self,
-        inputs: &[u8],
-        trusted_advice: &[u8],
-    ) -> Vec<u8> {
+    pub fn run_to_populate_advice(&self, inputs: &[u8], trusted_advice: &[u8]) -> Vec<u8> {
         if let Some(elf_compute_advice_contents) = &self.elf_compute_advice_contents {
             // Run the compute_advice version to populate the advice tape
             let (_, _, _, _io_device) = tracer::trace(
@@ -138,6 +134,7 @@ pub fn trace(
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+    println!("guest Program::trace");
     let (lazy_trace, trace, memory, io_device) = tracer::trace(
         elf_contents,
         elf_path,

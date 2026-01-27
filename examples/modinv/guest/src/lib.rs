@@ -1,4 +1,4 @@
-#![cfg_attr(feature = "guest", no_std)]
+use jolt::jolt_println;
 
 /// Computes the modular multiplicative inverse of `a` modulo `m` using the Extended Euclidean Algorithm.
 /// Returns `Some(x)` where `a * x ≡ 1 (mod m)`, or `None` if the inverse doesn't exist.
@@ -10,35 +10,37 @@
 /// The advice function wraps the result in `UntrustedAdvice<T>`, signaling that the value must be verified
 /// before use.
 #[jolt::advice]
-fn compute_modinv(_a: u64, _m: u64) -> jolt::UntrustedAdvice<Option<u64>> {{
-    if _m == 0 {
-        None
-    } else {
-        // Extended Euclidean Algorithm
-        let (mut old_r, mut r) = (_a as i128, _m as i128);
-        let (mut old_s, mut s) = (1i128, 0i128);
-
-        while r != 0 {
-            let quotient = old_r / r;
-            (old_r, r) = (r, old_r - quotient * r);
-            (old_s, s) = (s, old_s - quotient * s);
-        }
-
-        // old_r is the GCD
-        if old_r != 1 {
-            // No inverse exists
+fn compute_modinv(_a: u64, _m: u64) -> jolt::UntrustedAdvice<Option<u64>> {
+    {
+        if _m == 0 {
             None
         } else {
-            // Ensure the result is positive
-            let result = if old_s < 0 {
-                (old_s + _m as i128) as u64
+            // Extended Euclidean Algorithm
+            let (mut old_r, mut r) = (_a as i128, _m as i128);
+            let (mut old_s, mut s) = (1i128, 0i128);
+
+            while r != 0 {
+                let quotient = old_r / r;
+                (old_r, r) = (r, old_r - quotient * r);
+                (old_s, s) = (s, old_s - quotient * s);
+            }
+
+            // old_r is the GCD
+            if old_r != 1 {
+                // No inverse exists
+                None
             } else {
-                old_s as u64
-            };
-            Some(result)
+                // Ensure the result is positive
+                let result = if old_s < 0 {
+                    (old_s + _m as i128) as u64
+                } else {
+                    old_s as u64
+                };
+                Some(result)
+            }
         }
     }
-}}
+}
 
 /// Simple modular inverse example demonstrating runtime advice.
 ///
@@ -51,6 +53,8 @@ fn modinv(a: u64, m: u64) -> u64 {
     // Get the modular inverse from the advice tape (precomputed on first pass)
     let inv_advice = compute_modinv(a, m);
 
+    jolt_println!("{inv_advice:?}");
+
     // Extract the value from the UntrustedAdvice wrapper using Deref
     let inv_option = inv_advice.deref();
 
@@ -62,8 +66,11 @@ fn modinv(a: u64, m: u64) -> u64 {
     // Using u128 to avoid overflow during multiplication
     let product = ((a as u128) * (inv as u128)) % (m as u128);
 
+    jolt_println!("product = {product}");
+
     // Use check_advice! to ensure the multiplication produces 1 mod m
     jolt::check_advice!(product == 1);
+    jolt_println!("inv = {inv}");
 
     inv
 }

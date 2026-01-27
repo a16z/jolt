@@ -232,16 +232,43 @@ impl embedded_io::Read for AdviceReader {
             );
         }
 
-        if remaining == 0 {
-            return Ok(0); // EOF
-        }
-
         // Read up to min(buf.len(), remaining) bytes
         let bytes_to_read = core::cmp::min(buf.len(), remaining as usize);
-
-        // Read byte by byte (could be optimized to use larger chunks)
-        for i in 0..bytes_to_read {
-            let dst_ptr = unsafe { buf.as_mut_ptr().add(i) };
+        let dst_ptr = buf.as_mut_ptr();
+        if bytes_to_read >= 8 {
+            unsafe {
+                core::arch::asm!(
+                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+                    opcode = const CUSTOM_OPCODE,
+                    funct3 = const FUNCT3_ADVICE_SD,
+                    rs1 = in(reg) dst_ptr,
+                    options(nostack)
+                );
+            }
+            Ok(8)
+        } else if bytes_to_read >= 4 {
+            unsafe {
+                core::arch::asm!(
+                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+                    opcode = const CUSTOM_OPCODE,
+                    funct3 = const FUNCT3_ADVICE_SW,
+                    rs1 = in(reg) dst_ptr,
+                    options(nostack)
+                );
+            }
+            Ok(4)
+        } else if bytes_to_read >= 2 {
+            unsafe {
+                core::arch::asm!(
+                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+                    opcode = const CUSTOM_OPCODE,
+                    funct3 = const FUNCT3_ADVICE_SH,
+                    rs1 = in(reg) dst_ptr,
+                    options(nostack)
+                );
+            }
+            Ok(2)
+        } else if bytes_to_read == 1 {
             unsafe {
                 core::arch::asm!(
                     ".insn s {opcode}, {funct3}, x0, 0({rs1})",
@@ -251,9 +278,10 @@ impl embedded_io::Read for AdviceReader {
                     options(nostack)
                 );
             }
+            Ok(1)
+        } else {
+            Ok(0)
         }
-
-        Ok(bytes_to_read)
     }
 }
 

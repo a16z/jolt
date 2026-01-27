@@ -25,15 +25,21 @@ pub fn main() {
     info!("Computing modular inverse of {} modulo {}", a, m);
 
     let now = Instant::now();
+    println!("PROVE");
     let (output, proof, io_device) = prove_modinv(a, m);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-
+    println!("VERIFY");
     let is_valid = verify_modinv(a, m, output, io_device.panic, proof);
 
     info!("Input: a = {}, m = {}", a, m);
     info!("Output (modular inverse): {}", output);
-    info!("Verification: a * output mod m = {} * {} mod {} = {}",
-          a, output, m, ((a as u128) * (output as u128)) % (m as u128));
+    info!(
+        "Verification: a * output mod m = {} * {} mod {} = {}",
+        a,
+        output,
+        m,
+        ((a as u128) * (output as u128)) % (m as u128)
+    );
     info!("Proof valid: {}", is_valid);
 
     assert_eq!(output, 4, "Expected inverse of 3 mod 11 to be 4");

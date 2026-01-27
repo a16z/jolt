@@ -83,6 +83,7 @@ pub fn trace(
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+    println!("tracer trace");
     let mut lazy_trace_iter = trace_lazy(
         elf_contents,
         elf_path,
