@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
 use jolt_core::zkvm::prover::JoltProverPreprocessing;
@@ -201,19 +203,24 @@ fn prove_example(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
-    let (bytecode, init_memory_state, _) = program.decode();
+    let (instructions, init_memory_state, _) = program.decode();
     let (_lazy_trace, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
     let padded_trace_len = (trace.len() + 1).next_power_of_two();
     drop(trace);
 
     let task = move || {
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode,
-            program_io.memory_layout.clone(),
+        use jolt_core::zkvm::program::ProgramPreprocessing;
+        let program_data = Arc::new(ProgramPreprocessing::preprocess(
+            instructions,
             init_memory_state,
+        ));
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            program_data.meta(),
+            program_io.memory_layout.clone(),
             padded_trace_len,
         );
-        let preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let preprocessing =
+            JoltProverPreprocessing::new(shared_preprocessing.clone(), Arc::clone(&program_data));
 
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -229,9 +236,10 @@ fn prove_example(
         let program_io = prover.program_io.clone();
         let (jolt_proof, _) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+        let verifier_preprocessing = JoltVerifierPreprocessing::new_full(
             shared_preprocessing,
             preprocessing.generators.to_verifier_setup(),
+            Arc::clone(&preprocessing.program),
         );
         let verifier =
             RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, program_io, None, None)
@@ -255,7 +263,7 @@ fn prove_example_with_trace(
     _scale: usize,
 ) -> (std::time::Duration, usize, usize, usize) {
     let mut program = host::Program::new(example_name);
-    let (bytecode, init_memory_state, _) = program.decode();
+    let (instructions, init_memory_state, _) = program.decode();
     let (_, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
 
     assert!(
@@ -263,13 +271,18 @@ fn prove_example_with_trace(
         "Trace is longer than expected"
     );
 
-    let shared_preprocessing = JoltSharedPreprocessing::new(
-        bytecode.clone(),
-        program_io.memory_layout.clone(),
+    use jolt_core::zkvm::program::ProgramPreprocessing;
+    let program_data = Arc::new(ProgramPreprocessing::preprocess(
+        instructions,
         init_memory_state,
+    ));
+    let shared_preprocessing = JoltSharedPreprocessing::new(
+        program_data.meta(),
+        program_io.memory_layout.clone(),
         trace.len().next_power_of_two(),
     );
-    let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
+    let preprocessing =
+        JoltProverPreprocessing::new(shared_preprocessing, Arc::clone(&program_data));
 
     let elf_contents_opt = program.get_elf_contents();
     let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");

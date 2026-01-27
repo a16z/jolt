@@ -500,6 +500,38 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         UniPoly::from_coeff(s_coeffs)
     }
 
+    /// Compute the round polynomial `s(X) = l(X) · q(X)` given:
+    /// - `q_evals`: evaluations `[q(1), q(2), ..., q(deg(q)-1), q(∞)]` (length = deg(q))
+    /// - `q_at_0`: evaluation `q(0)`
+    ///
+    /// This avoids requiring `s(0)+s(1)` as an input, and avoids recovering `q(0)` via division.
+    pub fn gruen_poly_from_evals_with_q0(&self, q_evals: &[F], q_at_0: F) -> UniPoly<F> {
+        let r_round = match self.binding_order {
+            BindingOrder::LowToHigh => self.w[self.current_index - 1],
+            BindingOrder::HighToLow => self.w[self.current_index],
+        };
+
+        // Compute l(0) and l(1) for the current linear eq polynomial.
+        let l_at_0 = self.current_scalar * EqPolynomial::mle(&[F::zero()], &[r_round]);
+        let l_at_1 = self.current_scalar * EqPolynomial::mle(&[F::one()], &[r_round]);
+
+        // Interpolate q from [q(0), q(1), ..., q(deg-1), q(∞)].
+        let mut full_q_evals = q_evals.to_vec();
+        full_q_evals.insert(0, q_at_0);
+        let q = UniPoly::from_evals_toom(&full_q_evals);
+
+        // Multiply q(X) by l(X) = l_c0 + l_c1·X.
+        let l_c0 = l_at_0;
+        let l_c1 = l_at_1 - l_at_0;
+        let mut s_coeffs = vec![F::zero(); q.coeffs.len() + 1];
+        for (i, q_ci) in q.coeffs.into_iter().enumerate() {
+            s_coeffs[i] += q_ci * l_c0;
+            s_coeffs[i + 1] += q_ci * l_c1;
+        }
+
+        UniPoly::from_coeff(s_coeffs)
+    }
+
     pub fn merge(&self) -> DensePolynomial<F> {
         let evals = match self.binding_order {
             BindingOrder::LowToHigh => {
@@ -795,8 +827,6 @@ mod tests {
     /// Verify that evals_cached returns [1] at index 0 (eq over 0 vars).
     #[test]
     fn evals_cached_starts_with_one() {
-        use crate::poly::eq_poly::EqPolynomial;
-
         let mut rng = test_rng();
         for num_vars in 1..=10 {
             let w: Vec<<Fr as JoltField>::Challenge> =

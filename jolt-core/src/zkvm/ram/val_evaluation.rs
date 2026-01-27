@@ -25,9 +25,9 @@ use crate::{
     transcripts::Transcript,
     utils::math::Math,
     zkvm::{
-        bytecode::BytecodePreprocessing,
         claim_reductions::AdviceKind,
-        config::OneHotParams,
+        config::{OneHotParams, ProgramMode},
+        program::{ProgramMetadata, ProgramPreprocessing},
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -93,11 +93,23 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
         }
     }
 
+    /// Create params for verifier.
+    ///
+    /// # Arguments
+    /// - `program_meta`: RAM preprocessing metadata
+    /// - `program_image_words`: Program image words (only needed in Full mode, None for Committed mode)
+    /// - `program_io`: Program I/O device
+    /// - `trace_len`: Trace length
+    /// - `ram_K`: RAM K parameter
+    /// - `program_mode`: Bytecode mode (Full or Committed)
+    /// - `opening_accumulator`: Verifier opening accumulator
     pub fn new_from_verifier(
-        ram_preprocessing: &super::RAMPreprocessing,
+        program_meta: &ProgramMetadata,
+        program_image_words: Option<&[u64]>,
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
+        program_mode: ProgramMode,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -134,10 +146,28 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
             n_memory_vars,
         );
 
-        // Compute the public part of val_init evaluation (bytecode + inputs) without
-        // materializing the full length-K initial RAM state.
-        let val_init_public_eval =
-            super::eval_initial_ram_mle::<F>(ram_preprocessing, program_io, &r_address.r);
+        // Public part of val_init:
+        // - Full mode: compute program-image+inputs directly using provided words.
+        // - Committed mode: use staged scalar program-image claim + locally computed input contribution.
+        let val_init_public_eval = match program_mode {
+            ProgramMode::Full => {
+                let words = program_image_words.expect("Full mode requires program_image_words");
+                super::eval_initial_ram_mle::<F>(
+                    program_meta.min_bytecode_address,
+                    words,
+                    program_io,
+                    &r_address.r,
+                )
+            }
+            ProgramMode::Committed => {
+                let (_, prog_img_claim) = opening_accumulator.get_virtual_polynomial_opening(
+                    VirtualPolynomial::ProgramImageInitContributionRw,
+                    SumcheckId::RamValEvaluation,
+                );
+                let input_eval = super::eval_inputs_mle::<F>(program_io, &r_address.r);
+                prog_img_claim + input_eval
+            }
+        };
 
         // Combine all contributions: untrusted + trusted + public
         let init_eval = untrusted_contribution + trusted_contribution + val_init_public_eval;
@@ -190,7 +220,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     pub fn initialize(
         params: ValEvaluationSumcheckParams<F>,
         trace: &[Cycle],
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &ProgramPreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
         // Compute the size-K table storing all eq(r_address, k) evaluations for
@@ -213,12 +243,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         drop(_guard);
         drop(span);
 
-        let inc = CommittedPolynomial::RamInc.generate_witness(
-            bytecode_preprocessing,
-            memory_layout,
-            trace,
-            None,
-        );
+        let inc = CommittedPolynomial::RamInc.generate_witness(program, memory_layout, trace, None);
         let lt = LtPolynomial::new(&params.r_cycle);
 
         Self {
@@ -323,17 +348,21 @@ pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
     pub fn new(
-        ram_preprocessing: &super::RAMPreprocessing,
+        program_meta: &ProgramMetadata,
+        program_image_words: Option<&[u64]>,
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
+        program_mode: ProgramMode,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let params = ValEvaluationSumcheckParams::new_from_verifier(
-            ram_preprocessing,
+            program_meta,
+            program_image_words,
             program_io,
             trace_len,
             ram_K,
+            program_mode,
             opening_accumulator,
         );
         Self { params }

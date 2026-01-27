@@ -152,12 +152,19 @@ pub enum SumcheckId {
     RegistersClaimReduction,
     RegistersReadWriteChecking,
     RegistersValEvaluation,
+    BytecodeReadRafAddressPhase,
     BytecodeReadRaf,
+    BooleanityAddressPhase,
     Booleanity,
     AdviceClaimReductionCyclePhase,
     AdviceClaimReduction,
+    BytecodeClaimReductionCyclePhase,
+    BytecodeClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
+    /// Claim reduction binding the staged program-image (initial RAM) scalar contribution(s)
+    /// to the committed `CommittedPolynomial::ProgramImageInit` polynomial.
+    ProgramImageClaimReduction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
@@ -255,6 +262,7 @@ impl<F: JoltField> DoryOpeningState<F> {
         rlc_streaming_data: Arc<RLCStreamingData>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
         advice_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        bytecode_T: usize,
     ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
         // Accumulate gamma coefficients per polynomial
         let mut rlc_map = BTreeMap::new();
@@ -272,6 +280,7 @@ impl<F: JoltField> DoryOpeningState<F> {
             poly_ids.clone(),
             &coeffs,
             advice_polys,
+            bytecode_T,
         ));
 
         let hints: Vec<PCS::OpeningProofHint> = rlc_map

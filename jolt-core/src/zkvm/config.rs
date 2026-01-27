@@ -1,5 +1,8 @@
 use allocative::Allocative;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
+use std::io::{Read, Write};
 
 use crate::field::JoltField;
 use crate::utils::math::Math;
@@ -17,6 +20,62 @@ pub fn get_instruction_sumcheck_phases(log_t: usize) -> usize {
         16
     } else {
         8
+    }
+}
+
+/// Controls whether the prover/verifier use the **full** program path (verifier may do O(K))
+/// or the **committed** program path (staged Val claims + claim reduction + folded Stage 8
+/// opening for bytecode chunk + program image commitments).
+///
+/// "Program" encompasses both bytecode (instructions) and program image (initial RAM).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Allocative)]
+pub enum ProgramMode {
+    /// Full mode: verifier has full access to bytecode and program image.
+    Full = 0,
+    /// Committed mode: verifier only has commitments to bytecode chunks and program image.
+    /// Uses staged Val claims + claim reductions + folded Stage 8 joint opening.
+    Committed = 1,
+}
+
+impl Default for ProgramMode {
+    fn default() -> Self {
+        Self::Full
+    }
+}
+
+impl CanonicalSerialize for ProgramMode {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        (*self as u8).serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        (*self as u8).serialized_size(compress)
+    }
+}
+
+impl Valid for ProgramMode {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for ProgramMode {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = u8::deserialize_with_mode(reader, compress, validate)?;
+        match value {
+            0 => Ok(Self::Full),
+            1 => Ok(Self::Committed),
+            _ => Err(SerializationError::InvalidData),
+        }
     }
 }
 
@@ -146,6 +205,22 @@ impl OneHotConfig {
 
         Self {
             log_k_chunk: log_k_chunk as u8,
+            lookups_ra_virtual_log_k_chunk: lookups_ra_virtual_log_k_chunk as u8,
+        }
+    }
+
+    /// Create a OneHotConfig with an explicit log_k_chunk.
+    pub fn from_log_k_chunk(log_k_chunk: usize) -> Self {
+        debug_assert!(log_k_chunk == 4 || log_k_chunk == 8);
+        let log_k_chunk = log_k_chunk as u8;
+        let lookups_ra_virtual_log_k_chunk = if log_k_chunk == 4 {
+            LOG_K / 8
+        } else {
+            LOG_K / 4
+        };
+
+        Self {
+            log_k_chunk,
             lookups_ra_virtual_log_k_chunk: lookups_ra_virtual_log_k_chunk as u8,
         }
     }

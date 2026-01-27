@@ -69,6 +69,8 @@ jobs:
           path: ~/.jolt
       - name: Install Jolt RISC-V Rust toolchain
         run: cargo run install-toolchain
+      - name: Clear Dory URS cache
+        run: rm -rf ~/.cache/dory
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests

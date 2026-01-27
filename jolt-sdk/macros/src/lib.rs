@@ -66,16 +66,18 @@ impl MacroBuilder {
     fn build(&mut self) -> TokenStream {
         let memory_config_fn = self.make_memory_config_fn();
         let build_prover_fn = self.make_build_prover_fn();
+        let build_prover_committed_fn = self.make_build_prover_committed_fn();
         let build_verifier_fn = self.make_build_verifier_fn();
         let analyze_fn = self.make_analyze_function();
         let trace_to_file_fn = self.make_trace_to_file_func();
         let compile_fn = self.make_compile_func();
+        let preprocess_fn = self.make_preprocess_func();
+        let preprocess_committed_fn = self.make_preprocess_committed_func();
         let preprocess_shared_fn = self.make_preprocess_shared_func();
-        let preprocess_prover_fn = self.make_preprocess_prover_func();
-        let preprocess_verifier_fn = self.make_preprocess_verifier_func();
         let verifier_preprocess_from_prover_fn = self.make_preprocess_from_prover_func();
         let commit_trusted_advice_fn = self.make_commit_trusted_advice_func();
         let prove_fn = self.make_prove_func();
+        let prove_committed_fn = self.make_prove_committed_func();
 
         let attributes = parse_attributes(&self.attr);
         let mut execute_fn = quote! {};
@@ -96,17 +98,19 @@ impl MacroBuilder {
         quote! {
             #memory_config_fn
             #build_prover_fn
+            #build_prover_committed_fn
             #build_verifier_fn
             #execute_fn
             #analyze_fn
             #trace_to_file_fn
             #compile_fn
+            #preprocess_fn
+            #preprocess_committed_fn
             #preprocess_shared_fn
-            #preprocess_prover_fn
-            #preprocess_verifier_fn
             #verifier_preprocess_from_prover_fn
             #commit_trusted_advice_fn
             #prove_fn
+            #prove_committed_fn
             #main_fn
         }
         .into()
@@ -192,8 +196,71 @@ impl MacroBuilder {
             ) -> #return_type
             {
                 #imports
-                let program = std::sync::Arc::new(program);
-                let preprocessing = std::sync::Arc::new(preprocessing);
+                let program = Arc::new(program);
+                let preprocessing = Arc::new(preprocessing);
+
+                let prove_closure = move |#inputs #commitment_param_in_closure| {
+                    let program = (*program).clone();
+                    let preprocessing = (*preprocessing).clone();
+                    #prove_fn_name(program, preprocessing, #(#all_names),* #commitment_arg_in_call)
+                };
+
+                prove_closure
+            }
+        }
+    }
+
+    fn make_build_prover_committed_fn(&self) -> TokenStream2 {
+        let fn_name = self.get_func_name();
+        let build_prover_fn_name =
+            Ident::new(&format!("build_prover_committed_{fn_name}"), fn_name.span());
+        let prove_output_ty = self.get_prove_output_type();
+
+        // Include public, trusted_advice, and untrusted_advice arguments for the prover
+        let ordered_func_args = self.get_all_func_args_in_order();
+        let all_names: Vec<_> = ordered_func_args.iter().map(|(name, _)| name).collect();
+        let all_types: Vec<_> = ordered_func_args.iter().map(|(_, ty)| ty).collect();
+
+        let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
+        let inputs = quote! { #(#inputs_vec),* };
+        let prove_fn_name = Ident::new(&format!("prove_committed_{fn_name}"), fn_name.span());
+        let imports = self.make_imports();
+
+        let has_trusted_advice = !self.trusted_func_args.is_empty();
+
+        let commitment_param_in_closure = if has_trusted_advice {
+            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
+            trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
+        } else {
+            quote! {}
+        };
+
+        let commitment_arg_in_call = if has_trusted_advice {
+            quote! { , trusted_advice_commitment, trusted_advice_hint }
+        } else {
+            quote! {}
+        };
+
+        let return_type = if has_trusted_advice {
+            quote! {
+                impl Fn(#(#all_types),*, Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>) -> #prove_output_ty + Sync + Send
+            }
+        } else {
+            quote! {
+                impl Fn(#(#all_types),*) -> #prove_output_ty + Sync + Send
+            }
+        };
+
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #build_prover_fn_name(
+                program: jolt::host::Program,
+                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
+            ) -> #return_type
+            {
+                #imports
+                let program = Arc::new(program);
+                let preprocessing = Arc::new(preprocessing);
 
                 let prove_closure = move |#inputs #commitment_param_in_closure| {
                     let program = (*program).clone();
@@ -253,7 +320,7 @@ impl MacroBuilder {
             ) -> impl Fn(#(#input_types ,)* #output_type, bool, #commitment_param_in_signature jolt::RV64IMACProof) -> bool + Sync + Send
             {
                 #imports
-                let preprocessing = std::sync::Arc::new(preprocessing);
+                let preprocessing = Arc::new(preprocessing);
 
                 let verify_closure = move |#(#public_inputs,)* output, panic, #commitment_param_in_closure proof: jolt::RV64IMACProof| {
                     let preprocessing = (*preprocessing).clone();
@@ -379,7 +446,7 @@ impl MacroBuilder {
                 #imports
 
                 let mut program = Program::new(#guest_name);
-                let path = std::path::PathBuf::from(target_dir);
+                let path = PathBuf::from(target_dir);
                 program.set_func(#fn_name_str);
                 #set_std
                 #set_mem_size
@@ -427,6 +494,97 @@ impl MacroBuilder {
         }
     }
 
+    fn make_preprocess_func(&self) -> TokenStream2 {
+        let attributes = parse_attributes(&self.attr);
+        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
+        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
+        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
+        let max_untrusted_advice_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
+        let max_trusted_advice_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
+        let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
+        let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
+        let imports = self.make_imports();
+
+        let fn_name = self.get_func_name();
+        let preprocess_fn_name = Ident::new(&format!("preprocess_{fn_name}"), fn_name.span());
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #preprocess_fn_name(program: &mut jolt::host::Program)
+                -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>
+            {
+                #imports
+
+                let (instructions, memory_init, program_size) = program.decode();
+                let memory_config = MemoryConfig {
+                    max_input_size: #max_input_size,
+                    max_output_size: #max_output_size,
+                    max_untrusted_advice_size: #max_untrusted_advice_size,
+                    max_trusted_advice_size: #max_trusted_advice_size,
+                    stack_size: #stack_size,
+                    memory_size: #memory_size,
+                    program_size: Some(program_size),
+                };
+                let memory_layout = MemoryLayout::new(&memory_config);
+
+                let program_data = Arc::new(ProgramPreprocessing::preprocess(instructions, memory_init));
+                let shared = JoltSharedPreprocessing::new(
+                    program_data.meta(),
+                    memory_layout,
+                    #max_trace_length,
+                );
+                JoltProverPreprocessing::new(shared, program_data)
+            }
+        }
+    }
+
+    fn make_preprocess_committed_func(&self) -> TokenStream2 {
+        let attributes = parse_attributes(&self.attr);
+        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
+        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
+        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
+        let max_untrusted_advice_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
+        let max_trusted_advice_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
+        let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
+        let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
+        let imports = self.make_imports();
+
+        let fn_name = self.get_func_name();
+        let preprocess_fn_name =
+            Ident::new(&format!("preprocess_committed_{fn_name}"), fn_name.span());
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #preprocess_fn_name(program: &mut jolt::host::Program)
+                -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>
+            {
+                #imports
+
+                let (instructions, memory_init, program_size) = program.decode();
+                let memory_config = MemoryConfig {
+                    max_input_size: #max_input_size,
+                    max_output_size: #max_output_size,
+                    max_untrusted_advice_size: #max_untrusted_advice_size,
+                    max_trusted_advice_size: #max_trusted_advice_size,
+                    stack_size: #stack_size,
+                    memory_size: #memory_size,
+                    program_size: Some(program_size),
+                };
+                let memory_layout = MemoryLayout::new(&memory_config);
+
+                let program_data = Arc::new(ProgramPreprocessing::preprocess(instructions, memory_init));
+                let shared = JoltSharedPreprocessing::new(
+                    program_data.meta(),
+                    memory_layout,
+                    #max_trace_length,
+                );
+                JoltProverPreprocessing::new_committed(shared, program_data)
+            }
+        }
+    }
+
     fn make_preprocess_shared_func(&self) -> TokenStream2 {
         let attributes = parse_attributes(&self.attr);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
@@ -446,11 +604,10 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_shared_fn_name(program: &mut jolt::host::Program)
-                -> jolt::JoltSharedPreprocessing
+                -> (jolt::JoltSharedPreprocessing, std::sync::Arc<jolt::ProgramPreprocessing>)
             {
                 #imports
-
-                let (bytecode, memory_init, program_size) = program.decode();
+                let (instructions, memory_init, program_size) = program.decode();
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
@@ -461,56 +618,13 @@ impl MacroBuilder {
                     program_size: Some(program_size),
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
-
-                let preprocessing = JoltSharedPreprocessing::new(
-                    bytecode,
+                let program_data = Arc::new(ProgramPreprocessing::preprocess(instructions, memory_init));
+                let shared = JoltSharedPreprocessing::new(
+                    program_data.meta(),
                     memory_layout,
-                    memory_init,
                     #max_trace_length,
                 );
-
-                preprocessing
-            }
-        }
-    }
-
-    fn make_preprocess_prover_func(&self) -> TokenStream2 {
-        let imports = self.make_imports();
-
-        let fn_name = self.get_func_name();
-        let preprocess_prover_fn_name =
-            Ident::new(&format!("preprocess_prover_{fn_name}"), fn_name.span());
-        quote! {
-            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_prover_fn_name(shared_preprocessing: jolt::JoltSharedPreprocessing)
-                -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>
-            {
-                #imports
-                let prover_preprocessing = JoltProverPreprocessing::new(
-                    shared_preprocessing,
-                );
-
-                prover_preprocessing
-            }
-        }
-    }
-
-    fn make_preprocess_verifier_func(&self) -> TokenStream2 {
-        let imports = self.make_imports();
-
-        let fn_name = self.get_func_name();
-        let preprocess_verifier_fn_name =
-            Ident::new(&format!("preprocess_verifier_{fn_name}"), fn_name.span());
-        quote! {
-            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_verifier_fn_name(
-                shared_preprocess: jolt::JoltSharedPreprocessing,
-                generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
-            ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>
-            {
-                #imports
-                let preprocessing = JoltVerifierPreprocessing::new(shared_preprocess, generators);
-                preprocessing
+                (shared, program_data)
             }
         }
     }
@@ -687,12 +801,110 @@ impl MacroBuilder {
 
                 let elf_contents_opt = program.get_elf_contents();
                 let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-                let prover = RV64IMACProver::gen_from_elf(&preprocessing,
+                let prover = RV64IMACProver::gen_from_elf_with_program_mode(&preprocessing,
                     &elf_contents,
                     &input_bytes,
                     &untrusted_advice_bytes,
                     &trusted_advice_bytes,
                     #commitment_arg,
+                    jolt::ProgramMode::Full,
+                );
+                let io_device = prover.program_io.clone();
+                let (jolt_proof, _) = prover.prove();
+
+                #handle_return
+
+                (ret_val, jolt_proof, io_device)
+            }
+        }
+    }
+
+    fn make_prove_committed_func(&self) -> TokenStream2 {
+        let prove_output_ty = self.get_prove_output_type();
+
+        let handle_return = match &self.func.sig.output {
+            ReturnType::Default => quote! {
+                let ret_val = ();
+            },
+            ReturnType::Type(_, ty) => quote! {
+                let mut outputs = io_device.outputs.clone();
+                outputs.resize(preprocessing.shared.memory_layout.max_output_size as usize, 0);
+                let ret_val = jolt::postcard::from_bytes::<#ty>(&outputs).unwrap();
+            },
+        };
+
+        let set_program_args = self.pub_func_args.iter().map(|(name, _)| {
+            quote! {
+                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
+        let set_program_untrusted_advice_args = self.untrusted_func_args.iter().map(|(name, _)| {
+            quote! {
+                untrusted_advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
+        let set_program_trusted_advice_args = self.trusted_func_args.iter().map(|(name, _)| {
+            quote! {
+                trusted_advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
+
+        let fn_name = self.get_func_name();
+        let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
+        let inputs = quote! { #(#inputs_vec),* };
+        let imports = self.make_imports();
+
+        let prove_fn_name = syn::Ident::new(&format!("prove_committed_{fn_name}"), fn_name.span());
+
+        let has_trusted_advice = !self.trusted_func_args.is_empty();
+
+        let commitment_param = if has_trusted_advice {
+            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
+            trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
+        } else {
+            quote! {}
+        };
+
+        let commitment_arg = if has_trusted_advice {
+            quote! { trusted_advice_commitment, trusted_advice_hint }
+        } else {
+            quote! { None, None }
+        };
+
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            #[allow(clippy::too_many_arguments)]
+            pub fn #prove_fn_name(
+                mut program: jolt::host::Program,
+                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
+                #inputs
+                #commitment_param
+            ) -> #prove_output_ty {
+                #imports
+
+                if !preprocessing.is_committed_mode() {
+                    panic!(
+                        "Committed bytecode proving requires committed preprocessing. \
+                        Use `preprocess_committed_*` / `JoltProverPreprocessing::new_committed`."
+                    );
+                }
+
+                let mut input_bytes = vec![];
+                #(#set_program_args;)*
+                let mut untrusted_advice_bytes = vec![];
+                #(#set_program_untrusted_advice_args;)*
+                let mut trusted_advice_bytes = vec![];
+                #(#set_program_trusted_advice_args;)*
+
+                let elf_contents_opt = program.get_elf_contents();
+                let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+                let prover = RV64IMACProver::gen_from_elf_with_program_mode(&preprocessing,
+                    &elf_contents,
+                    &input_bytes,
+                    &untrusted_advice_bytes,
+                    &trusted_advice_bytes,
+                    #commitment_arg,
+                    jolt::ProgramMode::Committed,
                 );
                 let io_device = prover.program_io.clone();
                 let (jolt_proof, _) = prover.prove();
@@ -890,6 +1102,8 @@ impl MacroBuilder {
                 RV64IMACVerifier,
                 RV64IMACProof,
                 host::Program,
+                host::analyze::ProgramSummary,
+                ProgramPreprocessing,
                 JoltProverPreprocessing,
                 MemoryConfig,
                 MemoryLayout,
@@ -899,6 +1113,10 @@ impl MacroBuilder {
                 JoltVerifierPreprocessing,
                 JoltSharedPreprocessing
             };
+            #[cfg(not(feature = "guest"))]
+            use std::sync::Arc;
+            #[cfg(not(feature = "guest"))]
+            use std::path::PathBuf;
         }
     }
 

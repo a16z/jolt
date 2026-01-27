@@ -12,6 +12,8 @@ use crate::{
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
+#[cfg(feature = "pprof")]
+use pprof::protos::Message;
 use proof_serialization::JoltProof;
 #[cfg(feature = "prover")]
 use prover::JoltCpuProver;
@@ -26,6 +28,7 @@ pub mod config;
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod lookup_table;
+pub mod program;
 pub mod proof_serialization;
 #[cfg(feature = "prover")]
 pub mod prover;
@@ -35,6 +38,9 @@ pub mod registers;
 pub mod spartan;
 pub mod verifier;
 pub mod witness;
+
+#[cfg(test)]
+mod tests;
 
 // Scoped CPU profiler for performance analysis. Feature-gated by "pprof".
 // Usage: let _guard = pprof_scope!("label");
@@ -64,7 +70,6 @@ impl Drop for PprofGuard {
                 let _ = std::fs::create_dir_all(dir);
             }
             if let Ok(mut f) = std::fs::File::create(&filename) {
-                use pprof::protos::Message;
                 if let Ok(p) = report.pprof() {
                     let mut buf = Vec::new();
                     if p.encode(&mut buf).is_ok() {

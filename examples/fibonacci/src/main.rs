@@ -6,16 +6,18 @@ pub fn main() {
     tracing_subscriber::fmt::init();
 
     let save_to_disk = std::env::args().any(|arg| arg == "--save");
+    let committed_bytecode = std::env::args().any(|arg| arg == "--committed-bytecode");
 
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_fib(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_fib(&mut program);
-
-    let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
+    let prover_preprocessing = if committed_bytecode {
+        guest::preprocess_committed_fib(&mut program)
+    } else {
+        guest::preprocess_fib(&mut program)
+    };
     let verifier_preprocessing =
-        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup);
+        guest::verifier_preprocessing_from_prover_fib(&prover_preprocessing);
 
     if save_to_disk {
         serialize_and_print_size(
@@ -26,7 +28,6 @@ pub fn main() {
         .expect("Could not serialize preprocessing.");
     }
 
-    let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
 
     let program_summary = guest::analyze_fib(10);
@@ -39,8 +40,22 @@ pub fn main() {
     info!("Trace file written to: {trace_file}.");
 
     let now = Instant::now();
-    let (output, proof, io_device) = prove_fib(50);
+    let (output, proof, io_device) = if committed_bytecode {
+        let prove_fib = guest::build_prover_committed_fib(program, prover_preprocessing);
+        prove_fib(50)
+    } else {
+        let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
+        prove_fib(50)
+    };
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    info!(
+        "bytecode mode: {}",
+        if committed_bytecode {
+            "Committed"
+        } else {
+            "Full"
+        }
+    );
 
     if save_to_disk {
         serialize_and_print_size("Proof", "/tmp/fib_proof.bin", &proof)

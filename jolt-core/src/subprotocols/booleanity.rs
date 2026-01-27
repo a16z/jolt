@@ -36,7 +36,10 @@ use crate::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
-        shared_ra_polys::{compute_all_G_and_ra_indices, RaIndices, SharedRaPolynomials},
+        shared_ra_polys::{
+            compute_all_G, compute_all_G_and_ra_indices, compute_ra_indices, RaIndices,
+            SharedRaPolynomials,
+        },
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
@@ -47,8 +50,8 @@ use crate::{
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, thread::drop_in_background_thread},
     zkvm::{
-        bytecode::BytecodePreprocessing,
         config::OneHotParams,
+        program::ProgramPreprocessing,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
@@ -242,13 +245,13 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
     pub fn initialize(
         params: BooleanitySumcheckParams<F>,
         trace: &[Cycle],
-        bytecode: &BytecodePreprocessing,
+        program: &ProgramPreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
         // Compute G and RA indices in a single pass over the trace
         let (G, ra_indices) = compute_all_G_and_ra_indices::<F>(
             trace,
-            bytecode,
+            program,
             memory_layout,
             &params.one_hot_params,
             &params.r_cycle,
@@ -388,6 +391,53 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
 
         gruen_poly * self.eq_r_r
     }
+
+    fn ingest_address_challenge(&mut self, r_j: F::Challenge, round: usize) {
+        // Phase 1: Bind B and update F
+        self.B.bind(r_j);
+        self.F.update(r_j);
+
+        // Transition to phase 2
+        if round == self.params.log_k_chunk - 1 {
+            self.eq_r_r = self.B.get_current_scalar();
+
+            // Initialize SharedRaPolynomials with per-poly pre-scaled eq tables (by rho_i)
+            let F_table = std::mem::take(&mut self.F);
+            let ra_indices = std::mem::take(&mut self.ra_indices);
+            let base_eq = F_table.clone_values();
+            let num_polys = self.params.polynomial_types.len();
+            debug_assert!(
+                num_polys == self.gamma_powers.len(),
+                "gamma_powers length mismatch: got {}, expected {}",
+                self.gamma_powers.len(),
+                num_polys
+            );
+            let tables: Vec<Vec<F>> = (0..num_polys)
+                .into_par_iter()
+                .map(|i| {
+                    let rho = self.gamma_powers[i];
+                    base_eq.iter().map(|v| rho * *v).collect()
+                })
+                .collect();
+            self.H = Some(SharedRaPolynomials::new(
+                tables,
+                ra_indices,
+                self.params.one_hot_params.clone(),
+            ));
+
+            // Drop G arrays
+            let g = std::mem::take(&mut self.G);
+            drop_in_background_thread(g);
+        }
+    }
+
+    fn ingest_cycle_challenge(&mut self, r_j: F::Challenge) {
+        // Phase 2: Bind D and H
+        self.D.bind(r_j);
+        if let Some(ref mut h) = self.H {
+            h.bind_in_place(r_j, BindingOrder::LowToHigh);
+        }
+    }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySumcheckProver<F> {
@@ -407,48 +457,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
     #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if round < self.params.log_k_chunk {
-            // Phase 1: Bind B and update F
-            self.B.bind(r_j);
-            self.F.update(r_j);
-
-            // Transition to phase 2
-            if round == self.params.log_k_chunk - 1 {
-                self.eq_r_r = self.B.get_current_scalar();
-
-                // Initialize SharedRaPolynomials with per-poly pre-scaled eq tables (by rho_i)
-                let F_table = std::mem::take(&mut self.F);
-                let ra_indices = std::mem::take(&mut self.ra_indices);
-                let base_eq = F_table.clone_values();
-                let num_polys = self.params.polynomial_types.len();
-                debug_assert!(
-                    num_polys == self.gamma_powers.len(),
-                    "gamma_powers length mismatch: got {}, expected {}",
-                    self.gamma_powers.len(),
-                    num_polys
-                );
-                let tables: Vec<Vec<F>> = (0..num_polys)
-                    .into_par_iter()
-                    .map(|i| {
-                        let rho = self.gamma_powers[i];
-                        base_eq.iter().map(|v| rho * *v).collect()
-                    })
-                    .collect();
-                self.H = Some(SharedRaPolynomials::new(
-                    tables,
-                    ra_indices,
-                    self.params.one_hot_params.clone(),
-                ));
-
-                // Drop G arrays
-                let g = std::mem::take(&mut self.G);
-                drop_in_background_thread(g);
-            }
+            self.ingest_address_challenge(r_j, round);
         } else {
-            // Phase 2: Bind D and H
-            self.D.bind(r_j);
-            if let Some(ref mut h) = self.H {
-                h.bind_in_place(r_j, BindingOrder::LowToHigh);
-            }
+            self.ingest_cycle_challenge(r_j);
         }
     }
 
@@ -467,6 +478,393 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
 
         // All polynomials share the same opening point (r_address, r_cycle)
         // Use a single SumcheckId for all
+        accumulator.append_sparse(
+            transcript,
+            self.params.polynomial_types.clone(),
+            SumcheckId::Booleanity,
+            opening_point.r[..self.params.log_k_chunk].to_vec(),
+            opening_point.r[self.params.log_k_chunk..].to_vec(),
+            claims,
+        );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+/// Booleanity Address-Phase Sumcheck Prover.
+///
+/// This prover handles only the first `log_k_chunk` rounds (address variables).
+/// The cycle-phase prover is constructed separately from witness + accumulator (Option B).
+#[derive(Allocative)]
+pub struct BooleanityAddressSumcheckProver<F: JoltField> {
+    /// B: split-eq over address-chunk variables (LowToHigh).
+    B: GruenSplitEqPolynomial<F>,
+    /// G[i][k] = Σ_j eq(r_cycle, j) · ra_i(k, j) for all RA polynomials
+    G: Vec<Vec<F>>,
+    /// F: Expanding table for address phase
+    F: ExpandingTable<F>,
+    /// Last round polynomial for claim computation
+    last_round_poly: Option<UniPoly<F>>,
+    /// Final claim after binding all address variables
+    address_claim: Option<F>,
+    /// Parameters (shared with cycle prover)
+    pub params: BooleanitySumcheckParams<F>,
+}
+
+impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
+    /// Initialize a BooleanityAddressSumcheckProver.
+    ///
+    /// Computes G polynomials and RA indices in a single pass over the trace.
+    #[tracing::instrument(skip_all, name = "BooleanityAddressSumcheckProver::initialize")]
+    pub fn initialize(
+        params: BooleanitySumcheckParams<F>,
+        trace: &[Cycle],
+        program: &ProgramPreprocessing,
+        memory_layout: &MemoryLayout,
+    ) -> Self {
+        // Compute G in a single pass over the trace (witness-dependent).
+        let G = compute_all_G::<F>(
+            trace,
+            program,
+            memory_layout,
+            &params.one_hot_params,
+            &params.r_cycle,
+        );
+
+        // Initialize split-eq polynomial for address variables
+        let B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
+
+        // Initialize expanding table for address phase
+        let k_chunk = 1 << params.log_k_chunk;
+        let mut F_table = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
+        F_table.reset(F::one());
+
+        Self {
+            B,
+            G,
+            F: F_table,
+            last_round_poly: None,
+            address_claim: None,
+            params,
+        }
+    }
+
+    fn compute_message_impl(&self, round: usize, previous_claim: F) -> UniPoly<F> {
+        let m = round + 1;
+        let B = &self.B;
+        let N = self.params.polynomial_types.len();
+
+        // Compute quadratic coefficients via generic split-eq fold
+        let quadratic_coeffs: [F; DEGREE_BOUND - 1] = B
+            .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|k_prime| {
+                let coeffs = (0..N)
+                    .into_par_iter()
+                    .map(|i| {
+                        let G_i = &self.G[i];
+                        let inner_sum = G_i[k_prime << m..(k_prime + 1) << m]
+                            .par_iter()
+                            .enumerate()
+                            .map(|(k, &G_k)| {
+                                let k_m = k >> (m - 1);
+                                let F_k = self.F[k & ((1 << (m - 1)) - 1)];
+                                let G_times_F = G_k * F_k;
+
+                                let eval_infty = G_times_F * F_k;
+                                let eval_0 = if k_m == 0 {
+                                    eval_infty - G_times_F
+                                } else {
+                                    F::zero()
+                                };
+                                [eval_0, eval_infty]
+                            })
+                            .fold_with(
+                                [F::Unreduced::<5>::zero(); DEGREE_BOUND - 1],
+                                |running, new| {
+                                    [
+                                        running[0] + new[0].as_unreduced_ref(),
+                                        running[1] + new[1].as_unreduced_ref(),
+                                    ]
+                                },
+                            )
+                            .reduce(
+                                || [F::Unreduced::zero(); DEGREE_BOUND - 1],
+                                |running, new| [running[0] + new[0], running[1] + new[1]],
+                            );
+
+                        let gamma_2i = self.params.gamma_powers_square[i];
+                        [
+                            gamma_2i * F::from_barrett_reduce(inner_sum[0]),
+                            gamma_2i * F::from_barrett_reduce(inner_sum[1]),
+                        ]
+                    })
+                    .reduce(
+                        || [F::zero(); DEGREE_BOUND - 1],
+                        |running, new| [running[0] + new[0], running[1] + new[1]],
+                    );
+                coeffs
+            });
+
+        B.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
+    }
+
+    fn ingest_challenge_impl(&mut self, r_j: F::Challenge) {
+        self.B.bind(r_j);
+        self.F.update(r_j);
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for BooleanityAddressSumcheckProver<F>
+{
+    fn degree(&self) -> usize {
+        self.params.degree()
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.params.log_k_chunk
+    }
+
+    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
+        self.params.input_claim(_accumulator)
+    }
+
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
+        let poly = self.compute_message_impl(round, previous_claim);
+        self.last_round_poly = Some(poly.clone());
+        poly
+    }
+
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
+        if let Some(poly) = self.last_round_poly.take() {
+            let claim = poly.evaluate(&r_j);
+            if round == self.params.log_k_chunk - 1 {
+                self.address_claim = Some(claim);
+            }
+        }
+        self.ingest_challenge_impl(r_j);
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut T,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        let mut r_address = sumcheck_challenges.to_vec();
+        r_address.reverse();
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(r_address);
+        let address_claim = self
+            .address_claim
+            .expect("Booleanity address-phase claim missing");
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::BooleanityAddrClaim,
+            SumcheckId::BooleanityAddressPhase,
+            opening_point,
+            address_claim,
+        );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+/// Booleanity Cycle-Phase Sumcheck Prover.
+///
+/// This prover handles the remaining `log_t` rounds (cycle variables).
+/// It is constructed from scratch via [`BooleanityCycleSumcheckProver::initialize`].
+#[derive(Allocative)]
+pub struct BooleanityCycleSumcheckProver<F: JoltField> {
+    /// D: split-eq over time/cycle variables (LowToHigh).
+    D: GruenSplitEqPolynomial<F>,
+    /// Shared H polynomials (RA polys bound over address, pre-scaled by gamma)
+    H: SharedRaPolynomials<F>,
+    /// eq(r_address, r_address) from address phase
+    eq_r_r: F,
+    /// Per-polynomial powers γ^i (in the base field).
+    gamma_powers: Vec<F>,
+    /// Per-polynomial inverse powers γ^{-i} (in the base field).
+    gamma_powers_inv: Vec<F>,
+    /// Parameters
+    pub params: BooleanitySumcheckParams<F>,
+}
+
+impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
+    /// Initialize the cycle-phase prover from the Stage 6a address opening point.
+    ///
+    /// The only witness-dependent work performed here should be collecting `ra_indices`
+    /// (needed to materialize `SharedRaPolynomials` for the cycle phase).
+    #[tracing::instrument(skip_all, name = "BooleanityCycleSumcheckProver::initialize")]
+    pub fn initialize(
+        params: BooleanitySumcheckParams<F>,
+        trace: &[Cycle],
+        program: &ProgramPreprocessing,
+        memory_layout: &MemoryLayout,
+        accumulator: &ProverOpeningAccumulator<F>,
+    ) -> Self {
+        // Recover Stage 6a address challenges from the accumulator.
+        // These were stored as BIG_ENDIAN (MSB-first) by the address-phase cache_openings.
+        let (r_address_point, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::BooleanityAddrClaim,
+            SumcheckId::BooleanityAddressPhase,
+        );
+        let mut r_address_low_to_high = r_address_point.r;
+        r_address_low_to_high.reverse();
+
+        // Derive eq_r_r = eq(params.r_address, r_address_challenges) via the same binding
+        // progression as the address prover.
+        let mut B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
+        for r_j in r_address_low_to_high.iter().cloned() {
+            B.bind(r_j);
+        }
+        let eq_r_r = B.get_current_scalar();
+
+        // Derive base eq table over k_chunk addresses from the address challenges.
+        let k_chunk = 1 << params.log_k_chunk;
+        let mut F_table = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
+        F_table.reset(F::one());
+        for r_j in r_address_low_to_high.iter().cloned() {
+            F_table.update(r_j);
+        }
+        let base_eq = F_table.clone_values();
+
+        // Compute RA indices from witness (unfused with G computation).
+        let ra_indices = compute_ra_indices(trace, program, memory_layout, &params.one_hot_params);
+
+        // Compute prover-only batching coefficients rho_i = gamma^i and inverses.
+        let num_polys = params.polynomial_types.len();
+        let gamma_f: F = params.gamma.into();
+        let mut gamma_powers = Vec::with_capacity(num_polys);
+        let mut gamma_powers_inv = Vec::with_capacity(num_polys);
+        let mut rho_i = F::one();
+        for _ in 0..num_polys {
+            gamma_powers.push(rho_i);
+            gamma_powers_inv.push(
+                rho_i
+                    .inverse()
+                    .expect("gamma is nonzero, so rho_i is invertible"),
+            );
+            rho_i *= gamma_f;
+        }
+
+        // Initialize SharedRaPolynomials with per-poly pre-scaled eq tables (by rho_i).
+        let tables: Vec<Vec<F>> = (0..num_polys)
+            .into_par_iter()
+            .map(|i| {
+                let rho = gamma_powers[i];
+                base_eq.iter().map(|v| rho * *v).collect()
+            })
+            .collect();
+        let H = SharedRaPolynomials::new(tables, ra_indices, params.one_hot_params.clone());
+
+        // Cycle split-eq polynomial over r_cycle.
+        let D = GruenSplitEqPolynomial::new(&params.r_cycle, BindingOrder::LowToHigh);
+
+        Self {
+            D,
+            H,
+            eq_r_r,
+            gamma_powers,
+            gamma_powers_inv,
+            params,
+        }
+    }
+
+    fn compute_message_impl(&self, previous_claim: F) -> UniPoly<F> {
+        let D = &self.D;
+        let H = &self.H;
+        let num_polys = H.num_polys();
+
+        // Compute quadratic coefficients via generic split-eq fold
+        let quadratic_coeffs: [F; DEGREE_BOUND - 1] = D
+            .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|j_prime| {
+                let mut acc_c = F::Unreduced::<9>::zero();
+                let mut acc_e = F::Unreduced::<9>::zero();
+                for i in 0..num_polys {
+                    let h_0 = H.get_bound_coeff(i, 2 * j_prime);
+                    let h_1 = H.get_bound_coeff(i, 2 * j_prime + 1);
+                    let b = h_1 - h_0;
+
+                    let rho = self.gamma_powers[i];
+                    acc_c += h_0.mul_unreduced::<9>(h_0 - rho);
+                    acc_e += b.mul_unreduced::<9>(b);
+                }
+                [
+                    F::from_montgomery_reduce::<9>(acc_c),
+                    F::from_montgomery_reduce::<9>(acc_e),
+                ]
+            });
+
+        // Adjust claim by eq_r_r scaling
+        let adjusted_claim = previous_claim * self.eq_r_r.inverse().unwrap();
+        let gruen_poly =
+            D.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], adjusted_claim);
+
+        gruen_poly * self.eq_r_r
+    }
+
+    fn ingest_challenge_impl(&mut self, r_j: F::Challenge) {
+        self.D.bind(r_j);
+        self.H.bind_in_place(r_j, BindingOrder::LowToHigh);
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for BooleanityCycleSumcheckProver<F>
+{
+    fn degree(&self) -> usize {
+        self.params.degree()
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.params.log_t
+    }
+
+    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
+        accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::BooleanityAddrClaim,
+                SumcheckId::BooleanityAddressPhase,
+            )
+            .1
+    }
+
+    #[tracing::instrument(skip_all, name = "BooleanityCycleSumcheckProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+        self.compute_message_impl(previous_claim)
+    }
+
+    #[tracing::instrument(skip_all, name = "BooleanityCycleSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
+        self.ingest_challenge_impl(r_j)
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut T,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        let (r_address_point, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::BooleanityAddrClaim,
+            SumcheckId::BooleanityAddressPhase,
+        );
+        let mut r_address_le = r_address_point.r;
+        r_address_le.reverse();
+        let mut full_challenges = r_address_le;
+        full_challenges.extend_from_slice(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(&full_challenges);
+
+        // H is scaled by rho_i; unscale so cached openings match the committed polynomials.
+        let claims: Vec<F> = (0..self.H.num_polys())
+            .map(|i| self.H.final_sumcheck_claim(i) * self.gamma_powers_inv[i])
+            .collect();
+
         accumulator.append_sparse(
             transcript,
             self.params.polynomial_types.clone(),
@@ -537,6 +935,166 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityS
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
+        accumulator.append_sparse(
+            transcript,
+            self.params.polynomial_types.clone(),
+            SumcheckId::Booleanity,
+            opening_point.r,
+        );
+    }
+}
+
+pub struct BooleanityAddressSumcheckVerifier<F: JoltField> {
+    params: BooleanitySumcheckParams<F>,
+}
+
+impl<F: JoltField> BooleanityAddressSumcheckVerifier<F> {
+    pub fn new(params: BooleanitySumcheckParams<F>) -> Self {
+        Self { params }
+    }
+
+    /// Consume this verifier and return the underlying parameters (for Option B orchestration).
+    pub fn into_params(self) -> BooleanitySumcheckParams<F> {
+        self.params
+    }
+
+    pub fn into_cycle_verifier(self) -> BooleanityCycleSumcheckVerifier<F> {
+        BooleanityCycleSumcheckVerifier {
+            params: self.params,
+        }
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for BooleanityAddressSumcheckVerifier<F>
+{
+    fn degree(&self) -> usize {
+        self.params.degree()
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.params.log_k_chunk
+    }
+
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        self.params.input_claim(accumulator)
+    }
+
+    fn expected_output_claim(
+        &self,
+        accumulator: &VerifierOpeningAccumulator<F>,
+        _sumcheck_challenges: &[F::Challenge],
+    ) -> F {
+        accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::BooleanityAddrClaim,
+                SumcheckId::BooleanityAddressPhase,
+            )
+            .1
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
+        transcript: &mut T,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        let mut r_address = sumcheck_challenges.to_vec();
+        r_address.reverse();
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::BooleanityAddrClaim,
+            SumcheckId::BooleanityAddressPhase,
+            OpeningPoint::<BIG_ENDIAN, F>::new(r_address),
+        );
+    }
+}
+
+pub struct BooleanityCycleSumcheckVerifier<F: JoltField> {
+    params: BooleanitySumcheckParams<F>,
+}
+
+impl<F: JoltField> BooleanityCycleSumcheckVerifier<F> {
+    pub fn new(params: BooleanitySumcheckParams<F>) -> Self {
+        Self { params }
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for BooleanityCycleSumcheckVerifier<F>
+{
+    fn degree(&self) -> usize {
+        self.params.degree()
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.params.log_t
+    }
+
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::BooleanityAddrClaim,
+                SumcheckId::BooleanityAddressPhase,
+            )
+            .1
+    }
+
+    fn expected_output_claim(
+        &self,
+        accumulator: &VerifierOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> F {
+        let (r_address_point, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::BooleanityAddrClaim,
+            SumcheckId::BooleanityAddressPhase,
+        );
+        let mut r_address_le = r_address_point.r;
+        r_address_le.reverse();
+        let mut full_challenges = r_address_le;
+        full_challenges.extend_from_slice(sumcheck_challenges);
+
+        let ra_claims: Vec<F> = self
+            .params
+            .polynomial_types
+            .iter()
+            .map(|poly_type| {
+                accumulator
+                    .get_committed_polynomial_opening(*poly_type, SumcheckId::Booleanity)
+                    .1
+            })
+            .collect();
+
+        let combined_r: Vec<F::Challenge> = self
+            .params
+            .r_address
+            .iter()
+            .cloned()
+            .rev()
+            .chain(self.params.r_cycle.iter().cloned().rev())
+            .collect();
+
+        EqPolynomial::<F>::mle(&full_challenges, &combined_r)
+            * zip(&self.params.gamma_powers_square, ra_claims)
+                .map(|(gamma_2i, ra)| (ra.square() - ra) * gamma_2i)
+                .sum::<F>()
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
+        transcript: &mut T,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        let (r_address_point, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::BooleanityAddrClaim,
+            SumcheckId::BooleanityAddressPhase,
+        );
+        let mut r_address_le = r_address_point.r;
+        r_address_le.reverse();
+        let mut full_challenges = r_address_le;
+        full_challenges.extend_from_slice(sumcheck_challenges);
+        let opening_point = self.params.normalize_opening_point(&full_challenges);
         accumulator.append_sparse(
             transcript,
             self.params.polynomial_types.clone(),

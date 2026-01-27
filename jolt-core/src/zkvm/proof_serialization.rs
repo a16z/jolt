@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    fs::File,
     io::{Read, Write},
 };
 
@@ -18,7 +19,7 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstanceProof,
     transcripts::Transcript,
     zkvm::{
-        config::{OneHotConfig, ReadWriteConfig},
+        config::{OneHotConfig, ProgramMode, ReadWriteConfig},
         instruction::{CircuitFlags, InstructionFlags},
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
@@ -38,13 +39,15 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage3_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage6a_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage6b_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub bytecode_K: usize,
+    pub program_mode: ProgramMode,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
     pub dory_layout: DoryLayout,
@@ -254,19 +257,31 @@ impl CanonicalSerialize for CommittedPolynomial {
                 3u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
             }
+            Self::BytecodeChunk(i) => {
+                7u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
+            }
             Self::RamRa(i) => {
                 4u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
             }
             Self::TrustedAdvice => 5u8.serialize_with_mode(writer, compress),
             Self::UntrustedAdvice => 6u8.serialize_with_mode(writer, compress),
+            Self::ProgramImageInit => 8u8.serialize_with_mode(writer, compress),
         }
     }
 
     fn serialized_size(&self, _compress: Compress) -> usize {
         match self {
-            Self::RdInc | Self::RamInc | Self::TrustedAdvice | Self::UntrustedAdvice => 1,
-            Self::InstructionRa(_) | Self::BytecodeRa(_) | Self::RamRa(_) => 2,
+            Self::RdInc
+            | Self::RamInc
+            | Self::TrustedAdvice
+            | Self::UntrustedAdvice
+            | Self::ProgramImageInit => 1,
+            Self::InstructionRa(_)
+            | Self::BytecodeRa(_)
+            | Self::BytecodeChunk(_)
+            | Self::RamRa(_) => 2,
         }
     }
 }
@@ -301,6 +316,11 @@ impl CanonicalDeserialize for CommittedPolynomial {
                 }
                 5 => Self::TrustedAdvice,
                 6 => Self::UntrustedAdvice,
+                7 => {
+                    let i = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::BytecodeChunk(i as usize)
+                }
+                8 => Self::ProgramImageInit,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
@@ -367,6 +387,19 @@ impl CanonicalSerialize for VirtualPolynomial {
                 40u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*flag).unwrap()).serialize_with_mode(&mut writer, compress)
             }
+            Self::BytecodeValStage(stage) => {
+                41u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*stage).unwrap()).serialize_with_mode(&mut writer, compress)
+            }
+            Self::BytecodeReadRafAddrClaim => 42u8.serialize_with_mode(&mut writer, compress),
+            Self::BooleanityAddrClaim => 43u8.serialize_with_mode(&mut writer, compress),
+            Self::BytecodeClaimReductionIntermediate => {
+                44u8.serialize_with_mode(&mut writer, compress)
+            }
+            Self::ProgramImageInitContributionRw => 45u8.serialize_with_mode(&mut writer, compress),
+            Self::ProgramImageInitContributionRaf => {
+                46u8.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
@@ -408,11 +441,17 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::RamValInit
             | Self::RamValFinal
             | Self::RamHammingWeight
-            | Self::UnivariateSkip => 1,
+            | Self::UnivariateSkip
+            | Self::BytecodeReadRafAddrClaim
+            | Self::BooleanityAddrClaim
+            | Self::BytecodeClaimReductionIntermediate
+            | Self::ProgramImageInitContributionRw
+            | Self::ProgramImageInitContributionRaf => 1,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
-            | Self::LookupTableFlag(_) => 2,
+            | Self::LookupTableFlag(_)
+            | Self::BytecodeValStage(_) => 2,
         }
     }
 }
@@ -488,6 +527,15 @@ impl CanonicalDeserialize for VirtualPolynomial {
                     let flag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::LookupTableFlag(flag as usize)
                 }
+                41 => {
+                    let stage = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    Self::BytecodeValStage(stage as usize)
+                }
+                42 => Self::BytecodeReadRafAddrClaim,
+                43 => Self::BooleanityAddrClaim,
+                44 => Self::BytecodeClaimReductionIntermediate,
+                45 => Self::ProgramImageInitContributionRw,
+                46 => Self::ProgramImageInitContributionRaf,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
@@ -499,7 +547,6 @@ pub fn serialize_and_print_size(
     file_name: &str,
     item: &impl CanonicalSerialize,
 ) -> Result<(), SerializationError> {
-    use std::fs::File;
     let mut file = File::create(file_name)?;
     item.serialize_compressed(&mut file)?;
     let file_size_bytes = file.metadata()?.len();

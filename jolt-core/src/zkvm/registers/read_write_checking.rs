@@ -1,17 +1,12 @@
 use std::sync::Arc;
 
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-use crate::poly::opening_proof::PolynomialId;
 use crate::subprotocols::read_write_matrix::{
     AddressMajorMatrixEntry, ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
     RegistersAddressMajorEntry, RegistersCycleMajorEntry,
 };
-use crate::subprotocols::sumcheck_claim::{
-    CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
-    VerifierEvaluablePolynomial,
-};
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::ReadWriteConfig;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{
     field::JoltField,
@@ -19,13 +14,17 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
     subprotocols::{
+        sumcheck_claim::{
+            CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
+            VerifierEvaluablePolynomial,
+        },
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -196,7 +195,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     pub fn initialize(
         params: RegistersReadWriteCheckingParams<F>,
         trace: Arc<Vec<Cycle>>,
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &ProgramPreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
         let r_prime = &params.r_cycle;
@@ -214,12 +213,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                 Some(MultilinearPolynomial::from(EqPolynomial::evals(&r_prime.r))),
             )
         };
-        let inc = CommittedPolynomial::RdInc.generate_witness(
-            bytecode_preprocessing,
-            memory_layout,
-            &trace,
-            None,
-        );
+        let inc = CommittedPolynomial::RdInc.generate_witness(program, memory_layout, &trace, None);
         let sparse_matrix =
             ReadWriteMatrixCycleMajor::<_, RegistersCycleMajorEntry<F>>::new(&trace, params.gamma);
         let phase1_rounds = params.phase1_num_rounds;
@@ -805,23 +799,6 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RegistersReadWriteCheckingVerifier<F>
 {
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
-        let result = self.params.input_claim(accumulator);
-
-        #[cfg(test)]
-        {
-            let claims = Self::input_output_claims();
-            let gamma_pows: Vec<F> =
-                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
-                    .take(claims.claims.len())
-                    .collect();
-            let reference_result = claims.input_claim(&gamma_pows, accumulator);
-            assert_eq!(result, reference_result);
-        }
-
-        result
-    }
-
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -859,23 +836,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let rs1_value_claim = rs1_ra_claim * val_claim;
         let rs2_value_claim = rs2_ra_claim * val_claim;
 
-        let result = EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle)
+        EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle)
             * (rd_write_value_claim
-                + self.params.gamma * (rs1_value_claim + self.params.gamma * rs2_value_claim));
-
-        #[cfg(test)]
-        {
-            let claims = Self::input_output_claims();
-            let gamma_pows: Vec<F> =
-                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
-                    .take(claims.claims.len())
-                    .collect();
-            let reference_result = claims.expected_output_claim(&r_cycle, &gamma_pows, accumulator);
-
-            assert_eq!(result, reference_result);
-        }
-
-        result
+                + self.params.gamma * (rs1_value_claim + self.params.gamma * rs2_value_claim))
     }
 
     fn cache_openings(

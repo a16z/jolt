@@ -8,11 +8,9 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_add(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_add(&mut program);
-    let prover_preprocessing = guest::preprocess_prover_add(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
+    let prover_preprocessing = guest::preprocess_add(&mut program);
     let verifier_preprocessing =
-        guest::preprocess_verifier_add(shared_preprocessing, verifier_setup);
+        guest::verifier_preprocessing_from_prover_add(&prover_preprocessing);
 
     let prove_add = guest::build_prover_add(program, prover_preprocessing);
     let verify_add = guest::build_verifier_add(verifier_preprocessing);
@@ -21,12 +19,9 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_mul(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_mul(&mut program);
-    let prover_preprocessing = guest::preprocess_prover_mul(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_mul(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-    );
+    let prover_preprocessing = guest::preprocess_mul(&mut program);
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_mul(&prover_preprocessing);
 
     let prove_mul = guest::build_prover_mul(program, prover_preprocessing);
     let verify_mul = guest::build_verifier_mul(verifier_preprocessing);

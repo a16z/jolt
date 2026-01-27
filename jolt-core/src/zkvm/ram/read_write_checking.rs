@@ -18,8 +18,8 @@ use crate::subprotocols::sumcheck_claim::{
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::{OneHotParams, ReadWriteConfig};
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::{
     field::JoltField,
     poly::{
@@ -170,7 +170,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     pub fn initialize(
         params: RamReadWriteCheckingParams<F>,
         trace: &[Cycle],
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &ProgramPreprocessing,
         memory_layout: &MemoryLayout,
         initial_ram_state: &[u64],
     ) -> Self {
@@ -189,12 +189,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                 Some(MultilinearPolynomial::from(EqPolynomial::evals(&r_prime.r))),
             )
         };
-        let inc = CommittedPolynomial::RamInc.generate_witness(
-            bytecode_preprocessing,
-            memory_layout,
-            trace,
-            None,
-        );
+        let inc = CommittedPolynomial::RamInc.generate_witness(program, memory_layout, trace, None);
         let val_init: Vec<_> = initial_ram_state
             .par_iter()
             .map(|x| F::from_u64(*x))

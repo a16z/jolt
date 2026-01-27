@@ -14,10 +14,10 @@
 //! (typed evaluators and claim computation).
 
 use crate::poly::opening_proof::{OpeningId, PolynomialId, SumcheckId};
-use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{
     CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
 };
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::witness::VirtualPolynomial;
 
 use crate::field::JoltField;
@@ -266,11 +266,7 @@ pub struct R1CSCycleInputs {
 impl R1CSCycleInputs {
     /// Build directly from the execution trace and preprocessing,
     /// mirroring the optimized semantics used in `compute_claimed_r1cs_input_evals`.
-    pub fn from_trace<F>(
-        bytecode_preprocessing: &BytecodePreprocessing,
-        trace: &[Cycle],
-        t: usize,
-    ) -> Self
+    pub fn from_trace<F>(program: &ProgramPreprocessing, trace: &[Cycle], t: usize) -> Self
     where
         F: JoltField,
     {
@@ -318,9 +314,9 @@ impl R1CSCycleInputs {
         };
 
         // PCs
-        let pc = bytecode_preprocessing.get_pc(cycle) as u64;
+        let pc = program.get_pc(cycle) as u64;
         let next_pc = if let Some(nc) = next_cycle {
-            bytecode_preprocessing.get_pc(nc) as u64
+            program.get_pc(nc) as u64
         } else {
             0u64
         };
@@ -540,12 +536,12 @@ pub struct ShiftSumcheckCycleState {
 }
 
 impl ShiftSumcheckCycleState {
-    pub fn new(cycle: &Cycle, bytecode_preprocessing: &BytecodePreprocessing) -> Self {
+    pub fn new(cycle: &Cycle, program: &ProgramPreprocessing) -> Self {
         let instruction = cycle.instruction();
         let circuit_flags = instruction.circuit_flags();
         Self {
             unexpanded_pc: instruction.normalize().address as u64,
-            pc: bytecode_preprocessing.get_pc(cycle) as u64,
+            pc: program.get_pc(cycle) as u64,
             is_virtual: circuit_flags[CircuitFlags::VirtualInstruction],
             is_first_in_sequence: circuit_flags[CircuitFlags::IsFirstInSequence],
             is_noop: instruction.instruction_flags()[InstructionFlags::IsNoop],

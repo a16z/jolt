@@ -4,10 +4,14 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::proof_serialization::JoltProof;
+use crate::zkvm::prover::JoltCpuProver;
 use crate::zkvm::prover::JoltProverPreprocessing;
+use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::ProverDebugInfo;
 use common::jolt_device::MemoryLayout;
+use std::sync::Arc;
 use tracer::JoltDevice;
 
 #[allow(clippy::type_complexity)]
@@ -16,16 +20,15 @@ pub fn preprocess(
     guest: &Program,
     max_trace_length: usize,
 ) -> JoltProverPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> {
-    use crate::zkvm::verifier::JoltSharedPreprocessing;
-
-    let (bytecode, memory_init, program_size) = guest.decode();
+    let (instructions, memory_init, program_size) = guest.decode();
 
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    let shared_preprocessing =
-        JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init, max_trace_length);
-    JoltProverPreprocessing::new(shared_preprocessing)
+
+    let program = Arc::new(ProgramPreprocessing::preprocess(instructions, memory_init));
+    let shared = JoltSharedPreprocessing::new(program.meta(), memory_layout, max_trace_length);
+    JoltProverPreprocessing::new(shared, program)
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -44,8 +47,6 @@ pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transc
     JoltDevice,
     Option<ProverDebugInfo<F, FS, PCS>>,
 ) {
-    use crate::zkvm::prover::JoltCpuProver;
-
     let prover = JoltCpuProver::gen_from_elf(
         preprocessing,
         &guest.elf_contents,

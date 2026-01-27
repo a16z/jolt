@@ -138,7 +138,8 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
 
         let log_t = trace_len.log_2();
         let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-        let (main_col_vars, main_row_vars) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
+        let (main_col_vars, main_row_vars) = DoryGlobals::try_get_main_sigma_nu()
+            .unwrap_or_else(|| DoryGlobals::main_sigma_nu(log_k_chunk, log_t));
 
         let r_val_eval = accumulator
             .get_advice_opening(kind, SumcheckId::RamValEvaluation)
@@ -510,11 +511,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
     fn round_offset(&self, max_num_rounds: usize) -> usize {
         match self.params.phase {
             ReductionPhase::CycleVariables => {
-                // Align to the *start* of Booleanity's cycle segment, so local rounds correspond
-                // to low Dory column bits in the unified point ordering.
-                let booleanity_rounds = self.params.log_k_chunk + self.params.log_t;
-                let booleanity_offset = max_num_rounds - booleanity_rounds;
-                booleanity_offset + self.params.log_k_chunk
+                // Stage 6b only spans cycle variables; align to the start of the cycle segment.
+                max_num_rounds.saturating_sub(self.params.log_t)
             }
             ReductionPhase::AddressVariables => 0,
         }
@@ -656,11 +654,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn round_offset(&self, max_num_rounds: usize) -> usize {
         let params = self.params.borrow();
         match params.phase {
-            ReductionPhase::CycleVariables => {
-                let booleanity_rounds = params.log_k_chunk + params.log_t;
-                let booleanity_offset = max_num_rounds - booleanity_rounds;
-                booleanity_offset + params.log_k_chunk
-            }
+            ReductionPhase::CycleVariables => max_num_rounds.saturating_sub(params.log_t),
             ReductionPhase::AddressVariables => 0,
         }
     }
