@@ -18,6 +18,7 @@
 //! tracing will panic. This is acceptable for ZeroOS M-mode which only uses `csrr`.
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::{
     declare_riscv_instr,
@@ -104,21 +105,20 @@ impl RISCVTrace for CSRRS {
     /// For rs1 = 0 (csrr, read only) with rd != 0:
     ///   0: ADDI(rd, vr, 0) - Copy from virtual register to rd
     ///
-    /// For rs1 = 0, rd = 0: No-op (empty sequence)
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        // If rd == 0, this is a no-op
-        if self.operands.rd == 0 {
-            return Vec::new();
-        }
-
         let csr_addr = self.csr_address();
 
         // Validate CSR address is supported
+        // CSR 0 is never valid - return no-op for default-constructed instructions
         match csr_addr {
+            0 => {
+                warn!("CSRRS with CSR address 0 is invalid, returning NoOp");
+                return vec![Instruction::NoOp];
+            }
             CSR_MSTATUS | CSR_MTVEC | CSR_MSCRATCH | CSR_MEPC | CSR_MCAUSE | CSR_MTVAL => {}
             _ => panic!("CSRRS: Unsupported CSR 0x{csr_addr:03x}"),
         };

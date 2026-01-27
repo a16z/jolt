@@ -15,6 +15,7 @@
 //! The full `csrrw rd, csr, rs` swaps rd ← old_CSR, CSR ← rs.
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::{
     declare_riscv_instr,
@@ -106,7 +107,12 @@ impl RISCVTrace for CSRRW {
         let csr_addr = self.csr_address();
 
         // Validate CSR address is supported
+        // CSR 0 is never valid - return no-op for default-constructed instructions
         match csr_addr {
+            0 => {
+                warn!("CSRRW with CSR address 0 is invalid, returning NoOp");
+                return vec![Instruction::NoOp];
+            }
             CSR_MSTATUS | CSR_MTVEC | CSR_MSCRATCH | CSR_MEPC | CSR_MCAUSE | CSR_MTVAL => {}
             _ => panic!("CSRRW: Unsupported CSR 0x{csr_addr:03x}"),
         };
