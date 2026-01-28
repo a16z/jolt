@@ -2,11 +2,18 @@ use super::transcript::Transcript;
 use crate::field::JoltField;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_serialize::CanonicalSerialize;
+use std::borrow::Borrow;
+
+#[cfg(feature = "host")]
 use blake2::digest::consts::U32;
+#[cfg(feature = "host")]
 use blake2::{Blake2b, Digest};
 
-type Blake2b256 = Blake2b<U32>;
-use std::borrow::Borrow;
+#[cfg(feature = "host")]
+type HostBlake2b256 = Blake2b<U32>;
+
+#[cfg(not(feature = "host"))]
+use jolt_inlines_blake2::Blake2b256 as InlineBlake2b256;
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript using Blake2b.
 #[derive(Default, Clone)]
@@ -27,14 +34,61 @@ pub struct Blake2bTranscript {
 }
 
 impl Blake2bTranscript {
-    /// Gives the hasher object with the running seed and index added
-    /// To load hash you must call finalize, after appending u8 vectors
-    fn hasher(&self) -> Blake2b256 {
-        let mut packed = [0_u8; 28].to_vec();
-        packed.append(&mut self.n_rounds.to_be_bytes().to_vec());
-        Blake2b256::new()
-            .chain_update(self.state)
-            .chain_update(&packed)
+    #[inline(always)]
+    fn packed_round(&self) -> [u8; 32] {
+        let mut packed = [0u8; 32];
+        packed[28..].copy_from_slice(&self.n_rounds.to_be_bytes());
+        packed
+    }
+
+    /// Hash `state || round || data` to produce the next 32-byte transcript state.
+    #[inline(always)]
+    fn hash_with_round(&self, data: &[u8]) -> [u8; 32] {
+        let packed_round = self.packed_round();
+
+        #[cfg(feature = "host")]
+        {
+            let mut hasher = HostBlake2b256::new();
+            hasher.update(self.state);
+            hasher.update(packed_round);
+            hasher.update(data);
+            hasher.finalize().into()
+        }
+
+        #[cfg(not(feature = "host"))]
+        {
+            let mut hasher = InlineBlake2b256::new();
+            hasher.update(&self.state);
+            hasher.update(&packed_round);
+            hasher.update(data);
+            hasher.finalize()
+        }
+    }
+
+    /// Hash `state || round || a || b` to produce the next 32-byte transcript state.
+    #[inline(always)]
+    fn hash_with_round_two(&self, a: &[u8], b: &[u8]) -> [u8; 32] {
+        let packed_round = self.packed_round();
+
+        #[cfg(feature = "host")]
+        {
+            let mut hasher = HostBlake2b256::new();
+            hasher.update(self.state);
+            hasher.update(packed_round);
+            hasher.update(a);
+            hasher.update(b);
+            hasher.finalize().into()
+        }
+
+        #[cfg(not(feature = "host"))]
+        {
+            let mut hasher = InlineBlake2b256::new();
+            hasher.update(&self.state);
+            hasher.update(&packed_round);
+            hasher.update(a);
+            hasher.update(b);
+            hasher.finalize()
+        }
     }
 
     // Loads arbitrary byte lengths using ceil(out/32) invocations of 32 byte randoms
@@ -48,7 +102,7 @@ impl Blake2bTranscript {
             remaining_len -= 32;
         }
         // We load a full 32 byte random region
-        let mut full_rand = vec![0_u8; 32];
+        let mut full_rand = [0_u8; 32];
         self.challenge_bytes32(&mut full_rand);
         // Then only clone the first bits of this random region to perfectly fill out
         out[start..start + remaining_len].clone_from_slice(&full_rand[0..remaining_len]);
@@ -57,7 +111,7 @@ impl Blake2bTranscript {
     // Loads exactly 32 bytes from the transcript by hashing the seed with the round constant
     fn challenge_bytes32(&mut self, out: &mut [u8]) {
         assert_eq!(32, out.len());
-        let rand: [u8; 32] = self.hasher().finalize().into();
+        let rand: [u8; 32] = self.hash_with_round(&[]);
         out.clone_from_slice(rand.as_slice());
         self.update_state(rand);
     }
@@ -80,21 +134,21 @@ impl Blake2bTranscript {
 
 impl Transcript for Blake2bTranscript {
     fn new(label: &'static [u8]) -> Self {
-        // Hash in the label
+        // Hash in the label (right-padded to one EVM word).
         assert!(label.len() < 33);
-        let hasher = if label.len() == 32 {
-            Blake2b256::new().chain_update(label)
-        } else {
-            let zeros = vec![0_u8; 32 - label.len()];
-            Blake2b256::new().chain_update(label).chain_update(zeros)
-        };
-        let out = hasher.finalize();
+        let mut word = [0u8; 32];
+        word[..label.len()].copy_from_slice(label);
+
+        #[cfg(feature = "host")]
+        let out: [u8; 32] = HostBlake2b256::digest(word).into();
+        #[cfg(not(feature = "host"))]
+        let out: [u8; 32] = InlineBlake2b256::digest(&word);
 
         Self {
-            state: out.into(),
+            state: out,
             n_rounds: 0,
             #[cfg(test)]
-            state_history: vec![out.into()],
+            state_history: vec![out],
             #[cfg(test)]
             expected_state_history: None,
         }
@@ -111,38 +165,30 @@ impl Transcript for Blake2bTranscript {
         // We require all messages to fit into one evm word and then right pad them
         // right padding matches the format of the strings when cast to bytes 32 in solidity
         assert!(msg.len() < 33);
-        let hasher = if msg.len() == 32 {
-            self.hasher().chain_update(msg)
-        } else {
-            let mut packed = msg.to_vec();
-            packed.append(&mut vec![0_u8; 32 - msg.len()]);
-            self.hasher().chain_update(packed)
-        };
-        // Instantiate hasher add our seed, position and msg
-        self.update_state(hasher.finalize().into());
+        let mut word = [0u8; 32];
+        word[..msg.len()].copy_from_slice(msg);
+        self.update_state(self.hash_with_round(&word));
     }
 
     fn append_bytes(&mut self, bytes: &[u8]) {
-        // Add the message and label
-        let hasher = self.hasher().chain_update(bytes);
-        self.update_state(hasher.finalize().into());
+        self.update_state(self.hash_with_round(bytes));
     }
 
     fn append_u64(&mut self, x: u64) {
-        // Allocate into a 32 byte region
-        let mut packed = [0_u8; 24].to_vec();
-        packed.append(&mut x.to_be_bytes().to_vec());
-        let hasher = self.hasher().chain_update(packed.clone());
-        self.update_state(hasher.finalize().into());
+        // Allocate into a 32 byte region (EVM word)
+        let mut word = [0u8; 32];
+        word[24..].copy_from_slice(&x.to_be_bytes());
+        self.update_state(self.hash_with_round(&word));
     }
 
     fn append_scalar<F: JoltField>(&mut self, scalar: &F) {
-        let mut buf = vec![];
-        scalar.serialize_uncompressed(&mut buf).unwrap();
+        let mut buf = vec![0u8; F::NUM_BYTES];
+        let mut cursor = std::io::Cursor::new(&mut buf[..]);
+        scalar.serialize_uncompressed(&mut cursor).unwrap();
         // Serialize uncompressed gives the scalar in LE byte order which is not
         // a natural representation in the EVM for scalar math so we reverse
         // to get an EVM compatible version.
-        buf = buf.into_iter().rev().collect();
+        buf.reverse();
         self.append_bytes(&buf);
     }
 
@@ -152,7 +198,7 @@ impl Transcript for Blake2bTranscript {
         // Serialize uncompressed gives the scalar in LE byte order which is not
         // a natural representation in the EVM for scalar math so we reverse
         // to get an EVM compatible version.
-        buf = buf.into_iter().rev().collect();
+        buf.reverse();
         self.append_bytes(&buf);
     }
 
@@ -178,13 +224,12 @@ impl Transcript for Blake2bTranscript {
         // can lead to errors so we extract the affine coordinates and the encode them be before writing
         let x = aff.x().unwrap();
         x.serialize_compressed(&mut x_bytes).unwrap();
-        x_bytes = x_bytes.into_iter().rev().collect();
+        x_bytes.reverse();
         let y = aff.y().unwrap();
         y.serialize_compressed(&mut y_bytes).unwrap();
-        y_bytes = y_bytes.into_iter().rev().collect();
+        y_bytes.reverse();
 
-        let hasher = self.hasher().chain_update(x_bytes).chain_update(y_bytes);
-        self.update_state(hasher.finalize().into());
+        self.update_state(self.hash_with_round_two(&x_bytes, &y_bytes));
     }
 
     fn append_points<G: CurveGroup>(&mut self, points: &[G]) {
@@ -196,10 +241,10 @@ impl Transcript for Blake2bTranscript {
     }
 
     fn challenge_u128(&mut self) -> u128 {
-        let mut buf = vec![0u8; 16];
+        let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
-        buf = buf.into_iter().rev().collect();
-        u128::from_be_bytes(buf.try_into().unwrap())
+        buf.reverse();
+        u128::from_be_bytes(buf)
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
@@ -208,10 +253,9 @@ impl Transcript for Blake2bTranscript {
     }
 
     fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F {
-        let mut buf = vec![0u8; 16];
+        let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
-
-        buf = buf.into_iter().rev().collect();
+        buf.reverse();
         F::from_bytes(&buf)
     }
 
