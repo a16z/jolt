@@ -1,5 +1,3 @@
-use jolt::jolt_println;
-
 /// Computes the modular multiplicative inverse of `a` modulo `m` using the Extended Euclidean Algorithm.
 /// Returns `Some(x)` where `a * x ≡ 1 (mod m)`, or `None` if the inverse doesn't exist.
 ///
@@ -53,8 +51,6 @@ fn modinv(a: u64, m: u64) -> u64 {
     // Get the modular inverse from the advice tape (precomputed on first pass)
     let inv_advice = compute_modinv(a, m);
 
-    jolt_println!("{inv_advice:?}");
-
     // Extract the value from the UntrustedAdvice wrapper using Deref
     let inv_option = inv_advice.deref();
 
@@ -66,11 +62,8 @@ fn modinv(a: u64, m: u64) -> u64 {
     // Using u128 to avoid overflow during multiplication
     let product = ((a as u128) * (inv as u128)) % (m as u128);
 
-    jolt_println!("product = {product}");
-
     // Use check_advice! to ensure the multiplication produces 1 mod m
     jolt::check_advice!(product == 1);
-    jolt_println!("inv = {inv}");
 
     inv
 }

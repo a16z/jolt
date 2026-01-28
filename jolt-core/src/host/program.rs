@@ -345,14 +345,16 @@ impl Program {
             program_size: Some(program_size),
         };
 
-        guest::program::trace(
+        let (lazy_trace, trace, memory, jolt_device, _advice_tape) = guest::program::trace(
             &elf_contents,
             self.elf.as_ref(),
             inputs,
             untrusted_advice,
             trusted_advice,
             &memory_config,
-        )
+            None,
+        );
+        (lazy_trace, trace, memory, jolt_device)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]

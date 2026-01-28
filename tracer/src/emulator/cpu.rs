@@ -71,19 +71,12 @@ impl AdviceTape {
 
 /// Write data to the CPU's advice tape
 pub fn advice_tape_write(cpu: &mut Cpu, bytes: &[u8]) {
-    eprintln!("advice_tape_write: writing {} bytes: {:?}", bytes.len(), bytes);
     cpu.advice_tape.write(bytes);
 }
 
 /// Read data from the CPU's advice tape
 pub fn advice_tape_read(cpu: &mut Cpu, num_bytes: usize) -> Option<u64> {
-    let remaining = cpu.advice_tape.remaining();
-    eprintln!("advice_tape_read: requesting {} bytes, {} bytes remaining", num_bytes, remaining);
-    let result = cpu.advice_tape.read(num_bytes);
-    if result.is_none() {
-        eprintln!("advice_tape_read: FAILED - not enough bytes!");
-    }
-    result
+    cpu.advice_tape.read(num_bytes)
 }
 
 /// Get the number of bytes remaining to be read from the CPU's advice tape

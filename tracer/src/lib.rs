@@ -82,30 +82,9 @@ pub fn trace(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
-    let (lazy_trace, trace, memory, jolt_device, _advice_tape) = trace_with_advice(
-        elf_contents,
-        elf_path,
-        inputs,
-        untrusted_advice,
-        trusted_advice,
-        memory_config,
-        None,
-    );
-    (lazy_trace, trace, memory, jolt_device)
-}
-
-pub fn trace_with_advice(
-    elf_contents: &[u8],
-    elf_path: Option<&std::path::PathBuf>,
-    inputs: &[u8],
-    untrusted_advice: &[u8],
-    trusted_advice: &[u8],
-    memory_config: &MemoryConfig,
     advice_tape: Option<cpu::AdviceTape>,
 ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice, cpu::AdviceTape) {
-    println!("tracer trace_with_advice");
-    let mut lazy_trace_iter = trace_lazy_with_advice(
+    let mut lazy_trace_iter = trace_lazy(
         elf_contents,
         elf_path,
         inputs,
@@ -155,6 +134,7 @@ pub fn trace_to_file(
         untrusted_advice,
         trusted_advice,
         memory_config,
+        None,
     );
 
     for cycle in &mut lazy {
@@ -173,26 +153,6 @@ pub fn trace_to_file(
 
 #[tracing::instrument(skip_all)]
 pub fn trace_lazy(
-    elf_contents: &[u8],
-    elf_path: Option<&std::path::PathBuf>,
-    inputs: &[u8],
-    untrusted_advice: &[u8],
-    trusted_advice: &[u8],
-    memory_config: &MemoryConfig,
-) -> LazyTraceIterator {
-    trace_lazy_with_advice(
-        elf_contents,
-        elf_path,
-        inputs,
-        untrusted_advice,
-        trusted_advice,
-        memory_config,
-        None,
-    )
-}
-
-#[tracing::instrument(skip_all)]
-pub fn trace_lazy_with_advice(
     elf_contents: &[u8],
     elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],

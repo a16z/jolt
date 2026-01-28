@@ -59,14 +59,16 @@ impl Program {
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
-        trace(
+        let (lazy_trace, trace, memory, jolt_device, _advice_tape) = trace(
             &self.elf_contents,
             self.elf.as_ref(),
             inputs,
             untrusted_advice,
             trusted_advice,
             &self.memory_config,
-        )
+            None,
+        );
+        (lazy_trace, trace, memory, jolt_device)
     }
 
     pub fn trace_to_file(
@@ -110,29 +112,9 @@ pub fn trace(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
-    let (lazy_trace, trace, memory, jolt_device, _advice_tape) = trace_with_advice(
-        elf_contents,
-        elf_path,
-        inputs,
-        untrusted_advice,
-        trusted_advice,
-        memory_config,
-        None,
-    );
-    (lazy_trace, trace, memory, jolt_device)
-}
-
-pub fn trace_with_advice(
-    elf_contents: &[u8],
-    elf_path: Option<&PathBuf>,
-    inputs: &[u8],
-    untrusted_advice: &[u8],
-    trusted_advice: &[u8],
-    memory_config: &MemoryConfig,
     advice_tape: Option<tracer::AdviceTape>,
 ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice, tracer::AdviceTape) {
-    tracer::trace_with_advice(
+    tracer::trace(
         elf_contents,
         elf_path,
         inputs,

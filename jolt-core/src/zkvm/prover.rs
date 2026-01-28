@@ -174,27 +174,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice: &[u8],
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
-    ) -> Self {
-        Self::gen_from_elf_with_advice(
-            preprocessing,
-            elf_contents,
-            inputs,
-            untrusted_advice,
-            trusted_advice,
-            trusted_advice_commitment,
-            trusted_advice_hint,
-            None,
-        )
-    }
-
-    pub fn gen_from_elf_with_advice(
-        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        elf_contents: &[u8],
-        inputs: &[u8],
-        untrusted_advice: &[u8],
-        trusted_advice: &[u8],
-        trusted_advice_commitment: Option<PCS::Commitment>,
-        trusted_advice_hint: Option<PCS::OpeningProofHint>,
         advice_tape: Option<tracer::AdviceTape>,
     ) -> Self {
         let memory_config = MemoryConfig {
@@ -209,7 +188,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let (lazy_trace, trace, final_memory_state, program_io, _advice_tape_out) = {
             let _pprof_trace = pprof_scope!("trace");
-            guest::program::trace_with_advice(
+            guest::program::trace(
                 elf_contents,
                 None,
                 inputs,
@@ -460,9 +439,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.preprocessing.shared.bytecode.code_size
         );
 
-        println!("Before generate_and_commit_witness_polynomials");
         let (commitments, mut opening_proof_hints) = self.generate_and_commit_witness_polynomials();
-        println!("After generate_and_commit_witness_polynomials");
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
 
