@@ -169,8 +169,7 @@ impl Program {
             }
 
             // Add suffix to target dir if building with compute_advice feature
-            let is_compute_advice = extra_features.iter().any(|&f| f == "compute_advice");
-            let target = if is_compute_advice {
+            let target = if extra_features.contains(&"compute_advice") {
                 format!(
                     "{}/{}-{}-compute-advice",
                     target_dir,
@@ -252,8 +251,7 @@ impl Program {
 
             // If extra_features contains "compute_advice", store in elf_compute_advice
             // Otherwise store in elf
-            let is_compute_advice = extra_features.iter().any(|&f| f == "compute_advice");
-            if is_compute_advice {
+            if extra_features.contains(&"compute_advice") {
                 self.elf_compute_advice = Some(PathBuf::from_str(&elf_path).unwrap());
                 if debug_symbols {
                     info!("Built compute_advice guest binary with debug symbols: {elf_path}");

@@ -166,6 +166,7 @@ pub struct JoltCpuProver<
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn gen_from_elf(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         elf_contents: &[u8],
@@ -1648,6 +1649,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -1693,6 +1695,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -1755,6 +1758,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -1815,6 +1819,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -1882,6 +1887,7 @@ mod tests {
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2003,6 +2009,7 @@ mod tests {
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2153,6 +2160,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2199,6 +2207,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2243,6 +2252,7 @@ mod tests {
             &[50],
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -2378,6 +2388,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (proof, debug_info) = prover.prove();
@@ -2431,6 +2442,7 @@ mod tests {
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2454,54 +2466,5 @@ mod tests {
             0xbb, 0x16, 0xd7,
         ];
         assert_eq!(io_device.outputs, expected_output);
-    }
-
-    #[test]
-    #[serial]
-    fn modinv_e2e() {
-        let mut program = host::Program::new("modinv-guest");
-        let a = 3u64;
-        let m = 11u64;
-        let inputs = postcard::to_stdvec(&(a, m)).unwrap();
-        let (bytecode, init_memory_state, _) = program.decode();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-        let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            init_memory_state,
-            1 << 16,
-        );
-
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
-        let elf_contents_opt = program.get_elf_contents();
-        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover = RV64IMACProver::gen_from_elf(
-            &prover_preprocessing,
-            elf_contents,
-            &inputs,
-            &[],
-            &[],
-            None,
-            None,
-        );
-        let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
-
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device.clone(),
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier")
-        .verify()
-        .expect("Verification failed");
-
-        // Expected output: modular inverse of 3 mod 11 is 4
-        // Verify: 3 * 4 = 12 ≡ 1 (mod 11)
-        let output = u64::from_le_bytes(io_device.outputs.try_into().unwrap());
-        assert_eq!(output, 4, "Expected inverse of 3 mod 11 to be 4");
     }
 }

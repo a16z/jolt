@@ -82,11 +82,9 @@ fn modinv_naive(a: u64, m: u64) -> u64 {
     }
 
     // Ensure the result is positive
-    let result = if old_s < 0 {
+    if old_s < 0 {
         (old_s + m as i128) as u64
     } else {
         old_s as u64
-    };
-
-    result
+    }
 }
