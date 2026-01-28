@@ -241,10 +241,16 @@ impl Program {
                 .expect("failed to build guest");
 
             if !output.status.success() {
-                io::stderr().write_all(&output.stderr).unwrap();
-                let output_msg = format!("::build command: \n{cmd_line}\n");
-                io::stderr().write_all(output_msg.as_bytes()).unwrap();
-                panic!("failed to compile guest");
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if stderr.contains("does not contain this feature: compute_advice") {
+                    info!("guest does not support compute_advice feature");
+                    return;
+                } else {
+                    io::stderr().write_all(&output.stderr).unwrap();
+                    let output_msg = format!("::build command: \n{cmd_line}\n");
+                    io::stderr().write_all(output_msg.as_bytes()).unwrap();
+                    panic!("failed to compile guest");
+                }
             }
 
             let elf_path = format!("{}/{}/release/{}", target, target_triple, self.guest);
