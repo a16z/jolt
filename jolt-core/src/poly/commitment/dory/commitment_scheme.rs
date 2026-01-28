@@ -109,7 +109,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
+    ) -> (Self::Proof, Option<Self::Field>) {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
         let mut rng = rand::thread_rng();
 
@@ -135,17 +135,20 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
-        dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _, ZK, _>(
-            poly,
-            &ark_point,
-            row_commitments,
-            nu,
-            sigma,
-            setup,
-            &mut dory_transcript,
-            &mut rng,
-        )
-        .expect("proof generation should succeed")
+        let (proof, y_blinding) =
+            dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _, ZK, _>(
+                poly,
+                &ark_point,
+                row_commitments,
+                nu,
+                sigma,
+                setup,
+                &mut dory_transcript,
+                &mut rng,
+            )
+            .expect("proof generation should succeed");
+
+        (proof, y_blinding.map(|b| ark_to_jolt(&b)))
     }
 
     fn verify<ProofTranscript: Transcript>(
@@ -393,10 +396,6 @@ where
 {
     fn eval_commitment(proof: &Self::Proof) -> Option<C::G1> {
         proof.y_com.as_ref().copied().map(C::G1::from)
-    }
-
-    fn eval_commitment_blinding(proof: &Self::Proof) -> Option<Self::Field> {
-        proof.y_blinding.as_ref().map(ark_to_jolt)
     }
 
     fn eval_commitment_gens(setup: &Self::ProverSetup) -> Option<(C::G1, C::G1)> {

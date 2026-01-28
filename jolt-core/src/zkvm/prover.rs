@@ -186,6 +186,7 @@ struct Stage8ZkData<F: JoltField> {
     opening_ids: Vec<OpeningId>,
     constraint_coeffs: Vec<F>,
     joint_claim: F,
+    y_blinding: F,
 }
 
 impl<
@@ -1545,8 +1546,7 @@ impl<
             .iter()
             .map(|id| self.opening_accumulator.get_opening(*id))
             .collect();
-        let extra_blinding = PCS::eval_commitment_blinding(joint_opening_proof)
-            .expect("missing eval commitment blinding");
+        let extra_blinding = stage8_data.y_blinding;
         let extra_witness = ExtraConstraintWitness {
             output_value: stage8_data.joint_claim,
             blinding: extra_blinding,
@@ -1970,7 +1970,7 @@ impl<
         }
 
         // Dory opening proof at the unified point
-        let proof = PCS::prove(
+        let (proof, y_blinding) = PCS::prove(
             &self.preprocessing.generators,
             &joint_poly,
             &opening_point.r,
@@ -1982,6 +1982,7 @@ impl<
             opening_ids,
             constraint_coeffs,
             joint_claim,
+            y_blinding: y_blinding.expect("ZK mode requires y_blinding"),
         };
 
         (proof, stage8_data)

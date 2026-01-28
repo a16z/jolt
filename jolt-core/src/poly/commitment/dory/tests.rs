@@ -35,7 +35,7 @@ mod tests {
         );
 
         let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
-        let proof = DoryCommitmentScheme::prove(
+        let (proof, _y_blinding) = DoryCommitmentScheme::prove(
             prover_setup,
             &poly,
             &opening_point,
@@ -261,7 +261,7 @@ mod tests {
 
         let correct_evaluation = poly.evaluate(&opening_point);
 
-        let proof = DoryCommitmentScheme::prove(
+        let (proof, _y_blinding) = DoryCommitmentScheme::prove(
             &prover_setup,
             &poly,
             &opening_point,
@@ -418,7 +418,7 @@ mod tests {
         );
 
         let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
-        let proof = DoryCommitmentScheme::prove(
+        let (proof, _y_blinding) = DoryCommitmentScheme::prove(
             &prover_setup,
             &poly,
             &opening_point,
@@ -501,7 +501,7 @@ mod tests {
 
         // Step 8: Create evaluation proof using combined commitment and hint
         let mut prove_transcript = Blake2bTranscript::new(b"dory_homomorphic_test");
-        let proof = DoryCommitmentScheme::prove(
+        let (proof, _y_blinding) = DoryCommitmentScheme::prove(
             &prover_setup,
             &combined_poly,
             &opening_point,
@@ -593,7 +593,7 @@ mod tests {
 
         // Step 9: Create evaluation proof using combined hint
         let mut prove_transcript = Blake2bTranscript::new(b"dory_batch_commit_e2e_test");
-        let proof = DoryCommitmentScheme::prove(
+        let (proof, _y_blinding) = DoryCommitmentScheme::prove(
             &prover_setup,
             &combined_poly,
             &opening_point,
@@ -619,7 +619,7 @@ mod tests {
 
         // Step 11: Also verify that proving with the direct hint works
         let mut prove_transcript2 = Blake2bTranscript::new(b"dory_batch_commit_e2e_test");
-        let proof2 = DoryCommitmentScheme::prove(
+        let (proof2, _y_blinding2) = DoryCommitmentScheme::prove(
             &prover_setup,
             &combined_poly,
             &opening_point,

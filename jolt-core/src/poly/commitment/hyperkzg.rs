@@ -490,9 +490,10 @@ where
         opening_point: &[<Self::Field as JoltField>::Challenge], // point at which the polynomial is evaluated
         _hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
+    ) -> (Self::Proof, Option<Self::Field>) {
         let eval = poly.evaluate(opening_point);
-        HyperKZG::<P>::open(setup, poly, opening_point, &eval, transcript).unwrap()
+        let proof = HyperKZG::<P>::open(setup, poly, opening_point, &eval, transcript).unwrap();
+        (proof, None) // HyperKZG doesn't have ZK blinding
     }
 
     fn verify<ProofTranscript: Transcript>(
