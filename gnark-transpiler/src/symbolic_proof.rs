@@ -234,3 +234,144 @@ fn symbolize_sumcheck_proof<T: jolt_core::transcripts::Transcript>(
 
     SumcheckInstanceProof::new(compressed_polys)
 }
+
+/// Extract concrete witness values from a real proof
+/// Returns a HashMap<variable_index, value_as_decimal_string>
+///
+/// The indices match exactly what symbolize_proof allocates.
+pub fn extract_witness_values(
+    real_proof: &RV64IMACProof,
+) -> std::collections::HashMap<usize, String> {
+    use ark_ff::PrimeField;
+    use ark_serialize::CanonicalSerialize;
+    let mut values: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+    let mut idx: usize = 0;
+
+    // Helper to convert bytes to field element chunks
+    fn bytes_to_chunks(bytes: &[u8]) -> Vec<ark_bn254::Fr> {
+        let num_chunks = 12; // Always 12 chunks per commitment
+        (0..num_chunks)
+            .map(|i| {
+                let start = i * 32;
+                let end = std::cmp::min(start + 32, bytes.len());
+                if start >= bytes.len() {
+                    ark_bn254::Fr::from(0u64)
+                } else {
+                    ark_bn254::Fr::from_le_bytes_mod_order(&bytes[start..end])
+                }
+            })
+            .collect()
+    }
+
+    // Helper to serialize a commitment to bytes
+    // MUST match the Poseidon transcript serialization:
+    // 1. Use serialize_uncompressed (not compressed)
+    // 2. Reverse bytes for BE/EVM format
+    fn commitment_to_bytes<T: CanonicalSerialize>(commitment: &T) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        commitment.serialize_uncompressed(&mut bytes).expect("serialization failed");
+        // Reverse bytes to match Poseidon transcript format (BE for EVM compatibility)
+        bytes.reverse();
+        bytes
+    }
+
+    // === Commitments (41 commitments × 12 chunks each) ===
+    for commitment in &real_proof.commitments {
+        let chunks = bytes_to_chunks(&commitment_to_bytes(commitment));
+        for chunk in chunks {
+            values.insert(idx, format!("{}", chunk.into_bigint()));
+            idx += 1;
+        }
+    }
+
+    // === Opening claims ===
+    for (_key, (_point, claim)) in &real_proof.opening_claims.0 {
+        values.insert(idx, format!("{}", claim.into_bigint()));
+        idx += 1;
+    }
+
+    // === Stage 1 uni-skip proof ===
+    for coeff in &real_proof.stage1_uni_skip_first_round_proof.uni_poly.coeffs {
+        values.insert(idx, format!("{}", coeff.into_bigint()));
+        idx += 1;
+    }
+
+    // === Stage 1 sumcheck proof ===
+    for poly in &real_proof.stage1_sumcheck_proof.compressed_polys {
+        for coeff in &poly.coeffs_except_linear_term {
+            values.insert(idx, format!("{}", coeff.into_bigint()));
+            idx += 1;
+        }
+    }
+
+    // === Stage 2 uni-skip proof ===
+    for coeff in &real_proof.stage2_uni_skip_first_round_proof.uni_poly.coeffs {
+        values.insert(idx, format!("{}", coeff.into_bigint()));
+        idx += 1;
+    }
+
+    // === Stage 2 sumcheck proof ===
+    for poly in &real_proof.stage2_sumcheck_proof.compressed_polys {
+        for coeff in &poly.coeffs_except_linear_term {
+            values.insert(idx, format!("{}", coeff.into_bigint()));
+            idx += 1;
+        }
+    }
+
+    // === Stage 3 sumcheck proof ===
+    for poly in &real_proof.stage3_sumcheck_proof.compressed_polys {
+        for coeff in &poly.coeffs_except_linear_term {
+            values.insert(idx, format!("{}", coeff.into_bigint()));
+            idx += 1;
+        }
+    }
+
+    // === Stage 4 sumcheck proof ===
+    for poly in &real_proof.stage4_sumcheck_proof.compressed_polys {
+        for coeff in &poly.coeffs_except_linear_term {
+            values.insert(idx, format!("{}", coeff.into_bigint()));
+            idx += 1;
+        }
+    }
+
+    // === Stage 5 sumcheck proof ===
+    for poly in &real_proof.stage5_sumcheck_proof.compressed_polys {
+        for coeff in &poly.coeffs_except_linear_term {
+            values.insert(idx, format!("{}", coeff.into_bigint()));
+            idx += 1;
+        }
+    }
+
+    // === Stage 6 sumcheck proof ===
+    for poly in &real_proof.stage6_sumcheck_proof.compressed_polys {
+        for coeff in &poly.coeffs_except_linear_term {
+            values.insert(idx, format!("{}", coeff.into_bigint()));
+            idx += 1;
+        }
+    }
+
+    // === Stage 7 sumcheck proof ===
+    for poly in &real_proof.stage7_sumcheck_proof.compressed_polys {
+        for coeff in &poly.coeffs_except_linear_term {
+            values.insert(idx, format!("{}", coeff.into_bigint()));
+            idx += 1;
+        }
+    }
+
+    // === Stage 7 claims ===
+    for claim in &real_proof.stage7_sumcheck_claims {
+        values.insert(idx, format!("{}", claim.into_bigint()));
+        idx += 1;
+    }
+
+    // === Untrusted advice commitment (if present) ===
+    if let Some(ref commitment) = real_proof.untrusted_advice_commitment {
+        let chunks = bytes_to_chunks(&commitment_to_bytes(commitment));
+        for chunk in chunks {
+            values.insert(idx, format!("{}", chunk.into_bigint()));
+            idx += 1;
+        }
+    }
+
+    values
+}

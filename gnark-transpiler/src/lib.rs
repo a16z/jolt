@@ -54,5 +54,5 @@ pub use ast_commitment_scheme::AstCommitmentScheme;
 pub use keccak::KeccakMleTranscript;
 pub use mle_opening_accumulator::MleOpeningAccumulator;
 pub use poseidon::PoseidonAstTranscript;
-pub use symbolic_proof::{symbolize_proof, VarAllocator};
+pub use symbolic_proof::{symbolize_proof, extract_witness_values, VarAllocator};
 pub use witness::Stage1Witness;
