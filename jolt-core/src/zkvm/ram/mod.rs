@@ -437,57 +437,6 @@ fn calculate_advice_memory_evaluation<F: JoltField>(
     }
 }
 
-/// Evaluate the public portion of the initial RAM state at a random address point `r_address`
-/// without materializing the full length-`ram_K` initial memory vector.
-///
-/// Public initial memory consists of:
-/// - the program image (`ram_preprocessing.bytecode_words`) placed at `min_bytecode_address`
-/// - public inputs (`program_io.inputs`) placed at `memory_layout.input_start`
-///
-/// This function computes:
-///   \sum_k Val_init_public[k] * eq(r_address, k)
-/// but only over the (contiguous) regions that can be non-zero.
-fn evaluate_public_initial_ram_evaluation<F: JoltField>(
-    ram_preprocessing: &RAMPreprocessing,
-    program_io: &JoltDevice,
-    r_address: &[F::Challenge],
-) -> F {
-    // Bytecode region
-    let bytecode_start = remap_address(
-        ram_preprocessing.min_bytecode_address,
-        &program_io.memory_layout,
-    )
-    .unwrap() as usize;
-    let mut acc = eval_public_init_u64_range::<F>(
-        bytecode_start,
-        &ram_preprocessing.bytecode_words,
-        r_address,
-    );
-
-    // Inputs region (packed into u64 words in little-endian)
-    if !program_io.inputs.is_empty() {
-        let input_start = remap_address(
-            program_io.memory_layout.input_start,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
-        let input_words: Vec<u64> = program_io
-            .inputs
-            .chunks(8)
-            .map(|chunk| {
-                let mut word = [0u8; 8];
-                for (i, byte) in chunk.iter().enumerate() {
-                    word[i] = *byte;
-                }
-                u64::from_le_bytes(word)
-            })
-            .collect();
-        acc += eval_public_init_u64_range::<F>(input_start, &input_words, r_address);
-    }
-
-    acc
-}
-
 /// Evaluate a shifted slice of `u64` coefficients as a multilinear polynomial at `r`.
 ///
 /// Conceptually computes:
@@ -498,7 +447,7 @@ fn evaluate_public_initial_ram_evaluation<F: JoltField>(
 ///
 /// Uses aligned power-of-two block decomposition with `EqPolynomial::evals_for_max_aligned_block`,
 /// and accumulates using unreduced limb arithmetic via `Acc6U`.
-fn eval_public_init_u64_range<F: JoltField>(
+fn sparse_eval_u64_block<F: JoltField>(
     start_index: usize,
     values: &[u64],
     r: &[F::Challenge],
@@ -528,6 +477,150 @@ fn eval_public_init_u64_range<F: JoltField>(
         off += block_size;
     }
     acc
+}
+
+/// Evaluate the public portion of the initial RAM state at a random address point `r_address`
+/// without materializing the full length-`ram_K` initial memory vector.
+///
+/// Public initial memory consists of:
+/// - the program image (`ram_preprocessing.bytecode_words`) placed at `min_bytecode_address`
+/// - public inputs (`program_io.inputs`) placed at `memory_layout.input_start`
+///
+/// This function computes:
+///   \sum_k Val_init_public[k] * eq(r_address, k)
+/// but only over the (contiguous) regions that can be non-zero.
+pub fn eval_initial_ram_mle<F: JoltField>(
+    ram_preprocessing: &RAMPreprocessing,
+    program_io: &JoltDevice,
+    r_address: &[F::Challenge],
+) -> F {
+    // Bytecode region
+    let bytecode_start = remap_address(
+        ram_preprocessing.min_bytecode_address,
+        &program_io.memory_layout,
+    )
+    .unwrap() as usize;
+    let mut acc =
+        sparse_eval_u64_block::<F>(bytecode_start, &ram_preprocessing.bytecode_words, r_address);
+
+    // Inputs region (packed into u64 words in little-endian)
+    if !program_io.inputs.is_empty() {
+        let input_start = remap_address(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+        let input_words: Vec<u64> = program_io
+            .inputs
+            .chunks(8)
+            .map(|chunk| {
+                let mut word = [0u8; 8];
+                for (i, byte) in chunk.iter().enumerate() {
+                    word[i] = *byte;
+                }
+                u64::from_le_bytes(word)
+            })
+            .collect();
+        acc += sparse_eval_u64_block::<F>(input_start, &input_words, r_address);
+    }
+
+    acc
+}
+
+/// Evaluate the *public IO* polynomial at a (full-RAM) address point `r_address` without
+/// materializing a dense IO-region vector.
+///
+/// This is the multilinear extension of the public IO words:
+/// - inputs (packed into u64 words, little-endian) at `memory_layout.input_start`
+/// - outputs (packed into u64 words, little-endian) at `memory_layout.output_start`
+/// - panic bit at `memory_layout.panic`
+/// - termination bit at `memory_layout.termination` (set to 1 only if not panicking)
+/// - all other IO-region words are 0
+///
+/// The IO polynomial is naturally defined over the IO-region domain of size
+/// `remap_address(RAM_START_ADDRESS, ..)` (in words), which is a power of two by construction.
+/// When `r_address` has more variables than the IO polynomial, we embed it into the larger
+/// domain by fixing the extra high-order variables to 0, which corresponds to multiplying
+/// by `∏(1 - r_hi[i])`.
+pub fn eval_io_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challenge]) -> F {
+    // IO region size in words (power of two).
+    let range_end_words =
+        remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
+    let io_len_words = range_end_words.next_power_of_two().max(1);
+    debug_assert!(io_len_words.is_power_of_two());
+
+    let num_io_vars = io_len_words.log_2();
+    let (r_hi, r_lo) = r_address.split_at(r_address.len() - num_io_vars);
+    debug_assert_eq!(r_lo.len(), num_io_vars);
+
+    // Embed the IO polynomial into the full RAM domain (if any extra high vars exist).
+    let mut hi_scale = F::one();
+    for r_i in r_hi.iter() {
+        hi_scale *= F::one() - *r_i;
+    }
+
+    let mut acc = F::zero();
+
+    // Inputs region
+    if !program_io.inputs.is_empty() {
+        let input_start = remap_address(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+        let input_words: Vec<u64> = program_io
+            .inputs
+            .chunks(8)
+            .map(|chunk| {
+                let mut word = [0u8; 8];
+                for (i, byte) in chunk.iter().enumerate() {
+                    word[i] = *byte;
+                }
+                u64::from_le_bytes(word)
+            })
+            .collect();
+        acc += sparse_eval_u64_block::<F>(input_start, &input_words, r_lo);
+    }
+
+    // Outputs region
+    if !program_io.outputs.is_empty() {
+        let output_start = remap_address(
+            program_io.memory_layout.output_start,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+        let output_words: Vec<u64> = program_io
+            .outputs
+            .chunks(8)
+            .map(|chunk| {
+                let mut word = [0u8; 8];
+                for (i, byte) in chunk.iter().enumerate() {
+                    word[i] = *byte;
+                }
+                u64::from_le_bytes(word)
+            })
+            .collect();
+        acc += sparse_eval_u64_block::<F>(output_start, &output_words, r_lo);
+    }
+
+    // Panic bit (one word)
+    let panic_index =
+        remap_address(program_io.memory_layout.panic, &program_io.memory_layout).unwrap() as usize;
+    let panic_word = [program_io.panic as u64];
+    acc += sparse_eval_u64_block::<F>(panic_index, &panic_word, r_lo);
+
+    // Termination bit (one word), only set when not panicking.
+    if !program_io.panic {
+        let termination_index = remap_address(
+            program_io.memory_layout.termination,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+        let term_word = [1u64];
+        acc += sparse_eval_u64_block::<F>(termination_index, &term_word, r_lo);
+    }
+
+    hi_scale * acc
 }
 
 /// Returns `(initial_memory_state, final_memory_state)`
@@ -730,7 +823,7 @@ mod tests {
             .collect();
 
         let dense_eval = MultilinearPolynomial::<F>::from(dense).evaluate(&r);
-        let fast_eval = evaluate_public_initial_ram_evaluation::<F>(&ram_pp, &program_io, &r);
+        let fast_eval = eval_initial_ram_mle::<F>(&ram_pp, &program_io, &r);
 
         assert_eq!(dense_eval, fast_eval);
     }
