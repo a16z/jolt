@@ -14,8 +14,6 @@ use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
 
-use core::cell::RefCell;
-
 /// A FIFO queue for storing and retrieving advice data between emulation passes.
 /// During the first emulation pass (with `compute_advice` feature), advice functions
 /// write serialized data to this tape. During the second pass (without the feature),

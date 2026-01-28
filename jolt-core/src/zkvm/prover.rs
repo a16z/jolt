@@ -175,6 +175,28 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
     ) -> Self {
+        Self::gen_from_elf_with_advice(
+            preprocessing,
+            elf_contents,
+            inputs,
+            untrusted_advice,
+            trusted_advice,
+            trusted_advice_commitment,
+            trusted_advice_hint,
+            None,
+        )
+    }
+
+    pub fn gen_from_elf_with_advice(
+        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        elf_contents: &[u8],
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+        trusted_advice_commitment: Option<PCS::Commitment>,
+        trusted_advice_hint: Option<PCS::OpeningProofHint>,
+        advice_tape: Option<tracer::AdviceTape>,
+    ) -> Self {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
             max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
@@ -185,15 +207,16 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
-        let (lazy_trace, trace, final_memory_state, program_io) = {
+        let (lazy_trace, trace, final_memory_state, program_io, _advice_tape_out) = {
             let _pprof_trace = pprof_scope!("trace");
-            guest::program::trace(
+            guest::program::trace_with_advice(
                 elf_contents,
                 None,
                 inputs,
                 untrusted_advice,
                 trusted_advice,
                 &memory_config,
+                advice_tape,
             )
         };
 

@@ -83,24 +83,52 @@ pub fn trace(
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
-    println!("tracer trace");
-    let mut lazy_trace_iter = trace_lazy(
+    let (lazy_trace, trace, memory, jolt_device, _advice_tape) = trace_with_advice(
         elf_contents,
         elf_path,
         inputs,
         untrusted_advice,
         trusted_advice,
         memory_config,
+        None,
+    );
+    (lazy_trace, trace, memory, jolt_device)
+}
+
+pub fn trace_with_advice(
+    elf_contents: &[u8],
+    elf_path: Option<&std::path::PathBuf>,
+    inputs: &[u8],
+    untrusted_advice: &[u8],
+    trusted_advice: &[u8],
+    memory_config: &MemoryConfig,
+    advice_tape: Option<cpu::AdviceTape>,
+) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice, cpu::AdviceTape) {
+    println!("tracer trace_with_advice");
+    let mut lazy_trace_iter = trace_lazy_with_advice(
+        elf_contents,
+        elf_path,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        memory_config,
+        advice_tape,
     );
     let lazy_trace_iter_ = lazy_trace_iter.clone();
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
+
+    // Extract the populated advice tape before moving lazy_tracer
+    let advice_tape_result = lazy_trace_iter.lazy_tracer.take_advice_tape();
+
     let final_memory_state =
         std::mem::take(&mut lazy_trace_iter.lazy_tracer.final_memory_state).unwrap();
+    let jolt_device = lazy_trace_iter.lazy_tracer.get_jolt_device();
     (
-        lazy_trace_iter_,
+        lazy_trace_iter_,  // Return the clone since lazy_tracer was moved
         trace,
         final_memory_state,
-        lazy_trace_iter.lazy_tracer.get_jolt_device(),
+        jolt_device,
+        advice_tape_result,  // Return the populated advice tape
     )
 }
 
@@ -152,6 +180,27 @@ pub fn trace_lazy(
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> LazyTraceIterator {
+    trace_lazy_with_advice(
+        elf_contents,
+        elf_path,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        memory_config,
+        None,
+    )
+}
+
+#[tracing::instrument(skip_all)]
+pub fn trace_lazy_with_advice(
+    elf_contents: &[u8],
+    elf_path: Option<&std::path::PathBuf>,
+    inputs: &[u8],
+    untrusted_advice: &[u8],
+    trusted_advice: &[u8],
+    memory_config: &MemoryConfig,
+    advice_tape: Option<cpu::AdviceTape>,
+) -> LazyTraceIterator {
     LazyTraceIterator::new(CheckpointingTracer::new(setup_emulator_with_backtraces(
         elf_contents,
         elf_path,
@@ -159,6 +208,7 @@ pub fn trace_lazy(
         untrusted_advice,
         trusted_advice,
         memory_config,
+        advice_tape,
     )))
 }
 
@@ -223,6 +273,7 @@ fn setup_emulator(
         untrusted_advice,
         trusted_advice,
         memory_config,
+        None, // No advice tape by default
     )
 }
 
@@ -235,10 +286,16 @@ fn setup_emulator_with_backtraces(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
+    advice_tape: Option<cpu::AdviceTape>,
 ) -> Emulator {
     let term = DefaultTerminal::default();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
+
+    // Set the advice tape if provided
+    if let Some(tape) = advice_tape {
+        emulator.set_advice_tape(tape);
+    }
 
     assert!(
         trusted_advice.len() as u64 <= memory_config.max_trusted_advice_size,
@@ -551,6 +608,11 @@ impl CheckpointingTracer {
         self.trace_steps_since_last_checkpoint = 0;
 
         new_processor_state
+    }
+
+    /// Take ownership of the advice tape from the emulator, replacing it with an empty one
+    pub fn take_advice_tape(&mut self) -> cpu::AdviceTape {
+        self.emulator_state.take_advice_tape()
     }
 }
 

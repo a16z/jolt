@@ -691,8 +691,8 @@ impl MacroBuilder {
                 #(#set_program_trusted_advice_args;)*
 
                 // Two-pass strategy: First run compute_advice version to populate advice tape
-                if let Some(compute_advice_elf_contents) = program.get_elf_compute_advice_contents() {
-                    use jolt::guest::program::{trace as guest_trace, decode as guest_decode};
+                let advice_tape = if let Some(compute_advice_elf_contents) = program.get_elf_compute_advice_contents() {
+                    use jolt::guest::program::{trace_with_advice as guest_trace_with_advice, decode as guest_decode};
 
                     // Decode compute_advice ELF to get its program size
                     let (_, _, compute_advice_program_size) = guest_decode(&compute_advice_elf_contents);
@@ -707,36 +707,39 @@ impl MacroBuilder {
                         program_size: Some(compute_advice_program_size),
                     };
 
-                    // Clear advice tape before first pass
-                    jolt::advice_tape_clear();
-
                     // First pass: run compute_advice version to populate advice tape
-                    let _ = guest_trace(
+                    let (_lazy_trace, _, _, _, advice_tape) = guest_trace_with_advice(
                         &compute_advice_elf_contents,
                         None,
                         &input_bytes,
                         &untrusted_advice_bytes,
                         &trusted_advice_bytes,
                         &memory_config,
+                        None, // Start with empty advice tape
                     );
 
-                    // Check advice tape size for debugging
-                    let tape_size = jolt::advice_tape_len();
+                    // Extract the populated advice tape from the return value
+                    let tape_size = advice_tape.len();
                     eprintln!("Advice tape size after first pass: {} bytes", tape_size);
 
                     // Reset read position for second pass
-                    jolt::advice_tape_reset();
-                }
+                    let mut tape_for_second_pass = advice_tape;
+                    tape_for_second_pass.reset_read_position();
+                    Some(tape_for_second_pass)
+                } else {
+                    None
+                };
 
                 // Second pass: run normal version with populated advice tape to generate proof
                 let elf_contents_opt = program.get_elf_contents();
                 let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-                let prover = RV64IMACProver::gen_from_elf(&preprocessing,
+                let prover = RV64IMACProver::gen_from_elf_with_advice(&preprocessing,
                     &elf_contents,
                     &input_bytes,
                     &untrusted_advice_bytes,
                     &trusted_advice_bytes,
                     #commitment_arg,
+                    advice_tape,
                 );
                 let io_device = prover.program_io.clone();
                 let (jolt_proof, _) = prover.prove();
@@ -938,9 +941,7 @@ impl MacroBuilder {
                 MemoryConfig,
                 MemoryLayout,
                 JoltDevice,
-                advice_tape_clear,
-                advice_tape_len,
-                advice_tape_reset,
+                AdviceTape,
             };
             use jolt::{
                 JoltVerifierPreprocessing,
