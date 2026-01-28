@@ -1177,6 +1177,35 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_body = &func.block;
     let fn_attrs = &func.attrs;
 
+    // Validate that no inputs are mutable
+    for arg in fn_inputs {
+        if let syn::FnArg::Typed(pat_type) = arg {
+            // Case 1: mut x: T
+            if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                if pat_ident.mutability.is_some() {
+                    panic!(
+                        "#[jolt::advice] mutable argument '{}' in function '{}'. Mutable arguments are not allowed in advice functions",
+                        pat_ident.ident, fn_name
+                    );
+                }
+            }
+            // Case 2: x: &mut T
+            if let syn::Type::Reference(type_ref) = &*pat_type.ty {
+                if type_ref.mutability.is_some() {
+                    panic!(
+                        "#[jolt::advice] mutable argument '{}' in function '{}'. Mutable arguments are not allowed in advice functions",
+                        if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                            pat_ident.ident.to_string()
+                        } else {
+                            "<unknown>".to_string()
+                        },
+                        fn_name
+                    );
+                }
+            }
+        }
+    }
+
     // Validate return type is UntrustedAdvice<T>
     let inner_type = match fn_output {
         ReturnType::Type(_, ty) => {
