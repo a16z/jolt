@@ -17,7 +17,7 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand_core::CryptoRngCore;
 
-use crate::curve::JoltCurve;
+use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::transcripts::Transcript;
@@ -61,12 +61,22 @@ pub struct BlindFoldProver<'a, F: JoltField, C: JoltCurve> {
     gens: &'a PedersenGenerators<C>,
     /// Verifier R1CS for sumcheck verification
     r1cs: &'a VerifierR1CS<F>,
+    /// Generators for evaluation commitments (g1_0, h1)
+    eval_commitment_gens: Option<(C::G1, C::G1)>,
 }
 
 impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
     /// Create a new BlindFold prover.
-    pub fn new(gens: &'a PedersenGenerators<C>, r1cs: &'a VerifierR1CS<F>) -> Self {
-        Self { gens, r1cs }
+    pub fn new(
+        gens: &'a PedersenGenerators<C>,
+        r1cs: &'a VerifierR1CS<F>,
+        eval_commitment_gens: Option<(C::G1, C::G1)>,
+    ) -> Self {
+        Self {
+            gens,
+            r1cs,
+            eval_commitment_gens,
+        }
     }
 
     /// Generate a BlindFold proof.
@@ -87,7 +97,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
     ) -> BlindFoldProof<F, C> {
         // Step 1: Sample random satisfying pair
         let (random_instance, random_witness, random_z) =
-            sample_random_satisfying_pair(self.gens, self.r1cs, rng);
+            sample_random_satisfying_pair(self.gens, self.r1cs, self.eval_commitment_gens, rng);
 
         // Step 2: Compute cross-term T
         let T = compute_cross_term(
@@ -199,6 +209,8 @@ pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve> {
     gens: &'a PedersenGenerators<C>,
     /// Verifier R1CS for sumcheck verification
     r1cs: &'a VerifierR1CS<F>,
+    /// Generators for evaluation commitments (g1_0, h1)
+    eval_commitment_gens: Option<(C::G1, C::G1)>,
 }
 
 /// Error type for BlindFold verification.
@@ -212,14 +224,24 @@ pub enum BlindFoldVerifyError {
     RoundCommitmentMismatch(usize),
     /// Round coefficients in W don't match round_coefficients at specified round
     RoundCoefficientsMismatch(usize),
+    /// Evaluation commitment opening failed at specified index
+    EvalCommitmentMismatch(usize),
     /// R1CS constraint not satisfied
     R1CSConstraintFailed(usize),
 }
 
 impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
     /// Create a new BlindFold verifier.
-    pub fn new(gens: &'a PedersenGenerators<C>, r1cs: &'a VerifierR1CS<F>) -> Self {
-        Self { gens, r1cs }
+    pub fn new(
+        gens: &'a PedersenGenerators<C>,
+        r1cs: &'a VerifierR1CS<F>,
+        eval_commitment_gens: Option<(C::G1, C::G1)>,
+    ) -> Self {
+        Self {
+            gens,
+            r1cs,
+            eval_commitment_gens,
+        }
     }
 
     /// Verify a BlindFold proof.
@@ -293,6 +315,26 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
             .verify_round_coefficients_consistency(self.r1cs, &proof.final_output_info)
             .map_err(BlindFoldVerifyError::RoundCoefficientsMismatch)?;
 
+        // Check evaluation commitments for extra constraints (if any)
+        if !folded_instance.eval_commitments.is_empty() {
+            let (g1_0, h1) = self
+                .eval_commitment_gens
+                .expect("Missing eval commitment generators");
+            let witness_offset = 1 + self.r1cs.num_public_inputs;
+            for (i, commitment) in folded_instance.eval_commitments.iter().enumerate() {
+                let output_var = self.r1cs.extra_output_vars[i];
+                let blinding_var = self.r1cs.extra_blinding_vars[i];
+                let output_idx = output_var.index() - witness_offset;
+                let blinding_idx = blinding_var.index() - witness_offset;
+                let output_value = proof.folded_witness.W[output_idx];
+                let blinding_value = proof.folded_witness.W[blinding_idx];
+                let expected = g1_0.scalar_mul(&output_value) + h1.scalar_mul(&blinding_value);
+                if *commitment != expected {
+                    return Err(BlindFoldVerifyError::EvalCommitmentMismatch(i));
+                }
+            }
+        }
+
         // Step 4: Verify R1CS satisfaction
         // Check: (A·Z') ∘ (B·Z') = u_folded*(C·Z') + E_folded
         let result = proof.folded_witness.check_satisfaction(
@@ -337,6 +379,11 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
 
     // Include round commitments in Fiat-Shamir
     for commitment in &instance.round_commitments {
+        append_g1_to_transcript::<C>(commitment, transcript);
+    }
+
+    // Include evaluation commitments in Fiat-Shamir
+    for commitment in &instance.eval_commitments {
         append_g1_to_transcript::<C>(commitment, transcript);
     }
 }
@@ -396,12 +443,13 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             &mut rng,
         );
 
         // Create prover and verifier
-        let prover = BlindFoldProver::new(&gens, &r1cs);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
+        let prover = BlindFoldProver::new(&gens, &r1cs, None);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         // Generate proof
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
@@ -457,11 +505,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             &mut rng,
         );
 
-        let prover = BlindFoldProver::new(&gens, &r1cs);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
+        let prover = BlindFoldProver::new(&gens, &r1cs, None);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         // Generate valid proof
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
@@ -550,11 +599,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             &mut rng,
         );
 
-        let prover = BlindFoldProver::new(&gens, &r1cs);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
+        let prover = BlindFoldProver::new(&gens, &r1cs, None);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_multi");
         let proof = prover.prove(

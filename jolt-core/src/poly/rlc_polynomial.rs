@@ -354,6 +354,16 @@ impl<F: JoltField> RLCPolynomial<F> {
             self.streaming_vector_matrix_product(left_vec, num_columns, Arc::clone(ctx))
         } else {
             // Linear space mode: use pre-computed dense_rlc
+            // Dense polys of length T are embedded as replicated K times in K*T.
+            // For correct VMV, we need to sum left_vec over all K blocks.
+            let dense_rows = self.dense_rlc.len() / num_columns;
+            let k_chunk = left_vec.len() / dense_rows;
+
+            let row_factors: Vec<F> = (0..dense_rows)
+                .into_par_iter()
+                .map(|row| (0..k_chunk).map(|k| left_vec[k * dense_rows + row]).sum())
+                .collect();
+
             (0..num_columns)
                 .into_par_iter()
                 .map(|col_index| {
@@ -361,7 +371,7 @@ impl<F: JoltField> RLCPolynomial<F> {
                         .iter()
                         .skip(col_index)
                         .step_by(num_columns)
-                        .zip(left_vec.iter())
+                        .zip(row_factors.iter())
                         .map(|(&a, &b)| -> F { a * b })
                         .sum::<F>()
                 })
@@ -508,14 +518,14 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                     VmvSetup::<F>::create_accumulators(num_columns);
 
                 let row_start = chunk_idx * rows_per_thread;
-                for (local_idx, &row_weight) in row_weights.iter().enumerate() {
+                for (local_idx, _) in row_weights.iter().enumerate() {
                     let row_idx = row_start + local_idx;
                     let chunk_start = row_idx * num_columns;
 
-                    // Row-scaled dense coefficients.
-                    let scaled_rd_inc = row_weight * setup.rd_inc_coeff;
-                    let scaled_ram_inc = row_weight * setup.ram_inc_coeff;
+                    // Dense polys use row_factors (summed over all K blocks) for correct embedding
                     let row_factor = setup.row_factors[row_idx];
+                    let scaled_rd_inc = row_factor * setup.rd_inc_coeff;
+                    let scaled_ram_inc = row_factor * setup.ram_inc_coeff;
 
                     // Split into valid trace range vs padding range.
                     let valid_end = std::cmp::min(chunk_start + num_columns, trace_len);
@@ -575,10 +585,10 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
             .fold(
                 || VmvSetup::<F>::create_accumulators(num_columns),
                 |(mut dense_accs, mut onehot_accs), (row_idx, chunk)| {
-                    let row_weight = left_vec[row_idx];
-                    let scaled_rd_inc = row_weight * setup.rd_inc_coeff;
-                    let scaled_ram_inc = row_weight * setup.ram_inc_coeff;
+                    // Dense polys use row_factors (summed over all K blocks) for correct embedding
                     let row_factor = setup.row_factors[row_idx];
+                    let scaled_rd_inc = row_factor * setup.rd_inc_coeff;
+                    let scaled_ram_inc = row_factor * setup.ram_inc_coeff;
 
                     // Process columns within chunk sequentially.
                     for (col_idx, cycle) in chunk.iter().enumerate() {

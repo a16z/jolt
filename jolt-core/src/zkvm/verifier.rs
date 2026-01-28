@@ -5,12 +5,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::curve::JoltCurve;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitment};
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::subprotocols::blindfold::{
     BlindFoldVerifier, FinalOutputConfig, InputClaimConstraint, OutputClaimConstraint, StageConfig,
-    VerifierR1CSBuilder,
+    ValueSource, VerifierR1CSBuilder,
 };
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
@@ -62,13 +62,13 @@ use crate::zkvm::{
         product::ProductVirtualRemainderVerifier, shift::ShiftSumcheckVerifier,
         verify_stage1_uni_skip, verify_stage2_uni_skip,
     },
-    ProverDebugInfo,
+    stage8_opening_ids, ProverDebugInfo,
 };
 use crate::{
     field::JoltField,
     poly::opening_proof::{
-        compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningPoint,
-        SumcheckId, VerifierOpeningAccumulator,
+        compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningId,
+        OpeningPoint, SumcheckId, VerifierOpeningAccumulator,
     },
     pprof_scope,
     subprotocols::{
@@ -205,11 +205,17 @@ pub struct JoltVerifier<
     pub pedersen_generators: PedersenGenerators<C>,
 }
 
+#[derive(Clone, Debug)]
+struct Stage8VerifyData<F: JoltField> {
+    opening_ids: Vec<OpeningId>,
+    constraint_coeffs: Vec<F>,
+}
+
 impl<
         'a,
         F: JoltField,
         C: JoltCurve,
-        PCS: CommitmentScheme<Field = F>,
+        PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>,
         ProofTranscript: Transcript,
     > JoltVerifier<'a, F, C, PCS, ProofTranscript>
 {
@@ -390,6 +396,7 @@ impl<
             stage7_result.output_constraint_challenge_values.clone(), // Stage 6
         ];
 
+        let stage8_data = self.verify_stage8()?;
         self.verify_blindfold(
             &sumcheck_challenges,
             uniskip_challenges,
@@ -401,8 +408,8 @@ impl<
             &stage2_result.batched_input_constraint,
             &stage1_result.input_constraint_challenge_values,
             &stage2_result.input_constraint_challenge_values,
+            &stage8_data,
         )?;
-        self.verify_stage8()?;
 
         Ok(())
     }
@@ -1006,6 +1013,7 @@ impl<
         stage2_batched_input: &InputClaimConstraint,
         stage1_batched_input_values: &[F],
         stage2_batched_input_values: &[F],
+        stage8_data: &Stage8VerifyData<F>,
     ) -> Result<(), anyhow::Error> {
         // Build stage configurations including uni-skip rounds.
         // Uni-skip rounds are the first round of stages 1 and 2 (indices 0 and 1).
@@ -1134,8 +1142,17 @@ impl<
                 Some(FinalOutputConfig::with_constraint(constraint.clone()));
         }
 
+        let extra_constraint_terms: Vec<(ValueSource, ValueSource)> = stage8_data
+            .opening_ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (ValueSource::challenge(i), ValueSource::opening(*id)))
+            .collect();
+        let extra_constraint = OutputClaimConstraint::linear(extra_constraint_terms);
+        let extra_constraints = vec![extra_constraint];
+
         // Build the verifier R1CS with the same structure as the prover
-        let builder = VerifierR1CSBuilder::new(&stage_configs);
+        let builder = VerifierR1CSBuilder::new_with_extra(&stage_configs, &extra_constraints);
         let r1cs = builder.build();
 
         // SECURITY: Verify that challenges in BlindFold proof match those derived from main transcript.
@@ -1256,6 +1273,18 @@ impl<
             }
         }
 
+        // Verify extra constraint challenge values (PCS binding)
+        for (value_idx, expected) in stage8_data.constraint_coeffs.iter().enumerate() {
+            let actual = self.proof.blindfold_proof.real_instance.x[constraint_challenge_idx];
+            if *expected != actual {
+                return Err(anyhow::anyhow!(
+                    "BlindFold extra constraint challenge mismatch at index {value_idx}: \
+                     expected {expected:?}, got {actual:?}"
+                ));
+            }
+            constraint_challenge_idx += 1;
+        }
+
         // SECURITY: Verify round commitments in BlindFold match those in sumcheck proofs.
         // This prevents prover from using different polynomials in BlindFold vs sumcheck.
         let mut expected_round_commitments: Vec<C::G1> = Vec::new();
@@ -1286,8 +1315,21 @@ impl<
             ));
         }
 
+        // SECURITY: Verify eval commitments in BlindFold match the PCS proof.
+        let expected_eval_commitment = PCS::eval_commitment(&self.proof.joint_opening_proof)
+            .ok_or_else(|| anyhow::anyhow!("Missing evaluation commitment in PCS proof"))?;
+        let eval_commitments = &self.proof.blindfold_proof.real_instance.eval_commitments;
+        if eval_commitments.len() != 1 || eval_commitments[0] != expected_eval_commitment {
+            return Err(anyhow::anyhow!(
+                "BlindFold eval commitment does not match PCS proof"
+            ));
+        }
+
         // Create BlindFold verifier and verify the proof
-        let verifier = BlindFoldVerifier::new(&self.pedersen_generators, &r1cs);
+        let eval_commitment_gens =
+            PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
+        let verifier =
+            BlindFoldVerifier::new(&self.pedersen_generators, &r1cs, eval_commitment_gens);
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
         verifier
@@ -1401,7 +1443,7 @@ impl<
     }
 
     /// Stage 8: Dory batch opening verification.
-    fn verify_stage8(&mut self) -> Result<(), anyhow::Error> {
+    fn verify_stage8(&mut self) -> Result<Stage8VerifyData<F>, anyhow::Error> {
         // Get the unified opening point from HammingWeightClaimReduction
         // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
         let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
@@ -1409,10 +1451,11 @@ impl<
             SumcheckId::HammingWeightClaimReduction,
         );
         let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let r_address_stage7 = &opening_point.r[..log_k_chunk];
+        let _r_address_stage7 = &opening_point.r[..log_k_chunk];
 
         // 1. Collect all (polynomial, claim) pairs
         let mut polynomial_claims = Vec::new();
+        let mut scaling_factors = Vec::new();
 
         // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
         let (_, ram_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
@@ -1424,12 +1467,11 @@ impl<
             SumcheckId::IncClaimReduction,
         );
 
-        // Apply Lagrange factor for dense polys
-        // Note: r_address is in big-endian, Lagrange factor uses ∏(1 - r_i)
-        let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
-
-        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
-        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
+        // Dense polynomials are independent of address variables, so no Lagrange scaling.
+        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim));
+        scaling_factors.push(F::one());
+        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim));
+        scaling_factors.push(F::one());
 
         // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
         for i in 0..self.one_hot_params.instruction_d {
@@ -1438,6 +1480,7 @@ impl<
                 SumcheckId::HammingWeightClaimReduction,
             );
             polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
+            scaling_factors.push(F::one());
         }
         for i in 0..self.one_hot_params.bytecode_d {
             let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
@@ -1445,6 +1488,7 @@ impl<
                 SumcheckId::HammingWeightClaimReduction,
             );
             polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
+            scaling_factors.push(F::one());
         }
         for i in 0..self.one_hot_params.ram_d {
             let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
@@ -1452,11 +1496,15 @@ impl<
                 SumcheckId::HammingWeightClaimReduction,
             );
             polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
+            scaling_factors.push(F::one());
         }
 
         // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
         // These are committed with smaller dimensions, so we apply Lagrange factors to embed
         // them in the top-left block of the main Dory matrix.
+        let mut include_trusted_advice = false;
+        let mut include_untrusted_advice = false;
+
         if let Some((advice_point, advice_claim)) = self
             .opening_accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReductionPhase2)
@@ -1467,6 +1515,8 @@ impl<
                 CommittedPolynomial::TrustedAdvice,
                 advice_claim * lagrange_factor,
             ));
+            scaling_factors.push(lagrange_factor);
+            include_trusted_advice = true;
         }
 
         if let Some((advice_point, advice_claim)) = self.opening_accumulator.get_advice_opening(
@@ -1479,12 +1529,25 @@ impl<
                 CommittedPolynomial::UntrustedAdvice,
                 advice_claim * lagrange_factor,
             ));
+            scaling_factors.push(lagrange_factor);
+            include_untrusted_advice = true;
         }
 
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         self.transcript.append_scalars(&claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+        let constraint_coeffs: Vec<F> = gamma_powers
+            .iter()
+            .zip(&scaling_factors)
+            .map(|(gamma, scale)| *gamma * *scale)
+            .collect();
+
+        let opening_ids = stage8_opening_ids(
+            &self.one_hot_params,
+            include_trusted_advice,
+            include_untrusted_advice,
+        );
 
         // Build state for computing joint commitment/claim
         let state = DoryOpeningState {
@@ -1541,7 +1604,12 @@ impl<
             &joint_claim,
             &joint_commitment,
         )
-        .context("Stage 8")
+        .context("Stage 8")?;
+
+        Ok(Stage8VerifyData {
+            opening_ids,
+            constraint_coeffs,
+        })
     }
 
     /// Compute joint commitment for the batch opening.

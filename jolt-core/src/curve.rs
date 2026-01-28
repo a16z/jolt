@@ -102,6 +102,7 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
 use ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::{pairing::Pairing, AdditiveGroup, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, Zero};
+use dory::backends::arkworks::ArkG1;
 use std::ops::MulAssign;
 
 /// Wrapper around BN254 G1 projective points
@@ -180,6 +181,12 @@ impl JoltGroupElement for Bn254G1 {
     fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self {
         let fr_scalar = jolt_field_to_fr(scalar);
         Bn254G1(self.0 * fr_scalar)
+    }
+}
+
+impl From<ArkG1> for Bn254G1 {
+    fn from(value: ArkG1) -> Self {
+        Bn254G1(value.0)
     }
 }
 

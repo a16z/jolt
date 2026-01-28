@@ -1,7 +1,7 @@
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
 
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
@@ -32,7 +32,7 @@ pub fn preprocess(
 pub fn verify<
     F: JoltField,
     C: JoltCurve,
-    PCS: StreamingCommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
     FS: Transcript,
 >(
     inputs_bytes: &[u8],

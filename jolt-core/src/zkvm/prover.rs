@@ -1,4 +1,7 @@
-use crate::{subprotocols::streaming_schedule::LinearOnlySchedule, zkvm::config::OneHotConfig};
+use crate::{
+    subprotocols::streaming_schedule::LinearOnlySchedule,
+    zkvm::{config::OneHotConfig, stage8_opening_ids},
+};
 use std::{
     collections::HashMap,
     fs::File,
@@ -15,6 +18,8 @@ use crate::zkvm::config::ReadWriteConfig;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
 
+#[cfg(test)]
+use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
@@ -24,10 +29,13 @@ use crate::{
     guest,
     poly::lagrange_poly::LagrangeHelper,
     poly::{
-        commitment::{commitment_scheme::StreamingCommitmentScheme, dory::DoryGlobals},
+        commitment::{
+            commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment},
+            dory::DoryGlobals,
+        },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
-            compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator,
+            compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningId,
             ProverOpeningAccumulator, SumcheckId,
         },
         rlc_polynomial::{RLCStreamingData, TraceSource},
@@ -35,9 +43,9 @@ use crate::{
     pprof_scope,
     subprotocols::{
         blindfold::{
-            BlindFoldProof, BlindFoldProver, BlindFoldWitness, FinalOutputWitness,
-            InputClaimConstraint, OutputClaimConstraint, RelaxedR1CSInstance, RoundWitness,
-            StageConfig, StageWitness, VerifierR1CSBuilder,
+            BlindFoldProof, BlindFoldProver, BlindFoldWitness, ExtraConstraintWitness,
+            FinalOutputWitness, InputClaimConstraint, OutputClaimConstraint, RelaxedR1CSInstance,
+            RoundWitness, StageConfig, StageWitness, ValueSource, VerifierR1CSBuilder,
         },
         booleanity::{BooleanitySumcheckParams, BooleanitySumcheckProver},
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
@@ -173,11 +181,18 @@ pub struct JoltCpuProver<
     pub rw_config: ReadWriteConfig,
 }
 
+#[derive(Clone, Debug)]
+struct Stage8ZkData<F: JoltField> {
+    opening_ids: Vec<OpeningId>,
+    constraint_coeffs: Vec<F>,
+    joint_claim: F,
+}
+
 impl<
         'a,
         F: JoltField,
         C: JoltCurve,
-        PCS: StreamingCommitmentScheme<Field = F>,
+        PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
         ProofTranscript: Transcript,
     > JoltCpuProver<'a, F, C, PCS, ProofTranscript>
 {
@@ -488,9 +503,9 @@ impl<
             r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
         ];
 
-        let (blindfold_proof, blindfold_initial_claims) = self.prove_blindfold();
-
-        let joint_opening_proof = self.prove_stage8(opening_proof_hints);
+        let (joint_opening_proof, stage8_data) = self.prove_stage8(opening_proof_hints);
+        let (blindfold_proof, blindfold_initial_claims) =
+            self.prove_blindfold(&stage8_data, &joint_opening_proof);
 
         #[cfg(test)]
         assert!(
@@ -1298,7 +1313,11 @@ impl<
     /// The initial_claims are for the 7 logical Jolt stages, where stages 1-2 use
     /// uni-skip initial claims and stages 3-7 use regular sumcheck initial claims.
     #[tracing::instrument(skip_all)]
-    fn prove_blindfold(&mut self) -> (BlindFoldProof<F, C>, [F; 9]) {
+    fn prove_blindfold(
+        &mut self,
+        stage8_data: &Stage8ZkData<F>,
+        joint_opening_proof: &PCS::Proof,
+    ) -> (BlindFoldProof<F, C>, [F; 9]) {
         tracing::info!("BlindFold proving");
 
         let mut rng = rand::thread_rng();
@@ -1503,8 +1522,17 @@ impl<
             }
         }
 
+        let extra_constraint_terms: Vec<(ValueSource, ValueSource)> = stage8_data
+            .opening_ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (ValueSource::challenge(i), ValueSource::opening(*id)))
+            .collect();
+        let extra_constraint = OutputClaimConstraint::linear(extra_constraint_terms);
+        let extra_constraints = vec![extra_constraint];
+
         // Build verifier R1CS from configurations
-        let builder = VerifierR1CSBuilder::<F>::new(&stage_configs);
+        let builder = VerifierR1CSBuilder::<F>::new_with_extra(&stage_configs, &extra_constraints);
         let r1cs = builder.build();
 
         // Convert initial claims to array - 7 chains (one per Jolt stage)
@@ -1512,9 +1540,26 @@ impl<
             .try_into()
             .expect("Expected exactly 7 initial claims");
 
+        let extra_opening_values: Vec<F> = stage8_data
+            .opening_ids
+            .iter()
+            .map(|id| self.opening_accumulator.get_opening(*id))
+            .collect();
+        let extra_blinding = PCS::eval_commitment_blinding(joint_opening_proof)
+            .expect("missing eval commitment blinding");
+        let extra_witness = ExtraConstraintWitness {
+            output_value: stage8_data.joint_claim,
+            blinding: extra_blinding,
+            challenge_values: stage8_data.constraint_coeffs.clone(),
+            opening_values: extra_opening_values,
+        };
+
         // Use all 7 initial claims for the BlindFoldWitness (one per Jolt stage)
-        let blindfold_witness =
-            BlindFoldWitness::with_multiple_claims(initial_claims_array.to_vec(), stage_witnesses);
+        let blindfold_witness = BlindFoldWitness::with_extra_constraints(
+            initial_claims_array.to_vec(),
+            stage_witnesses,
+            vec![extra_witness],
+        );
 
         // Assign witness to get Z vector
         let z = blindfold_witness.assign(&r1cs);
@@ -1556,6 +1601,8 @@ impl<
         }
 
         // Create non-relaxed instance and witness with round commitment data
+        let eval_commitments =
+            vec![PCS::eval_commitment(joint_opening_proof).expect("missing eval commitment")];
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, C>::new_non_relaxed(
             &self.pedersen_generators,
             &witness,
@@ -1564,11 +1611,13 @@ impl<
             round_commitments,
             round_coefficients,
             round_blindings,
+            eval_commitments,
             &mut rng,
         );
 
         // Run BlindFold protocol
-        let prover = BlindFoldProver::new(&self.pedersen_generators, &r1cs);
+        let eval_commitment_gens = PCS::eval_commitment_gens(&self.preprocessing.generators);
+        let prover = BlindFoldProver::new(&self.pedersen_generators, &r1cs, eval_commitment_gens);
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
         let proof = prover.prove(
@@ -1678,7 +1727,7 @@ impl<
     fn prove_stage8(
         &mut self,
         opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-    ) -> PCS::Proof {
+    ) -> (PCS::Proof, Stage8ZkData<F>) {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
         let _guard = DoryGlobals::initialize_context(
@@ -1694,10 +1743,12 @@ impl<
             SumcheckId::HammingWeightClaimReduction,
         );
         let log_k_chunk = self.one_hot_params.log_k_chunk;
+        #[allow(unused_variables)]
         let r_address_stage7 = &opening_point.r[..log_k_chunk];
 
         // 1. Collect all (polynomial, claim) pairs
         let mut polynomial_claims = Vec::new();
+        let mut scaling_factors = Vec::new();
 
         // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
         // These are at r_cycle_stage6 only (length log_T)
@@ -1729,13 +1780,11 @@ impl<
             );
         }
 
-        // Apply Lagrange factor for dense polys: ∏_{i<log_k_chunk} (1 - r_address[i])
-        // Because dense polys have fewer variables, we need to account for this
-        // Note: r_address is in big-endian, Lagrange factor uses ∏(1 - r_i)
-        let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
-
-        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
-        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
+        // Dense polynomials are independent of address variables, so no Lagrange scaling.
+        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim));
+        scaling_factors.push(F::one());
+        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim));
+        scaling_factors.push(F::one());
 
         // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
         // These are at (r_address_stage7, r_cycle_stage6)
@@ -1745,6 +1794,7 @@ impl<
                 SumcheckId::HammingWeightClaimReduction,
             );
             polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
+            scaling_factors.push(F::one());
         }
         for i in 0..self.one_hot_params.bytecode_d {
             let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
@@ -1752,6 +1802,7 @@ impl<
                 SumcheckId::HammingWeightClaimReduction,
             );
             polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
+            scaling_factors.push(F::one());
         }
         for i in 0..self.one_hot_params.ram_d {
             let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
@@ -1759,11 +1810,15 @@ impl<
                 SumcheckId::HammingWeightClaimReduction,
             );
             polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
+            scaling_factors.push(F::one());
         }
 
         // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
         // These are committed with smaller dimensions, so we apply Lagrange factors to embed
         // them in the top-left block of the main Dory matrix.
+        let mut include_trusted_advice = false;
+        let mut include_untrusted_advice = false;
+
         if let Some((advice_point, advice_claim)) = self
             .opening_accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReductionPhase2)
@@ -1774,6 +1829,8 @@ impl<
                 CommittedPolynomial::TrustedAdvice,
                 advice_claim * lagrange_factor,
             ));
+            scaling_factors.push(lagrange_factor);
+            include_trusted_advice = true;
         }
 
         if let Some((advice_point, advice_claim)) = self.opening_accumulator.get_advice_opening(
@@ -1786,12 +1843,30 @@ impl<
                 CommittedPolynomial::UntrustedAdvice,
                 advice_claim * lagrange_factor,
             ));
+            scaling_factors.push(lagrange_factor);
+            include_untrusted_advice = true;
         }
 
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         self.transcript.append_scalars(&claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+        let constraint_coeffs: Vec<F> = gamma_powers
+            .iter()
+            .zip(&scaling_factors)
+            .map(|(gamma, scale)| *gamma * *scale)
+            .collect();
+        let joint_claim: F = gamma_powers
+            .iter()
+            .zip(claims.iter())
+            .map(|(gamma, claim)| *gamma * claim)
+            .sum();
+
+        let opening_ids = stage8_opening_ids(
+            &self.one_hot_params,
+            include_trusted_advice,
+            include_untrusted_advice,
+        );
 
         // Build DoryOpeningState
         let state = DoryOpeningState {
@@ -1824,14 +1899,92 @@ impl<
             advice_polys,
         );
 
+        #[cfg(test)]
+        {
+            let r_be = opening_point.r.clone();
+            let mut r_rev = r_be.clone();
+            r_rev.reverse();
+
+            let (r_addr, r_cycle) = r_be.split_at(log_k_chunk);
+            let r_swap = [r_cycle, r_addr].concat();
+
+            let mut r_addr_le: Vec<F::Challenge> = r_addr.to_vec();
+            r_addr_le.reverse();
+            let mut r_cycle_le: Vec<F::Challenge> = r_cycle.to_vec();
+            r_cycle_le.reverse();
+            let r_swap_le = [r_cycle_le.as_slice(), r_addr_le.as_slice()].concat();
+            let r_addr_le_cycle = [r_addr_le.as_slice(), r_cycle_le.as_slice()].concat();
+
+            let log_t = self.padded_trace_len.log_2();
+            let (_sigma_main, nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
+
+            let (r_rows, r_cols) = r_be.split_at(nu_main);
+            let mut r_rows_rev: Vec<F::Challenge> = r_rows.to_vec();
+            r_rows_rev.reverse();
+            let mut r_cols_rev: Vec<F::Challenge> = r_cols.to_vec();
+            r_cols_rev.reverse();
+            let r_seg_rev = [r_rows_rev.as_slice(), r_cols_rev.as_slice()].concat();
+            let r_seg_swap_rev = [r_cols_rev.as_slice(), r_rows_rev.as_slice()].concat();
+
+            let candidates = [
+                ("be", &r_be),
+                ("rev", &r_rev),
+                ("swap", &r_swap),
+                ("swap_le", &r_swap_le),
+                ("addr_le_cycle", &r_addr_le_cycle),
+                ("seg_rev", &r_seg_rev),
+                ("seg_swap_rev", &r_seg_swap_rev),
+            ];
+
+            let mut matched = None;
+            for (label, point) in candidates {
+                let eval = joint_poly.evaluate(point);
+                if eval == joint_claim {
+                    matched = Some(label);
+                    break;
+                }
+            }
+
+            if matched.is_none() {
+                let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
+                let mut joint_claim_dense_scaled = joint_claim;
+                if !opening_ids.is_empty() {
+                    let ram_inc = opening_ids[0];
+                    let rd_inc = opening_ids[1];
+                    let ram_inc_claim = self.opening_accumulator.get_opening(ram_inc);
+                    let rd_inc_claim = self.opening_accumulator.get_opening(rd_inc);
+                    joint_claim_dense_scaled +=
+                        (lagrange_factor - F::one()) * (ram_inc_claim + rd_inc_claim);
+                }
+                let eval_be = joint_poly.evaluate(&opening_point.r);
+                let eval_rev = joint_poly.evaluate(&r_rev);
+                let eval_swap = joint_poly.evaluate(&r_swap);
+                let eval_swap_le = joint_poly.evaluate(&r_swap_le);
+                let eval_addr_le_cycle = joint_poly.evaluate(&r_addr_le_cycle);
+                let eval_seg_rev = joint_poly.evaluate(&r_seg_rev);
+                let eval_seg_swap_rev = joint_poly.evaluate(&r_seg_swap_rev);
+                panic!(
+                    "Stage8 joint claim mismatch: joint_claim={joint_claim:?} joint_claim_dense_scaled={joint_claim_dense_scaled:?} eval_be={eval_be:?} eval_rev={eval_rev:?} eval_swap={eval_swap:?} eval_swap_le={eval_swap_le:?} eval_addr_le_cycle={eval_addr_le_cycle:?} eval_seg_rev={eval_seg_rev:?} eval_seg_swap_rev={eval_seg_swap_rev:?}"
+                );
+            }
+        }
+
         // Dory opening proof at the unified point
-        PCS::prove(
+        let proof = PCS::prove(
             &self.preprocessing.generators,
             &joint_poly,
             &opening_point.r,
             Some(hint),
             &mut self.transcript,
-        )
+        );
+
+        let stage8_data = Stage8ZkData {
+            opening_ids,
+            constraint_coeffs,
+            joint_claim,
+        };
+
+        (proof, stage8_data)
     }
 }
 
@@ -2958,12 +3111,13 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             &mut rng,
         );
 
         // Run BlindFold protocol
-        let prover = BlindFoldProver::new(&gens, &r1cs);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
+        let prover = BlindFoldProver::new(&gens, &r1cs, None);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_E2E");
         let proof = prover.prove(

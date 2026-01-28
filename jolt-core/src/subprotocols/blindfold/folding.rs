@@ -6,7 +6,7 @@
 //! The key insight: if (u₁, w₁) and (u₂, w₂) both satisfy the relaxed R1CS,
 //! then their fold (u', w') also satisfies it.
 
-use crate::curve::JoltCurve;
+use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use rand_core::CryptoRngCore;
@@ -75,6 +75,7 @@ pub fn compute_cross_term<F: JoltField>(
 pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCore>(
     gens: &PedersenGenerators<C>,
     r1cs: &VerifierR1CS<F>,
+    eval_commitment_gens: Option<(C::G1, C::G1)>,
     rng: &mut R,
 ) -> (RelaxedR1CSInstance<F, C>, RelaxedR1CSWitness<F>, Vec<F>) {
     // Build W with proper structure: [coefficients, intermediates, next_claim] per round
@@ -83,6 +84,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     let mut round_coefficients: Vec<Vec<F>> = Vec::new();
     let mut round_blindings: Vec<F> = Vec::new();
     let mut round_commitments: Vec<C::G1> = Vec::new();
+    let mut eval_commitments: Vec<C::G1> = Vec::new();
 
     // Track allocated openings to match R1CS's global_opening_vars behavior
     let mut allocated_openings: std::collections::HashSet<crate::poly::opening_proof::OpeningId> =
@@ -180,6 +182,41 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         }
     }
 
+    // Append extra constraints after all stages
+    for constraint in &r1cs.extra_constraints {
+        let num_new_openings = constraint
+            .required_openings
+            .iter()
+            .filter(|id| {
+                if allocated_openings.contains(id) {
+                    false
+                } else {
+                    allocated_openings.insert(**id);
+                    true
+                }
+            })
+            .count();
+        let num_aux = estimate_aux_var_count(constraint);
+
+        for _ in 0..num_new_openings {
+            W.push(F::random(rng));
+        }
+
+        let output_value = F::random(rng);
+        W.push(output_value);
+
+        for _ in 0..num_aux {
+            W.push(F::random(rng));
+        }
+
+        let blinding = F::random(rng);
+        W.push(blinding);
+
+        let (g1_0, h1) = eval_commitment_gens.expect("Missing eval commitment generators");
+        let commitment = g1_0.scalar_mul(&output_value) + h1.scalar_mul(&blinding);
+        eval_commitments.push(commitment);
+    }
+
     // Sample random public inputs
     let x: Vec<F> = (0..r1cs.num_public_inputs)
         .map(|_| F::random(rng))
@@ -241,6 +278,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         W_bar,
         x: x.clone(),
         round_commitments,
+        eval_commitments,
     };
 
     let witness = RelaxedR1CSWitness {
@@ -340,7 +378,7 @@ mod tests {
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 10);
 
         // Sample random satisfying pair
-        let (instance, witness, z) = sample_random_satisfying_pair(&gens, &r1cs, &mut rng);
+        let (instance, witness, z) = sample_random_satisfying_pair(&gens, &r1cs, None, &mut rng);
 
         // Instance should have non-zero u
         assert!(!instance.u.is_zero());
@@ -405,7 +443,7 @@ mod tests {
         let u1 = F::one();
 
         // Pair 2: random satisfying pair
-        let (inst2, w2, z2) = sample_random_satisfying_pair(&gens, &r1cs, &mut rng);
+        let (inst2, w2, z2) = sample_random_satisfying_pair(&gens, &r1cs, None, &mut rng);
         let u2 = inst2.u;
 
         // Compute cross-term
@@ -449,8 +487,8 @@ mod tests {
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 10);
 
         // Create two random satisfying pairs
-        let (inst1, wit1, _) = sample_random_satisfying_pair(&gens, &r1cs, &mut rng);
-        let (inst2, wit2, _) = sample_random_satisfying_pair(&gens, &r1cs, &mut rng);
+        let (inst1, wit1, _) = sample_random_satisfying_pair(&gens, &r1cs, None, &mut rng);
+        let (inst2, wit2, _) = sample_random_satisfying_pair(&gens, &r1cs, None, &mut rng);
 
         // Compute cross-term (using placeholder Z vectors for this test)
         let T: Vec<F> = (0..r1cs.num_constraints)

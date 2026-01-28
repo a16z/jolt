@@ -170,6 +170,19 @@ pub struct FinalOutputWitness<F> {
     pub is_general_constraint: bool,
 }
 
+/// Witness data for extra constraints appended after all stages.
+#[derive(Clone, Debug, Default)]
+pub struct ExtraConstraintWitness<F> {
+    /// Output value for the constraint (witness variable).
+    pub output_value: F,
+    /// Blinding used for the evaluation commitment (witness variable).
+    pub blinding: F,
+    /// Challenge values for the constraint (public inputs).
+    pub challenge_values: Vec<F>,
+    /// Opening values required by the constraint (witness variables).
+    pub opening_values: Vec<F>,
+}
+
 impl<F: JoltField> FinalOutputWitness<F> {
     pub fn new(batching_coefficients: Vec<F>, evaluations: Vec<F>) -> Self {
         debug_assert_eq!(
@@ -215,6 +228,8 @@ pub struct BlindFoldWitness<F> {
     pub initial_claims: Vec<F>,
     /// Witness data for each stage
     pub stages: Vec<StageWitness<F>>,
+    /// Extra constraints appended after all stages (e.g., PCS binding)
+    pub extra_constraints: Vec<ExtraConstraintWitness<F>>,
 }
 
 impl<F: JoltField> BlindFoldWitness<F> {
@@ -223,6 +238,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         Self {
             initial_claims: vec![initial_claim],
             stages,
+            extra_constraints: Vec::new(),
         }
     }
 
@@ -232,6 +248,20 @@ impl<F: JoltField> BlindFoldWitness<F> {
         Self {
             initial_claims,
             stages,
+            extra_constraints: Vec::new(),
+        }
+    }
+
+    /// Create a new BlindFold witness with extra constraints appended after all stages.
+    pub fn with_extra_constraints(
+        initial_claims: Vec<F>,
+        stages: Vec<StageWitness<F>>,
+        extra_constraints: Vec<ExtraConstraintWitness<F>>,
+    ) -> Self {
+        Self {
+            initial_claims,
+            stages,
+            extra_constraints,
         }
     }
 
@@ -287,19 +317,29 @@ impl<F: JoltField> BlindFoldWitness<F> {
             .map(|c| c.num_challenges)
             .sum();
 
+        // Count total extra constraint challenge values
+        let total_extra_constraint_challenges: usize = r1cs
+            .extra_constraints
+            .iter()
+            .map(|c| c.num_challenges)
+            .sum();
+
         // Public input layout:
         // - Indices 1..=total_rounds are sumcheck challenges
         // - Indices total_rounds+1..=total_rounds+num_chains are initial_claims
         // - Indices after that are batching_coefficients (simple constraints)
         // - Indices after that are output constraint_challenge_values
         // - Indices after that are input constraint_challenge_values
+        // - Indices after that are extra constraint_challenge_values
         let challenge_start = 1;
         let initial_claims_start = total_rounds + 1;
         let batching_coeffs_start = initial_claims_start + num_chains;
         let constraint_challenges_start = batching_coeffs_start + total_batching_coeffs;
         let input_constraint_challenges_start =
             constraint_challenges_start + total_constraint_challenges;
-        let witness_start = input_constraint_challenges_start + total_input_constraint_challenges;
+        let extra_constraint_challenges_start =
+            input_constraint_challenges_start + total_input_constraint_challenges;
+        let witness_start = extra_constraint_challenges_start + total_extra_constraint_challenges;
 
         // Assign initial claims
         for (i, claim) in self.initial_claims.iter().enumerate() {
@@ -310,6 +350,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         let mut batching_coeff_idx = batching_coeffs_start;
         let mut constraint_challenge_idx = constraint_challenges_start;
         let mut input_constraint_challenge_idx = input_constraint_challenges_start;
+        let mut extra_constraint_challenge_idx = extra_constraint_challenges_start;
         let mut witness_idx = witness_start;
 
         // Track which openings have been assigned (mirrors R1CS's global_opening_vars)
@@ -545,6 +586,84 @@ impl<F: JoltField> BlindFoldWitness<F> {
                         }
                     }
                 }
+            }
+        }
+
+        // Assign extra constraints appended after all stages
+        for (extra_idx, constraint) in r1cs.extra_constraints.iter().enumerate() {
+            let extra_witness = self.extra_constraints.get(extra_idx);
+            let num_challenges = constraint.num_challenges;
+            let num_aux_vars = Self::estimate_aux_var_count(constraint);
+
+            if let Some(witness) = extra_witness {
+                debug_assert_eq!(
+                    witness.opening_values.len(),
+                    constraint.required_openings.len(),
+                    "Extra opening values count mismatch"
+                );
+
+                // Assign opening values only for NEW openings (matching R1CS allocation)
+                for (opening_id, val) in constraint
+                    .required_openings
+                    .iter()
+                    .zip(&witness.opening_values)
+                {
+                    if !assigned_openings.contains(opening_id) {
+                        z[witness_idx] = *val;
+                        witness_idx += 1;
+                        assigned_openings.insert(*opening_id);
+                    }
+                }
+
+                // Assign output value
+                z[witness_idx] = witness.output_value;
+                witness_idx += 1;
+
+                // Assign challenge values (public inputs)
+                debug_assert_eq!(
+                    witness.challenge_values.len(),
+                    num_challenges,
+                    "Extra challenge values count mismatch"
+                );
+                for val in &witness.challenge_values {
+                    z[extra_constraint_challenge_idx] = *val;
+                    extra_constraint_challenge_idx += 1;
+                }
+
+                // Compute and assign aux vars for intermediate products
+                let aux_values = Self::compute_aux_vars(
+                    constraint,
+                    &witness.opening_values,
+                    &witness.challenge_values,
+                );
+                debug_assert_eq!(
+                    aux_values.len(),
+                    num_aux_vars,
+                    "Extra aux var count mismatch"
+                );
+                for val in aux_values {
+                    z[witness_idx] = val;
+                    witness_idx += 1;
+                }
+
+                // Assign blinding
+                z[witness_idx] = witness.blinding;
+                witness_idx += 1;
+            } else {
+                let num_new_openings = constraint
+                    .required_openings
+                    .iter()
+                    .filter(|id| {
+                        if assigned_openings.contains(id) {
+                            false
+                        } else {
+                            assigned_openings.insert(**id);
+                            true
+                        }
+                    })
+                    .count();
+                witness_idx += num_new_openings + 1 + num_aux_vars + 1;
+                extra_constraint_challenge_idx += num_challenges;
             }
         }
 

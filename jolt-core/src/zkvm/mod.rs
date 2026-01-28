@@ -1,9 +1,12 @@
 use std::fs::File;
 
+use crate::zkvm::config::OneHotParams;
+use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
     curve::Bn254Curve,
     field::JoltField,
     poly::opening_proof::ProverOpeningAccumulator,
+    poly::opening_proof::{OpeningId, SumcheckId},
     poly::{
         commitment::commitment_scheme::CommitmentScheme, commitment::dory::DoryCommitmentScheme,
     },
@@ -36,6 +39,55 @@ pub mod registers;
 pub mod spartan;
 pub mod verifier;
 pub mod witness;
+
+pub(crate) fn stage8_opening_ids(
+    one_hot_params: &OneHotParams,
+    include_trusted_advice: bool,
+    include_untrusted_advice: bool,
+) -> Vec<OpeningId> {
+    let mut opening_ids = Vec::new();
+
+    opening_ids.push(OpeningId::Committed(
+        CommittedPolynomial::RamInc,
+        SumcheckId::IncClaimReduction,
+    ));
+    opening_ids.push(OpeningId::Committed(
+        CommittedPolynomial::RdInc,
+        SumcheckId::IncClaimReduction,
+    ));
+
+    for i in 0..one_hot_params.instruction_d {
+        opening_ids.push(OpeningId::Committed(
+            CommittedPolynomial::InstructionRa(i),
+            SumcheckId::HammingWeightClaimReduction,
+        ));
+    }
+    for i in 0..one_hot_params.bytecode_d {
+        opening_ids.push(OpeningId::Committed(
+            CommittedPolynomial::BytecodeRa(i),
+            SumcheckId::HammingWeightClaimReduction,
+        ));
+    }
+    for i in 0..one_hot_params.ram_d {
+        opening_ids.push(OpeningId::Committed(
+            CommittedPolynomial::RamRa(i),
+            SumcheckId::HammingWeightClaimReduction,
+        ));
+    }
+
+    if include_trusted_advice {
+        opening_ids.push(OpeningId::TrustedAdvice(
+            SumcheckId::AdviceClaimReductionPhase2,
+        ));
+    }
+    if include_untrusted_advice {
+        opening_ids.push(OpeningId::UntrustedAdvice(
+            SumcheckId::AdviceClaimReductionPhase2,
+        ));
+    }
+
+    opening_ids
+}
 
 // Scoped CPU profiler for performance analysis. Feature-gated by "pprof".
 // Usage: let _guard = pprof_scope!("label");

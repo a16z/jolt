@@ -86,6 +86,12 @@ pub struct VerifierR1CS<F: JoltField> {
     pub num_constraints: usize,
     /// Stage configurations used to build this R1CS
     pub stage_configs: Vec<StageConfig>,
+    /// Extra constraints (e.g., PCS binding) appended after all stages
+    pub extra_constraints: Vec<OutputClaimConstraint>,
+    /// Output variables for extra constraints (one per constraint)
+    pub extra_output_vars: Vec<Variable>,
+    /// Blinding variables for extra constraints (one per constraint)
+    pub extra_blinding_vars: Vec<Variable>,
 }
 
 impl<F: JoltField> VerifierR1CS<F> {
@@ -163,12 +169,22 @@ pub struct VerifierR1CSBuilder<F: JoltField> {
     input_constraint_challenge_counts: Vec<usize>,
     /// Stage configurations
     stage_configs: Vec<StageConfig>,
+    /// Extra constraints appended after all stages
+    extra_constraints: Vec<OutputClaimConstraint>,
     /// Mapping from (stage, round) to the round's variables
     round_vars: Vec<Vec<RoundVariables>>,
     /// Final output variables for each stage with final_output config
     final_output_vars: Vec<Option<FinalOutputVariables>>,
     /// Initial input variables for each stage with initial_input config
     initial_input_vars: Vec<Option<FinalOutputVariables>>,
+    /// Output variables for extra constraints
+    extra_output_vars: Vec<Variable>,
+    /// Blinding variables for extra constraints
+    extra_blinding_vars: Vec<Variable>,
+    /// Extra constraint challenge variables (public inputs)
+    extra_constraint_challenge_vars: Vec<Variable>,
+    /// Number of extra constraint challenge vars per constraint
+    extra_constraint_challenge_counts: Vec<usize>,
 }
 
 /// Variables allocated for a single sumcheck round
@@ -189,6 +205,14 @@ pub struct RoundVariables {
 impl<F: JoltField> VerifierR1CSBuilder<F> {
     /// Create a new builder for the given stage configurations
     pub fn new(stage_configs: &[StageConfig]) -> Self {
+        Self::new_with_extra(stage_configs, &[])
+    }
+
+    /// Create a new builder with extra constraints appended after all stages.
+    pub fn new_with_extra(
+        stage_configs: &[StageConfig],
+        extra_constraints: &[OutputClaimConstraint],
+    ) -> Self {
         let total_rounds: usize = stage_configs.iter().map(|s| s.num_rounds).sum();
 
         // Count independent chains (first stage + stages with starts_new_chain)
@@ -234,7 +258,13 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         let total_input_constraint_challenges: usize =
             input_constraint_challenge_counts.iter().sum();
 
-        // Allocate public inputs: challenges + initial claims + batching coefficients + output constraint challenges + input constraint challenges
+        let extra_constraint_challenge_counts: Vec<usize> =
+            extra_constraints.iter().map(|c| c.num_challenges).collect();
+        let total_extra_constraint_challenges: usize =
+            extra_constraint_challenge_counts.iter().sum();
+
+        // Allocate public inputs: challenges + initial claims + batching coefficients
+        // + output constraint challenges + input constraint challenges + extra constraint challenges
         // Index 0 is the constant 1 (u scalar)
         // Indices 1..=total_rounds are sumcheck challenges
         // Indices total_rounds+1..=total_rounds+num_chains are initial claims
@@ -263,12 +293,26 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                 )
             })
             .collect();
+        let extra_constraint_challenge_vars: Vec<Variable> = (0..total_extra_constraint_challenges)
+            .map(|i| {
+                Variable::new(
+                    total_rounds
+                        + 1
+                        + num_chains
+                        + total_batching_coeffs
+                        + total_constraint_challenges
+                        + total_input_constraint_challenges
+                        + i,
+                )
+            })
+            .collect();
         let next_var = total_rounds
             + 1
             + num_chains
             + total_batching_coeffs
             + total_constraint_challenges
-            + total_input_constraint_challenges;
+            + total_input_constraint_challenges
+            + total_extra_constraint_challenges;
 
         Self {
             constraints: Vec::new(),
@@ -281,9 +325,14 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             input_constraint_challenge_vars,
             input_constraint_challenge_counts,
             stage_configs: stage_configs.to_vec(),
+            extra_constraints: extra_constraints.to_vec(),
             round_vars: Vec::new(),
             final_output_vars: Vec::new(),
             initial_input_vars: Vec::new(),
+            extra_output_vars: Vec::new(),
+            extra_blinding_vars: Vec::new(),
+            extra_constraint_challenge_vars,
+            extra_constraint_challenge_counts,
         }
     }
 
@@ -631,14 +680,59 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             self.final_output_vars.push(final_output_vars);
         }
 
+        let extra_constraints = self.extra_constraints.clone();
+        let extra_constraint_challenge_counts = self.extra_constraint_challenge_counts.clone();
+        let extra_constraint_challenge_vars = self.extra_constraint_challenge_vars.clone();
+
+        // Append extra constraints after all stages.
+        for (extra_idx, constraint) in extra_constraints.iter().enumerate() {
+            // Allocate/reuse witness variables for required openings using global map
+            for opening_id in &constraint.required_openings {
+                if !global_opening_vars.contains_key(opening_id) {
+                    let var = Variable::new(self.next_var);
+                    self.next_var += 1;
+                    global_opening_vars.insert(*opening_id, var);
+                }
+            }
+
+            // Allocate output variable for this constraint
+            let output_var = Variable::new(self.next_var);
+            self.next_var += 1;
+
+            // Use pre-allocated public input variables for constraint challenges
+            let challenge_offset: usize =
+                extra_constraint_challenge_counts[..extra_idx].iter().sum();
+            let num_challenges = extra_constraint_challenge_counts[extra_idx];
+            let constraint_challenge_vars: Vec<Variable> = extra_constraint_challenge_vars
+                [challenge_offset..challenge_offset + num_challenges]
+                .to_vec();
+
+            // Add the sum-of-products constraint
+            let _aux_vars = self.add_sum_of_products_constraint(
+                output_var,
+                constraint,
+                &global_opening_vars,
+                &constraint_challenge_vars,
+            );
+
+            // Allocate blinding variable for evaluation commitment binding
+            let blinding_var = Variable::new(self.next_var);
+            self.next_var += 1;
+
+            self.extra_output_vars.push(output_var);
+            self.extra_blinding_vars.push(blinding_var);
+        }
+
         let num_constraints = self.constraints.len();
         let num_vars = self.next_var;
-        // Public inputs: challenges + initial_claims + batching_coeffs + output_constraint_challenges + input_constraint_challenges
+        // Public inputs: challenges + initial_claims + batching_coeffs
+        // + output_constraint_challenges + input_constraint_challenges + extra_constraint_challenges
         let num_public_inputs = self.challenge_vars.len()
             + self.initial_claim_vars.len()
             + self.batching_coeff_vars.len()
             + self.constraint_challenge_vars.len()
-            + self.input_constraint_challenge_vars.len();
+            + self.input_constraint_challenge_vars.len()
+            + self.extra_constraint_challenge_vars.len();
 
         // Build sparse matrices
         let mut a = SparseR1CSMatrix::new(num_constraints, num_vars);
@@ -665,6 +759,9 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             num_public_inputs,
             num_constraints,
             stage_configs: self.stage_configs,
+            extra_constraints: self.extra_constraints,
+            extra_output_vars: self.extra_output_vars,
+            extra_blinding_vars: self.extra_blinding_vars,
         }
     }
 

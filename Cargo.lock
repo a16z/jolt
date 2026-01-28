@@ -988,8 +988,6 @@ dependencies = [
 [[package]]
 name = "dory-derive"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92455ee9d76bb8878b7900486c07e880cd019acf144144aa61c799fb6464fefe"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -999,8 +997,6 @@ dependencies = [
 [[package]]
 name = "dory-pcs"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c39e3ecf57aa4adc063f292501076a16bd6f254c090c949cc9906af7edb43de4"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1010,7 +1006,6 @@ dependencies = [
  "bincode",
  "blake2",
  "digest",
- "dirs",
  "dory-derive",
  "once_cell",
  "rand_core 0.6.4",

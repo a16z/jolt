@@ -3,12 +3,15 @@
 use super::dory_globals::DoryGlobals;
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 use super::wrappers::{
-    jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
-    JoltToDoryTranscript, BN254,
+    ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup,
+    ArkworksVerifierSetup, JoltToDoryTranscript, BN254,
 };
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
-    poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
+    poly::commitment::commitment_scheme::{
+        CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment,
+    },
     poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
@@ -20,6 +23,7 @@ use dory::primitives::{
     arithmetic::{Group, PairingCurve},
     poly::Polynomial,
 };
+use dory::ZK;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use rayon::prelude::*;
@@ -107,6 +111,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
+        let mut rng = rand::thread_rng();
 
         let row_commitments = hint.unwrap_or_else(|| {
             let (_commitment, row_commitments) = Self::commit(poly, setup);
@@ -130,7 +135,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
-        dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _>(
+        dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _, ZK, _>(
             poly,
             &ark_point,
             row_commitments,
@@ -138,6 +143,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             sigma,
             setup,
             &mut dory_transcript,
+            &mut rng,
         )
         .expect("proof generation should succeed")
     }
@@ -187,6 +193,11 @@ impl CommitmentScheme for DoryCommitmentScheme {
     /// can homomorphically combine the row commitments for multiple polynomials into the
     /// row commitments for the RLC of those polynomials. This is more efficient than computing
     /// the row commitments for the RLC from scratch.
+    ///
+    /// For shorter polynomials (e.g., T-length dense polys in a K*T RLC), we replicate their
+    /// row commitments K times to match the K*T matrix layout. This is because a dense poly
+    /// p(cycle) embedded in K*T is constant in the address dimension, so its row commitments
+    /// repeat with period T/num_cols.
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_hints")]
     fn combine_hints(
         hints: Vec<Self::OpeningProofHint>,
@@ -195,11 +206,26 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let num_rows = DoryGlobals::get_max_num_rows();
 
         let mut rlc_hint = vec![ArkG1(G1Projective::zero()); num_rows];
-        for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
-            hint.resize(num_rows, ArkG1(G1Projective::zero()));
+        for (coeff, hint) in coeffs.iter().zip(hints.into_iter()) {
+            // Replicate shorter hints to match num_rows (for dense poly embedding)
+            let mut expanded_hint = if hint.len() < num_rows && !hint.is_empty() {
+                let replication_factor = num_rows / hint.len();
+                let mut expanded = Vec::with_capacity(num_rows);
+                for _ in 0..replication_factor {
+                    expanded.extend(hint.iter().cloned());
+                }
+                expanded
+            } else {
+                let mut h = hint;
+                h.resize(num_rows, ArkG1(G1Projective::zero()));
+                h
+            };
 
             let row_commitments: &mut [G1Projective] = unsafe {
-                std::slice::from_raw_parts_mut(hint.as_mut_ptr() as *mut G1Projective, hint.len())
+                std::slice::from_raw_parts_mut(
+                    expanded_hint.as_mut_ptr() as *mut G1Projective,
+                    expanded_hint.len(),
+                )
             };
 
             let rlc_row_commitments: &[G1Projective] = unsafe {
@@ -217,7 +243,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
                 rlc_row_commitments,
             );
 
-            let _ = std::mem::replace(&mut rlc_hint, hint);
+            let _ = std::mem::replace(&mut rlc_hint, expanded_hint);
         }
 
         rlc_hint
@@ -310,11 +336,12 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         onehot_k: Option<usize>,
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
-        if let Some(K) = onehot_k {
+        let num_rows = DoryGlobals::get_max_num_rows();
+
+        if let Some(_K) = onehot_k {
             let row_len = DoryGlobals::get_num_columns();
             let T = DoryGlobals::get_T();
             let rows_per_k = T / row_len;
-            let num_rows = K * T / row_len;
 
             let mut row_commitments = vec![ArkG1(G1Projective::zero()); num_rows];
             for (chunk_index, commitments) in chunks.iter().enumerate() {
@@ -326,18 +353,61 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
                     .for_each(|(dest, src)| *dest = *src);
             }
 
-            let g2_bases = &setup.g2_vec[..row_commitments.len()];
+            let g2_bases = &setup.g2_vec[..num_rows];
             let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
             (tier_2, row_commitments)
         } else {
-            let row_commitments: Vec<ArkG1> =
-                chunks.iter().flat_map(|chunk| chunk.clone()).collect();
+            // Dense polynomial: replicate row commitments to match K*T matrix layout
+            // This ensures homomorphic combination works correctly with one-hot polynomials
+            let dense_rows: Vec<ArkG1> = chunks.iter().flat_map(|chunk| chunk.clone()).collect();
 
-            let g2_bases = &setup.g2_vec[..row_commitments.len()];
-            let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+            let dense_row_count = dense_rows.len();
+            if dense_row_count > 0 && dense_row_count < num_rows {
+                // Replicate dense rows to fill the full matrix
+                let replication_factor = num_rows / dense_row_count;
+                let mut row_commitments = Vec::with_capacity(num_rows);
+                for _ in 0..replication_factor {
+                    row_commitments.extend(dense_rows.iter().cloned());
+                }
 
-            (tier_2, row_commitments)
+                let g2_bases = &setup.g2_vec[..num_rows];
+                let tier_2 =
+                    <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+
+                (tier_2, row_commitments)
+            } else {
+                // No replication needed (dense_row_count == num_rows or edge case)
+                let g2_bases = &setup.g2_vec[..dense_rows.len()];
+                let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&dense_rows, g2_bases);
+
+                (tier_2, dense_rows)
+            }
         }
+    }
+}
+
+impl<C: JoltCurve> ZkEvalCommitment<C> for DoryCommitmentScheme
+where
+    C::G1: From<ArkG1>,
+{
+    fn eval_commitment(proof: &Self::Proof) -> Option<C::G1> {
+        proof.y_com.as_ref().copied().map(C::G1::from)
+    }
+
+    fn eval_commitment_blinding(proof: &Self::Proof) -> Option<Self::Field> {
+        proof.y_blinding.as_ref().map(ark_to_jolt)
+    }
+
+    fn eval_commitment_gens(setup: &Self::ProverSetup) -> Option<(C::G1, C::G1)> {
+        let g1_0 = setup.0.g1_vec.first().copied().map(C::G1::from)?;
+        let h1 = C::G1::from(setup.0.h1);
+        Some((g1_0, h1))
+    }
+
+    fn eval_commitment_gens_verifier(setup: &Self::VerifierSetup) -> Option<(C::G1, C::G1)> {
+        let g1_0 = C::G1::from(setup.0.g1_0);
+        let h1 = C::G1::from(setup.0.h1);
+        Some((g1_0, h1))
     }
 }

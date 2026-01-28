@@ -35,6 +35,8 @@ pub struct RelaxedR1CSInstance<F: JoltField, C: JoltCurve> {
     pub x: Vec<F>,
     /// Per-round commitments from ZK sumcheck
     pub round_commitments: Vec<C::G1>,
+    /// Evaluation commitments (e.g., y_com) for extra constraints
+    pub eval_commitments: Vec<C::G1>,
 }
 
 /// Relaxed R1CS Witness (private data)
@@ -69,6 +71,7 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
         round_commitments: Vec<C::G1>,
         round_coefficients: Vec<Vec<F>>,
         round_blindings: Vec<F>,
+        eval_commitments: Vec<C::G1>,
         rng: &mut R,
     ) -> (Self, RelaxedR1CSWitness<F>) {
         // For non-relaxed: E = 0, u = 1
@@ -88,6 +91,7 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
             W_bar,
             x: public_inputs,
             round_commitments,
+            eval_commitments,
         };
 
         let witness_struct = RelaxedR1CSWitness {
@@ -112,6 +116,12 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
     /// - round_commitments' = round_commitments₁ + r·round_commitments₂
     pub fn fold(&self, other: &Self, T_bar: &C::G1, r: F) -> Self {
         let r_squared = r * r;
+
+        debug_assert_eq!(
+            self.eval_commitments.len(),
+            other.eval_commitments.len(),
+            "Eval commitment length mismatch"
+        );
 
         // Ē' = Ē₁ + r·T̄ + r²·Ē₂
         let E_bar = self.E_bar + T_bar.scalar_mul(&r) + other.E_bar.scalar_mul(&r_squared);
@@ -138,12 +148,20 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
             .map(|(c1, c2)| *c1 + c2.scalar_mul(&r))
             .collect();
 
+        let eval_commitments: Vec<C::G1> = self
+            .eval_commitments
+            .iter()
+            .zip(&other.eval_commitments)
+            .map(|(c1, c2)| *c1 + c2.scalar_mul(&r))
+            .collect();
+
         Self {
             E_bar,
             u,
             W_bar,
             x,
             round_commitments,
+            eval_commitments,
         }
     }
 }
@@ -475,6 +493,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             &mut rng,
         );
 
@@ -627,6 +646,7 @@ mod tests {
             W_bar: W_bar1,
             x: x1.clone(),
             round_commitments: Vec::new(),
+            eval_commitments: Vec::new(),
         };
 
         let inst2 = RelaxedR1CSInstance::<F, Bn254Curve> {
@@ -635,6 +655,7 @@ mod tests {
             W_bar: W_bar2,
             x: x2.clone(),
             round_commitments: Vec::new(),
+            eval_commitments: Vec::new(),
         };
 
         let r = F::rand(&mut rng);

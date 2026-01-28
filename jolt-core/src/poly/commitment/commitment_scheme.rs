@@ -4,6 +4,7 @@ use std::fmt::Debug;
 
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
@@ -125,6 +126,20 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     ) -> Result<(), ProofVerifyError>;
 
     fn protocol_name() -> &'static [u8];
+}
+
+pub trait ZkEvalCommitment<C: JoltCurve>: CommitmentScheme {
+    /// Returns the evaluation commitment (e.g. y_com) if present in the proof.
+    fn eval_commitment(proof: &Self::Proof) -> Option<C::G1>;
+
+    /// Returns the evaluation blinding factor if present in the proof.
+    fn eval_commitment_blinding(proof: &Self::Proof) -> Option<Self::Field>;
+
+    /// Returns the generators used for evaluation commitments in the prover setup.
+    fn eval_commitment_gens(setup: &Self::ProverSetup) -> Option<(C::G1, C::G1)>;
+
+    /// Returns the generators used for evaluation commitments in the verifier setup.
+    fn eval_commitment_gens_verifier(setup: &Self::VerifierSetup) -> Option<(C::G1, C::G1)>;
 }
 
 pub trait StreamingCommitmentScheme: CommitmentScheme {

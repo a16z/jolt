@@ -1,7 +1,6 @@
 //! Type conversions and wrappers between Jolt types and final-dory's arkworks backend
 
 use crate::{
-    field::JoltField,
     msm::VariableBaseMSM,
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     transcripts::{AppendToTranscript, Transcript},
@@ -12,7 +11,7 @@ use ark_ff::Zero;
 use dory::{
     error::DoryError,
     primitives::{
-        arithmetic::{DoryRoutines, Group as DoryGroup, PairingCurve},
+        arithmetic::{DoryRoutines, Field, Group as DoryGroup, PairingCurve},
         poly::{MultilinearLagrange, Polynomial as DoryPolynomial},
         transcript::Transcript as DoryTranscript,
         DorySerialize,
@@ -70,13 +69,9 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
     }
 
     fn evaluate(&self, point: &[ArkFr]) -> ArkFr {
-        let native_point: Vec<<Fr as JoltField>::Challenge> = point
-            .par_iter()
-            .map(|p| {
-                let f_val: Fr = ark_to_jolt(p);
-                unsafe { std::mem::transmute_copy(&f_val) }
-            })
-            .collect();
+        // Dory uses little-endian variable order; reverse to match Jolt's big-endian order.
+        // Use Fr directly (not Challenge type) to avoid type mismatch issues.
+        let native_point: Vec<Fr> = point.iter().rev().map(ark_to_jolt).collect();
         let result = PolynomialEvaluation::evaluate(self, native_point.as_slice());
         jolt_to_ark(&result)
     }
@@ -101,6 +96,39 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
         let commitment = E::multi_pair_g2_setup(&row_commitments, g2_bases);
 
         Ok((commitment, row_commitments))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn commit_zk<E, _M1, R>(
+        &self,
+        nu: usize,
+        sigma: usize,
+        setup: &ProverSetup<E>,
+        rng: &mut R,
+    ) -> Result<(E::GT, Vec<E::G1>, Vec<ArkFr>), DoryError>
+    where
+        E: PairingCurve,
+        _M1: DoryRoutines<E::G1>,
+        E::G1: DoryGroup<Scalar = ArkFr>,
+        R: rand_core::RngCore,
+    {
+        let num_cols = 1 << sigma;
+        let num_rows = 1 << nu;
+
+        // Perform an MSM per row of the polynomial's matrix representation
+        let mut row_commitments = commit_tier_1::<E>(self, &setup.g1_vec, num_cols)?;
+
+        let mut row_blinds = Vec::with_capacity(num_rows);
+        for i in 0..num_rows {
+            let r_i = ArkFr::random(rng);
+            row_blinds.push(r_i);
+            row_commitments[i] = row_commitments[i] + setup.h1.scale(&r_i);
+        }
+
+        let g2_bases = &setup.g2_vec[..row_commitments.len()];
+        let commitment = E::multi_pair_g2_setup(&row_commitments, g2_bases);
+
+        Ok((commitment, row_commitments, row_blinds))
     }
 }
 

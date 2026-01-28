@@ -28,7 +28,9 @@ pub use protocol::{
 };
 pub use r1cs::{SparseR1CSMatrix, VerifierR1CS, VerifierR1CSBuilder};
 pub use relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
-pub use witness::{BlindFoldWitness, FinalOutputWitness, RoundWitness, StageWitness};
+pub use witness::{
+    BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, RoundWitness, StageWitness,
+};
 
 use crate::field::JoltField;
 
