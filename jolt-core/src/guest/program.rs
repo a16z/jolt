@@ -88,7 +88,6 @@ impl Program {
             trace_file,
         )
     }
-
 }
 
 pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
@@ -113,7 +112,13 @@ pub fn trace(
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
     advice_tape: Option<tracer::AdviceTape>,
-) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice, tracer::AdviceTape) {
+) -> (
+    LazyTraceIterator,
+    Vec<Cycle>,
+    Memory,
+    JoltDevice,
+    tracer::AdviceTape,
+) {
     tracer::trace(
         elf_contents,
         elf_path,

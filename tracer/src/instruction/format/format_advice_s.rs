@@ -56,7 +56,8 @@ impl InstructionFormat for FormatAdviceS {
                     _ => 0
                 } | // imm[31:12] = [31]
                 ((word >> 20) & 0xfe0) | // imm[11:5] = [31:25]
-                ((word >> 7) & 0x1f)      // imm[4:0] = [11:7]
+                ((word >> 7) & 0x1f)
+                // imm[4:0] = [11:7]
             ) as i32 as i64,
         }
     }

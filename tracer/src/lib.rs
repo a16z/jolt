@@ -25,7 +25,7 @@ pub mod instruction;
 pub mod utils;
 
 pub use common::jolt_device::JoltDevice;
-pub use cpu::{AdviceTape, advice_tape_read, advice_tape_remaining, advice_tape_write};
+pub use cpu::{advice_tape_read, advice_tape_remaining, advice_tape_write, AdviceTape};
 pub use instruction::inline::{list_registered_inlines, register_inline};
 
 use crate::{
@@ -83,7 +83,13 @@ pub fn trace(
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
     advice_tape: Option<cpu::AdviceTape>,
-) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice, cpu::AdviceTape) {
+) -> (
+    LazyTraceIterator,
+    Vec<Cycle>,
+    Memory,
+    JoltDevice,
+    cpu::AdviceTape,
+) {
     let mut lazy_trace_iter = trace_lazy(
         elf_contents,
         elf_path,
@@ -103,11 +109,11 @@ pub fn trace(
         std::mem::take(&mut lazy_trace_iter.lazy_tracer.final_memory_state).unwrap();
     let jolt_device = lazy_trace_iter.lazy_tracer.get_jolt_device();
     (
-        lazy_trace_iter_,  // Return the clone since lazy_tracer was moved
+        lazy_trace_iter_, // Return the clone since lazy_tracer was moved
         trace,
         final_memory_state,
         jolt_device,
-        advice_tape_result,  // Return the populated advice tape
+        advice_tape_result, // Return the populated advice tape
     )
 }
 

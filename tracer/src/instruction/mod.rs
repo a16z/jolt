@@ -248,8 +248,8 @@ pub mod sub;
 pub mod subw;
 pub mod sw;
 pub mod virtual_advice;
-pub mod virtual_advice_load;
 pub mod virtual_advice_len;
+pub mod virtual_advice_load;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
@@ -977,7 +977,9 @@ impl Instruction {
                     FUNCT3_ADVICE_SH => Ok(AdviceSH::new(instr, address, true, compressed).into()),
                     FUNCT3_ADVICE_SW => Ok(AdviceSW::new(instr, address, true, compressed).into()),
                     FUNCT3_ADVICE_SD => Ok(AdviceSD::new(instr, address, true, compressed).into()),
-                    FUNCT3_ADVICE_LEN => Ok(VirtualAdviceLen::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_LEN => {
+                        Ok(VirtualAdviceLen::new(instr, address, true, compressed).into())
+                    }
                     _ => Err("Invalid custom/virtual instruction (funct3 = {funct_3}"),
                 }
             }

@@ -90,7 +90,12 @@ impl Program {
     }
 
     #[tracing::instrument(skip_all, name = "Program::build_with_features")]
-    pub fn build_with_features(&mut self, target_dir: &str, channel: &str, extra_features: &[&str]) {
+    pub fn build_with_features(
+        &mut self,
+        target_dir: &str,
+        channel: &str,
+        extra_features: &[&str],
+    ) {
         if self.elf.is_none() {
             #[cfg(not(target_arch = "wasm32"))]
             install_toolchain().unwrap();
