@@ -1230,6 +1230,7 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         // Version without compute_advice: read from advice tape
         #[cfg(not(feature = "compute_advice"))]
+        #[allow(unused_variables)]
         #(#fn_attrs)*
         #fn_vis fn #fn_name(#fn_inputs) #fn_output {
             // Need a scratch buffer for postcard deserialization

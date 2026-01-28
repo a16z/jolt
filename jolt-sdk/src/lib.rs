@@ -111,10 +111,7 @@ pub static mut _HEAP_PTR: u8 = 0;
 #[macro_export]
 macro_rules! check_advice {
     ($cond:expr) => {{
-        #[cfg(all(
-            not(feature = "host"),
-            any(target_arch = "riscv32", target_arch = "riscv64")
-        ))]
+        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
         {
             let cond_value = if $cond { 1u64 } else { 0u64 };
             let expected_value = 1u64;
@@ -131,10 +128,7 @@ macro_rules! check_advice {
                 );
             }
         }
-        #[cfg(any(
-            feature = "host",
-            not(any(target_arch = "riscv32", target_arch = "riscv64"))
-        ))]
+        #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
         {
             assert!($cond, "Advice assertion failed");
         }
