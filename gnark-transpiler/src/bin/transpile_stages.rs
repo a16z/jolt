@@ -3,9 +3,10 @@
 //! Uses TranspilableVerifier with symbolic proof and MleOpeningAccumulator
 //! to generate a Gnark circuit for stages 1-6 of the Jolt verifier.
 
+use ark_ff::PrimeField;
 use ark_serialize::CanonicalDeserialize;
 use gnark_transpiler::{
-    symbolize_proof, AstCommitmentScheme, MleOpeningAccumulator,
+    symbolize_proof, extract_witness_values, AstCommitmentScheme, MleOpeningAccumulator,
     PoseidonAstTranscript, MemoizedCodeGen, sanitize_go_name,
 };
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
@@ -15,6 +16,7 @@ use jolt_core::zkvm::RV64IMACProof;
 use common::jolt_device::JoltDevice;
 use zklean_extractor::mle_ast::{enable_constraint_mode, take_constraints as take_assertions, MleAst};
 use std::collections::HashMap;
+use serde::Serialize;
 
 fn main() {
     println!("=== Transpiling Jolt Verifier Stages 1-6 to Gnark ===\n");
@@ -260,10 +262,30 @@ fn main() {
     let circuit_code = generate_stages_circuit(&assertions, &var_names, "JoltStages16Circuit");
 
     // Write to file
-    let output_path = "/Users/mariogalante/DEV/wonderjolt/jolt/gnark-transpiler/go/stages16_circuit.go";
-    std::fs::write(output_path, &circuit_code).expect("Failed to write circuit file");
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let output_path = format!("{}/go/stages16_circuit.go", manifest_dir);
+    std::fs::write(&output_path, &circuit_code).expect("Failed to write circuit file");
     println!("  Circuit written to: {}", output_path);
     println!("  Circuit size: {} bytes", circuit_code.len());
+
+    // === Generate witness data ===
+    println!("\n=== Generating Witness Data ===");
+    let witness_values = extract_witness_values(&real_proof);
+
+    // Build witness JSON mapping sanitized variable names to values
+    let mut witness_map: HashMap<String, String> = HashMap::new();
+    for (idx, name) in var_alloc.descriptions() {
+        let sanitized = sanitize_go_name(name);
+        if let Some(value) = witness_values.get(&(*idx as usize)) {
+            witness_map.insert(sanitized, value.clone());
+        }
+    }
+
+    let witness_json = serde_json::to_string_pretty(&witness_map).expect("Failed to serialize witness");
+    let witness_path = format!("{}/go/stages16_witness.json", manifest_dir);
+    std::fs::write(&witness_path, &witness_json).expect("Failed to write witness file");
+    println!("  Witness written to: {}", witness_path);
+    println!("  Witness variables: {}", witness_map.len());
 
     println!("\n=== SUCCESS ===");
     println!("TranspilableVerifier stages 1-6 transpiled to Gnark circuit.");

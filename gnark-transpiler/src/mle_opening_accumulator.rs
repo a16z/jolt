@@ -226,13 +226,17 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
 
     fn append_virtual<T: Transcript>(
         &mut self,
-        _transcript: &mut T,
+        transcript: &mut T,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, MleAst>,
     ) {
         let key = OpeningId::Virtual(polynomial, sumcheck);
-        if let Some((stored_point, _)) = self.openings.get_mut(&key) {
+        if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
+            // CRITICAL: Must append the claim to transcript, matching VerifierOpeningAccumulator behavior.
+            // Without this, the transcript state diverges and challenges are incorrect.
+            // See: jolt-core/src/poly/opening_proof.rs lines 868-869 and 1097-1098
+            transcript.append_scalar(claim);
             *stored_point = opening_point.r;
         } else {
             panic!(
@@ -244,14 +248,16 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
 
     fn append_untrusted_advice<T: Transcript>(
         &mut self,
-        _transcript: &mut T,
+        transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, MleAst>,
     ) {
         // For MleAst, untrusted advice is stored as a virtual polynomial with a special marker
         // We use VirtualPolynomial::UntrustedAdvice as the key
         let key = OpeningId::UntrustedAdvice(sumcheck_id);
-        if let Some((stored_point, _)) = self.openings.get_mut(&key) {
+        if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
+            // CRITICAL: Must append the claim to transcript, matching VerifierOpeningAccumulator behavior.
+            transcript.append_scalar(claim);
             *stored_point = opening_point.r;
         } else {
             panic!(
@@ -263,13 +269,15 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
 
     fn append_trusted_advice<T: Transcript>(
         &mut self,
-        _transcript: &mut T,
+        transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, MleAst>,
     ) {
         // For MleAst, trusted advice is stored similarly
         let key = OpeningId::TrustedAdvice(sumcheck_id);
-        if let Some((stored_point, _)) = self.openings.get_mut(&key) {
+        if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
+            // CRITICAL: Must append the claim to transcript, matching VerifierOpeningAccumulator behavior.
+            transcript.append_scalar(claim);
             *stored_point = opening_point.r;
         } else {
             panic!(
@@ -281,13 +289,15 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
 
     fn append_dense<T: Transcript>(
         &mut self,
-        _transcript: &mut T,
+        transcript: &mut T,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
         opening_point: Vec<MleAst>,
     ) {
         let key = OpeningId::Committed(polynomial, sumcheck);
-        if let Some((stored_point, _)) = self.openings.get_mut(&key) {
+        if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
+            // CRITICAL: Must append the claim to transcript, matching VerifierOpeningAccumulator behavior.
+            transcript.append_scalar(claim);
             *stored_point = opening_point;
         } else {
             panic!(
@@ -299,15 +309,17 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
 
     fn append_sparse<T: Transcript>(
         &mut self,
-        _transcript: &mut T,
+        transcript: &mut T,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
         opening_point: Vec<MleAst>,
     ) {
         // For sparse openings, we store each polynomial with the same point
+        // CRITICAL: Must append ALL claims to transcript, matching VerifierOpeningAccumulator behavior.
         for polynomial in polynomials {
             let key = OpeningId::Committed(polynomial, sumcheck);
-            if let Some((stored_point, _)) = self.openings.get_mut(&key) {
+            if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
+                transcript.append_scalar(claim);
                 *stored_point = opening_point.clone();
             } else {
                 panic!(
