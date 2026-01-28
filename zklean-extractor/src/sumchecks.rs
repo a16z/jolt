@@ -7,9 +7,13 @@ use jolt_core::{
         Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend, VerifierEvaluablePolynomial,
     },
     zkvm::{
-        lookup_table::LookupTables, ram::read_write_checking::RamReadWriteCheckingVerifier, registers::read_write_checking::RegistersReadWriteCheckingVerifier, spartan::{
+        lookup_table::LookupTables,
+        ram::read_write_checking::RamReadWriteCheckingVerifier,
+        registers::read_write_checking::RegistersReadWriteCheckingVerifier,
+        spartan::{
             instruction_input::InstructionInputSumcheckVerifier, shift::ShiftSumcheckVerifier,
-        }, witness::{CommittedPolynomial, VirtualPolynomial}
+        },
+        witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
 use regex::{NoExpand, Regex};
@@ -33,14 +37,20 @@ fn all_sumcheck_claims<F: JoltField>() -> Vec<InputOutputClaims<F>> {
 
 /// A list of sumcheck variables that we need to extract, despite not extracting any sumchecks that
 /// use them.
+// TODO This can go away if we extract a more complete set of sumchecks, in particular the read-raf
+// checks.
 fn extra_sumcheck_vars<const XLEN: usize>() -> Vec<(SumcheckId, PolynomialId)> {
-    LookupTables::<XLEN>::iter()
-        .enumerate()
-        .map(|(i, _table)| (
-                SumcheckId::InstructionReadRaf,
-                PolynomialId::Virtual(VirtualPolynomial::LookupTableFlag(i)),
-        ))
-        .collect()
+    std::iter::once((
+        SumcheckId::InstructionReadRaf,
+        PolynomialId::Virtual(VirtualPolynomial::InstructionRafFlag),
+    ))
+    .chain(LookupTables::<XLEN>::iter().enumerate().map(|(i, _table)| {
+        (
+            SumcheckId::InstructionReadRaf,
+            PolynomialId::Virtual(VirtualPolynomial::LookupTableFlag(i)),
+        )
+    }))
+    .collect()
 }
 
 #[derive(Debug, Clone)]

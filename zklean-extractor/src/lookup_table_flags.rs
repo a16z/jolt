@@ -16,7 +16,7 @@ use crate::{
 pub struct ZkLeanLookupTableFlag<const XLEN: usize> {
     sumcheck_id: SumcheckId,
     polynomial_id: PolynomialId,
-    lookup_table: ZkLeanLookupTable<XLEN>,
+    lookup_table_ident: String,
 }
 
 impl<const XLEN: usize> ZkLeanLookupTableFlag<XLEN> {
@@ -27,29 +27,14 @@ impl<const XLEN: usize> ZkLeanLookupTableFlag<XLEN> {
             .enumerate()
             .map(move |(i, lookup_table)| {
                 let polynomial_id = PolynomialId::Virtual(VirtualPolynomial::LookupTableFlag(i));
+                let lookup_table_ident = ZkLeanLookupTable::from(lookup_table).name();
 
                 ZkLeanLookupTableFlag {
                     sumcheck_id,
                     polynomial_id,
-                    lookup_table: lookup_table.into(),
+                    lookup_table_ident,
                 }
             })
-    }
-
-    pub fn zklean_pretty_print(
-        &self,
-        f: &mut impl std::io::Write,
-        vars_ident: &str,
-        indent_level: usize,
-    ) -> std::io::Result<()> {
-        let indent = indent(indent_level);
-        let name = self.lookup_table.name();
-
-        write!(f, "{indent}(")?;
-        pretty_print_opening_ref(f, vars_ident, self.sumcheck_id, self.polynomial_id)?;
-        write!(f, ", {name})")?;
-
-        Ok(())
     }
 }
 
@@ -62,26 +47,48 @@ impl<const XLEN: usize> ZkLeanLookupTableFlag<XLEN> {
 // This makes the assumption that the lookup tables and flags aren't associated in a different way
 // in the future. A better way to extract this would be to extract the instruction_read_raf
 // sumcheck itself.
+//
+// TODO It would be good to have a dedicated struct, rather than using (SumcheckId, PolynomialId).
 pub struct ZkLeanLookupTableFlags<const XLEN: usize> {
-    chunks: Vec<(SumcheckId, PolynomialId)>,
-    flags: Vec<ZkLeanLookupTableFlag<XLEN>>,
+    left_operand: (SumcheckId, PolynomialId),
+    right_operand: (SumcheckId, PolynomialId),
+    /// A Boolean flag variable, set as follows:
+    /// - 0: MLE input is the interleaving of the left and right operands
+    /// - 1: MLE input is the concatenation of the left and right operands
+    interleaving_flag: (SumcheckId, PolynomialId),
+    /// Boolean flags for each lookup table, along with the corresponding lookup-table identifiers
+    lookup_table_flags: Vec<ZkLeanLookupTableFlag<XLEN>>,
+    /// Variable to constrain equal to muxed lookups
+    lookup_output: (SumcheckId, PolynomialId),
 }
 
 impl<const XLEN: usize> ZkLeanLookupTableFlags<XLEN> {
     pub fn extract() -> Self {
-        let chunks = vec![
-            (
-                SumcheckId::SpartanOuter,
-                PolynomialId::Virtual(VirtualPolynomial::LeftLookupOperand),
-            ),
-            (
-                SumcheckId::SpartanOuter,
-                PolynomialId::Virtual(VirtualPolynomial::RightLookupOperand),
-            ),
-        ];
-        let flags = ZkLeanLookupTableFlag::<XLEN>::iter().collect();
+        let left_operand = (
+            SumcheckId::SpartanOuter,
+            PolynomialId::Virtual(VirtualPolynomial::LeftLookupOperand),
+        );
+        let right_operand = (
+            SumcheckId::SpartanOuter,
+            PolynomialId::Virtual(VirtualPolynomial::RightLookupOperand),
+        );
+        let interleaving_flag = (
+            SumcheckId::InstructionReadRaf,
+            PolynomialId::Virtual(VirtualPolynomial::InstructionRafFlag),
+        );
+        let lookup_table_flags = ZkLeanLookupTableFlag::<XLEN>::iter().collect();
+        let lookup_output = (
+            SumcheckId::SpartanOuter,
+            PolynomialId::Virtual(VirtualPolynomial::LookupOutput),
+        );
 
-        Self { chunks, flags }
+        Self {
+            left_operand,
+            right_operand,
+            interleaving_flag,
+            lookup_table_flags,
+            lookup_output,
+        }
     }
 
     pub fn zklean_pretty_print(
@@ -90,46 +97,78 @@ impl<const XLEN: usize> ZkLeanLookupTableFlags<XLEN> {
         mut indent_level: usize,
     ) -> std::io::Result<()> {
         let vars_ident = "inputs";
+
         writeln!(
             f,
-            "{}def lookup_step [ZKField f] ({vars_ident}: SumcheckVars f): ZKBuilder f PUnit := do",
+            "{}def mux_lookup_flags [ZKField f] ",
+            indent(indent_level)
+        )?;
+        indent_level += 1;
+        writeln!(f, "{}({vars_ident} : SumcheckVars f)", indent(indent_level))?;
+        writeln!(f, "{}(interleaving : Interleaving)", indent(indent_level))?;
+        writeln!(f, "{}(right left : ZKExpr f)", indent(indent_level))?;
+        writeln!(f, "{}: ZKBuilder f (ZKExpr f) := do", indent(indent_level))?;
+        writeln!(f, "{}ZKBuilder.mux", indent(indent_level))?;
+        indent_level += 1;
+        writeln!(f, "{}#[", indent(indent_level))?;
+        indent_level += 1;
+        for flag in self.lookup_table_flags.iter() {
+            writeln!(f, "{}(", indent(indent_level))?;
+            indent_level += 1;
+            write!(f, "{}", indent(indent_level))?;
+            pretty_print_opening_ref(f, vars_ident, flag.sumcheck_id, flag.polynomial_id)?;
+            writeln!(f, ",")?;
+            writeln!(
+                f,
+                "{}evalLookupTableMLE (LookupTable interleaving {}) left right",
+                indent(indent_level),
+                flag.lookup_table_ident
+            )?;
+            indent_level -= 1;
+            writeln!(f, "{}),", indent(indent_level))?;
+        }
+        indent_level -= 1;
+        writeln!(f, "{}]", indent(indent_level))?;
+        indent_level -= 1;
+        indent_level -= 1;
+
+        writeln!(f)?;
+        writeln!(
+            f,
+            "{}def lookup_step [ZKField f] ({vars_ident} : SumcheckVars f): ZKBuilder f PUnit := do",
             indent(indent_level),
         )?;
         indent_level += 1;
-        writeln!(f, "{}let res <- ZKBuilder.muxLookup", indent(indent_level))?;
+        write!(f, "{}let left := ", indent(indent_level))?;
+        pretty_print_opening_ref(f, vars_ident, self.left_operand.0, self.left_operand.1)?;
+        writeln!(f)?;
+        write!(f, "{}let right := ", indent(indent_level))?;
+        pretty_print_opening_ref(f, vars_ident, self.right_operand.0, self.right_operand.1)?;
+        writeln!(f)?;
+        writeln!(f, "{}let concated_eval <- mux_lookup_flags {vars_ident} Interleaving.Concatenated left right", indent(indent_level))?;
+        writeln!(f, "{}let interleaved_eval <- mux_lookup_flags {vars_ident} Interleaving.Interleaved left right", indent(indent_level))?;
+        writeln!(f, "{}let res <- ZkBuilder.mux #[", indent(indent_level))?;
         indent_level += 1;
-
-        writeln!(f, "{}(#v[", indent(indent_level))?;
-        indent_level += 1;
-        for chunk in self.chunks.iter() {
-            write!(f, "{}", indent(indent_level))?;
-            pretty_print_opening_ref(f, vars_ident, chunk.0, chunk.1)?;
-            writeln!(f, ",")?;
-        }
-        indent_level -= 1;
-        writeln!(f, "{}])", indent(indent_level))?;
-
-        writeln!(f, "{}(#v[", indent(indent_level))?;
-        indent_level += 1;
-        for flag in self.flags.iter() {
-            flag.zklean_pretty_print(f, &vars_ident, indent_level)?;
-            writeln!(f, ",")?;
-        }
-        indent_level -= 1;
-        writeln!(f, "{}])", indent(indent_level))?;
-
-        indent_level -= 1;
-        write!(
-            f,
-            "{}ZKBuilder.constrainEq res ",
-            indent(indent_level)
-        )?;
+        write!(f, "{}(", indent(indent_level))?;
         pretty_print_opening_ref(
             f,
             vars_ident,
-            SumcheckId::SpartanOuter,
-            PolynomialId::Virtual(VirtualPolynomial::LookupOutput),
+            self.interleaving_flag.0,
+            self.interleaving_flag.1,
         )?;
+        writeln!(f, ", concatenated_eval),")?;
+        write!(f, "{}(1 - ", indent(indent_level))?;
+        pretty_print_opening_ref(
+            f,
+            vars_ident,
+            self.interleaving_flag.0,
+            self.interleaving_flag.1,
+        )?;
+        writeln!(f, ", interleaved_eval),")?;
+        indent_level -= 1;
+        writeln!(f, "{}]", indent(indent_level))?;
+        write!(f, "{}ZKBuilder.constrainEq res ", indent(indent_level))?;
+        pretty_print_opening_ref(f, vars_ident, self.lookup_output.0, self.lookup_output.1)?;
 
         Ok(())
     }
