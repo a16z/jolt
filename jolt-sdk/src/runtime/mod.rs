@@ -1,44 +1,32 @@
-//! ZeroOS integration for Jolt zkVM
+//! Runtime support for Jolt zkVM guests
 //!
-//! This module provides the canonical ZeroOS integration code for Jolt.
-//! It includes boot, trap handling, and I/O functionality needed to run
-//! ZeroOS-based guests on the Jolt zkVM.
+//! This module provides the ZeroOS-based runtime for Jolt guests.
+//! It includes boot, trap handling, and runtime functionality needed to run
+//! guests on the Jolt zkVM.
 //!
 //! ## Architecture
 //!
-//! The ZeroOS integration works as follows:
+//! The runtime works as follows:
 //! - Boot: `__platform_bootstrap` initializes ZeroOS subsystems (heap, VFS, scheduler)
 //! - Trap: `trap_handler` routes syscalls through ZeroOS's Linux syscall layer
-//! - I/O: `ecall` provides ECALL-based print functionality
-//! - Exit: `platform_exit` uses infinite loop for clean termination
-//!
-//! ## Feature Flags
-//!
-//! Enable the `zeroos` feature in `jolt-sdk` to use this module.
+//! - Exit: `platform_exit` (in jolt-platform) uses infinite loop for clean termination
 
 mod boot;
 
-pub mod ecall;
 #[cfg(all(
     not(target_os = "none"),
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 pub mod trap;
 
-// Note: jolt_print, jolt_println, println, eprintln macros are exported at
-// crate root via #[macro_export] in ecall.rs
-
 cfg_if::cfg_if! {
     if #[cfg(target_os = "linux")] {
-        // println and eprintln macros are defined in ecall.rs via #[macro_export]
-        // They work for both std and no-std modes.
-
         pub fn exit(code: i32) -> ! {
             std::process::exit(code)
         }
     } else if #[cfg(target_os = "none")] {
         use crate::eprintln;
-        pub use ecall::putchar;
+        pub use jolt_platform::putchar;
 
         extern "C" {
             /// Set the panic bit in the I/O region.
@@ -48,7 +36,7 @@ cfg_if::cfg_if! {
         }
 
         pub fn exit(code: i32) -> ! {
-            platform_exit(code)
+            jolt_platform::platform_exit(code)
         }
 
         #[global_allocator]
@@ -64,17 +52,6 @@ cfg_if::cfg_if! {
     }
 }
 
-/// Exit the program.
-///
-/// Enters an infinite loop (`j .`) which the Jolt emulator detects via PC stall
-/// (prev_pc == pc) and treats as clean termination.
-#[no_mangle]
-pub extern "C" fn platform_exit(_code: i32) -> ! {
-    unsafe {
-        core::arch::asm!("j .", options(noreturn));
-    }
-}
-
 /// Debug write function for ZeroOS debug crate integration.
 ///
 /// # Safety
@@ -85,7 +62,7 @@ pub unsafe extern "C" fn __debug_write(msg: *const u8, len: usize) {
     if !msg.is_null() && len > 0 {
         let slice = core::slice::from_raw_parts(msg, len);
         for &byte in slice {
-            ecall::putchar(byte);
+            jolt_platform::putchar(byte);
         }
     }
 }

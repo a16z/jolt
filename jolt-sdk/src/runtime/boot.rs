@@ -107,7 +107,7 @@ pub extern "C" fn __platform_bootstrap() {
 
 #[cfg(feature = "zeroos-vfs-device-console")]
 mod console {
-    use super::super::ecall::putchar;
+    use jolt_platform::putchar;
     use zeroos::vfs;
 
     pub fn jolt_console_write(_file: *mut u8, buf: *const u8, count: usize) -> isize {

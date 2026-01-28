@@ -75,4 +75,4 @@ impl<T> core::ops::Deref for UntrustedAdvice<T> {
 pub static mut _HEAP_PTR: u8 = 0;
 
 #[cfg(target_arch = "riscv64")]
-pub mod support;
+pub mod runtime;
