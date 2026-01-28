@@ -839,7 +839,7 @@ impl MacroBuilder {
     }
 
     /// Generate `jolt_panic()` function that writes to the panic address.
-    /// This is called by the support crate's `#[panic_handler]` to signal panics to jolt-core.
+    /// This is called by the runtime's `#[panic_handler]` to signal panics to jolt-core.
     fn make_panic(&self, panic_address: u64) -> TokenStream2 {
         quote! {
             #[cfg(feature = "guest")]
