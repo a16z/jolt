@@ -988,6 +988,7 @@ dependencies = [
 [[package]]
 name = "dory-derive"
 version = "0.1.0"
+source = "git+https://github.com/a16z/dory?branch=feat%2Fzk#691ce5b466680849c2bf9cc4cc3f0ee3d0451220"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -997,6 +998,7 @@ dependencies = [
 [[package]]
 name = "dory-pcs"
 version = "0.1.0"
+source = "git+https://github.com/a16z/dory?branch=feat%2Fzk#691ce5b466680849c2bf9cc4cc3f0ee3d0451220"
 dependencies = [
  "ark-bn254",
  "ark-ec",
