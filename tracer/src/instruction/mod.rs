@@ -980,7 +980,7 @@ impl Instruction {
                     FUNCT3_ADVICE_LEN => {
                         Ok(VirtualAdviceLen::new(instr, address, true, compressed).into())
                     }
-                    _ => Err("Invalid custom/virtual instruction (funct3 = {funct_3}"),
+                    _ => Err("Invalid custom/virtual instruction"),
                 }
             }
             _ => Err("Unknown opcode"),

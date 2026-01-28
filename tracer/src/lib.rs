@@ -1086,7 +1086,8 @@ mod tests {
             program_size: Some(elf.len() as u64),
             ..Default::default()
         };
-        let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
+        let (_, execution_trace, _, _, _) =
+            trace(&elf, None, &INPUTS, &[], &[], &memory_config, None);
         let (checkpoints, _) = trace_checkpoints(&elf, &INPUTS, &[], &[], &memory_config, n);
         assert_eq!(execution_trace.len(), expected_trace_length);
         assert_eq!(checkpoints.len(), expected_trace_length.div_ceil(n));
@@ -1109,7 +1110,8 @@ mod tests {
             ..Default::default()
         };
 
-        let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
+        let (_, execution_trace, _, _, _) =
+            trace(&elf, None, &INPUTS, &[], &[], &memory_config, None);
         let mut emulator: Emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];
