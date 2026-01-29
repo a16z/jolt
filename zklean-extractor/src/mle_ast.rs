@@ -336,6 +336,17 @@ impl MleAst {
         Self::new_var('v', index)
     }
 
+    /// Create an MleAst from an existing node ID.
+    ///
+    /// This is useful for codegen when you have a node ID but need to use
+    /// MleAst methods like `is_constant()` or `try_evaluate_constant()`.
+    pub fn from_node_id(node_id: NodeId) -> Self {
+        Self {
+            root: node_id,
+            reg_name: None,
+        }
+    }
+
     /// Get the root node ID for this AST.
     pub fn root(&self) -> NodeId {
         self.root
@@ -413,6 +424,194 @@ impl MleAst {
         Self {
             root,
             reg_name: input.reg_name,
+        }
+    }
+
+    /// Returns true if this AST represents a constant value (no variables).
+    ///
+    /// An expression is constant if it contains only scalars and operations on scalars,
+    /// with no `Var` or `NamedVar` atoms anywhere in the tree.
+    pub fn is_constant(&self) -> bool {
+        is_node_constant(self.root)
+    }
+
+    /// If this AST is constant, evaluate it and return the scalar value.
+    ///
+    /// Returns `None` if the AST contains any variables.
+    /// Returns `Some([u64; 4])` with the computed constant value.
+    ///
+    /// Note: This uses modular arithmetic with the BN254 scalar field modulus.
+    pub fn try_evaluate_constant(&self) -> Option<Scalar> {
+        if !self.is_constant() {
+            return None;
+        }
+        Some(evaluate_constant_node(self.root))
+    }
+}
+
+/// Check if an edge is constant (contains no variables)
+fn is_edge_constant(edge: Edge) -> bool {
+    match edge {
+        Edge::Atom(Atom::Scalar(_)) => true,
+        Edge::Atom(Atom::Var(_)) => false,
+        Edge::Atom(Atom::NamedVar(_)) => false, // Named vars could be constants, but we can't know statically
+        Edge::NodeRef(id) => is_node_constant(id),
+    }
+}
+
+/// Check if a node is constant (contains no variables)
+fn is_node_constant(node_id: NodeId) -> bool {
+    match get_node(node_id) {
+        Node::Atom(Atom::Scalar(_)) => true,
+        Node::Atom(Atom::Var(_)) => false,
+        Node::Atom(Atom::NamedVar(_)) => false,
+        Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e)
+        | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::MulTwoPow192(e) => {
+            is_edge_constant(e)
+        }
+        Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
+            is_edge_constant(e1) && is_edge_constant(e2)
+        }
+        Node::Poseidon(e1, e2, e3) => {
+            is_edge_constant(e1) && is_edge_constant(e2) && is_edge_constant(e3)
+        }
+    }
+}
+
+/// BN254 scalar field modulus: 21888242871839275222246405745257275088548364400416034343698204186575808495617
+const BN254_MODULUS: [u64; 4] = [
+    0x43E1F593F0000001,
+    0x2833E84879B97091,
+    0xB85045B68181585D,
+    0x30644E72E131A029,
+];
+
+/// Subtract two 256-bit numbers with modular reduction
+fn scalar_sub_mod(a: Scalar, b: Scalar) -> Scalar {
+    // a - b mod p = a + (p - b) mod p
+    let neg_b = scalar_neg_mod(b);
+    scalar_add_mod(a, neg_b)
+}
+
+/// Add two 256-bit numbers with modular reduction
+fn scalar_add_mod(a: Scalar, b: Scalar) -> Scalar {
+    let mut result = [0u64; 4];
+    let mut carry = 0u128;
+
+    for i in 0..4 {
+        let sum = a[i] as u128 + b[i] as u128 + carry;
+        result[i] = sum as u64;
+        carry = sum >> 64;
+    }
+
+    // Reduce mod p if needed
+    if carry > 0 || scalar_ge(&result, &BN254_MODULUS) {
+        scalar_sub_no_borrow(&result, &BN254_MODULUS)
+    } else {
+        result
+    }
+}
+
+/// Negate a scalar: -a mod p = p - a
+fn scalar_neg_mod(a: Scalar) -> Scalar {
+    if a == SCALAR_ZERO {
+        return SCALAR_ZERO;
+    }
+    scalar_sub_no_borrow(&BN254_MODULUS, &a)
+}
+
+/// Multiply two 256-bit numbers with modular reduction (simplified)
+fn scalar_mul_mod(a: Scalar, b: Scalar) -> Scalar {
+    // For full correctness, we'd need Montgomery multiplication
+    // For now, use a simple approach via BigUint
+    use num_bigint::BigUint;
+
+    let a_big = BigUint::from_slice(&[a[0] as u32, (a[0] >> 32) as u32,
+                                       a[1] as u32, (a[1] >> 32) as u32,
+                                       a[2] as u32, (a[2] >> 32) as u32,
+                                       a[3] as u32, (a[3] >> 32) as u32]);
+    let b_big = BigUint::from_slice(&[b[0] as u32, (b[0] >> 32) as u32,
+                                       b[1] as u32, (b[1] >> 32) as u32,
+                                       b[2] as u32, (b[2] >> 32) as u32,
+                                       b[3] as u32, (b[3] >> 32) as u32]);
+    let p_big = BigUint::from_slice(&[BN254_MODULUS[0] as u32, (BN254_MODULUS[0] >> 32) as u32,
+                                       BN254_MODULUS[1] as u32, (BN254_MODULUS[1] >> 32) as u32,
+                                       BN254_MODULUS[2] as u32, (BN254_MODULUS[2] >> 32) as u32,
+                                       BN254_MODULUS[3] as u32, (BN254_MODULUS[3] >> 32) as u32]);
+
+    let result = (a_big * b_big) % p_big;
+    let digits = result.to_u64_digits();
+
+    let mut out = [0u64; 4];
+    for (i, &d) in digits.iter().take(4).enumerate() {
+        out[i] = d;
+    }
+    out
+}
+
+/// Compare two 256-bit numbers: returns true if a >= b
+fn scalar_ge(a: &Scalar, b: &Scalar) -> bool {
+    for i in (0..4).rev() {
+        if a[i] > b[i] { return true; }
+        if a[i] < b[i] { return false; }
+    }
+    true // equal
+}
+
+/// Subtract b from a, assuming a >= b (no modular reduction)
+fn scalar_sub_no_borrow(a: &Scalar, b: &Scalar) -> Scalar {
+    let mut result = [0u64; 4];
+    let mut borrow = 0i128;
+
+    for i in 0..4 {
+        let diff = a[i] as i128 - b[i] as i128 - borrow;
+        if diff < 0 {
+            result[i] = (diff + (1i128 << 64)) as u64;
+            borrow = 1;
+        } else {
+            result[i] = diff as u64;
+            borrow = 0;
+        }
+    }
+
+    result
+}
+
+/// Evaluate a constant edge to its scalar value
+fn evaluate_constant_edge(edge: Edge) -> Scalar {
+    match edge {
+        Edge::Atom(Atom::Scalar(s)) => s,
+        Edge::Atom(Atom::Var(_)) | Edge::Atom(Atom::NamedVar(_)) => {
+            panic!("Cannot evaluate non-constant edge")
+        }
+        Edge::NodeRef(id) => evaluate_constant_node(id),
+    }
+}
+
+/// Evaluate a constant node to its scalar value
+fn evaluate_constant_node(node_id: NodeId) -> Scalar {
+    match get_node(node_id) {
+        Node::Atom(Atom::Scalar(s)) => s,
+        Node::Atom(Atom::Var(_)) | Node::Atom(Atom::NamedVar(_)) => {
+            panic!("Cannot evaluate non-constant node")
+        }
+        Node::Neg(e) => scalar_neg_mod(evaluate_constant_edge(e)),
+        Node::Add(e1, e2) => {
+            scalar_add_mod(evaluate_constant_edge(e1), evaluate_constant_edge(e2))
+        }
+        Node::Sub(e1, e2) => {
+            scalar_sub_mod(evaluate_constant_edge(e1), evaluate_constant_edge(e2))
+        }
+        Node::Mul(e1, e2) => {
+            scalar_mul_mod(evaluate_constant_edge(e1), evaluate_constant_edge(e2))
+        }
+        Node::Inv(_) | Node::Div(_, _) => {
+            // Modular inverse is complex - for now, panic
+            panic!("Modular inverse not implemented for constant evaluation")
+        }
+        Node::Poseidon(_, _, _) | Node::Keccak256(_) | Node::ByteReverse(_)
+        | Node::Truncate128Reverse(_) | Node::Truncate128(_) | Node::MulTwoPow192(_) => {
+            panic!("Hash/transform operations cannot be evaluated as constants")
         }
     }
 }
@@ -990,6 +1189,14 @@ impl std::ops::Add<&Self> for MleAst {
     type Output = Self;
 
     fn add(mut self, rhs: &Self) -> Self::Output {
+        // Optimization: x + 0 = x, 0 + x = x
+        // This prevents constant-vs-constant additions in generated code
+        if self.is_zero() {
+            return rhs.clone();
+        }
+        if rhs.is_zero() {
+            return self;
+        }
         self.binop(Node::Add, rhs);
         self
     }
@@ -999,6 +1206,15 @@ impl std::ops::Sub<&Self> for MleAst {
     type Output = Self;
 
     fn sub(mut self, rhs: &Self) -> Self::Output {
+        // Optimization: x - 0 = x
+        // This prevents constant-vs-constant subtractions in generated code
+        if rhs.is_zero() {
+            return self;
+        }
+        // Optimization: 0 - x = -x
+        if self.is_zero() {
+            return -rhs.clone();
+        }
         self.binop(Node::Sub, rhs);
         self
     }
@@ -1032,24 +1248,60 @@ impl FieldOps<&Self, Self> for MleAst {}
 
 impl std::ops::AddAssign for MleAst {
     fn add_assign(&mut self, rhs: Self) {
+        // Optimization: x += 0 is a no-op
+        if rhs.is_zero() {
+            return;
+        }
+        // Optimization: 0 += x => self = x
+        if self.is_zero() {
+            *self = rhs;
+            return;
+        }
         self.binop(Node::Add, &rhs);
     }
 }
 
 impl<'a> std::ops::AddAssign<&'a Self> for MleAst {
     fn add_assign(&mut self, rhs: &'a Self) {
+        // Optimization: x += 0 is a no-op
+        if rhs.is_zero() {
+            return;
+        }
+        // Optimization: 0 += x => self = x
+        if self.is_zero() {
+            *self = rhs.clone();
+            return;
+        }
         self.binop(Node::Add, rhs);
     }
 }
 
 impl std::ops::SubAssign for MleAst {
     fn sub_assign(&mut self, rhs: Self) {
+        // Optimization: x -= 0 is a no-op
+        if rhs.is_zero() {
+            return;
+        }
+        // Optimization: 0 -= x => self = -x
+        if self.is_zero() {
+            *self = -rhs;
+            return;
+        }
         self.binop(Node::Sub, &rhs);
     }
 }
 
 impl<'a> std::ops::SubAssign<&'a Self> for MleAst {
     fn sub_assign(&mut self, rhs: &'a Self) {
+        // Optimization: x -= 0 is a no-op
+        if rhs.is_zero() {
+            return;
+        }
+        // Optimization: 0 -= x => self = -x
+        if self.is_zero() {
+            *self = -rhs.clone();
+            return;
+        }
         self.binop(Node::Sub, rhs);
     }
 }

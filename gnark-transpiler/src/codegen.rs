@@ -9,7 +9,7 @@
 use std::collections::{BTreeSet, HashMap};
 use zklean_extractor::mle_ast::{
     common_subexpression_elimination, common_subexpression_elimination_incremental, get_node,
-    insert_node, Atom, Bindings, Edge, Node,
+    insert_node, Atom, Bindings, Edge, MleAst, Node,
 };
 
 /// Format a scalar value ([u64; 4]) for Gnark code generation.
@@ -39,7 +39,7 @@ fn format_scalar_for_gnark(limbs: [u64; 4]) -> String {
 pub struct MemoizedCodeGen {
     /// Reference counts for each NodeId (computed in first pass)
     ref_counts: HashMap<usize, usize>,
-    /// Maps NodeId to CSE variable name (e.g., "cse_0")
+    /// Maps NodeId to CSE variable name (e.g., "cse_0" or "cse_3_0" for constraint 3)
     generated: HashMap<usize, String>,
     /// CSE variable definitions in order
     bindings: Vec<String>,
@@ -49,6 +49,8 @@ pub struct MemoizedCodeGen {
     vars: BTreeSet<u16>,
     /// Maps variable index to input name (e.g., 0 -> "UniSkipCoeff0")
     var_names: HashMap<u16, String>,
+    /// Optional constraint index for per-constraint CSE naming (None = global CSE)
+    constraint_idx: Option<usize>,
 }
 
 impl MemoizedCodeGen {
@@ -60,6 +62,7 @@ impl MemoizedCodeGen {
             cse_counter: 0,
             vars: BTreeSet::new(),
             var_names: HashMap::new(),
+            constraint_idx: None,
         }
     }
 
@@ -72,6 +75,29 @@ impl MemoizedCodeGen {
             cse_counter: 0,
             vars: BTreeSet::new(),
             var_names,
+            constraint_idx: None,
+        }
+    }
+
+    /// Create a new MemoizedCodeGen with custom variable names and a constraint index.
+    /// CSE variable names will be prefixed with the constraint index (e.g., "cse_3_0" for constraint 3).
+    pub fn with_var_names_and_constraint_idx(var_names: HashMap<u16, String>, constraint_idx: usize) -> Self {
+        Self {
+            ref_counts: HashMap::new(),
+            generated: HashMap::new(),
+            bindings: Vec::new(),
+            cse_counter: 0,
+            vars: BTreeSet::new(),
+            var_names,
+            constraint_idx: Some(constraint_idx),
+        }
+    }
+
+    /// Generate a CSE variable name using the configured prefix
+    fn make_cse_name(&self) -> String {
+        match self.constraint_idx {
+            Some(idx) => format!("cse_{}_{}", idx, self.cse_counter),
+            None => format!("cse_{}", self.cse_counter),
         }
     }
 
@@ -84,6 +110,7 @@ impl MemoizedCodeGen {
     pub fn bindings_code(&self) -> String {
         self.bindings.join("")
     }
+
 
     /// Debug: get reference counts for all nodes
     pub fn ref_counts(&self) -> &HashMap<usize, usize> {
@@ -142,7 +169,13 @@ impl MemoizedCodeGen {
                     format!("circuit.X_{}", index)
                 }
             }
-            Atom::NamedVar(index) => format!("cse_{}", index),
+            Atom::NamedVar(index) => {
+                // Use constraint-prefixed name if available
+                match self.constraint_idx {
+                    Some(constraint_idx) => format!("cse_{}_{}", constraint_idx, index),
+                    None => format!("cse_{}", index),
+                }
+            }
         }
     }
 
@@ -222,7 +255,7 @@ impl MemoizedCodeGen {
         // Hoist to CSE variable if referenced more than once
         let ref_count = self.ref_counts.get(&node_id).copied().unwrap_or(1);
         if ref_count > 1 {
-            let var_name = format!("cse_{}", self.cse_counter);
+            let var_name = self.make_cse_name();
             self.cse_counter += 1;
             self.bindings.push(format!("\t{} := {}\n", var_name, expr));
             self.generated.insert(node_id, var_name.clone());
@@ -325,16 +358,73 @@ pub fn generate_stage1_circuit_memoized(
     output
 }
 
+/// Statistics about constant assertions detected during codegen
+#[derive(Debug, Default)]
+pub struct ConstantAssertionStats {
+    /// Total number of constraints processed
+    pub total_constraints: usize,
+    /// Number of constant assertions that were skipped
+    pub constant_skipped: usize,
+    /// Number of constant assertions that failed (non-zero constant)
+    pub constant_failed: usize,
+    /// Names of failed constant assertions
+    pub failed_names: Vec<String>,
+}
+
 /// Generate a complete Gnark circuit from an AstBundle.
 ///
 /// This is the generic codegen that works with any stage/verifier.
 /// It reads constraints and inputs from the bundle and generates
 /// appropriate gnark code based on the Assertion types.
+///
+/// **Constant Assertion Handling**: If a constraint expression is entirely
+/// constant (contains no variables), the assertion is verified at compile-time:
+/// - If constant == 0 for EqualZero assertions, the constraint is SKIPPED
+/// - If constant != 0, the function PANICS (static verification failure)
+///
+/// Returns the generated Go code and statistics about constant assertions.
 pub fn generate_circuit_from_bundle(
     bundle: &zklean_extractor::mle_ast::AstBundle,
     circuit_name: &str,
 ) -> String {
+    let (code, stats) = generate_circuit_from_bundle_with_stats(bundle, circuit_name);
+
+    // Log statistics
+    if stats.constant_skipped > 0 || stats.constant_failed > 0 {
+        eprintln!(
+            "Codegen stats: {} total constraints, {} constant-skipped, {} constant-failed",
+            stats.total_constraints, stats.constant_skipped, stats.constant_failed
+        );
+    }
+
+    // Panic if any constant assertions failed
+    if stats.constant_failed > 0 {
+        panic!(
+            "Static verification failed: {} constant assertions are non-zero: {:?}",
+            stats.constant_failed, stats.failed_names
+        );
+    }
+
+    code
+}
+
+/// Generate a complete Gnark circuit from an AstBundle, with statistics.
+///
+/// This version returns statistics about constant assertion handling,
+/// useful for debugging and testing.
+///
+/// **Per-Constraint CSE**: To avoid the node aliasing bug where structurally identical
+/// expressions from different constraints get merged, we use per-constraint CSE contexts.
+/// This means each constraint gets its own CSE namespace (cse_0_0, cse_0_1, ... for constraint 0,
+/// cse_1_0, cse_1_1, ... for constraint 1, etc.). This prevents CSE from merging expressions
+/// that are structurally identical but semantically different across constraints.
+pub fn generate_circuit_from_bundle_with_stats(
+    bundle: &zklean_extractor::mle_ast::AstBundle,
+    circuit_name: &str,
+) -> (String, ConstantAssertionStats) {
     use zklean_extractor::mle_ast::{Assertion, InputKind};
+
+    let mut stats = ConstantAssertionStats::default();
 
     // Build var_names mapping from bundle inputs
     let var_names: HashMap<u16, String> = bundle
@@ -343,28 +433,64 @@ pub fn generate_circuit_from_bundle(
         .map(|input| (input.index, input.name.clone()))
         .collect();
 
-    let mut codegen = MemoizedCodeGen::with_var_names(var_names);
+    // Per-constraint CSE: generate each constraint with its own CSE context
+    // This avoids the node aliasing bug where structurally identical expressions
+    // from different constraints get incorrectly merged.
+    let mut all_bindings_code = String::new();
+    // constraint_data: (name, expr, assertion, is_const, const_val, other_expr for EqualNode)
+    let mut constraint_data: Vec<(String, String, &Assertion, bool, Option<[u64; 4]>, Option<String>)> = Vec::new();
+    let mut all_vars: BTreeSet<u16> = BTreeSet::new();
 
-    // First pass: count references to all constraint roots
-    for constraint in &bundle.constraints {
-        codegen.count_refs(constraint.root);
-        // Also count refs for EqualNode targets
-        if let Assertion::EqualNode(other_id) = &constraint.assertion {
+    for (constraint_idx, c) in bundle.constraints.iter().enumerate() {
+        // Create a fresh codegen context for this constraint with per-constraint CSE naming
+        // This ensures CSE variables from different constraints don't collide
+        // e.g., constraint 0 uses cse_0_0, cse_0_1, constraint 1 uses cse_1_0, cse_1_1, etc.
+        let mut codegen = MemoizedCodeGen::with_var_names_and_constraint_idx(
+            var_names.clone(),
+            constraint_idx,
+        );
+
+        // Count references within this constraint only
+        codegen.count_refs(c.root);
+        if let Assertion::EqualNode(other_id) = &c.assertion {
             codegen.count_refs(*other_id);
         }
+
+        // Generate expression for this constraint
+        let expr = codegen.generate_expr(c.root);
+
+        // Generate other_expr for EqualNode assertions
+        let other_expr = if let Assertion::EqualNode(other_id) = &c.assertion {
+            Some(codegen.generate_expr(*other_id))
+        } else {
+            None
+        };
+
+        // Collect vars used in this constraint
+        all_vars.extend(codegen.vars().iter());
+
+        // Check if constant
+        let ast = MleAst::from_node_id(c.root);
+        let is_const = ast.is_constant();
+        let const_val = if is_const {
+            ast.try_evaluate_constant()
+        } else {
+            None
+        };
+
+        // Collect bindings for this constraint (already have prefixed names from codegen)
+        let constraint_bindings = codegen.bindings_code();
+        if !constraint_bindings.is_empty() {
+            all_bindings_code.push_str(&format!("\t// CSE bindings for constraint {}\n", constraint_idx));
+            all_bindings_code.push_str(&constraint_bindings);
+        }
+
+        constraint_data.push((c.name.clone(), expr, &c.assertion, is_const, const_val, other_expr));
     }
 
-    // Second pass: generate expressions for each constraint
-    let constraint_exprs: Vec<(String, String, &Assertion)> = bundle
-        .constraints
-        .iter()
-        .map(|c| {
-            let expr = codegen.generate_expr(c.root);
-            (c.name.clone(), expr, &c.assertion)
-        })
-        .collect();
+    stats.total_constraints = constraint_data.len();
 
-    let bindings_code = codegen.bindings_code();
+    let bindings_code = all_bindings_code;
 
     let mut output = String::new();
 
@@ -375,7 +501,7 @@ pub fn generate_circuit_from_bundle(
     output.push_str("\n");
     output.push_str("\t\"github.com/consensys/gnark/frontend\"\n");
     if bindings_code.contains("poseidon.Hash")
-        || constraint_exprs.iter().any(|(_, e, _)| e.contains("poseidon.Hash"))
+        || constraint_data.iter().any(|(_, e, _, _, _, _)| e.contains("poseidon.Hash"))
     {
         output.push_str("\t\"jolt_verifier/poseidon\"\n");
     }
@@ -437,7 +563,36 @@ pub fn generate_circuit_from_bundle(
     }
 
     // Generate constraints based on assertion type
-    for (name, expr, assertion) in &constraint_exprs {
+    // Skip constant assertions that are satisfied, track those that fail
+    for (name, expr, assertion, is_const, const_val, other_expr) in &constraint_data {
+        // Handle constant assertions specially
+        if *is_const {
+            match assertion {
+                Assertion::EqualZero => {
+                    let val = const_val.unwrap_or([0, 0, 0, 0]);
+                    if val == [0, 0, 0, 0] {
+                        // Constant equals zero - statically satisfied, skip
+                        output.push_str(&format!("\t// {} = 0 (statically verified, skipped)\n\n", name));
+                        stats.constant_skipped += 1;
+                        continue;
+                    } else {
+                        // Constant != 0 - static failure
+                        output.push_str(&format!(
+                            "\t// {} STATIC FAILURE: constant != 0\n",
+                            name
+                        ));
+                        stats.constant_failed += 1;
+                        stats.failed_names.push(name.clone());
+                        // Still emit the constraint so the error is visible
+                    }
+                }
+                _ => {
+                    // For other assertion types with constants, we can't easily
+                    // verify statically, so emit them as normal
+                }
+            }
+        }
+
         output.push_str(&format!("\t// {}\n", name));
         let var_name = sanitize_go_name(name);
         output.push_str(&format!("\t{} := {}\n", var_name, expr));
@@ -453,11 +608,12 @@ pub fn generate_circuit_from_bundle(
                     sanitize_go_name(pub_name)
                 ));
             }
-            Assertion::EqualNode(other_id) => {
-                let other_expr = codegen.generate_expr(*other_id);
+            Assertion::EqualNode(_) => {
+                // other_expr was generated during the constraint processing loop
+                let other = other_expr.as_ref().expect("EqualNode assertion must have other_expr");
                 output.push_str(&format!(
                     "\tapi.AssertIsEqual({}, {})\n\n",
-                    var_name, other_expr
+                    var_name, other
                 ));
             }
         }
@@ -466,7 +622,7 @@ pub fn generate_circuit_from_bundle(
     output.push_str("\treturn nil\n");
     output.push_str("}\n");
 
-    output
+    (output, stats)
 }
 
 /// Sanitize a name for use as a Go identifier.

@@ -376,6 +376,8 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
 
     fn challenge_scalar<JF: JoltField>(&mut self) -> JF {
         // Under the hood all Fr are 128 bits for performance
+        #[cfg(feature = "debug-expected-output")]
+        eprintln!(">>> challenge_scalar called <<<");
         self.challenge_scalar_128_bits()
     }
 
@@ -383,11 +385,30 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
         let mut buf = vec![0u8; 16];
         self.challenge_bytes(&mut buf);
 
+        #[cfg(feature = "debug-expected-output")]
+        {
+            // Print the 16 bytes before reversal
+            eprintln!("=== CHALLENGE_SCALAR_128_BITS DEBUG ===");
+            eprintln!("16 bytes before reverse (LE from hash) = {:?}", &buf);
+        }
+
         buf = buf.into_iter().rev().collect();
+
+        #[cfg(feature = "debug-expected-output")]
+        {
+            eprintln!("16 bytes after reverse = {:?}", &buf);
+            // Convert to u128 for display
+            let val = u128::from_be_bytes(buf.clone().try_into().unwrap());
+            eprintln!("result as u128 = {}", val);
+            eprintln!("=== END CHALLENGE_SCALAR_128_BITS ===");
+        }
+
         JF::from_bytes(&buf)
     }
 
     fn challenge_vector<JF: JoltField>(&mut self, len: usize) -> Vec<JF> {
+        #[cfg(feature = "debug-expected-output")]
+        eprintln!(">>> challenge_vector called with len={} <<<", len);
         (0..len)
             .map(|_i| self.challenge_scalar())
             .collect::<Vec<JF>>()
@@ -428,8 +449,45 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
     }
 
     fn debug_state(&self, label: &str) {
-        println!("TRANSCRIPT DEBUG [{}]: n_rounds={}, state={:02x?}",
-            label, self.n_rounds, &self.state[..8]);
+        #[cfg(feature = "debug-expected-output")]
+        {
+            // Print full 32-byte state and the field element interpretation
+            let state_f = F::from_le_bytes_mod_order(&self.state);
+            println!("TRANSCRIPT DEBUG [{}]: n_rounds={}", label, self.n_rounds);
+            println!("  state_bytes (full 32): {:02x?}", &self.state);
+
+            // Serialize state_f back to see field element value
+            use ark_serialize::CanonicalSerialize;
+            let mut state_bytes = Vec::new();
+            state_f.serialize_compressed(&mut state_bytes).unwrap();
+            let state_decimal = num_bigint::BigUint::from_bytes_le(&state_bytes).to_string();
+            println!("  state_f (decimal): {}", state_decimal);
+
+            // Also compute what challenge_bytes32 would return (hash output)
+            let mut poseidon = Self::hasher();
+            let round_f = F::from(self.n_rounds as u64);
+            let zero = F::zero();
+            let hash_output = poseidon
+                .hash(&[state_f, round_f, zero])
+                .expect("Poseidon hash failed");
+            let mut hash_bytes = [0u8; 32];
+            hash_output.serialize_uncompressed(&mut hash_bytes[..]).unwrap();
+
+            // Print hash output
+            let hash_decimal = num_bigint::BigUint::from_bytes_le(&hash_bytes).to_string();
+            println!("  hash(state_f, n_rounds, 0) = {}", hash_decimal);
+            println!("  hash_bytes (LE): {:02x?}", &hash_bytes);
+
+            // Print what Truncate128 would produce
+            let mut le16 = hash_bytes[..16].to_vec();
+            le16.reverse();
+            let truncated = num_bigint::BigUint::from_bytes_be(&le16).to_string();
+            println!("  truncate128(hash) = {}", truncated);
+        }
+        #[cfg(not(feature = "debug-expected-output"))]
+        {
+            let _ = label;  // Suppress unused warning
+        }
     }
 }
 
