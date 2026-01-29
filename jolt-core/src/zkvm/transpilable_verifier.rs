@@ -214,7 +214,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         self.verify_stage1()?;
         self.verify_stage2()?;
-        // self.verify_stage3()?;
+        self.verify_stage3()?;
         // self.verify_stage4()?;
         // self.verify_stage5()?;
         // self.verify_stage6()?;
