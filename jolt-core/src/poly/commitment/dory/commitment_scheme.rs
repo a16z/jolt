@@ -1,6 +1,6 @@
 //! Dory polynomial commitment scheme implementation
 
-use super::dory_globals::DoryGlobals;
+use super::dory_globals::{DoryContext, DoryGlobals};
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 use super::wrappers::{
     ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup,
@@ -34,6 +34,35 @@ use tracing::trace_span;
 #[derive(Clone)]
 pub struct DoryCommitmentScheme;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DoryHintPad {
+    Replicate,
+    ZeroPad,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DoryOpeningProofHint {
+    row_commitments: Vec<ArkG1>,
+    pad: DoryHintPad,
+}
+
+impl DoryOpeningProofHint {
+    fn new(row_commitments: Vec<ArkG1>) -> Self {
+        let pad = match DoryGlobals::current_context() {
+            DoryContext::Main => DoryHintPad::Replicate,
+            DoryContext::TrustedAdvice | DoryContext::UntrustedAdvice => DoryHintPad::ZeroPad,
+        };
+        Self {
+            row_commitments,
+            pad,
+        }
+    }
+
+    fn into_rows(self) -> Vec<ArkG1> {
+        self.row_commitments
+    }
+}
+
 fn bind_opening_inputs<ProofTranscript: Transcript>(
     transcript: &mut ProofTranscript,
     opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
@@ -58,7 +87,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     type Commitment = ArkGT;
     type Proof = ArkDoryProof;
     type BatchedProof = Vec<ArkDoryProof>;
-    type OpeningProofHint = Vec<ArkG1>;
+    type OpeningProofHint = DoryOpeningProofHint;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
@@ -102,7 +131,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         )
         .expect("commitment should succeed");
 
-        (tier_2, row_commitments)
+        (tier_2, DoryOpeningProofHint::new(row_commitments))
     }
 
     fn batch_commit<U>(
@@ -133,10 +162,12 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let opening = PolynomialEvaluation::evaluate(poly, opening_point);
         bind_opening_inputs(transcript, opening_point, &opening);
 
-        let row_commitments = hint.unwrap_or_else(|| {
-            let (_commitment, row_commitments) = Self::commit(poly, setup);
-            row_commitments
-        });
+        let row_commitments = hint
+            .map(DoryOpeningProofHint::into_rows)
+            .unwrap_or_else(|| {
+                let (_commitment, row_commitments) = Self::commit(poly, setup);
+                row_commitments.into_rows()
+            });
 
         let num_cols = DoryGlobals::get_num_columns();
         let num_rows = DoryGlobals::get_max_num_rows();
@@ -232,16 +263,30 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut rlc_hint = vec![ArkG1(G1Projective::zero()); num_rows];
         for (coeff, hint) in coeffs.iter().zip(hints.into_iter()) {
-            // Replicate shorter hints to match num_rows (for dense poly embedding)
-            let mut expanded_hint = if hint.len() < num_rows && !hint.is_empty() {
-                let replication_factor = num_rows / hint.len();
-                let mut expanded = Vec::with_capacity(num_rows);
-                for _ in 0..replication_factor {
-                    expanded.extend(hint.iter().cloned());
+            let DoryOpeningProofHint {
+                row_commitments: hint_rows,
+                pad,
+            } = hint;
+            // Replicate shorter hints to match num_rows for dense poly embedding.
+            // For advice polynomials, we zero-pad instead (they occupy the top-left block only).
+            let mut expanded_hint = if hint_rows.len() < num_rows && !hint_rows.is_empty() {
+                match pad {
+                    DoryHintPad::ZeroPad => {
+                        let mut h = hint_rows;
+                        h.resize(num_rows, ArkG1(G1Projective::zero()));
+                        h
+                    }
+                    DoryHintPad::Replicate => {
+                        let replication_factor = num_rows / hint_rows.len();
+                        let mut expanded = Vec::with_capacity(num_rows);
+                        for _ in 0..replication_factor {
+                            expanded.extend(hint_rows.iter().cloned());
+                        }
+                        expanded
+                    }
                 }
-                expanded
             } else {
-                let mut h = hint;
+                let mut h = hint_rows;
                 h.resize(num_rows, ArkG1(G1Projective::zero()));
                 h
             };
@@ -271,7 +316,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             let _ = std::mem::replace(&mut rlc_hint, expanded_hint);
         }
 
-        rlc_hint
+        DoryOpeningProofHint::new(rlc_hint)
     }
 
     /// Homomorphically combines multiple commitments using a random linear combination.
@@ -381,7 +426,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             let g2_bases = &setup.g2_vec[..num_rows];
             let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-            (tier_2, row_commitments)
+            (tier_2, DoryOpeningProofHint::new(row_commitments))
         } else {
             // Dense polynomial: replicate row commitments to match K*T matrix layout
             // This ensures homomorphic combination works correctly with one-hot polynomials
@@ -400,13 +445,13 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
                 let tier_2 =
                     <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-                (tier_2, row_commitments)
+                (tier_2, DoryOpeningProofHint::new(row_commitments))
             } else {
                 // No replication needed (dense_row_count == num_rows or edge case)
                 let g2_bases = &setup.g2_vec[..dense_rows.len()];
                 let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&dense_rows, g2_bases);
 
-                (tier_2, dense_rows)
+                (tier_2, DoryOpeningProofHint::new(dense_rows))
             }
         }
     }

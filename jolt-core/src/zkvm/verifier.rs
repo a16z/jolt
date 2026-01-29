@@ -463,7 +463,9 @@ impl<
         let output_constraint_challenge_values = if batched_output_constraint.is_some() {
             let mut values = batching_coefficients.clone();
             for instance in &instances {
-                let r_slice = &r_stage1[max_num_rounds - instance.num_rounds()..];
+                let num_rounds = instance.num_rounds();
+                let offset = instance.round_offset(max_num_rounds);
+                let r_slice = &r_stage1[offset..offset + num_rounds];
                 values.extend(
                     instance
                         .get_params()
@@ -587,7 +589,9 @@ impl<
         let mut input_constraint_challenge_values: Vec<F> =
             scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
-            let r_slice = &r_stage2[max_num_rounds - instance.num_rounds()..];
+            let num_rounds = instance.num_rounds();
+            let offset = instance.round_offset(max_num_rounds);
+            let r_slice = &r_stage2[offset..offset + num_rounds];
             output_constraint_challenge_values.extend(
                 instance
                     .get_params()
@@ -665,7 +669,9 @@ impl<
         let mut input_constraint_challenge_values: Vec<F> =
             scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
-            let r_slice = &r_stage3[max_num_rounds - instance.num_rounds()..];
+            let num_rounds = instance.num_rounds();
+            let offset = instance.round_offset(max_num_rounds);
+            let r_slice = &r_stage3[offset..offset + num_rounds];
             output_constraint_challenge_values.extend(
                 instance
                     .get_params()
@@ -763,7 +769,9 @@ impl<
         let mut input_constraint_challenge_values: Vec<F> =
             scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
-            let r_slice = &r_stage4[max_num_rounds - instance.num_rounds()..];
+            let num_rounds = instance.num_rounds();
+            let offset = instance.round_offset(max_num_rounds);
+            let r_slice = &r_stage4[offset..offset + num_rounds];
             output_constraint_challenge_values.extend(
                 instance
                     .get_params()
@@ -839,7 +847,9 @@ impl<
         let mut input_constraint_challenge_values: Vec<F> =
             scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
-            let r_slice = &r_stage5[max_num_rounds - instance.num_rounds()..];
+            let num_rounds = instance.num_rounds();
+            let offset = instance.round_offset(max_num_rounds);
+            let r_slice = &r_stage5[offset..offset + num_rounds];
             output_constraint_challenge_values.extend(
                 instance
                     .get_params()
@@ -972,7 +982,9 @@ impl<
         let mut input_constraint_challenge_values: Vec<F> =
             scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
-            let r_slice = &r_stage6[max_num_rounds - instance.num_rounds()..];
+            let num_rounds = instance.num_rounds();
+            let offset = instance.round_offset(max_num_rounds);
+            let r_slice = &r_stage6[offset..offset + num_rounds];
             output_constraint_challenge_values.extend(
                 instance
                     .get_params()
@@ -1422,7 +1434,9 @@ impl<
         let mut input_constraint_challenge_values: Vec<F> =
             scale_batching_coefficients(&batching_coefficients, &instances);
         for instance in &instances {
-            let r_slice = &r_stage7[max_num_rounds - instance.num_rounds()..];
+            let num_rounds = instance.num_rounds();
+            let offset = instance.round_offset(max_num_rounds);
+            let r_slice = &r_stage7[offset..offset + num_rounds];
             output_constraint_challenge_values.extend(
                 instance
                     .get_params()
