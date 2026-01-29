@@ -117,34 +117,44 @@ impl MemoizedCodeGen {
         &self.ref_counts
     }
 
-    /// First pass: count references to each node
-    pub fn count_refs(&mut self, node_id: usize) {
-        *self.ref_counts.entry(node_id).or_insert(0) += 1;
+    /// First pass: count references to each node (iterative to avoid stack overflow)
+    pub fn count_refs(&mut self, root_node_id: usize) {
+        let mut stack = vec![root_node_id];
 
-        // Only traverse children on first visit
-        if self.ref_counts[&node_id] == 1 {
-            let node = get_node(node_id);
-            match node {
-                Node::Atom(_) => {}
-                Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e) | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::MulTwoPow192(e) => {
-                    self.count_refs_edge(e);
-                }
-                Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
-                    self.count_refs_edge(e1);
-                    self.count_refs_edge(e2);
-                }
-                Node::Poseidon(e1, e2, e3) => {
-                    self.count_refs_edge(e1);
-                    self.count_refs_edge(e2);
-                    self.count_refs_edge(e3);
+        while let Some(node_id) = stack.pop() {
+            *self.ref_counts.entry(node_id).or_insert(0) += 1;
+
+            // Only traverse children on first visit
+            if self.ref_counts[&node_id] == 1 {
+                let node = get_node(node_id);
+                match node {
+                    Node::Atom(_) => {}
+                    Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e) | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::MulTwoPow192(e) => {
+                        if let Edge::NodeRef(id) = e {
+                            stack.push(id);
+                        }
+                    }
+                    Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
+                        if let Edge::NodeRef(id) = e1 {
+                            stack.push(id);
+                        }
+                        if let Edge::NodeRef(id) = e2 {
+                            stack.push(id);
+                        }
+                    }
+                    Node::Poseidon(e1, e2, e3) => {
+                        if let Edge::NodeRef(id) = e1 {
+                            stack.push(id);
+                        }
+                        if let Edge::NodeRef(id) = e2 {
+                            stack.push(id);
+                        }
+                        if let Edge::NodeRef(id) = e3 {
+                            stack.push(id);
+                        }
+                    }
                 }
             }
-        }
-    }
-
-    fn count_refs_edge(&mut self, edge: Edge) {
-        if let Edge::NodeRef(id) = edge {
-            self.count_refs(id);
         }
     }
 
@@ -180,88 +190,193 @@ impl MemoizedCodeGen {
     }
 
     /// Generate Gnark expression for a node, with memoization based on ref count
-    pub fn generate_expr(&mut self, node_id: usize) -> String {
-        // Check if already generated
-        if let Some(var_name) = self.generated.get(&node_id) {
-            return var_name.clone();
+    /// (Iterative implementation to avoid stack overflow on deep ASTs)
+    pub fn generate_expr(&mut self, root_node_id: usize) -> String {
+        // Phase 1: Build post-order traversal (children before parents)
+        // We need to process nodes in an order where all children are processed before their parent
+        let mut post_order: Vec<usize> = Vec::new();
+        let mut visited: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut stack: Vec<(usize, bool)> = vec![(root_node_id, false)];
+
+        while let Some((node_id, children_processed)) = stack.pop() {
+            if children_processed {
+                // All children have been processed, add this node to post_order
+                post_order.push(node_id);
+                continue;
+            }
+
+            // Skip if already in post_order (already fully processed)
+            if visited.contains(&node_id) {
+                continue;
+            }
+            visited.insert(node_id);
+
+            // Push this node back with children_processed = true
+            stack.push((node_id, true));
+
+            // Push children (they'll be processed first due to stack LIFO)
+            let node = get_node(node_id);
+            match node {
+                Node::Atom(_) => {}
+                Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e)
+                | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::MulTwoPow192(e) => {
+                    if let Edge::NodeRef(id) = e {
+                        if !visited.contains(&id) {
+                            stack.push((id, false));
+                        }
+                    }
+                }
+                Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
+                    if let Edge::NodeRef(id) = e2 {
+                        if !visited.contains(&id) {
+                            stack.push((id, false));
+                        }
+                    }
+                    if let Edge::NodeRef(id) = e1 {
+                        if !visited.contains(&id) {
+                            stack.push((id, false));
+                        }
+                    }
+                }
+                Node::Poseidon(e1, e2, e3) => {
+                    if let Edge::NodeRef(id) = e3 {
+                        if !visited.contains(&id) {
+                            stack.push((id, false));
+                        }
+                    }
+                    if let Edge::NodeRef(id) = e2 {
+                        if !visited.contains(&id) {
+                            stack.push((id, false));
+                        }
+                    }
+                    if let Edge::NodeRef(id) = e1 {
+                        if !visited.contains(&id) {
+                            stack.push((id, false));
+                        }
+                    }
+                }
+            }
         }
 
-        let node = get_node(node_id);
+        // Phase 2: Generate expressions in post-order (children before parents)
+        for node_id in post_order {
+            // Skip if already generated
+            if self.generated.contains_key(&node_id) {
+                continue;
+            }
 
-        // For atoms, just return directly without hoisting
-        if let Node::Atom(atom) = node {
-            return self.atom_to_gnark(atom);
+            let node = get_node(node_id);
+
+            // For atoms, just generate directly without hoisting
+            if let Node::Atom(atom) = node {
+                // Don't store atoms in generated - they're always inlined
+                continue;
+            }
+
+            // Generate the expression for this node (children are already in self.generated or are atoms)
+            let expr = match node {
+                Node::Atom(atom) => self.atom_to_gnark(atom),
+                Node::Add(left, right) => {
+                    let l = self.edge_to_gnark_iterative(left);
+                    let r = self.edge_to_gnark_iterative(right);
+                    format!("api.Add({}, {})", l, r)
+                }
+                Node::Mul(left, right) => {
+                    let l = self.edge_to_gnark_iterative(left);
+                    let r = self.edge_to_gnark_iterative(right);
+                    format!("api.Mul({}, {})", l, r)
+                }
+                Node::Sub(left, right) => {
+                    let l = self.edge_to_gnark_iterative(left);
+                    let r = self.edge_to_gnark_iterative(right);
+                    format!("api.Sub({}, {})", l, r)
+                }
+                Node::Div(left, right) => {
+                    let l = self.edge_to_gnark_iterative(left);
+                    let r = self.edge_to_gnark_iterative(right);
+                    format!("api.Div({}, {})", l, r)
+                }
+                Node::Neg(child) => {
+                    let c = self.edge_to_gnark_iterative(child);
+                    format!("api.Neg({})", c)
+                }
+                Node::Inv(child) => {
+                    let c = self.edge_to_gnark_iterative(child);
+                    format!("api.Inverse({})", c)
+                }
+                Node::Poseidon(state, n_rounds, data) => {
+                    let s = self.edge_to_gnark_iterative(state);
+                    let r = self.edge_to_gnark_iterative(n_rounds);
+                    let d = self.edge_to_gnark_iterative(data);
+                    format!("poseidon.Hash(api, {}, {}, {})", s, r, d)
+                }
+                Node::Keccak256(input) => {
+                    let i = self.edge_to_gnark_iterative(input);
+                    format!("keccak.Keccak256(api, {})", i)
+                }
+                Node::ByteReverse(input) => {
+                    let i = self.edge_to_gnark_iterative(input);
+                    format!("poseidon.ByteReverse(api, {})", i)
+                }
+                Node::Truncate128Reverse(input) => {
+                    let i = self.edge_to_gnark_iterative(input);
+                    format!("poseidon.Truncate128Reverse(api, {})", i)
+                }
+                Node::Truncate128(input) => {
+                    let i = self.edge_to_gnark_iterative(input);
+                    format!("poseidon.Truncate128(api, {})", i)
+                }
+                Node::MulTwoPow192(input) => {
+                    let i = self.edge_to_gnark_iterative(input);
+                    format!("poseidon.AppendU64Transform(api, {})", i)
+                }
+            };
+
+            // Hoist to CSE variable if referenced more than once
+            let ref_count = self.ref_counts.get(&node_id).copied().unwrap_or(1);
+            if ref_count > 1 {
+                let var_name = self.make_cse_name();
+                self.cse_counter += 1;
+                self.bindings.push(format!("\t{} := {}\n", var_name, expr));
+                self.generated.insert(node_id, var_name);
+            } else {
+                // Store the expression for single-use nodes too, so children can reference it
+                self.generated.insert(node_id, expr);
+            }
         }
 
-        // Generate the expression for this node
-        let expr = match node {
-            Node::Atom(atom) => self.atom_to_gnark(atom),
-            Node::Add(left, right) => {
-                let l = self.edge_to_gnark(left);
-                let r = self.edge_to_gnark(right);
-                format!("api.Add({}, {})", l, r)
-            }
-            Node::Mul(left, right) => {
-                let l = self.edge_to_gnark(left);
-                let r = self.edge_to_gnark(right);
-                format!("api.Mul({}, {})", l, r)
-            }
-            Node::Sub(left, right) => {
-                let l = self.edge_to_gnark(left);
-                let r = self.edge_to_gnark(right);
-                format!("api.Sub({}, {})", l, r)
-            }
-            Node::Div(left, right) => {
-                let l = self.edge_to_gnark(left);
-                let r = self.edge_to_gnark(right);
-                format!("api.Div({}, {})", l, r)
-            }
-            Node::Neg(child) => {
-                let c = self.edge_to_gnark(child);
-                format!("api.Neg({})", c)
-            }
-            Node::Inv(child) => {
-                let c = self.edge_to_gnark(child);
-                format!("api.Inverse({})", c)
-            }
-            Node::Poseidon(state, n_rounds, data) => {
-                let s = self.edge_to_gnark(state);
-                let r = self.edge_to_gnark(n_rounds);
-                let d = self.edge_to_gnark(data);
-                format!("poseidon.Hash(api, {}, {}, {})", s, r, d)
-            }
-            Node::Keccak256(input) => {
-                let i = self.edge_to_gnark(input);
-                format!("keccak.Keccak256(api, {})", i)
-            }
-            Node::ByteReverse(input) => {
-                let i = self.edge_to_gnark(input);
-                format!("poseidon.ByteReverse(api, {})", i)
-            }
-            Node::Truncate128Reverse(input) => {
-                let i = self.edge_to_gnark(input);
-                format!("poseidon.Truncate128Reverse(api, {})", i)
-            }
-            Node::Truncate128(input) => {
-                let i = self.edge_to_gnark(input);
-                format!("poseidon.Truncate128(api, {})", i)
-            }
-            Node::MulTwoPow192(input) => {
-                let i = self.edge_to_gnark(input);
-                format!("poseidon.AppendU64Transform(api, {})", i)
-            }
-        };
-
-        // Hoist to CSE variable if referenced more than once
-        let ref_count = self.ref_counts.get(&node_id).copied().unwrap_or(1);
-        if ref_count > 1 {
-            let var_name = self.make_cse_name();
-            self.cse_counter += 1;
-            self.bindings.push(format!("\t{} := {}\n", var_name, expr));
-            self.generated.insert(node_id, var_name.clone());
-            var_name
+        // Return the expression for the root node
+        if let Some(expr) = self.generated.get(&root_node_id) {
+            expr.clone()
         } else {
-            expr
+            // Root was an atom
+            let node = get_node(root_node_id);
+            if let Node::Atom(atom) = node {
+                self.atom_to_gnark(atom)
+            } else {
+                panic!("Root node {} not found in generated expressions", root_node_id)
+            }
+        }
+    }
+
+    /// Non-recursive edge_to_gnark that looks up already-generated expressions
+    fn edge_to_gnark_iterative(&mut self, edge: Edge) -> String {
+        match edge {
+            Edge::Atom(atom) => self.atom_to_gnark(atom),
+            Edge::NodeRef(node_id) => {
+                // Child should already be generated (we're in post-order)
+                if let Some(expr) = self.generated.get(&node_id) {
+                    expr.clone()
+                } else {
+                    // Must be an atom node
+                    let node = get_node(node_id);
+                    if let Node::Atom(atom) = node {
+                        self.atom_to_gnark(atom)
+                    } else {
+                        panic!("Node {} not found in generated - post-order traversal bug?", node_id)
+                    }
+                }
+            }
         }
     }
 }
