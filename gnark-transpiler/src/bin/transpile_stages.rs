@@ -195,17 +195,20 @@ fn main() {
     }
     println!("  Total problematic assertions: {}", problematic_count);
 
-    // Count multiplications by constant 0 in each assertion
-    fn count_mul_by_zero(node_id: usize) -> usize {
+    // Count multiplications by constant 0 in each assertion (with memoization)
+    fn count_mul_by_zero(node_id: usize, cache: &mut HashMap<usize, usize>) -> usize {
+        if let Some(&count) = cache.get(&node_id) {
+            return count;
+        }
         let node = get_node(node_id);
-        match node {
+        let count = match node {
             Node::Atom(_) => 0,
             Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e)
             | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::MulTwoPow192(e) => {
-                count_mul_by_zero_edge(&e)
+                count_mul_by_zero_edge(&e, cache)
             }
             Node::Add(a, b) | Node::Sub(a, b) | Node::Div(a, b) => {
-                count_mul_by_zero_edge(&a) + count_mul_by_zero_edge(&b)
+                count_mul_by_zero_edge(&a, cache) + count_mul_by_zero_edge(&b, cache)
             }
             Node::Mul(a, b) => {
                 let is_zero_mul = match (&a, &b) {
@@ -214,26 +217,29 @@ fn main() {
                     }
                     _ => false,
                 };
-                let count = if is_zero_mul { 1 } else { 0 };
-                count + count_mul_by_zero_edge(&a) + count_mul_by_zero_edge(&b)
+                let base = if is_zero_mul { 1 } else { 0 };
+                base + count_mul_by_zero_edge(&a, cache) + count_mul_by_zero_edge(&b, cache)
             }
             Node::Poseidon(a, b, c) => {
-                count_mul_by_zero_edge(&a) + count_mul_by_zero_edge(&b) + count_mul_by_zero_edge(&c)
+                count_mul_by_zero_edge(&a, cache) + count_mul_by_zero_edge(&b, cache) + count_mul_by_zero_edge(&c, cache)
             }
-        }
+        };
+        cache.insert(node_id, count);
+        count
     }
 
-    fn count_mul_by_zero_edge(edge: &Edge) -> usize {
+    fn count_mul_by_zero_edge(edge: &Edge, cache: &mut HashMap<usize, usize>) -> usize {
         match edge {
             Edge::Atom(_) => 0,
-            Edge::NodeRef(id) => count_mul_by_zero(*id),
+            Edge::NodeRef(id) => count_mul_by_zero(*id, cache),
         }
     }
 
     println!("\n=== Checking for Mul-by-Zero Pattern ===");
     let mut mul_zero_assertions = Vec::new();
+    let mut mul_zero_cache: HashMap<usize, usize> = HashMap::new();
     for (i, assertion) in assertions.iter().enumerate() {
-        let count = count_mul_by_zero(assertion.root());
+        let count = count_mul_by_zero(assertion.root(), &mut mul_zero_cache);
         if count > 0 {
             mul_zero_assertions.push((i, count));
         }
