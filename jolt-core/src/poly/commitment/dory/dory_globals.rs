@@ -2,10 +2,10 @@
 
 use crate::utils::math::Math;
 use allocative::Allocative;
-use dory::backends::arkworks::{init_cache, is_cached, ArkG1, ArkG2};
+use dory::backends::arkworks::{init_cache, ArkG1, ArkG2};
 use std::sync::{
     atomic::{AtomicU8, Ordering},
-    OnceLock,
+    RwLock,
 };
 
 /// Dory matrix layout for OneHot polynomials.
@@ -137,19 +137,19 @@ impl From<DoryLayout> for u8 {
 }
 
 // Main polynomial globals
-static mut GLOBAL_T: OnceLock<usize> = OnceLock::new();
-static mut MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
-static mut NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
+static GLOBAL_T: RwLock<Option<usize>> = RwLock::new(None);
+static MAX_NUM_ROWS: RwLock<Option<usize>> = RwLock::new(None);
+static NUM_COLUMNS: RwLock<Option<usize>> = RwLock::new(None);
 
 // Trusted advice globals
-static mut TRUSTED_ADVICE_T: OnceLock<usize> = OnceLock::new();
-static mut TRUSTED_ADVICE_MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
-static mut TRUSTED_ADVICE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
+static TRUSTED_ADVICE_T: RwLock<Option<usize>> = RwLock::new(None);
+static TRUSTED_ADVICE_MAX_NUM_ROWS: RwLock<Option<usize>> = RwLock::new(None);
+static TRUSTED_ADVICE_NUM_COLUMNS: RwLock<Option<usize>> = RwLock::new(None);
 
 // Untrusted advice globals
-static mut UNTRUSTED_ADVICE_T: OnceLock<usize> = OnceLock::new();
-static mut UNTRUSTED_ADVICE_MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
-static mut UNTRUSTED_ADVICE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
+static UNTRUSTED_ADVICE_T: RwLock<Option<usize>> = RwLock::new(None);
+static UNTRUSTED_ADVICE_MAX_NUM_ROWS: RwLock<Option<usize>> = RwLock::new(None);
+static UNTRUSTED_ADVICE_NUM_COLUMNS: RwLock<Option<usize>> = RwLock::new(None);
 
 // Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice
 static CURRENT_CONTEXT: AtomicU8 = AtomicU8::new(0);
@@ -293,101 +293,95 @@ impl DoryGlobals {
     }
 
     fn set_max_num_rows_for_context(max_num_rows: usize, context: DoryContext) {
-        #[allow(static_mut_refs)]
-        unsafe {
-            match context {
-                DoryContext::Main => {
-                    let _ = MAX_NUM_ROWS.set(max_num_rows);
-                }
-                DoryContext::TrustedAdvice => {
-                    let _ = TRUSTED_ADVICE_MAX_NUM_ROWS.set(max_num_rows);
-                }
-                DoryContext::UntrustedAdvice => {
-                    let _ = UNTRUSTED_ADVICE_MAX_NUM_ROWS.set(max_num_rows);
-                }
+        match context {
+            DoryContext::Main => {
+                *MAX_NUM_ROWS.write().unwrap() = Some(max_num_rows);
+            }
+            DoryContext::TrustedAdvice => {
+                *TRUSTED_ADVICE_MAX_NUM_ROWS.write().unwrap() = Some(max_num_rows);
+            }
+            DoryContext::UntrustedAdvice => {
+                *UNTRUSTED_ADVICE_MAX_NUM_ROWS.write().unwrap() = Some(max_num_rows);
             }
         }
     }
 
     pub fn get_max_num_rows() -> usize {
         let context = Self::current_context();
-        #[allow(static_mut_refs)]
-        unsafe {
-            match context {
-                DoryContext::Main => *MAX_NUM_ROWS.get().expect("max_num_rows not initialized"),
-                DoryContext::TrustedAdvice => *TRUSTED_ADVICE_MAX_NUM_ROWS
-                    .get()
-                    .expect("trusted_advice max_num_rows not initialized"),
-                DoryContext::UntrustedAdvice => *UNTRUSTED_ADVICE_MAX_NUM_ROWS
-                    .get()
-                    .expect("untrusted_advice max_num_rows not initialized"),
-            }
+        match context {
+            DoryContext::Main => MAX_NUM_ROWS
+                .read()
+                .unwrap()
+                .expect("max_num_rows not initialized"),
+            DoryContext::TrustedAdvice => TRUSTED_ADVICE_MAX_NUM_ROWS
+                .read()
+                .unwrap()
+                .expect("trusted_advice max_num_rows not initialized"),
+            DoryContext::UntrustedAdvice => UNTRUSTED_ADVICE_MAX_NUM_ROWS
+                .read()
+                .unwrap()
+                .expect("untrusted_advice max_num_rows not initialized"),
         }
     }
 
     fn set_num_columns_for_context(num_columns: usize, context: DoryContext) {
-        #[allow(static_mut_refs)]
-        unsafe {
-            match context {
-                DoryContext::Main => {
-                    let _ = NUM_COLUMNS.set(num_columns);
-                }
-                DoryContext::TrustedAdvice => {
-                    let _ = TRUSTED_ADVICE_NUM_COLUMNS.set(num_columns);
-                }
-                DoryContext::UntrustedAdvice => {
-                    let _ = UNTRUSTED_ADVICE_NUM_COLUMNS.set(num_columns);
-                }
+        match context {
+            DoryContext::Main => {
+                *NUM_COLUMNS.write().unwrap() = Some(num_columns);
+            }
+            DoryContext::TrustedAdvice => {
+                *TRUSTED_ADVICE_NUM_COLUMNS.write().unwrap() = Some(num_columns);
+            }
+            DoryContext::UntrustedAdvice => {
+                *UNTRUSTED_ADVICE_NUM_COLUMNS.write().unwrap() = Some(num_columns);
             }
         }
     }
 
     pub fn get_num_columns() -> usize {
         let context = Self::current_context();
-        #[allow(static_mut_refs)]
-        unsafe {
-            match context {
-                DoryContext::Main => *NUM_COLUMNS.get().expect("num_columns not initialized"),
-                DoryContext::TrustedAdvice => *TRUSTED_ADVICE_NUM_COLUMNS
-                    .get()
-                    .expect("trusted_advice num_columns not initialized"),
-                DoryContext::UntrustedAdvice => *UNTRUSTED_ADVICE_NUM_COLUMNS
-                    .get()
-                    .expect("untrusted_advice num_columns not initialized"),
-            }
+        match context {
+            DoryContext::Main => NUM_COLUMNS
+                .read()
+                .unwrap()
+                .expect("num_columns not initialized"),
+            DoryContext::TrustedAdvice => TRUSTED_ADVICE_NUM_COLUMNS
+                .read()
+                .unwrap()
+                .expect("trusted_advice num_columns not initialized"),
+            DoryContext::UntrustedAdvice => UNTRUSTED_ADVICE_NUM_COLUMNS
+                .read()
+                .unwrap()
+                .expect("untrusted_advice num_columns not initialized"),
         }
     }
 
     fn set_T_for_context(t: usize, context: DoryContext) {
-        #[allow(static_mut_refs)]
-        unsafe {
-            match context {
-                DoryContext::Main => {
-                    let _ = GLOBAL_T.set(t);
-                }
-                DoryContext::TrustedAdvice => {
-                    let _ = TRUSTED_ADVICE_T.set(t);
-                }
-                DoryContext::UntrustedAdvice => {
-                    let _ = UNTRUSTED_ADVICE_T.set(t);
-                }
+        match context {
+            DoryContext::Main => {
+                *GLOBAL_T.write().unwrap() = Some(t);
+            }
+            DoryContext::TrustedAdvice => {
+                *TRUSTED_ADVICE_T.write().unwrap() = Some(t);
+            }
+            DoryContext::UntrustedAdvice => {
+                *UNTRUSTED_ADVICE_T.write().unwrap() = Some(t);
             }
         }
     }
 
     pub fn get_T() -> usize {
         let context = Self::current_context();
-        #[allow(static_mut_refs)]
-        unsafe {
-            match context {
-                DoryContext::Main => *GLOBAL_T.get().expect("t not initialized"),
-                DoryContext::TrustedAdvice => *TRUSTED_ADVICE_T
-                    .get()
-                    .expect("trusted_advice t not initialized"),
-                DoryContext::UntrustedAdvice => *UNTRUSTED_ADVICE_T
-                    .get()
-                    .expect("untrusted_advice t not initialized"),
-            }
+        match context {
+            DoryContext::Main => GLOBAL_T.read().unwrap().expect("t not initialized"),
+            DoryContext::TrustedAdvice => TRUSTED_ADVICE_T
+                .read()
+                .unwrap()
+                .expect("trusted_advice t not initialized"),
+            DoryContext::UntrustedAdvice => UNTRUSTED_ADVICE_T
+                .read()
+                .unwrap()
+                .expect("untrusted_advice t not initialized"),
         }
     }
 
@@ -447,26 +441,23 @@ impl DoryGlobals {
     /// Reset global state
     #[cfg(test)]
     pub fn reset() {
-        #[allow(static_mut_refs)]
-        unsafe {
-            // Reset main globals
-            let _ = GLOBAL_T.take();
-            let _ = MAX_NUM_ROWS.take();
-            let _ = NUM_COLUMNS.take();
+        // Reset main globals
+        *GLOBAL_T.write().unwrap() = None;
+        *MAX_NUM_ROWS.write().unwrap() = None;
+        *NUM_COLUMNS.write().unwrap() = None;
 
-            // Reset layout to default (CycleMajor)
-            CURRENT_LAYOUT.store(0, Ordering::SeqCst);
+        // Reset layout to default (CycleMajor)
+        CURRENT_LAYOUT.store(0, Ordering::SeqCst);
 
-            // Reset trusted advice globals
-            let _ = TRUSTED_ADVICE_T.take();
-            let _ = TRUSTED_ADVICE_MAX_NUM_ROWS.take();
-            let _ = TRUSTED_ADVICE_NUM_COLUMNS.take();
+        // Reset trusted advice globals
+        *TRUSTED_ADVICE_T.write().unwrap() = None;
+        *TRUSTED_ADVICE_MAX_NUM_ROWS.write().unwrap() = None;
+        *TRUSTED_ADVICE_NUM_COLUMNS.write().unwrap() = None;
 
-            // Reset untrusted advice globals
-            let _ = UNTRUSTED_ADVICE_T.take();
-            let _ = UNTRUSTED_ADVICE_MAX_NUM_ROWS.take();
-            let _ = UNTRUSTED_ADVICE_NUM_COLUMNS.take();
-        }
+        // Reset untrusted advice globals
+        *UNTRUSTED_ADVICE_T.write().unwrap() = None;
+        *UNTRUSTED_ADVICE_MAX_NUM_ROWS.write().unwrap() = None;
+        *UNTRUSTED_ADVICE_NUM_COLUMNS.write().unwrap() = None;
 
         // Reset context to Main
         CURRENT_CONTEXT.store(0, Ordering::SeqCst);
@@ -478,15 +469,15 @@ impl DoryGlobals {
     /// prepared versions of the G1 and G2 generators for ~20-30% speedup
     /// in repeated pairing operations.
     ///
-    /// If the cache is already initialized, this function returns early without
-    /// doing anything.
+    /// init_cache handles smart re-initialization internally:
+    /// - If cache doesn't exist, creates it
+    /// - If cache is too small, replaces with larger one
+    /// - If cache is large enough, no-op (reuses existing)
     ///
     /// # Arguments
     /// * `g1_vec` - Vector of G1 generators from the prover setup
     /// * `g2_vec` - Vector of G2 generators from the prover setup
     pub fn init_prepared_cache(g1_vec: &[ArkG1], g2_vec: &[ArkG2]) {
-        if !is_cached() {
-            init_cache(g1_vec, g2_vec);
-        }
+        init_cache(g1_vec, g2_vec);
     }
 }
