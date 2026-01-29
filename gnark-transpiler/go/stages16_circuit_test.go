@@ -445,6 +445,166 @@ func TestDebugA1Assertion(t *testing.T) {
 	}
 }
 
+// TestComputeA1Components manually computes the components of the a1 assertion
+// to identify which part is incorrect
+func TestComputeA1Components(t *testing.T) {
+	t.Log("Computing a1 assertion components manually")
+	t.Log("")
+
+	// Load witness
+	witnessPath := getStages16WitnessPath()
+	assignment, err := LoadStages16Assignment(witnessPath)
+	if err != nil {
+		t.Fatalf("Failed to load witness data: %v", err)
+	}
+
+	v := reflect.ValueOf(assignment).Elem()
+	p, _ := new(big.Int).SetString("21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
+
+	// Get input claim and sumcheck round coefficients
+	inputClaim := v.FieldByName("Claim_Virtual_UnivariateSkip_SpartanOuter").Interface().(*big.Int)
+	t.Logf("Input Claim (UnivariateSkip): %s", inputClaim.String())
+
+	// Collect all sumcheck round coefficients R{i}_0, R{i}_1, R{i}_2
+	type roundCoeffs struct {
+		R0, R1, R2 *big.Int
+	}
+	rounds := make([]roundCoeffs, 11)
+	for i := 0; i <= 10; i++ {
+		rounds[i] = roundCoeffs{
+			R0: v.FieldByName(fmt.Sprintf("Stage1_Sumcheck_R%d_0", i)).Interface().(*big.Int),
+			R1: v.FieldByName(fmt.Sprintf("Stage1_Sumcheck_R%d_1", i)).Interface().(*big.Int),
+			R2: v.FieldByName(fmt.Sprintf("Stage1_Sumcheck_R%d_2", i)).Interface().(*big.Int),
+		}
+		t.Logf("Round %d: R0=%s, R1=%s, R2=%s", i, rounds[i].R0.String(), rounds[i].R1.String(), rounds[i].R2.String())
+	}
+
+	// Now we need to compute the challenges. The challenges come from Poseidon hashes.
+	// For now, let's verify the sumcheck round polynomial consistency.
+	// For a valid sumcheck with degree-2 polynomial: p(0) + p(1) = claim
+	// For degree-3: p(0) + p(1) + p(2) = claim (but there are also constraints on p(3))
+
+	// The coefficients R0, R1, R2 for a degree-3 compressed polynomial represent:
+	// R0 = p(0), R1 = p(2), R2 = p(3)  (p(1) is recovered via hint = claim - R0)
+	// Actually looking at the circuit, the formula is:
+	// p(r) = R0 + linear*r + R1*r^2 + R2*r^3
+	// where linear = hint - 2*R0 - R1 - R2
+	// and hint = claim - R0 (from sumcheck property p(0) + p(1) = claim)
+
+	// Verify: p(0) + p(1) = claim for round 0
+	// p(0) = R0
+	// For degree-3 sumcheck (Jolt outer): p(0) + p(1) + p(2) + p(3) = claim? No...
+	// Actually let me check the exact sumcheck degree bound
+
+	// Looking at outer.rs: OUTER_REMAINING_DEGREE_BOUND = 3
+	// For sumcheck with remaining degree 3:
+	// prover sends [p(0), p(2), p(3)] (missing p(1))
+	// verifier checks: p(0) + p(1) = previous_claim
+	// so hint = previous_claim - p(0) = p(1)
+
+	t.Log("\n=== Sumcheck Round Consistency Check (degree-3) ===")
+	// For degree-3: coeffs_except_linear_term = [c0, c2, c3] where c0=p(0), c2=p(2), c3=p(3)
+	// hint = p(1) = claim - p(0)
+	// The polynomial is: p(x) = c0 + c1*x + c2*x^2 + c3*x^3
+	// We know: p(0) = c0, p(1) = c0 + c1 + c2 + c3, p(2) = c0 + 2*c1 + 4*c2 + 8*c3, p(3) = c0 + 3*c1 + 9*c2 + 27*c3
+	// From p(0) = R0, p(2) = R1, p(3) = R2:
+	// c0 = R0
+	// R1 = c0 + 2*c1 + 4*c2 + 8*c3
+	// R2 = c0 + 3*c1 + 9*c2 + 27*c3
+
+	// Wait, this is getting complicated. Let me look at the circuit formula directly.
+	// From line 838 in stages16_circuit.go:
+	// The formula for evaluating compressed poly at challenge r is:
+	// R0 + r * (hint - 2*R0 - R1 - R2) + r^2 * R1 + r^3 * R2
+	// This is: R0 + r*linear_term + r^2*R1 + r^3*R2
+	// where linear_term = hint - 2*R0 - R1 - R2
+
+	// For sumcheck: p(0) + p(1) = claim
+	// p(0) = R0
+	// p(1) = hint = claim - R0
+
+	t.Log("\nRound 0 verification:")
+	r0_hint := new(big.Int).Sub(inputClaim, rounds[0].R0)
+	r0_hint.Mod(r0_hint, p)
+	t.Logf("  hint (claim - R0_0) = %s", r0_hint.String())
+	t.Logf("  R0_0 + hint should equal claim: %s + %s = %s",
+		rounds[0].R0.String(), r0_hint.String(), new(big.Int).Add(rounds[0].R0, r0_hint).Mod(new(big.Int).Add(rounds[0].R0, r0_hint), p).String())
+
+	// The linear term in the polynomial
+	linear0 := new(big.Int).Sub(r0_hint, rounds[0].R0)
+	linear0.Sub(linear0, rounds[0].R0)
+	linear0.Sub(linear0, rounds[0].R1)
+	linear0.Sub(linear0, rounds[0].R2)
+	linear0.Mod(linear0, p)
+	t.Logf("  linear_term = hint - 2*R0 - R1 - R2 = %s", linear0.String())
+
+	// To evaluate p(r), we need the challenge r which comes from Poseidon
+	// We can't easily compute that here without reimplementing Poseidon
+	// But we can check the structure
+
+	t.Log("\n=== Virtual Polynomial Claims ===")
+	// Print all claims used in the expected_output_claim computation
+	claimNames := []string{
+		"Claim_Virtual_OpFlags_Load_SpartanOuter",
+		"Claim_Virtual_OpFlags_Store_SpartanOuter",
+		"Claim_Virtual_OpFlags_AddOperands_SpartanOuter",
+		"Claim_Virtual_OpFlags_SubtractOperands_SpartanOuter",
+		"Claim_Virtual_OpFlags_MultiplyOperands_SpartanOuter",
+		"Claim_Virtual_OpFlags_Assert_SpartanOuter",
+		"Claim_Virtual_ShouldJump_SpartanOuter",
+		"Claim_Virtual_OpFlags_VirtualInstruction_SpartanOuter",
+		"Claim_Virtual_NextIsVirtual_SpartanOuter",
+		"Claim_Virtual_NextIsFirstInSequence_SpartanOuter",
+		"Claim_Virtual_RamAddress_SpartanOuter",
+		"Claim_Virtual_RamReadValue_SpartanOuter",
+		"Claim_Virtual_RamWriteValue_SpartanOuter",
+		"Claim_Virtual_RdWriteValue_SpartanOuter",
+		"Claim_Virtual_Rs2Value_SpartanOuter",
+		"Claim_Virtual_LeftLookupOperand_SpartanOuter",
+		"Claim_Virtual_LeftInstructionInput_SpartanOuter",
+		"Claim_Virtual_LookupOutput_SpartanOuter",
+		"Claim_Virtual_NextUnexpandedPC_SpartanOuter",
+		"Claim_Virtual_PC_SpartanOuter",
+		"Claim_Virtual_OpFlags_DoNotUpdateUnexpandedPC_SpartanOuter",
+		"Claim_Virtual_Rs1Value_SpartanOuter",
+		"Claim_Virtual_Imm_SpartanOuter",
+		"Claim_Virtual_RightLookupOperand_SpartanOuter",
+		"Claim_Virtual_RightInstructionInput_SpartanOuter",
+		"Claim_Virtual_Product_SpartanOuter",
+		"Claim_Virtual_UnexpandedPC_SpartanOuter",
+		"Claim_Virtual_OpFlags_IsCompressed_SpartanOuter",
+		"Claim_Virtual_ShouldBranch_SpartanOuter",
+		"Claim_Virtual_OpFlags_Jump_SpartanOuter",
+		"Claim_Virtual_WriteLookupOutputToRD_SpartanOuter",
+		"Claim_Virtual_WritePCtoRD_SpartanOuter",
+		"Claim_Virtual_OpFlags_Advice_SpartanOuter",
+		"Claim_Virtual_NextPC_SpartanOuter",
+	}
+
+	nonZeroClaims := 0
+	for _, name := range claimNames {
+		field := v.FieldByName(name)
+		if field.IsValid() && !field.IsZero() {
+			val := field.Interface().(*big.Int)
+			if val.Cmp(big.NewInt(0)) != 0 {
+				t.Logf("  %s = %s", name, val.String())
+				nonZeroClaims++
+			}
+		}
+	}
+	t.Logf("Total non-zero claims: %d", nonZeroClaims)
+
+	// Run solver to get the actual error
+	t.Log("\n=== Running Solver ===")
+	var circuit JoltStages16Circuit
+	err = test.IsSolved(&circuit, assignment, ecc.BN254.ScalarField())
+	if err != nil {
+		t.Logf("Solver error: %v", err)
+	} else {
+		t.Log("All constraints satisfied!")
+	}
+}
+
 func TestStages16CircuitProveVerify(t *testing.T) {
 	t.Log("Jolt Stages 1-6 Verifier - Full Groth16 Prove/Verify Test")
 	t.Log("")

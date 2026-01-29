@@ -1140,6 +1140,21 @@ impl One for MleAst {
     fn one() -> Self {
         Self::new_scalar(SCALAR_ONE)
     }
+
+    /// Check if this MleAst represents the constant 1.
+    ///
+    /// IMPORTANT: This implementation checks the node structure directly
+    /// instead of using `*self == Self::one()`. The default `is_one()`
+    /// would trigger `PartialEq::eq`, which in constraint mode registers
+    /// a constraint `(self - 1) = 0`. This caused spurious constraints
+    /// involving io values (10, 55) when optimized multiplication checked
+    /// if coefficients were 1.
+    fn is_one(&self) -> bool {
+        matches!(
+            get_node(self.root),
+            Node::Atom(Atom::Scalar(value)) if value == SCALAR_ONE
+        )
+    }
 }
 
 impl std::ops::Neg for MleAst {
