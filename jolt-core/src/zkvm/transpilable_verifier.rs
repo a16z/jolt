@@ -213,13 +213,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         self.verify_stage1()?;
-        // TODO(gnark-transpilation): Stage 2 disabled due to constant-vs-constant assertion issue.
-        // Problem: RamReadWriteCheckingVerifier uses EqPolynomial::evals_serial which expands to
-        // 64 symbolic evaluations (ram_d=64, log_k_chunk=6). These get multiplied by coefficients
-        // from the proof that are concrete 0s, resulting in 64 mul-by-zero operations that
-        // collapse to constant expressions. Gnark rejects assertions comparing two constants.
-        // See: assertions 53-68 each have 64 mul-by-zero ops in the generated circuit.
-        // Fix needed: Either make coefficients symbolic or optimize away constant multiplications.
         // self.verify_stage2()?;
         // self.verify_stage3()?;
         // self.verify_stage4()?;

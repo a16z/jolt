@@ -15,7 +15,7 @@ use jolt_core::zkvm::transpilable_verifier::{JoltVerifierPreprocessing, Transpil
 use jolt_core::zkvm::RV64IMACProof;
 use common::jolt_device::JoltDevice;
 use zklean_extractor::mle_ast::{enable_constraint_mode, take_constraints as take_assertions, MleAst};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use serde::Serialize;
 
 fn main() {
@@ -238,6 +238,7 @@ fn main() {
             mul_zero_assertions.push((i, count));
         }
     }
+
     if !mul_zero_assertions.is_empty() {
         println!("  Found {} assertions with mul-by-zero:", mul_zero_assertions.len());
         for (i, count) in mul_zero_assertions.iter().take(20) {
@@ -292,26 +293,49 @@ fn main() {
 }
 
 /// Generate Gnark circuit code from accumulated assertions
+///
+/// **Per-Assertion CSE**: To fix the node aliasing bug where structurally identical
+/// expressions from different assertions get merged, we now use per-assertion CSE contexts.
+/// Each assertion gets its own CSE namespace (cse_0_0, cse_0_1 for assertion 0, etc.).
 fn generate_stages_circuit(
     assertions: &[MleAst],
     var_names: &HashMap<u16, String>,
     circuit_name: &str,
 ) -> String {
-    let mut codegen = MemoizedCodeGen::with_var_names(var_names.clone());
+    // Per-assertion CSE: generate each assertion with its own CSE context
+    // This avoids the node aliasing bug where structurally identical expressions
+    // from different assertions get incorrectly merged.
+    let mut all_bindings_code = String::new();
+    let mut assertion_exprs: Vec<String> = Vec::new();
+    let mut all_vars: BTreeSet<u16> = BTreeSet::new();
 
-    // First pass: count references to all assertion roots
-    for assertion in assertions {
+    for (assertion_idx, assertion) in assertions.iter().enumerate() {
+        // Create a fresh codegen context for this assertion with per-assertion CSE naming
+        let mut codegen = MemoizedCodeGen::with_var_names_and_constraint_idx(
+            var_names.clone(),
+            assertion_idx,
+        );
+
+        // Count references within this assertion only
         codegen.count_refs(assertion.root());
+
+        // Generate expression for this assertion
+        let expr = codegen.generate_expr(assertion.root());
+        assertion_exprs.push(expr);
+
+        // Collect vars used in this assertion
+        all_vars.extend(codegen.vars().iter());
+
+        // Collect bindings for this assertion (already have prefixed names from codegen)
+        let constraint_bindings = codegen.bindings_code();
+        if !constraint_bindings.is_empty() {
+            all_bindings_code.push_str(&format!("\t// CSE bindings for assertion {}\n", assertion_idx));
+            all_bindings_code.push_str(&constraint_bindings);
+        }
     }
 
-    // Second pass: generate expressions for each assertion
-    let assertion_exprs: Vec<String> = assertions
-        .iter()
-        .map(|a| codegen.generate_expr(a.root()))
-        .collect();
-
-    let bindings_code = codegen.bindings_code();
-    let vars = codegen.vars();
+    let bindings_code = all_bindings_code;
+    let vars = &all_vars;
 
     let mut output = String::new();
 
