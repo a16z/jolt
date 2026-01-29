@@ -271,7 +271,12 @@ mod tests {
 
         // Test 1: Tamper with the evaluation
         {
-            let tampered_evaluation = Fr::rand(&mut rng);
+            use ark_ff::One;
+
+            let mut tampered_evaluation = Fr::rand(&mut rng);
+            if tampered_evaluation == correct_evaluation {
+                tampered_evaluation += Fr::one();
+            }
 
             let mut verify_transcript =
                 Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
@@ -287,6 +292,35 @@ mod tests {
             assert!(
                 result.is_err(),
                 "Verification should fail with tampered evaluation"
+            );
+        }
+
+        // Test 1b: Tamper with the committed evaluation in ZK proofs
+        #[cfg(feature = "prover")]
+        {
+            let mut tampered_proof = proof.clone();
+            if let Some(ref mut y_com) = tampered_proof.y_com {
+                *y_com = *y_com + verifier_setup.g1_0;
+            } else if let Some(ref mut e2) = tampered_proof.e2 {
+                *e2 = *e2 + verifier_setup.g2_0;
+            } else {
+                panic!("ZK proof missing committed evaluation fields");
+            }
+
+            let mut verify_transcript =
+                Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+            let result = DoryCommitmentScheme::verify(
+                &tampered_proof,
+                &verifier_setup,
+                &mut verify_transcript,
+                &opening_point,
+                &correct_evaluation,
+                &commitment,
+            );
+
+            assert!(
+                result.is_err(),
+                "Verification should fail with tampered committed evaluation"
             );
         }
 

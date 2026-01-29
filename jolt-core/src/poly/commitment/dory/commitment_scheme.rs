@@ -12,7 +12,7 @@ use crate::{
     poly::commitment::commitment_scheme::{
         CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment,
     },
-    poly::multilinear_polynomial::MultilinearPolynomial,
+    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
@@ -33,6 +33,23 @@ use tracing::trace_span;
 
 #[derive(Clone)]
 pub struct DoryCommitmentScheme;
+
+fn bind_opening_inputs<ProofTranscript: Transcript>(
+    transcript: &mut ProofTranscript,
+    opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
+    opening: &ark_bn254::Fr,
+) {
+    transcript.append_message(b"dory_opening_point");
+    let mut point_scalars = Vec::with_capacity(opening_point.len());
+    for point in opening_point {
+        let scalar: ark_bn254::Fr = (*point).into();
+        point_scalars.push(scalar);
+    }
+    transcript.append_scalars(&point_scalars);
+
+    transcript.append_message(b"dory_opening_eval");
+    transcript.append_scalar(opening);
+}
 
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
@@ -113,6 +130,9 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
         let mut rng = rand::thread_rng();
 
+        let opening = PolynomialEvaluation::evaluate(poly, opening_point);
+        bind_opening_inputs(transcript, opening_point, &opening);
+
         let row_commitments = hint.unwrap_or_else(|| {
             let (_commitment, row_commitments) = Self::commit(poly, setup);
             row_commitments
@@ -160,6 +180,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
         let _span = trace_span!("DoryCommitmentScheme::verify").entered();
+
+        bind_opening_inputs(transcript, opening_point, opening);
 
         // Dory uses the opposite endian-ness as Jolt
         let ark_point: Vec<ArkFr> = opening_point
