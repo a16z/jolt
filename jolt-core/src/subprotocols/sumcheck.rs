@@ -257,21 +257,19 @@ impl BatchedSumcheck {
                 print_current_memory_usage(label.as_str());
             }
 
-            let remaining_rounds = max_num_rounds - round;
-
             let univariate_polys: Vec<UniPoly<F>> = sumcheck_instances
                 .iter_mut()
                 .zip(individual_claims.iter())
                 .map(|(sumcheck, previous_claim)| {
                     let num_rounds = sumcheck.num_rounds();
-                    if remaining_rounds > num_rounds {
-                        let scaled_input_claim = sumcheck
-                            .input_claim(opening_accumulator)
-                            .mul_pow_2(remaining_rounds - num_rounds - 1);
-                        UniPoly::from_coeff(vec![scaled_input_claim])
-                    } else {
-                        let offset = max_num_rounds - sumcheck.num_rounds();
+                    let offset = sumcheck.round_offset(max_num_rounds);
+                    let active = round >= offset && round < offset + num_rounds;
+                    if active {
                         sumcheck.compute_message(round - offset, *previous_claim)
+                    } else {
+                        // Dummy round: polynomial is constant with H(0)=H(1)=previous_claim/2.
+                        let two_inv = F::from_u64(2).inverse().unwrap();
+                        UniPoly::from_coeff(vec![*previous_claim * two_inv])
                     }
                 })
                 .collect();
@@ -309,8 +307,10 @@ impl BatchedSumcheck {
                 .for_each(|(claim, poly)| *claim = poly.evaluate(&r_j));
 
             for sumcheck in sumcheck_instances.iter_mut() {
-                if remaining_rounds <= sumcheck.num_rounds() {
-                    let offset = max_num_rounds - sumcheck.num_rounds();
+                let num_rounds = sumcheck.num_rounds();
+                let offset = sumcheck.round_offset(max_num_rounds);
+                let active = round >= offset && round < offset + num_rounds;
+                if active {
                     sumcheck.ingest_challenge(r_j, round - offset);
                 }
             }
@@ -338,7 +338,9 @@ impl BatchedSumcheck {
             .unwrap();
 
         for sumcheck in sumcheck_instances.iter() {
-            let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+            let num_rounds = sumcheck.num_rounds();
+            let offset = sumcheck.round_offset(max_num_rounds);
+            let r_slice = &r_sumcheck[offset..offset + num_rounds];
             sumcheck.cache_openings(opening_accumulator, transcript, r_slice);
         }
 
@@ -351,7 +353,9 @@ impl BatchedSumcheck {
         let constraint_challenge_values: Vec<Vec<F>> = sumcheck_instances
             .iter()
             .map(|sumcheck| {
-                let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+                let num_rounds = sumcheck.num_rounds();
+                let offset = sumcheck.round_offset(max_num_rounds);
+                let r_slice = &r_sumcheck[offset..offset + num_rounds];
                 sumcheck
                     .get_params()
                     .output_constraint_challenge_values(r_slice)
@@ -667,6 +671,12 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
             return Err(ProofVerifyError::InvalidInputLength(
                 num_rounds,
                 self.round_commitments.len(),
+            ));
+        }
+        if self.poly_degrees.len() != num_rounds {
+            return Err(ProofVerifyError::InvalidInputLength(
+                num_rounds,
+                self.poly_degrees.len(),
             ));
         }
 

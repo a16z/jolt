@@ -228,6 +228,10 @@ pub enum BlindFoldVerifyError {
     EvalCommitmentMismatch(usize),
     /// R1CS constraint not satisfied
     R1CSConstraintFailed(usize),
+    /// Real instance must be non-relaxed (u = 1)
+    InvalidRealInstanceU,
+    /// Real instance must be non-relaxed (E = 0)
+    InvalidRealInstanceE,
 }
 
 impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
@@ -255,6 +259,14 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         proof: &BlindFoldProof<F, C>,
         transcript: &mut T,
     ) -> Result<(), BlindFoldVerifyError> {
+        // SECURITY: Real instance must be non-relaxed.
+        if proof.real_instance.u != F::one() {
+            return Err(BlindFoldVerifyError::InvalidRealInstanceU);
+        }
+        if proof.real_instance.E_bar != C::G1::zero() {
+            return Err(BlindFoldVerifyError::InvalidRealInstanceE);
+        }
+
         // Step 1: Replay transcript to get challenge
         // SECURITY: real_instance must be bound to prevent adaptive attacks
         transcript.append_message(b"BlindFold_real_instance");
@@ -392,6 +404,7 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
 mod tests {
     use super::*;
     use crate::curve::Bn254Curve;
+    use crate::curve::JoltCurve;
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
     use crate::subprotocols::blindfold::StageConfig;
@@ -399,6 +412,26 @@ mod tests {
     use ark_bn254::Fr;
     use ark_std::UniformRand;
     use rand::thread_rng;
+
+    fn round_commitment_data<F: JoltField, C: JoltCurve, R: rand_core::RngCore>(
+        gens: &PedersenGenerators<C>,
+        stages: &[StageWitness<F>],
+        rng: &mut R,
+    ) -> (Vec<C::G1>, Vec<Vec<F>>, Vec<F>) {
+        let mut commitments = Vec::new();
+        let mut coeffs = Vec::new();
+        let mut blindings = Vec::new();
+        for stage in stages {
+            for round in &stage.rounds {
+                let blinding = F::random(rng);
+                let commitment = gens.commit(&round.coeffs, &blinding);
+                commitments.push(commitment);
+                coeffs.push(round.coeffs.clone());
+                blindings.push(blinding);
+            }
+        }
+        (commitments, coeffs, blindings)
+    }
 
     #[test]
     fn test_blindfold_protocol_completeness() {
@@ -434,15 +467,17 @@ mod tests {
         let witness: Vec<F> = z[witness_start..].to_vec();
         let public_inputs: Vec<F> = z[1..witness_start].to_vec();
 
-        // Create non-relaxed instance and witness (with empty round commitment data for unit test)
+        let (round_commitments, round_coefficients, round_blindings) =
+            round_commitment_data(&gens, &blindfold_witness.stages, &mut rng);
+        // Create non-relaxed instance and witness
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
             &gens,
             &witness,
             public_inputs,
             r1cs.num_constraints,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            round_commitments,
+            round_coefficients,
+            round_blindings,
             Vec::new(),
             &mut rng,
         );
@@ -497,14 +532,16 @@ mod tests {
         let witness: Vec<F> = z[witness_start..].to_vec();
         let public_inputs: Vec<F> = z[1..witness_start].to_vec();
 
+        let (round_commitments, round_coefficients, round_blindings) =
+            round_commitment_data(&gens, &blindfold_witness.stages, &mut rng);
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
             &gens,
             &witness,
             public_inputs,
             r1cs.num_constraints,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            round_commitments,
+            round_coefficients,
+            round_blindings,
             Vec::new(),
             &mut rng,
         );
@@ -591,14 +628,16 @@ mod tests {
         let witness: Vec<F> = z[witness_start..].to_vec();
         let public_inputs: Vec<F> = z[1..witness_start].to_vec();
 
+        let (round_commitments, round_coefficients, round_blindings) =
+            round_commitment_data(&gens, &blindfold_witness.stages, &mut rng);
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
             &gens,
             &witness,
             public_inputs,
             r1cs.num_constraints,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            round_commitments,
+            round_coefficients,
+            round_blindings,
             Vec::new(),
             &mut rng,
         );

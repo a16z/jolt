@@ -117,7 +117,13 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
     pub fn fold(&self, other: &Self, T_bar: &C::G1, r: F) -> Self {
         let r_squared = r * r;
 
-        debug_assert_eq!(
+        assert_eq!(self.x.len(), other.x.len(), "Public input length mismatch");
+        assert_eq!(
+            self.round_commitments.len(),
+            other.round_commitments.len(),
+            "Round commitment length mismatch"
+        );
+        assert_eq!(
             self.eval_commitments.len(),
             other.eval_commitments.len(),
             "Eval commitment length mismatch"

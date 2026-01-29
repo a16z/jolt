@@ -9,8 +9,8 @@ use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitm
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::subprotocols::blindfold::{
-    BlindFoldVerifier, FinalOutputConfig, InputClaimConstraint, OutputClaimConstraint, StageConfig,
-    ValueSource, VerifierR1CSBuilder,
+    pedersen_generator_count_for_r1cs, BlindFoldVerifier, FinalOutputConfig, InputClaimConstraint,
+    OutputClaimConstraint, StageConfig, ValueSource, VerifierR1CSBuilder,
 };
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
@@ -79,6 +79,7 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::witness::CommittedPolynomial,
 };
+
 use anyhow::Context;
 
 /// Result of verifying a sumcheck stage.
@@ -1328,8 +1329,9 @@ impl<
         // Create BlindFold verifier and verify the proof
         let eval_commitment_gens =
             PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
-        let verifier =
-            BlindFoldVerifier::new(&self.pedersen_generators, &r1cs, eval_commitment_gens);
+        let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
+        let pedersen_generators = PedersenGenerators::<C>::deterministic(pedersen_generator_count);
+        let verifier = BlindFoldVerifier::new(&pedersen_generators, &r1cs, eval_commitment_gens);
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
         verifier

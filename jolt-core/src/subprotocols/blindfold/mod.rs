@@ -34,6 +34,21 @@ pub use witness::{
 
 use crate::field::JoltField;
 
+/// Compute the required Pedersen generator count for a given BlindFold R1CS.
+/// This must cover commitments to the witness vector W, the error vector E,
+/// and the largest round polynomial coefficient vector.
+pub fn pedersen_generator_count_for_r1cs<F: JoltField>(r1cs: &VerifierR1CS<F>) -> usize {
+    let witness_len = r1cs.num_vars.saturating_sub(1 + r1cs.num_public_inputs);
+    let error_len = r1cs.num_constraints;
+    let max_round_coeffs = r1cs
+        .stage_configs
+        .iter()
+        .map(|c| c.poly_degree + 1)
+        .max()
+        .unwrap_or(0);
+    witness_len.max(error_len).max(max_round_coeffs)
+}
+
 /// Configuration for final output binding at end of a chain.
 ///
 /// Supports two modes:

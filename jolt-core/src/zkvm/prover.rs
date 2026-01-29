@@ -43,9 +43,10 @@ use crate::{
     pprof_scope,
     subprotocols::{
         blindfold::{
-            BlindFoldProof, BlindFoldProver, BlindFoldWitness, ExtraConstraintWitness,
-            FinalOutputWitness, InputClaimConstraint, OutputClaimConstraint, RelaxedR1CSInstance,
-            RoundWitness, StageConfig, StageWitness, ValueSource, VerifierR1CSBuilder,
+            pedersen_generator_count_for_r1cs, BlindFoldProof, BlindFoldProver, BlindFoldWitness,
+            ExtraConstraintWitness, FinalOutputWitness, InputClaimConstraint,
+            OutputClaimConstraint, RelaxedR1CSInstance, RoundWitness, StageConfig, StageWitness,
+            ValueSource, VerifierR1CSBuilder,
         },
         booleanity::{BooleanitySumcheckParams, BooleanitySumcheckProver},
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
@@ -1601,10 +1602,12 @@ impl<
         }
 
         // Create non-relaxed instance and witness with round commitment data
+        let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
+        let pedersen_generators = PedersenGenerators::<C>::deterministic(pedersen_generator_count);
         let eval_commitments =
             vec![PCS::eval_commitment(joint_opening_proof).expect("missing eval commitment")];
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, C>::new_non_relaxed(
-            &self.pedersen_generators,
+            &pedersen_generators,
             &witness,
             public_inputs,
             r1cs.num_constraints,
@@ -1617,7 +1620,7 @@ impl<
 
         // Run BlindFold protocol
         let eval_commitment_gens = PCS::eval_commitment_gens(&self.preprocessing.generators);
-        let prover = BlindFoldProver::new(&self.pedersen_generators, &r1cs, eval_commitment_gens);
+        let prover = BlindFoldProver::new(&pedersen_generators, &r1cs, eval_commitment_gens);
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
         let proof = prover.prove(
@@ -2069,6 +2072,7 @@ mod tests {
     use serial_test::serial;
 
     use crate::host;
+    use crate::poly::commitment::pedersen::PedersenGenerators;
     use crate::poly::{
         commitment::{
             commitment_scheme::CommitmentScheme,
@@ -2086,6 +2090,27 @@ mod tests {
         verifier::{JoltVerifier, JoltVerifierPreprocessing},
         RV64IMACProver, RV64IMACVerifier,
     };
+    use crate::{curve::JoltCurve, field::JoltField};
+
+    fn round_commitment_data<F: JoltField, C: JoltCurve, R: rand_core::RngCore>(
+        gens: &PedersenGenerators<C>,
+        stages: &[crate::subprotocols::blindfold::StageWitness<F>],
+        rng: &mut R,
+    ) -> (Vec<C::G1>, Vec<Vec<F>>, Vec<F>) {
+        let mut commitments = Vec::new();
+        let mut coeffs = Vec::new();
+        let mut blindings = Vec::new();
+        for stage in stages {
+            for round in &stage.rounds {
+                let blinding = F::random(rng);
+                let commitment = gens.commit(&round.coeffs, &blinding);
+                commitments.push(commitment);
+                coeffs.push(round.coeffs.clone());
+                blindings.push(blinding);
+            }
+        }
+        (commitments, coeffs, blindings)
+    }
 
     fn commit_trusted_advice_preprocessing_only(
         preprocessing: &JoltProverPreprocessing<Fr, DoryCommitmentScheme>,
@@ -3054,7 +3079,6 @@ mod tests {
     #[serial]
     fn blindfold_protocol_e2e() {
         use crate::curve::Bn254Curve;
-        use crate::poly::commitment::pedersen::PedersenGenerators;
         use crate::subprotocols::blindfold::{
             BlindFoldProver, BlindFoldVerifier, BlindFoldWitness, RelaxedR1CSInstance,
             RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
@@ -3103,15 +3127,17 @@ mod tests {
         let witness: Vec<Fr> = z[witness_start..].to_vec();
         let public_inputs: Vec<Fr> = z[1..witness_start].to_vec();
 
-        // Create non-relaxed instance and witness (with empty round commitment data for unit test)
+        let (round_commitments, round_coefficients, round_blindings) =
+            round_commitment_data(&gens, &blindfold_witness.stages, &mut rng);
+        // Create non-relaxed instance and witness
         let (real_instance, real_witness) = RelaxedR1CSInstance::<Fr, Bn254Curve>::new_non_relaxed(
             &gens,
             &witness,
             public_inputs,
             r1cs.num_constraints,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            round_commitments,
+            round_coefficients,
+            round_blindings,
             Vec::new(),
             &mut rng,
         );
