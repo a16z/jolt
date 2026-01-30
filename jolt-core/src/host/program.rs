@@ -3,8 +3,9 @@ use crate::guest;
 use crate::host::analyze::ProgramSummary;
 use crate::host::{Program, DEFAULT_TARGET_DIR};
 use common::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
-    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, RAM_START_ADDRESS,
+    DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE,
+    DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
+    RAM_START_ADDRESS,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use std::fs::File;
@@ -22,7 +23,7 @@ impl Program {
         Self {
             guest: guest.to_string(),
             func: None,
-            memory_size: DEFAULT_MEMORY_SIZE,
+            heap_size: DEFAULT_HEAP_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
             max_untrusted_advice_size: DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
@@ -42,7 +43,7 @@ impl Program {
     }
 
     pub fn set_memory_config(&mut self, memory_config: MemoryConfig) {
-        self.set_memory_size(memory_config.memory_size);
+        self.set_heap_size(memory_config.heap_size);
         self.set_stack_size(memory_config.stack_size);
         self.set_max_input_size(memory_config.max_input_size);
         self.set_max_trusted_advice_size(memory_config.max_trusted_advice_size);
@@ -50,8 +51,8 @@ impl Program {
         self.set_max_output_size(memory_config.max_output_size);
     }
 
-    pub fn set_memory_size(&mut self, len: u64) {
-        self.memory_size = len;
+    pub fn set_heap_size(&mut self, len: u64) {
+        self.heap_size = len;
     }
 
     pub fn set_stack_size(&mut self, len: u64) {
@@ -96,15 +97,10 @@ impl Program {
             }
 
             // Pass memory layout parameters to cargo-jolt
-            // Note: In Jolt's MemoryConfig, `memory_size` represents heap size, not total RAM.
-            // cargo-jolt uses different naming:
-            //   --memory-size = total RAM (as specified by the platform linker script)
-            //   --heap-size = heap allocation within RAM (= Jolt's memory_size)
-            //   --stack-size = stack allocation (= Jolt's stack_size)
             args.push("--stack-size".to_string());
             args.push(self.stack_size.to_string());
             args.push("--heap-size".to_string());
-            args.push(self.memory_size.to_string());
+            args.push(self.heap_size.to_string());
 
             // Create per-guest target directory (isolates builds)
             let guest_target_dir = format!(
@@ -223,7 +219,7 @@ impl Program {
         let program_size = program_end - RAM_START_ADDRESS;
 
         let memory_config = MemoryConfig {
-            memory_size: self.memory_size,
+            heap_size: self.heap_size,
             stack_size: self.stack_size,
             max_input_size: self.max_input_size,
             max_untrusted_advice_size: self.max_untrusted_advice_size,
@@ -259,7 +255,7 @@ impl Program {
         let (_, _, program_end, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
         let memory_config = MemoryConfig {
-            memory_size: self.memory_size,
+            heap_size: self.heap_size,
             stack_size: self.stack_size,
             max_input_size: self.max_input_size,
             max_untrusted_advice_size: self.max_untrusted_advice_size,

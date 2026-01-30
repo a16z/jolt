@@ -34,7 +34,7 @@ pub struct VerificationResult {
 #[jolt::provable(
     max_input_size = 1048576,   // 1MB input
     max_output_size = 65536,    // 64KB output
-    memory_size = 33554432,     // 32MB memory
+    heap_size = 33554432,     // 32MB memory
     stack_size = 131072,        // 128KB stack
     max_trace_length = 33554432 // 32M trace length
 )]

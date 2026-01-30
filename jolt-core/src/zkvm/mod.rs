@@ -126,7 +126,7 @@ pub fn fiat_shamir_preamble(
 ) {
     transcript.append_u64(program_io.memory_layout.max_input_size);
     transcript.append_u64(program_io.memory_layout.max_output_size);
-    transcript.append_u64(program_io.memory_layout.memory_size);
+    transcript.append_u64(program_io.memory_layout.heap_size);
     transcript.append_bytes(&program_io.inputs);
     transcript.append_bytes(&program_io.outputs);
     transcript.append_u64(program_io.panic as u64);
