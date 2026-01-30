@@ -23,7 +23,6 @@ use itertools::Itertools;
 use rayon::prelude::*;
 
 use crate::field::JoltField;
-use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
@@ -35,9 +34,8 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::chunks::{
-    build_bytecode_chunks_from_instructions, total_lanes, weighted_lane_sum_for_instruction,
+    for_each_active_lane_value, total_lanes, weighted_lane_sum_for_instruction, ActiveLaneValue,
 };
 use crate::zkvm::bytecode::read_raf_checking::BytecodeReadRafSumcheckParams;
 use crate::zkvm::instruction::{
@@ -60,24 +58,9 @@ const NUM_VAL_STAGES: usize = 5;
 /// running the reduction. This is a pure index permutation, i.e. a variable renaming, and the
 /// resulting evaluations match the committed polynomial when the opening point is interpreted in
 /// the unified `[lane || cycle]` order.
-fn permute_address_major_to_cycle_major<F: JoltField>(
-    coeffs: Vec<F>,
-    k_chunk: usize,
-    t_size: usize,
-) -> Vec<F> {
-    debug_assert_eq!(coeffs.len(), k_chunk * t_size);
-    let mut out: Vec<F> = unsafe_allocate_zero_vec(k_chunk * t_size);
-    for lane in 0..k_chunk {
-        for k in 0..t_size {
-            // AddressMajor: idx = cycle * K + address
-            let idx_in = k * k_chunk + lane;
-            // CycleMajor: idx = address * T + cycle
-            let idx_out = lane * t_size + k;
-            out[idx_out] = coeffs[idx_in];
-        }
-    }
-    out
-}
+// NOTE: With the fused-lane cycle-phase refactor, we no longer materialize the full per-lane
+// bytecode chunk polynomials inside this reduction prover. This means we also no longer need
+// to permute AddressMajor <-> CycleMajor coefficient vectors here.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Allocative)]
 pub enum BytecodeReductionPhase {
@@ -205,18 +188,23 @@ pub struct BytecodeClaimReductionProver<F: JoltField> {
     /// Program instructions (padded to power-of-2). Used for a fast first round.
     #[allocative(skip)]
     program: Arc<ProgramPreprocessing>,
-    /// Chunk polynomials B_i(lane, k) (eventually committed).
-    bytecode_chunks: Vec<MultilinearPolynomial<F>>,
+    /// Cycle-only polynomial:
+    /// \( S(k) = \sum_{\ell} W_{\eta}(\ell) \cdot lane\_value(\ell, instr[k]) \).
+    ///
+    /// This matches the GPU implementation's "main polynomial" strategy: during the cycle-phase
+    /// sumcheck we only need the **lane-summed** polynomial over the cycle domain (size K),
+    /// rather than all 448 lane polynomials.
+    cycle_weighted_sum: MultilinearPolynomial<F>,
+    /// Lane-only chunk polynomials after evaluating cycle vars at `r_cycle`:
+    /// \( B_i(\cdot, r\_cycle) \) for each chunk i.
+    ///
+    /// This is computed once at the Stage 6b → Stage 7 transition and is only
+    /// `num_chunks * k_chunk` field elements (≤ 448 total, padded).
+    lane_chunks_at_r_cycle: Vec<MultilinearPolynomial<F>>,
     /// Eq table/polynomial over the bytecode address point `r_bc` (cycle variables only).
     eq_r_bc: MultilinearPolynomial<F>,
     /// Lane-weight polynomials over the lane variables only (one per chunk).
     lane_weight_polys: Vec<MultilinearPolynomial<F>>,
-    /// Flattened lane weights in canonical global-lane order (length = total_lanes()).
-    ///
-    /// This is used by the cycle-phase first-round fast path to evaluate the lane sum
-    /// without scanning all lanes.
-    #[allocative(skip)]
-    lane_weights_global: Vec<F>,
     /// Batched-sumcheck scaling for trailing dummy rounds (see `round_offset`).
     #[allocative(skip)]
     batch_dummy_rounds: AtomicUsize,
@@ -231,7 +219,6 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
         let log_k = params.log_k;
         let t_size = 1 << log_k;
         let k_chunk = 1 << params.log_k_chunk;
-        let layout = DoryGlobals::get_layout();
 
         // Eq table over the bytecode address point.
         let eq_r_bc = EqPolynomial::<F>::evals(&params.r_bc.r);
@@ -247,149 +234,164 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
             .map(|w| MultilinearPolynomial::from(w.clone()))
             .collect();
 
-        // Flatten lane weights in canonical global order for the cycle-round-0 fast path.
+        // Build the fused-lane cycle polynomial S(k) over the cycle domain only.
+        let bytecode_len = program.bytecode_len();
+        debug_assert_eq!(bytecode_len, t_size);
         let total = total_lanes();
-        let mut lane_weights_global = Vec::with_capacity(total);
+        let mut lane_weights_global = vec![F::zero(); total];
         for global_lane in 0..total {
             let chunk_idx = global_lane / k_chunk;
             let lane = global_lane % k_chunk;
-            lane_weights_global.push(params.chunk_lane_weights[chunk_idx][lane]);
+            lane_weights_global[global_lane] = params.chunk_lane_weights[chunk_idx][lane];
         }
-
-        // Build per-chunk bytecode polynomials B_i(lane, k).
-        let bytecode_len = program.bytecode_len();
-        debug_assert_eq!(bytecode_len, t_size);
-        let mut bytecode_chunks =
-            build_bytecode_chunks_from_instructions::<F>(&program.instructions, params.log_k_chunk);
-        if layout == DoryLayout::AddressMajor {
-            // Permute committed AddressMajor coefficient order into CycleMajor for the reduction.
-            for poly in bytecode_chunks.iter_mut() {
-                if let MultilinearPolynomial::LargeScalars(p) = poly {
-                    let old = std::mem::take(&mut p.Z);
-                    p.Z = permute_address_major_to_cycle_major(old, k_chunk, t_size);
-                } else {
-                    unreachable!("bytecode chunks are dense field polynomials");
-                }
-            }
-        }
-
-        debug_assert_eq!(bytecode_chunks.len(), params.num_chunks);
-        debug_assert_eq!(lane_weight_polys.len(), params.num_chunks);
+        let cycle_weighted_evals: Vec<F> = program
+            .instructions
+            .par_iter()
+            .map(|instr| weighted_lane_sum_for_instruction(&lane_weights_global, instr))
+            .collect();
+        debug_assert_eq!(cycle_weighted_evals.len(), t_size);
+        let cycle_weighted_sum = MultilinearPolynomial::from(cycle_weighted_evals);
 
         Self {
             params,
             program,
-            bytecode_chunks,
+            cycle_weighted_sum,
+            lane_chunks_at_r_cycle: vec![],
             eq_r_bc,
             lane_weight_polys,
-            lane_weights_global,
             batch_dummy_rounds: AtomicUsize::new(0),
         }
     }
 
-    fn compute_message_impl(&self, round: usize, previous_claim: F) -> UniPoly<F> {
+    /// Prepare the lane-phase witness polynomials \(B_i(\cdot, r_{cycle})\).
+    ///
+    /// This is intended to be called once after the cycle-phase sumcheck has finished
+    /// (i.e. after all `log_K` cycle challenges are known) and before we transition
+    /// `params.phase` to [`BytecodeReductionPhase::LaneVariables`].
+    #[tracing::instrument(skip_all, name = "BytecodeClaimReductionProver::prepare_lane_phase")]
+    pub fn prepare_lane_phase(&mut self) {
+        if !self.lane_chunks_at_r_cycle.is_empty() {
+            return;
+        }
+
+        let log_k = self.params.log_k;
+        let k_chunk = 1usize << self.params.log_k_chunk;
+        let num_chunks = self.params.num_chunks;
+        let total = total_lanes();
+
+        assert_eq!(
+            self.params.cycle_var_challenges.len(),
+            log_k,
+            "prepare_lane_phase called before cycle challenges are complete (have {}, expected {})",
+            self.params.cycle_var_challenges.len(),
+            log_k
+        );
+
+        // Convert the stored LE (LSB-first) cycle challenges into BE (MSB-first) order
+        // for EqPolynomial::evals, which uses big-endian indexing.
+        let r_cycle_be: OpeningPoint<BIG_ENDIAN, F> =
+            OpeningPoint::<LITTLE_ENDIAN, F>::new(self.params.cycle_var_challenges.clone())
+                .match_endianness();
+
+        let eq_cycle = EqPolynomial::<F>::evals(&r_cycle_be.r);
+        debug_assert_eq!(eq_cycle.len(), self.program.instructions.len());
+
+        // b_vals[global_lane] = Σ_k eq(r_cycle, k) * lane_value(global_lane, instr[k])
+        let b_vals: Vec<F> = self
+            .program
+            .instructions
+            .par_iter()
+            .zip(eq_cycle.par_iter())
+            .fold(
+                || vec![F::zero(); total],
+                |mut acc, (instr, eq_k)| {
+                    for_each_active_lane_value::<F>(instr, |lane, v| match v {
+                        ActiveLaneValue::One => {
+                            acc[lane] += *eq_k;
+                        }
+                        ActiveLaneValue::Scalar(s) => {
+                            acc[lane] += *eq_k * s;
+                        }
+                    });
+                    acc
+                },
+            )
+            .reduce(
+                || vec![F::zero(); total],
+                |mut a, b| {
+                    a.iter_mut().zip(b.iter()).for_each(|(x, y)| *x += *y);
+                    a
+                },
+            );
+
+        // Chunk b_vals into `num_chunks` lane polynomials of length k_chunk.
+        self.lane_chunks_at_r_cycle = (0..num_chunks)
+            .map(|chunk_idx| {
+                let mut coeffs = vec![F::zero(); k_chunk];
+                for lane in 0..k_chunk {
+                    let global_lane = chunk_idx * k_chunk + lane;
+                    if global_lane < total {
+                        coeffs[lane] = b_vals[global_lane];
+                    }
+                }
+                MultilinearPolynomial::from(coeffs)
+            })
+            .collect();
+    }
+
+    fn compute_message_impl(&self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let mut evals: [F; DEGREE_BOUND] = match self.params.phase {
             BytecodeReductionPhase::CycleVariables => {
-                // Fast path for the first cycle bit: evaluate the lane-weighted sum per instruction
-                // using one-hot/boolean sparsity (no lane scan), then split by cycle parity.
-                if round == 0 {
-                    let t_size = self.eq_r_bc.len();
-                    debug_assert_eq!(t_size, self.program.instructions.len());
-                    debug_assert!(t_size.is_power_of_two());
+                let t_size = self.eq_r_bc.len();
+                debug_assert_eq!(t_size, self.cycle_weighted_sum.len());
+                debug_assert!(t_size.is_power_of_two());
 
-                    let eq_evals: &[F] = match &self.eq_r_bc {
-                        MultilinearPolynomial::LargeScalars(p) => &p.Z,
-                        _ => unreachable!("EqPolynomial::evals produces a dense field polynomial"),
-                    };
+                let eq_evals: &[F] = match &self.eq_r_bc {
+                    MultilinearPolynomial::LargeScalars(p) => &p.Z,
+                    _ => unreachable!("EqPolynomial::evals produces a dense field polynomial"),
+                };
+                let s_evals: &[F] = match &self.cycle_weighted_sum {
+                    MultilinearPolynomial::LargeScalars(p) => &p.Z,
+                    _ => unreachable!("cycle_weighted_sum is a dense field polynomial"),
+                };
 
-                    let num_pairs = t_size / 2;
-                    let (h0_sum, h2_sum) = (0..num_pairs)
-                        .into_par_iter()
-                        .map(|j| {
-                            // Pair of cycle indices differing in the LSB: k0 even, k1 odd.
-                            let k0 = 2 * j;
-                            let k1 = k0 + 1;
+                // Round univariate is over the current LSB of the (remaining) cycle domain.
+                let num_pairs = t_size / 2;
+                let (h0_sum, h2_sum) = (0..num_pairs)
+                    .into_par_iter()
+                    .map(|j| {
+                        let k0 = 2 * j;
+                        let k1 = k0 + 1;
+                        let s0 = s_evals[k0];
+                        let s1 = s_evals[k1];
+                        let e0 = eq_evals[k0];
+                        let e1 = eq_evals[k1];
 
-                            // Lane-weighted sums (over all lanes) at k0 and k1.
-                            let s0 = weighted_lane_sum_for_instruction(
-                                &self.lane_weights_global,
-                                &self.program.instructions[k0],
-                            );
-                            let s1 = weighted_lane_sum_for_instruction(
-                                &self.lane_weights_global,
-                                &self.program.instructions[k1],
-                            );
+                        let h0 = s0 * e0;
+                        let s2 = (s1 + s1) - s0;
+                        let e2 = (e1 + e1) - e0;
+                        let h2 = s2 * e2;
+                        (h0, h2)
+                    })
+                    .reduce(
+                        || (F::zero(), F::zero()),
+                        |(a0, a1), (b0, b1)| (a0 + b0, a1 + b1),
+                    );
 
-                            // Eq polynomial values at k0 and k1 (cycle LSB = 0/1).
-                            let e0 = eq_evals[k0];
-                            let e1 = eq_evals[k1];
-
-                            // For x in {0,1,2} (interpreted as the current cycle LSB):
-                            // - B(x) is linear, so B(2) = 2*B(1) - B(0)
-                            // - eq(x) is linear, so eq(2) = 2*eq(1) - eq(0)
-                            // And H(x) = Σ_{lane,rest} (B(x) * W_eta(lane) * eq(x)),
-                            // so for this round we can compute:
-                            //   H(0) = Σ_pairs e0*s0
-                            //   H(2) = Σ_pairs (2e1-e0) * (2s1-s0)
-                            let h0 = s0 * e0;
-                            let e2 = (e1 + e1) - e0;
-                            let s2 = (s1 + s1) - s0;
-                            let h2 = s2 * e2;
-
-                            (h0, h2)
-                        })
-                        .reduce(
-                            || (F::zero(), F::zero()),
-                            |(a0, a1), (b0, b1)| (a0 + b0, a1 + b1),
-                        );
-
-                    [h0_sum, h2_sum]
-                } else {
-                    let cycle_half = self.eq_r_bc.len() / 2;
-                    let half = self.bytecode_chunks[0].len() / 2;
-                    debug_assert_eq!(half, cycle_half * (1 << self.params.log_k_chunk));
-
-                    (0..half)
-                        .into_par_iter()
-                        .map(|j| {
-                            let lane = j / cycle_half;
-                            let cycle_pair = j % cycle_half;
-                            let eq_evals = self.eq_r_bc.sumcheck_evals_array::<DEGREE_BOUND>(
-                                cycle_pair,
-                                BindingOrder::LowToHigh,
-                            );
-
-                            let mut out = [F::zero(); DEGREE_BOUND];
-                            for (chunk_idx, b) in self.bytecode_chunks.iter().enumerate() {
-                                let lane_weight = self.params.chunk_lane_weights[chunk_idx][lane];
-                                let w0 = lane_weight * eq_evals[0];
-                                let w2 = lane_weight * eq_evals[1];
-                                let b_evals = b.sumcheck_evals_array::<DEGREE_BOUND>(
-                                    j,
-                                    BindingOrder::LowToHigh,
-                                );
-                                out[0] += b_evals[0] * w0;
-                                out[1] += b_evals[1] * w2;
-                            }
-                            out
-                        })
-                        .reduce(
-                            || [F::zero(); DEGREE_BOUND],
-                            |mut acc, arr| {
-                                acc.iter_mut().zip(arr.iter()).for_each(|(a, b)| *a += *b);
-                                acc
-                            },
-                        )
-                }
+                [h0_sum, h2_sum]
             }
             BytecodeReductionPhase::LaneVariables => {
                 let eq_eval = self.eq_r_bc.get_bound_coeff(0);
-                let half = self.bytecode_chunks[0].len() / 2;
+                assert!(
+                    !self.lane_chunks_at_r_cycle.is_empty(),
+                    "lane-phase invoked before prepare_lane_phase()"
+                );
+                let half = self.lane_chunks_at_r_cycle[0].len() / 2;
                 (0..half)
                     .into_par_iter()
                     .map(|j| {
                         let mut out = [F::zero(); DEGREE_BOUND];
-                        for (chunk_idx, b) in self.bytecode_chunks.iter().enumerate() {
+                        for (chunk_idx, b) in self.lane_chunks_at_r_cycle.iter().enumerate() {
                             let b_evals =
                                 b.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
                             let lw_evals = self.lane_weight_polys[chunk_idx]
@@ -452,15 +454,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeClaim
         if self.params.phase == BytecodeReductionPhase::CycleVariables {
             self.params.cycle_var_challenges.push(r_j);
             self.eq_r_bc.bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.cycle_weighted_sum
+                .bind_parallel(r_j, BindingOrder::LowToHigh);
         }
         if self.params.phase == BytecodeReductionPhase::LaneVariables {
             self.lane_weight_polys
                 .iter_mut()
                 .for_each(|p| p.bind_parallel(r_j, BindingOrder::LowToHigh));
+            self.lane_chunks_at_r_cycle
+                .iter_mut()
+                .for_each(|p| p.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
-        self.bytecode_chunks
-            .iter_mut()
-            .for_each(|p| p.bind_parallel(r_j, BindingOrder::LowToHigh));
     }
 
     fn cache_openings(
@@ -475,18 +479,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeClaim
                 let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
 
                 let eq_eval = self.eq_r_bc.get_bound_coeff(0);
-                let mut sum = F::zero();
-                for (b, lw) in self
-                    .bytecode_chunks
-                    .iter()
-                    .zip(self.lane_weight_polys.iter())
-                {
-                    debug_assert_eq!(b.len(), lw.len());
-                    for i in 0..b.len() {
-                        sum += b.get_bound_coeff(i) * lw.get_bound_coeff(i);
-                    }
-                }
-                sum *= eq_eval;
+                let s_eval = self.cycle_weighted_sum.get_bound_coeff(0);
+                let sum = s_eval * eq_eval;
 
                 accumulator.append_virtual(
                     transcript,
@@ -505,7 +499,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeClaim
                     .map(CommittedPolynomial::BytecodeChunk)
                     .collect();
                 let claims: Vec<F> = self
-                    .bytecode_chunks
+                    .lane_chunks_at_r_cycle
                     .iter()
                     .map(|p| p.final_sumcheck_claim())
                     .collect();

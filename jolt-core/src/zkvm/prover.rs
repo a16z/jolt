@@ -1620,6 +1620,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             vec![Box::new(hw_prover)];
 
         if let Some(mut bytecode_reduction_prover) = self.bytecode_reduction_prover.take() {
+            // Stage 6b → Stage 7 transition for bytecode claim reduction:
+            // - Cycle-phase sumcheck is complete, so we can materialize the lane-phase witness
+            //   polynomials B_i(·, r_cycle) (GPU-style "export b_vals").
+            bytecode_reduction_prover.prepare_lane_phase();
             bytecode_reduction_prover.params.phase = BytecodeReductionPhase::LaneVariables;
             instances.push(Box::new(bytecode_reduction_prover));
         }
