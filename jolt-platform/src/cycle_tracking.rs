@@ -49,6 +49,7 @@ mod riscv_specific {
                 in("x11") marker_id, // we store ptr address of the label &str to recover it during emulation
                 in("x12") marker_len, // length of the label &str
                 in("x13") event_type, // either start or end
+                in("x17") 0u32, // a7=0 marks this as a Jolt ECALL
                 options(nostack, nomem, preserves_flags)
             );
         }

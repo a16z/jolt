@@ -328,7 +328,6 @@ impl CanonicalSerialize for VirtualPolynomial {
             Self::Product => 11u8.serialize_with_mode(&mut writer, compress),
             Self::ShouldJump => 12u8.serialize_with_mode(&mut writer, compress),
             Self::ShouldBranch => 13u8.serialize_with_mode(&mut writer, compress),
-            Self::VirtualSequenceActive => 41u8.serialize_with_mode(&mut writer, compress),
             Self::WritePCtoRD => 14u8.serialize_with_mode(&mut writer, compress),
             Self::WriteLookupOutputToRD => 15u8.serialize_with_mode(&mut writer, compress),
             Self::Rd => 16u8.serialize_with_mode(&mut writer, compress),
@@ -387,7 +386,6 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::Product
             | Self::ShouldJump
             | Self::ShouldBranch
-            | Self::VirtualSequenceActive
             | Self::WritePCtoRD
             | Self::WriteLookupOutputToRD
             | Self::Rd
@@ -490,7 +488,6 @@ impl CanonicalDeserialize for VirtualPolynomial {
                     let flag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::LookupTableFlag(flag as usize)
                 }
-                41 => Self::VirtualSequenceActive,
                 _ => return Err(SerializationError::InvalidData),
             },
         )

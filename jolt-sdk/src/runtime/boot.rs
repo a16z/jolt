@@ -23,7 +23,6 @@ extern "C" {
 #[inline(always)]
 #[cfg(all(target_arch = "riscv64", target_os = "linux"))]
 fn install_trap_vector() {
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     unsafe {
         core::arch::asm!("la t0, _trap_handler", "csrw mtvec, t0");
     }

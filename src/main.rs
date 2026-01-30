@@ -151,20 +151,17 @@ fn main() {
 // Build command (from cargo-jolt)
 // ============================================================================
 
-/// Jolt-specific rustflags for zkVM environment
-const JOLT_RUSTFLAGS: &[&str] = &[
-    // lower-atomic: Jolt prover doesn't support LR/SC atomic instructions
-    "-Cpasses=lower-atomic",
-    // panic=abort: Required for zkVM
-    "-Cpanic=abort",
-    // Optimize for size (helps with register allocation for inline asm)
-    "-Copt-level=z",
-    // Disable LLVM's MachineOutliner: it generates a faulty calling pattern on RISC-V
-    // that creates infinite loops (auipc t1,0; jr offset(t1); ... jr t1 returns to auipc).
-    "-Cllvm-args=-enable-machine-outliner=never",
-    // Use jolt-platform's custom getrandom implementation
-    "--cfg=getrandom_backend=\"custom\"",
-];
+/// Resolve the guest optimization level from `JOLT_GUEST_OPT` env var (default: "3").
+fn guest_opt_flag() -> String {
+    let level = std::env::var("JOLT_GUEST_OPT").unwrap_or_else(|_| "3".to_string());
+    match level.as_str() {
+        "0" | "1" | "2" | "3" | "s" | "z" => {}
+        _ => panic!(
+            "Invalid JOLT_GUEST_OPT value: {level}. Allowed values are 0, 1, 2, 3, s, z"
+        ),
+    }
+    format!("-Copt-level={level}")
+}
 
 fn build_command(args: JoltBuildArgs) -> Result<()> {
     debug!("build_command: {args:?}");
@@ -194,12 +191,23 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         None
     };
 
+    let opt_flag = guest_opt_flag();
+    let jolt_rustflags: &[&str] = &[
+        "-Cpasses=lower-atomic",
+        "-Cpanic=abort",
+        &opt_flag,
+        // Disable LLVM's MachineOutliner: it generates a faulty calling pattern on RISC-V
+        // that creates infinite loops (auipc t1,0; jr offset(t1); ... jr t1 returns to auipc).
+        "-Cllvm-args=-enable-machine-outliner=never",
+        "--cfg=getrandom_backend=\"custom\"",
+    ];
+
     zeroos_build::cmds::build_binary_with_rustflags(
         &workspace_root,
         &args.base,
         toolchain_paths,
         Some(linker_tpl),
-        Some(JOLT_RUSTFLAGS),
+        Some(jolt_rustflags),
     )?;
 
     Ok(())

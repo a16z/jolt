@@ -378,16 +378,16 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
                 - { 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) }
                 - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } )
     ),
-    // if Inline && !NextIsNoop && !IsLastInSequence {
+    // if VirtualInstruction && !IsLastInSequence {
     //     assert!(NextPC == PC + 1)
     // }
-    // Uses VirtualSequenceActive = VirtualInstruction * (1 - NextIsNoop)
-    // This avoids enforcing PC + 1 when the inline sequence is followed by NoOp padding.
-    // We also subtract IsLastInSequence to skip the constraint when JALR terminates
-    // a virtual sequence and may jump to a trap handler (NextPC != PC + 1).
+    // Guard = OpFlags(VirtualInstruction) − OpFlags(IsLastInSequence).
+    // For valid boolean inputs where IsLast=1 implies VI=1, this equals VI && !IsLast.
+    // Skips the constraint when JALR terminates a virtual sequence (NextPC may jump
+    // to a trap handler) and when the instruction is not part of an inline sequence.
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::NextPCEqPCPlusOneIfInline,
-        if { { JoltR1CSInputs::VirtualSequenceActive } - { JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence) } }
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) } - { JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence) } }
         => ( { JoltR1CSInputs::NextPC } ) == ( { JoltR1CSInputs::PC } + { 1i128 } )
     ),
     // if NextIsVirtual && !NextIsFirstInSequence {
@@ -520,8 +520,8 @@ pub static R1CS_CONSTRAINTS_FIRST_GROUP: [NamedR1CSConstraint; OUTER_UNIVARIATE_
 pub static R1CS_CONSTRAINTS_SECOND_GROUP: [NamedR1CSConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
     filter_r1cs_constraints(&R1CS_CONSTRAINTS_SECOND_GROUP_LABELS);
 
-/// Domain sizing for product-virtualization univariate-skip (size-6 window)
-pub const NUM_PRODUCT_VIRTUAL: usize = 6;
+/// Domain sizing for product-virtualization univariate-skip (size-5 window)
+pub const NUM_PRODUCT_VIRTUAL: usize = 5;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE: usize = NUM_PRODUCT_VIRTUAL - 1;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
@@ -539,7 +539,6 @@ pub enum ProductConstraintLabel {
     WritePCtoRD,
     ShouldBranch,
     ShouldJump,
-    VirtualSequenceActive,
 }
 
 /// Number of product virtualization constraints
@@ -608,14 +607,6 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
         left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
         right: ProductFactorExpr::OneMinus(VirtualPolynomial::NextIsNoop),
         output: VirtualPolynomial::ShouldJump,
-    },
-    // 5: VirtualSequenceActive = OpFlags(VirtualInstruction) · (1 − NextIsNoop)
-    // Used to guard NextPCEqPCPlusOneIfInline: only enforce PC + 1 when not followed by NoOp
-    ProductConstraint {
-        label: ProductConstraintLabel::VirtualSequenceActive,
-        left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction)),
-        right: ProductFactorExpr::OneMinus(VirtualPolynomial::NextIsNoop),
-        output: VirtualPolynomial::VirtualSequenceActive,
     },
 ];
 
