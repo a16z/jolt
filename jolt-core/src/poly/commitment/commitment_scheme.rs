@@ -2,7 +2,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::fmt::Debug;
 
-use crate::transcripts::{AppendToTranscript, Transcript};
+use crate::transcripts::Transcript;
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
@@ -20,7 +20,6 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         + PartialEq
         + CanonicalSerialize
         + CanonicalDeserialize
-        + AppendToTranscript
         + Clone;
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;

@@ -627,7 +627,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // Append commitments to transcript
         for commitment in &commitments {
-            self.transcript.append_serializable(commitment);
+            self.transcript
+                .append_serializable(b"commitment", commitment);
         }
 
         (commitments, hint_map)
@@ -658,7 +659,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice, None);
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
-        self.transcript.append_serializable(&commitment);
+        self.transcript
+            .append_serializable(b"untrusted_advice", &commitment);
 
         self.advice.untrusted_advice_polynomial = Some(poly);
         self.advice.untrusted_advice_hint = Some(hint);
@@ -683,8 +685,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         let poly = MultilinearPolynomial::from(trusted_advice_vec);
         self.advice.trusted_advice_polynomial = Some(poly);
-        self.transcript
-            .append_serializable(self.advice.trusted_advice_commitment.as_ref().unwrap());
+        self.transcript.append_serializable(
+            b"trusted_advice",
+            self.advice.trusted_advice_commitment.as_ref().unwrap(),
+        );
     }
 
     #[tracing::instrument(skip_all)]
@@ -1435,7 +1439,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
 
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
-        self.transcript.append_scalars(&claims);
+        self.transcript.append_scalars(b"rlc_claims", &claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
 
         // Build DoryOpeningState

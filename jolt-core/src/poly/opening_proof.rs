@@ -382,7 +382,7 @@ where
         opening_point: Vec<F::Challenge>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
+        transcript.append_scalar(b"opening_claim", &claim);
 
         // Add opening to map
         let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
@@ -406,7 +406,7 @@ where
         claims: Vec<F>,
     ) {
         claims.iter().for_each(|claim| {
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
         });
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
 
@@ -427,7 +427,7 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
+        transcript.append_scalar(b"opening_claim", &claim);
         assert!(
             self.openings
                 .insert(
@@ -453,7 +453,7 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
+        transcript.append_scalar(b"opening_claim", &claim);
         self.openings.insert(
             OpeningId::UntrustedAdvice(sumcheck_id),
             (opening_point, claim),
@@ -467,7 +467,7 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
+        transcript.append_scalar(b"opening_claim", &claim);
         self.openings.insert(
             OpeningId::TrustedAdvice(sumcheck_id),
             (opening_point, claim),
@@ -560,7 +560,7 @@ where
     ) {
         let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
         let claim = self.openings.get(&key).unwrap().1;
-        transcript.append_scalar(&claim);
+        transcript.append_scalar(b"opening_claim", &claim);
 
         // Update the opening point in self.openings (it was initialized with default empty point)
         self.openings.insert(
@@ -587,7 +587,7 @@ where
         for label in polynomials.into_iter() {
             let key = OpeningId::Polynomial(PolynomialId::Committed(label), sumcheck);
             let claim = self.openings.get(&key).unwrap().1;
-            transcript.append_scalar(&claim);
+            transcript.append_scalar(b"opening_claim", &claim);
 
             // Update the opening point in self.openings (it was initialized with default empty point)
             self.openings.insert(
@@ -610,7 +610,7 @@ where
     ) {
         let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
         if let Some((_, claim)) = self.openings.get(&key) {
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim; // Copy the claim value
             self.openings.insert(key, (opening_point.clone(), claim));
         } else {
@@ -626,7 +626,7 @@ where
     ) {
         let key = OpeningId::UntrustedAdvice(sumcheck_id);
         if let Some((_, claim)) = self.openings.get(&key) {
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
         } else {
@@ -642,7 +642,7 @@ where
     ) {
         let key = OpeningId::TrustedAdvice(sumcheck_id);
         if let Some((_, claim)) = self.openings.get(&key) {
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
         } else {

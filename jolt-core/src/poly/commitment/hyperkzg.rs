@@ -19,7 +19,7 @@ use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
-    transcripts::{AppendToTranscript, Transcript},
+    transcripts::Transcript,
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
@@ -66,12 +66,6 @@ pub struct HyperKZGCommitment<P: Pairing>(pub P::G1Affine);
 impl<P: Pairing> Default for HyperKZGCommitment<P> {
     fn default() -> Self {
         Self(P::G1Affine::zero())
-    }
-}
-
-impl<P: Pairing> AppendToTranscript for HyperKZGCommitment<P> {
-    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
-        transcript.append_point(&self.0.into_group());
     }
 }
 
@@ -157,8 +151,8 @@ where
     });
 
     // TODO(moodlezoup): Avoid cloned()
-    let scalars = v.iter().flatten().collect::<Vec<&P::ScalarField>>();
-    transcript.append_scalars::<P::ScalarField>(&scalars);
+    let scalars: Vec<P::ScalarField> = v.iter().flatten().cloned().collect();
+    transcript.append_scalars(b"hyperkzg_evals", &scalars);
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(f.len());
     let f_arc: Vec<Arc<MultilinearPolynomial<P::ScalarField>>> =
         f.iter().map(|poly| Arc::new(poly.clone())).collect();
@@ -185,7 +179,8 @@ where
 
     // The prover computes the challenge to keep the transcript in the same
     // state as that of the verifier
-    transcript.append_points(&w.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>());
+    let w_points: Vec<P::G1> = w.iter().map(|g| g.into_group()).collect();
+    transcript.append_points(b"hyperkzg_witness", &w_points);
     let _d_0: P::ScalarField = transcript.challenge_scalar();
 
     (w, v)
@@ -206,11 +201,12 @@ where
     let k = C.len();
     let t = u.len();
 
-    let scalars = v.iter().flatten().collect::<Vec<&P::ScalarField>>();
-    transcript.append_scalars::<P::ScalarField>(&scalars);
+    let scalars: Vec<P::ScalarField> = v.iter().flatten().cloned().collect();
+    transcript.append_scalars(b"hyperkzg_evals", &scalars);
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(k);
 
-    transcript.append_points(&W.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>());
+    let w_points: Vec<P::G1> = W.iter().map(|g| g.into_group()).collect();
+    transcript.append_points(b"hyperkzg_witness", &w_points);
     let d_0: P::ScalarField = transcript.challenge_scalar();
     let d_1 = d_0 * d_0;
 
@@ -340,7 +336,8 @@ where
         // Phase 2
         // We do not need to add x to the transcript, because in our context x was obtained from the transcript.
         // We also do not need to absorb `C` and `eval` as they are already absorbed by the transcript by the caller
-        transcript.append_points(&com.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>());
+        let com_points: Vec<P::G1> = com.iter().map(|g| g.into_group()).collect();
+        transcript.append_points(b"hyperkzg_com", &com_points);
         let r: <P as Pairing>::ScalarField = transcript.challenge_scalar();
         let u = vec![r, -r, r * r];
 
@@ -367,7 +364,8 @@ where
 
         // we do not need to add x to the transcript, because in our context x was
         // obtained from the transcript
-        transcript.append_points(&com.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>());
+        let com_points: Vec<P::G1> = com.iter().map(|g| g.into_group()).collect();
+        transcript.append_points(b"hyperkzg_com", &com_points);
         let r: <P as Pairing>::ScalarField = transcript.challenge_scalar();
 
         if r == P::ScalarField::zero() || C.0 == P::G1Affine::zero() {
