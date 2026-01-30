@@ -4,12 +4,12 @@
 //!
 //! For ZeroOS: Single-core, no-interrupts, M-mode-only. Supports the following CSRs
 //! mapped to virtual registers for proof verification:
-//!   - mtvec (0x305) → vr33
-//!   - mscratch (0x340) → vr34
-//!   - mepc (0x341) → vr35
-//!   - mcause (0x342) → vr36
-//!   - mtval (0x343) → vr37
-//!   - mstatus (0x300) → vr38
+//!   - mtvec (0x305) → vr34
+//!   - mscratch (0x340) → vr35
+//!   - mepc (0x341) → vr36
+//!   - mcause (0x342) → vr37
+//!   - mtval (0x343) → vr38
+//!   - mstatus (0x300) → vr39
 //!
 //! The `csrw csr, rs` pseudo-instruction is `csrrw x0, csr, rs` (rd=0, discard old value).
 //! The full `csrrw rd, csr, rs` swaps rd ← old_CSR, CSR ← rs.
@@ -216,7 +216,7 @@ mod tests {
         let write_val: u64 = 0x1111_0000;
 
         // Set up the virtual register (single source of truth)
-        cpu.x[33] = old_vr_val as i64; // vr33 = mtvec
+        cpu.x[34] = old_vr_val as i64; // vr34 = mtvec
         cpu.x[5] = write_val as i64; // rs1 = t0 = write_val
 
         let mut trace: Vec<Cycle> = Vec::new();
@@ -225,7 +225,7 @@ mod tests {
         // Architectural rd (t0) gets old value from virtual register.
         assert_eq!(cpu.x[5] as u64, old_vr_val);
 
-        // Virtual register (vr33 = mtvec) should have the new value (from rs1).
-        assert_eq!(cpu.x[33] as u64, write_val);
+        // Virtual register (vr34 = mtvec) should have the new value (from rs1).
+        assert_eq!(cpu.x[34] as u64, write_val);
     }
 }

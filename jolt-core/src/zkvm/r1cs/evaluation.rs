@@ -128,16 +128,16 @@ pub(crate) const PRODUCT_VIRTUAL_COEFFS_PER_J: [[i32;
 /// Boolean guards for the first group (univariate-skip base window)
 #[derive(Clone, Copy, Debug)]
 pub struct AzFirstGroup {
-    pub not_load_store: bool,          // !(Load || Store)
-    pub load_a: bool,                  // Load
-    pub load_b: bool,                  // Load
-    pub store: bool,                   // Store
-    pub add_sub_mul: bool,             // Add || Sub || Mul
-    pub not_add_sub_mul: bool,         // !(Add || Sub || Mul)
-    pub assert_flag: bool,             // Assert
-    pub should_jump: bool,             // ShouldJump
+    pub not_load_store: bool,         // !(Load || Store)
+    pub load_a: bool,                 // Load
+    pub load_b: bool,                 // Load
+    pub store: bool,                  // Store
+    pub add_sub_mul: bool,            // Add || Sub || Mul
+    pub not_add_sub_mul: bool,        // !(Add || Sub || Mul)
+    pub assert_flag: bool,            // Assert
+    pub should_jump: bool,            // ShouldJump
     pub virtual_instr_not_last: bool, // VirtualInstruction && !IsLastInSequence
-    pub must_start_sequence: bool,     // NextIsVirtual && !NextIsFirstInSequence
+    pub must_start_sequence: bool,    // NextIsVirtual && !NextIsFirstInSequence
 }
 
 impl AzFirstGroup {

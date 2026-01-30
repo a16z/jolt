@@ -3,7 +3,7 @@
 //! Encoding: 0x30200073 (SYSTEM opcode, funct3=000, imm=0x302)
 //!
 //! For ZeroOS M-mode-only operation:
-//! - Reads mepc (from virtual register vr35) and sets PC to that value
+//! - Reads mepc (from virtual register vr36) and sets PC to that value
 //! - In full RISC-V, MRET also restores privilege mode from mstatus.MPP
 //!   and sets mstatus.MIE from mstatus.MPIE, but for single-privilege
 //!   M-mode-only execution, these bits don't need to change.
@@ -52,7 +52,7 @@ impl MRET {
 impl RISCVTrace for MRET {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         // Don't call self.execute() - the inline sequence's JALR handles the PC update.
-        // The JALR reads mepc from virtual register vr35 and jumps to it.
+        // The JALR reads mepc from virtual register vr36 and jumps to it.
 
         // Generate and execute inline sequence
         // The inline sequence reads mepc from virtual register (source of truth for proofs)
@@ -66,11 +66,11 @@ impl RISCVTrace for MRET {
 
     /// Generate inline sequence for MRET.
     ///
-    /// MRET jumps to mepc. The mepc virtual register (vr35) must have been written
+    /// MRET jumps to mepc. The mepc virtual register (vr36) must have been written
     /// by a prior CSRRW instruction (typically in the trap handler before MRET).
     ///
     /// Layout:
-    ///   0: JALR(x0, vr35, 0) - Jump to mepc (read directly from virtual register)
+    ///   0: JALR(x0, vr36, 0) - Jump to mepc (read directly from virtual register)
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

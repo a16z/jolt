@@ -102,8 +102,9 @@ pub struct Cpu {
     pub(crate) pc: u64,
     csr: [u64; CSR_CAPACITY],
     pub mmu: Mmu,
-    reservation: u64, // @TODO: Should support multiple address reservations
+    reservation: u64,
     is_reservation_set: bool,
+    reservation_width: ReservationWidth,
     _dump_flag: bool,
     unsigned_data_mask: u64,
     // pub trace: Vec<Cycle>,
@@ -119,6 +120,12 @@ pub struct Cpu {
 pub enum Xlen {
     Bit32,
     Bit64, // @TODO: Support Bit128
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ReservationWidth {
+    Word,       // 32-bit (LR.W/SC.W)
+    Doubleword, // 64-bit (LR.D/SC.D)
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -269,6 +276,7 @@ impl Cpu {
             mmu: Mmu::new(Xlen::Bit64, terminal),
             reservation: 0,
             is_reservation_set: false,
+            reservation_width: ReservationWidth::Word,
             _dump_flag: false,
             unsigned_data_mask: 0xffffffffffffffff,
             // trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
@@ -328,9 +336,10 @@ impl Cpu {
     }
 
     /// Sets the reservation address for atomic memory operations
-    pub fn set_reservation(&mut self, address: u64) {
+    pub fn set_reservation(&mut self, address: u64, width: ReservationWidth) {
         self.reservation = address;
         self.is_reservation_set = true;
+        self.reservation_width = width;
     }
 
     /// Clears the reservation for atomic memory operations
@@ -338,9 +347,9 @@ impl Cpu {
         self.is_reservation_set = false;
     }
 
-    /// Checks if a reservation is set for the given address
-    pub fn has_reservation(&self, address: u64) -> bool {
-        self.is_reservation_set && self.reservation == address
+    /// Checks if a reservation is set for the given address and width
+    pub fn has_reservation(&self, address: u64, width: ReservationWidth) -> bool {
+        self.is_reservation_set && self.reservation == address && self.reservation_width == width
     }
 
     pub fn is_reservation_set(&self) -> bool {
@@ -1091,6 +1100,7 @@ impl Cpu {
             mmu: self.mmu.save_state_with_empty_memory(),
             reservation: self.reservation,
             is_reservation_set: self.is_reservation_set,
+            reservation_width: self.reservation_width,
             _dump_flag: self._dump_flag,
             unsigned_data_mask: self.unsigned_data_mask,
             trace_len: self.trace_len,

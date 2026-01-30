@@ -16,8 +16,7 @@ use crate::{
 };
 
 use super::{
-    addi::ADDI, format::format_i::FormatI, or::OR, Cycle, Instruction, RISCVInstruction,
-    RISCVTrace,
+    addi::ADDI, format::format_i::FormatI, or::OR, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -185,7 +184,7 @@ mod tests {
         let old_csr: u64 = 0x00FF;
         let rs1_val: u64 = 0xFF00;
 
-        cpu.x[33] = old_csr as i64; // vr33 = mtvec
+        cpu.x[34] = old_csr as i64; // vr34 = mtvec
         cpu.x[5] = rs1_val as i64; // t0
 
         let mut trace: Vec<Cycle> = Vec::new();
@@ -195,7 +194,7 @@ mod tests {
         assert_eq!(cpu.x[10] as u64, old_csr, "rd should get old CSR value");
         // vr (mtvec) should have old | rs1
         assert_eq!(
-            cpu.x[33] as u64,
+            cpu.x[34] as u64,
             old_csr | rs1_val,
             "CSR should have bits set from rs1"
         );
@@ -218,7 +217,7 @@ mod tests {
         let old_csr: u64 = 0x00FF;
         let rs1_val: u64 = 0xFF00;
 
-        cpu.x[33] = old_csr as i64; // vr33 = mtvec
+        cpu.x[34] = old_csr as i64; // vr34 = mtvec
         cpu.x[5] = rs1_val as i64; // t0
 
         let mut trace: Vec<Cycle> = Vec::new();
@@ -228,7 +227,7 @@ mod tests {
         assert_eq!(cpu.x[5] as u64, old_csr, "rd should get old CSR value");
         // vr should have old | rs1 (using preserved rs1, not clobbered value)
         assert_eq!(
-            cpu.x[33] as u64,
+            cpu.x[34] as u64,
             old_csr | rs1_val,
             "CSR should have bits set from original rs1"
         );

@@ -173,7 +173,6 @@ impl JoltState {
             &self.next_is_first_in_sequence,
             &self.lookup_output,
             &self.should_jump,
-            &self.virtual_sequence_active,
             &self.flags[CircuitFlags::AddOperands as usize],
             &self.flags[CircuitFlags::SubtractOperands as usize],
             &self.flags[CircuitFlags::MultiplyOperands as usize],
