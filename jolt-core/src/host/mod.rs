@@ -23,6 +23,7 @@ pub struct Program {
     max_output_size: u64,
     std: bool,
     pub elf: Option<PathBuf>,
+    pub elf_compute_advice: Option<PathBuf>,
 }
 
 pub const DEFAULT_TARGET_DIR: &str = "/tmp/jolt-guest-targets";

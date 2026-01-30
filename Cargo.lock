@@ -2122,6 +2122,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "common",
+ "embedded-io 0.6.1",
  "hex-literal",
  "jolt-core",
  "jolt-platform",
@@ -2383,6 +2384,23 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "modinv"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "modinv-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "modinv-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
 ]
 
 [[package]]

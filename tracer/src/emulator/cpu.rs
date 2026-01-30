@@ -14,6 +14,76 @@ use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
 
+/// A FIFO queue for storing and retrieving advice data between emulation passes.
+/// During the first emulation pass (with `compute_advice` feature), advice functions
+/// write serialized data to this tape. During the second pass (without the feature),
+/// advice functions read from this tape in the same order.
+#[derive(Clone, Debug, Default)]
+pub struct AdviceTape {
+    data: Vec<u8>,
+    read_position: usize,
+}
+
+impl AdviceTape {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append bytes to the advice tape (called during first emulation pass)
+    pub fn write(&mut self, bytes: &[u8]) {
+        self.data.extend_from_slice(bytes);
+    }
+
+    /// Read a specific number of bytes from the advice tape (called during second emulation pass)
+    pub fn read(&mut self, num_bytes: usize) -> Option<u64> {
+        if self.read_position + num_bytes > self.data.len() {
+            return None;
+        }
+
+        let mut result = 0u64;
+        for i in 0..num_bytes {
+            result |= (self.data[self.read_position + i] as u64) << (i * 8);
+        }
+        self.read_position += num_bytes;
+        Some(result)
+    }
+
+    /// Reset the read position (useful for multiple passes)
+    pub fn reset_read_position(&mut self) {
+        self.read_position = 0;
+    }
+
+    /// Get the current size of the advice tape
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Check if the advice tape is empty
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// Get the number of bytes remaining to be read
+    pub fn remaining(&self) -> usize {
+        self.data.len().saturating_sub(self.read_position)
+    }
+}
+
+/// Write data to the CPU's advice tape
+pub fn advice_tape_write(cpu: &mut Cpu, bytes: &[u8]) {
+    cpu.advice_tape.write(bytes);
+}
+
+/// Read data from the CPU's advice tape
+pub fn advice_tape_read(cpu: &mut Cpu, num_bytes: usize) -> Option<u64> {
+    cpu.advice_tape.read(num_bytes)
+}
+
+/// Get the number of bytes remaining to be read from the CPU's advice tape
+pub fn advice_tape_remaining(cpu: &Cpu) -> usize {
+    cpu.advice_tape.remaining()
+}
+
 use crate::instruction::format::NormalizedOperands;
 use crate::utils::panic::CallFrame;
 #[cfg(not(feature = "std"))]
@@ -21,8 +91,8 @@ use alloc::collections::VecDeque;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 use jolt_platform::{
-    JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM,
-    JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
+    JOLT_ADVICE_WRITE_ECALL_NUM, JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START,
+    JOLT_CYCLE_TRACK_ECALL_NUM, JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
 };
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
@@ -108,11 +178,13 @@ pub struct Cpu {
     unsigned_data_mask: u64,
     // pub trace: Vec<Cycle>,
     pub trace_len: usize,
-    executed_instrs: u64, // “real” RV64IMAC cycles
+    executed_instrs: u64, // "real" RV64IMAC cycles
     active_markers: FnvHashMap<u32, ActiveMarker>,
     pub vr_allocator: VirtualRegisterAllocator,
     /// Call stack tracking (circular buffer)
     call_stack: VecDeque<CallFrame>,
+    /// Advice tape for runtime advice system
+    pub advice_tape: AdviceTape,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -277,6 +349,7 @@ impl Cpu {
             active_markers: FnvHashMap::default(),
             vr_allocator: VirtualRegisterAllocator::new(),
             call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
+            advice_tape: AdviceTape::new(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -556,6 +629,16 @@ impl Cpu {
                 // string pointer) is swallowed here and will manifest as the
                 // usual access-fault on the *next* instruction fetch.
                 let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
+
+                return false;
+            } else if call_id == JOLT_ADVICE_WRITE_ECALL_NUM {
+                let src_ptr = self.x[11] as u64; // a1
+                let len = self.x[12] as u64; // a2
+
+                // Any fault raised while touching guest memory (e.g. a bad
+                // pointer) is swallowed here and will manifest as the
+                // usual access-fault on the *next* instruction fetch.
+                let _ = self.handle_advice_write(src_ptr, len);
 
                 return false;
             }
@@ -1042,6 +1125,17 @@ impl Cpu {
         Ok(())
     }
 
+    fn handle_advice_write(&mut self, ptr: u64, len: u64) -> Result<(), Trap> {
+        // Read bytes from guest memory and write to advice tape
+        let mut bytes = Vec::with_capacity(len as usize);
+        for i in 0..len {
+            let (b, _) = self.mmu.load(ptr + i)?;
+            bytes.push(b);
+        }
+        advice_tape_write(self, &bytes);
+        Ok(())
+    }
+
     /// Read a NUL-terminated guest string from memory.
     fn read_string(&mut self, mut addr: u32, len: u32) -> Result<String, Trap> {
         let mut bytes = Vec::with_capacity(len as usize);
@@ -1097,6 +1191,7 @@ impl Cpu {
             active_markers: self.active_markers.clone(),
             vr_allocator: self.vr_allocator.clone(),
             call_stack: self.call_stack.clone(),
+            advice_tape: self.advice_tape.clone(),
         }
     }
 }

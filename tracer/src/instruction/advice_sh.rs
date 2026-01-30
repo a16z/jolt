@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
+    emulator::cpu::{advice_tape_read, Cpu, Xlen},
     utils::inline_helpers::InstrAssembler,
 };
 
@@ -14,6 +14,7 @@ use super::lui::LUI;
 use super::sd::SD;
 use super::sll::SLL;
 use super::slli::SLLI;
+use super::virtual_advice_load::VirtualAdviceLoad;
 use super::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use super::virtual_lw::VirtualLW;
 use super::virtual_sw::VirtualSW;
@@ -22,30 +23,34 @@ use super::Instruction;
 use super::RAMWrite;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
-use super::{format::format_s::FormatS, Cycle, RISCVInstruction, RISCVTrace};
+use super::{format::format_advice_s::FormatAdviceS, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
-    name   = SH,
-    mask   = 0x0000707f,
-    match  = 0x00001023,
-    format = FormatS,
+    name   = AdviceSH,
+    mask   = 0,
+    match  = 0,
+    format = FormatAdviceS,
     ram    = RAMWrite
 );
 
-impl SH {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SH as RISCVInstruction>::RAMAccess) {
+impl AdviceSH {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <AdviceSH as RISCVInstruction>::RAMAccess) {
+        // Read 2 bytes (halfword) from the advice tape
+        let advice_value = advice_tape_read(cpu, 2).expect("Failed to read from advice tape");
+
+        // Store the advice value to memory at address rs1 + imm
         *ram_access = cpu
             .mmu
             .store_halfword(
                 cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64,
-                cpu.x[self.operands.rs2 as usize] as u16,
+                advice_value as u16,
             )
             .ok()
             .unwrap();
     }
 }
 
-impl RISCVTrace for SH {
+impl RISCVTrace for AdviceSH {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
@@ -54,18 +59,7 @@ impl RISCVTrace for SH {
         }
     }
 
-    /// Store halfword to memory using word-aligned access.
-    ///
-    /// SH stores the lower 16 bits of rs2 to memory at address rs1+imm.
-    /// Since zkVM uses word-aligned memory, this requires:
-    /// 1. Assert halfword alignment of the target address
-    /// 2. Load the aligned word/doubleword containing the target halfword
-    /// 3. Mask and replace the specific 16-bit halfword
-    /// 4. Store the modified word/doubleword back to memory
-    ///
-    /// The implementation uses the XOR technique: (word ^ halfword) & mask ^ word
-    /// This clears the original halfword bits and sets the new halfword value
-    /// in a single sequence without branches.
+    /// Store halfword (16-bit) from advice tape to aligned memory.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -78,20 +72,8 @@ impl RISCVTrace for SH {
     }
 }
 
-impl SH {
-    /// 32-bit implementation of store halfword.
-    ///
-    /// Algorithm:
-    /// 1. Assert halfword alignment (address must be multiple of 2)
-    /// 2. Calculate target address and align to 4-byte boundary
-    /// 3. Load the aligned word containing the target halfword
-    /// 4. Calculate shift amount based on halfword position (bit 1 of address)
-    /// 5. Create 16-bit mask (0xFFFF) shifted to halfword position
-    /// 6. Shift halfword value to correct position
-    /// 7. Use XOR operations to replace the target halfword
-    /// 8. Store the modified word back to memory
+impl AdviceSH {
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        // Virtual registers used in sequence
         let v_address = allocator.allocate();
         let v_word_address = allocator.allocate();
         let v_word = allocator.allocate();
@@ -107,7 +89,9 @@ impl SH {
         asm.emit_i::<SLLI>(*v_shift, *v_address, 3);
         asm.emit_u::<LUI>(*v_mask, 0xffff);
         asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
-        asm.emit_r::<SLL>(*v_halfword, self.operands.rs2, *v_shift);
+        // Read halfword from advice tape into v_halfword register (imm=2 means 2 bytes)
+        asm.emit_j::<VirtualAdviceLoad>(*v_halfword, 2);
+        asm.emit_r::<SLL>(*v_halfword, *v_halfword, *v_shift);
         asm.emit_r::<XOR>(*v_halfword, *v_word, *v_halfword);
         asm.emit_r::<AND>(*v_halfword, *v_halfword, *v_mask);
         asm.emit_r::<XOR>(*v_word, *v_word, *v_halfword);
@@ -115,13 +99,7 @@ impl SH {
         asm.finalize()
     }
 
-    /// 64-bit implementation of store halfword.
-    ///
-    /// Similar to 32-bit version but operates on 64-bit doublewords.
-    /// The halfword position is determined by bits 1-2 of the address
-    /// (4 possible halfword positions within an 8-byte doubleword).
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        // Virtual registers used in sequence
         let v_address = allocator.allocate();
         let v_dword_address = allocator.allocate();
         let v_dword = allocator.allocate();
@@ -137,7 +115,9 @@ impl SH {
         asm.emit_i::<SLLI>(*v_shift, *v_address, 3);
         asm.emit_u::<LUI>(*v_mask, 0xffff);
         asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
-        asm.emit_r::<SLL>(*v_halfword, self.operands.rs2, *v_shift);
+        // Read halfword from advice tape into v_halfword register (imm=2 means 2 bytes)
+        asm.emit_j::<VirtualAdviceLoad>(*v_halfword, 2);
+        asm.emit_r::<SLL>(*v_halfword, *v_halfword, *v_shift);
         asm.emit_r::<XOR>(*v_halfword, *v_dword, *v_halfword);
         asm.emit_r::<AND>(*v_halfword, *v_halfword, *v_mask);
         asm.emit_r::<XOR>(*v_dword, *v_dword, *v_halfword);

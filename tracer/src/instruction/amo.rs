@@ -16,7 +16,7 @@ use crate::instruction::xor::XOR;
 use crate::utils::inline_helpers::InstrAssembler;
 
 pub fn amo_pre64(asm: &mut InstrAssembler, rs1: u8, v_rd: u8, v_dword: u8, v_shift: u8) {
-    asm.emit_halign::<VirtualAssertWordAlignment>(rs1, 0);
+    asm.emit_align::<VirtualAssertWordAlignment>(rs1, 0);
     // Use v_shift temporarily to hold aligned address
     asm.emit_i::<ANDI>(v_shift, rs1, -8i64 as u64);
     asm.emit_ld::<LD>(v_dword, v_shift, 0);
@@ -51,7 +51,7 @@ pub fn amo_post64(
 }
 
 pub fn amo_pre32(asm: &mut InstrAssembler, rs1: u8, v_rd: u8) {
-    asm.emit_halign::<VirtualAssertWordAlignment>(rs1, 0);
+    asm.emit_align::<VirtualAssertWordAlignment>(rs1, 0);
     asm.emit_i::<VirtualLW>(v_rd, rs1, 0);
 }
 

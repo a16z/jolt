@@ -106,6 +106,26 @@ impl Emulator {
         }
     }
 
+    /// Set the advice tape for this emulator
+    pub fn set_advice_tape(&mut self, tape: cpu::AdviceTape) {
+        self.cpu.advice_tape = tape;
+    }
+
+    /// Get a reference to the advice tape
+    pub fn get_advice_tape(&self) -> &cpu::AdviceTape {
+        &self.cpu.advice_tape
+    }
+
+    /// Get a mutable reference to the advice tape
+    pub fn get_mut_advice_tape(&mut self) -> &mut cpu::AdviceTape {
+        &mut self.cpu.advice_tape
+    }
+
+    /// Take ownership of the advice tape, replacing it with an empty one
+    pub fn take_advice_tape(&mut self) -> cpu::AdviceTape {
+        std::mem::take(&mut self.cpu.advice_tape)
+    }
+
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
     /// The differences from `run_program()` are
     /// * Disassembles every instruction and dumps to terminal

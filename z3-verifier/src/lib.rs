@@ -44,8 +44,8 @@ macro_rules! template_format {
             imm: 1234,
         }
     };
-    (AssertAlignFormat) => {
-        AssertAlignFormat { rs1: 2, imm: 1234 }
+    (FormatAssert) => {
+        FormatAssert { rs1: 2, imm: 1234 }
     };
     (FormatVirtualRightShiftI) => {
         FormatVirtualRightShiftI {
