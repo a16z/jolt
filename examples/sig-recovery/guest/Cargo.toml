@@ -1,0 +1,20 @@
+[package]
+name = "sig-recovery-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
+	"guest-std",
+	"thread",
+	"stdout",
+] }
+ark-ff = { workspace = true }
+reth-primitives-traits = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+alloy-eips = { workspace = true }
+serde = { workspace = true }
+postcard = { workspace = true }

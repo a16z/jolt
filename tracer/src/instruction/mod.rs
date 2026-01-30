@@ -35,10 +35,13 @@ use bgeu::BGEU;
 use blt::BLT;
 use bltu::BLTU;
 use bne::BNE;
+use csrrs::CSRRS;
+use csrrw::CSRRW;
 use div::DIV;
 use divu::DIVU;
 use divuw::DIVUW;
 use divw::DIVW;
+use ebreak::EBREAK;
 use ecall::ECALL;
 use fence::FENCE;
 use jal::JAL;
@@ -53,6 +56,7 @@ use lrw::LRW;
 use lui::LUI;
 use lw::LW;
 use lwu::LWU;
+use mret::MRET;
 use mul::MUL;
 use mulh::MULH;
 use mulhsu::MULHSU;
@@ -170,10 +174,13 @@ pub mod bgeu;
 pub mod blt;
 pub mod bltu;
 pub mod bne;
+pub mod csrrs;
+pub mod csrrw;
 pub mod div;
 pub mod divu;
 pub mod divuw;
 pub mod divw;
+pub mod ebreak;
 pub mod ecall;
 pub mod fence;
 pub mod inline;
@@ -189,6 +196,7 @@ pub mod lrw;
 pub mod lui;
 pub mod lw;
 pub mod lwu;
+pub mod mret;
 pub mod mul;
 pub mod mulh;
 pub mod mulhsu;
@@ -622,8 +630,9 @@ macro_rules! define_rv32im_enums {
 
 define_rv32im_enums! {
     instructions: [
-        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
-        ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
+        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
+        CSRRS, CSRRW, DIV, DIVU,
+        EBREAK, ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MRET, MUL, MULH, MULHSU,
         MULHU, OR, ORI, REM, REMU, SB, SD, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
         SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
         // RV64I
@@ -919,11 +928,29 @@ impl Instruction {
                 }
             }
             0b1110011 => {
-                // For now this only (potentially) maps to ECALL.
-                if instr == ECALL::MATCH {
-                    Ok(ECALL::new(instr, address, true, compressed).into())
-                } else {
-                    Err("Unsupported SYSTEM instruction")
+                // SYSTEM instructions: ECALL, EBREAK, MRET, CSRs
+                let funct3 = (instr >> 12) & 0x7;
+                let funct7 = (instr >> 25) & 0x7f;
+                let rs2 = (instr >> 20) & 0x1f;
+
+                match (funct3, funct7, rs2) {
+                    // ECALL: funct3=0, funct7=0, rs2=0 (instr = 0x00000073)
+                    (0, 0, 0) if instr == 0x00000073 => {
+                        Ok(ECALL::new(instr, address, true, compressed).into())
+                    }
+                    // EBREAK: funct3=0, rs2=1 (instr = 0x00100073)
+                    (0, 0, 1) if instr == 0x00100073 => {
+                        Ok(EBREAK::new(instr, address, true, compressed).into())
+                    }
+                    // MRET: funct3=0, funct7=0x18, rs2=2 (instr = 0x30200073)
+                    (0, 0x18, 2) if instr == 0x30200073 => {
+                        Ok(MRET::new(instr, address, true, compressed).into())
+                    }
+                    // CSRRW: funct3=1
+                    (1, _, _) => Ok(CSRRW::new(instr, address, true, compressed).into()),
+                    // CSRRS: funct3=2
+                    (2, _, _) => Ok(CSRRS::new(instr, address, true, compressed).into()),
+                    _ => Err("Unsupported SYSTEM instruction"),
                 }
             }
             // 0x0B is reserved for inlines supported by Jolt in jolt-inlines crate.

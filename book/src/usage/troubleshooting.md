@@ -11,7 +11,7 @@ Below is an example of manually specifying both the total memory and stack size.
 extern crate alloc;
 use alloc::vec::Vec;
 
-#[jolt::provable(stack_size = 10000, memory_size = 10000000)]
+#[jolt::provable(stack_size = 10000, heap_size = 10000000)]
 fn waste_memory(size: u32, n: u32) {
     let mut v = Vec::new();
     for i in 0..size {

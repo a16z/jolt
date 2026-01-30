@@ -106,6 +106,7 @@ struct JoltState<T = Int> {
     write_pc_to_rd: T,
     next_is_virtual: T,
     next_is_first_in_sequence: T,
+    virtual_sequence_active: T,
 }
 
 impl JoltState {
@@ -143,6 +144,7 @@ impl JoltState {
             next_is_first_in_sequence: Int::new_const(format!(
                 "{prefix}_next_is_first_in_sequence"
             )),
+            virtual_sequence_active: Int::new_const(format!("{prefix}_virtual_sequence_active")),
         }
     }
 
@@ -184,6 +186,7 @@ impl JoltState {
             &self.flags[CircuitFlags::Advice as usize],
             &self.flags[CircuitFlags::IsCompressed as usize],
             &self.flags[CircuitFlags::IsFirstInSequence as usize],
+            &self.flags[CircuitFlags::IsLastInSequence as usize],
         ]
     }
 
@@ -374,6 +377,7 @@ impl JoltState {
             write_pc_to_rd: eval(&self.write_pc_to_rd)?,
             next_is_virtual: eval(&self.next_is_virtual)?,
             next_is_first_in_sequence: eval(&self.next_is_first_in_sequence)?,
+            virtual_sequence_active: eval(&self.virtual_sequence_active)?,
         })
     }
 }

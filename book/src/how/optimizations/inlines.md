@@ -10,7 +10,7 @@ Jolt inlines are a unique optimization technique that replaces high-level operat
 
 **Custom Instructions**: Jolt enables the creation of custom instructions that can accelerate common operations. These custom instructions must have structured multilinear extension (MLE) polynomials, meaning that they can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../instruction-execution.html) for details on structured MLEs). By ensuring all custom instructions maintain this property, Jolt achieves the performance benefits of specialized operations without sacrificing the simplicity of its proof system. This is the core innovation that distinguishes Jolt inlines from traditional precompiles or simple assembly optimizations - we compress complex operations into lookup-friendly instructions that remain fully verifiable within the main zkVM, eliminating the need for complex glue logic or separate constraint systems.
 
-**Extended Register Set**: Inline sequences have access to 32 additional registers beyond the standard RISC-V register set. This expanded register space allows complex operations to maintain state in registers rather than memory, dramatically reducing load/store operations.
+**Extended Register Set**: Inline sequences have access to additional virtual registers beyond the standard RISC-V register set (specifically registers 47--63, allocated via `allocate_for_inline()`). This expanded register space allows complex operations to maintain state in registers rather than memory, dramatically reducing load/store operations. See [virtual register layout](../architecture/registers.md#virtual-register-layout) for details.
 
 ## Example Usage
 
@@ -160,7 +160,9 @@ The Jolt zkVM architecture provides several unique optimization opportunities th
 
 ### 1. Extended Virtual Registers
 
-Inline sequences have access to 32 additional virtual registers beyond the standard RISC-V register set. This allows complex operations to maintain their entire working state in registers, eliminating hundreds of load/store operations that would otherwise be required. Importantly, this expanded register usage comes with virtually zero additional cost to the prover, making it an essentially "free" optimization from a proof generation perspective.
+Inline sequences have access to virtual registers beyond the standard RISC-V register set. Of the 32 virtual registers (registers 32--63), the first 8 (registers 32--39) are **reserved** for persistent state (LR/SC reservation addresses and M-mode CSRs) and 7 more (registers 40--46) are reserved for instruction-level virtual sequences. Inline sequences use registers 47--63 (up to 17 registers), allocated via `allocate_for_inline()`. See the [virtual register layout](../architecture/registers.md#virtual-register-layout) for the full map.
+
+This allows complex operations to maintain their working state in registers, eliminating hundreds of load/store operations that would otherwise be required. Importantly, this expanded register usage comes with virtually zero additional cost to the prover, making it an essentially "free" optimization from a proof generation perspective.
 
 ### 2. Custom Instructions
 
@@ -185,12 +187,14 @@ When creating user-defined inlines, you must adhere to these critical requiremen
 1. **Opcode Space**: Use opcode `0x2B` for user-defined inlines (`0x0B` is reserved for Jolt core inlines)
 
 2. **Virtual Register Management**:
-   - All virtual registers (registers 32-63) must be zeroed out at the end of the inline sequence
+   - All inline virtual registers (registers 47--63) must be zeroed out at the end of the inline sequence
+   - Reserved registers (32--39) must not be modified by inlines; these hold persistent state (LR/SC reservations, CSRs)
+   - Instruction registers (40--46) are managed by `allocate()` for virtual sequences and must not be used by inlines
    - This ensures clean state for subsequent operations
 
 3. **Register Preservation**:
    - Inlines cannot modify any of the real 32 RISC-V registers, including the destination register (`rd`)
-   - The inline must operate purely through memory operations and virtual registers
+   - The inline must operate purely through memory operations and virtual registers (47--63)
 
 4. **Instruction Encoding**:
    - Use `funct7` to identify your operation type (must be unique among user-defined inlines)
@@ -212,7 +216,7 @@ A typical inline implementation consists of three main components:
 
 When designing your inline, consider:
 
-- **Register Allocation**: Maximize use of the 32 additional virtual registers to minimize memory operations
+- **Register Allocation**: Maximize use of the 17 inline virtual registers (47--63) to minimize memory operations
 - **Custom Instructions**: Identify patterns that could benefit from custom instructions (creating custom user-defined instructions is not available at this time)
 - **Immediate Values**: Leverage 64-bit immediate values to reduce instruction count
 - **Memory Access Patterns**: Structure your algorithm to minimize load/store operations
@@ -225,7 +229,7 @@ The inline system continues to evolve with planned enhancements:
 
 - **Extended instruction set**: Additional custom instructions for common patterns
 - **Automated inline generation**: Compiler-driven inline synthesis for hot code paths
-- **Larger register files**: Expanding beyond 32 additional registers for complex algorithms
+- **Larger register files**: Expanding the virtual register pool for complex algorithms
 - **Domain-specific optimizations**: Specialized inlines for bigint arithmetic, elliptic curves, and other cryptographic primitives
 
 Inlines represent a fundamental innovation in zkVM design, demonstrating that significant performance improvements are possible while maintaining the simplicity and verifiability of a RISC-V-based architecture.

@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process::exit;
 
 use clap::Parser;
+use common::jolt_device::{JoltDevice, MemoryConfig};
 
 use tracer::emulator::{default_terminal::DefaultTerminal, Emulator};
 
@@ -24,6 +25,10 @@ struct Args {
     /// Execute the program in trace mode
     #[arg(short, long, value_name = "true|false")]
     trace: Option<bool>,
+
+    /// Print disassembly of each instruction as it executes
+    #[arg(short, long)]
+    disassemble: bool,
 }
 
 fn main() {
@@ -46,7 +51,15 @@ fn main() {
     // Create and run the emulator
     let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
     emulator.setup_program(&elf_content);
-    emulator.run_test(args.trace.unwrap_or(false));
+
+    // Setup JoltDevice for low memory access (addresses below RAM_START_ADDRESS)
+    let memory_config = MemoryConfig {
+        program_size: Some(elf_content.len() as u64),
+        ..Default::default()
+    };
+    emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(JoltDevice::new(&memory_config));
+
+    emulator.run_test(args.trace.unwrap_or(false), args.disassemble);
 
     // If signature file is specified, write the signature with specified granularity
     if let Some(sig_path) = args.signature {

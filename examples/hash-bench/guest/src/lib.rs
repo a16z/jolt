@@ -37,7 +37,7 @@ const BLAKE3_SIZES: &[usize] = &[
 
 #[jolt::provable(
     max_output_size = 4096,
-    memory_size = 33554432,
+    heap_size = 33554432,
     stack_size = 10485760,
     max_trace_length = 50000000
 )]

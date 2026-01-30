@@ -1,6 +1,7 @@
 use super::{FieldOps, JoltField, MulU64WithCarry};
 #[cfg(feature = "challenge-254-bit")]
 use crate::field::challenge::Mont254BitChallenge;
+#[cfg(not(feature = "challenge-254-bit"))]
 use crate::field::challenge::MontU128Challenge;
 use crate::field::MulTrunc;
 use crate::utils::thread::unsafe_allocate_zero_vec;

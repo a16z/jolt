@@ -74,7 +74,7 @@ where
 
         let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));
         let memory_config = common::jolt_device::MemoryConfig {
-            memory_size: TEST_MEMORY_CAPACITY,
+            heap_size: TEST_MEMORY_CAPACITY,
             program_size: Some(1024), // Set a small program size for tests
             ..Default::default()
         };

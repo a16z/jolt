@@ -1,6 +1,6 @@
-const TEST_MEMORY_CAPACITY: u64 = 1024 * 512 * 100;
+const TEST_MEMORY_CAPACITY: u64 = DEFAULT_HEAP_SIZE;
 
-const PROGRAM_MEMORY_CAPACITY: u64 = DEFAULT_MEMORY_SIZE; // big enough to run Linux and xv6
+const PROGRAM_MEMORY_CAPACITY: u64 = DEFAULT_HEAP_SIZE;
 
 extern crate fnv;
 
@@ -31,7 +31,7 @@ use self::cpu::{Cpu, Xlen};
 use self::elf_analyzer::ElfAnalyzer;
 use self::terminal::Terminal;
 
-use common::constants::{DEFAULT_MEMORY_SIZE, RAM_START_ADDRESS};
+use common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
 use std::io::Write;
 use std::path::Path;
 
@@ -111,16 +111,33 @@ impl Emulator {
     /// * Disassembles every instruction and dumps to terminal
     /// * The emulator stops when the test finishes
     /// * Displays the result message (pass/fail) to terminal
-    pub fn run_test(&mut self, trace: bool) {
+    pub fn run_test(&mut self, trace: bool, disassemble: bool) {
         // @TODO: Send this message to terminal?
         #[cfg(feature = "std")]
         tracing::info!("This elf file seems like a riscv-tests elf file. Running in test mode.");
+        let mut cycle_count = 0;
+        let mut prev_pc: u64 = 0;
         loop {
-            let disas = self.cpu.disassemble_next_instruction();
-            tracing::debug!("{disas}");
+            // Disassemble and print each instruction if requested (like spike -d)
+            if disassemble {
+                let disas = self.cpu.disassemble_next_instruction();
+                println!("core   0: {disas}");
+            }
+
+            // Check for infinite loop termination (PC stall detection)
+            // This is used by Jolt guests that terminate via `j .` instruction.
+            // The trap handler (in guest_std_boot.rs or guest_no_std_boot.rs) calls
+            // jolt_exit() which enters an infinite loop for clean termination.
+            let pc = self.cpu.read_pc();
+            if prev_pc == pc {
+                tracing::info!("Program exited successfully (code 0) after {cycle_count} cycles");
+                break;
+            }
+            prev_pc = pc;
 
             let mut traces = if trace { Some(Vec::new()) } else { None };
             self.tick(traces.as_mut());
+            cycle_count += 1;
 
             // Check if tohost has been written to
             let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
