@@ -59,7 +59,6 @@ fn modinv(a: u64, m: u64) -> u64 {
 /// This version performs the Extended Euclidean Algorithm entirely within the guest,
 /// without leveraging the advice system. This allows us to compare the cycle counts
 /// to demonstrate the efficiency gains from using runtime advice.
-#[jolt::provable]
 fn modinv_naive(a: u64, m: u64) -> u64 {
     if m == 0 {
         return 0;
