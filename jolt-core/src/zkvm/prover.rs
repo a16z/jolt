@@ -755,17 +755,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
-        // Initialization params
-        let spartan_product_virtual_remainder_params = ProductVirtualRemainderParams::new(
-            self.trace.len(),
-            uni_skip_params,
-            &self.opening_accumulator,
-        );
-        let ram_raf_evaluation_params = RafEvaluationSumcheckParams::new(
-            &self.program_io.memory_layout,
-            &self.one_hot_params,
-            &self.opening_accumulator,
-        );
+        // Initialization params (same order as batch)
         let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
             &self.opening_accumulator,
             &mut self.transcript,
@@ -773,10 +763,10 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.trace.len(),
             &self.rw_config,
         );
-        let ram_output_check_params = OutputSumcheckParams::new(
-            self.one_hot_params.ram_k,
-            &self.program_io,
-            &mut self.transcript,
+        let spartan_product_virtual_remainder_params = ProductVirtualRemainderParams::new(
+            self.trace.len(),
+            uni_skip_params,
+            &self.opening_accumulator,
         );
         let instruction_claim_reduction_params =
             InstructionLookupsClaimReductionSumcheckParams::new(
@@ -784,17 +774,18 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &self.opening_accumulator,
                 &mut self.transcript,
             );
-
-        // Initialization
-        let spartan_product_virtual_remainder = ProductVirtualRemainderProver::initialize(
-            spartan_product_virtual_remainder_params,
-            Arc::clone(&self.trace),
-        );
-        let ram_raf_evaluation = RamRafEvaluationSumcheckProver::initialize(
-            ram_raf_evaluation_params,
-            &self.trace,
+        let ram_raf_evaluation_params = RafEvaluationSumcheckParams::new(
             &self.program_io.memory_layout,
+            &self.one_hot_params,
+            &self.opening_accumulator,
         );
+        let ram_output_check_params = OutputSumcheckParams::new(
+            self.one_hot_params.ram_k,
+            &self.program_io,
+            &mut self.transcript,
+        );
+
+        // Initialization (same order as batch)
         let ram_read_write_checking = RamReadWriteCheckingProver::initialize(
             ram_read_write_checking_params,
             &self.trace,
@@ -802,17 +793,26 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io.memory_layout,
             &self.initial_ram_state,
         );
-        let ram_output_check = OutputSumcheckProver::initialize(
-            ram_output_check_params,
-            &self.initial_ram_state,
-            &self.final_ram_state,
-            &self.program_io.memory_layout,
+        let spartan_product_virtual_remainder = ProductVirtualRemainderProver::initialize(
+            spartan_product_virtual_remainder_params,
+            Arc::clone(&self.trace),
         );
         let instruction_claim_reduction =
             InstructionLookupsClaimReductionSumcheckProver::initialize(
                 instruction_claim_reduction_params,
                 Arc::clone(&self.trace),
             );
+        let ram_raf_evaluation = RamRafEvaluationSumcheckProver::initialize(
+            ram_raf_evaluation_params,
+            &self.trace,
+            &self.program_io.memory_layout,
+        );
+        let ram_output_check = OutputSumcheckProver::initialize(
+            ram_output_check_params,
+            &self.initial_ram_state,
+            &self.final_ram_state,
+            &self.program_io.memory_layout,
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -1006,26 +1006,26 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     fn prove_stage5(&mut self) -> SumcheckInstanceProof<F, ProofTranscript> {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
-        let registers_val_evaluation_params =
-            RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
-        let ram_ra_reduction_params = RaReductionParams::new(
-            self.trace.len(),
-            &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
+        // Initialization params (same order as batch)
         let lookups_read_raf_params = InstructionReadRafSumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        let ram_ra_reduction_params = RaReductionParams::new(
+            self.trace.len(),
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        let registers_val_evaluation_params =
+            RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
 
-        let registers_val_evaluation = RegistersValEvaluationSumcheckProver::initialize(
-            registers_val_evaluation_params,
-            &self.trace,
-            &self.preprocessing.shared.bytecode,
-            &self.program_io.memory_layout,
+        // Initialization (same order as batch)
+        let lookups_read_raf = InstructionReadRafSumcheckProver::initialize(
+            lookups_read_raf_params,
+            Arc::clone(&self.trace),
         );
         let ram_ra_reduction = RamRaClaimReductionSumcheckProver::initialize(
             ram_ra_reduction_params,
@@ -1033,9 +1033,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io.memory_layout,
             &self.one_hot_params,
         );
-        let lookups_read_raf = InstructionReadRafSumcheckProver::initialize(
-            lookups_read_raf_params,
-            Arc::clone(&self.trace),
+        let registers_val_evaluation = RegistersValEvaluationSumcheckProver::initialize(
+            registers_val_evaluation_params,
+            &self.trace,
+            &self.preprocessing.shared.bytecode,
+            &self.program_io.memory_layout,
         );
 
         #[cfg(feature = "allocative")]
