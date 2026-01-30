@@ -39,7 +39,7 @@
 use super::inputs::JoltR1CSInputs;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::witness::VirtualPolynomial;
-use strum::EnumCount;
+use strum::EnumCount as EnumCountTrait;
 use strum_macros::{EnumCount, EnumIter};
 
 pub use super::ops::{Term, LC};
