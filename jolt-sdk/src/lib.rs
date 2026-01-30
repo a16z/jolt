@@ -22,6 +22,7 @@ pub const FUNCT3_ADVICE_LEN: u32 = 0b110; // Get remaining bytes in advice tape
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub mod host_utils;
+
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub use host_utils::*;
 
@@ -201,6 +202,50 @@ impl AdviceReader {
     }
 }
 
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+impl AdviceReader {
+    // Read a single byte from the advice tape into the provided pointer.
+    pub unsafe fn read_sb(&mut self, ptr: *mut u8) {
+        core::arch::asm!(
+            ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+            opcode = const CUSTOM_OPCODE,
+            funct3 = const FUNCT3_ADVICE_SB,
+            rs1 = in(reg) ptr,
+            options(nostack)
+        );
+    }
+    // Read a halfword (2 bytes) from the advice tape into the provided pointer.
+    pub unsafe fn read_sh(&mut self, ptr: *mut u16) {
+        core::arch::asm!(
+            ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+            opcode = const CUSTOM_OPCODE,
+            funct3 = const FUNCT3_ADVICE_SH,
+            rs1 = in(reg) ptr,
+            options(nostack)
+        );
+    }
+    // Read a word (4 bytes) from the advice tape into the provided pointer
+    pub unsafe fn read_sw(&mut self, ptr: *mut u32) {
+        core::arch::asm!(
+            ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+            opcode = const CUSTOM_OPCODE,
+            funct3 = const FUNCT3_ADVICE_SW,
+            rs1 = in(reg) ptr,
+            options(nostack)
+        );
+    }
+    // Read a doubleword (8 bytes) from the advice tape into the provided pointer
+    pub unsafe fn read_sd(&mut self, ptr: *mut u64) {
+        core::arch::asm!(
+            ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+            opcode = const CUSTOM_OPCODE,
+            funct3 = const FUNCT3_ADVICE_SD,
+            rs1 = in(reg) ptr,
+            options(nostack)
+        );
+    }
+}
+
 impl embedded_io::ErrorType for AdviceReader {
     type Error = core::convert::Infallible;
 }
@@ -231,46 +276,22 @@ impl embedded_io::Read for AdviceReader {
         let dst_ptr = buf.as_mut_ptr();
         if bytes_to_read >= 8 {
             unsafe {
-                core::arch::asm!(
-                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
-                    opcode = const CUSTOM_OPCODE,
-                    funct3 = const FUNCT3_ADVICE_SD,
-                    rs1 = in(reg) dst_ptr,
-                    options(nostack)
-                );
+                self.read_sd(dst_ptr as *mut u64);
             }
             Ok(8)
         } else if bytes_to_read >= 4 {
             unsafe {
-                core::arch::asm!(
-                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
-                    opcode = const CUSTOM_OPCODE,
-                    funct3 = const FUNCT3_ADVICE_SW,
-                    rs1 = in(reg) dst_ptr,
-                    options(nostack)
-                );
+                self.read_sw(dst_ptr as *mut u32);
             }
             Ok(4)
         } else if bytes_to_read >= 2 {
             unsafe {
-                core::arch::asm!(
-                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
-                    opcode = const CUSTOM_OPCODE,
-                    funct3 = const FUNCT3_ADVICE_SH,
-                    rs1 = in(reg) dst_ptr,
-                    options(nostack)
-                );
+                self.read_sh(dst_ptr as *mut u16);
             }
             Ok(2)
         } else if bytes_to_read == 1 {
             unsafe {
-                core::arch::asm!(
-                    ".insn s {opcode}, {funct3}, x0, 0({rs1})",
-                    opcode = const CUSTOM_OPCODE,
-                    funct3 = const FUNCT3_ADVICE_SB,
-                    rs1 = in(reg) dst_ptr,
-                    options(nostack)
-                );
+                self.read_sb(dst_ptr as *mut u8);
             }
             Ok(1)
         } else {
@@ -285,5 +306,74 @@ impl embedded_io::Read for AdviceReader {
     fn read(&mut self, _buf: &mut [u8]) -> Result<usize, Self::Error> {
         // This should never be called on the host
         panic!("AdviceReader::read() called on non-RISC-V target");
+    }
+}
+
+// Trait for writing to and reading from the advice tape
+// with default implementation going through AdviceWriter/AdviceReader
+pub trait AdviceTapeIO: Sized + Serialize + for<'a> Deserialize<'a> {
+    fn write_to_advice_tape(&self) {
+        let mut writer = AdviceWriter::get();
+        postcard::to_eio(self, &mut writer).expect("Failed to write advice to tape");
+    }
+    fn new_from_advice_tape() -> Self {
+        // Create a scratch buffer for postcard deserialization
+        let mut buffer: [u8; 8] = [0u8; 8];
+        // create advice reader and read from tape
+        let mut reader = AdviceReader::get();
+        let (result, _) = postcard::from_eio((&mut reader, &mut buffer))
+            .expect("Failed to read advice from tape");
+        // return deserialized result
+        result
+    }
+}
+
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+use embedded_io::Write;
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+use std::mem::MaybeUninit;
+
+impl AdviceTapeIO for u64 {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn write_to_advice_tape(&self) {
+        // write u64 to advice tape directly via ECALL
+        let mut writer = AdviceWriter::get();
+        AdviceWriter::write(&mut writer, &self.to_le_bytes()).expect("Failed to write advice");
+    }
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn new_from_advice_tape() -> Self {
+        // read u64 from advice tape directly via a single ADVICE_SD instruction
+        let mut reader = AdviceReader::get();
+        let mut x = MaybeUninit::<u64>::uninit();
+        unsafe {
+            AdviceReader::read_sd(&mut reader, x.as_mut_ptr());
+            x.assume_init()
+        }
+    }
+}
+
+impl AdviceTapeIO for (u64, u64) {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn write_to_advice_tape(&self) {
+        // write each u64 to advice tape directly via ECALL
+        let mut writer = AdviceWriter::get();
+        writer
+            .write(&self.0.to_le_bytes())
+            .expect("Failed to write advice");
+        writer
+            .write(&self.1.to_le_bytes())
+            .expect("Failed to write advice");
+    }
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn new_from_advice_tape() -> Self {
+        // read two u64s from advice tape directly via two ADVICE_SD instructions
+        let mut reader = AdviceReader::get();
+        let mut x = MaybeUninit::<u64>::uninit();
+        let mut y = MaybeUninit::<u64>::uninit();
+        unsafe {
+            reader.read_sd(x.as_mut_ptr());
+            reader.read_sd(y.as_mut_ptr());
+            (x.assume_init(), y.assume_init())
+        }
     }
 }
