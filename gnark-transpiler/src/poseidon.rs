@@ -173,13 +173,16 @@ impl Transcript for PoseidonAstTranscript {
     }
 
     fn append_message(&mut self, msg: &'static [u8]) {
-        // Same as append_bytes but for static messages
-        // Pad to 32 bytes and convert to field element (LE)
+        // Matches jolt-core: hash_bytes32_and_update which does immediate hashing.
+        // This is NOT batchable - it's a direct poseidon call per jolt-core semantics.
         assert!(msg.len() <= 32);
         let mut padded = [0u8; 32];
         padded[..msg.len()].copy_from_slice(msg);
         let limbs = bytes_to_scalar(&padded);
-        self.hash_and_update(MleAst::from(limbs));
+        let chunk_field = MleAst::from(limbs);
+        let round = MleAst::from_u64(self.n_rounds as u64);
+        self.state = MleAst::poseidon(&self.state, &round, &chunk_field);
+        self.n_rounds += 1;
     }
 
     fn append_bytes(&mut self, bytes: &[u8]) {
@@ -215,32 +218,40 @@ impl Transcript for PoseidonAstTranscript {
     }
 
     fn append_u64(&mut self, x: u64) {
+        // Matches jolt-core: hash_bytes32_and_update which does immediate hashing.
+        // This is NOT batchable - it's a direct poseidon call per jolt-core semantics.
+        //
         // PoseidonTranscript::append_u64 does:
         //   1. Pack u64 into 32-byte array with BE-padding: packed[24..32] = x.to_be_bytes()
         //   2. Interpret packed as LE field element via from_le_bytes_mod_order
-        //
-        // The transformation is handled by the Go hint `appendU64TransformHint` which
-        // computes the correct field element. Here we just create the AST node.
+        //   3. Mathematically: value * 2^192
         let x_ast = MleAst::from_u64(x);
         let transformed = MleAst::mul_two_pow_192(&x_ast);
-        self.hash_and_update(transformed);
+        let round = MleAst::from_u64(self.n_rounds as u64);
+        self.state = MleAst::poseidon(&self.state, &round, &transformed);
+        self.n_rounds += 1;
     }
 
     fn append_scalar<F: JoltField>(&mut self, scalar: &F) {
+        // Matches jolt-core: serialize -> reverse -> hash_bytes32_and_update (immediate hashing).
+        // This is NOT batchable - it's a direct poseidon call per jolt-core semantics.
+        //
         // Trigger serialization which stores MleAst in thread-local (if F = MleAst)
         let mut buf = vec![];
         let _ = scalar.serialize_uncompressed(&mut buf);
 
         // Retrieve the MleAst from thread-local (set by MleAst::serialize_with_mode)
+        let round = MleAst::from_u64(self.n_rounds as u64);
         if let Some(mle_ast) = take_pending_append() {
             // Apply byte-reverse to match PoseidonTranscript::append_scalar behavior:
             // PoseidonTranscript does: serialize(LE) -> reverse -> from_le_bytes_mod_order -> hash
-            // This transforms the value before hashing for EVM compatibility.
             let byte_reversed = MleAst::byte_reverse(&mle_ast);
-            self.hash_and_update(byte_reversed);
+            self.state = MleAst::poseidon(&self.state, &round, &byte_reversed);
+            self.n_rounds += 1;
         } else {
             // Fallback for non-MleAst types (shouldn't happen in transpilation)
-            self.hash_and_update(MleAst::from_u64(0));
+            self.state = MleAst::poseidon(&self.state, &round, &MleAst::from_u64(0));
+            self.n_rounds += 1;
         }
     }
 
