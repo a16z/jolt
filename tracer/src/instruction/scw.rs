@@ -93,6 +93,7 @@ impl RISCVTrace for SCW {
 impl SCW {
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         let v_reservation = allocator.reservation_w_register();
+        let v_reservation_d = allocator.reservation_d_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
 
         // 0: Prover supplies success/failure result
@@ -130,8 +131,9 @@ impl SCW {
         asm.emit_s::<VirtualSW>(self.operands.rs1, *v_diff, 0);
         drop(v_diff);
 
-        // 12-13: Clear reservation, set rd
+        // 12-14: Clear both reservation registers, set rd
         asm.emit_i::<ADDI>(v_reservation, 0, 0);
+        asm.emit_i::<ADDI>(v_reservation_d, 0, 0);
         asm.emit_i::<ADDI>(self.operands.rd, *v_result, 0);
         drop(v_result);
 
@@ -330,6 +332,51 @@ mod tests {
         assert_eq!(cpu.x[13], 1, "SC.W to different address should fail (rd=1)");
         let (val, _) = cpu.mmu.load_word(addr_b).unwrap();
         assert_eq!(val, 0xBBBB_BBBB, "Memory at addr_b should be unchanged");
+    }
+
+    /// Verify that SC.W's inline sequence clears BOTH reservation registers (vr32 and vr33).
+    /// This catches the cross-width cleanup bug: without clearing vr33, a subsequent SC.D
+    /// could succeed against a stale reservation left by a prior LR.D.
+    #[test]
+    fn test_scw_inline_sequence_clears_both_reservation_registers() {
+        let mut cpu = setup_cpu();
+        let addr = DRAM_BASE;
+        cpu.mmu.store_doubleword(addr, 0xDEADBEEF_CAFEBABE).unwrap();
+        cpu.x[11] = addr as i64;
+
+        // LR.D sets reservation_d (vr33)
+        let decoded = Instruction::decode(encode_lrd(10, 11), 0x1000, false).unwrap();
+        let Instruction::LRD(lrd) = decoded else {
+            panic!("Expected LRD");
+        };
+        let mut trace = Vec::new();
+        lrd.trace(&mut cpu, Some(&mut trace));
+
+        // SC.W fails (width mismatch), but must clear BOTH vr32 and vr33
+        cpu.x[12] = 0x12345678;
+        let decoded = Instruction::decode(encode_scw(13, 11, 12), 0x1004, false).unwrap();
+        let Instruction::SCW(scw) = decoded else {
+            panic!("Expected SCW");
+        };
+        let mut trace = Vec::new();
+        scw.trace(&mut cpu, Some(&mut trace));
+
+        // Inspect the trace: both reservation registers must be written to 0
+        let cleared_regs: Vec<u8> = trace
+            .iter()
+            .filter_map(|cycle| cycle.rd_write())
+            .filter(|&(rd, _, new_val)| (rd == 32 || rd == 33) && new_val == 0)
+            .map(|(rd, _, _)| rd)
+            .collect();
+
+        assert!(
+            cleared_regs.contains(&32),
+            "SC.W inline sequence must clear reservation_w (vr32)"
+        );
+        assert!(
+            cleared_regs.contains(&33),
+            "SC.W inline sequence must clear reservation_d (vr33)"
+        );
     }
 
     #[test]
