@@ -65,9 +65,7 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
         }
     }
 
-    let heap_size = *attributes
-        .get("heap_size")
-        .unwrap_or(&DEFAULT_HEAP_SIZE);
+    let heap_size = *attributes.get("heap_size").unwrap_or(&DEFAULT_HEAP_SIZE);
     let stack_size = *attributes.get("stack_size").unwrap_or(&DEFAULT_STACK_SIZE);
     let max_input_size = *attributes
         .get("max_input_size")

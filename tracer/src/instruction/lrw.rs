@@ -4,7 +4,7 @@ use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
+    emulator::cpu::{Cpu, ReservationWidth, Xlen},
 };
 
 use super::addi::ADDI;
@@ -34,8 +34,7 @@ impl LRW {
 
         cpu.x[self.operands.rd as usize] = match value {
             Ok((word, _memory_read)) => {
-                // Set reservation for this address
-                cpu.set_reservation(address);
+                cpu.set_reservation(address, ReservationWidth::Word);
 
                 // Sign extend the 32-bit value
                 word as i32 as i64
@@ -47,9 +46,8 @@ impl LRW {
 
 impl RISCVTrace for LRW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // Set reservation in CPU state (for SC.W to check later)
         let address = cpu.x[self.operands.rs1 as usize] as u64;
-        cpu.set_reservation(address);
+        cpu.set_reservation(address, ReservationWidth::Word);
 
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
@@ -76,24 +74,24 @@ impl RISCVTrace for LRW {
 
 impl LRW {
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        let v_reservation = allocator.reservation_register();
+        let v_reservation_w = allocator.reservation_w_register();
+        let v_reservation_d = allocator.reservation_d_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
 
-        // Store reservation address (rs1 -> register 32) using ADDI rd, rs1, 0
-        asm.emit_i::<ADDI>(v_reservation, self.operands.rs1, 0);
-        // Load word (same as VirtualLW but with imm=0)
+        asm.emit_i::<ADDI>(v_reservation_w, self.operands.rs1, 0);
+        asm.emit_i::<ADDI>(v_reservation_d, 0, 0); // clear D reservation
         asm.emit_i::<VirtualLW>(self.operands.rd, self.operands.rs1, 0);
 
         asm.finalize()
     }
 
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        let v_reservation = allocator.reservation_register();
+        let v_reservation_w = allocator.reservation_w_register();
+        let v_reservation_d = allocator.reservation_d_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
 
-        // 1. Store reservation address (rs1 -> v_reservation) using ADDI
-        asm.emit_i::<ADDI>(v_reservation, self.operands.rs1, 0);
-        // 2. Load word - LW will auto-expand into the proper sequence
+        asm.emit_i::<ADDI>(v_reservation_w, self.operands.rs1, 0);
+        asm.emit_i::<ADDI>(v_reservation_d, 0, 0); // clear D reservation
         asm.emit_ld::<LW>(self.operands.rd, self.operands.rs1, 0);
 
         asm.finalize()

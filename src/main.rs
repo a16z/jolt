@@ -156,9 +156,7 @@ fn guest_opt_flag() -> String {
     let level = std::env::var("JOLT_GUEST_OPT").unwrap_or_else(|_| "3".to_string());
     match level.as_str() {
         "0" | "1" | "2" | "3" | "s" | "z" => {}
-        _ => panic!(
-            "Invalid JOLT_GUEST_OPT value: {level}. Allowed values are 0, 1, 2, 3, s, z"
-        ),
+        _ => panic!("Invalid JOLT_GUEST_OPT value: {level}. Allowed values are 0, 1, 2, 3, s, z"),
     }
     format!("-Copt-level={level}")
 }

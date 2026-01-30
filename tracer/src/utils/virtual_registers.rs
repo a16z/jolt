@@ -1,12 +1,13 @@
-use common::constants::{
-    RISCV_REGISTER_COUNT, VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT, VIRTUAL_REGISTER_COUNT,
-};
+use common::constants::{RISCV_REGISTER_COUNT, VIRTUAL_REGISTER_COUNT};
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
 const NUM_VIRTUAL_REGISTERS: usize = VIRTUAL_REGISTER_COUNT as usize;
-const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize =
-    VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT as usize;
+/// Number of virtual registers available for instruction inline sequences (allocate()).
+/// This is independent of NUM_RESERVED_VIRTUAL_REGISTERS: reserved registers protect
+/// persistent state (reservations, CSRs), while instruction registers are the pool
+/// used by allocate() for temporary values within an inline sequence.
+const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize = 7;
 const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 
 /// CSR addresses for M-mode CSRs supported by the virtual register system.
@@ -19,41 +20,36 @@ pub const CSR_MCAUSE: u16 = 0x342; // Machine Trap Cause
 pub const CSR_MTVAL: u16 = 0x343; // Machine Trap Value
 
 /// Layout of virtual registers:
-/// - Registers 32-38: Reserved CSR registers (persistent, never allocated)
-///   - 32: Reservation address for LR/SC
-///   - 33: mtvec (trap handler address)
-///   - 34: mscratch (trap scratch register)
-///   - 35: mepc (exception PC)
-///   - 36: mcause (trap cause)
-///   - 37: mtval (trap value)
-///   - 38: mstatus (machine status)
-/// - Registers 39-45: Temporary registers for inline sequences (allocate())
-/// - Registers 46+: Registers for larger inlines (allocate_for_inline())
+/// - Registers 32-39: Reserved registers (persistent, never allocated)
+///   - 32: Reservation address for LR.W/SC.W
+///   - 33: Reservation address for LR.D/SC.D
+///   - 34: mtvec (trap handler address)
+///   - 35: mscratch (trap scratch register)
+///   - 36: mepc (exception PC)
+///   - 37: mcause (trap cause)
+///   - 38: mtval (trap value)
+///   - 39: mstatus (machine status)
+/// - Registers 40-46: Temporary registers for inline sequences (allocate())
+/// - Registers 47+: Registers for larger inlines (allocate_for_inline())
 ///
-/// The reserved registers (32-38) are skipped by allocate() and allocate_for_inline()
+/// The reserved registers (32-39) are skipped by allocate() and allocate_for_inline()
 /// to ensure they persist across instructions.
-/// Register 32 is used for LR/SC reservation address.
-const RESERVATION_REGISTER: u8 = RISCV_REGISTER_BASE; // register 32
+const RESERVATION_W_REGISTER: u8 = RISCV_REGISTER_BASE; // register 32 (LR.W/SC.W)
+const RESERVATION_D_REGISTER: u8 = RISCV_REGISTER_BASE + 1; // register 33 (LR.D/SC.D)
 
 /// CSR Virtual Register Mapping (persistent, not allocated):
-/// - Register 33: mtvec (trap handler address)
-/// - Register 34: mscratch (trap scratch register)
-/// - Register 35: mepc (exception PC)
-/// - Register 36: mcause (trap cause)
-/// - Register 37: mtval (trap value)
-/// - Register 38: mstatus (machine status)
-const TRAP_HANDLER_REGISTER: u8 = RISCV_REGISTER_BASE + 1; // register 33 (mtvec)
-const MSCRATCH_REGISTER: u8 = RISCV_REGISTER_BASE + 2; // register 34
-const MEPC_REGISTER: u8 = RISCV_REGISTER_BASE + 3; // register 35
-const MCAUSE_REGISTER: u8 = RISCV_REGISTER_BASE + 4; // register 36
-const MTVAL_REGISTER: u8 = RISCV_REGISTER_BASE + 5; // register 37
-const MSTATUS_REGISTER: u8 = RISCV_REGISTER_BASE + 6; // register 38
+const TRAP_HANDLER_REGISTER: u8 = RISCV_REGISTER_BASE + 2; // register 34 (mtvec)
+const MSCRATCH_REGISTER: u8 = RISCV_REGISTER_BASE + 3; // register 35
+const MEPC_REGISTER: u8 = RISCV_REGISTER_BASE + 4; // register 36
+const MCAUSE_REGISTER: u8 = RISCV_REGISTER_BASE + 5; // register 37
+const MTVAL_REGISTER: u8 = RISCV_REGISTER_BASE + 6; // register 38
+const MSTATUS_REGISTER: u8 = RISCV_REGISTER_BASE + 7; // register 39
 
 /// Number of reserved virtual registers that are NOT allocated.
-/// Includes: reservation (32), mtvec (33), mscratch (34), mepc (35),
-///           mcause (36), mtval (37), mstatus (38)
-/// allocate() skips these and starts from register 39.
-const NUM_RESERVED_VIRTUAL_REGISTERS: usize = 7;
+/// Includes: reservation_w (32), reservation_d (33), mtvec (34), mscratch (35),
+///           mepc (36), mcause (37), mtval (38), mstatus (39)
+/// allocate() skips these and starts from register 40.
+const NUM_RESERVED_VIRTUAL_REGISTERS: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct VirtualRegisterAllocator {
@@ -75,40 +71,42 @@ impl VirtualRegisterAllocator {
         }
     }
 
-    /// Get the reservation register (register 32) used for LR/SC operations.
-    /// This register holds the memory address reserved by LR instructions
-    /// and is checked by SC instructions.
-    pub fn reservation_register(&self) -> u8 {
-        RESERVATION_REGISTER
+    /// Get the word-width reservation register (register 32) for LR.W/SC.W.
+    pub fn reservation_w_register(&self) -> u8 {
+        RESERVATION_W_REGISTER
     }
 
-    /// Get the trap handler register (register 33) - mtvec CSR.
-    /// Set at boot via CSR ECALL, used by trap-taking ECALLs to verify target.
+    /// Get the doubleword-width reservation register (register 33) for LR.D/SC.D.
+    pub fn reservation_d_register(&self) -> u8 {
+        RESERVATION_D_REGISTER
+    }
+
+    /// Get the trap handler register (register 34) - mtvec CSR.
     pub fn trap_handler_register(&self) -> u8 {
         TRAP_HANDLER_REGISTER
     }
 
-    /// Get the mscratch register (register 34) - scratch register for trap handler.
+    /// Get the mscratch register (register 35) - scratch register for trap handler.
     pub fn mscratch_register(&self) -> u8 {
         MSCRATCH_REGISTER
     }
 
-    /// Get the mepc register (register 35) - exception program counter.
+    /// Get the mepc register (register 36) - exception program counter.
     pub fn mepc_register(&self) -> u8 {
         MEPC_REGISTER
     }
 
-    /// Get the mcause register (register 36) - trap cause.
+    /// Get the mcause register (register 37) - trap cause.
     pub fn mcause_register(&self) -> u8 {
         MCAUSE_REGISTER
     }
 
-    /// Get the mtval register (register 37) - trap value.
+    /// Get the mtval register (register 38) - trap value.
     pub fn mtval_register(&self) -> u8 {
         MTVAL_REGISTER
     }
 
-    /// Get the mstatus register (register 38) - machine status.
+    /// Get the mstatus register (register 39) - machine status.
     pub fn mstatus_register(&self) -> u8 {
         MSTATUS_REGISTER
     }
@@ -117,12 +115,12 @@ impl VirtualRegisterAllocator {
     /// Returns Some(register) if the CSR is supported, None otherwise.
     ///
     /// Supported CSRs:
-    /// - mstatus (0x300) → vr38
-    /// - mtvec (0x305) → vr33
-    /// - mscratch (0x340) → vr34
-    /// - mepc (0x341) → vr35
-    /// - mcause (0x342) → vr36
-    /// - mtval (0x343) → vr37
+    /// - mstatus (0x300) → vr39
+    /// - mtvec (0x305) → vr34
+    /// - mscratch (0x340) → vr35
+    /// - mepc (0x341) → vr36
+    /// - mcause (0x342) → vr37
+    /// - mtval (0x343) → vr38
     pub fn csr_to_virtual_register(&self, csr_addr: u16) -> Option<u8> {
         match csr_addr {
             CSR_MSTATUS => Some(self.mstatus_register()),
@@ -154,7 +152,7 @@ impl VirtualRegisterAllocator {
     }
 
     /// Allocate virtual register that can be used in the inline sequence of
-    /// an instruction. Skips reserved registers (32-38) and uses registers 39-45.
+    /// an instruction. Skips reserved registers (32-39) and uses registers 40-46.
     pub(crate) fn allocate(&self) -> VirtualRegisterGuard {
         for (i, allocated) in self
             .allocated
@@ -162,9 +160,9 @@ impl VirtualRegisterAllocator {
             .expect("Failed to lock virtual register allocator")
             .iter_mut()
             .enumerate()
-            .skip(NUM_RESERVED_VIRTUAL_REGISTERS) // Skip reserved registers (32-38)
+            .skip(NUM_RESERVED_VIRTUAL_REGISTERS) // Skip reserved registers (32-39)
             .take(NUM_VIRTUAL_INSTRUCTION_REGISTERS)
-        // Take 7 registers (39-45)
+        // Take 7 registers (40-46)
         {
             if !*allocated {
                 *allocated = true;
@@ -178,9 +176,9 @@ impl VirtualRegisterAllocator {
     }
 
     /// Allocate virtual register that can be used in an inline.
-    /// Uses registers 46+ (skips reserved 32-38 and instruction 39-45).
+    /// Uses registers 47+ (skips reserved 32-39 and instruction 40-46).
     pub fn allocate_for_inline(&self) -> VirtualRegisterGuard {
-        // Skip reserved registers (32-38) and instruction registers (39-45)
+        // Skip reserved registers (32-39) and instruction registers (40-46)
         let skip_count = NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS;
         for (i, allocated) in self
             .allocated
@@ -206,10 +204,10 @@ impl VirtualRegisterAllocator {
     }
 
     pub fn get_registers_for_reset(&self) -> Vec<u8> {
-        // Assert that all inline registers (46+) have been dropped.
+        // Assert that all inline registers (47+) have been dropped.
         // This function only returns inline registers from pending_clearing_inline,
         // so we only need to verify those are deallocated.
-        // Skip reserved (32-38) and instruction (39-45) registers.
+        // Skip reserved (32-39) and instruction (40-46) registers.
         assert!(
             self.allocated
                 .lock()
@@ -267,27 +265,27 @@ impl Drop for VirtualRegisterGuard {
 mod tests {
     use super::*;
 
-    // First allocatable register (after skipping reserved 32-38)
-    const FIRST_ALLOC_REG: u8 = RISCV_REGISTER_BASE + NUM_RESERVED_VIRTUAL_REGISTERS as u8; // 39
+    // First allocatable register (after skipping reserved 32-39)
+    const FIRST_ALLOC_REG: u8 = RISCV_REGISTER_BASE + NUM_RESERVED_VIRTUAL_REGISTERS as u8; // 40
 
     // First inline register (after reserved + instruction registers)
     const FIRST_INLINE_REG: u8 = RISCV_REGISTER_BASE
         + NUM_RESERVED_VIRTUAL_REGISTERS as u8
-        + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8; // 46
+        + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8; // 47
 
     #[test]
     fn test_allocate_deallocate() {
         let allocator = VirtualRegisterAllocator::new();
         {
             let guard1 = allocator.allocate();
-            assert_eq!(*guard1, FIRST_ALLOC_REG); // register 39
+            assert_eq!(*guard1, FIRST_ALLOC_REG); // register 40
 
             let guard2 = allocator.allocate();
-            assert_eq!(*guard2, FIRST_ALLOC_REG + 1); // register 40
+            assert_eq!(*guard2, FIRST_ALLOC_REG + 1); // register 41
         }
 
         let guard3 = allocator.allocate();
-        assert_eq!(*guard3, FIRST_ALLOC_REG); // register 39 (reused)
+        assert_eq!(*guard3, FIRST_ALLOC_REG); // register 40 (reused)
     }
 
     #[test]
@@ -295,7 +293,7 @@ mod tests {
         let allocator = VirtualRegisterAllocator::new();
         let guard = allocator.allocate();
         let index: u8 = *guard;
-        assert_eq!(index, FIRST_ALLOC_REG); // register 39
+        assert_eq!(index, FIRST_ALLOC_REG); // register 40
     }
 
     #[test]
@@ -319,14 +317,14 @@ mod tests {
         let allocator = VirtualRegisterAllocator::new();
         {
             let guard1 = allocator.allocate_for_inline();
-            assert_eq!(*guard1, FIRST_INLINE_REG); // register 46
+            assert_eq!(*guard1, FIRST_INLINE_REG); // register 47
 
             let guard2 = allocator.allocate_for_inline();
-            assert_eq!(*guard2, FIRST_INLINE_REG + 1); // register 47
+            assert_eq!(*guard2, FIRST_INLINE_REG + 1); // register 48
         }
 
         let guard3 = allocator.allocate_for_inline();
-        assert_eq!(*guard3, FIRST_INLINE_REG); // register 46 (reused)
+        assert_eq!(*guard3, FIRST_INLINE_REG); // register 47 (reused)
     }
 
     #[test]
@@ -334,7 +332,7 @@ mod tests {
         let allocator = VirtualRegisterAllocator::new();
         let guard = allocator.allocate_for_inline();
         let index: u8 = *guard;
-        assert_eq!(index, FIRST_INLINE_REG); // register 46
+        assert_eq!(index, FIRST_INLINE_REG); // register 47
     }
 
     #[test]
@@ -360,19 +358,19 @@ mod tests {
     #[test]
     fn test_combined_allocate_and_inline() {
         let allocator = VirtualRegisterAllocator::new();
-        // Allocate some instruction registers (39-45)
+        // Allocate some instruction registers (40-46)
         let guard1 = allocator.allocate();
-        assert_eq!(*guard1, FIRST_ALLOC_REG); // register 39
+        assert_eq!(*guard1, FIRST_ALLOC_REG); // register 40
 
         let guard2 = allocator.allocate();
-        assert_eq!(*guard2, FIRST_ALLOC_REG + 1); // register 40
+        assert_eq!(*guard2, FIRST_ALLOC_REG + 1); // register 41
 
-        // Allocate some inline registers (46+)
+        // Allocate some inline registers (47+)
         let inline_guard1 = allocator.allocate_for_inline();
-        assert_eq!(*inline_guard1, FIRST_INLINE_REG); // register 46
+        assert_eq!(*inline_guard1, FIRST_INLINE_REG); // register 47
 
         let inline_guard2 = allocator.allocate_for_inline();
-        assert_eq!(*inline_guard2, FIRST_INLINE_REG + 1); // register 47
+        assert_eq!(*inline_guard2, FIRST_INLINE_REG + 1); // register 48
 
         // Allocate more instruction registers
         let guard3 = allocator.allocate();

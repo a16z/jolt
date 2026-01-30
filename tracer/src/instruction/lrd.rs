@@ -4,7 +4,7 @@ use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, Xlen},
+    emulator::cpu::{Cpu, ReservationWidth, Xlen},
 };
 
 use super::addi::ADDI;
@@ -33,8 +33,7 @@ impl LRD {
 
         cpu.x[self.operands.rd as usize] = match value {
             Ok((doubleword, _memory_read)) => {
-                // Set reservation for this address
-                cpu.set_reservation(address);
+                cpu.set_reservation(address, ReservationWidth::Doubleword);
 
                 // Return the 64-bit value
                 doubleword as i64
@@ -46,9 +45,8 @@ impl LRD {
 
 impl RISCVTrace for LRD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // Set reservation in CPU state (for SC.D to check later)
         let address = cpu.x[self.operands.rs1 as usize] as u64;
-        cpu.set_reservation(address);
+        cpu.set_reservation(address, ReservationWidth::Doubleword);
 
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
@@ -68,12 +66,12 @@ impl RISCVTrace for LRD {
         // LR.D is only available in RV64A, so we only implement the 64-bit path
         assert_eq!(xlen, Xlen::Bit64, "LR.D is only available in RV64");
 
-        let v_reservation = allocator.reservation_register();
+        let v_reservation_d = allocator.reservation_d_register();
+        let v_reservation_w = allocator.reservation_w_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // Store reservation address (rs1 -> register 32) using ADDI rd, rs1, 0
-        asm.emit_i::<ADDI>(v_reservation, self.operands.rs1, 0);
-        // Load doubleword directly (no alignment/shifting needed for 64-bit aligned access)
+        asm.emit_i::<ADDI>(v_reservation_d, self.operands.rs1, 0);
+        asm.emit_i::<ADDI>(v_reservation_w, 0, 0); // clear W reservation
         asm.emit_ld::<LD>(self.operands.rd, self.operands.rs1, 0);
 
         asm.finalize()
