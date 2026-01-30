@@ -5,16 +5,15 @@ use syn::{Lit, Meta, MetaNameValue, NestedMeta};
 
 #[cfg(feature = "std")]
 use crate::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRACE_LENGTH,
-    DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE,
-    DEFAULT_STACK_SIZE,
+    DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRACE_LENGTH,
+    DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
 };
 
 pub struct Attributes {
     pub wasm: bool,
     pub nightly: bool,
     pub guest_only: bool,
-    pub memory_size: u64,
+    pub heap_size: u64,
     pub stack_size: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
@@ -39,7 +38,7 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
                 };
                 let ident = &path.get_ident().expect("Expected identifier");
                 match ident.to_string().as_str() {
-                    "memory_size" => attributes.insert("memory_size", value),
+                    "heap_size" => attributes.insert("heap_size", value),
                     "stack_size" => attributes.insert("stack_size", value),
                     "max_input_size" => attributes.insert("max_input_size", value),
                     "max_output_size" => attributes.insert("max_output_size", value),
@@ -66,9 +65,9 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
         }
     }
 
-    let memory_size = *attributes
-        .get("memory_size")
-        .unwrap_or(&DEFAULT_MEMORY_SIZE);
+    let heap_size = *attributes
+        .get("heap_size")
+        .unwrap_or(&DEFAULT_HEAP_SIZE);
     let stack_size = *attributes.get("stack_size").unwrap_or(&DEFAULT_STACK_SIZE);
     let max_input_size = *attributes
         .get("max_input_size")
@@ -90,7 +89,7 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
         wasm,
         nightly,
         guest_only,
-        memory_size,
+        heap_size,
         stack_size,
         max_input_size,
         max_output_size,

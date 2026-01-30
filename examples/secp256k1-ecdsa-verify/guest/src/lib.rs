@@ -6,7 +6,7 @@ use jolt_inlines_secp256k1::{ecdsa_verify, Secp256k1Error, Secp256k1Fr, Secp256k
 // given message hash z, signature (r, s), and public key Q
 // all inputs are little-endian u64 arrays in normal form
 // returns Ok(()) if signature is valid, Err(SignatureError) otherwise
-#[jolt::provable(memory_size = 100000, max_trace_length = 524288)]
+#[jolt::provable(heap_size = 100000, max_trace_length = 524288)]
 fn secp256k1_ecdsa_verify(
     z: [u64; 4],
     r: [u64; 4],

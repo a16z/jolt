@@ -532,7 +532,7 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
 
 const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]
 
-#[jolt::provable(memory_size = 32768, max_trace_length = 65536)]
+#[jolt::provable(heap_size = 32768, max_trace_length = 65536)]
 fn fib(n: u32) -> u128 {
     let mut a: u128 = 0;
     let mut b: u128 = 1;

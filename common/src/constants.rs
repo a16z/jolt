@@ -20,10 +20,8 @@ pub const INSTRUCTION_PHASES_THRESHOLD_LOG_T: usize = 24;
 
 pub const RAM_START_ADDRESS: u64 = 0x80000000;
 
-// big enough to run Linux and xv6
-pub const EMULATOR_MEMORY_CAPACITY: u64 = 1024 * 1024 * 128;
-
-pub const DEFAULT_MEMORY_SIZE: u64 = EMULATOR_MEMORY_CAPACITY;
+// Big enough to run Linux and xv6.
+pub const DEFAULT_HEAP_SIZE: u64 = 1024 * 1024 * 128;
 
 pub const DEFAULT_STACK_SIZE: u64 = 4096;
 // 64 byte stack canary. 4 word protection for 32-bit and 2 word for 64-bit

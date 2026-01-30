@@ -108,7 +108,7 @@ Jolt supports standard `print!` and `println!` macros in guest programs.
 ### Example
 
 ```rust
-#[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
+#[jolt::provable(heap_size = 10240, max_trace_length = 65536)]
 fn int_to_string(n: i32) -> String {
     print!("Hello, ");
     println!("from int_to_string({n})!");

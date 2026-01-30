@@ -15,7 +15,7 @@ fn wyhash64(mut x: u64) -> u64 {
     x
 }
 
-#[jolt::provable(stack_size = 10000, memory_size = 10000000)]
+#[jolt::provable(stack_size = 10000, heap_size = 10000000)]
 pub fn btreemap(n: u32) -> u128 {
     use alloc::collections::BTreeMap;
 

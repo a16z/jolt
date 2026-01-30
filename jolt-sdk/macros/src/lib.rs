@@ -122,7 +122,7 @@ impl MacroBuilder {
         let max_untrusted_advice_size =
             proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
-        let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
+        let heap_size = proc_macro2::Literal::u64_unsuffixed(attributes.heap_size);
 
         let memory_config_fn_name = Ident::new(&format!("memory_config_{fn_name}"), fn_name.span());
         let imports = self.make_imports();
@@ -137,7 +137,7 @@ impl MacroBuilder {
                     max_trusted_advice_size: #max_trusted_advice_size,
                     max_untrusted_advice_size: #max_untrusted_advice_size,
                     stack_size: #stack_size,
-                    memory_size: #memory_size,
+                    heap_size: #heap_size,
                     program_size: None,
                 }
             }
@@ -264,7 +264,7 @@ impl MacroBuilder {
                         max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
                         max_trusted_advice_size: memory_layout.max_trusted_advice_size,
                         stack_size: memory_layout.stack_size,
-                        memory_size: memory_layout.memory_size,
+                        heap_size: memory_layout.heap_size,
                         program_size: Some(memory_layout.program_size),
                     };
                     let mut io_device = JoltDevice::new(&memory_config);
@@ -437,7 +437,7 @@ impl MacroBuilder {
         let max_trusted_advice_size =
             proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
-        let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
+        let heap_size = proc_macro2::Literal::u64_unsuffixed(attributes.heap_size);
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
@@ -457,7 +457,7 @@ impl MacroBuilder {
                     max_untrusted_advice_size: #max_untrusted_advice_size,
                     max_trusted_advice_size: #max_trusted_advice_size,
                     stack_size: #stack_size,
-                    memory_size: #memory_size,
+                    heap_size: #heap_size,
                     program_size: Some(program_size),
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
@@ -712,7 +712,7 @@ impl MacroBuilder {
             max_untrusted_advice_size: attributes.max_untrusted_advice_size,
             max_trusted_advice_size: attributes.max_trusted_advice_size,
             stack_size: attributes.stack_size,
-            memory_size: attributes.memory_size,
+            heap_size: attributes.heap_size,
             // Not needed for the main function, but we need the io region information from MemoryLayout.
             program_size: Some(0),
         });
@@ -915,9 +915,9 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let mut code: Vec<TokenStream2> = Vec::new();
 
-        let value = attributes.memory_size;
+        let value = attributes.heap_size;
         code.push(quote! {
-            program.set_memory_size(#value);
+            program.set_heap_size(#value);
         });
 
         let value = attributes.stack_size;

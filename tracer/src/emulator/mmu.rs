@@ -210,13 +210,13 @@ impl Mmu {
                     "Stack overflow: Triggered Stack Canary. Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
                 );
                 assert!(
-                    ea < layout.memory_end,
+                    ea < layout.heap_end,
                     "Heap overflow: Attempted to {verb} 0x{ea:X}. Heap too small.\n{layout:#?}",
                 );
             } else {
                 // allow reads across the whole designated memory region as long as the address is valid
                 assert!(
-                    ea < layout.memory_end,
+                    ea < layout.heap_end,
                     "Illegal Memory Access: Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
                 );
             }
@@ -1210,7 +1210,6 @@ impl MemoryWrapper {
 mod test_mmu {
     use super::*;
     use crate::emulator::terminal::DummyTerminal;
-    use common::constants::DEFAULT_MEMORY_SIZE;
     use common::jolt_device::MemoryConfig;
 
     fn setup_mmu() -> Mmu {
@@ -1221,7 +1220,13 @@ mod test_mmu {
             ..Default::default()
         };
         mmu.jolt_device = Some(JoltDevice::new(&memory_config));
-        mmu.init_memory(DEFAULT_MEMORY_SIZE);
+        let capacity = mmu
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .get_total_memory_size();
+        mmu.init_memory(capacity);
 
         mmu
     }
@@ -1232,7 +1237,7 @@ mod test_mmu {
         let mut mmu = setup_mmu();
 
         // Try to write beyond the allocated memory
-        let overflow_address = mmu.jolt_device.as_ref().unwrap().memory_layout.memory_end + 1;
+        let overflow_address = mmu.jolt_device.as_ref().unwrap().memory_layout.heap_end + 1;
         mmu.trace_store(overflow_address, 0xc50513);
     }
 
