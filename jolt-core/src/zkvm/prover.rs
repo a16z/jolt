@@ -755,7 +755,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &mut self.transcript,
         );
 
-        // Initialization params (same order as batch)
         let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
             &self.opening_accumulator,
             &mut self.transcript,
@@ -784,8 +783,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io,
             &mut self.transcript,
         );
-
-        // Initialization (same order as batch)
         let ram_read_write_checking = RamReadWriteCheckingProver::initialize(
             ram_read_write_checking_params,
             &self.trace,
@@ -1022,7 +1019,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let registers_val_evaluation_params =
             RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
 
-        // Initialization (same order as batch)
         let lookups_read_raf = InstructionReadRafSumcheckProver::initialize(
             lookups_read_raf_params,
             Arc::clone(&self.trace),
