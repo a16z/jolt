@@ -3,19 +3,7 @@
 //! Encoding: csr[31:20] | rs1[19:15] | funct3=010[14:12] | rd[11:7] | opcode=1110011[6:0]
 //!
 //! The `csrr rd, csr` pseudo-instruction is `csrrs rd, csr, x0` (read only, no bits set).
-//!
-//! ## Limitation: Only `csrr` pseudo-instruction supported
-//!
-//! The full CSRRS instruction atomically reads and sets bits: `rd = CSR; CSR |= rs1`.
-//! We only support the read-only `csrr` pseudo-instruction (rs1 = x0).
-//!
-//! **Why?** Implementing the bit-set operation would require an OR instruction in the
-//! inline sequence, which we don't have. We'd need to either:
-//! - Add a virtual OR instruction, or
-//! - Synthesize OR from AND/XOR (more complex)
-//!
-//! **Impact:** If ZeroOS or guest code uses `csrrs rd, csr, rs1` with rs1 != 0,
-//! tracing will panic. This is acceptable for ZeroOS M-mode which only uses `csrr`.
+//! The `csrs csr, rs` pseudo-instruction is `csrrs x0, csr, rs` (set only, discard old value).
 
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -28,16 +16,9 @@ use crate::{
 };
 
 use super::{
-    addi::ADDI, format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    addi::ADDI, format::format_i::FormatI, or::OR, Cycle, Instruction, RISCVInstruction,
+    RISCVTrace,
 };
-
-/// CSR addresses for M-mode CSRs
-const CSR_MSTATUS: u16 = 0x300;
-const CSR_MTVEC: u16 = 0x305;
-const CSR_MSCRATCH: u16 = 0x340;
-const CSR_MEPC: u16 = 0x341;
-const CSR_MCAUSE: u16 = 0x342;
-const CSR_MTVAL: u16 = 0x343;
 
 declare_riscv_instr!(
     name   = CSRRS,
@@ -74,19 +55,7 @@ impl CSRRS {
 
 impl RISCVTrace for CSRRS {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // Only support csrr pseudo-instruction (rs1=0)
-        if self.operands.rs1 != 0 {
-            panic!(
-                "CSRRS: rs1 != 0 not supported (only csrr pseudo-instruction is used). \
-                 Use csrr rd, csr instead of csrrs rd, csr, rs1."
-            );
-        }
-
         // Don't call self.execute() - the inline sequence handles all register writes.
-        // For csrr (rs1=0), there's no CSR state modification needed.
-
-        // Generate and execute inline sequence
-        // The inline sequence reads from the virtual register (source of truth for proofs)
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
         let mut trace = trace;
@@ -95,16 +64,24 @@ impl RISCVTrace for CSRRS {
         }
     }
 
-    /// Generate inline sequence for CSRRS (csrr pseudo-instruction only).
+    /// Generate inline sequence for CSRRS.
     ///
-    /// Reads CSR value from the virtual register and copies to rd.
-    /// Virtual registers are updated by:
-    /// - CSRRW for mtvec, mscratch
-    /// - ECALL inline sequence for mepc, mcause, mtval, mstatus (when trap is taken)
+    /// Semantics: `rd = CSR; CSR |= rs1`
     ///
-    /// For rs1 = 0 (csrr, read only) with rd != 0:
-    ///   0: ADDI(rd, vr, 0) - Copy from virtual register to rd
+    /// For rs1 = 0, rd != 0 (csrr — read only):
+    ///   ADDI(rd, vr, 0)
     ///
+    /// For rs1 != 0, rd = 0 (csrs — set only):
+    ///   OR(vr, vr, rs1)
+    ///
+    /// For rs1 != 0, rd != 0, rd != rs1 (full read-set):
+    ///   ADDI(rd, vr, 0)     — read old value to rd
+    ///   OR(vr, vr, rs1)     — set bits
+    ///
+    /// For rs1 != 0, rd != 0, rd == rs1 (read-set, dest clobbers source):
+    ///   ADDI(temp, rs1, 0)  — preserve rs1
+    ///   ADDI(rd, vr, 0)     — read old value to rd (clobbers rs1)
+    ///   OR(vr, vr, temp)    — set bits from preserved value
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -112,32 +89,35 @@ impl RISCVTrace for CSRRS {
     ) -> Vec<Instruction> {
         let csr_addr = self.csr_address();
 
-        // Validate CSR address is supported
         // CSR 0 is never valid - return no-op for default-constructed instructions
-        match csr_addr {
-            0 => {
-                warn!("CSRRS with CSR address 0 is invalid, returning NoOp");
-                return vec![Instruction::NoOp];
-            }
-            CSR_MSTATUS | CSR_MTVEC | CSR_MSCRATCH | CSR_MEPC | CSR_MCAUSE | CSR_MTVAL => {}
-            _ => panic!("CSRRS: Unsupported CSR 0x{csr_addr:03x}"),
-        };
+        if csr_addr == 0 {
+            warn!("CSRRS with CSR address 0 is invalid, returning NoOp");
+            return vec![Instruction::NoOp];
+        }
 
-        // Map CSR address to virtual register
-        let virtual_reg = match csr_addr {
-            CSR_MSTATUS => allocator.mstatus_register(),
-            CSR_MTVEC => allocator.trap_handler_register(),
-            CSR_MSCRATCH => allocator.mscratch_register(),
-            CSR_MEPC => allocator.mepc_register(),
-            CSR_MCAUSE => allocator.mcause_register(),
-            CSR_MTVAL => allocator.mtval_register(),
-            _ => unreachable!(), // Already validated above
-        };
+        let virtual_reg = allocator
+            .csr_to_virtual_register(csr_addr)
+            .unwrap_or_else(|| panic!("CSRRS: Unsupported CSR 0x{csr_addr:03x}"));
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // Read from virtual register to rd
-        asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0);
+        if self.operands.rs1 == 0 {
+            // csrr: read only
+            asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0);
+        } else if self.operands.rd == 0 {
+            // csrs: set only
+            asm.emit_r::<OR>(virtual_reg, virtual_reg, self.operands.rs1);
+        } else if self.operands.rd == self.operands.rs1 {
+            // rd == rs1: preserve rs1 before clobbering
+            let temp = allocator.allocate();
+            asm.emit_i::<ADDI>(*temp, self.operands.rs1, 0);
+            asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0);
+            asm.emit_r::<OR>(virtual_reg, virtual_reg, *temp);
+        } else {
+            // rd != rs1: read old, then set
+            asm.emit_i::<ADDI>(self.operands.rd, virtual_reg, 0);
+            asm.emit_r::<OR>(virtual_reg, virtual_reg, self.operands.rs1);
+        }
 
         asm.finalize()
     }
@@ -145,7 +125,8 @@ impl RISCVTrace for CSRRS {
 
 #[cfg(test)]
 mod tests {
-    use crate::instruction::Instruction;
+    use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
+    use crate::instruction::{Cycle, Instruction, RISCVTrace};
 
     /// Test decoding of `csrr t0, mtvec` (csrrs t0, mtvec, x0)
     #[test]
@@ -185,5 +166,71 @@ mod tests {
             }
             _ => panic!("Expected CSRRS instruction, got {decoded:?}"),
         }
+    }
+
+    /// Test trace of full csrrs: rd = old CSR, CSR |= rs1
+    #[test]
+    fn test_csrrs_trace_full() {
+        // csrrs a0, mtvec, t0 (rd=a0(10), rs1=t0(5), csr=mtvec)
+        let instr: u32 = 0x3052a573;
+        let address: u64 = 0x1000;
+
+        let decoded = Instruction::decode(instr, address, false).expect("Failed to decode CSRRS");
+        let Instruction::CSRRS(csrrs) = decoded else {
+            panic!("Expected CSRRS instruction");
+        };
+
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+
+        let old_csr: u64 = 0x00FF;
+        let rs1_val: u64 = 0xFF00;
+
+        cpu.x[33] = old_csr as i64; // vr33 = mtvec
+        cpu.x[5] = rs1_val as i64; // t0
+
+        let mut trace: Vec<Cycle> = Vec::new();
+        csrrs.trace(&mut cpu, Some(&mut trace));
+
+        // rd (a0) should have old CSR value
+        assert_eq!(cpu.x[10] as u64, old_csr, "rd should get old CSR value");
+        // vr (mtvec) should have old | rs1
+        assert_eq!(
+            cpu.x[33] as u64,
+            old_csr | rs1_val,
+            "CSR should have bits set from rs1"
+        );
+    }
+
+    /// Test trace of csrrs with rd == rs1 (clobber case)
+    #[test]
+    fn test_csrrs_trace_rd_eq_rs1() {
+        // csrrs t0, mtvec, t0 (rd == rs1 == x5)
+        let instr: u32 = (0x305 << 20) | (5 << 15) | (2 << 12) | (5 << 7) | 0x73;
+        let address: u64 = 0x1000;
+
+        let decoded = Instruction::decode(instr, address, false).expect("Failed to decode CSRRS");
+        let Instruction::CSRRS(csrrs) = decoded else {
+            panic!("Expected CSRRS instruction");
+        };
+
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+
+        let old_csr: u64 = 0x00FF;
+        let rs1_val: u64 = 0xFF00;
+
+        cpu.x[33] = old_csr as i64; // vr33 = mtvec
+        cpu.x[5] = rs1_val as i64; // t0
+
+        let mut trace: Vec<Cycle> = Vec::new();
+        csrrs.trace(&mut cpu, Some(&mut trace));
+
+        // rd (t0) should have old CSR value
+        assert_eq!(cpu.x[5] as u64, old_csr, "rd should get old CSR value");
+        // vr should have old | rs1 (using preserved rs1, not clobbered value)
+        assert_eq!(
+            cpu.x[33] as u64,
+            old_csr | rs1_val,
+            "CSR should have bits set from original rs1"
+        );
     }
 }

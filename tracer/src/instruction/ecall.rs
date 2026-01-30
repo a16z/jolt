@@ -56,7 +56,70 @@ impl ECALL {
     }
 }
 
-impl ECALL {
+impl RISCVTrace for ECALL {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        // Don't call self.execute() - the inline sequence handles all register/PC updates.
+        // CSR values are computed with constrained instructions (no advice needed).
+
+        let return_addr = self.address + 4;
+        let call_id = cpu.x[10] as u32; // a0
+
+        // Handle Jolt-specific ECALLs (these don't take trap)
+        let trap_taken = if call_id == JOLT_CYCLE_TRACK_ECALL_NUM {
+            let marker_ptr = cpu.x[11] as u32; // a1
+            let marker_len = cpu.x[12] as u32; // a2
+            let event_type = cpu.x[13] as u32; // a3
+            let _ = cpu.handle_jolt_cycle_marker(marker_ptr, marker_len, event_type);
+            false
+        } else if call_id == JOLT_PRINT_ECALL_NUM {
+            let string_ptr = cpu.x[11] as u32; // a1
+            let string_len = cpu.x[12] as u32; // a2
+            let event_type = cpu.x[13] as u32; // a3
+            let _ = cpu.handle_jolt_print(string_ptr, string_len, event_type as u8);
+            false
+        } else {
+            true
+        };
+
+        // Compute target PC:
+        // - Jolt ECALLs: return to next instruction (no trap)
+        // - Other ECALLs: jump to trap handler (from virtual register)
+        let target_pc = if trap_taken {
+            cpu.x[cpu.vr_allocator.trap_handler_register() as usize] as u64
+        } else {
+            return_addr
+        };
+
+        let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+
+        // The inline sequence structure (all constrained except target_pc):
+        // 0: AUIPC(ecall_addr, 0)
+        // 1: ADDI(vr_mepc, ecall_addr, 0)
+        // 2: ADDI(return_addr, ecall_addr, 4)
+        // 3: ADDI(vr_mcause, x0, 11)
+        // 4: ADDI(vr_mtval, x0, 0)
+        // 5: ADDI(three, x0, 3)
+        // 6: VirtualMULI(vr_mstatus, three, 2048)  <- SLLI expands to this
+        // 7: VirtualAdvice(target_pc)              <- Only advice, constrained below
+        // 8: SUB(diff1, target_pc, return_addr)
+        // 9: SUB(diff_trap, target_pc, v_trap_handler)
+        // 10: MUL(diff1, diff1, diff_trap)          <- target_pc ∈ {ret, trap}
+        // 11: VirtualAssertEQ(diff1, 0, 0)
+        // 12: MUL(diff1, a7, diff_trap)             <- real syscalls must trap
+        // 13: VirtualAssertEQ(diff1, 0, 0)
+        // 14: JALR(x0, target_pc, 0)
+
+        // Fill in the only advice value: target_pc at index 7
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[7] {
+            instr.advice = target_pc;
+        }
+
+        let mut trace = trace;
+        for instr in inline_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
     /// Generate inline sequence for ECALL.
     ///
     /// All trap CSR writes use constrained instructions (no VirtualAdvice):
@@ -65,13 +128,13 @@ impl ECALL {
     /// - mtval = 0 (constant)
     /// - mstatus = 0x1800 (M-mode, MPP=3, MIE=0)
     ///
-    /// The only advice value is target_pc, which is constrained to be either:
-    /// - return_addr (ecall_addr + 4) for Jolt-specific ECALLs, or
-    /// - trap_handler (from virtual register) for real traps
+    /// The only advice value is target_pc, constrained by two checks:
+    /// 1. target_pc ∈ {return_addr, trap_handler} — no arbitrary jumps.
+    /// 2. a7 * (target_pc - trap_handler) == 0 — if a7 != 0 (real syscall),
+    ///    target_pc must be trap_handler. Jolt ECALLs set a7=0.
     ///
-    /// This makes ECALL fully sound: a malicious prover cannot corrupt CSR values
-    /// or jump to arbitrary addresses.
-    fn generate_inline_sequence(
+    /// Together these prevent a malicious prover from skipping real traps.
+    fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
@@ -119,89 +182,25 @@ impl ECALL {
         let target_pc = allocator.allocate();
         asm.emit_j::<VirtualAdvice>(*target_pc, 0);
 
-        // Verify: (target_pc == return_addr) OR (target_pc == trap_handler)
-        // Using: (target_pc - return_addr) * (target_pc - trap_handler) == 0
+        // Constraint 1: target_pc ∈ {return_addr, trap_handler}
+        // (target_pc - return_addr) * (target_pc - trap_handler) == 0
         let diff1 = allocator.allocate();
-        let diff2 = allocator.allocate();
+        let diff_trap = allocator.allocate();
         asm.emit_r::<SUB>(*diff1, *target_pc, *return_addr);
-        asm.emit_r::<SUB>(*diff2, *target_pc, v_trap_handler_reg);
-        asm.emit_r::<MUL>(*diff1, *diff1, *diff2);
+        asm.emit_r::<SUB>(*diff_trap, *target_pc, v_trap_handler_reg);
+        asm.emit_r::<MUL>(*diff1, *diff1, *diff_trap);
+        asm.emit_b::<VirtualAssertEQ>(*diff1, 0, 0);
+
+        // Constraint 2: real syscalls must trap.
+        // Jolt-specific ECALLs set a7 (x17) = 0; real Linux syscalls have a7 = syscall number != 0.
+        // a7 * (target_pc - trap_handler) == 0
+        // If a7 != 0, forces target_pc == trap_handler (prover cannot skip real traps).
+        asm.emit_r::<MUL>(*diff1, 17, *diff_trap);
         asm.emit_b::<VirtualAssertEQ>(*diff1, 0, 0);
 
         // Jump to target PC
         asm.emit_i::<JALR>(0, *target_pc, 0);
 
         asm.finalize()
-    }
-}
-
-impl RISCVTrace for ECALL {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // Don't call self.execute() - the inline sequence handles all register/PC updates.
-        // CSR values are computed with constrained instructions (no advice needed).
-
-        let return_addr = self.address + 4;
-        let call_id = cpu.x[10] as u32; // a0
-
-        // Handle Jolt-specific ECALLs (these don't take trap)
-        let trap_taken = if call_id == JOLT_CYCLE_TRACK_ECALL_NUM {
-            let marker_ptr = cpu.x[11] as u32; // a1
-            let marker_len = cpu.x[12] as u32; // a2
-            let event_type = cpu.x[13] as u32; // a3
-            let _ = cpu.handle_jolt_cycle_marker(marker_ptr, marker_len, event_type);
-            false
-        } else if call_id == JOLT_PRINT_ECALL_NUM {
-            let string_ptr = cpu.x[11] as u32; // a1
-            let string_len = cpu.x[12] as u32; // a2
-            let event_type = cpu.x[13] as u32; // a3
-            let _ = cpu.handle_jolt_print(string_ptr, string_len, event_type as u8);
-            false
-        } else {
-            true
-        };
-
-        // Compute target PC:
-        // - Jolt ECALLs: return to next instruction (no trap)
-        // - Other ECALLs: jump to trap handler (from virtual register)
-        let target_pc = if trap_taken {
-            cpu.x[cpu.vr_allocator.trap_handler_register() as usize] as u64
-        } else {
-            return_addr
-        };
-
-        let mut inline_sequence = self.generate_inline_sequence(&cpu.vr_allocator, cpu.xlen);
-
-        // The inline sequence structure (all constrained except target_pc):
-        // 0: AUIPC(ecall_addr, 0)
-        // 1: ADDI(vr_mepc, ecall_addr, 0)
-        // 2: ADDI(return_addr, ecall_addr, 4)
-        // 3: ADDI(vr_mcause, x0, 11)
-        // 4: ADDI(vr_mtval, x0, 0)
-        // 5: ADDI(three, x0, 3)
-        // 6: VirtualMULI(vr_mstatus, three, 2048)  <- SLLI expands to this
-        // 7: VirtualAdvice(target_pc)              <- Only advice, constrained below
-        // 8: SUB(diff1, target_pc, return_addr)
-        // 9: SUB(diff2, target_pc, v_trap_handler)
-        // 10: MUL(diff1, diff1, diff2)
-        // 11: VirtualAssertEQ(diff1, 0, 0)
-        // 12: JALR(x0, target_pc, 0)
-
-        // Fill in the only advice value: target_pc at index 7
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[7] {
-            instr.advice = target_pc;
-        }
-
-        let mut trace = trace;
-        for instr in inline_sequence {
-            instr.trace(cpu, trace.as_deref_mut());
-        }
-    }
-
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
-        self.generate_inline_sequence(allocator, xlen)
     }
 }

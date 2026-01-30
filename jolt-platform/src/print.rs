@@ -40,7 +40,7 @@ fn jolt_print_ecall(buf: *const u8, len: usize) {
             in("a1") buf,
             in("a2") len,
             in("a3") JOLT_PRINT_STRING as usize,
-            in("a7") 0usize,  // a7=0 marks this as a special ECALL, not a syscall
+            in("a7") 0usize,  // a7=0 marks this as a special ECALL
             options(nostack)
         );
     }

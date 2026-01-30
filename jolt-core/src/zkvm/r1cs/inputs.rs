@@ -54,14 +54,13 @@ pub enum JoltR1CSInputs {
     NextIsFirstInSequence, // (shift sumcheck)
     LookupOutput,          // (instruction rv)
     ShouldJump,            // (product virtualization)
-    VirtualSequenceActive, // (product virtualization) VirtualInstruction * (1 - NextIsNoop)
     OpFlags(CircuitFlags),
 }
 
 pub const NUM_R1CS_INPUTS: usize = ALL_R1CS_INPUTS.len();
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 38] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 37] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -85,7 +84,6 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 38] = [
     JoltR1CSInputs::NextIsFirstInSequence,
     JoltR1CSInputs::LookupOutput,
     JoltR1CSInputs::ShouldJump,
-    JoltR1CSInputs::VirtualSequenceActive,
     JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands),
     JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands),
     JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
@@ -140,21 +138,20 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::NextIsFirstInSequence => 20,
             JoltR1CSInputs::LookupOutput => 21,
             JoltR1CSInputs::ShouldJump => 22,
-            JoltR1CSInputs::VirtualSequenceActive => 23,
-            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) => 24,
-            JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) => 25,
-            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) => 26,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Load) => 27,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 28,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 29,
-            JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 30,
-            JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) => 31,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 32,
-            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 33,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 34,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 35,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence) => 36,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence) => 37,
+            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) => 23,
+            JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) => 24,
+            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) => 25,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Load) => 26,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 27,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 28,
+            JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 29,
+            JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) => 30,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 31,
+            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 32,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 33,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 34,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence) => 35,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence) => 36,
         }
     }
 }
@@ -181,7 +178,6 @@ impl From<&JoltR1CSInputs> for VirtualPolynomial {
             JoltR1CSInputs::ShouldBranch => VirtualPolynomial::ShouldBranch,
             JoltR1CSInputs::WritePCtoRD => VirtualPolynomial::WritePCtoRD,
             JoltR1CSInputs::WriteLookupOutputToRD => VirtualPolynomial::WriteLookupOutputToRD,
-            JoltR1CSInputs::VirtualSequenceActive => VirtualPolynomial::VirtualSequenceActive,
             JoltR1CSInputs::OpFlags(flag) => VirtualPolynomial::OpFlags(*flag),
             JoltR1CSInputs::LeftInstructionInput => VirtualPolynomial::LeftInstructionInput,
             JoltR1CSInputs::RightInstructionInput => VirtualPolynomial::RightInstructionInput,
@@ -257,8 +253,6 @@ pub struct R1CSCycleInputs {
     pub should_jump: bool,
     /// Derived: `Branch && (LookupOutput == 1)`.
     pub should_branch: bool,
-    /// Derived: `VirtualInstruction && !NextIsNoop`.
-    pub virtual_sequence_active: bool,
 
     /// `IsRdNotZero` && ` `WriteLookupOutputToRD`
     pub write_lookup_output_to_rd_addr: bool,
@@ -360,7 +354,6 @@ impl R1CSCycleInputs {
         };
         let should_jump = flags_view[CircuitFlags::Jump] && !next_is_noop;
         let should_branch = instruction_flags[InstructionFlags::Branch] && (lookup_output == 1);
-        let virtual_sequence_active = flags_view[CircuitFlags::VirtualInstruction] && !next_is_noop;
 
         // Write-to-Rd selectors (masked by flags)
         let write_lookup_output_to_rd_addr = flags_view[CircuitFlags::WriteLookupOutputToRD]
@@ -400,7 +393,6 @@ impl R1CSCycleInputs {
             next_is_noop,
             should_jump,
             should_branch,
-            virtual_sequence_active,
             write_lookup_output_to_rd_addr,
             write_pc_to_rd_addr,
             next_is_virtual,
@@ -434,7 +426,6 @@ impl R1CSCycleInputs {
             JoltR1CSInputs::NextIsFirstInSequence => self.next_is_first_in_sequence as i128,
             JoltR1CSInputs::LookupOutput => self.lookup_output as i128,
             JoltR1CSInputs::ShouldJump => self.should_jump as i128,
-            JoltR1CSInputs::VirtualSequenceActive => self.virtual_sequence_active as i128,
             JoltR1CSInputs::OpFlags(flag) => self.flags[flag] as i128,
         }
     }
@@ -451,7 +442,7 @@ impl R1CSCycleInputs {
 /// 5: LookupOutput
 /// 6: InstructionFlags(Branch)
 /// 7: NextIsNoop
-/// 8: OpFlags(VirtualInstruction)
+/// 8: OpFlags(VirtualInstruction) — not a product factor, but opened here for downstream stages
 pub const PRODUCT_UNIQUE_FACTOR_VIRTUALS: [VirtualPolynomial; 9] = [
     VirtualPolynomial::LeftInstructionInput,
     VirtualPolynomial::RightInstructionInput,
@@ -489,7 +480,7 @@ pub struct ProductCycleInputs {
     pub not_next_noop: bool,
     /// IsRdNotZero instruction flag (boolean)
     pub is_rd_not_zero: bool,
-    /// VirtualInstruction flag (boolean) - used for VirtualSequenceActive product
+    /// VirtualInstruction flag (boolean) — opened at product cycle point for downstream stages
     pub virtual_instruction_flag: bool,
 }
 
@@ -532,7 +523,6 @@ impl ProductCycleInputs {
         // WriteLookupOutputToRD flag
         let write_lookup_output_to_rd_flag = flags_view[CircuitFlags::WriteLookupOutputToRD];
 
-        // VirtualInstruction flag for VirtualSequenceActive product
         let virtual_instruction_flag = flags_view[CircuitFlags::VirtualInstruction];
 
         Self {
@@ -625,9 +615,6 @@ mod tests {
                 }
                 (JoltR1CSInputs::LookupOutput, JoltR1CSInputs::LookupOutput) => true,
                 (JoltR1CSInputs::ShouldJump, JoltR1CSInputs::ShouldJump) => true,
-                (JoltR1CSInputs::VirtualSequenceActive, JoltR1CSInputs::VirtualSequenceActive) => {
-                    true
-                }
                 (JoltR1CSInputs::OpFlags(flag1), JoltR1CSInputs::OpFlags(flag2)) => {
                     self.const_eq_circuit_flags(*flag1, *flag2)
                 }
