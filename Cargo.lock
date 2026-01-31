@@ -2050,6 +2050,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-inlines-grumpkin"
+version = "0.1.0"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-grumpkin",
+ "ark-serialize",
+ "ctor 0.2.9",
+ "hex-literal",
+ "num-bigint",
+ "num-integer",
+ "serde",
+ "tracer",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
 dependencies = [
@@ -2383,6 +2400,26 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "msm-bench"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "jolt-inlines-grumpkin",
+ "jolt-sdk",
+ "msm-bench-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "msm-bench-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-grumpkin",
+ "jolt-sdk",
 ]
 
 [[package]]

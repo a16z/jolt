@@ -1,0 +1,12 @@
+[package]
+name = "msm-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+jolt-inlines-grumpkin = { workspace = true, features = ["host"] }
+guest = { package = "msm-bench-guest", path = "./guest" }
+ark-bn254.workspace = true
