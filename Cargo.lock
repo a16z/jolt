@@ -2386,6 +2386,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "modexp"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "jolt-sdk",
+ "modexp-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "modexp-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "muldiv"
 version = "0.1.0"
 dependencies = [
