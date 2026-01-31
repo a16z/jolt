@@ -13,7 +13,6 @@ use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::OneHotParams;
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
-use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
 use crate::zkvm::ram::RAMPreprocessing;
 use crate::zkvm::witness::all_committed_polynomials;
 use crate::zkvm::Serializable;
@@ -35,8 +34,7 @@ use crate::zkvm::{
         hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
-        read_write_checking::RamReadWriteCheckingVerifier,
-        val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier,
+        read_write_checking::RamReadWriteCheckingVerifier, val_fused::RamValFusedSumcheckVerifier,
         verifier_accumulate_advice,
     },
     registers::{
@@ -325,6 +323,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 
     fn verify_stage4(&mut self) -> Result<(), anyhow::Error> {
+        let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
+            self.proof.trace_length,
+            &self.opening_accumulator,
+            &mut self.transcript,
+            &self.proof.rw_config,
+        );
         verifier_accumulate_advice::<F>(
             self.proof.ram_K,
             &self.program_io,
@@ -336,34 +340,28 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 .rw_config
                 .needs_single_advice_opening(self.proof.trace_length.log_2()),
         );
-        let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
-            self.proof.trace_length,
-            &self.opening_accumulator,
-            &mut self.transcript,
-            &self.proof.rw_config,
-        );
-        let ram_val_evaluation = RamValEvaluationSumcheckVerifier::new(
+        self.transcript.append_message(b"ram_val_fused_gamma");
+        let ram_val_fused_gamma: F = self.transcript.challenge_scalar::<F>();
+        let initial_ram_state = crate::zkvm::ram::gen_ram_initial_memory_state::<F>(
+            self.proof.ram_K,
             &self.preprocessing.shared.ram,
+            &self.program_io,
+        );
+        let ram_val_fused = RamValFusedSumcheckVerifier::new(
+            &initial_ram_state,
             &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
-            &self.opening_accumulator,
-        );
-        let ram_val_final = ValFinalSumcheckVerifier::new(
-            &self.preprocessing.shared.ram,
-            &self.program_io,
-            self.proof.trace_length,
-            self.proof.ram_K,
-            &self.opening_accumulator,
             &self.proof.rw_config,
+            ram_val_fused_gamma,
+            &self.opening_accumulator,
         );
 
         let _r_stage4 = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
             vec![
-                &registers_read_write_checking,
-                &ram_val_evaluation,
-                &ram_val_final,
+                &registers_read_write_checking as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
+                &ram_val_fused,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
