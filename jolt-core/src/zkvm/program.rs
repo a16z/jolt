@@ -7,6 +7,7 @@
 //! Both come from the same ELF file and are conceptually "the program".
 
 use std::any::TypeId;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
@@ -508,28 +509,33 @@ fn derive_bytecode_commitments_sparse_dory(
     );
     let num_rows = total_size / num_columns;
 
-    // Build commitments per chunk.
-    // NOTE: this is O(num_chunks * bytecode_len * active_lanes_per_instr) which is intended to be
-    // used with k_chunk=256 (num_chunks ~ 1) for large instances.
-    let (commitments, hints): (Vec<_>, Vec<_>) = (0..num_chunks)
-        .map(|chunk_idx| {
-            let lane_start = chunk_idx * k_chunk;
-            let lane_end = lane_start + k_chunk;
-
-            let mut row_acc: Vec<G1Projective> = vec![G1Projective::zero(); num_rows];
-
-            for (cycle, instr) in program.instructions[..bytecode_len].iter().enumerate() {
+    // Build tier-1 row commitments by streaming once over the program instructions.
+    //
+    // Parallelization strategy:
+    // - Parallelize over `cycle` (Rayon over instructions).
+    // - Each thread accumulates into per-chunk sparse maps: chunk -> (row_idx -> row_commitment).
+    // - Reduce by pointwise addition of the sparse maps.
+    //
+    // This avoids the previous O(num_chunks * bytecode_len) rescans of the instruction stream.
+    let sparse_rows_by_chunk: Vec<HashMap<usize, G1Projective>> = program.instructions
+        [..bytecode_len]
+        .par_iter()
+        .enumerate()
+        .fold(
+            || vec![HashMap::<usize, G1Projective>::new(); num_chunks],
+            |mut acc, (cycle, instr)| {
                 for_each_active_lane_value::<Fr>(instr, |global_lane, lane_val| {
-                    if global_lane < lane_start || global_lane >= lane_end {
+                    let chunk_idx = global_lane / k_chunk;
+                    if chunk_idx >= num_chunks {
                         return;
                     }
-                    let lane = global_lane - lane_start; // address within this chunk
+                    let lane = global_lane % k_chunk;
 
                     let global_index =
                         layout.address_cycle_to_index(lane, cycle, k_chunk, bytecode_T);
                     let row_idx = global_index / num_columns;
                     let col_idx = global_index % num_columns;
-                    debug_assert!(row_idx < row_acc.len());
+                    debug_assert!(row_idx < num_rows);
 
                     let scalar = match lane_val {
                         ActiveLaneValue::One => Fr::one(),
@@ -540,18 +546,50 @@ fn derive_bytecode_commitments_sparse_dory(
                     }
 
                     let base = setup.g1_vec[col_idx].0;
+                    let entry = acc[chunk_idx]
+                        .entry(row_idx)
+                        .or_insert_with(G1Projective::zero);
                     if scalar.is_one() {
-                        row_acc[row_idx] += base;
+                        *entry += base;
                     } else {
-                        row_acc[row_idx] += base * scalar;
+                        *entry += base * scalar;
                     }
                 });
+                acc
+            },
+        )
+        .reduce(
+            || vec![HashMap::<usize, G1Projective>::new(); num_chunks],
+            |mut a, b| {
+                for (a_map, b_map) in a.iter_mut().zip(b.into_iter()) {
+                    for (row_idx, row_commitment) in b_map.into_iter() {
+                        let entry = a_map.entry(row_idx).or_insert_with(G1Projective::zero);
+                        *entry += row_commitment;
+                    }
+                }
+                a
+            },
+        );
+
+    // Materialize full row-commitment vectors (hints) and compute tier-2 commitments.
+    let (commitments, hints): (Vec<ArkGT>, Vec<Vec<ArkG1>>) = sparse_rows_by_chunk
+        .into_iter()
+        .map(|row_map| {
+            // Full hint vector required by Dory opening proof.
+            let mut row_commitments: Vec<ArkG1> = vec![ArkG1(G1Projective::zero()); num_rows];
+
+            // For tier-2 commitment, we can skip identity rows (pairing with identity is neutral).
+            let mut nonzero_rows: Vec<ArkG1> = Vec::with_capacity(row_map.len());
+            let mut nonzero_g2: Vec<_> = Vec::with_capacity(row_map.len());
+
+            for (row_idx, row_commitment) in row_map.into_iter() {
+                let rc = ArkG1(row_commitment);
+                row_commitments[row_idx] = rc;
+                nonzero_rows.push(rc);
+                nonzero_g2.push(setup.g2_vec[row_idx].clone());
             }
 
-            let row_commitments: Vec<ArkG1> = row_acc.into_iter().map(ArkG1).collect();
-            let g2_bases = &setup.g2_vec[..row_commitments.len()];
-            let tier2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
-
+            let tier2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&nonzero_rows, &nonzero_g2);
             (tier2, row_commitments)
         })
         .unzip();
