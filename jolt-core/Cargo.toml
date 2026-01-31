@@ -45,7 +45,15 @@ prover = [
 ]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
-minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
+minimal = [
+    "ark-ec/std",
+    "ark-ff/std",
+    "ark-std/std",
+    "ark-ff/asm",
+    "rayon",
+    # Used to accelerate Fiat-Shamir transcript hashing in guest/recursion builds.
+    "dep:jolt-inlines-blake2",
+]
 allocative = ["dep:inferno"]
 monitor = ["dep:sysinfo"]
 pprof = ["dep:pprof", "dep:prost"]
@@ -166,3 +174,12 @@ required-features = ["host"]
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats.workspace = true
 tokio = { workspace = true, optional = true, features = ["rt-multi-thread"] }
+
+# For recursion / guest verifier builds we want to use Jolt inline hashing instructions on RISC-V.
+# When building on non-RISC-V targets without the `host` feature (e.g. unit tests with `--features minimal`),
+# we still need this crate to compile, so we enable its `host` feature there.
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+jolt-inlines-blake2 = { workspace = true, default-features = false, optional = true }
+
+[target.'cfg(not(target_arch = "riscv64"))'.dependencies]
+jolt-inlines-blake2 = { workspace = true, default-features = false, features = ["host"], optional = true }

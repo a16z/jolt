@@ -1,8 +1,13 @@
 //! High-level Blake2b hashing API for host and guest modes.
 use crate::{BLOCK_INPUT_SIZE_IN_BYTES, IV, MSG_BLOCK_LEN, STATE_VECTOR_LEN};
 const OUTPUT_SIZE: usize = 64;
+const OUTPUT_SIZE_256: usize = 32;
 
-pub struct Blake2b {
+/// Internal Blake2b hasher parameterized by output length.
+///
+/// Note: in Blake2, the output length is part of the parameter block and changes the initial
+/// state; Blake2b-256 is **not** Blake2b-512 truncated.
+struct Blake2bInner<const OUT: usize> {
     /// Hash state (8 x 64-bit words)
     h: [u64; STATE_VECTOR_LEN],
     /// Buffer for incomplete blocks
@@ -13,11 +18,11 @@ pub struct Blake2b {
     counter: u64,
 }
 
-impl Blake2b {
+impl<const OUT: usize> Blake2bInner<OUT> {
     #[inline(always)]
-    pub fn new() -> Self {
+    fn new() -> Self {
         let mut h = IV;
-        h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
+        h[0] ^= 0x01010000 ^ (OUT as u64);
 
         Self {
             h,
@@ -28,7 +33,7 @@ impl Blake2b {
     }
 
     #[inline(always)]
-    pub fn update(&mut self, input: &[u8]) {
+    fn update(&mut self, input: &[u8]) {
         let input_len = input.len();
         if input_len == 0 {
             return;
@@ -93,7 +98,7 @@ impl Blake2b {
     }
 
     #[inline(always)]
-    pub fn finalize(mut self) -> [u8; OUTPUT_SIZE] {
+    fn finalize(mut self) -> [u8; OUT] {
         self.counter += self.buffer_len as u64;
 
         // Zero the remaining bytes using optimized pointer write
@@ -110,43 +115,37 @@ impl Blake2b {
         // Process the final block
         compression_caller(&mut self.h, &self.buffer, self.counter, true);
 
-        #[cfg(target_endian = "little")]
-        {
-            // Safety: [u64; 8] and [u8; 64] have identical size (64 bytes)
-            unsafe { core::mem::transmute::<[u64; STATE_VECTOR_LEN], [u8; OUTPUT_SIZE]>(self.h) }
-        }
-
-        #[cfg(target_endian = "big")]
-        {
-            // For big-endian, convert each u64 to little-endian bytes
-            let mut hash = [0u8; OUTPUT_SIZE];
-            for i in 0..STATE_VECTOR_LEN {
-                let bytes = self.h[i].to_le_bytes();
-                hash[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
-            }
-            hash
-        }
+        let full = to_bytes(self.h);
+        let mut out = [0u8; OUT];
+        out.copy_from_slice(&full[..OUT]);
+        out
     }
 
     /// Computes BLAKE2b hash in one call.
     /// Optimized for virtual cycles by avoiding intermediate buffers for small inputs.
     #[inline(always)]
-    pub fn digest(input: &[u8]) -> [u8; OUTPUT_SIZE] {
+    fn digest(input: &[u8]) -> [u8; OUT] {
         let mut h = IV;
-        h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
+        h[0] ^= 0x01010000 ^ (OUT as u64);
 
         let len = input.len();
 
         // Empty input: direct compression
         if len == 0 {
             compress_direct(&mut h, &[], 0, true);
-            return to_bytes(h);
+            let full = to_bytes(h);
+            let mut out = [0u8; OUT];
+            out.copy_from_slice(&full[..OUT]);
+            return out;
         }
 
         // Single block (≤128 bytes): direct compression (no intermediate buffer)
         if len <= BLOCK_INPUT_SIZE_IN_BYTES {
             compress_direct(&mut h, input, len as u64, true);
-            return to_bytes(h);
+            let full = to_bytes(h);
+            let mut out = [0u8; OUT];
+            out.copy_from_slice(&full[..OUT]);
+            return out;
         }
 
         // Large input: process full blocks directly, then final block
@@ -182,7 +181,40 @@ impl Blake2b {
             compress_direct(&mut h, &input[tail_offset..], len as u64, true);
         }
 
-        to_bytes(h)
+        let full = to_bytes(h);
+        let mut out = [0u8; OUT];
+        out.copy_from_slice(&full[..OUT]);
+        out
+    }
+}
+
+/// Blake2b-512 streaming hasher.
+pub struct Blake2b {
+    inner: Blake2bInner<OUTPUT_SIZE>,
+}
+
+impl Blake2b {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self {
+            inner: Blake2bInner::<OUTPUT_SIZE>::new(),
+        }
+    }
+
+    #[inline(always)]
+    pub fn update(&mut self, input: &[u8]) {
+        self.inner.update(input);
+    }
+
+    #[inline(always)]
+    pub fn finalize(self) -> [u8; OUTPUT_SIZE] {
+        self.inner.finalize()
+    }
+
+    /// Computes BLAKE2b-512 hash in one call.
+    #[inline(always)]
+    pub fn digest(input: &[u8]) -> [u8; OUTPUT_SIZE] {
+        Blake2bInner::<OUTPUT_SIZE>::digest(input)
     }
 }
 
@@ -361,6 +393,41 @@ fn compress_direct(
     }
 }
 
+pub struct Blake2b256 {
+    inner: Blake2bInner<OUTPUT_SIZE_256>,
+}
+
+impl Blake2b256 {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self {
+            inner: Blake2bInner::<OUTPUT_SIZE_256>::new(),
+        }
+    }
+
+    #[inline(always)]
+    pub fn update(&mut self, input: &[u8]) {
+        self.inner.update(input);
+    }
+
+    #[inline(always)]
+    pub fn finalize(self) -> [u8; OUTPUT_SIZE_256] {
+        self.inner.finalize()
+    }
+
+    /// Computes Blake2b-256 hash in one call.
+    #[inline(always)]
+    pub fn digest(input: &[u8]) -> [u8; OUTPUT_SIZE_256] {
+        Blake2bInner::<OUTPUT_SIZE_256>::digest(input)
+    }
+}
+
+impl Default for Blake2b256 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Default for Blake2b {
     fn default() -> Self {
         Self::new()
@@ -477,6 +544,49 @@ mod digest_tests {
                     Blake2b::digest(&input),
                     Into::<[u8; 64]>::into(blake2::Blake2b512::digest(input)),
                     "Blake2b mismatch with {pattern_name} pattern at length {length}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_blake2b256_against_reference_implementation() {
+        use blake2::digest::consts::U32;
+        use blake2::Digest as RefDigest;
+        type RefBlake2b256 = blake2::Blake2b<U32>;
+
+        let mut input = [0u8; 1200];
+        for (i, b) in input.iter_mut().enumerate() {
+            *b = ((i * 7 + 13) % 256) as u8;
+        }
+
+        let lengths = [
+            0usize, 1, 2, 3, 7, 8, 15, 16, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257,
+            511, 512, 513, 1023, 1024, 1199, 1200,
+        ];
+
+        for &length in &lengths {
+            let slice = &input[..length];
+            let expected: [u8; 32] = RefBlake2b256::digest(slice).into();
+            assert_eq!(
+                Blake2b256::digest(slice),
+                expected,
+                "Blake2b256 mismatch at input length {length}"
+            );
+
+            // Also test streaming updates for a couple chunk sizes.
+            for &chunk_size in &[1usize, 7, 31, 32, 63, 64, 65, 128] {
+                let mut hasher = Blake2b256::new();
+                let mut offset = 0;
+                while offset < length {
+                    let end = core::cmp::min(offset + chunk_size, length);
+                    hasher.update(&slice[offset..end]);
+                    offset = end;
+                }
+                assert_eq!(
+                    hasher.finalize(),
+                    expected,
+                    "Blake2b256 streaming mismatch: length={length}, chunk_size={chunk_size}"
                 );
             }
         }
