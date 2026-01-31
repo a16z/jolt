@@ -160,6 +160,7 @@ impl<T> UnwrapOrSpoilProof<T> for Result<T, Secp256k1Error> {
 pub enum Secp256k1Error {
     InvalidFqElement, // input array does not correspond to a valid Fq element
     InvalidFrElement, // input array does not correspond to a valid Fr element
+    NotOnCurve,       // point is not on the secp256k1 curve
     QAtInfinity,      // public key is point at infinity
     ROrSZero,         // one of the signature components is zero
     RxMismatch,       // computed R.x does not match r
@@ -555,7 +556,7 @@ impl Secp256k1Point {
         if p.is_on_curve() {
             Ok(p)
         } else {
-            Err(Secp256k1Error::QAtInfinity)
+            Err(Secp256k1Error::NotOnCurve)
         }
     }
     /// creates a new Secp256k1Point from two Secp256k1Fq elements
