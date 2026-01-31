@@ -6,6 +6,7 @@
 //!
 //! Both come from the same ELF file and are conceptually "the program".
 
+use std::any::TypeId;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
@@ -17,15 +18,22 @@ use rayon::prelude::*;
 use tracer::instruction::{Cycle, Instruction};
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::dory::{DoryContext, DoryGlobals, DoryLayout};
+use crate::poly::commitment::dory::{
+    ArkG1, ArkGT, ArkworksProverSetup, DoryCommitmentScheme, DoryContext, DoryGlobals, DoryLayout,
+    BN254,
+};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::zkvm::bytecode::chunks::{
-    build_bytecode_chunks, build_bytecode_chunks_for_main_matrix, total_lanes,
+    build_bytecode_chunks, build_bytecode_chunks_for_main_matrix, for_each_active_lane_value,
+    total_lanes, ActiveLaneValue,
 };
 pub use crate::zkvm::bytecode::BytecodePCMapper;
 use crate::zkvm::bytecode::BytecodePreprocessing;
+use ark_bn254::{Fr, G1Projective};
+use ark_ff::{One, Zero};
+use dory::primitives::arithmetic::PairingCurve;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ProgramPreprocessing - Full program data (prover + full-mode verifier)
@@ -273,63 +281,84 @@ impl<PCS: CommitmentScheme> TrustedProgramCommitments<PCS> {
         // Get layout before context initialization. Layout affects coefficient indexing.
         let layout = DoryGlobals::get_layout();
 
-        // Layout-conditional bytecode commitment generation:
-        // - CycleMajor: Use main-matrix dimensions (k_chunk * T) for correct Stage 8 embedding
-        // - AddressMajor: Use bytecode dimensions (k_chunk * bytecode_len), which works correctly
+        // Bytecode commitments: prefer a streaming/sparse Tier-1 commitment path for Dory.
         //
-        // Note: The context guard must remain alive through the commit operation, so we
-        // initialize and build/commit together for each layout branch.
-        //
-        // bytecode_T: The T value used for bytecode coefficient indexing (needed for Stage 8 VMP).
-        let (bytecode_commitments, bytecode_hints, bytecode_num_columns, bytecode_T) = match layout
+        // This avoids materializing dense coefficient vectors of length (k_chunk * T) per chunk.
+        // For non-Dory PCS implementations, we fall back to the dense polynomial commit path.
+        let (bytecode_commitments, bytecode_hints, bytecode_num_columns, bytecode_T) = if TypeId::of::<
+            PCS,
+        >(
+        )
+            == TypeId::of::<DoryCommitmentScheme>()
         {
-            DoryLayout::CycleMajor => {
-                // For CycleMajor, commit bytecode with main-matrix dimensions.
-                // This ensures row-commitment hints match main matrix structure when T > bytecode_len.
-                let _guard = DoryGlobals::initialize_bytecode_context_with_main_dimensions(
-                    k_chunk,
-                    max_trace_len,
-                    log_k_chunk,
-                );
-                let _ctx = DoryGlobals::with_context(DoryContext::Bytecode);
-                let num_columns = DoryGlobals::get_num_columns();
-
-                let chunks = build_bytecode_chunks_for_main_matrix_from_program::<PCS::Field>(
+            // SAFETY: guarded by the TypeId check above. In this monomorphization, PCS is
+            // DoryCommitmentScheme, so ProverSetup/Commitment/Hint types match exactly.
+            let dory_setup: &ArkworksProverSetup =
+                unsafe { &*(generators as *const PCS::ProverSetup as *const ArkworksProverSetup) };
+            let (commitments, hints, num_columns, bytecode_t) =
+                derive_bytecode_commitments_sparse_dory(
                     program,
+                    dory_setup,
                     log_k_chunk,
                     max_trace_len,
                     layout,
                 );
-                debug_assert_eq!(chunks.len(), num_chunks);
+            let commitments: Vec<PCS::Commitment> = unsafe { std::mem::transmute(commitments) };
+            let hints: Vec<PCS::OpeningProofHint> = unsafe { std::mem::transmute(hints) };
+            (commitments, hints, num_columns, bytecode_t)
+        } else {
+            // Layout-conditional bytecode commitment generation (dense fallback):
+            // - CycleMajor: Use main-matrix dimensions (k_chunk * T) for correct Stage 8 embedding
+            // - AddressMajor: Use bytecode dimensions (k_chunk * bytecode_len), which works correctly
+            //
+            // Note: The context guard must remain alive through the commit operation, so we
+            // initialize and build/commit together for each layout branch.
+            //
+            // bytecode_T: The T value used for bytecode coefficient indexing (needed for Stage 8 VMP).
+            match layout {
+                DoryLayout::CycleMajor => {
+                    let _guard = DoryGlobals::initialize_bytecode_context_with_main_dimensions(
+                        k_chunk,
+                        max_trace_len,
+                        log_k_chunk,
+                    );
+                    let _ctx = DoryGlobals::with_context(DoryContext::Bytecode);
+                    let num_columns = DoryGlobals::get_num_columns();
 
-                let (commitments, hints): (Vec<_>, Vec<_>) = chunks
-                    .par_iter()
-                    .map(|poly| PCS::commit(poly, generators))
-                    .unzip();
-                // For CycleMajor, bytecode_T = max_trace_len (main-matrix dimensions)
-                (commitments, hints, num_columns, max_trace_len)
-            }
-            DoryLayout::AddressMajor => {
-                // For AddressMajor, the existing approach works correctly.
-                // Bytecode index = cycle * k_chunk + lane, same as main for cycle < bytecode_len.
-                let _guard = DoryGlobals::initialize_bytecode_context_for_main_sigma(
-                    k_chunk,
-                    bytecode_len,
-                    log_k_chunk,
-                    log_t,
-                );
-                let _ctx = DoryGlobals::with_context(DoryContext::Bytecode);
-                let num_columns = DoryGlobals::get_num_columns();
+                    let chunks = build_bytecode_chunks_for_main_matrix_from_program::<PCS::Field>(
+                        program,
+                        log_k_chunk,
+                        max_trace_len,
+                        layout,
+                    );
+                    debug_assert_eq!(chunks.len(), num_chunks);
 
-                let chunks = build_bytecode_chunks_from_program::<PCS::Field>(program, log_k_chunk);
-                debug_assert_eq!(chunks.len(), num_chunks);
+                    let (commitments, hints): (Vec<_>, Vec<_>) = chunks
+                        .par_iter()
+                        .map(|poly| PCS::commit(poly, generators))
+                        .unzip();
+                    (commitments, hints, num_columns, max_trace_len)
+                }
+                DoryLayout::AddressMajor => {
+                    let _guard = DoryGlobals::initialize_bytecode_context_for_main_sigma(
+                        k_chunk,
+                        bytecode_len,
+                        log_k_chunk,
+                        log_t,
+                    );
+                    let _ctx = DoryGlobals::with_context(DoryContext::Bytecode);
+                    let num_columns = DoryGlobals::get_num_columns();
 
-                let (commitments, hints): (Vec<_>, Vec<_>) = chunks
-                    .par_iter()
-                    .map(|poly| PCS::commit(poly, generators))
-                    .unzip();
-                // For AddressMajor, bytecode_T = bytecode_len (bytecode dimensions)
-                (commitments, hints, num_columns, bytecode_len)
+                    let chunks =
+                        build_bytecode_chunks_from_program::<PCS::Field>(program, log_k_chunk);
+                    debug_assert_eq!(chunks.len(), num_chunks);
+
+                    let (commitments, hints): (Vec<_>, Vec<_>) = chunks
+                        .par_iter()
+                        .map(|poly| PCS::commit(poly, generators))
+                        .unzip();
+                    (commitments, hints, num_columns, bytecode_len)
+                }
             }
         };
 
@@ -357,9 +386,8 @@ impl<PCS: CommitmentScheme> TrustedProgramCommitments<PCS> {
         let program_image_num_columns = DoryGlobals::get_num_columns();
 
         // Build program image polynomial with padded size
-        let program_image_poly =
-            build_program_image_polynomial_padded::<PCS::Field>(program, program_image_num_words);
-        let program_image_mle = MultilinearPolynomial::from(program_image_poly);
+        let program_image_mle: MultilinearPolynomial<PCS::Field> =
+            build_program_image_polynomial_padded(program, program_image_num_words);
         let (program_image_commitment, program_image_hint) =
             PCS::commit(&program_image_mle, generators);
 
@@ -386,7 +414,7 @@ impl<PCS: CommitmentScheme> TrustedProgramCommitments<PCS> {
     /// Needed for Stage 8 opening proof generation.
     pub fn build_program_image_polynomial<F: crate::field::JoltField>(
         program: &ProgramPreprocessing,
-    ) -> Vec<F> {
+    ) -> MultilinearPolynomial<F> {
         build_program_image_polynomial::<F>(program)
     }
 
@@ -397,7 +425,7 @@ impl<PCS: CommitmentScheme> TrustedProgramCommitments<PCS> {
     pub fn build_program_image_polynomial_padded<F: crate::field::JoltField>(
         program: &ProgramPreprocessing,
         padded_len: usize,
-    ) -> Vec<F> {
+    ) -> MultilinearPolynomial<F> {
         build_program_image_polynomial_padded::<F>(program, padded_len)
     }
 }
@@ -405,23 +433,130 @@ impl<PCS: CommitmentScheme> TrustedProgramCommitments<PCS> {
 /// Build program-image polynomial from ProgramPreprocessing.
 fn build_program_image_polynomial<F: crate::field::JoltField>(
     program: &ProgramPreprocessing,
-) -> Vec<F> {
+) -> MultilinearPolynomial<F> {
     let padded_len = program.program_image_len_words_padded();
     build_program_image_polynomial_padded::<F>(program, padded_len)
 }
 
 /// Build program-image polynomial from ProgramPreprocessing with explicit padded size.
+///
+/// Implementation note: we store program-image coefficients as `u64` small scalars (U64Scalars)
+/// to avoid eagerly converting the entire image to field elements.
 fn build_program_image_polynomial_padded<F: crate::field::JoltField>(
     program: &ProgramPreprocessing,
     padded_len: usize,
-) -> Vec<F> {
+) -> MultilinearPolynomial<F> {
     debug_assert!(padded_len.is_power_of_two());
     debug_assert!(padded_len >= program.program_image_words.len());
-    let mut poly = vec![F::zero(); padded_len];
+    let mut coeffs = vec![0u64; padded_len];
     for (i, &word) in program.program_image_words.iter().enumerate() {
-        poly[i] = F::from_u64(word);
+        coeffs[i] = word;
     }
-    poly
+    MultilinearPolynomial::from(coeffs)
+}
+
+/// Streaming/sparse bytecode commitments for Dory.
+///
+/// Computes tier-1 row commitments directly from the instruction stream by only touching
+/// nonzero lane values (via `for_each_active_lane_value`). This avoids materializing the
+/// dense coefficient vectors for each bytecode chunk polynomial.
+///
+/// Returns:
+/// - commitments: one per bytecode chunk
+/// - hints: tier-1 row commitments per chunk (Dory opening proof hint)
+/// - num_columns: bytecode context matrix width
+/// - bytecode_T: the T used for coefficient indexing (needed later in Stage 8 VMP)
+fn derive_bytecode_commitments_sparse_dory(
+    program: &ProgramPreprocessing,
+    setup: &ArkworksProverSetup,
+    log_k_chunk: usize,
+    max_trace_len: usize,
+    layout: DoryLayout,
+) -> (Vec<ArkGT>, Vec<Vec<ArkG1>>, usize, usize) {
+    let k_chunk = 1usize << log_k_chunk;
+    let bytecode_len = program.bytecode_len();
+    let num_chunks = total_lanes().div_ceil(k_chunk);
+    let log_t = max_trace_len.log_2();
+
+    // Initialize Bytecode context with dimensions matching the committed-bytecode strategy.
+    let (num_columns, bytecode_T) = match layout {
+        DoryLayout::CycleMajor => {
+            let _guard = DoryGlobals::initialize_bytecode_context_with_main_dimensions(
+                k_chunk,
+                max_trace_len,
+                log_k_chunk,
+            );
+            let _ctx = DoryGlobals::with_context(DoryContext::Bytecode);
+            (DoryGlobals::get_num_columns(), max_trace_len)
+        }
+        DoryLayout::AddressMajor => {
+            let _guard = DoryGlobals::initialize_bytecode_context_for_main_sigma(
+                k_chunk,
+                bytecode_len,
+                log_k_chunk,
+                log_t,
+            );
+            let _ctx = DoryGlobals::with_context(DoryContext::Bytecode);
+            (DoryGlobals::get_num_columns(), bytecode_len)
+        }
+    };
+
+    let total_size = k_chunk * bytecode_T;
+    debug_assert!(
+        total_size % num_columns == 0,
+        "expected (k_chunk*bytecode_T) divisible by num_columns"
+    );
+    let num_rows = total_size / num_columns;
+
+    // Build commitments per chunk.
+    // NOTE: this is O(num_chunks * bytecode_len * active_lanes_per_instr) which is intended to be
+    // used with k_chunk=256 (num_chunks ~ 1) for large instances.
+    let (commitments, hints): (Vec<_>, Vec<_>) = (0..num_chunks)
+        .map(|chunk_idx| {
+            let lane_start = chunk_idx * k_chunk;
+            let lane_end = lane_start + k_chunk;
+
+            let mut row_acc: Vec<G1Projective> = vec![G1Projective::zero(); num_rows];
+
+            for (cycle, instr) in program.instructions[..bytecode_len].iter().enumerate() {
+                for_each_active_lane_value::<Fr>(instr, |global_lane, lane_val| {
+                    if global_lane < lane_start || global_lane >= lane_end {
+                        return;
+                    }
+                    let lane = global_lane - lane_start; // address within this chunk
+
+                    let global_index =
+                        layout.address_cycle_to_index(lane, cycle, k_chunk, bytecode_T);
+                    let row_idx = global_index / num_columns;
+                    let col_idx = global_index % num_columns;
+                    debug_assert!(row_idx < row_acc.len());
+
+                    let scalar = match lane_val {
+                        ActiveLaneValue::One => Fr::one(),
+                        ActiveLaneValue::Scalar(v) => v,
+                    };
+                    if scalar.is_zero() {
+                        return;
+                    }
+
+                    let base = setup.g1_vec[col_idx].0;
+                    if scalar.is_one() {
+                        row_acc[row_idx] += base;
+                    } else {
+                        row_acc[row_idx] += base * scalar;
+                    }
+                });
+            }
+
+            let row_commitments: Vec<ArkG1> = row_acc.into_iter().map(ArkG1).collect();
+            let g2_bases = &setup.g2_vec[..row_commitments.len()];
+            let tier2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
+
+            (tier2, row_commitments)
+        })
+        .unzip();
+
+    (commitments, hints, num_columns, bytecode_T)
 }
 
 /// Build bytecode chunks from ProgramPreprocessing.

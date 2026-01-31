@@ -197,31 +197,41 @@ impl CommitmentScheme for DoryCommitmentScheme {
         coeffs: &[Self::Field],
     ) -> Self::OpeningProofHint {
         let num_rows = DoryGlobals::get_max_num_rows();
-
         let mut rlc_hint = vec![ArkG1(G1Projective::zero()); num_rows];
-        for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
-            hint.resize(num_rows, ArkG1(G1Projective::zero()));
 
-            let row_commitments: &mut [G1Projective] = unsafe {
-                std::slice::from_raw_parts_mut(hint.as_mut_ptr() as *mut G1Projective, hint.len())
+        // SAFETY: ArkG1 is repr(transparent) over G1Projective.
+        let rlc_row_commitments: &mut [G1Projective] = unsafe {
+            std::slice::from_raw_parts_mut(
+                rlc_hint.as_mut_ptr() as *mut G1Projective,
+                rlc_hint.len(),
+            )
+        };
+
+        // Combine each hint into the accumulator without forcing all hints to length `num_rows`.
+        // This avoids O(num_rows) work per polynomial when the hint is much smaller (e.g. program image).
+        for (coeff, hint) in coeffs.iter().zip(hints.into_iter()) {
+            if coeff.is_zero() {
+                continue;
+            }
+            let len = hint.len().min(num_rows);
+            if len == 0 {
+                continue;
+            }
+
+            // SAFETY: ArkG1 is repr(transparent) over G1Projective.
+            let hint_rows: &[G1Projective] = unsafe {
+                std::slice::from_raw_parts(hint.as_ptr() as *const G1Projective, hint.len())
             };
 
-            let rlc_row_commitments: &[G1Projective] = unsafe {
-                std::slice::from_raw_parts(rlc_hint.as_ptr() as *const G1Projective, rlc_hint.len())
-            };
-
-            let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
+            let _span = trace_span!("vector_add_scalar_mul_g1_online");
             let _enter = _span.enter();
 
-            // Scales the row commitments for the current polynomial by
-            // its coefficient
-            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
-                row_commitments,
+            // Accumulate: rlc[i] += coeff * hint[i] for i in [0..len)
+            jolt_optimizations::vector_add_scalar_mul_g1_online(
+                &mut rlc_row_commitments[..len],
+                &hint_rows[..len],
                 *coeff,
-                rlc_row_commitments,
             );
-
-            let _ = std::mem::replace(&mut rlc_hint, hint);
         }
 
         rlc_hint

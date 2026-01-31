@@ -584,7 +584,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 {
                     // Sanity: re-commit the program image polynomial and ensure it matches the trusted commitment.
                     // Must use the same padded size and context as TrustedProgramCommitments::derive().
-                    let poly =
+                    let mle =
                         TrustedProgramCommitments::<PCS>::build_program_image_polynomial_padded::<F>(
                             &self.preprocessing.program,
                             trusted.program_image_num_words,
@@ -612,7 +612,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                         main_num_columns,
                     );
                     let _ctx = DoryGlobals::with_context(DoryContext::ProgramImage);
-                    let mle = MultilinearPolynomial::from(poly);
                     let (recommit, _hint) = PCS::commit(&mle, &self.preprocessing.generators);
                     assert_eq!(
                         recommit, trusted.program_image_commitment,
@@ -1904,14 +1903,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 .as_ref()
                 .expect("program commitments missing in committed mode");
             // Use the padded size from the trusted commitments (may be larger than program's own padded size)
-            let program_image_poly =
+            advice_polys.insert(
+                CommittedPolynomial::ProgramImageInit,
                 TrustedProgramCommitments::<PCS>::build_program_image_polynomial_padded::<F>(
                     &self.preprocessing.program,
                     trusted.program_image_num_words,
-                );
-            advice_polys.insert(
-                CommittedPolynomial::ProgramImageInit,
-                MultilinearPolynomial::from(program_image_poly),
+                ),
             );
         }
 
