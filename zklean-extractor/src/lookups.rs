@@ -89,7 +89,7 @@ impl<const XLEN: usize> ZkLeanLookupTables<XLEN> {
     }
 
     pub fn zklean_imports(&self) -> Vec<String> {
-        vec![String::from("ZkLean")]
+        vec![String::from("ZKLean")]
     }
 }
 

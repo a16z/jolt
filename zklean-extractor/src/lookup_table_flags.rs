@@ -182,7 +182,7 @@ impl<const XLEN: usize> AsModule for ZkLeanLookupTableFlags<XLEN> {
         Ok(Module {
             name: String::from("LookupTableFlags"),
             imports: vec![
-                String::from("ZkLean"),
+                String::from("ZKLean"),
                 String::from("Jolt.Sumchecks"),
                 String::from("Jolt.LookupTables"),
             ],

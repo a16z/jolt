@@ -434,7 +434,7 @@ impl<F: JoltField> AsModule for ZkLeanSumchecks<F> {
 
         Ok(Module {
             name: String::from("Sumchecks"),
-            imports: vec![String::from("ZkLean"), String::from("Jolt.R1CS")],
+            imports: vec![String::from("ZKLean"), String::from("Jolt.R1CS")],
             contents,
         })
     }
