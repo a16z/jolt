@@ -6,7 +6,7 @@ To prove the correctness of these lookups, we use the [Shout](../twist-shout.md)
 
 One distinguishing feature of the bytecode Shout instance is that we have multiple instances of the read-checking and $\widetilde{\textsf{raf}}$-evaluation sumchecks.
 Intuitively, the bytecode serves as the "ground truth" of what's being executed, so one would expect many virtual polynomial claims to eventually lead back to the bytecode.
-And this holds in practice –– in the Jolt sumcheck [DAG](./architecture/architecture.md##sumchecks-as-nodes) diagram, we see that there are five stages of read-checking claims pointing to the bytecode read-checking node, and two RAF (read-at-frequency) evaluation claims folded into stages 1 and 3.
+And this holds in practice –– in the Jolt sumcheck [DAG](./architecture/architecture.md##sumchecks-as-nodes) diagram, we see that there are five stages of read-checking claims pointing to the bytecode read-checking node, and two $\widetilde{\textsf{raf}}$ evaluation claims folded into stages 1 and 3.
 
 Each stage has its own unique opening point, so having in-edges of different colors implies that multiple instances of that sumcheck must be run in [parallel](../optimizations/batched-sumcheck.md) to prove the different claims.
 
@@ -27,9 +27,18 @@ We start from some ELF file, compiled from the guest program. For each instructi
 
 Then, we compute a [Reed-Solomon fingerprint](https://publish.obsidian.md/matteo/3.+Permanent+notes/Reed-Solomon+Fingerprinting) of some subset of the values in the tuple, depending on what $\widetilde{\textsf{rv}}$ claims are being proven. These fingerprints serve as the coefficients of the $\widetilde{\textsf{Val}}$ polynomial for that read-checking instance.
 
-## Multi-stage Architecture
+## $\widetilde{\textsf{raf}}$-evaluation
 
-The bytecode read-checking sumcheck combines five stages of claims into a single batched sumcheck, using two levels of random linear combinations (RLCs):
+$\widetilde{\textsf{raf}}$-evaluation claims for the program counter are folded into the multi-stage read-checking sumcheck rather than being handled separately. There are two $\widetilde{\textsf{raf}}$ claims:
+
+- **raf claim 1**: From the Spartan "outer" sumcheck, folded into Stage 1 with weight $\gamma^5$
+- **raf claim 3**: From the Spartan "shift" sumcheck, folded into Stage 3 with weight $\gamma^6$
+
+The $\widetilde{\textsf{raf}}$ polynomial in the context of bytecode is the expanded program counter ($\widetilde{\textsf{PC}}$), which maps each cycle to the bytecode index being executed. This is distinct from $\widetilde{\textsf{UnexpandedPC}}$, which is the ELF/memory address.
+
+## Batching read-checking and $\widetilde{\textsf{raf}}$-evaluation together
+
+The bytecode read-checking sumcheck combines claims from five different sumcheck [stages](./architecture.md) into a single batched sumcheck, using two levels of random linear combinations (RLCs):
 
 1. **Stage-level RLC (using $\gamma$)**: Combines the five stages together
 2. **Per-stage RLC (using $\beta_s$)**: Combines multiple claims within each stage
@@ -42,7 +51,7 @@ The five stages are:
 - **Stage 4**: Register read-write checking claims (register addresses)
 - **Stage 5**: Register value evaluation and instruction lookup claims (register addresses, lookup table flags)
 
-Additionally, RAF (read-at-frequency) claims for the program counter are folded into stages 1 and 3 using the identity polynomial.
+Additionally, bytecode $\widetilde{\textsf{raf}}$ claims for the program counter are folded into stages 1 and 3. 
 
 ### Combined Sumcheck Expression
 
@@ -57,15 +66,15 @@ where:
 - $j$ ranges over cycle indices (time dimension)
 - $\widetilde{\textsf{ra}}(k, j)$ is the read access polynomial indicating cycle $j$ accesses bytecode row $k$
 - $\widetilde{\textsf{Val}}_s(k)$ is the stage-specific value polynomial encoding instruction data
-- $\widetilde{\textsf{Int}}(k) = 1$ for all $k$ (identity polynomial, used for RAF claims)
+- $\widetilde{\textsf{Int}}(k)$ is the identity polynomial that converts a bytecode index from binary form $k \in \{0, 1\}^K$ to the corresponding field element $\widetilde{\textsf{Int}}(k) \in \mathbb{F}$ (used for $\widetilde{\textsf{raf}}$ claims)
 - $\gamma$ is the stage-folding challenge
 - $\beta_s$ challenges are used within each $\widetilde{\textsf{Val}}_s(k)$ to combine multiple sub-claims
 
-Note that the RAF claims use the $\widetilde{\textsf{PC}}$ virtual polynomial (the expanded program counter), not $\widetilde{\textsf{UnexpandedPC}}$.
+Note that the $\widetilde{\textsf{raf}}$ claims treat the *expanded* program counter as $\widetilde{\textsf{ra}}$, not `UnexpandedPC`.
 
-### Stage Value Polynomials
+### Stage $\widetilde{\textsf{Val}}$ Polynomials
 
-Each stage has its own $\widetilde{\textsf{Val}}_s(k)$ polynomial that encodes different instruction properties. Using per-stage challenges $\beta_s$, these are defined as:
+Each of the five claims has a corresponding $\widetilde{\textsf{Val}}_s(k)$ polynomial that encodes different instruction properties. Using per-stage challenges $\beta_s$, these are defined as:
 
 **Stage 1** (Spartan outer sumcheck):
 $$
@@ -98,9 +107,8 @@ $$
 
 where:
 - $\texttt{unexpanded\_pc}(k)$ is the instruction's ELF/memory address (not the bytecode index $k$)
-- $\widetilde{\textsf{eq}}(\texttt{rd}[k], r_\text{register})$ equals 1 if instruction $k$ has destination register $\texttt{rd}[k] = r_\text{register}$, and 0 otherwise
-- Similarly for $\texttt{rs1}$ and $\texttt{rs2}$
-- Various boolean flags indicate instruction properties (jump, branch, noop, etc.)
+- $\widetilde{\textsf{eq}}(\texttt{rd}[k], r_\text{register})$ equals 1 if instruction $k$ has destination register $\texttt{rd}[k] = r_\text{register}$, and 0 otherwise (similarly for $\texttt{rs1}$ and $\texttt{rs2}$)
+- Various boolean [flags](#flags) indicate instruction properties
 
 ### Instruction address
 
@@ -122,19 +130,6 @@ There are two types of Boolean flags used in Jolt:
 - [Lookup table flags](./instruction_execution.md#multiplexing-between-instructions), used in the instruction execution Shout
 
 The associated flags for a given instruction in the bytecode can be computed a priori (i.e. in preprocessing), so any claims about these flags arising from Spartan or instruction execution Shout are also proven using bytecode read-checking. Circuit flags appear in Stages 1, 2, and 3, while lookup table flags appear in Stage 5.
-
-## RAF-evaluation
-
-RAF (read-at-frequency) evaluation claims for the program counter are folded into the multi-stage read-checking sumcheck rather than being handled separately. There are two RAF claims:
-
-- **RAF claim 1**: From the Spartan "outer" sumcheck, folded into Stage 1 with weight $\gamma^5$
-- **RAF claim 3**: From the Spartan "shift" sumcheck, folded into Stage 3 with weight $\gamma^6$
-
-The RAF polynomial in the context of bytecode is the expanded program counter ($\widetilde{\textsf{PC}}$), which maps each cycle to the bytecode index being executed. This is distinct from $\widetilde{\textsf{UnexpandedPC}}$, which is the ELF/memory address.
-
-These RAF claims are proven by using the identity polynomial $\widetilde{\textsf{Int}}(k) = 1$ for all $k$, which when multiplied by the appropriate $\widetilde{\textsf{eq}}$ and $\widetilde{\textsf{ra}}$ polynomials, sums to the number of times each bytecode row is accessed—exactly what the RAF evaluation computes.
-
-Note the "offset trick" for Stage 3's RAF weight: the prover uses $\gamma^4 \cdot \texttt{raf\_shift\_claim}$ within the Stage 3 per-stage claim, then the stage itself is folded with outer factor $\gamma^2$, yielding the overall weight $\gamma^6$.
 
 ## Sumcheck Structure and Binding Order
 
@@ -158,7 +153,7 @@ In the final $\log T$ rounds, cycle variables are bound, also in **low-to-high**
 2. Each stage uses a `GruenSplitEqPolynomial` to efficiently handle the per-stage $\widetilde{\textsf{eq}}_s$ evaluations
 3. The bound $\widetilde{\textsf{Val}}_s$ and $\widetilde{\textsf{Int}}$ values from Phase 1 are used as coefficients
 
-The sumcheck univariate in this phase has degree $d + 1$, which is cubic (degree 3) when $d = 2$.
+The sumcheck univariate in this phase has degree $d + 1$.
 
 The chunking parameter $d$ is chosen based on the bytecode size to balance prover time and proof size. Larger $d$ reduces the number of committed RA polynomials but increases the degree (and thus the cost per round) of the sumcheck.
 
