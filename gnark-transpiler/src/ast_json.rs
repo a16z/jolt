@@ -223,66 +223,6 @@ fn collect_nodes_from_root(root_id: usize, max_id: &mut usize) {
     }
 }
 
-/// Export Stage1TranscriptVerificationResult to JSON
-pub fn export_stage1_ast(
-    result: &jolt_core::zkvm::stage1_only_verifier::Stage1TranscriptVerificationResult<
-        zklean_extractor::mle_ast::MleAst,
-    >,
-    trace_length: usize,
-) -> Stage1AstJson {
-    use std::collections::BTreeSet;
-
-    // Find the maximum node ID we need
-    let mut max_id = 0usize;
-    collect_nodes_from_root(result.final_claim.root(), &mut max_id);
-    collect_nodes_from_root(result.power_sum_check.root(), &mut max_id);
-    for check in &result.sumcheck_consistency_checks {
-        collect_nodes_from_root(check.root(), &mut max_id);
-    }
-
-    // Export all nodes up to max_id
-    let nodes: Vec<NodeJson> = (0..=max_id).map(|id| get_node(id).into()).collect();
-
-    // Collect variables
-    let mut vars = BTreeSet::new();
-    collect_vars_from_node(result.final_claim.root(), &mut vars);
-    collect_vars_from_node(result.power_sum_check.root(), &mut vars);
-    for check in &result.sumcheck_consistency_checks {
-        collect_vars_from_node(check.root(), &mut vars);
-    }
-
-    // Build constraints
-    let mut constraints = vec![ConstraintJson {
-        name: "power_sum_check".to_string(),
-        description: "Sum over symmetric domain must equal 0".to_string(),
-        root_node_id: result.power_sum_check.root(),
-    }];
-
-    for (i, check) in result.sumcheck_consistency_checks.iter().enumerate() {
-        constraints.push(ConstraintJson {
-            name: format!("consistency_check_{}", i),
-            description: format!("Sumcheck round {}: poly(0) + poly(1) - claim == 0", i),
-            root_node_id: check.root(),
-        });
-    }
-
-    constraints.push(ConstraintJson {
-        name: "final_claim".to_string(),
-        description: "Final claim must match expected value".to_string(),
-        root_node_id: result.final_claim.root(),
-    });
-
-    let num_rounds = (trace_length as f64).log2() as usize;
-
-    Stage1AstJson {
-        nodes,
-        constraints,
-        variables: vars.into_iter().collect(),
-        trace_length,
-        num_rounds,
-    }
-}
-
 fn collect_vars_from_node(node_id: usize, vars: &mut std::collections::BTreeSet<u16>) {
     let node = get_node(node_id);
     match node {
@@ -486,12 +426,3 @@ impl Stage1AstJson {
     }
 }
 
-/// Alias for export_stage1_ast (kept for backwards compatibility)
-pub fn export_stage1_poseidon_ast(
-    result: &jolt_core::zkvm::stage1_only_verifier::Stage1TranscriptVerificationResult<
-        zklean_extractor::mle_ast::MleAst,
-    >,
-    trace_length: usize,
-) -> Stage1AstJson {
-    export_stage1_ast(result, trace_length)
-}
