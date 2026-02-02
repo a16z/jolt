@@ -12,7 +12,7 @@ In order to reduce all of the polynomial evaluation claims into a single opening
 
 ### Layer 1
 
-All of the polynomials in Jolt fall into one of two categerories: **one-hot** polynomials (the $\widetilde{\textsf{ra}$ and $\widetilde{\textsf{wa}$ arising in [Twist/Shout](../twist-shout.md)), and **dense** polynomials (we use this to mean anything that's not one-hot).
+All of the polynomials in Jolt fall into one of two categerories: **one-hot** polynomials (the $\widetilde{\textsf{ra}}$ and $\widetilde{\textsf{wa}}$ arising in [Twist/Shout](../twist-shout.md)), and **dense** polynomials (we use this to mean anything that's not one-hot).
 
 For *dense* polynomials evaluated at the same point, we apply the [Multiple polynomials, same point](../optimizations/batched-openings.md#multiple-polynomials-same-point) subprotocol to reduce them to a single dense polynomial evaluated at that point.
 
