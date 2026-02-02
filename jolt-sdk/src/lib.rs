@@ -10,15 +10,15 @@ pub const CUSTOM_OPCODE: u32 = 0x5B; // Custom instructions opcode
 #[doc(hidden)]
 pub const FUNCT3_VIRTUAL_ASSERT_EQ: u32 = 0b001; // VirtualAssertEQ funct3
 #[doc(hidden)]
-pub const FUNCT3_ADVICE_SB: u32 = 0b010; // Store byte from advice tape
+pub const FUNCT3_ADVICE_LB: u32 = 0b010; // Load byte from advice tape
 #[doc(hidden)]
-pub const FUNCT3_ADVICE_SH: u32 = 0b011; // Store halfword from advice tape
+pub const FUNCT3_ADVICE_LH: u32 = 0b011; // Load halfword from advice tape
 #[doc(hidden)]
-pub const FUNCT3_ADVICE_SW: u32 = 0b100; // Store word from advice tape
+pub const FUNCT3_ADVICE_LW: u32 = 0b100; // Load word from advice tape
 #[doc(hidden)]
-pub const FUNCT3_ADVICE_SD: u32 = 0b101; // Store doubleword from advice tape
+pub const FUNCT3_ADVICE_LD: u32 = 0b101; // Load doubleword from advice tape
 #[doc(hidden)]
-pub const FUNCT3_ADVICE_LEN: u32 = 0b110; // Get remaining bytes in advice tape
+pub const FUNCT3_ADVICE_LEN: u32 = 0b110; // Get number of remaining bytes in advice tape
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub mod host_utils;
@@ -202,47 +202,67 @@ impl AdviceReader {
     }
 }
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 impl AdviceReader {
-    // Read a single byte from the advice tape into the provided pointer.
-    pub unsafe fn read_sb(&mut self, ptr: *mut u8) {
+    // Load a single byte from the advice tape and return it
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    pub unsafe fn read_lb(&mut self) -> u8 {
+        let x;
         core::arch::asm!(
-            ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+            ".insn i {opcode}, {funct3}, {rd}, x0, 8",
             opcode = const CUSTOM_OPCODE,
-            funct3 = const FUNCT3_ADVICE_SB,
-            rs1 = in(reg) ptr,
+            funct3 = const FUNCT3_ADVICE_LB,
+            rd = out(reg) x,
             options(nostack)
         );
+        x
     }
-    // Read a halfword (2 bytes) from the advice tape into the provided pointer.
-    pub unsafe fn read_sh(&mut self, ptr: *mut u16) {
+    // Load a halfword (2 bytes) from the advice tape and return it
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    pub unsafe fn read_lh(&mut self) -> u16 {
+        let x;
         core::arch::asm!(
-            ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+            ".insn i {opcode}, {funct3}, {rd}, x0, 8",
             opcode = const CUSTOM_OPCODE,
-            funct3 = const FUNCT3_ADVICE_SH,
-            rs1 = in(reg) ptr,
+            funct3 = const FUNCT3_ADVICE_LH,
+            rd = out(reg) x,
             options(nostack)
         );
+        x
     }
-    // Read a word (4 bytes) from the advice tape into the provided pointer
-    pub unsafe fn read_sw(&mut self, ptr: *mut u32) {
+    // Load a word (4 bytes) from the advice tape and return it
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    pub unsafe fn read_lw(&mut self) -> u32 {
+        let x;
         core::arch::asm!(
-            ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+            ".insn i {opcode}, {funct3}, {rd}, x0, 8",
             opcode = const CUSTOM_OPCODE,
-            funct3 = const FUNCT3_ADVICE_SW,
-            rs1 = in(reg) ptr,
+            funct3 = const FUNCT3_ADVICE_LW,
+            rd = out(reg) x,
             options(nostack)
         );
+        x
     }
-    // Read a doubleword (8 bytes) from the advice tape into the provided pointer
-    pub unsafe fn read_sd(&mut self, ptr: *mut u64) {
+    // Load a doubleword (8 bytes) from the advice tape and return it
+    // on 32-bit targets, this is performed via two 4-byte reads
+    #[cfg(any(target_arch = "riscv32"))]
+    pub unsafe fn read_ld(&mut self) -> u64 {
+        let low = self.read_lw() as u64;
+        let high = self.read_lw() as u64;
+        (high << 32) | low
+    }
+    // Load a doubleword (8 bytes) from the advice tape and return it
+    // on 64-bit targets, this is a single 8-byte read
+    #[cfg(any(target_arch = "riscv64"))]
+    pub unsafe fn read_ld(&mut self) -> u64 {
+        let x;
         core::arch::asm!(
-            ".insn s {opcode}, {funct3}, x0, 0({rs1})",
+            ".insn i {opcode}, {funct3}, {rd}, x0, 8",
             opcode = const CUSTOM_OPCODE,
-            funct3 = const FUNCT3_ADVICE_SD,
-            rs1 = in(reg) ptr,
+            funct3 = const FUNCT3_ADVICE_LD,
+            rd = out(reg) x,
             options(nostack)
         );
+        x
     }
 }
 
@@ -274,24 +294,31 @@ impl embedded_io::Read for AdviceReader {
         // Read up to min(buf.len(), remaining) bytes
         let bytes_to_read = core::cmp::min(buf.len(), remaining as usize);
         let dst_ptr = buf.as_mut_ptr();
+        // Read as many bytes at once as possible
         if bytes_to_read >= 8 {
             unsafe {
-                self.read_sd(dst_ptr as *mut u64);
+                // On 32-bit architectures this is effectively two 4-byte reads
+                // On 64-bit architectures this is a single 8-byte read
+                let value = self.read_ld();
+                core::ptr::write_unaligned(dst_ptr as *mut u64, value);
             }
             Ok(8)
         } else if bytes_to_read >= 4 {
             unsafe {
-                self.read_sw(dst_ptr as *mut u32);
+                let value = self.read_lw();
+                core::ptr::write_unaligned(dst_ptr as *mut u32, value);
             }
             Ok(4)
         } else if bytes_to_read >= 2 {
             unsafe {
-                self.read_sh(dst_ptr as *mut u16);
+                let value = self.read_lh();
+                core::ptr::write_unaligned(dst_ptr as *mut u16, value);
             }
             Ok(2)
         } else if bytes_to_read == 1 {
             unsafe {
-                self.read_sb(dst_ptr as *mut u8);
+                let value = self.read_lb();
+                core::ptr::write_unaligned(dst_ptr as *mut u8, value);
             }
             Ok(1)
         } else {
@@ -329,9 +356,54 @@ pub trait AdviceTapeIO: Sized + Serialize + for<'a> Deserialize<'a> {
 }
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-use core::mem::MaybeUninit;
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 use embedded_io::Write;
+
+// Implement AdviceTapeIO for primitive types
+
+impl AdviceTapeIO for u8 {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn write_to_advice_tape(&self) {
+        // write u8 to advice tape directly via ECALL
+        let mut writer = AdviceWriter::get();
+        AdviceWriter::write(&mut writer, &self.to_le_bytes()).expect("Failed to write advice");
+    }
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn new_from_advice_tape() -> Self {
+        // read u8 from advice tape directly
+        let mut reader = AdviceReader::get();
+        unsafe { reader.read_lb() }
+    }
+}
+
+impl AdviceTapeIO for u16 {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn write_to_advice_tape(&self) {
+        // write u16 to advice tape directly via ECALL
+        let mut writer = AdviceWriter::get();
+        AdviceWriter::write(&mut writer, &self.to_le_bytes()).expect("Failed to write advice");
+    }
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn new_from_advice_tape() -> Self {
+        // read u16 from advice tape directly
+        let mut reader = AdviceReader::get();
+        unsafe { reader.read_lh() }
+    }
+}
+
+impl AdviceTapeIO for u32 {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn write_to_advice_tape(&self) {
+        // write u32 to advice tape directly via ECALL
+        let mut writer = AdviceWriter::get();
+        AdviceWriter::write(&mut writer, &self.to_le_bytes()).expect("Failed to write advice");
+    }
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn new_from_advice_tape() -> Self {
+        // read u32 from advice tape directly
+        let mut reader = AdviceReader::get();
+        unsafe { reader.read_lw() }
+    }
+}
 
 impl AdviceTapeIO for u64 {
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
@@ -342,38 +414,97 @@ impl AdviceTapeIO for u64 {
     }
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     fn new_from_advice_tape() -> Self {
-        // read u64 from advice tape directly via a single ADVICE_SD instruction
+        // read u64 from advice tape directly
         let mut reader = AdviceReader::get();
-        let mut x = MaybeUninit::<u64>::uninit();
-        unsafe {
-            AdviceReader::read_sd(&mut reader, x.as_mut_ptr());
-            x.assume_init()
-        }
+        unsafe { reader.read_ld() }
     }
 }
 
-impl AdviceTapeIO for (u64, u64) {
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+// Implement AdviceTapeIO for tuples and small arrays of AdviceTapeIO types
+// The goal is to avoid Postcard's overhead for these common cases
+// TODO, potentially replace these with a macro
+
+impl<S, T> AdviceTapeIO for (S, T)
+where
+    S: AdviceTapeIO,
+    T: AdviceTapeIO,
+{
     fn write_to_advice_tape(&self) {
-        // write each u64 to advice tape directly via ECALL
-        let mut writer = AdviceWriter::get();
-        writer
-            .write(&self.0.to_le_bytes())
-            .expect("Failed to write advice");
-        writer
-            .write(&self.1.to_le_bytes())
-            .expect("Failed to write advice");
+        self.0.write_to_advice_tape();
+        self.1.write_to_advice_tape();
     }
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     fn new_from_advice_tape() -> Self {
-        // read two u64s from advice tape directly via two ADVICE_SD instructions
-        let mut reader = AdviceReader::get();
-        let mut x = MaybeUninit::<u64>::uninit();
-        let mut y = MaybeUninit::<u64>::uninit();
-        unsafe {
-            reader.read_sd(x.as_mut_ptr());
-            reader.read_sd(y.as_mut_ptr());
-            (x.assume_init(), y.assume_init())
-        }
+        (S::new_from_advice_tape(), T::new_from_advice_tape())
+    }
+}
+
+impl<S, T, U> AdviceTapeIO for (S, T, U)
+where
+    S: AdviceTapeIO,
+    T: AdviceTapeIO,
+    U: AdviceTapeIO,
+{
+    fn write_to_advice_tape(&self) {
+        self.0.write_to_advice_tape();
+        self.1.write_to_advice_tape();
+        self.2.write_to_advice_tape();
+    }
+    fn new_from_advice_tape() -> Self {
+        (
+            S::new_from_advice_tape(),
+            T::new_from_advice_tape(),
+            U::new_from_advice_tape(),
+        )
+    }
+}
+
+impl<S> AdviceTapeIO for [S; 2]
+where
+    S: AdviceTapeIO,
+{
+    fn write_to_advice_tape(&self) {
+        self[0].write_to_advice_tape();
+        self[1].write_to_advice_tape();
+    }
+    fn new_from_advice_tape() -> Self {
+        [S::new_from_advice_tape(), S::new_from_advice_tape()]
+    }
+}
+
+impl<S> AdviceTapeIO for [S; 3]
+where
+    S: AdviceTapeIO,
+{
+    fn write_to_advice_tape(&self) {
+        self[0].write_to_advice_tape();
+        self[1].write_to_advice_tape();
+        self[2].write_to_advice_tape();
+    }
+    fn new_from_advice_tape() -> Self {
+        [
+            S::new_from_advice_tape(),
+            S::new_from_advice_tape(),
+            S::new_from_advice_tape(),
+        ]
+    }
+}
+
+impl<S> AdviceTapeIO for [S; 4]
+where
+    S: AdviceTapeIO,
+{
+    fn write_to_advice_tape(&self) {
+        self[0].write_to_advice_tape();
+        self[1].write_to_advice_tape();
+        self[2].write_to_advice_tape();
+        self[3].write_to_advice_tape();
+    }
+    fn new_from_advice_tape() -> Self {
+        [
+            S::new_from_advice_tape(),
+            S::new_from_advice_tape(),
+            S::new_from_advice_tape(),
+            S::new_from_advice_tape(),
+        ]
     }
 }
