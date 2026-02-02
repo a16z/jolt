@@ -124,6 +124,6 @@ For more details on the batched opening proof subprotocol, see [Opening proof](.
 ### Managing state and data flow
 
 The `StateManager` is responsible for tracking and managing the state persisted across all the sumcheck stages in Jolt.
-In particular, it contains an `Openings` map to manage the flow of claimed evaluations –– the edges of the DAG. It's a mapping from an `OpeningId` to a claimed polynomial evaluation. As sumchecks are proven, their output claims (for both virtual and committed polynomials) are inserted into the map. Later sumchecks can then consume the virtual polynomial openings as input claims.
+In particular, it contains an `Openings` map to manage the flow of claimed evaluations –– the edges of the DAG. It's a mapping from an `OpeningId` to a claimed polynomial evaluation. As sumchecks are proven, their output claims (for both virtual and committed polynomials) are inserted into the map. Later sumchecks can then consume the virtual polynomial openings as input claims.
 
 While virtual polynomial claims are used internally and passed between sumchecks, committed polynomial claims are tracked because they must ultimately be verified via a batched [Dory](../dory.md) opening proof at the end of the protocol.
