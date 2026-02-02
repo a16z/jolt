@@ -17,6 +17,7 @@ use super::sub::SUB;
 use super::virtual_advice::VirtualAdvice;
 use super::virtual_assert_eq::VirtualAssertEQ;
 use super::virtual_assert_lte::VirtualAssertLTE;
+use super::xori::XORI;
 use super::{Cycle, Instruction, RAMWrite, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
@@ -54,13 +55,12 @@ impl RISCVTrace for SCD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let success = cpu.has_reservation(address, ReservationWidth::Doubleword);
-        let sc_result = if success { 0u64 } else { 1u64 };
 
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
-        // VirtualAdvice is at index 0
+        // VirtualAdvice is at index 0 — advise v_success (1=success, 0=failure)
         if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
-            instr.advice = sc_result;
+            instr.advice = success as u64;
         }
 
         let mut trace = trace;
@@ -74,8 +74,8 @@ impl RISCVTrace for SCD {
     /// SC.D: Store Conditional Doubleword (RV64A only)
     ///
     /// Uses VirtualAdvice to support both success and failure paths:
-    /// - Success (v_result=0): reservation must match, store rs2, rd=0
-    /// - Failure (v_result=1): no constraint on reservation, store is no-op, rd=1
+    /// - Success (v_success=1): reservation must match, store rs2, rd=0
+    /// - Failure (v_success=0): no constraint on reservation, store is no-op, rd=1
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -87,18 +87,14 @@ impl RISCVTrace for SCD {
         let v_reservation_w = allocator.reservation_w_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // 0: Prover supplies success/failure result
-        let v_result = allocator.allocate();
-        asm.emit_j::<VirtualAdvice>(*v_result, 0);
+        // 0: Prover supplies success flag (1=success, 0=failure)
+        let v_success = allocator.allocate();
+        asm.emit_j::<VirtualAdvice>(*v_success, 0);
 
-        // 1-2: Constrain v_result ∈ {0, 1}
+        // 1-2: Constrain v_success ∈ {0, 1}
         let v_one = allocator.allocate();
         asm.emit_i::<ADDI>(*v_one, 0, 1);
-        asm.emit_b::<VirtualAssertLTE>(*v_result, *v_one, 0);
-
-        // 3: v_success = 1 - v_result (1 on success, 0 on failure)
-        let v_success = allocator.allocate();
-        asm.emit_r::<SUB>(*v_success, *v_one, *v_result);
+        asm.emit_b::<VirtualAssertLTE>(*v_success, *v_one, 0);
         drop(v_one);
 
         // 4-6: Constrain: success → reservation must match address
@@ -119,16 +115,15 @@ impl RISCVTrace for SCD {
         asm.emit_r::<MUL>(*v_diff, *v_diff, *v_success);
         asm.emit_r::<ADD>(*v_diff, *v_mem, *v_diff);
         drop(v_mem);
-        drop(v_success);
 
         asm.emit_s::<SD>(self.operands.rs1, *v_diff, 0);
         drop(v_diff);
 
-        // 12-14: Clear both reservation registers, set rd = v_result
+        // 11-13: Clear both reservation registers, set rd = !v_success
         asm.emit_i::<ADDI>(v_reservation, 0, 0);
         asm.emit_i::<ADDI>(v_reservation_w, 0, 0);
-        asm.emit_i::<ADDI>(self.operands.rd, *v_result, 0);
-        drop(v_result);
+        asm.emit_i::<XORI>(self.operands.rd, *v_success, 1);
+        drop(v_success);
 
         asm.finalize()
     }
