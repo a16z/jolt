@@ -107,29 +107,16 @@ impl<const XLEN: usize> ZkLeanLookupTableFlags<XLEN> {
         writeln!(f, "{}({vars_ident} : SumcheckVars f)", indent(indent_level))?;
         writeln!(f, "{}(interleaving : Interleaving)", indent(indent_level))?;
         writeln!(f, "{}(right left : ZKExpr f)", indent(indent_level))?;
-        writeln!(f, "{}: ZKBuilder f (ZKExpr f) := do", indent(indent_level))?;
-        writeln!(f, "{}ZKBuilder.mux", indent(indent_level))?;
-        indent_level += 1;
-        writeln!(f, "{}#[", indent(indent_level))?;
+        writeln!(f, "{}: ZKBuilder f (ZKExpr f) :=", indent(indent_level))?;
+        writeln!(f, "{}mux_mles interleaving left right #[", indent(indent_level))?;
         indent_level += 1;
         for flag in self.lookup_table_flags.iter() {
-            writeln!(f, "{}(", indent(indent_level))?;
-            indent_level += 1;
-            write!(f, "{}", indent(indent_level))?;
+            write!(f, "{}(", indent(indent_level))?;
             pretty_print_opening_ref(f, vars_ident, flag.sumcheck_id, flag.polynomial_id)?;
-            writeln!(f, ",")?;
-            writeln!(
-                f,
-                "{}evalLookupTableMLE (LookupTable interleaving {}) left right",
-                indent(indent_level),
-                flag.lookup_table_ident
-            )?;
-            indent_level -= 1;
-            writeln!(f, "{}),", indent(indent_level))?;
+            writeln!(f, ", {}),", flag.lookup_table_ident)?;
         }
         indent_level -= 1;
         writeln!(f, "{}]", indent(indent_level))?;
-        indent_level -= 1;
         indent_level -= 1;
 
         writeln!(f)?;
@@ -145,9 +132,9 @@ impl<const XLEN: usize> ZkLeanLookupTableFlags<XLEN> {
         write!(f, "{}let right := ", indent(indent_level))?;
         pretty_print_opening_ref(f, vars_ident, self.right_operand.0, self.right_operand.1)?;
         writeln!(f)?;
-        writeln!(f, "{}let concated_eval <- mux_lookup_flags {vars_ident} Interleaving.Concatenated left right", indent(indent_level))?;
+        writeln!(f, "{}let concatenated_eval <- mux_lookup_flags {vars_ident} Interleaving.Concatenated left right", indent(indent_level))?;
         writeln!(f, "{}let interleaved_eval <- mux_lookup_flags {vars_ident} Interleaving.Interleaved left right", indent(indent_level))?;
-        writeln!(f, "{}let res <- ZkBuilder.mux #[", indent(indent_level))?;
+        writeln!(f, "{}let res <- mux #[", indent(indent_level))?;
         indent_level += 1;
         write!(f, "{}(", indent(indent_level))?;
         pretty_print_opening_ref(
@@ -185,6 +172,7 @@ impl<const XLEN: usize> AsModule for ZkLeanLookupTableFlags<XLEN> {
                 String::from("ZKLean"),
                 String::from("Jolt.Sumchecks"),
                 String::from("Jolt.LookupTables"),
+                String::from("Jolt.Util"),
             ],
             contents,
         })
