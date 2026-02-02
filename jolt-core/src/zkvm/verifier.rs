@@ -189,17 +189,18 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         // Append commitments to transcript
         for commitment in &self.proof.commitments {
-            self.transcript.append_serializable(commitment);
+            self.transcript
+                .append_serializable(b"commitment", commitment);
         }
         // Append untrusted advice commitment to transcript
         if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
             self.transcript
-                .append_serializable(untrusted_advice_commitment);
+                .append_serializable(b"untrusted_advice", untrusted_advice_commitment);
         }
         // Append trusted advice commitment to transcript
         if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
             self.transcript
-                .append_serializable(trusted_advice_commitment);
+                .append_serializable(b"trusted_advice", trusted_advice_commitment);
         }
 
         self.verify_stage1()?;
@@ -249,16 +250,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         )
         .context("Stage 2 univariate skip first round")?;
 
-        let spartan_product_virtual_remainder = ProductVirtualRemainderVerifier::new(
-            self.proof.trace_length,
-            uni_skip_params,
-            &self.opening_accumulator,
-        );
-        let ram_raf_evaluation = RamRafEvaluationSumcheckVerifier::new(
-            &self.program_io.memory_layout,
-            &self.one_hot_params,
-            &self.opening_accumulator,
-        );
         let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
             &self.opening_accumulator,
             &mut self.transcript,
@@ -266,22 +257,36 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.proof.trace_length,
             &self.proof.rw_config,
         );
-        let ram_output_check =
-            OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
+
+        let spartan_product_virtual_remainder = ProductVirtualRemainderVerifier::new(
+            self.proof.trace_length,
+            uni_skip_params,
+            &self.opening_accumulator,
+        );
+
         let instruction_claim_reduction = InstructionLookupsClaimReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
         );
 
+        let ram_raf_evaluation = RamRafEvaluationSumcheckVerifier::new(
+            &self.program_io.memory_layout,
+            &self.one_hot_params,
+            &self.opening_accumulator,
+        );
+
+        let ram_output_check =
+            OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
+
         let _r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
             vec![
-                &spartan_product_virtual_remainder,
-                &ram_raf_evaluation,
                 &ram_read_write_checking,
-                &ram_output_check,
+                &spartan_product_virtual_remainder,
                 &instruction_claim_reduction,
+                &ram_raf_evaluation,
+                &ram_output_check,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -308,7 +313,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let _r_stage3 = BatchedSumcheck::verify(
             &self.proof.stage3_sumcheck_proof,
             vec![
-                &spartan_shift as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
+                &spartan_shift,
                 &spartan_instruction_input,
                 &spartan_registers_claim_reduction,
             ],
@@ -357,7 +362,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let _r_stage4 = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
             vec![
-                &registers_read_write_checking as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
+                &registers_read_write_checking,
                 &ram_val_evaluation,
                 &ram_val_final,
             ],
@@ -371,27 +376,28 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
     fn verify_stage5(&mut self) -> Result<(), anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let registers_val_evaluation =
-            RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
-        let ram_ra_reduction = RamRaClaimReductionSumcheckVerifier::new(
-            self.proof.trace_length,
-            &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
+
         let lookups_read_raf = InstructionReadRafSumcheckVerifier::new(
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        let ram_ra_reduction = RamRaClaimReductionSumcheckVerifier::new(
+            self.proof.trace_length,
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        let registers_val_evaluation =
+            RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
 
         let _r_stage5 = BatchedSumcheck::verify(
             &self.proof.stage5_sumcheck_proof,
             vec![
-                &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
-                &ram_ra_reduction,
                 &lookups_read_raf,
+                &ram_ra_reduction,
+                &registers_val_evaluation,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -466,8 +472,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![
             &bytecode_read_raf,
-            &ram_hamming_booleanity,
             &booleanity,
+            &ram_hamming_booleanity,
             &ram_ra_virtual,
             &lookups_ra_virtual,
             &inc_reduction,
@@ -626,7 +632,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
-        self.transcript.append_scalars(&claims);
+        self.transcript.append_scalars(b"rlc_claims", &claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
 
         // Build state for computing joint commitment/claim
