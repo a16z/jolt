@@ -15,15 +15,9 @@ pub struct FormatAdviceLoadI {
     pub imm: u64,
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatAdviceLoadI {
     pub rd: (u64, u64), // (old_value, new_value)
-}
-
-impl Default for RegisterStateFormatAdviceLoadI {
-    fn default() -> Self {
-        Self { rd: (0, 0) }
-    }
 }
 
 impl InstructionRegisterState for RegisterStateFormatAdviceLoadI {

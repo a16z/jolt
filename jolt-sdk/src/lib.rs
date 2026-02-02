@@ -244,7 +244,7 @@ impl AdviceReader {
     }
     // Load a doubleword (8 bytes) from the advice tape and return it
     // on 32-bit targets, this is performed via two 4-byte reads
-    #[cfg(any(target_arch = "riscv32"))]
+    #[cfg(target_arch = "riscv32")]
     pub unsafe fn read_ld(&mut self) -> u64 {
         let low = self.read_lw() as u64;
         let high = self.read_lw() as u64;
@@ -252,7 +252,7 @@ impl AdviceReader {
     }
     // Load a doubleword (8 bytes) from the advice tape and return it
     // on 64-bit targets, this is a single 8-byte read
-    #[cfg(any(target_arch = "riscv64"))]
+    #[cfg(target_arch = "riscv64")]
     pub unsafe fn read_ld(&mut self) -> u64 {
         let x;
         core::arch::asm!(
