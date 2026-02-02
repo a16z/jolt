@@ -6,7 +6,7 @@
 //! `verifier-transpilation` feature, as they require code from the verifier-transpilation branch.
 
 use serde::{Deserialize, Serialize};
-use zklean_extractor::mle_ast::{get_node, Atom, Edge, Node};
+use zklean_extractor::mle_ast::{Atom, Edge, Node};
 
 /// JSON-serializable representation of an Atom
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -183,84 +183,6 @@ pub struct Stage1AstJson {
     /// Metadata
     pub trace_length: usize,
     pub num_rounds: usize,
-}
-
-/// Collect all nodes reachable from a root node
-fn collect_nodes_from_root(root_id: usize, max_id: &mut usize) {
-    *max_id = (*max_id).max(root_id);
-
-    let node = get_node(root_id);
-    match node {
-        Node::Atom(_) => {}
-        Node::Neg(edge) | Node::Inv(edge) | Node::ByteReverse(edge) | Node::Truncate128Reverse(edge) | Node::Truncate128(edge) | Node::MulTwoPow192(edge) => {
-            if let Edge::NodeRef(id) = edge {
-                collect_nodes_from_root(id, max_id);
-            }
-        }
-        Node::Add(left, right)
-        | Node::Mul(left, right)
-        | Node::Sub(left, right)
-        | Node::Div(left, right) => {
-            if let Edge::NodeRef(id) = left {
-                collect_nodes_from_root(id, max_id);
-            }
-            if let Edge::NodeRef(id) = right {
-                collect_nodes_from_root(id, max_id);
-            }
-        }
-        Node::Poseidon(state, n_rounds, data) => {
-            for edge in [state, n_rounds, data] {
-                if let Edge::NodeRef(id) = edge {
-                    collect_nodes_from_root(id, max_id);
-                }
-            }
-        }
-        Node::Keccak256(input) => {
-            if let Edge::NodeRef(id) = input {
-                collect_nodes_from_root(id, max_id);
-            }
-        }
-    }
-}
-
-fn collect_vars_from_node(node_id: usize, vars: &mut std::collections::BTreeSet<u16>) {
-    let node = get_node(node_id);
-    match node {
-        Node::Atom(Atom::Var(index)) => {
-            vars.insert(index);
-        }
-        Node::Atom(_) => {}
-        Node::Neg(edge) | Node::Inv(edge) | Node::ByteReverse(edge) | Node::Truncate128Reverse(edge) | Node::Truncate128(edge) | Node::MulTwoPow192(edge) => {
-            collect_vars_from_edge(edge, vars);
-        }
-        Node::Add(left, right)
-        | Node::Mul(left, right)
-        | Node::Sub(left, right)
-        | Node::Div(left, right) => {
-            collect_vars_from_edge(left, vars);
-            collect_vars_from_edge(right, vars);
-        }
-        Node::Poseidon(state, n_rounds, data) => {
-            for edge in [state, n_rounds, data] {
-                collect_vars_from_edge(edge, vars);
-            }
-        }
-        Node::Keccak256(input) => {
-            collect_vars_from_edge(input, vars);
-        }
-    }
-}
-
-fn collect_vars_from_edge(edge: Edge, vars: &mut std::collections::BTreeSet<u16>) {
-    match edge {
-        Edge::Atom(Atom::Var(index)) => {
-            vars.insert(index);
-        }
-        Edge::Atom(_) => {}
-        Edge::NodeRef(node_id) => {
-            collect_vars_from_node(node_id, vars);
-        }
-    }
 }
 
 impl Stage1AstJson {
