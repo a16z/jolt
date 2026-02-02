@@ -39,18 +39,65 @@ fn all_sumcheck_claims<F: JoltField>() -> Vec<InputOutputClaims<F>> {
 /// use them.
 // TODO This can go away if we extract a more complete set of sumchecks, in particular the read-raf
 // checks.
-fn extra_sumcheck_vars<const XLEN: usize>() -> Vec<(SumcheckId, PolynomialId)> {
-    std::iter::once((
+fn extra_sumcheck_vars<const XLEN: usize>() -> Vec<ZkLeanVarRef> {
+    std::iter::once(ZkLeanVarRef::virtual_var(
         SumcheckId::InstructionReadRaf,
-        PolynomialId::Virtual(VirtualPolynomial::InstructionRafFlag),
+        VirtualPolynomial::InstructionRafFlag,
     ))
     .chain(LookupTables::<XLEN>::iter().enumerate().map(|(i, _table)| {
-        (
+        ZkLeanVarRef::virtual_var(
             SumcheckId::InstructionReadRaf,
-            PolynomialId::Virtual(VirtualPolynomial::LookupTableFlag(i)),
+            VirtualPolynomial::LookupTableFlag(i),
         )
     }))
     .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ZkLeanVarRef {
+    sumcheck_id: SumcheckId,
+    polynomial_id: PolynomialId,
+}
+
+impl std::fmt::Display for ZkLeanVarRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let vars_type = sumcheck_ident(self.sumcheck_id);
+        match self.polynomial_id {
+            PolynomialId::Committed(committed_polynomial) => {
+                let var_name = committed_var_ident(committed_polynomial);
+                write!(f, "{vars_type}.{var_name}")
+            }
+            PolynomialId::Virtual(virtual_polynomial) => {
+                let var_name = virtual_var_ident(virtual_polynomial);
+                write!(f, "{vars_type}.{var_name}")
+            }
+        }
+    }
+}
+
+impl ZkLeanVarRef {
+    pub fn new(sumcheck_id: SumcheckId, polynomial_id: PolynomialId) -> Self {
+        Self {
+            sumcheck_id,
+            polynomial_id,
+        }
+    }
+
+    pub fn virtual_var(sumcheck_id: SumcheckId, poly: VirtualPolynomial) -> Self {
+        Self {
+            sumcheck_id,
+            polynomial_id: PolynomialId::Virtual(poly),
+        }
+    }
+
+    // NOTE: This is not used for now, but it likely will be when we extract more sumchecks.
+    #[allow(dead_code)]
+    pub fn committed_var(sumcheck_id: SumcheckId, poly: CommittedPolynomial) -> Self {
+        Self {
+            sumcheck_id,
+            polynomial_id: PolynomialId::Committed(poly),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -80,12 +127,12 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
         }
     }
 
-    fn insert_var(&mut self, sumcheck_id: SumcheckId, polynomial_id: PolynomialId) {
-        match polynomial_id {
+    fn insert_var(&mut self, var: ZkLeanVarRef) {
+        match var.polynomial_id {
             PolynomialId::Committed(committed_polynomial) => {
                 let var_name = committed_var_ident(committed_polynomial);
                 self.sumchecks
-                    .entry(sumcheck_id)
+                    .entry(var.sumcheck_id)
                     .and_modify(|s| s.insert_var(&var_name))
                     .or_insert_with(|| ZkLeanSumcheck {
                         claims: None,
@@ -95,7 +142,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
             PolynomialId::Virtual(virtual_polynomial) => {
                 let var_name = virtual_var_ident(virtual_polynomial);
                 self.sumchecks
-                    .entry(sumcheck_id)
+                    .entry(var.sumcheck_id)
                     .and_modify(|s| s.insert_var(&var_name))
                     .or_insert_with(|| ZkLeanSumcheck {
                         claims: None,
@@ -112,7 +159,7 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
                 self.insert_vars_from_claim_expr(sumcheck_id, e2);
             }
             ClaimExpr::Var(polynomial_id) => {
-                self.insert_var(sumcheck_id, *polynomial_id);
+                self.insert_var(ZkLeanVarRef::new(sumcheck_id, *polynomial_id));
             }
             _ => (),
         }
@@ -139,8 +186,8 @@ impl<F: JoltField> ZkLeanSumchecks<F> {
         for claims in all_sumcheck_claims() {
             res.insert_claims(&claims);
         }
-        for (sumcheck_id, polynomial_id) in extra_sumcheck_vars::<XLEN>() {
-            res.insert_var(sumcheck_id, polynomial_id);
+        for var in extra_sumcheck_vars::<XLEN>() {
+            res.insert_var(var);
         }
         res
     }
@@ -354,27 +401,6 @@ fn pretty_print_claims_fun<F: JoltField>(
     Ok(())
 }
 
-pub fn pretty_print_opening_ref(
-    f: &mut impl std::io::Write,
-    vars_ident: &str,
-    sumcheck_id: SumcheckId,
-    opening_ref: PolynomialId,
-) -> std::io::Result<()> {
-    let vars_type = sumcheck_ident(sumcheck_id);
-    match opening_ref {
-        PolynomialId::Committed(committed_polynomial) => {
-            let var_name = committed_var_ident(committed_polynomial);
-            write!(f, "{vars_ident}.{vars_type}.{var_name}")?;
-        }
-        PolynomialId::Virtual(virtual_polynomial) => {
-            let var_name = virtual_var_ident(virtual_polynomial);
-            write!(f, "{vars_ident}.{vars_type}.{var_name}")?;
-        }
-    }
-
-    Ok(())
-}
-
 fn pretty_print_claim_expr<F: JoltField>(
     f: &mut impl std::io::Write,
     vars_ident: &str,
@@ -419,8 +445,8 @@ fn pretty_print_claim_expr<F: JoltField>(
                 write!(f, ")")?;
             }
         }
-        ClaimExpr::Var(opening_ref) => {
-            pretty_print_opening_ref(f, vars_ident, sumcheck_id, *opening_ref)?;
+        ClaimExpr::Var(polynomial_id) => {
+            write!(f, "{vars_ident}.{}", ZkLeanVarRef::new(sumcheck_id, *polynomial_id))?;
         }
     }
 
