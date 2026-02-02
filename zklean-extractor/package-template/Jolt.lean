@@ -1,10 +1,14 @@
 -- This module serves as the root of the `Jolt` library.
 -- Import modules here that should be built as part of the library.
 
+import Jolt.MemOps
+import Jolt.Util
+
+-- Extracted modules
 import Jolt.R1CS
 import Jolt.LookupTables
+import Jolt.LookupTableFlags
 import Jolt.Instructions
-import Jolt.MemOps
 import Jolt.Sumchecks
 
 /--
@@ -18,8 +22,7 @@ def jolt_step [ZKField f]
   uniform_claims inputs
   uniform_jolt_constraints inputs.JoltR1CSInputs
 
-  -- TODO: What does this change into for Twist & Shout?
-  --lookup_step inputs
+  lookup_step inputs
 
   memory_step inputs mem_reg mem_ram mem_elfaddress mem_bitflags mem_rs1 mem_rs2 mem_rd mem_imm
 
