@@ -3,7 +3,6 @@
 //! Uses TranspilableVerifier with symbolic proof and MleOpeningAccumulator
 //! to generate a Gnark circuit for stages 1-6 of the Jolt verifier.
 
-use ark_ff::PrimeField;
 use ark_serialize::CanonicalDeserialize;
 use gnark_transpiler::{
     symbolize_proof, extract_witness_values, AstCommitmentScheme, MleOpeningAccumulator,
@@ -16,7 +15,6 @@ use jolt_core::zkvm::RV64IMACProof;
 use common::jolt_device::JoltDevice;
 use zklean_extractor::mle_ast::{enable_constraint_mode, take_constraints as take_assertions, MleAst};
 use std::collections::{BTreeSet, HashMap};
-use serde::Serialize;
 
 fn main() {
     println!("=== Transpiling Jolt Verifier Stages 1-6 to Gnark ===\n");
@@ -62,7 +60,7 @@ fn main() {
 
     // Symbolize the proof
     println!("\n=== Symbolizing Proof ===");
-    let (symbolic_proof, mut accumulator, var_alloc) = symbolize_proof(&real_proof);
+    let (symbolic_proof, accumulator, var_alloc) = symbolize_proof(&real_proof);
     println!("  Total symbolic variables: {}", var_alloc.next_idx());
 
     // Create transcript
@@ -136,7 +134,6 @@ fn main() {
             return "...".to_string();
         }
         let node = get_node(node_id);
-        let indent = "  ".repeat(depth);
         match node {
             Node::Atom(Atom::Scalar(limbs)) => {
                 if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
@@ -153,7 +150,7 @@ fn main() {
             Node::Sub(a, b) => format!("Sub({}, {})", describe_edge(&a, depth + 1), describe_edge(&b, depth + 1)),
             Node::Mul(a, b) => format!("Mul({}, {})", describe_edge(&a, depth + 1), describe_edge(&b, depth + 1)),
             Node::Div(a, b) => format!("Div({}, {})", describe_edge(&a, depth + 1), describe_edge(&b, depth + 1)),
-            Node::Poseidon(a, b, c) => format!("Poseidon(...)"),
+            Node::Poseidon(..) => format!("Poseidon(...)"),
             Node::Keccak256(e) => format!("Keccak256({})", describe_edge(&e, depth + 1)),
             Node::ByteReverse(e) => format!("ByteReverse({})", describe_edge(&e, depth + 1)),
             Node::Truncate128Reverse(e) => format!("Truncate128Reverse({})", describe_edge(&e, depth + 1)),
