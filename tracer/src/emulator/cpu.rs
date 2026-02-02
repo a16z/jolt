@@ -21,8 +21,7 @@ use alloc::collections::VecDeque;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 use jolt_platform::{
-    JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM,
-    JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
+    JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
 };
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
@@ -533,43 +532,6 @@ impl Cpu {
     }
 
     fn handle_trap(&mut self, trap: Trap, instruction_address: u64, is_interrupt: bool) -> bool {
-        // non-interrupt case is an ECALL
-        if !is_interrupt
-            && matches!(
-                trap.trap_type,
-                TrapType::EnvironmentCallFromUMode
-                    | TrapType::EnvironmentCallFromSMode
-                    | TrapType::EnvironmentCallFromMMode
-            )
-        {
-            let call_id = self.x[10] as u32; // a0
-            if call_id == JOLT_CYCLE_TRACK_ECALL_NUM {
-                let marker_ptr = self.x[11] as u32; // a1
-                let marker_len = self.x[12] as u32; // a2
-                let event_type = self.x[13] as u32; // a3
-
-                // Read / update the per-label counters.
-                //
-                // Any fault raised while touching guest memory (e.g. a bad
-                // string pointer) is swallowed here and will manifest as the
-                // usual access-fault on the *next* instruction fetch.
-                let _ = self.handle_jolt_cycle_marker(marker_ptr, marker_len, event_type);
-
-                return false; // we don't take the trap
-            } else if call_id == JOLT_PRINT_ECALL_NUM {
-                let string_ptr = self.x[11] as u32; // a0
-                let string_len = self.x[12] as u32; // a1
-                let event_type = self.x[13] as u32; // a2
-
-                // Any fault raised while touching guest memory (e.g. a bad
-                // string pointer) is swallowed here and will manifest as the
-                // usual access-fault on the *next* instruction fetch.
-                let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
-
-                return false;
-            }
-        }
-
         let current_privilege_encoding = get_privilege_encoding(&self.privilege_mode) as u64;
         let cause = get_trap_cause(&trap, &self.xlen);
 
@@ -1040,11 +1002,11 @@ impl Cpu {
         Ok(())
     }
 
-    pub fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u8) -> Result<(), Trap> {
+    pub fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u32) -> Result<(), Trap> {
         let message = self.read_string(ptr, len)?;
-        if event_type == JOLT_PRINT_STRING as u8 {
+        if event_type == JOLT_PRINT_STRING {
             print!("{message}");
-        } else if event_type == JOLT_PRINT_LINE as u8 {
+        } else if event_type == JOLT_PRINT_LINE {
             println!("{message}");
         } else {
             panic!("Unexpected event type: {event_type}");
