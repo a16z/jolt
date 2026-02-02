@@ -12,7 +12,11 @@ use jolt::{end_cycle_tracking, start_cycle_tracking};
 #[jolt::advice]
 fn modinv_advice(a: u64, m: u64) -> jolt::UntrustedAdvice<(u64, u64)> {
     let inv = modinv_naive(a, m);
-    let quo = (a as u128 * inv as u128 / m as u128) as u64;
+    let quo = if m == 0 {
+        0
+    } else {
+        (a as u128 * inv as u128 / m as u128) as u64
+    };
     (inv, quo)
 }
 
