@@ -108,18 +108,17 @@ impl Transcript for Blake2bTranscript {
 
     // === Internal raw methods (EVM-compatible serialization) ===
 
-    fn raw_append_message(&mut self, msg: &'static [u8]) {
-        // We require all messages to fit into one evm word and then right pad them
-        // right padding matches the format of the strings when cast to bytes 32 in solidity
-        assert!(msg.len() < 33);
-        let hasher = if msg.len() == 32 {
-            self.hasher().chain_update(msg)
+    fn raw_append_label(&mut self, label: &'static [u8]) {
+        // Labels must fit into one EVM word, right-padded with zeros
+        // (matches Solidity's bytes32 string casting)
+        assert!(label.len() < 33);
+        let hasher = if label.len() == 32 {
+            self.hasher().chain_update(label)
         } else {
-            let mut packed = msg.to_vec();
-            packed.append(&mut vec![0_u8; 32 - msg.len()]);
+            let mut packed = label.to_vec();
+            packed.append(&mut vec![0_u8; 32 - label.len()]);
             self.hasher().chain_update(packed)
         };
-        // Instantiate hasher add our seed, position and msg
         self.update_state(hasher.finalize().into());
     }
 
