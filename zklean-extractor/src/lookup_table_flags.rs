@@ -44,7 +44,7 @@ impl<const XLEN: usize> ZkLeanLookupTableFlag<XLEN> {
     ) -> std::io::Result<()> {
         writeln!(
             f,
-            "{}({vars_ident}.{}, {})",
+            "{}({vars_ident}.{}, {}),",
             indent(indent_level),
             self.var,
             self.lookup_table_ident
