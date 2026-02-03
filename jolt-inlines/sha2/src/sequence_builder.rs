@@ -1,7 +1,12 @@
 use core::array;
 
 use tracer::{
-    instruction::{andn::ANDN, format::format_inline::FormatInline, lw::LW, sw::SW, Instruction},
+    emulator::cpu::Xlen,
+    instruction::{
+        andn::ANDN, format::format_inline::FormatInline, ld::LD, lw::LW, or::OR, sd::SD,
+        slli::SLLI, srli::SRLI, sw::SW, virtual_zero_extend_word::VirtualZeroExtendWord,
+        Instruction,
+    },
     utils::{
         inline_helpers::{
             InstrAssembler,
@@ -76,26 +81,87 @@ impl Sha256SequenceBuilder {
         if !self.initial {
             // Load initial hash values from memory when using custom IV
             // Load all A-H into initial_state registers (used both for initial values and final addition)
-            (0..8).for_each(|i| {
-                self.asm
-                    .emit_ld::<LW>(*self.iv[i], self.operands.rs1, (i * 4) as i64)
-            });
+            if self.asm.xlen == Xlen::Bit32 {
+                // if 32-bit, LW is cheap so use it
+                (0..8).for_each(|i| {
+                    self.asm
+                        .emit_ld::<LW>(*self.iv[i], self.operands.rs1, (i * 4) as i64)
+                });
+            } else {
+                // if 64-bit, LW expands into a long sequence of virtual instructions
+                // so we use LD to load two registers at a time
+                // the sequence is A,B | C,D | E,F | G,H
+                (0..4).for_each(|i| {
+                    let dst1 = *self.iv[i * 2];
+                    let dst2 = *self.iv[i * 2 + 1];
+                    // Load both words into dst1 using LD
+                    self.asm
+                        .emit_ld::<LD>(dst1, self.operands.rs1, (i as i64) * 8);
+                    // Extract the upper 32 bits into dst2 via a shift
+                    self.asm.emit_i::<SRLI>(dst2, dst1, 32);
+                    // Note that dst1 has junk in its upper 32 bits
+                    // but that's fine since the lower 32 bits are not affected
+                    // by the upper 32 bits in all subsequent operations in this inline
+                    // except for the final store, where we are careful to clean them up
+                });
+            }
         }
         // Load input words into message registers
-        (0..16).for_each(|i| {
-            self.asm
-                .emit_ld::<LW>(*self.message[i], self.operands.rs2, (i * 4) as i64)
-        });
+        if self.asm.xlen == Xlen::Bit32 {
+            // if 32-bit, LW is cheap so use it
+            (0..16).for_each(|i| {
+                self.asm
+                    .emit_ld::<LW>(*self.message[i], self.operands.rs2, (i * 4) as i64)
+            });
+        } else {
+            // if 64-bit, LW expands into a long sequence of virtual instructions
+            // so we use LD to load two registers at a time
+            // the sequence is W0,1 | W2,3 | ... | W14,15
+            (0..8).for_each(|i| {
+                let dst1 = *self.message[i * 2];
+                let dst2 = *self.message[i * 2 + 1];
+                // Load both words into dst1 using LD
+                self.asm
+                    .emit_ld::<LD>(dst1, self.operands.rs2, (i as i64) * 8);
+                // Extract the upper 32 bits into dst2 via a shift
+                self.asm.emit_i::<SRLI>(dst2, dst1, 32);
+                // Note that dst1 has junk in its upper 32 bits
+                // but that's fine since the lower 32 bits are not affected
+                // by the upper 32 bits in all subsequent operations in this inline
+                // except for the final store, where we are careful to clean them up
+            });
+        }
         // Run 64 rounds
         (0..64).for_each(|_| self.round());
         self.final_add_iv();
         // Store output values to rs1 location
         // Store output A..H in-order using the current VR mapping after all rotations
-        let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-        for (i, ch) in outs.iter().enumerate() {
-            let src = self.vr(*ch);
-            self.asm
-                .emit_s::<SW>(self.operands.rs1, src, (i as i64) * 4);
+        if self.asm.xlen == Xlen::Bit32 {
+            // if 32-bit, SW is cheap so use it
+            let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+            for (i, ch) in outs.iter().enumerate() {
+                let src = self.vr(*ch);
+                self.asm
+                    .emit_s::<SW>(self.operands.rs1, src, (i as i64) * 4);
+            }
+        } else {
+            // if 64-bit, SW is expands into a long sequence of virtual instructions
+            // so we use SD to store two registers at a time
+            // the sequence is A,B | C,D | E,F | G,H
+            let outs = [('A', 'B'), ('C', 'D'), ('E', 'F'), ('G', 'H')];
+            for (i, (ch1, ch2)) in outs.iter().enumerate() {
+                let src1 = self.vr(*ch1);
+                let src2 = self.vr(*ch2);
+                // clear top 32 bits of src1
+                self.asm.emit_i::<VirtualZeroExtendWord>(src1, src1, 0);
+                // shift src2 to top 32 bits
+                self.asm.emit_i::<SLLI>(src2, src2, 32);
+                // or them together into src1
+                self.asm.emit_r::<OR>(src1, src2, src1);
+                // and store pair as 64-bit word
+                self.asm
+                    .emit_s::<SD>(self.operands.rs1, src1, (i as i64) * 8);
+            }
         }
         // Total allocated: 8 (state) + 16 (message) + 8 (initial_state) + 4 (temps per round) = 36
         // The temps are allocated/deallocated per round, but we need to reserve space for them
