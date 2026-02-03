@@ -64,9 +64,7 @@ fn is_not_equal(x: &[u64; 4], y: &[u64; 4]) -> bool {
     x[0] != y[0] || x[1] != y[1] || x[2] != y[2] || x[3] != y[3]
 }
 
-/// panic instruction
-/// spoils the proof
-/// used for inline checks
+/// Halt-and-catch-fire: makes proof unsatisfiable
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
@@ -98,50 +96,8 @@ pub fn hcf() {
     panic!("explicit host code panic function called");
 }
 
-/// A trait for unwrapping Results in a way that spoils the proof on error.
-///
-/// # When to Use
-///
-/// Use `.unwrap_or_spoil_proof()` when you want to **assert** that a condition holds,
-/// and if it doesn't, **no valid proof should exist**. This is appropriate when:
-///
-/// - You want to prove "X is valid" (not "I checked X")
-/// - A malicious prover should not be able to produce any proof if the condition fails
-/// - The error case represents something that should be cryptographically impossible
-///
-/// # When NOT to Use
-///
-/// Do NOT use `.unwrap_or_spoil_proof()` for:
-///
-/// - Input validation (use `.unwrap()` or return `Result` instead)
-/// - Expected error cases that should be handled gracefully
-/// - Cases where you want a valid proof showing the error occurred
-///
-/// # Example
-///
-/// ```ignore
-/// // Soft verification - returns Result, proof is valid either way
-/// let result = ecdsa_verify(z, r, s, q);
-///
-/// // Normal panic - proof is valid, shows program panicked
-/// ecdsa_verify(z, r, s, q).unwrap();
-///
-/// // Spoil proof - NO valid proof can exist if signature is invalid
-/// ecdsa_verify(z, r, s, q).unwrap_or_spoil_proof();
-/// ```
+/// Unwrap that spoils proof on error (vs `.unwrap()` which allows valid proof of panic)
 pub trait UnwrapOrSpoilProof<T> {
-    /// Unwraps the Result, returning the success value.
-    ///
-    /// If the Result is `Err`, this function triggers a halt-and-catch-fire (HCF)
-    /// instruction that makes the proof unsatisfiable. No valid proof can be
-    /// generated for an execution that reaches this error path.
-    ///
-    /// # Returns
-    /// The unwrapped `Ok` value if successful.
-    ///
-    /// # Proof Implications
-    /// - `Ok(v)` → Returns `v`, proof proceeds normally
-    /// - `Err(_)` → Proof becomes unsatisfiable (cannot be verified)
     fn unwrap_or_spoil_proof(self) -> T;
 }
 
@@ -158,65 +114,49 @@ impl<T> UnwrapOrSpoilProof<T> for Result<T, GrumpkinError> {
     }
 }
 
-/// Error types for grumpkin operations
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum GrumpkinError {
-    InvalidFqElement, // input array does not correspond to a valid Fq element
-    InvalidFrElement, // input array does not correspond to a valid Fr element
-    NotOnCurve,       // point is not on the grumpkin curve
+    InvalidFqElement,
+    InvalidFrElement,
+    NotOnCurve,
 }
 
-/// grumpkin base field element
-/// in montgomery form
-/// as a wrapper around the arkworks implementation
-/// so that various operations can be replaced with inlines
+/// Wrapper around ark_grumpkin::Fq with inline-accelerated division
 #[derive(Clone, PartialEq, Debug)]
 pub struct GrumpkinFq {
     e: ark_grumpkin::Fq,
 }
 
 impl GrumpkinFq {
-    /// creates a new GrumpkinFq element from an Fq element
     #[inline(always)]
     pub fn new(e: Fq) -> Self {
         GrumpkinFq { e }
     }
-    /// creates a new GrumpkinFq element from a [u64; 4] array
-    /// performs conversion to montgomery form
-    /// returns Err(GrumpkinError) if the array does not correspond to a valid Fq element
+    /// Converts from standard form to Montgomery. Returns error if >= modulus.
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, GrumpkinError> {
-        // attempt to create a new Fq element from the array
-        let e = Fq::from_bigint(BigInt(*arr));
-        // if valid, return element, else return error
-        match e {
-            Some(val) => Ok(GrumpkinFq { e: val }),
-            None => Err(GrumpkinError::InvalidFqElement),
-        }
+        Fq::from_bigint(BigInt(*arr))
+            .map(|e| GrumpkinFq { e })
+            .ok_or(GrumpkinError::InvalidFqElement)
     }
-    /// creates a new GrumpkinFq element from a [u64; 4] array (unchecked)
-    /// the array is assumed to be in canonical montgomery form
+    /// SAFETY: input must be in canonical Montgomery form
     #[inline(always)]
     pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         GrumpkinFq {
             e: Fq::new_unchecked(BigInt(*arr)),
         }
     }
-    /// get inner Fq type
     #[inline(always)]
     pub fn fq(&self) -> Fq {
         self.e
     }
-    /// returns the additive identity element (0)
     #[inline(always)]
     pub fn zero() -> Self {
         GrumpkinFq { e: Fq::zero() }
     }
-    /// returns -17 in Fq
+    /// Precomputed -17 for curve equation y² = x³ - 17
     #[inline(always)]
     pub fn negative_seventeen() -> Self {
-        // derived from Fq::from(-17i64)
-        // precomputed to avoid recomputation in point doubling
         GrumpkinFq {
             e: Fq::new_unchecked(BigInt([
                 0xdd7056026000005a,
@@ -226,56 +166,46 @@ impl GrumpkinFq {
             ])),
         }
     }
-    /// returns true if the element is zero
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
         self.e.is_zero()
     }
-    /// returns -self
     #[inline(always)]
     pub fn neg(&self) -> Self {
         GrumpkinFq { e: -self.e }
     }
-    /// returns self + other
     #[inline(always)]
     pub fn add(&self, other: &GrumpkinFq) -> Self {
         GrumpkinFq {
             e: self.e + other.e,
         }
     }
-    /// returns self - other
     #[inline(always)]
     pub fn sub(&self, other: &GrumpkinFq) -> Self {
         GrumpkinFq {
             e: self.e - other.e,
         }
     }
-    /// returns 2*self
     #[inline(always)]
     pub fn dbl(&self) -> Self {
         GrumpkinFq { e: self.e.double() }
     }
-    /// returns 3*self
     #[inline(always)]
     pub fn tpl(&self) -> Self {
         GrumpkinFq {
             e: self.e.double() + self.e,
         }
     }
-    /// returns self * other
     #[inline(always)]
     pub fn mul(&self, other: &GrumpkinFq) -> Self {
         GrumpkinFq {
             e: self.e * other.e,
         }
     }
-    /// returns self^2
     #[inline(always)]
     pub fn square(&self) -> Self {
         GrumpkinFq { e: self.e.square() }
     }
-    /// returns self / other (unchecked variant)
-    /// uses custom inline for performance, costs nearly the same as multiplication
     /// SAFETY: caller must ensure other != 0
     #[cfg(all(
         not(feature = "host"),
@@ -283,7 +213,6 @@ impl GrumpkinFq {
     ))]
     #[inline(always)]
     pub fn div_unchecked(&self, other: &GrumpkinFq) -> Self {
-        // get inverse as pure advice
         let mut c = GrumpkinFq::zero();
         unsafe {
             use crate::{GRUMPKIN_DIVQ_ADV_FUNCT3, GRUMPKIN_FUNCT7, INLINE_OPCODE};
@@ -298,14 +227,10 @@ impl GrumpkinFq {
                 options(nostack)
             );
         }
-        // compute tmp = other * c
         let tmp = other.mul(&c);
-        // if not canonical (>= n), or other * c is not equal to self, panic
+        // Verify advice: c must be canonical and other * c == self
         if is_fq_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
-            // literal assembly to induce a panic (spoils the proof)
-            // merely using assert_eq! here is insufficient as it doesn't
-            // spoil the proof
-            hcf();
+            hcf(); // Spoils proof - assert_eq! alone doesn't suffice
         }
         c
     }
@@ -315,7 +240,6 @@ impl GrumpkinFq {
     ))]
     #[inline(always)]
     pub fn div(&self, other: &GrumpkinFq) -> Self {
-        // panic and spoil the proof if dividing by zero
         if other.is_zero() {
             hcf();
         }
@@ -352,90 +276,69 @@ impl GrumpkinFq {
     }
 }
 
-/// grumpkin scalar field element
-/// in montgomery form
-/// as a wrapper around the arkworks implementation
-/// so that various operations can be replaced with inlines
+/// Wrapper around ark_grumpkin::Fr with inline-accelerated division
 #[derive(Clone, PartialEq, Debug)]
 pub struct GrumpkinFr {
     e: ark_grumpkin::Fr,
 }
 
 impl GrumpkinFr {
-    /// creates a new GrumpkinFr element from an Fr element
     #[inline(always)]
     pub fn new(e: Fr) -> Self {
         GrumpkinFr { e }
     }
-    /// creates a new GrumpkinFr element from a [u64; 4] array
-    /// performs conversion to montgomery form
-    /// returns Err(GrumpkinError) if the array does not correspond to a valid Fr element
+    /// Converts from standard form to Montgomery. Returns error if >= modulus.
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, GrumpkinError> {
-        // attempt to create a new Fr element from the array
-        let e = Fr::from_bigint(BigInt(*arr));
-        // if valid, return element, else return error
-        match e {
-            Some(val) => Ok(GrumpkinFr { e: val }),
-            None => Err(GrumpkinError::InvalidFrElement),
-        }
+        Fr::from_bigint(BigInt(*arr))
+            .map(|e| GrumpkinFr { e })
+            .ok_or(GrumpkinError::InvalidFrElement)
     }
-    /// creates a new GrumpkinFr element from a [u64; 4] array (unchecked)
-    /// the array is assumed to be in canonical montgomery form
+    /// SAFETY: input must be in canonical Montgomery form
     #[inline(always)]
     pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         GrumpkinFr {
             e: Fr::new_unchecked(BigInt(*arr)),
         }
     }
-    /// get inner Fr type
     #[inline(always)]
     pub fn fr(&self) -> Fr {
         self.e
     }
-    /// returns the additive identity element (0)
     #[inline(always)]
     pub fn zero() -> Self {
         GrumpkinFr { e: Fr::zero() }
     }
-    /// returns true if the element is zero
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
         self.e.is_zero()
     }
-    /// returns -self
     #[inline(always)]
     pub fn neg(&self) -> Self {
         GrumpkinFr { e: -self.e }
     }
-    /// returns self + other
     #[inline(always)]
     pub fn add(&self, other: &GrumpkinFr) -> Self {
         GrumpkinFr {
             e: self.e + other.e,
         }
     }
-    /// returns self - other
     #[inline(always)]
     pub fn sub(&self, other: &GrumpkinFr) -> Self {
         GrumpkinFr {
             e: self.e - other.e,
         }
     }
-    /// returns self * other
     #[inline(always)]
     pub fn mul(&self, other: &GrumpkinFr) -> Self {
         GrumpkinFr {
             e: self.e * other.e,
         }
     }
-    /// returns self^2
     #[inline(always)]
     pub fn square(&self) -> Self {
         GrumpkinFr { e: self.e.square() }
     }
-    /// returns self / other (unchecked variant)
-    /// uses custom inline for performance, costs nearly the same as multiplication
     /// SAFETY: caller must ensure other != 0
     #[cfg(all(
         not(feature = "host"),
@@ -443,7 +346,6 @@ impl GrumpkinFr {
     ))]
     #[inline(always)]
     pub fn div_unchecked(&self, other: &GrumpkinFr) -> Self {
-        // get inverse as pure advice
         let mut c = GrumpkinFr::zero();
         unsafe {
             use crate::{GRUMPKIN_DIVR_ADV_FUNCT3, GRUMPKIN_FUNCT7, INLINE_OPCODE};
@@ -458,14 +360,10 @@ impl GrumpkinFr {
                 options(nostack)
             );
         }
-        // compute tmp = other * c
         let tmp = other.mul(&c);
-        // if not canonical (>= n), or other * c is not equal to self, panic
+        // Verify advice: c must be canonical and other * c == self
         if is_fr_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
-            // literal assembly to induce a panic (spoils the proof)
-            // merely using assert_eq! here is insufficient as it doesn't
-            // spoil the proof
-            hcf();
+            hcf(); // Spoils proof - assert_eq! alone doesn't suffice
         }
         c
     }
@@ -511,9 +409,7 @@ impl GrumpkinFr {
     }
 }
 
-/// grumpkin point in affine form
-/// (as a pair of base field elements in montgomery form)
-/// infinity is represented as (0, 0) because this point is not on the curve
+/// Affine point on Grumpkin curve y² = x³ - 17. Infinity = (0, 0).
 #[derive(Clone, PartialEq, Debug)]
 pub struct GrumpkinPoint {
     x: GrumpkinFq,
@@ -521,9 +417,6 @@ pub struct GrumpkinPoint {
 }
 
 impl GrumpkinPoint {
-    /// creates a new GrumpkinPoint from two GrumpkinFq elements
-    /// returns the point if it is on the curve
-    /// else returns Err(GrumpkinError)
     #[inline(always)]
     pub fn new(x: GrumpkinFq, y: GrumpkinFq) -> Result<Self, GrumpkinError> {
         let p = GrumpkinPoint { x, y };
@@ -533,15 +426,11 @@ impl GrumpkinPoint {
             Err(GrumpkinError::NotOnCurve)
         }
     }
-    /// creates a new GrumpkinPoint from two GrumpkinFq elements
-    /// performs no checks to ensure that the point is on the curve
     #[inline(always)]
     pub fn new_unchecked(x: GrumpkinFq, y: GrumpkinFq) -> Self {
         GrumpkinPoint { x, y }
     }
-    /// converts the point to a [u64; 8] array in Montgomery form
-    /// NOTE: this returns internal Montgomery representation, not standard form.
-    /// Use `from_u64_arr_unchecked` to round-trip, not `from_u64_arr`.
+    /// Returns Montgomery form. Use `from_u64_arr_unchecked` to round-trip.
     #[inline(always)]
     pub fn to_u64_arr(&self) -> [u64; 8] {
         let mut arr = [0u64; 8];
@@ -549,36 +438,28 @@ impl GrumpkinPoint {
         arr[4..8].copy_from_slice(&self.y.e.0 .0);
         arr
     }
-    /// creates a GrumpkinPoint from a [u64; 8] array in normal form
-    /// performs checks to ensure that the point is on the curve
-    /// and that the coordinates are well formed
+    /// Converts from standard form, validates on-curve.
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 8]) -> Result<Self, GrumpkinError> {
         let x = GrumpkinFq::from_u64_arr(&[arr[0], arr[1], arr[2], arr[3]])?;
         let y = GrumpkinFq::from_u64_arr(&[arr[4], arr[5], arr[6], arr[7]])?;
         GrumpkinPoint::new(x, y)
     }
-    /// creates a GrumpkinPoint from a [u64; 8] array
-    /// which is assumed to correspond to x and y coordinates in montgomery form
-    /// performs no checks to ensure that the point is on the curve
-    /// or that the coordinates are well formed
+    /// SAFETY: input must be canonical Montgomery form and on-curve (or (0,0) for infinity)
     #[inline(always)]
     pub fn from_u64_arr_unchecked(arr: &[u64; 8]) -> Self {
         let x = GrumpkinFq::from_u64_arr_unchecked(&[arr[0], arr[1], arr[2], arr[3]]);
         let y = GrumpkinFq::from_u64_arr_unchecked(&[arr[4], arr[5], arr[6], arr[7]]);
         GrumpkinPoint { x, y }
     }
-    /// get x coordinate
     #[inline(always)]
     pub fn x(&self) -> GrumpkinFq {
         self.x.clone()
     }
-    /// get y coordinate
     #[inline(always)]
     pub fn y(&self) -> GrumpkinFq {
         self.y.clone()
     }
-    /// get generator
     #[inline(always)]
     pub fn generator() -> Self {
         GrumpkinPoint {
@@ -586,7 +467,7 @@ impl GrumpkinPoint {
             y: GrumpkinFq::new(ark_grumpkin::G_GENERATOR_Y),
         }
     }
-    /// returns the point at infinity (0, 0)
+    /// (0, 0) represents infinity since it's not on the curve y² = x³ - 17
     #[inline(always)]
     pub fn infinity() -> Self {
         GrumpkinPoint {
@@ -594,12 +475,10 @@ impl GrumpkinPoint {
             y: GrumpkinFq::zero(),
         }
     }
-    /// returns true if the point is the point at infinity (0, 0)
     #[inline(always)]
     pub fn is_infinity(&self) -> bool {
         self.x.e.is_zero() && self.y.e.is_zero()
     }
-    /// checks if the point is on the grumpkin curve
     #[inline(always)]
     pub fn is_on_curve(&self) -> bool {
         self.is_infinity()
@@ -610,7 +489,6 @@ impl GrumpkinPoint {
                     .mul(&self.x)
                     .add(&GrumpkinFq::negative_seventeen()))
     }
-    /// negates a point on the grumpkin curve
     #[inline(always)]
     pub fn neg(&self) -> Self {
         if self.is_infinity() {
@@ -622,7 +500,6 @@ impl GrumpkinPoint {
             }
         }
     }
-    /// doubles a point on the grumpkin curve
     #[inline(always)]
     pub fn double(&self) -> Self {
         if self.y.is_zero() {
@@ -634,21 +511,16 @@ impl GrumpkinPoint {
             GrumpkinPoint { x: x2, y: y2 }
         }
     }
-    /// adds two points on the grumpkin curve
     #[inline(always)]
     pub fn add(&self, other: &GrumpkinPoint) -> Self {
-        // if either point is at infinity, return the other point
         if self.is_infinity() {
             other.clone()
         } else if other.is_infinity() {
             self.clone()
-        // if the points are equal, perform point doubling
         } else if self.x == other.x && self.y == other.y {
             self.double()
-        // if the x coordinates are equal but the y coordinates are not, return the point at infinity
-        } else if self.x == other.x && self.y != other.y {
+        } else if self.x == other.x {
             GrumpkinPoint::infinity()
-        // if the x coordinates are not equal and not infinity, perform standard point addition
         } else {
             let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
             let x2 = s.square().sub(&self.x.add(&other.x));
