@@ -3018,9 +3018,9 @@ name = "jolt-inlines-grumpkin"
 version = "0.1.0"
 dependencies = [
  "ark-ec",
- "ark-ff",
+ "ark-ff 0.5.0",
  "ark-grumpkin",
- "ark-serialize",
+ "ark-serialize 0.5.0",
  "ctor 0.2.9",
  "hex-literal",
  "num-bigint",

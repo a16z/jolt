@@ -177,8 +177,10 @@ impl VirtualRegisterAllocator {
 
     /// Allocate virtual register that can be used in an inline.
     /// Uses registers 47+ (skips reserved 32-39 and instruction 40-46).
+    ///
+    /// A register may be allocated multiple times (e.g., separately by advice and inline
+    /// sequence), but only cleared once.
     pub fn allocate_for_inline(&self) -> VirtualRegisterGuard {
-        // Skip reserved registers (32-39) and instruction registers (40-46)
         let skip_count = NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS;
         for (i, allocated) in self
             .allocated
@@ -190,12 +192,16 @@ impl VirtualRegisterAllocator {
         {
             if !*allocated {
                 *allocated = true;
-                self.pending_clearing_inline
+                let reg = i as u8 + RISCV_REGISTER_BASE;
+                let mut pending = self
+                    .pending_clearing_inline
                     .lock()
-                    .expect("Failed to lock virtual register allocator")
-                    .push(i as u8 + RISCV_REGISTER_BASE);
+                    .expect("Failed to lock virtual register allocator");
+                if !pending.contains(&reg) {
+                    pending.push(reg);
+                }
                 return VirtualRegisterGuard {
-                    index: i as u8 + RISCV_REGISTER_BASE,
+                    index: reg,
                     allocator: self.clone(),
                 };
             }
