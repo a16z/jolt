@@ -106,7 +106,7 @@ fn verify_composite_u64(n: u64) {
 /// Function to help prove that a is a subset of b using advice
 /// Provides a Vec<usize> of indices in b where each element of a can be found
 #[jolt::advice]
-fn subset_index(a: &Vec<usize>, b: &Vec<usize>) -> jolt::UntrustedAdvice<Vec<usize>> {
+fn subset_index(a: &[usize], b: &[usize]) -> jolt::UntrustedAdvice<Vec<usize>> {
     let mut indices = Vec::new();
     for &item in a.iter() {
         let mut found = false;
@@ -128,7 +128,7 @@ fn subset_index(a: &Vec<usize>, b: &Vec<usize>) -> jolt::UntrustedAdvice<Vec<usi
 
 /// Function to verify that the elements of a are all contained in b
 /// using a call to an advice function
-fn verify_subset(a: &Vec<usize>, b: &Vec<usize>) {
+fn verify_subset(a: &[usize], b: &[usize]) {
     // Get the indices from the advice tape
     let adv = subset_index(a, b);
     let indices = &*adv;
