@@ -1,0 +1,142 @@
+OUTPUT_ARCH(riscv)
+ENTRY(_start)
+
+MEMORY
+{
+    RAM (rwx) : ORIGIN = {{ MEMORY_ORIGIN }}, LENGTH = {{ MEMORY_SIZE }}
+}
+
+/* Reserve heap and stack sizes */
+__heap_size = {{ HEAP_SIZE }};
+__stack_size = {{ STACK_SIZE }};
+__stack_canary_size = 128;
+
+PHDRS
+{
+    text PT_LOAD FLAGS(5);        /* R-X */
+    rodata PT_LOAD FLAGS(4);      /* R-- */
+    data PT_LOAD FLAGS(6);        /* RW- (TLS sections will be in this LOAD) */
+    tls PT_TLS;                   /* TLS metadata (references sections in data LOAD) */
+}
+
+SECTIONS
+{
+    . = {{ MEMORY_ORIGIN }};
+    PROVIDE_HIDDEN(__ehdr_start = .);
+    
+    .text : {
+        *(.text.boot)
+        *(.text .text.*)
+        . = ALIGN(4);
+    } > RAM : text
+    
+    .rodata : {
+        *(.rodata .rodata.*)
+        *(.srodata .srodata.*)
+        . = ALIGN(8);
+    } > RAM : rodata
+
+    {% if backtrace %}
+    .eh_frame_hdr : ALIGN(4) {
+        PROVIDE_HIDDEN(__eh_frame_hdr_start = .);
+        KEEP(*(.eh_frame_hdr))
+        PROVIDE_HIDDEN(__eh_frame_hdr_end = .);
+        . = ALIGN(8);
+    } > RAM : rodata
+
+    .eh_frame : ALIGN(8) {
+        PROVIDE_HIDDEN(__eh_frame_start = .);
+        KEEP(*(.eh_frame))
+        KEEP(*(.eh_frame.*))
+        /* GCC/libgcc expects .eh_frame to be terminated by a 0-length entry.
+         * Without this, __register_frame may walk past the end and fault.
+         */
+        LONG(0)
+        PROVIDE_HIDDEN(__eh_frame_end = .);
+        . = ALIGN(8);
+    } > RAM : rodata
+    {% endif %}
+    
+    /* Constructor/destructor arrays (used by musl's __libc_start_init)
+     * GNU convention: these come BEFORE .data section
+     * Even if empty, these sections must exist for ELF System V ABI compliance.
+     * Musl iterates __init_array_start to __init_array_end before calling main.
+     * Populated by: C++ constructors, __attribute__((constructor)), #[ctor] crate */
+    .init_array : {
+        PROVIDE_HIDDEN(__init_array_start = .);
+        KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+        KEEP(*(.init_array))
+        PROVIDE_HIDDEN(__init_array_end = .);
+    } > RAM : data
+    
+    .fini_array : {
+        PROVIDE_HIDDEN(__fini_array_start = .);
+        KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*)))
+        KEEP(*(.fini_array))
+        PROVIDE_HIDDEN(__fini_array_end = .);
+    } > RAM : data
+    
+    /* Start data LOAD segment - TLS sections will be included here */
+    .data : {
+        *(.data .data.*)
+        PROVIDE(__sdata_start = .);
+        *(.sdata .sdata.*)
+        . = ALIGN(8);
+    } > RAM : data
+
+    /* Global pointer for linker relaxation - placed 0x800 bytes into .sdata
+     * This allows gp-relative addressing to reach ±2KB from this point */
+    PROVIDE(__global_pointer$ = __sdata_start + 0x800);
+    
+    /* TLS sections - assigned to both data LOAD (for loading) and tls (for PT_TLS) */
+    .tdata : ALIGN(16) {
+        PROVIDE_HIDDEN(__tdata_start = .);
+        *(.tdata .tdata.*)
+        /* Force non-empty TLS section with 8-byte dummy data */
+        . = . + 8;
+        PROVIDE_HIDDEN(__tdata_end = .);
+    } > RAM : data : tls
+    
+    .tbss : ALIGN(16) {
+        PROVIDE_HIDDEN(__tbss_start = .);
+        *(.tbss .tbss.*)
+        *(.tcommon)
+        /* Force non-empty TLS section with 8-byte dummy space */
+        . = . + 8;
+        PROVIDE_HIDDEN(__tbss_end = .);
+    } > RAM : data : tls
+    
+    .bss : {
+        PROVIDE(__bss_start = .);
+        *(.bss .bss.*)
+        *(COMMON)
+        *(.sbss .sbss.*)
+        . = ALIGN(8);
+        PROVIDE(__bss_end = .);
+    } > RAM : data
+
+    /* Convenience symbols for tooling/emulators. */
+    __memory_start = ORIGIN(RAM);
+    __ram_start = __memory_start;
+    __program_end = __bss_end;
+
+    /* Fail fast if the program image itself doesn't fit in RAM. */
+    ASSERT(__program_end <= ORIGIN(RAM) + LENGTH(RAM), "image does not fit in RAM")
+
+    /* Stack is placed immediately after the image + canary. */
+    . = ALIGN(8);
+    __stack_bottom = .;
+    . = . + __stack_canary_size;
+    . = . + __stack_size;
+    __stack_top = .;    
+    
+    /* Heap starts after the stack; heap grows upward. */
+    . = ALIGN(8);
+    __heap_start = .;
+    . = . + __heap_size;
+    __heap_end = .;
+
+    /* In this layout, "memory end" means the end of the reserved (image+canary+stack+heap). */
+    __memory_end = .;
+    __ram_end = .;
+}

@@ -36,6 +36,7 @@ members = [
     "jolt-inlines/blake3",
     "jolt-inlines/bigint",
     "jolt-inlines/secp256k1",
+    "jolt-inlines/grumpkin",
     "examples/btreemap/host",
     "examples/btreemap/guest",
     "examples/collatz",
@@ -76,6 +77,8 @@ members = [
     "examples/merkle-tree/guest",
     "examples/hash-bench",
     "examples/hash-bench/guest",
+    "examples/sig-recovery/host",
+    "examples/sig-recovery/guest",
     "zklean-extractor",
     "z3-verifier",
 ]
@@ -100,6 +103,10 @@ syn.workspace = true
 serde.workspace = true
 rmp-serde.workspace = true
 toml_edit.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+zeroos-build.workspace = true
 
 jolt-sdk = { workspace = true, features = ["host"] }
 jolt-core = { workspace = true, features = ["default"] }
@@ -238,6 +245,24 @@ criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
 serial_test = "3.2.0"
 
+# Logging
+log = { version = "0.4" }
+env_logger = { version = "0.11" }
+
+# ZeroOS build system
+zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git" }
+zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false }
+cfg-if = "1.0"
+riscv = { version = "0.12", default-features = false }
+
+# Ethereum/Crypto (for sig-recovery example)
+alloy-primitives = "1"
+alloy-consensus = "1"
+alloy-eips = "1"
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", features = ["rayon", "serde"] }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = ["serde"] }
+secp256k1 = { version = "0.30", features = ["recovery", "rand"] }
+
 # Internal dependencies
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
@@ -251,3 +276,4 @@ jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false
 jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false }
 jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
+jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
