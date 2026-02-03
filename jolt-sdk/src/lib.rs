@@ -524,7 +524,7 @@ impl AdviceTapeIO for Vec<u8> {
         // Create a vec of u8s with length len
         let mut buf = Vec::<u8>::with_capacity(len);
         // Cast the Vec<u8> to a byte slice of length len
-        let bytes = unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, len) };
+        let bytes = unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr(), len) };
         // Read the contents into the byte slice
         let mut reader = AdviceReader::get();
         AdviceReader::read_slice(&mut reader, bytes);
