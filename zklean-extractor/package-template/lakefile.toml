@@ -11,7 +11,7 @@ name = "Tests"
 [[require]]
 name = "zkLean"
 git = "https://github.com/GaloisInc/zk-lean.git"
-rev = "cf813e1c9ccfe7d26b70fcc4c9b6869cca1e538f"
+rev = "ace44761ed7b507a5f8233af59f6776acd789d66"
 subDir = "zk_lean"
 
 # TODO: This is present only so we can copy the BN254 scalar field
