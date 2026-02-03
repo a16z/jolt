@@ -446,7 +446,11 @@ fn pretty_print_claim_expr<F: JoltField>(
             }
         }
         ClaimExpr::Var(polynomial_id) => {
-            write!(f, "{vars_ident}.{}", ZkLeanVarRef::new(sumcheck_id, *polynomial_id))?;
+            write!(
+                f,
+                "{vars_ident}.{}",
+                ZkLeanVarRef::new(sumcheck_id, *polynomial_id)
+            )?;
         }
     }
 
