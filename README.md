@@ -69,6 +69,10 @@ inside the cloned repository.
 
 ```cd jolt; rustup show```.
 
+Install the Jolt CLI:
+
+```cargo install --path .```
+
 ## Build
 
 This repository uses workspaces, and each workspace can be built individually, e.g.
