@@ -198,7 +198,7 @@ impl<F: PrimeField, P: PoseidonParams<F>> PoseidonTranscript<F, P> {
                     expected_state_history.len()
                 );
                 assert!(
-                    new_state == expected_state_history[self.n_rounds as usize],
+                    new_state == expected_state_history[self.n_rounds as usize - 1],
                     "Fiat-Shamir transcript mismatch at round {}",
                     self.n_rounds
                 );
