@@ -279,7 +279,7 @@ define_rv32im_trait_impls! {
         EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
         SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment,
-        VirtualAssertWordAlignment, VirtualAssertLTE,
+        VirtualAssertWordAlignment, VirtualAssertLTE, VirtualHostIO,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
         VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMovsign, VirtualMULI, VirtualPow2,
@@ -330,6 +330,7 @@ pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
+pub mod virtual_host_io;
 pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_pow2;

@@ -94,6 +94,7 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter, IntoStaticStr};
 use sub::SUB;
 use subw::SUBW;
 use sw::SW;
+use virtual_host_io::VirtualHostIO;
 use xor::XOR;
 use xori::XORI;
 
@@ -242,6 +243,7 @@ pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
+pub mod virtual_host_io;
 pub mod virtual_lw;
 pub mod virtual_movsign;
 pub mod virtual_muli;
@@ -644,7 +646,7 @@ define_rv32im_enums! {
         // RV64A (Atomic Memory Operations)
         LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
         // Virtual
-        VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
+        VirtualAdvice, VirtualHostIO, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
         VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,
@@ -969,6 +971,7 @@ impl Instruction {
                 match funct3 {
                     0b000 => Ok(VirtualRev8W::new(instr, address, true, compressed).into()),
                     0b001 => Ok(VirtualAssertEQ::new(instr, address, true, compressed).into()),
+                    0b010 => Ok(VirtualHostIO::new(instr, address, true, compressed).into()),
                     _ => Err("Invalid virtual instruction"),
                 }
             }
