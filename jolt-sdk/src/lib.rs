@@ -519,13 +519,15 @@ impl AdviceTapeIO for Vec<u8> {
         AdviceWriter::write_bytes(&mut writer, self);
     }
     fn new_from_advice_tape() -> Self {
-        // First read the length of the advice data
+        // First read the length of the Vec<u8>
         let len = usize::new_from_advice_tape();
         // Create a vec of u8s with length len
-        let mut buf = Vec::with_capacity(len);
-        // Read the contents into the vec directly
+        let mut buf = Vec::<u8>::with_capacity(len);
+        // Cast the Vec<u8> to a byte slice of length len
+        let bytes = unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, len) };
+        // Read the contents into the byte slice
         let mut reader = AdviceReader::get();
-        AdviceReader::read_slice(&mut reader, &mut buf);
+        AdviceReader::read_slice(&mut reader, bytes);
         // Adjust the length of the Vec<u8> after reading
         unsafe {
             buf.set_len(len);
