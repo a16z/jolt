@@ -6,9 +6,32 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme, commitment::dory::DoryCommitmentScheme,
     },
-    transcripts::Blake2bTranscript,
     transcripts::Transcript,
 };
+
+// Compile-time error if multiple transcript features are enabled
+// When none of the transcript features are enabled, Jolt defaults to `Blake2bTranscript`
+#[cfg(any(
+    all(feature = "transcript-poseidon", feature = "transcript-keccak"),
+    all(feature = "transcript-poseidon", feature = "transcript-blake2b"),
+    all(feature = "transcript-keccak", feature = "transcript-blake2b"),
+    all(
+        feature = "transcript-poseidon",
+        feature = "transcript-keccak",
+        feature = "transcript-blake2b"
+    )
+))]
+compile_error!("Cannot enable multiple transcript features simultaneously. Please choose exactly one of: 'transcript-poseidon', 'transcript-keccak', or 'transcript-blake2b'.");
+
+#[cfg(any(
+    feature = "transcript-blake2b",
+    not(any(feature = "transcript-poseidon", feature = "transcript-keccak"))
+))]
+use crate::transcripts::Blake2bTranscript;
+#[cfg(feature = "transcript-keccak")]
+use crate::transcripts::KeccakTranscript;
+#[cfg(feature = "transcript-poseidon")]
+use crate::transcripts::PoseidonTranscriptFr;
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
@@ -133,9 +156,47 @@ pub fn fiat_shamir_preamble(
     transcript.append_u64(b"trace_length", trace_length as u64);
 }
 
-#[cfg(feature = "prover")]
+#[cfg(all(feature = "prover", feature = "transcript-poseidon"))]
+pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, DoryCommitmentScheme, PoseidonTranscriptFr>;
+#[cfg(feature = "transcript-poseidon")]
+pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, DoryCommitmentScheme, PoseidonTranscriptFr>;
+#[cfg(feature = "transcript-poseidon")]
+pub type RV64IMACProof = JoltProof<Fr, DoryCommitmentScheme, PoseidonTranscriptFr>;
+
+#[cfg(all(feature = "prover", feature = "transcript-keccak"))]
+pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, DoryCommitmentScheme, KeccakTranscript>;
+#[cfg(feature = "transcript-keccak")]
+pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, DoryCommitmentScheme, KeccakTranscript>;
+#[cfg(feature = "transcript-keccak")]
+pub type RV64IMACProof = JoltProof<Fr, DoryCommitmentScheme, KeccakTranscript>;
+
+#[cfg(all(
+    feature = "prover",
+    not(any(
+        feature = "transcript-poseidon",
+        feature = "transcript-keccak",
+        feature = "transcript-blake2b"
+    ))
+))]
 pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
+#[cfg(not(any(
+    feature = "transcript-poseidon",
+    feature = "transcript-keccak",
+    feature = "transcript-blake2b"
+)))]
 pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
+#[cfg(not(any(
+    feature = "transcript-poseidon",
+    feature = "transcript-keccak",
+    feature = "transcript-blake2b"
+)))]
+pub type RV64IMACProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
+
+#[cfg(all(feature = "prover", feature = "transcript-blake2b"))]
+pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
+#[cfg(feature = "transcript-blake2b")]
+pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
+#[cfg(feature = "transcript-blake2b")]
 pub type RV64IMACProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
 
 pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {

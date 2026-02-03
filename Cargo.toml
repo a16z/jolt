@@ -275,3 +275,7 @@ jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false
 jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false }
 jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
+
+# Poseidon parameter generation (arkworks 0.5 compatible fork)
+poseidon-paramgen = { git = "https://github.com/defi-wonderland/poseidon377", branch = "arkworks-0.5", default-features = false }
+poseidon-parameters = { git = "https://github.com/defi-wonderland/poseidon377", branch = "arkworks-0.5", default-features = false }
