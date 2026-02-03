@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1770049390371,
+  "lastUpdate": 1770079686615,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -49006,6 +49006,210 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 372536,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "107961892+sagar-a16z@users.noreply.github.com",
+            "name": "Sagar Dhawan",
+            "username": "sagar-a16z"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1bf751d90f600be8c949776c5c5717d0c20fd094",
+          "message": "feat: integrate ZeroOS runtime for jolt guest program execution (#1229)\n\n* feat: integrate ZeroOS runtime for jolt guest program execution\n  This commit integrates ZeroOS as the runtime environment for Jolt guest\n  programs, replacing the previous bare-metal boot implementation. ZeroOS\n  provides a lightweight kernel that handles trap/syscall routing, memory\n  management, and program initialization.\n\n  ## Key Changes\n\n  ### Runtime Integration (jolt-sdk/src/support/)\n  - Add boot.rs: ZeroOS bootstrap sequence (_start → __bootstrap → __main_entry)\n  - Add trap.rs: Trap handler routing syscalls through ZeroOS infrastructure\n  - Add ecall.rs: ECALL-based I/O for print functionality via SYS_write\n  - Add mod.rs: Module organization and feature gating\n\n  ### New Instruction Support\n  - EBREAK: Breakpoint instruction for debugging\n  - MRET: Machine return for trap handler exit\n  - CSRRW/CSRRS: CSR read-write instructions using virtual registers\n  - LR.W/LR.D, SC.W/SC.D: Atomic load-reserved/store-conditional\n\n  ### Virtual Register System (tracer/src/utils/virtual_registers.rs)\n  - Extend virtual registers to support CSR emulation\n  - Add MTVEC, MEPC, MCAUSE, MSTATUS virtual mappings\n\n  ### Bug Fixes\n  - Fix DoryGlobals OnceLock preventing multiple proofs with different trace\n    lengths. Changed to RwLock for re-initialization.\n\n  ### Configuration Updates\n  - Update max_trace_length in examples to accommodate ZeroOS boot overhead\n    (~2000-4000 additional cycles for runtime initialization)\n  - Add zeroos and riscv dependencies to jolt-sdk\n  - Add \"build\" command to jolt to build guests using the zeroOS runtime\n\n* add details for broken stdlib because of dory global state\n\n* fix: ci failures\n\n* Consolidate print/exit into jolt-platform, rename support to runtime\n\n* enable all stdlib tests\n\n* fix: address review comments\n\n* nit: rename memory_size to heap_size\n\n* fix: rework LR and SC implementation\n\n* fix: cross-width SC reservation clearing and replace hardcoded ELF with dynamic build\n\n* fix unused circuit flag and optimize sc instructions\n\n* rebase\n\n* fix: revert bad merge carryover",
+          "timestamp": "2026-02-02T19:08:54-05:00",
+          "tree_id": "38da1a5f211d6b20f5a5f2d3af1526306e294f99",
+          "url": "https://github.com/a16z/jolt/commit/1bf751d90f600be8c949776c5c5717d0c20fd094"
+        },
+        "date": 1770079685513,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 119632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 119884,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 119664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 119580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 119832,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 119680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 119832,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 120080,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 119992,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 119860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 119704,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 119820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 119580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sig-recovery-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sig-recovery-mem",
+            "value": 137036,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 120128,
             "unit": "KB",
             "extra": ""
           }
