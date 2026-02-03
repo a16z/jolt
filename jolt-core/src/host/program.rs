@@ -75,12 +75,8 @@ impl Program {
         self.max_output_size = size;
     }
 
-    pub fn build(&mut self, target_dir: &str) {
-        self.build_with_channel(target_dir, "stable");
-    }
-
     #[tracing::instrument(skip_all, name = "Program::build")]
-    pub fn build_with_channel(&mut self, target_dir: &str, _channel: &str) {
+    pub fn build(&mut self, target_dir: &str) {
         if self.elf.is_none() {
             // Use jolt CLI to build the guest program
             // JOLT_PATH can be set to override (for development/testing)

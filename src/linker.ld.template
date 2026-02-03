@@ -55,6 +55,17 @@ SECTIONS
         PROVIDE_HIDDEN(__eh_frame_end = .);
         . = ALIGN(8);
     } > RAM : rodata
+    {% else %}
+    /* When backtrace is disabled, discard .eh_frame to prevent orphan sections.
+     * Orphan .eh_frame sections trigger R_RISCV_SET32 relocation overflows at
+     * the 0x80000000 base address (signed 32-bit can't represent it).
+     * The compiler still emits .eh_frame — we just drop it at link time.
+     */
+    /DISCARD/ : {
+        *(.eh_frame)
+        *(.eh_frame.*)
+        *(.eh_frame_hdr)
+    }
     {% endif %}
     
     /* Constructor/destructor arrays (used by musl's __libc_start_init)
