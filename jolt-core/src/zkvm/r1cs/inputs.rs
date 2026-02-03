@@ -13,7 +13,7 @@
 //! Changes here affect `r1cs::constraints` (row shapes) and `r1cs::evaluation`
 //! (typed evaluators and claim computation).
 
-use crate::poly::opening_proof::{OpeningId, SumcheckId};
+use crate::poly::opening_proof::{OpeningId, PolynomialId, SumcheckId};
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{
     CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
@@ -60,7 +60,7 @@ pub enum JoltR1CSInputs {
 pub const NUM_R1CS_INPUTS: usize = ALL_R1CS_INPUTS.len();
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 37] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -97,6 +97,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
     JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
     JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
     JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence),
+    JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence),
 ];
 
 impl JoltR1CSInputs {
@@ -150,6 +151,7 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 33,
             JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 34,
             JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence) => 35,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence) => 36,
         }
     }
 }
@@ -188,7 +190,7 @@ impl From<&JoltR1CSInputs> for VirtualPolynomial {
 impl From<&JoltR1CSInputs> for OpeningId {
     fn from(input: &JoltR1CSInputs) -> Self {
         let poly = VirtualPolynomial::from(input);
-        OpeningId::Virtual(poly, SumcheckId::SpartanOuter)
+        OpeningId::Polynomial(PolynomialId::Virtual(poly), SumcheckId::SpartanOuter)
     }
 }
 
@@ -440,7 +442,8 @@ impl R1CSCycleInputs {
 /// 5: LookupOutput
 /// 6: InstructionFlags(Branch)
 /// 7: NextIsNoop
-pub const PRODUCT_UNIQUE_FACTOR_VIRTUALS: [VirtualPolynomial; 8] = [
+/// 8: OpFlags(VirtualInstruction) — not a product factor, but opened here for downstream stages
+pub const PRODUCT_UNIQUE_FACTOR_VIRTUALS: [VirtualPolynomial; 9] = [
     VirtualPolynomial::LeftInstructionInput,
     VirtualPolynomial::RightInstructionInput,
     VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
@@ -449,9 +452,10 @@ pub const PRODUCT_UNIQUE_FACTOR_VIRTUALS: [VirtualPolynomial; 8] = [
     VirtualPolynomial::LookupOutput,
     VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
     VirtualPolynomial::NextIsNoop,
+    VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
 ];
 
-/// Minimal, unified view for the Product-virtualization round: the 5 product pairs
+/// Minimal, unified view for the Product-virtualization round: the 6 product pairs
 /// (left, right) materialized from the trace for a single cycle.
 /// Total size is small; we keep primitive representations that match witness generation.
 #[derive(Clone, Debug)]
@@ -476,6 +480,8 @@ pub struct ProductCycleInputs {
     pub not_next_noop: bool,
     /// IsRdNotZero instruction flag (boolean)
     pub is_rd_not_zero: bool,
+    /// VirtualInstruction flag (boolean) — opened at product cycle point for downstream stages
+    pub virtual_instruction_flag: bool,
 }
 
 impl ProductCycleInputs {
@@ -517,6 +523,8 @@ impl ProductCycleInputs {
         // WriteLookupOutputToRD flag
         let write_lookup_output_to_rd_flag = flags_view[CircuitFlags::WriteLookupOutputToRD];
 
+        let virtual_instruction_flag = flags_view[CircuitFlags::VirtualInstruction];
+
         Self {
             instruction_left_input: left_input,
             instruction_right_input: right_input,
@@ -526,6 +534,7 @@ impl ProductCycleInputs {
             jump_flag,
             not_next_noop,
             is_rd_not_zero,
+            virtual_instruction_flag,
         }
     }
 }
@@ -647,6 +656,10 @@ mod tests {
                     | (
                         CircuitFlags::IsFirstInSequence,
                         CircuitFlags::IsFirstInSequence
+                    )
+                    | (
+                        CircuitFlags::IsLastInSequence,
+                        CircuitFlags::IsLastInSequence
                     )
             )
         }

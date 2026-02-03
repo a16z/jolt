@@ -3,7 +3,6 @@ use crate::field::JoltField;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_serialize::CanonicalSerialize;
 use sha3::{Digest, Keccak256};
-use std::borrow::Borrow;
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript.
 #[derive(Default, Clone)]
@@ -105,67 +104,50 @@ impl Transcript for KeccakTranscript {
         self.expected_state_history = Some(other.state_history);
     }
 
-    fn append_message(&mut self, msg: &'static [u8]) {
-        // We require all messages to fit into one evm word and then right pad them
-        // right padding matches the format of the strings when cast to bytes 32 in solidity
-        assert!(msg.len() < 33);
-        let hasher = if msg.len() == 32 {
-            self.hasher().chain_update(msg)
+    // === Internal raw methods (EVM-compatible serialization) ===
+
+    fn raw_append_label(&mut self, label: &'static [u8]) {
+        // Labels must fit into one EVM word, right-padded with zeros
+        // (matches Solidity's bytes32 string casting)
+        assert!(label.len() < 33);
+        let hasher = if label.len() == 32 {
+            self.hasher().chain_update(label)
         } else {
-            let mut packed = msg.to_vec();
-            packed.append(&mut vec![0_u8; 32 - msg.len()]);
+            let mut packed = label.to_vec();
+            packed.append(&mut vec![0_u8; 32 - label.len()]);
             self.hasher().chain_update(packed)
         };
-        // Instantiate hasher add our seed, position and msg
         self.update_state(hasher.finalize().into());
     }
 
-    fn append_bytes(&mut self, bytes: &[u8]) {
+    fn raw_append_bytes(&mut self, bytes: &[u8]) {
         // Add the message and label
         let hasher = self.hasher().chain_update(bytes);
         self.update_state(hasher.finalize().into());
     }
 
-    fn append_u64(&mut self, x: u64) {
-        // Allocate into a 32 byte region
+    fn raw_append_u64(&mut self, x: u64) {
+        // Allocate into a 32 byte region (left-padded for EVM uint256 compatibility)
         let mut packed = [0_u8; 24].to_vec();
         packed.append(&mut x.to_be_bytes().to_vec());
         let hasher = self.hasher().chain_update(packed.clone());
         self.update_state(hasher.finalize().into());
     }
 
-    fn append_scalar<F: JoltField>(&mut self, scalar: &F) {
+    fn raw_append_scalar<F: JoltField>(&mut self, scalar: &F) {
         let mut buf = vec![];
         scalar.serialize_uncompressed(&mut buf).unwrap();
         // Serialize uncompressed gives the scalar in LE byte order which is not
         // a natural representation in the EVM for scalar math so we reverse
         // to get an EVM compatible version.
         buf = buf.into_iter().rev().collect();
-        self.append_bytes(&buf);
+        self.raw_append_bytes(&buf);
     }
 
-    fn append_serializable<F: CanonicalSerialize>(&mut self, scalar: &F) {
-        let mut buf = vec![];
-        scalar.serialize_uncompressed(&mut buf).unwrap();
-        // Serialize uncompressed gives the scalar in LE byte order which is not
-        // a natural representation in the EVM for scalar math so we reverse
-        // to get an EVM compatible version.
-        buf = buf.into_iter().rev().collect();
-        self.append_bytes(&buf);
-    }
-
-    fn append_scalars<F: JoltField>(&mut self, scalars: &[impl Borrow<F>]) {
-        self.append_message(b"begin_append_vector");
-        for item in scalars.iter() {
-            self.append_scalar(item.borrow());
-        }
-        self.append_message(b"end_append_vector");
-    }
-
-    fn append_point<G: CurveGroup>(&mut self, point: &G) {
+    fn raw_append_point<G: CurveGroup>(&mut self, point: &G) {
         // If we add the point at infinity then we hash over a region of zeros
         if point.is_zero() {
-            self.append_bytes(&[0_u8; 64]);
+            self.raw_append_bytes(&[0_u8; 64]);
             return;
         }
 
@@ -185,13 +167,7 @@ impl Transcript for KeccakTranscript {
         self.update_state(hasher.finalize().into());
     }
 
-    fn append_points<G: CurveGroup>(&mut self, points: &[G]) {
-        self.append_message(b"begin_append_vector");
-        for item in points.iter() {
-            self.append_point(item);
-        }
-        self.append_message(b"end_append_vector");
-    }
+    // === Challenge generation methods ===
 
     fn challenge_u128(&mut self) -> u128 {
         let mut buf = vec![0u8; 16];

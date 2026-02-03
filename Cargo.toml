@@ -79,6 +79,8 @@ members = [
     "examples/hash-bench/guest",
     "examples/msm",
     "examples/msm/guest",
+    "examples/sig-recovery/host",
+    "examples/sig-recovery/guest",
     "zklean-extractor",
     "z3-verifier",
 ]
@@ -103,6 +105,10 @@ syn.workspace = true
 serde.workspace = true
 rmp-serde.workspace = true
 toml_edit.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+zeroos-build.workspace = true
 
 jolt-sdk = { workspace = true, features = ["host"] }
 jolt-core = { workspace = true, features = ["default"] }
@@ -154,7 +160,7 @@ sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", version = "0.1.0", features = ["backends", "cache", "disk-persistence"] }
+dory = { package = "dory-pcs", version = "0.2.0", features = ["backends", "cache", "disk-persistence"] }
 
 # Core Utilities
 clap = { version = "4.5.4", features = ["derive"] }
@@ -240,6 +246,24 @@ spinners = { version = "4.1.1", default-features = false }
 criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
 serial_test = "3.2.0"
+
+# Logging
+log = { version = "0.4" }
+env_logger = { version = "0.11" }
+
+# ZeroOS build system
+zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git" }
+zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false }
+cfg-if = "1.0"
+riscv = { version = "0.12", default-features = false }
+
+# Ethereum/Crypto (for sig-recovery example)
+alloy-primitives = "1"
+alloy-consensus = "1"
+alloy-eips = "1"
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", features = ["rayon", "serde"] }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = ["serde"] }
+secp256k1 = { version = "0.30", features = ["recovery", "rand"] }
 
 # Internal dependencies
 common = { path = "./common", default-features = false }

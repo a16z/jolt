@@ -68,51 +68,12 @@ where
                     poly.coeffs.len(),
                 )),
 
-            // TODO: Check if this is the fastest way forward.
-            MultilinearPolynomial::I64Scalars(poly) => {
-                if bases.len() != poly.coeffs.len() {
-                    return Err(ProofVerifyError::KeyLengthError(
-                        bases.len(),
-                        poly.coeffs.len(),
-                    ));
-                }
-
-                let scalars = &poly.coeffs;
-                let (pos_scalars, pos_bases, neg_scalars, neg_bases): (
-                    Vec<u64>,
-                    Vec<_>,
-                    Vec<u64>,
-                    Vec<_>,
-                ) = bases
-                    .par_iter()
-                    .zip(scalars.par_iter())
-                    .fold(
-                        || (vec![], vec![], vec![], vec![]),
-                        |(mut pos_s, mut pos_b, mut neg_s, mut neg_b), (base, &scalar)| {
-                            if scalar > 0 {
-                                pos_s.push(scalar as u64);
-                                pos_b.push(*base);
-                            } else if scalar < 0 {
-                                neg_s.push(scalar.unsigned_abs());
-                                neg_b.push(*base);
-                            }
-                            (pos_s, pos_b, neg_s, neg_b)
-                        },
-                    )
-                    .reduce(
-                        || (vec![], vec![], vec![], vec![]),
-                        |(mut ps1, mut pb1, mut ns1, mut nb1), (ps2, pb2, ns2, nb2)| {
-                            ps1.extend(ps2);
-                            pb1.extend(pb2);
-                            ns1.extend(ns2);
-                            nb1.extend(nb2);
-                            (ps1, pb1, ns1, nb1)
-                        },
-                    );
-
-                Ok(msm_u64::<Self>(&pos_bases, &pos_scalars, false)
-                    - msm_u64::<Self>(&neg_bases, &neg_scalars, false))
-            }
+            MultilinearPolynomial::I64Scalars(poly) => (bases.len() == poly.coeffs.len())
+                .then(|| msm_i64::<Self>(bases, &poly.coeffs, false))
+                .ok_or(ProofVerifyError::KeyLengthError(
+                    bases.len(),
+                    poly.coeffs.len(),
+                )),
             _ => unimplemented!("This variant of MultilinearPolynomial is not yet handled"),
         }
     }

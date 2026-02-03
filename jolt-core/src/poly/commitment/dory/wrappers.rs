@@ -7,7 +7,7 @@ use crate::{
         commitment::dory::{DoryContext, DoryGlobals, DoryLayout},
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
-    transcripts::{AppendToTranscript, Transcript},
+    transcripts::Transcript,
 };
 use ark_bn254::Fr;
 use ark_ec::CurveGroup;
@@ -29,30 +29,6 @@ pub use dory::backends::arkworks::{
 };
 
 pub type JoltFieldWrapper = ArkFr;
-
-impl AppendToTranscript for ArkGT {
-    fn append_to_transcript<S: Transcript>(&self, transcript: &mut S) {
-        transcript.append_serializable(self);
-    }
-}
-
-impl AppendToTranscript for &ArkGT {
-    fn append_to_transcript<S: Transcript>(&self, transcript: &mut S) {
-        transcript.append_serializable(*self);
-    }
-}
-
-impl AppendToTranscript for ArkDoryProof {
-    fn append_to_transcript<S: Transcript>(&self, transcript: &mut S) {
-        transcript.append_serializable(self);
-    }
-}
-
-impl AppendToTranscript for &ArkDoryProof {
-    fn append_to_transcript<S: Transcript>(&self, transcript: &mut S) {
-        transcript.append_serializable(*self);
-    }
-}
 
 #[inline]
 pub fn jolt_to_ark(f: &Fr) -> ArkFr {
@@ -377,7 +353,7 @@ impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscript<'a, T> {
             .transcript
             .as_mut()
             .expect("Transcript not initialized");
-        transcript.append_bytes(bytes);
+        transcript.append_bytes(b"dory_bytes", bytes);
     }
 
     fn append_field(&mut self, _label: &[u8], x: &ArkFr) {
@@ -386,7 +362,7 @@ impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscript<'a, T> {
             .as_mut()
             .expect("Transcript not initialized");
         let jolt_scalar: Fr = ark_to_jolt(x);
-        transcript.append_scalar(&jolt_scalar);
+        transcript.append_scalar(b"dory_field", &jolt_scalar);
     }
 
     fn append_group<G: DoryGroup>(&mut self, _label: &[u8], g: &G) {
@@ -398,7 +374,7 @@ impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscript<'a, T> {
         let mut buffer = Vec::new();
         g.serialize_compressed(&mut buffer)
             .expect("DorySerialize serialization should not fail");
-        transcript.append_bytes(&buffer);
+        transcript.append_bytes(b"dory_group", &buffer);
     }
 
     fn append_serde<S: DorySerialize>(&mut self, _label: &[u8], s: &S) {
@@ -410,7 +386,7 @@ impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscript<'a, T> {
         let mut buffer = Vec::new();
         s.serialize_compressed(&mut buffer)
             .expect("DorySerialize serialization should not fail");
-        transcript.append_bytes(&buffer);
+        transcript.append_bytes(b"dory_serde", &buffer);
     }
 
     fn challenge_scalar(&mut self, _label: &[u8]) -> ArkFr {

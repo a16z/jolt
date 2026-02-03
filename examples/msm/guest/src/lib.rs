@@ -39,7 +39,7 @@ const RUN_MICRO_BENCH: bool = false;
 
 #[jolt::provable(
     max_output_size = 1024,
-    memory_size = 134217728,   // 128 MB
+    heap_size = 134217728,     // 128 MB
     stack_size = 67108864,     // 64 MB
     max_trace_length = 500000000
 )]
