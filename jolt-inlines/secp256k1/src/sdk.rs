@@ -689,31 +689,27 @@ impl Secp256k1Point {
             Secp256k1Point { x: x2, y: y2 }
         }
     }
-    // specialty routine for computing res = 2*self + other
-    // tries to avoid doubling as much as possible
-    // and avoids computing unnecessary intermediate values
+    /// computes 2*self + other using an optimized formula that saves one field operation
     #[inline(always)]
     pub fn double_and_add(&self, other: &Secp256k1Point) -> Self {
-        // if self is infinity, then return other
         if self.is_infinity() {
             other.clone()
-        // if other is infinity, then return 2*self
         } else if other.is_infinity() {
             self.add(self)
-        // if self is equal to other, naive double and add
         } else if self.x == other.x && self.y == other.y {
             self.add(self).add(other)
-        // if self and other are inverses, return self
         } else if self.x == other.x && self.y != other.y {
+            // self + other = infinity, so 2*self + other = self
             self.clone()
-        // general case, compute (self + other) + self
-        // saving an operation in the middle
-        // note that (self + other) cannot equal infinity or self here
-        // so no special cases needed
         } else {
             let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
             let x2 = s.square().sub(&self.x).sub(&other.x);
-            let t = self.y.dbl().div(&self.x.sub(&x2)).sub(&s);
+            let divisor = self.x.sub(&x2);
+            // When divisor = 0, result is infinity. This happens when Q = -2P.
+            if divisor.is_zero() {
+                return Secp256k1Point::infinity();
+            }
+            let t = self.y.dbl().div_unchecked(&divisor).sub(&s);
             let x3 = t.square().sub(&self.x).sub(&x2);
             let y3 = t.mul(&(self.x.sub(&x3))).sub(&self.y);
             Secp256k1Point { x: x3, y: y3 }
