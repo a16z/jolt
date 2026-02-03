@@ -3014,6 +3014,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-inlines-grumpkin"
+version = "0.1.0"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-grumpkin",
+ "ark-serialize",
+ "ctor 0.2.9",
+ "hex-literal",
+ "num-bigint",
+ "num-integer",
+ "serde",
+ "tracer",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
 dependencies = [
