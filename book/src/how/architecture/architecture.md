@@ -106,7 +106,7 @@ where $r \in \mathbb{F}^n$ consists of the random challenges obtained over the c
 An output claim of one sumcheck might be the input claim of another sumcheck.
 Recall that [by definition](#virtual-vs-committed-polynomials), the output claim for a virtual polynomial is necessarily the input claim of another sumcheck.
 
-It follows that input claims can be viewed as in-edges and output claims as out-edges, thus defining the graph structure. This is what the Jolt sumcheck dag looks like:
+It follows that input claims can be viewed as in-edges and output claims as out-edges, thus defining the graph structure. This is what the Jolt sumcheck DAG looks like:
 
 ![dag](../../imgs/jolt_dag.png)
 
