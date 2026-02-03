@@ -1,4 +1,4 @@
 pub mod program;
-#[cfg(feature = "prover")]
+#[cfg(any(feature = "prover", feature = "wasm-prover"))]
 pub mod prover;
 pub mod verifier;

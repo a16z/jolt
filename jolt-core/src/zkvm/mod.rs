@@ -13,7 +13,7 @@ use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
 use proof_serialization::JoltProof;
-#[cfg(feature = "prover")]
+#[cfg(any(feature = "prover", feature = "wasm-prover"))]
 use prover::JoltCpuProver;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -27,7 +27,7 @@ pub mod instruction;
 pub mod instruction_lookups;
 pub mod lookup_table;
 pub mod proof_serialization;
-#[cfg(feature = "prover")]
+#[cfg(any(feature = "prover", feature = "wasm-prover"))]
 pub mod prover;
 pub mod r1cs;
 pub mod ram;
@@ -133,7 +133,7 @@ pub fn fiat_shamir_preamble(
     transcript.append_u64(b"trace_length", trace_length as u64);
 }
 
-#[cfg(feature = "prover")]
+#[cfg(any(feature = "prover", feature = "wasm-prover"))]
 pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
 pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
 pub type RV64IMACProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
@@ -180,6 +180,19 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
             ark_serialize::Compress::Yes,
             ark_serialize::Validate::No,
         )?)
+    }
+
+    /// Serializes to bytes using uncompressed format (larger but more portable)
+    fn serialize_to_bytes_uncompressed(&self) -> Result<Vec<u8>> {
+        let mut buffer = Vec::new();
+        self.serialize_uncompressed(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    /// Deserializes from uncompressed format
+    fn deserialize_from_bytes_uncompressed(bytes: &[u8]) -> Result<Self> {
+        let cursor = Cursor::new(bytes);
+        Ok(Self::deserialize_uncompressed(cursor)?)
     }
 }
 
