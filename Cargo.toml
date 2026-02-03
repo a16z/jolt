@@ -78,6 +78,8 @@ members = [
     "examples/hash-bench/guest",
     "examples/modinv",
     "examples/modinv/guest",
+    "examples/advice-demo",
+    "examples/advice-demo/guest",
     "zklean-extractor",
     "z3-verifier",
 ]

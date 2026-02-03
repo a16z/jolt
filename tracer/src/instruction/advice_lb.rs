@@ -52,21 +52,21 @@ impl RISCVTrace for AdviceLB {
 
 impl AdviceLB {
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        // Read 2 bytes from advice tape into the register rd
+        // Read 1 byte from advice tape into the register rd
         // And then shift twice to wipe upper bits and sign extend
         // rd = (rd << 24) >>> 24
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
-        asm.emit_j::<VirtualAdviceLoad>(self.operands.rd, 4);
+        asm.emit_j::<VirtualAdviceLoad>(self.operands.rd, 1);
         asm.emit_i::<SLLI>(self.operands.rd, self.operands.rd, 24);
         asm.emit_i::<SRAI>(self.operands.rd, self.operands.rd, 24);
         asm.finalize()
     }
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        // Read 2 bytes from advice tape into the register rd
+        // Read 1 byte from advice tape into the register rd
         // And then shift twice to wipe upper bits and sign extend
         // rd = (rd << 56) >>> 56
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
-        asm.emit_j::<VirtualAdviceLoad>(self.operands.rd, 4);
+        asm.emit_j::<VirtualAdviceLoad>(self.operands.rd, 1);
         asm.emit_i::<SLLI>(self.operands.rd, self.operands.rd, 56);
         asm.emit_i::<SRAI>(self.operands.rd, self.operands.rd, 56);
         asm.finalize()

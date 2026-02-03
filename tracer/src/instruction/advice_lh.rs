@@ -21,7 +21,7 @@ declare_riscv_instr!(
 
 impl AdviceLH {
     fn exec(&self, cpu: &mut Cpu, _: &mut <AdviceLH as RISCVInstruction>::RAMAccess) {
-        // Read 2 bytes (word) from the advice tape
+        // Read 2 bytes (halfword) from the advice tape
         let advice_value = advice_tape_read(cpu, 2).expect("Failed to read from advice tape");
         // Store the sign extended advice value to register rd
         cpu.x[self.operands.rd as usize] = advice_value as i16 as i64;
@@ -56,7 +56,7 @@ impl AdviceLH {
         // And then shift twice to wipe upper bits and sign extend
         // rd = (rd << 16) >>> 16
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
-        asm.emit_j::<VirtualAdviceLoad>(self.operands.rd, 4);
+        asm.emit_j::<VirtualAdviceLoad>(self.operands.rd, 2);
         asm.emit_i::<SLLI>(self.operands.rd, self.operands.rd, 16);
         asm.emit_i::<SRAI>(self.operands.rd, self.operands.rd, 16);
         asm.finalize()
@@ -66,7 +66,7 @@ impl AdviceLH {
         // And then shift twice to wipe upper bits and sign extend
         // rd = (rd << 48) >>> 48
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
-        asm.emit_j::<VirtualAdviceLoad>(self.operands.rd, 4);
+        asm.emit_j::<VirtualAdviceLoad>(self.operands.rd, 2);
         asm.emit_i::<SLLI>(self.operands.rd, self.operands.rd, 48);
         asm.emit_i::<SRAI>(self.operands.rd, self.operands.rd, 48);
         asm.finalize()

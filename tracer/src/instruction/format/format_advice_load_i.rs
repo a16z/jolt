@@ -22,9 +22,11 @@ pub struct RegisterStateFormatAdviceLoadI {
 
 impl InstructionRegisterState for RegisterStateFormatAdviceLoadI {
     #[cfg(any(feature = "test-utils", test))]
-    fn random(_rng: &mut rand::rngs::StdRng, _operands: &NormalizedOperands) -> Self {
-        //use rand::RngCore;
-        unimplemented!("random state generation for advice load instructions");
+    fn random(rng: &mut rand::rngs::StdRng, _operands: &NormalizedOperands) -> Self {
+        use rand::RngCore;
+        Self {
+            rd: (rng.next_u64(), rng.next_u64()),
+        }
     }
 
     fn rd_values(&self) -> Option<(u64, u64)> {

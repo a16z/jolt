@@ -137,8 +137,6 @@ macro_rules! check_advice {
 }
 
 /// Writer for sending advice data to the host during the compute_advice phase.
-///
-/// Implements `embedded_io::Write` to allow serialization of advice data via postcard.
 pub struct AdviceWriter;
 
 impl AdviceWriter {
@@ -147,15 +145,9 @@ impl AdviceWriter {
     pub fn get() -> Self {
         AdviceWriter
     }
-}
-
-impl embedded_io::ErrorType for AdviceWriter {
-    type Error = core::convert::Infallible;
-}
-
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-impl embedded_io::Write for AdviceWriter {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+    /// Write a slice of bytes to the advice tape.
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn write_bytes(&mut self, buf: &[u8]) -> usize {
         unsafe {
             let src_ptr = buf.as_ptr() as u64;
             let len = buf.len() as u64;
@@ -167,31 +159,31 @@ impl embedded_io::Write for AdviceWriter {
                 options(nostack)
             );
         }
-        Ok(buf.len())
+        buf.len()
     }
-
-    fn flush(&mut self) -> Result<(), Self::Error> {
-        // Nothing to flush, since write always processes the entire buffer
-        Ok(())
+    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+    fn write_bytes(&mut self, _buf: &[u8]) -> usize {
+        panic!("Advice tape IO is not supported on non-RISC-V targets");
     }
-}
-
-// Stub implementation for non-RISC-V targets (host builds)
-#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-impl embedded_io::Write for AdviceWriter {
-    fn write(&mut self, _buf: &[u8]) -> Result<usize, Self::Error> {
-        // This should never be called on the host
-        panic!("AdviceWriter::write() called on non-RISC-V target");
+    // Write a single byte to the advice tape
+    pub fn write_u8(&mut self, value: u8) {
+        self.write_bytes(&value.to_le_bytes());
     }
-
-    fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+    // Write a halfword (2 bytes) to the advice tape
+    pub fn write_u16(&mut self, value: u16) {
+        self.write_bytes(&value.to_le_bytes());
+    }
+    // Write a word (4 bytes) to the advice tape
+    pub fn write_u32(&mut self, value: u32) {
+        self.write_bytes(&value.to_le_bytes());
+    }
+    // Write a doubleword (8 bytes) to the advice tape
+    pub fn write_u64(&mut self, value: u64) {
+        self.write_bytes(&value.to_le_bytes());
     }
 }
 
 /// Reader for receiving advice data from the host during the proving phase.
-///
-/// Implements `embedded_io::Read` to allow deserialization of advice data via postcard.
 pub struct AdviceReader;
 
 impl AdviceReader {
@@ -200,15 +192,12 @@ impl AdviceReader {
     pub fn get() -> Self {
         AdviceReader
     }
-}
-
-impl AdviceReader {
     // Load a single byte from the advice tape and return it
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-    pub unsafe fn read_lb(&mut self) -> u8 {
+    pub unsafe fn read_u8(&mut self) -> u8 {
         let x;
         core::arch::asm!(
-            ".insn i {opcode}, {funct3}, {rd}, x0, 8",
+            ".insn i {opcode}, {funct3}, {rd}, x0, 0",
             opcode = const CUSTOM_OPCODE,
             funct3 = const FUNCT3_ADVICE_LB,
             rd = out(reg) x,
@@ -216,12 +205,16 @@ impl AdviceReader {
         );
         x
     }
+    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+    pub unsafe fn read_u8(&mut self) -> u8 {
+        panic!("Advice tape IO is not supported on non-RISC-V targets");
+    }
     // Load a halfword (2 bytes) from the advice tape and return it
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-    pub unsafe fn read_lh(&mut self) -> u16 {
+    pub unsafe fn read_u16(&mut self) -> u16 {
         let x;
         core::arch::asm!(
-            ".insn i {opcode}, {funct3}, {rd}, x0, 8",
+            ".insn i {opcode}, {funct3}, {rd}, x0, 0",
             opcode = const CUSTOM_OPCODE,
             funct3 = const FUNCT3_ADVICE_LH,
             rd = out(reg) x,
@@ -229,12 +222,16 @@ impl AdviceReader {
         );
         x
     }
+    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+    pub unsafe fn read_u16(&mut self) -> u16 {
+        panic!("Advice tape IO is not supported on non-RISC-V targets");
+    }
     // Load a word (4 bytes) from the advice tape and return it
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-    pub unsafe fn read_lw(&mut self) -> u32 {
+    pub unsafe fn read_u32(&mut self) -> u32 {
         let x;
         core::arch::asm!(
-            ".insn i {opcode}, {funct3}, {rd}, x0, 8",
+            ".insn i {opcode}, {funct3}, {rd}, x0, 0",
             opcode = const CUSTOM_OPCODE,
             funct3 = const FUNCT3_ADVICE_LW,
             rd = out(reg) x,
@@ -242,18 +239,22 @@ impl AdviceReader {
         );
         x
     }
+    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+    pub unsafe fn read_u32(&mut self) -> u32 {
+        panic!("Advice tape IO is not supported on non-RISC-V targets");
+    }
     // Load a doubleword (8 bytes) from the advice tape and return it
     // on 32-bit targets, this is performed via two 4-byte reads
     #[cfg(target_arch = "riscv32")]
-    pub unsafe fn read_ld(&mut self) -> u64 {
-        let low = self.read_lw() as u64;
-        let high = self.read_lw() as u64;
+    pub unsafe fn read_u64(&mut self) -> u64 {
+        let low = self.read_u32() as u64;
+        let high = self.read_u32() as u64;
         (high << 32) | low
     }
     // Load a doubleword (8 bytes) from the advice tape and return it
     // on 64-bit targets, this is a single 8-byte read
     #[cfg(target_arch = "riscv64")]
-    pub unsafe fn read_ld(&mut self) -> u64 {
+    pub unsafe fn read_u64(&mut self) -> u64 {
         let x;
         core::arch::asm!(
             ".insn i {opcode}, {funct3}, {rd}, x0, 8",
@@ -264,165 +265,152 @@ impl AdviceReader {
         );
         x
     }
-}
-
-impl embedded_io::ErrorType for AdviceReader {
-    type Error = core::convert::Infallible;
-}
-
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-impl embedded_io::Read for AdviceReader {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-
-        // First, query how many bytes remain in the advice tape
+    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+    pub unsafe fn read_u64(&mut self) -> u64 {
+        panic!("Advice tape IO is not supported on non-RISC-V targets");
+    }
+    // Get the number of remaining bytes in the advice tape
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    pub unsafe fn bytes_remaining(&mut self) -> u64 {
         let remaining: u64;
+        // VirtualAdviceLen uses custom opcode with funct3 encoding
+        // Encode as I-format: opcode | rd | funct3 | rs1=x0 | imm=0
+        core::arch::asm!(
+            ".insn i {opcode}, {funct3}, {rd}, x0, 0",
+            opcode = const CUSTOM_OPCODE,
+            funct3 = const FUNCT3_ADVICE_LEN,
+            rd = out(reg) remaining,
+            options(nostack)
+        );
+        remaining
+    }
+    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+    pub unsafe fn bytes_remaining(&mut self) -> u64 {
+        panic!("Advice tape IO is not supported on non-RISC-V targets");
+    }
+    // Fill the provided buffer with advice data read from the advice tape
+    // Attempts to read as much data as possible per instruction
+    // As with the instructions above, reading beyond the end of the advice tape
+    // will result in a runtime error during proof generation
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    fn read_slice(&mut self, buf: &mut [u8]) {
+        let mut ptr = buf.as_mut_ptr();
+        let mut remaining = buf.len();
         unsafe {
-            // VirtualAdviceLen uses custom opcode with funct3 encoding
-            // Encode as I-format: opcode | rd | funct3 | rs1=x0 | imm=0
-            core::arch::asm!(
-                ".insn i {opcode}, {funct3}, {rd}, x0, 0",
-                opcode = const CUSTOM_OPCODE,
-                funct3 = const FUNCT3_ADVICE_LEN,
-                rd = out(reg) remaining,
-                options(nostack)
-            );
-        }
+            while remaining >= 8 {
+                core::ptr::write_unaligned(ptr as *mut u64, self.read_u64());
+                ptr = ptr.add(8);
+                remaining -= 8;
+            }
 
-        // Read up to min(buf.len(), remaining) bytes
-        let bytes_to_read = core::cmp::min(buf.len(), remaining as usize);
-        let dst_ptr = buf.as_mut_ptr();
-        // Read as many bytes at once as possible
-        if bytes_to_read >= 8 {
-            unsafe {
-                // On 32-bit architectures this is effectively two 4-byte reads
-                // On 64-bit architectures this is a single 8-byte read
-                let value = self.read_ld();
-                core::ptr::write_unaligned(dst_ptr as *mut u64, value);
+            if remaining >= 4 {
+                core::ptr::write_unaligned(ptr as *mut u32, self.read_u32());
+                ptr = ptr.add(4);
+                remaining -= 4;
             }
-            Ok(8)
-        } else if bytes_to_read >= 4 {
-            unsafe {
-                let value = self.read_lw();
-                core::ptr::write_unaligned(dst_ptr as *mut u32, value);
+
+            if remaining >= 2 {
+                core::ptr::write_unaligned(ptr as *mut u16, self.read_u16());
+                ptr = ptr.add(2);
+                remaining -= 2;
             }
-            Ok(4)
-        } else if bytes_to_read >= 2 {
-            unsafe {
-                let value = self.read_lh();
-                core::ptr::write_unaligned(dst_ptr as *mut u16, value);
+
+            if remaining == 1 {
+                core::ptr::write_unaligned(ptr, self.read_u8());
             }
-            Ok(2)
-        } else if bytes_to_read == 1 {
-            unsafe {
-                let value = self.read_lb();
-                core::ptr::write_unaligned(dst_ptr as *mut u8, value);
-            }
-            Ok(1)
-        } else {
-            Ok(0)
         }
     }
-}
-
-// Stub implementation for non-RISC-V targets (host builds)
-#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-impl embedded_io::Read for AdviceReader {
-    fn read(&mut self, _buf: &mut [u8]) -> Result<usize, Self::Error> {
-        // This should never be called on the host
-        panic!("AdviceReader::read() called on non-RISC-V target");
+    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+    fn read_slice(&mut self, _buf: &mut [u8]) {
+        panic!("Advice tape IO is not supported on non-RISC-V targets");
     }
 }
 
 // Trait for writing to and reading from the advice tape
-// with default implementation going through AdviceWriter/AdviceReader
-pub trait AdviceTapeIO: Sized + Serialize + for<'a> Deserialize<'a> {
+pub trait AdviceTapeIO: Sized {
     fn write_to_advice_tape(&self) {
-        let mut writer = AdviceWriter::get();
-        postcard::to_eio(self, &mut writer).expect("Failed to write advice to tape");
+        panic!("Advice tape IO not implemented for this type/target");
     }
     fn new_from_advice_tape() -> Self {
-        // Create a scratch buffer for postcard deserialization
-        let mut buffer: [u8; 8] = [0u8; 8];
-        // create advice reader and read from tape
-        let mut reader = AdviceReader::get();
-        let (result, _) = postcard::from_eio((&mut reader, &mut buffer))
-            .expect("Failed to read advice from tape");
-        // return deserialized result
-        result
+        panic!("Advice tape IO not implemented for this type/target");
     }
 }
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-use embedded_io::Write;
-
 // Implement AdviceTapeIO for primitive types
-
 impl AdviceTapeIO for u8 {
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     fn write_to_advice_tape(&self) {
         // write u8 to advice tape directly via ECALL
         let mut writer = AdviceWriter::get();
-        AdviceWriter::write(&mut writer, &self.to_le_bytes()).expect("Failed to write advice");
+        writer.write_u8(*self);
     }
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     fn new_from_advice_tape() -> Self {
         // read u8 from advice tape directly
         let mut reader = AdviceReader::get();
-        unsafe { reader.read_lb() }
+        unsafe { reader.read_u8() }
     }
 }
 
 impl AdviceTapeIO for u16 {
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     fn write_to_advice_tape(&self) {
         // write u16 to advice tape directly via ECALL
         let mut writer = AdviceWriter::get();
-        AdviceWriter::write(&mut writer, &self.to_le_bytes()).expect("Failed to write advice");
+        writer.write_u16(*self);
     }
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     fn new_from_advice_tape() -> Self {
         // read u16 from advice tape directly
         let mut reader = AdviceReader::get();
-        unsafe { reader.read_lh() }
+        unsafe { reader.read_u16() }
     }
 }
 
 impl AdviceTapeIO for u32 {
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     fn write_to_advice_tape(&self) {
         // write u32 to advice tape directly via ECALL
         let mut writer = AdviceWriter::get();
-        AdviceWriter::write(&mut writer, &self.to_le_bytes()).expect("Failed to write advice");
+        writer.write_u32(*self);
     }
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     fn new_from_advice_tape() -> Self {
         // read u32 from advice tape directly
         let mut reader = AdviceReader::get();
-        unsafe { reader.read_lw() }
+        unsafe { reader.read_u32() }
     }
 }
 
 impl AdviceTapeIO for u64 {
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     fn write_to_advice_tape(&self) {
         // write u64 to advice tape directly via ECALL
         let mut writer = AdviceWriter::get();
-        AdviceWriter::write(&mut writer, &self.to_le_bytes()).expect("Failed to write advice");
+        writer.write_u64(*self);
     }
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     fn new_from_advice_tape() -> Self {
         // read u64 from advice tape directly
         let mut reader = AdviceReader::get();
-        unsafe { reader.read_ld() }
+        unsafe { reader.read_u64() }
+    }
+}
+
+impl AdviceTapeIO for usize {
+    fn write_to_advice_tape(&self) {
+        // write usize to advice tape directly via ECALL
+        let mut writer = AdviceWriter::get();
+        // to_le_bytes implicitly handles 32 vs 64 bit usize
+        AdviceWriter::write_bytes(&mut writer, &self.to_le_bytes());
+    }
+    fn new_from_advice_tape() -> Self {
+        // if usize is 32 bits, read u32; if 64 bits, read u64
+        let mut reader = AdviceReader::get();
+        #[cfg(target_pointer_width = "32")]
+        unsafe {
+            reader.read_u32() as usize
+        }
+        #[cfg(target_pointer_width = "64")]
+        unsafe {
+            reader.read_u64() as usize
+        }
     }
 }
 
 // Implement AdviceTapeIO for tuples and small arrays of AdviceTapeIO types
-// The goal is to avoid Postcard's overhead for these common cases
-// TODO, potentially replace these with a macro
 
 impl<S, T> AdviceTapeIO for (S, T)
 where
@@ -506,5 +494,143 @@ where
             S::new_from_advice_tape(),
             S::new_from_advice_tape(),
         ]
+    }
+}
+
+// Implement AdviceTapeIO for Vecs of u8s, u16s, u32s, u64s, and usizes
+// Optimized to read/write in bulk rather than element-by-element
+impl AdviceTapeIO for Vec<u8> {
+    fn write_to_advice_tape(&self) {
+        // Write the length of the Vec<u8> first
+        self.len().write_to_advice_tape();
+        // Then write the contents of the Vec<u8> to the advice tape
+        let mut writer = AdviceWriter::get();
+        AdviceWriter::write_bytes(&mut writer, self);
+    }
+    fn new_from_advice_tape() -> Self {
+        // First read the length of the advice data
+        let len = usize::new_from_advice_tape();
+        // Then read that many bytes into a pre-sized Vec<u8>
+        let mut reader = AdviceReader::get();
+        let mut buf = Vec::with_capacity(len);
+        unsafe {
+            buf.set_len(len);
+        }
+        AdviceReader::read_slice(&mut reader, &mut buf);
+        buf
+    }
+}
+
+impl AdviceTapeIO for Vec<u16> {
+    fn write_to_advice_tape(&self) {
+        // Write the length of the Vec<u16> first
+        self.len().write_to_advice_tape();
+        // Then write the contents of the Vec<u16> to the advice tape
+        let mut writer = AdviceWriter::get();
+        let bytes =
+            unsafe { std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 2) };
+        AdviceWriter::write_bytes(&mut writer, bytes);
+    }
+    fn new_from_advice_tape() -> Self {
+        // First read the length of the Vec<u16>
+        let len = usize::new_from_advice_tape();
+        // Create a vec of u16s length len
+        let mut reader = AdviceReader::get();
+        let mut buf = Vec::<u16>::with_capacity(len);
+        unsafe {
+            buf.set_len(len);
+        }
+        // Cast the Vec<u16> to a byte slice of twice the length
+        let bytes = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 2 * len) };
+        // Read the contents into the byte slice
+        AdviceReader::read_slice(&mut reader, bytes);
+        // Return the filled Vec<u16>
+        buf
+    }
+}
+
+impl AdviceTapeIO for Vec<u32> {
+    fn write_to_advice_tape(&self) {
+        // Write the length of the Vec<u32> first
+        self.len().write_to_advice_tape();
+        // Then write the contents of the Vec<u32> to the advice tape
+        let mut writer = AdviceWriter::get();
+        let bytes =
+            unsafe { std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 4) };
+        AdviceWriter::write_bytes(&mut writer, bytes);
+    }
+    fn new_from_advice_tape() -> Self {
+        // First read the length of the Vec<u32>
+        let len = usize::new_from_advice_tape();
+        // Create a vec of u32s length len
+        let mut reader = AdviceReader::get();
+        let mut buf = Vec::<u32>::with_capacity(len);
+        unsafe {
+            buf.set_len(len);
+        }
+        // Cast the Vec<u32> to a byte slice of 4x the length
+        let bytes = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 4 * len) };
+        // Read the contents into the byte slice
+        AdviceReader::read_slice(&mut reader, bytes);
+        // Return the filled Vec<u32>
+        buf
+    }
+}
+
+impl AdviceTapeIO for Vec<u64> {
+    fn write_to_advice_tape(&self) {
+        // Write the length of the Vec<u64> first
+        self.len().write_to_advice_tape();
+        // Then write the contents of the Vec<u64> to the advice tape
+        let mut writer = AdviceWriter::get();
+        let bytes =
+            unsafe { std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 8) };
+        AdviceWriter::write_bytes(&mut writer, bytes);
+    }
+    fn new_from_advice_tape() -> Self {
+        // First read the length of the Vec<u64>
+        let len = usize::new_from_advice_tape();
+        // Create a vec of u64s length len
+        let mut reader = AdviceReader::get();
+        let mut buf = Vec::<u64>::with_capacity(len);
+        unsafe {
+            buf.set_len(len);
+        }
+        // Cast the Vec<u64> to a byte slice of 8x the length
+        let bytes = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 8 * len) };
+        // Read the contents into the byte slice
+        AdviceReader::read_slice(&mut reader, bytes);
+        // Return the filled Vec<u64>
+        buf
+    }
+}
+
+impl AdviceTapeIO for Vec<usize> {
+    fn write_to_advice_tape(&self) {
+        // Write the length of the Vec<usize> first
+        self.len().write_to_advice_tape();
+        // Then write the contents of the Vec<usize> to the advice tape
+        for &item in self.iter() {
+            item.write_to_advice_tape();
+        }
+    }
+    fn new_from_advice_tape() -> Self {
+        // First read the length of the Vec<usize>
+        let len = usize::new_from_advice_tape();
+        // Create a vec of usizes of length len
+        let mut reader = AdviceReader::get();
+        let mut buf = Vec::<usize>::with_capacity(len);
+        unsafe {
+            buf.set_len(len);
+        }
+        // Cast the Vec<usize> to a byte slice of either 4x or 8x the length
+        #[cfg(target_pointer_width = "32")]
+        let bytes = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 4 * len) };
+        #[cfg(target_pointer_width = "64")]
+        let bytes = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 8 * len) };
+        // Read the contents into the byte slice
+        AdviceReader::read_slice(&mut reader, bytes);
+        // Return the filled Vec<usize>
+        buf
     }
 }
