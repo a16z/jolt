@@ -14,7 +14,7 @@ use rand::prelude::SliceRandom;
 use sysinfo::System;
 
 use build_wasm::{build_wasm, modify_cargo_toml};
-use zeroos_build::cmds::{BuildArgs, StdMode};
+use zeroos_build::cmds::{build::BacktraceMode, BuildArgs, StdMode};
 use zeroos_build::spec::TargetRenderOptions;
 
 #[global_allocator]
@@ -190,7 +190,24 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     };
 
     let opt_flag = guest_opt_flag();
-    let jolt_rustflags: &[&str] = &[
+
+    // Strip symbols for smaller ELFs. Preserve them when JOLT_BACKTRACE is set
+    // or --backtrace enable is passed, so the tracer can symbolize panic backtraces.
+    // In auto mode (default), strip for release and preserve for debug/dev profiles.
+    let backtrace_via_env = std::env::var("JOLT_BACKTRACE")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
+    let preserve_symbols = backtrace_via_env
+        || match args.base.backtrace {
+            BacktraceMode::Enable => true,
+            BacktraceMode::Disable => false,
+            BacktraceMode::Auto => {
+                let profile = zeroos_build::project::detect_profile(&args.base.cargo_args);
+                matches!(profile.as_str(), "debug" | "dev")
+            }
+        };
+
+    let mut jolt_rustflags: Vec<&str> = vec![
         "-Cpasses=lower-atomic",
         "-Cpanic=abort",
         &opt_flag,
@@ -200,12 +217,16 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         "--cfg=getrandom_backend=\"custom\"",
     ];
 
+    if !preserve_symbols {
+        jolt_rustflags.push("-Cstrip=symbols");
+    }
+
     zeroos_build::cmds::build_binary_with_rustflags(
         &workspace_root,
         &args.base,
         toolchain_paths,
         Some(linker_tpl),
-        Some(jolt_rustflags),
+        Some(&jolt_rustflags),
     )?;
 
     Ok(())

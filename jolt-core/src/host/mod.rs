@@ -6,10 +6,6 @@ use std::path::PathBuf;
 pub mod analyze;
 #[cfg(feature = "host")]
 pub mod program;
-#[cfg(all(feature = "host", not(target_arch = "wasm32")))]
-pub mod toolchain;
-
-pub const TOOLCHAIN_VERSION: &str = "1.89.0";
 
 #[derive(Clone)]
 pub struct Program {

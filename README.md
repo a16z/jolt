@@ -142,7 +142,8 @@ The above command will log memory usage info to the command line and output mult
 Tracer, Jolt's emulator, doesn't currently support attaching a debugger.
 
 However, it supports backtraces for panics that happen in guest programs.
-By default, DWARF symbols are stripped from the guest elf and backtraces won't have much information.
+By default, symbols are stripped from release guest ELFs and backtraces won't have much information.
+Debug/dev builds preserve symbols automatically.
 
 To enable symbolized backtraces, set the `JOLT_BACKTRACE` environment variable to `1` or `full`:
 
@@ -151,6 +152,8 @@ JOLT_BACKTRACE=1 cargo run --release -p example
 ```
 
 When `JOLT_BACKTRACE=full` is set, the backtraces include cycle counts and non-zero values of registers at each frame.
+
+You can also control symbol preservation directly via `jolt build --backtrace enable`.
 
 To further assist in debugging, Jolt supports `print!` and `println!` macros in guest programs. For `no_std` guests, import the macros via `use jolt::println;`. When std is enabled, the standard `println!` works automatically.
 
