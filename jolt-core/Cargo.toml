@@ -38,6 +38,14 @@ prover = [
     "dory/cache", # This includes `parallel` feature
     "dory/disk-persistence"
 ]
+wasm-prover = [
+    "minimal",
+    "dory/backends",
+    "dory/parallel",
+    "ark-ec/parallel",
+    "ark-ff/parallel",
+    "ark-std/parallel",
+]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
 minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]

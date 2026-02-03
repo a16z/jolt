@@ -2,7 +2,9 @@
 
 use crate::utils::math::Math;
 use allocative::Allocative;
-use dory::backends::arkworks::{init_cache, ArkG1, ArkG2};
+use dory::backends::arkworks::{ArkG1, ArkG2};
+#[cfg(not(target_arch = "wasm32"))]
+use dory::backends::arkworks::init_cache;
 use std::sync::{
     atomic::{AtomicU8, Ordering},
     RwLock,
@@ -477,7 +479,13 @@ impl DoryGlobals {
     /// # Arguments
     /// * `g1_vec` - Vector of G1 generators from the prover setup
     /// * `g2_vec` - Vector of G2 generators from the prover setup
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn init_prepared_cache(g1_vec: &[ArkG1], g2_vec: &[ArkG2]) {
         init_cache(g1_vec, g2_vec);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn init_prepared_cache(_g1_vec: &[ArkG1], _g2_vec: &[ArkG2]) {
+        // Cache not available in WASM (requires dory/cache feature which pulls in parallel)
     }
 }

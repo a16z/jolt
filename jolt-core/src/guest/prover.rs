@@ -11,7 +11,7 @@ use common::jolt_device::MemoryLayout;
 use tracer::JoltDevice;
 
 #[allow(clippy::type_complexity)]
-#[cfg(feature = "prover")]
+#[cfg(any(feature = "prover", feature = "wasm-prover"))]
 pub fn preprocess(
     guest: &Program,
     max_trace_length: usize,
@@ -29,7 +29,7 @@ pub fn preprocess(
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-#[cfg(feature = "prover")]
+#[cfg(any(feature = "prover", feature = "wasm-prover"))]
 pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript>(
     guest: &Program,
     inputs_bytes: &[u8],

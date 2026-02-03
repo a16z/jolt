@@ -11,7 +11,7 @@ use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::OneHotParams;
-#[cfg(feature = "prover")]
+#[cfg(any(feature = "prover", feature = "wasm-prover"))]
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
 use crate::zkvm::ram::RAMPreprocessing;
@@ -800,7 +800,7 @@ impl JoltSharedPreprocessing {
     }
 }
 
-#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone)]
 pub struct JoltVerifierPreprocessing<F, PCS>
 where
     F: JoltField,
@@ -808,6 +808,53 @@ where
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
+}
+
+impl<F, PCS> CanonicalSerialize for JoltVerifierPreprocessing<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        self.generators.serialize_with_mode(&mut writer, compress)?;
+        self.shared.serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.generators.serialized_size(compress) + self.shared.serialized_size(compress)
+    }
+}
+
+impl<F, PCS> CanonicalDeserialize for JoltVerifierPreprocessing<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let generators = PCS::VerifierSetup::deserialize_with_mode(&mut reader, compress, validate)?;
+        let shared = JoltSharedPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
+        Ok(Self { generators, shared })
+    }
+}
+
+impl<F, PCS> ark_serialize::Valid for JoltVerifierPreprocessing<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.generators.check()?;
+        self.shared.check()
+    }
 }
 
 impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
@@ -853,7 +900,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
     }
 }
 
-#[cfg(feature = "prover")]
+#[cfg(any(feature = "prover", feature = "wasm-prover"))]
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessing<F, PCS>>
     for JoltVerifierPreprocessing<F, PCS>
 {
