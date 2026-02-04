@@ -137,36 +137,36 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
-ark-bn254 = { path = "/Users/atretyakov/dev/arkworks-algebra/curves/bn254" }
-ark-grumpkin = { path = "/Users/atretyakov/dev/arkworks-algebra/curves/grumpkin" }
-ark-secp256k1 = { path = "/Users/atretyakov/dev/arkworks-algebra/curves/secp256k1" }
-ark-ff = { path = "/Users/atretyakov/dev/arkworks-algebra/ff" }
-ark-ec = { path = "/Users/atretyakov/dev/arkworks-algebra/ec" }
-ark-serialize = { path = "/Users/atretyakov/dev/arkworks-algebra/serialize" }
-dory-pcs = { path = "/Users/atretyakov/dev/dory" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm" }
+ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm" }
+ark-secp256k1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm" }
+dory-pcs = { git = "https://github.com/a16z/dory" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
 
 [workspace.dependencies]
-# Cryptography and Math (local forks for WASM support)
-ark-bn254 = { path = "/Users/atretyakov/dev/arkworks-algebra/curves/bn254", default-features = false }
-ark-grumpkin = { path = "/Users/atretyakov/dev/arkworks-algebra/curves/grumpkin", default-features = false }
-ark-ec = { path = "/Users/atretyakov/dev/arkworks-algebra/ec", default-features = false }
-ark-ff = { path = "/Users/atretyakov/dev/arkworks-algebra/ff", default-features = false }
-ark-serialize = { path = "/Users/atretyakov/dev/arkworks-algebra/serialize", default-features = false, features = [
+# Cryptography and Math (a16z fork with WASM support)
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm", default-features = false }
+ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm", default-features = false }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm", default-features = false }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm", default-features = false }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm", default-features = false, features = [
     "derive",
 ] }
-ark-secp256k1 = { path = "/Users/atretyakov/dev/arkworks-algebra/curves/secp256k1", default-features = false }
+ark-secp256k1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm", default-features = false }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.10"
 sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
-jolt-optimizations = { path = "/Users/atretyakov/dev/arkworks-algebra/jolt-optimizations" }
-dory = { package = "dory-pcs", path = "/Users/atretyakov/dev/dory", default-features = false }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "wasm" }
+dory = { package = "dory-pcs", git = "https://github.com/a16z/dory", default-features = false }
 
 # Core Utilities
 clap = { version = "4.5.4", features = ["derive"] }

@@ -41,6 +41,7 @@ prover = [
 wasm-prover = [
     "minimal",
     "dory/backends",
+    "dory/cache",
     "dory/parallel",
     "ark-ec/parallel",
     "ark-ff/parallel",

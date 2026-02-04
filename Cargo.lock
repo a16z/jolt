@@ -526,6 +526,7 @@ checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 [[package]]
 name = "ark-bn254"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=wasm#105bb433954024577c5df5c6c3b6d73a21a2ba57"
 dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",
@@ -536,6 +537,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=wasm#105bb433954024577c5df5c6c3b6d73a21a2ba57"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -594,6 +596,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=wasm#105bb433954024577c5df5c6c3b6d73a21a2ba57"
 dependencies = [
  "allocative",
  "ark-ff-asm 0.5.0",
@@ -634,6 +637,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=wasm#105bb433954024577c5df5c6c3b6d73a21a2ba57"
 dependencies = [
  "quote",
  "syn 2.0.114",
@@ -667,6 +671,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=wasm#105bb433954024577c5df5c6c3b6d73a21a2ba57"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -678,6 +683,7 @@ dependencies = [
 [[package]]
 name = "ark-grumpkin"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=wasm#105bb433954024577c5df5c6c3b6d73a21a2ba57"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -688,6 +694,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=wasm#105bb433954024577c5df5c6c3b6d73a21a2ba57"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -701,6 +708,7 @@ dependencies = [
 [[package]]
 name = "ark-secp256k1"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=wasm#105bb433954024577c5df5c6c3b6d73a21a2ba57"
 dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",
@@ -731,8 +739,9 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=wasm#105bb433954024577c5df5c6c3b6d73a21a2ba57"
 dependencies = [
- "ark-serialize-derive 0.5.0",
+ "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=wasm)",
  "ark-std 0.5.0",
  "arrayvec",
  "digest 0.10.7",
@@ -743,6 +752,8 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "213888f660fddcca0d257e88e54ac05bca01885f258ccdf695bafd77031bb69d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -752,8 +763,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "213888f660fddcca0d257e88e54ac05bca01885f258ccdf695bafd77031bb69d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=wasm#105bb433954024577c5df5c6c3b6d73a21a2ba57"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1741,6 +1751,7 @@ dependencies = [
 [[package]]
 name = "dory-derive"
 version = "0.2.0"
+source = "git+https://github.com/a16z/dory#4b37c1c0d35e0c0b7283c18890bbee7011976e75"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1750,6 +1761,7 @@ dependencies = [
 [[package]]
 name = "dory-pcs"
 version = "0.2.0"
+source = "git+https://github.com/a16z/dory#4b37c1c0d35e0c0b7283c18890bbee7011976e75"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2988,6 +3000,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=wasm#105bb433954024577c5df5c6c3b6d73a21a2ba57"
 dependencies = [
  "ark-bn254",
  "ark-ec",
