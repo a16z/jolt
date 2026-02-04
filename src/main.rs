@@ -211,11 +211,25 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         "-Cpasses=lower-atomic",
         "-Cpanic=abort",
         &opt_flag,
-        // Disable LLVM's MachineOutliner: it generates a faulty calling pattern on RISC-V
-        // that creates infinite loops (auipc t1,0; jr offset(t1); ... jr t1 returns to auipc).
+        // Disable MachineOutliner: generates broken call patterns on RISC-V (infinite loops).
         "-Cllvm-args=-enable-machine-outliner=never",
         "--cfg=getrandom_backend=\"custom\"",
     ];
+
+    // Also set medany for C code (cc crate reads CFLAGS_{target}).
+    let cflags_target = match args.base.mode {
+        StdMode::Std => "riscv64imac_zero_linux_musl",
+        StdMode::NoStd => "riscv64imac_unknown_none_elf",
+    };
+    let cflags_key = format!("CFLAGS_{cflags_target}");
+    let mut cflags = std::env::var(&cflags_key).unwrap_or_default();
+    if !cflags.contains("-mcmodel=medany") {
+        if !cflags.is_empty() {
+            cflags.push(' ');
+        }
+        cflags.push_str("-mcmodel=medany");
+        std::env::set_var(&cflags_key, &cflags);
+    }
 
     if !preserve_symbols {
         jolt_rustflags.push("-Cstrip=symbols");

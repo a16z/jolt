@@ -29,7 +29,14 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
+            ~/.zeroos
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install rust-src
+        run: rustup component add rust-src
+
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked
 
       - name: Run benchmark
         run: |

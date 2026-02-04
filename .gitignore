@@ -58,6 +58,7 @@ bin/act
 benchmark-runs/
 /perfetto_traces/
 *.pb
+*benchmark_results.json
 
 # verifier test fixtures
 jolt-sdk/tests/fixtures
