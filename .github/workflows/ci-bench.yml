@@ -31,6 +31,9 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked
+
       - name: Run benchmark
         run: |
           cd examples
