@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1770165322789,
+  "lastUpdate": 1770223526370,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -50230,6 +50230,210 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 108528,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mchl.zhu.96@gmail.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e8a9a22ec6940915ba946721f4bec3406441f9d9",
+          "message": "docs: Update outdated docs (#1243)\n\n* Update docs\n\n* Update bytecode read-checking docs to match implementation\n\nAlign the bytecode read-checking documentation with the current\nimplementation in jolt-core/src/zkvm/bytecode/read_raf_checking.rs:\ndocument the multi-stage (five-stage) read-checking architecture,\nclarify stage- and per-stage RLCs, fold RAF claims into stages 1 and 3,\ndefine per-stage Val polynomials and their contents, distinguish\nexpanded bytecode index vs ELF/unexpanded PC, describe sumcheck phases\nand binding order, and note RAF evaluation and chunking details. These\nchanges were needed because the original docs described fewer stages and\ndifferent folding/ordering; updating the prose and formulas ensures the\nbook reflects the actual code behavior and helps readers understand how\nclaims are combined, bound, and evaluated in the real implementation.\n\n* Fix identity polynomial description and clarify RAF notation\n\nCorrect the description of the identity polynomial and clarify RAF/raf\nnotation and folding in the bytecode documentation. The change fixes an\nincorrect definition (was stated as 1 for all k) to the correct identity\nInt(k)=k used for raf-evaluation, adds explicit explanation of two\nraf claims and how they fold into stages 1 and 3, and documents the\nidentity polynomial's role in the weighted sum. It also consolidates\nRAF/raf terminology, expands on claim-reduction sumchecks (listing\nimplementations and examples), and makes small wording/typo fixes to\nimprove clarity for readers and maintainers.\n\n* docs: Add detailed explanation of claim reduction sumchecks in Jolt\n\n* update DAG diagram and archietcture.md\n\n* capitalize DAG\n\n* update description of K^1/d configuration",
+          "timestamp": "2026-02-04T11:07:00-05:00",
+          "tree_id": "10bbc57c8107eac132f1a2fa5d218ed45ab94be8",
+          "url": "https://github.com/a16z/jolt/commit/e8a9a22ec6940915ba946721f4bec3406441f9d9"
+        },
+        "date": 1770223525392,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 108008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 108444,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 108404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 108532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 108408,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 108152,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 108240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 108620,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 108440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 108580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 108468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 108308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 108512,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sig-recovery-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sig-recovery-mem",
+            "value": 125936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 108340,
             "unit": "KB",
             "extra": ""
           }
