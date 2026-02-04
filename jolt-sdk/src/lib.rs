@@ -306,27 +306,49 @@ impl AdviceReader {
     fn read_slice(&mut self, buf: &mut [u8]) {
         let mut ptr = buf.as_mut_ptr();
         let mut remaining = buf.len();
+
         unsafe {
+            // get misalignment of ptr to 8-byte boundary
+            let mut to_align = core::cmp::min((8 - (ptr as usize & 7)) & 7, remaining);
+            // Perform largest aligned writes possible until aligned to 8-byte boundary
+            while to_align > 0 {
+                let addr = ptr as usize;
+                if to_align >= 4 && addr & 3 == 0 {
+                    core::ptr::write(ptr as *mut u32, self.read_u32());
+                    ptr = ptr.add(4);
+                    remaining -= 4;
+                    to_align -= 4;
+                } else if to_align >= 2 && addr & 1 == 0 {
+                    core::ptr::write(ptr as *mut u16, self.read_u16());
+                    ptr = ptr.add(2);
+                    remaining -= 2;
+                    to_align -= 2;
+                } else {
+                    core::ptr::write(ptr, self.read_u8());
+                    ptr = ptr.add(1);
+                    remaining -= 1;
+                    to_align -= 1;
+                }
+            }
+            // Read and write in aligned 8-byte chunks
             while remaining >= 8 {
-                core::ptr::write_unaligned(ptr as *mut u64, self.read_u64());
+                core::ptr::write(ptr as *mut u64, self.read_u64());
                 ptr = ptr.add(8);
                 remaining -= 8;
             }
-
+            // Handle any remaining bytes greedily with aligned reads/writes
             if remaining >= 4 {
-                core::ptr::write_unaligned(ptr as *mut u32, self.read_u32());
+                core::ptr::write(ptr as *mut u32, self.read_u32());
                 ptr = ptr.add(4);
                 remaining -= 4;
             }
-
             if remaining >= 2 {
-                core::ptr::write_unaligned(ptr as *mut u16, self.read_u16());
+                core::ptr::write(ptr as *mut u16, self.read_u16());
                 ptr = ptr.add(2);
                 remaining -= 2;
             }
-
             if remaining == 1 {
-                core::ptr::write_unaligned(ptr, self.read_u8());
+                core::ptr::write(ptr, self.read_u8());
             }
         }
     }
