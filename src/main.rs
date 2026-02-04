@@ -224,7 +224,9 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     let cflags_key = format!("CFLAGS_{cflags_target}");
     let mut cflags = std::env::var(&cflags_key).unwrap_or_default();
     if !cflags.contains("-mcmodel=medany") {
-        if !cflags.is_empty() { cflags.push(' '); }
+        if !cflags.is_empty() {
+            cflags.push(' ');
+        }
         cflags.push_str("-mcmodel=medany");
         std::env::set_var(&cflags_key, &cflags);
     }
