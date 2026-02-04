@@ -13,6 +13,9 @@
 
 set -e # Exit on error
 
+# Track failures so the script exits non-zero if any example fails
+failures=0
+
 # Enable tracing output at INFO level so that "Prover runtime:" logs are visible
 export RUST_LOG=info
 
@@ -95,7 +98,8 @@ for i in "${!test_directories[@]}"; do
   # Capture timing and output into a temp file
   temp_output=$(mktemp)
   if ! $TIME_CMD -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" cargo run --release -p "$file" 2>&1 | tee "$temp_output"; then
-    echo "Error running benchmark for $file. Skipping..."
+    echo "FAILED: $file"
+    failures=$((failures + 1))
     continue
   fi
   # Extract 'Prover runtime:' value using awk
@@ -117,3 +121,8 @@ done
 
 # Close the JSON structure
 printf "]\n" >>"$output_file"
+
+if [ "$failures" -gt 0 ]; then
+  echo "$failures example(s) failed"
+  exit 1
+fi
