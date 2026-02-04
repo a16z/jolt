@@ -1,6 +1,9 @@
 import init, {
     initThreadPool,
     init_inlines,
+    init_tracing,
+    get_trace_json,
+    clear_trace,
     WasmProver,
     WasmVerifier,
 } from '../pkg/jolt_wasm_ecdsa_prover.js';
@@ -16,6 +19,7 @@ self.onmessage = async (e) => {
             case 'init': {
                 await init();
                 await initThreadPool(data.numThreads);
+                init_tracing();
                 init_inlines();
 
                 prover = new WasmProver(
@@ -58,6 +62,21 @@ self.onmessage = async (e) => {
                     valid,
                     elapsed,
                 });
+                break;
+            }
+
+            case 'get-trace': {
+                const traceJson = get_trace_json();
+                self.postMessage({
+                    type: 'trace',
+                    trace: traceJson,
+                });
+                break;
+            }
+
+            case 'clear-trace': {
+                clear_trace();
+                self.postMessage({ type: 'trace-cleared' });
                 break;
             }
         }

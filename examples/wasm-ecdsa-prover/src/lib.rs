@@ -9,6 +9,8 @@ use wasm_bindgen::prelude::*;
 
 pub use wasm_bindgen_rayon::init_thread_pool;
 
+mod wasm_tracing;
+
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
 pub static mut _HEAP_PTR: u8 = 0;
@@ -19,6 +21,21 @@ type VerifierPreprocessing = JoltVerifierPreprocessing<Fr, DoryCommitmentScheme>
 #[wasm_bindgen(start)]
 pub fn wasm_main() {
     console_error_panic_hook::set_once();
+}
+
+#[wasm_bindgen]
+pub fn init_tracing() {
+    wasm_tracing::init();
+}
+
+#[wasm_bindgen]
+pub fn get_trace_json() -> String {
+    wasm_tracing::get_trace_json()
+}
+
+#[wasm_bindgen]
+pub fn clear_trace() {
+    wasm_tracing::clear();
 }
 
 #[wasm_bindgen]

@@ -1,7 +1,10 @@
 const status = document.getElementById('status');
 const proveBtn = document.getElementById('prove-btn');
 const verifyBtn = document.getElementById('verify-btn');
+const traceBtn = document.getElementById('trace-btn');
 const output = document.getElementById('output');
+
+let worker = null;
 
 // Test ECDSA signature - pre-computed for "hello world" signed with secp256k1
 // Note: r, s, q are valid only for "hello world" - changing message will fail verification
@@ -89,7 +92,6 @@ function populateInputs() {
     updateMessageHash();
 }
 
-let worker = null;
 let lastProofBytes = null;
 let lastProgramIoBytes = null;
 
@@ -135,7 +137,7 @@ async function main() {
         worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 
         worker.onmessage = (e) => {
-            const { type, error, proof, programIo, valid, elapsed } = e.data;
+            const { type, error, proof, programIo, valid, elapsed, trace } = e.data;
 
             if (type === 'error') {
                 setStatus('Error: ' + error, 'error');
@@ -149,6 +151,20 @@ async function main() {
                 log('Ready');
                 setStatus('Ready', 'ready');
                 proveBtn.disabled = false;
+                traceBtn.disabled = false;
+                return;
+            }
+
+            if (type === 'trace') {
+                // Download trace as JSON file
+                const blob = new Blob([trace], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `jolt-trace-${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                log('Trace downloaded');
                 return;
             }
 
@@ -233,6 +249,10 @@ verifyBtn.onclick = () => {
             programIo: lastProgramIoBytes,
         },
     });
+};
+
+traceBtn.onclick = () => {
+    worker.postMessage({ type: 'get-trace' });
 };
 
 main();
