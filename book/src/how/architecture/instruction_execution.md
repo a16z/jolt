@@ -110,7 +110,7 @@ $$
 
 where the sum is over all lookup tables $\ell$.
 
-Only one table's flag $\textsf{flag}}_{\ell}(j)$ is 1 at any given cycle $j$, so only that table's $\widetilde{\textsf{Val}}_\ell(k)$ contributes to the sum.
+Only one table's flag $\textsf{flag}_{\ell}(j)$ is 1 at any given cycle $j$, so only that table's $\widetilde{\textsf{Val}}_\ell(k)$ contributes to the sum.
 
 This term becomes a drop-in replacement for $\widetilde{\textsf{Val}}$ as it appears in the Shout read-checking sumcheck:
 

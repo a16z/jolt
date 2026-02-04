@@ -831,8 +831,6 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             r_cycle_5.r,
         ];
 
-        // Note: We don't have r_address at this point (it comes from sumcheck_challenges),
-        // so we initialize r_address_chunks as empty and will compute it later
         Self {
             gamma_powers,
             input_claim,
