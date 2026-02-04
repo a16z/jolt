@@ -11,7 +11,7 @@
 # - Build time is excluded by building the benchmarks before running them.
 # - Maximum resident size is being used as a surrogate to peak memory usage. 
 
-set -e # Exit on error
+set -eo pipefail # Exit on error; pipeline fails if any command fails
 
 # Track failures so the script exits non-zero if any example fails
 failures=0

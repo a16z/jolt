@@ -187,6 +187,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install rust-src
+        run: rustup component add rust-src
       - name: Build and install jolt CLI
         run: cargo install --path . --locked
       - name: Run examples
