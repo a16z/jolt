@@ -5,6 +5,8 @@
 use core::mem::MaybeUninit;
 
 /// SHA-256 hasher state.
+/// Aligned to 8 bytes so doubleword loads/stores can be used on 64-bit targets.
+#[repr(align(8))]
 pub struct Sha256 {
     /// Current hash state (8 x 32-bit words)
     ///

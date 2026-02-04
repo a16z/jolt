@@ -92,17 +92,12 @@ impl Sha256SequenceBuilder {
                 // so we use LD to load two registers at a time
                 // the sequence is A,B | C,D | E,F | G,H
                 (0..4).for_each(|i| {
-                    let dst1 = *self.iv[i * 2];
-                    let dst2 = *self.iv[i * 2 + 1];
-                    // Load both words into dst1 using LD
-                    self.asm
-                        .emit_ld::<LD>(dst1, self.operands.rs1, (i as i64) * 8);
-                    // Extract the upper 32 bits into dst2 via a shift
-                    self.asm.emit_i::<SRLI>(dst2, dst1, 32);
-                    // Note that dst1 has junk in its upper 32 bits
-                    // but that's fine since the lower 32 bits are not affected
-                    // by the upper 32 bits in all subsequent operations in this inline
-                    // except for the final store, where we are careful to clean them up
+                    self.load_paired_u32_dirty(
+                        self.operands.rs1,
+                        (i as i64) * 8,
+                        *self.iv[i * 2],
+                        *self.iv[i * 2 + 1],
+                    );
                 });
             }
         }
@@ -118,17 +113,12 @@ impl Sha256SequenceBuilder {
             // so we use LD to load two registers at a time
             // the sequence is W0,1 | W2,3 | ... | W14,15
             (0..8).for_each(|i| {
-                let dst1 = *self.message[i * 2];
-                let dst2 = *self.message[i * 2 + 1];
-                // Load both words into dst1 using LD
-                self.asm
-                    .emit_ld::<LD>(dst1, self.operands.rs2, (i as i64) * 8);
-                // Extract the upper 32 bits into dst2 via a shift
-                self.asm.emit_i::<SRLI>(dst2, dst1, 32);
-                // Note that dst1 has junk in its upper 32 bits
-                // but that's fine since the lower 32 bits are not affected
-                // by the upper 32 bits in all subsequent operations in this inline
-                // except for the final store, where we are careful to clean them up
+                self.load_paired_u32_dirty(
+                    self.operands.rs2,
+                    (i as i64) * 8,
+                    *self.message[i * 2],
+                    *self.message[i * 2 + 1],
+                );
             });
         }
         // Run 64 rounds
@@ -150,17 +140,12 @@ impl Sha256SequenceBuilder {
             // the sequence is A,B | C,D | E,F | G,H
             let outs = [('A', 'B'), ('C', 'D'), ('E', 'F'), ('G', 'H')];
             for (i, (ch1, ch2)) in outs.iter().enumerate() {
-                let src1 = self.vr(*ch1);
-                let src2 = self.vr(*ch2);
-                // clear top 32 bits of src1
-                self.asm.emit_i::<VirtualZeroExtendWord>(src1, src1, 0);
-                // shift src2 to top 32 bits
-                self.asm.emit_i::<SLLI>(src2, src2, 32);
-                // or them together into src1
-                self.asm.emit_r::<OR>(src1, src2, src1);
-                // and store pair as 64-bit word
-                self.asm
-                    .emit_s::<SD>(self.operands.rs1, src1, (i as i64) * 8);
+                self.store_paired_u32(
+                    self.operands.rs1,
+                    (i as i64) * 8,
+                    self.vr(*ch1),
+                    self.vr(*ch2),
+                );
             }
         }
         // Total allocated: 8 (state) + 16 (message) + 8 (initial_state) + 4 (temps per round) = 36
@@ -169,6 +154,35 @@ impl Sha256SequenceBuilder {
         drop(self.message);
         drop(self.iv);
         self.asm.finalize_inline()
+    }
+
+    /// Load two u32 values from an 8-byte aligned address using a single LD
+    /// Leaves junk in upper 32 bits of the first destination register
+    /// This is vastly more efficient than two separate LW instructions in 64-bit mode
+    /// Given that LW expands into a long sequence of virtual instructions
+    /// This dirty form is acceptable since the lower 32 bits are not affected
+    /// by the upper 32 bits in subsequent operations
+    /// (Except for the final store, where we clean up the upper bits)
+    fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
+        // Load 64 bits (2 x u32) in vr_lo
+        self.asm.emit_ld::<LD>(vr_lo, base, offset);
+        // Extract the upper 32 bits into dst2 via a shift
+        self.asm.emit_i::<SRLI>(vr_hi, vr_lo, 32);
+    }
+
+    /// Store two u32 values to an 8-byte aligned address using a single SD
+    /// This is vastly more efficient than two separate SW instructions in 64-bit mode
+    /// Given that SW expands into a long sequence of virtual instructions
+    /// Clobbers both input registers
+    fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
+        // clear top 32 bits of vr_lo
+        self.asm.emit_i::<VirtualZeroExtendWord>(vr_lo, vr_lo, 0);
+        // shift vr_hi to top 32 bits
+        self.asm.emit_i::<SLLI>(vr_hi, vr_hi, 32);
+        // or them together into vr_lo
+        self.asm.emit_r::<OR>(vr_lo, vr_hi, vr_lo);
+        // and store pair as 64-bit word
+        self.asm.emit_s::<SD>(base, vr_lo, offset);
     }
 
     /// Adds IV to the final hash value to produce output
