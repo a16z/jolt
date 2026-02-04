@@ -183,12 +183,13 @@ async function main() {
             console.error(e);
         };
 
-        setStatus('Initializing WASM (16 threads)...', 'loading');
+        const numThreads = navigator.hardwareConcurrency || 4;
+        setStatus(`Initializing WASM (${numThreads} threads)...`, 'loading');
 
         worker.postMessage({
             type: 'init',
             data: {
-                numThreads: 16,
+                numThreads,
                 proverPreprocessing: proverPrepBytes,
                 verifierPreprocessing: verifierPrepBytes,
                 elfBytes: elfBytes,
