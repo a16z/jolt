@@ -82,15 +82,11 @@ impl Sha256SequenceBuilder {
             // Load initial hash values from memory when using custom IV
             // Load all A-H into initial_state registers (used both for initial values and final addition)
             if self.asm.xlen == Xlen::Bit32 {
-                // if 32-bit, LW is cheap so use it
                 (0..8).for_each(|i| {
                     self.asm
                         .emit_ld::<LW>(*self.iv[i], self.operands.rs1, (i * 4) as i64)
                 });
             } else {
-                // if 64-bit, LW expands into a long sequence of virtual instructions
-                // so we use LD to load two registers at a time
-                // the sequence is A,B | C,D | E,F | G,H
                 (0..4).for_each(|i| {
                     self.load_paired_u32_dirty(
                         self.operands.rs1,
@@ -103,15 +99,11 @@ impl Sha256SequenceBuilder {
         }
         // Load input words into message registers
         if self.asm.xlen == Xlen::Bit32 {
-            // if 32-bit, LW is cheap so use it
             (0..16).for_each(|i| {
                 self.asm
                     .emit_ld::<LW>(*self.message[i], self.operands.rs2, (i * 4) as i64)
             });
         } else {
-            // if 64-bit, LW expands into a long sequence of virtual instructions
-            // so we use LD to load two registers at a time
-            // the sequence is W0,1 | W2,3 | ... | W14,15
             (0..8).for_each(|i| {
                 self.load_paired_u32_dirty(
                     self.operands.rs2,
@@ -127,7 +119,6 @@ impl Sha256SequenceBuilder {
         // Store output values to rs1 location
         // Store output A..H in-order using the current VR mapping after all rotations
         if self.asm.xlen == Xlen::Bit32 {
-            // if 32-bit, SW is cheap so use it
             let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
             for (i, ch) in outs.iter().enumerate() {
                 let src = self.vr(*ch);
@@ -135,9 +126,6 @@ impl Sha256SequenceBuilder {
                     .emit_s::<SW>(self.operands.rs1, src, (i as i64) * 4);
             }
         } else {
-            // if 64-bit, SW is expands into a long sequence of virtual instructions
-            // so we use SD to store two registers at a time
-            // the sequence is A,B | C,D | E,F | G,H
             let outs = [('A', 'B'), ('C', 'D'), ('E', 'F'), ('G', 'H')];
             for (i, (ch1, ch2)) in outs.iter().enumerate() {
                 self.store_paired_u32(
@@ -156,32 +144,19 @@ impl Sha256SequenceBuilder {
         self.asm.finalize_inline()
     }
 
-    /// Load two u32 values from an 8-byte aligned address using a single LD
-    /// Leaves junk in upper 32 bits of the first destination register
-    /// This is vastly more efficient than two separate LW instructions in 64-bit mode
-    /// Given that LW expands into a long sequence of virtual instructions
-    /// This dirty form is acceptable since the lower 32 bits are not affected
-    /// by the upper 32 bits in subsequent operations
-    /// (Except for the final store, where we clean up the upper bits)
+    /// WARNING: leaves junk in upper 32 bits of vr_lo. Safe because SHA-256 ops
+    /// preserve lower 32-bit correctness independent of upper bits.
+    /// Cleanup happens in `store_paired_u32`.
     fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        // Load 64 bits (2 x u32) in vr_lo
         self.asm.emit_ld::<LD>(vr_lo, base, offset);
-        // Extract the upper 32 bits into dst2 via a shift
         self.asm.emit_i::<SRLI>(vr_hi, vr_lo, 32);
     }
 
-    /// Store two u32 values to an 8-byte aligned address using a single SD
-    /// This is vastly more efficient than two separate SW instructions in 64-bit mode
-    /// Given that SW expands into a long sequence of virtual instructions
-    /// Clobbers both input registers
+    /// WARNING: clobbers both input registers.
     fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        // clear top 32 bits of vr_lo
         self.asm.emit_i::<VirtualZeroExtendWord>(vr_lo, vr_lo, 0);
-        // shift vr_hi to top 32 bits
         self.asm.emit_i::<SLLI>(vr_hi, vr_hi, 32);
-        // or them together into vr_lo
         self.asm.emit_r::<OR>(vr_lo, vr_hi, vr_lo);
-        // and store pair as 64-bit word
         self.asm.emit_s::<SD>(base, vr_lo, offset);
     }
 
