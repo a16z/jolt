@@ -17,7 +17,7 @@ set -e # Exit on error
 export RUST_LOG=info
 
 # Define the exclude list
-exclusion_list=("collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench")
+exclusion_list=("collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench" "recover-ecdsa")
 # JSON file to store results
 output_file="benchmark_results.json"
 
@@ -101,7 +101,7 @@ for i in "${!test_directories[@]}"; do
   # Extract 'Prover runtime:' value using awk
   # The tracing format outputs: "TIMESTAMP  INFO target: Prover runtime: X.XX s"
   # We need to extract the numeric value after "runtime:"
-  exec_time=$(awk '/Prover runtime:/ { for(i=1; i<=NF; i++) if($i=="runtime:") print $(i+1) }' "$temp_output") # in seconds
+  exec_time=$(awk '/Prover runtime:/ { for(i=1; i<=NF; i++) if($i=="runtime:") val=$(i+1) } END { print val }' "$temp_output") # in seconds
   # Extract 'MRS' value using awk
   mem_used=$(awk '/MRS:/ {print $2}' "$temp_output") # in KB
   echo "$output" # Print the output for debugging

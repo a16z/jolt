@@ -180,3 +180,16 @@ jobs:
       #     lake-package-directory: ./zklean-extractor/jolt-zklean
       #     build: true
       #     test: true
+
+  test-examples:
+    name: Test examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked
+      - name: Run examples
+        run: |
+          cd examples
+          ./run_ci_benchmarks.sh
