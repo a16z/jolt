@@ -2032,11 +2032,15 @@ impl PartialEq for AstCommitment {
 }
 
 impl AppendToTranscript for AstCommitment {
-    fn append_to_transcript<T: jolt_core::transcripts::Transcript>(&self, transcript: &mut T) {
+    fn append_to_transcript<T: jolt_core::transcripts::Transcript>(
+        &self,
+        label: &'static [u8],
+        transcript: &mut T,
+    ) {
         // Store chunks in thread-local for transcript to retrieve
         set_pending_commitment_chunks(self.chunks.clone());
         // The transcript's append_serializable will handle the actual hashing
-        transcript.append_serializable(self);
+        transcript.append_serializable(label, self);
     }
 }
 
