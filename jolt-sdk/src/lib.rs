@@ -112,7 +112,10 @@ pub static mut _HEAP_PTR: u8 = 0;
 /// ```
 #[macro_export]
 macro_rules! check_advice {
-    ($cond:expr) => {{
+    ($cond:expr) => {
+        $crate::check_advice!($cond, "Advice assertion failed")
+    };
+    ($cond:expr, $err:expr) => {{
         #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
         {
             let cond_value = if $cond { 1u64 } else { 0u64 };
@@ -132,7 +135,41 @@ macro_rules! check_advice {
         }
         #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
         {
-            assert!($cond, "Advice assertion failed");
+            assert!($cond, $err);
+        }
+    }};
+}
+
+/// Macro to assert that two values are equal, enforced by the prover.
+/// This is a specialization of check_advice! for equality checks.
+/// Rather than evaluating a boolean condition and then calling VirtualAssertEQ,
+/// this calls VirtualAssertEQ directly on the provided LHS and RHS
+/// Requires that both values fit in registers (fails to compile otherwise)
+/// This is similar to the distinction between assert! and assert_eq!
+#[macro_export]
+macro_rules! check_advice_eq {
+    ($left:expr, $right:expr) => {
+        $crate::check_advice_eq!($left, $right, "Advice equality assertion failed")
+    };
+    ($left:expr, $right:expr, $err:expr) => {{
+        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+        {
+            let left = $left;
+            let right = $right;
+            unsafe {
+                core::arch::asm!(
+                    ".insn b {opcode}, {funct3}, {rs1}, {rs2}, 0",
+                    opcode = const $crate::CUSTOM_OPCODE,
+                    funct3 = const $crate::FUNCT3_VIRTUAL_ASSERT_EQ,
+                    rs1 = in(reg) left,
+                    rs2 = in(reg) right,
+                    options(nostack)
+                );
+            }
+        }
+        #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+        {
+            assert_eq!($left, $right, $err);
         }
     }};
 }

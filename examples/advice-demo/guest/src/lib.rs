@@ -33,7 +33,14 @@ fn verify_composite_u8(n: u8) {
     // Extract the value from the UntrustedAdvice wrapper using Deref
     let (a, b) = *adv;
     // CRITICAL: Verify that the advice is correct!
-    jolt::check_advice!((a as u16) * (b as u16) == (n as u16) && 1 < a && a <= b && b < n);
+    // Here we demonstrate both check_advice_eq! and check_advice!
+    // With custom error messages (removed when compiled on guest but useful for debugging)
+    jolt::check_advice_eq!(
+        (a as u16) * (b as u16),
+        n as u16,
+        "incorrect factors for u8"
+    );
+    jolt::check_advice!(1 < a && a <= b && b < n, "factors out of range for u8");
 }
 
 /// Similar functions for u16, just for demonstration
@@ -58,7 +65,8 @@ fn verify_composite_u16(n: u16) {
     // Extract the value from the UntrustedAdvice wrapper using Deref
     let [a, b] = *adv;
     // CRITICAL: Verify that the advice is correct!
-    jolt::check_advice!((a as u32) * (b as u32) == (n as u32) && 1 < a && a <= b && b < n);
+    jolt::check_advice_eq!((a as u32) * (b as u32), n as u32);
+    jolt::check_advice!(1 < a && a <= b && b < n);
 }
 
 /// Similar function for u32, just for demonstration
@@ -82,7 +90,8 @@ fn verify_composite_u32(n: u32) {
     // Extract the value from the UntrustedAdvice wrapper using Deref
     let [a, b] = *adv;
     // CRITICAL: Verify that the advice is correct!
-    jolt::check_advice!((a as u64) * (b as u64) == (n as u64) && 1 < a && a <= b && b < n);
+    jolt::check_advice_eq!((a as u64) * (b as u64), n as u64);
+    jolt::check_advice!(1 < a && a <= b && b < n);
 }
 
 /// Similar function for u64, just for demonstration
@@ -106,6 +115,7 @@ fn verify_composite_u64(n: u64) {
     // Extract the value from the UntrustedAdvice wrapper using Deref
     let [a, b] = *adv;
     // CRITICAL: Verify that the advice is correct!
+    // note that jolt::check_advice_eq! doesn't work for u128, so we use jolt::check_advice! here
     jolt::check_advice!((a as u128) * (b as u128) == (n as u128) && 1 < a && a <= b && b < n);
 }
 
@@ -189,11 +199,11 @@ fn verify_frobnitz() {
     let adv = frobnitz_advice();
     let frob = &*adv;
     // CRITICAL: dummy checks to make sure the frobnitz is well formed
-    jolt::check_advice!(frob.x == 42);
-    jolt::check_advice!(frob.y == 9999);
-    jolt::check_advice!(frob.z.len() == 5);
+    jolt::check_advice_eq!(frob.x as u64, 42u64);
+    jolt::check_advice_eq!(frob.y, 9999u64);
+    jolt::check_advice_eq!(frob.z.len() as u64, 5u64);
     for (i, &val) in frob.z.iter().enumerate() {
-        jolt::check_advice!(val == (i as u16) + 1);
+        jolt::check_advice_eq!(val as u64, (i as u64) + 1u64);
     }
 }
 
@@ -249,7 +259,7 @@ fn verify_triangle_from_area(area: u32) {
         + adv.p2.x as i64 * (adv.p3.y as i64 - adv.p1.y as i64)
         + adv.p3.x as i64 * (adv.p1.y as i64 - adv.p2.y as i64))
         .abs();
-    jolt::check_advice!(double as u32 == 2 * area);
+    jolt::check_advice_eq!(double as u32, 2 * area);
 }
 
 /// Entrypoint for the advice demonstration.
