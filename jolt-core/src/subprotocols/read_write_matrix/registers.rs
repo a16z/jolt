@@ -70,30 +70,14 @@ pub struct RegistersCycleMajorEntry<F: JoltField> {
     pub wa_coeff: F,
 }
 
-impl<F: JoltField> RegistersCycleMajorEntry<F> {
-    const ROW_MASK: u64 = (1u64 << 56) - 1;
-    const COL_SHIFT: u32 = 56;
+const ROW_MASK: u64 = (1u64 << 56) - 1;
+const COL_SHIFT: u32 = 56;
 
-    #[inline(always)]
-    fn pack_row_col(row: usize, col: u8) -> u64 {
-        debug_assert!(
-            row <= Self::ROW_MASK as usize,
-            "row {} exceeds 56-bit limit",
-            row
-        );
-        debug_assert!(col < REGISTER_COUNT, "col {} exceeds register count", col);
-        (row as u64) | ((col as u64) << Self::COL_SHIFT)
-    }
-
-    #[inline(always)]
-    pub fn row(&self) -> usize {
-        (self.row_col & Self::ROW_MASK) as usize
-    }
-
-    #[inline(always)]
-    pub fn col(&self) -> u8 {
-        (self.row_col >> Self::COL_SHIFT) as u8
-    }
+#[inline(always)]
+fn pack_row_col(row: usize, col: u8) -> u64 {
+    debug_assert!(row <= ROW_MASK as usize, "row {} exceeds 56-bit limit", row);
+    debug_assert!(col < REGISTER_COUNT, "col {} exceeds register count", col);
+    (row as u64) | ((col as u64) << COL_SHIFT)
 }
 
 impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
@@ -139,7 +123,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
 
         if let Some((rs1, rs1_val)) = cycle.rs1_read() {
             out[len] = RegistersCycleMajorEntry {
-                row_col: RegistersCycleMajorEntry::<F>::pack_row_col(row, rs1),
+                row_col: pack_row_col(row, rs1),
                 prev_val: rs1_val,
                 next_val: rs1_val,
                 val_coeff: F::from_u64(rs1_val),
@@ -154,7 +138,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
                 e.ra_coeff += gamma_squared;
             } else {
                 out[len] = RegistersCycleMajorEntry {
-                    row_col: RegistersCycleMajorEntry::<F>::pack_row_col(row, rs2),
+                    row_col: pack_row_col(row, rs2),
                     prev_val: rs2_val,
                     next_val: rs2_val,
                     val_coeff: F::from_u64(rs2_val),
@@ -172,7 +156,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
                 e.next_val = rd_post_val;
             } else {
                 out[len] = RegistersCycleMajorEntry {
-                    row_col: RegistersCycleMajorEntry::<F>::pack_row_col(row, rd),
+                    row_col: pack_row_col(row, rd),
                     prev_val: rd_pre_val,
                     next_val: rd_post_val,
                     // val_coeff stores the value *before* any access at this cycle.
@@ -262,11 +246,11 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>> {
 
 impl<F: JoltField> CycleMajorMatrixEntry<F> for RegistersCycleMajorEntry<F> {
     fn row(&self) -> usize {
-        (self.row_col & Self::ROW_MASK) as usize
+        (self.row_col & ROW_MASK) as usize
     }
 
     fn column(&self) -> usize {
-        (self.row_col >> Self::COL_SHIFT) as usize
+        (self.row_col >> COL_SHIFT) as usize
     }
 
     fn bind_entries(even: Option<&Self>, odd: Option<&Self>, r: F::Challenge) -> Self {
@@ -276,10 +260,7 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RegistersCycleMajorEntry<F> {
                 debug_assert!(odd.row().is_odd());
                 debug_assert_eq!(even.column(), odd.column());
                 RegistersCycleMajorEntry {
-                    row_col: RegistersCycleMajorEntry::<F>::pack_row_col(
-                        even.row() / 2,
-                        even.column() as u8,
-                    ),
+                    row_col: pack_row_col(even.row() / 2, even.column() as u8),
                     ra_coeff: even.ra_coeff + r.mul_01_optimized(odd.ra_coeff - even.ra_coeff),
                     wa_coeff: even.wa_coeff + r.mul_01_optimized(odd.wa_coeff - even.wa_coeff),
                     val_coeff: even.val_coeff + r.mul_0_optimized(odd.val_coeff - even.val_coeff),
@@ -295,10 +276,7 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RegistersCycleMajorEntry<F> {
                 // ra/wa coeffs are 0.
                 let odd_val_coeff = F::from_u64(even.next_val);
                 RegistersCycleMajorEntry {
-                    row_col: RegistersCycleMajorEntry::<F>::pack_row_col(
-                        even.row() / 2,
-                        even.column() as u8,
-                    ),
+                    row_col: pack_row_col(even.row() / 2, even.column() as u8),
                     ra_coeff: (F::one() - r).mul_01_optimized(even.ra_coeff),
                     wa_coeff: (F::one() - r).mul_01_optimized(even.wa_coeff),
                     val_coeff: even.val_coeff + r.mul_0_optimized(odd_val_coeff - even.val_coeff),
@@ -314,10 +292,7 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RegistersCycleMajorEntry<F> {
                 // ra coeff is 0.
                 let even_val_coeff = F::from_u64(odd.prev_val);
                 RegistersCycleMajorEntry {
-                    row_col: RegistersCycleMajorEntry::<F>::pack_row_col(
-                        odd.row() / 2,
-                        odd.column() as u8,
-                    ),
+                    row_col: pack_row_col(odd.row() / 2, odd.column() as u8),
                     ra_coeff: r.mul_01_optimized(odd.ra_coeff),
                     wa_coeff: r.mul_01_optimized(odd.wa_coeff),
                     val_coeff: even_val_coeff + r.mul_0_optimized(odd.val_coeff - even_val_coeff),
@@ -471,36 +446,10 @@ pub struct RegistersAddressMajorEntry<F: JoltField> {
     pub wa_coeff: F,
 }
 
-impl<F: JoltField> RegistersAddressMajorEntry<F> {
-    const ROW_MASK: u64 = (1u64 << 56) - 1;
-    const COL_SHIFT: u32 = 56;
-
-    #[inline(always)]
-    fn pack_row_col(row: usize, col: u8) -> u64 {
-        debug_assert!(
-            row <= Self::ROW_MASK as usize,
-            "row {} exceeds 56-bit limit",
-            row
-        );
-        debug_assert!(col < REGISTER_COUNT, "col {} exceeds register count", col);
-        (row as u64) | ((col as u64) << Self::COL_SHIFT)
-    }
-
-    #[inline(always)]
-    pub fn row(&self) -> usize {
-        (self.row_col & Self::ROW_MASK) as usize
-    }
-
-    #[inline(always)]
-    pub fn col(&self) -> u8 {
-        (self.row_col >> Self::COL_SHIFT) as u8
-    }
-}
-
 impl<F: JoltField> From<RegistersCycleMajorEntry<F>> for RegistersAddressMajorEntry<F> {
     fn from(entry: RegistersCycleMajorEntry<F>) -> Self {
         RegistersAddressMajorEntry {
-            row_col: RegistersAddressMajorEntry::<F>::pack_row_col(entry.row(), entry.column() as u8),
+            row_col: pack_row_col(entry.row(), entry.column() as u8),
             prev_val: F::from_u64(entry.prev_val),
             next_val: F::from_u64(entry.next_val),
             val_coeff: entry.val_coeff,
@@ -512,11 +461,11 @@ impl<F: JoltField> From<RegistersCycleMajorEntry<F>> for RegistersAddressMajorEn
 
 impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> {
     fn row(&self) -> usize {
-        RegistersAddressMajorEntry::row(self)
+        (self.row_col & ROW_MASK) as usize
     }
 
     fn column(&self) -> usize {
-        RegistersAddressMajorEntry::col(self) as usize
+        (self.row_col >> COL_SHIFT) as usize
     }
 
     fn prev_val(&self) -> F {
@@ -536,11 +485,11 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
     ) -> Self {
         match (even, odd) {
             (Some(even), Some(odd)) => {
-                debug_assert!(even.col().is_even());
-                debug_assert!(odd.col().is_odd());
+                debug_assert!(even.column().is_even());
+                debug_assert!(odd.column().is_odd());
                 debug_assert_eq!(even.row(), odd.row());
                 RegistersAddressMajorEntry {
-                    row_col: RegistersAddressMajorEntry::<F>::pack_row_col(even.row(), even.col() / 2),
+                    row_col: pack_row_col(even.row(), even.column() as u8 / 2),
                     ra_coeff: even.ra_coeff + r.mul_01_optimized(odd.ra_coeff - even.ra_coeff),
                     wa_coeff: even.wa_coeff + r.mul_01_optimized(odd.wa_coeff - even.wa_coeff),
                     val_coeff: even.val_coeff + r.mul_0_optimized(odd.val_coeff - even.val_coeff),
@@ -555,8 +504,7 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
                 // means that its implicit Val coeff is odd_checkpoint, and its implicit
                 // ra coeff is 0.
                 RegistersAddressMajorEntry {
-                    row: even.row,
-                    col: even.col / 2,
+                    row_col: pack_row_col(even.row(), even.column() as u8 / 2),
                     ra_coeff: (F::one() - r).mul_01_optimized(even.ra_coeff),
                     wa_coeff: (F::one() - r).mul_01_optimized(even.wa_coeff),
                     val_coeff: even.val_coeff + r.mul_0_optimized(odd_checkpoint - even.val_coeff),
@@ -571,8 +519,7 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
                 // means that its implicit Val coeff is even_checkpoint, and its implicit
                 // ra coeff is 0.
                 RegistersAddressMajorEntry {
-                    row: odd.row,
-                    col: odd.col / 2,
+                    row_col: pack_row_col(odd.row(), odd.column() as u8 / 2),
                     ra_coeff: r.mul_01_optimized(odd.ra_coeff),
                     wa_coeff: r.mul_01_optimized(odd.wa_coeff),
                     val_coeff: even_checkpoint + r.mul_0_optimized(odd.val_coeff - even_checkpoint),
@@ -595,9 +542,9 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
     ) -> [F::Unreduced<8>; 2] {
         match (even, odd) {
             (Some(even), Some(odd)) => {
-                debug_assert!(even.col.is_even());
-                debug_assert!(odd.col.is_odd());
-                debug_assert_eq!(even.row, odd.row);
+                debug_assert!(even.column().is_even());
+                debug_assert!(odd.column().is_odd());
+                debug_assert_eq!(even.row(), odd.row());
                 let ra_evals = [even.ra_coeff, odd.ra_coeff + odd.ra_coeff - even.ra_coeff];
                 let wa_evals = [even.wa_coeff, odd.wa_coeff + odd.wa_coeff - even.wa_coeff];
                 let val_evals = [
