@@ -103,3 +103,15 @@ cargo build -p jolt-core --message-format=short -q
 ### Memory and Allocation
 - Pre-allocate vectors unsafely when size is known
 - Avoid unnecessary clones in hot paths
+
+### Prover Hot Paths
+- Prover pipeline: trace → witness gen → commitment → sumcheck rounds → opening proofs
+- Sumcheck inner loop dominates sumcheck rounds time: polynomial bind, sumcheck_evals, eq_poly evals
+- Benchmark changes to `poly/` code — small regressions multiply across thousands of rounds
+
+### Polynomial Types (poly/)
+- `DensePolynomial`: full field-element coefficients
+- `CompactPolynomial<T>`: small scalar coefficients (u8, u16, etc.), promoted to field on bind
+- `RaPolynomial`: lazy materialization via Round1->Round2->Round3->RoundN enum
+- `SharedRaPolynomials`: same round pattern but shares eq tables across N polynomials
+- `PrefixSuffixDecomposition`: splits polynomial as Σ P_i(prefix) · Q_i(suffix) for efficient sumcheck
