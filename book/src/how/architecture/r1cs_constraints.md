@@ -37,11 +37,9 @@ Some examples of circuit flags:
 
 - Jump Flag: Indicates jump instructions (JAL, JALR).
 
-- Branch Flag: Indicates branch instructions (e.g. BEQ, BNE).
-
 - Load Flag: Indicates load instructions (e.g. LB, LW).
 
-- Noop Flag: Indicates virtual no-op instructions, used to pad execution traces to a power-of-two length.
+- AddOperands Flag: Indicates that the instruction operands should be added "in the field", as described [above](#arithmetic-instructions) (e.g. ADD, ADDI, AUIPC).
 
 These flags appear in the R1CS constraints.
 For example, the "load" flag enables the aforementioned RAM-to-register constraint specifically for load instructions.

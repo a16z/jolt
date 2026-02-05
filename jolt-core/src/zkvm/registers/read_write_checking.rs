@@ -1,9 +1,14 @@
 use std::sync::Arc;
 
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+use crate::poly::opening_proof::PolynomialId;
 use crate::subprotocols::read_write_matrix::{
     AddressMajorMatrixEntry, ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
     RegistersAddressMajorEntry, RegistersCycleMajorEntry,
+};
+use crate::subprotocols::sumcheck_claim::{
+    CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
+    VerifierEvaluablePolynomial,
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::ReadWriteConfig;
@@ -800,6 +805,23 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RegistersReadWriteCheckingVerifier<F>
 {
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        let result = self.params.input_claim(accumulator);
+
+        #[cfg(test)]
+        {
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result = claims.input_claim(&gamma_pows, accumulator);
+            assert_eq!(result, reference_result);
+        }
+
+        result
+    }
+
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -837,9 +859,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let rs1_value_claim = rs1_ra_claim * val_claim;
         let rs2_value_claim = rs2_ra_claim * val_claim;
 
-        EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle)
+        let result = EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle)
             * (rd_write_value_claim
-                + self.params.gamma * (rs1_value_claim + self.params.gamma * rs2_value_claim))
+                + self.params.gamma * (rs1_value_claim + self.params.gamma * rs2_value_claim));
+
+        #[cfg(test)]
+        {
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result = claims.expected_output_claim(&r_cycle, &gamma_pows, accumulator);
+
+            assert_eq!(result, reference_result);
+        }
+
+        result
     }
 
     fn cache_openings(
@@ -881,5 +917,49 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RegistersReadWriteChecking,
             r_cycle.r,
         );
+    }
+}
+
+impl<F: JoltField> SumcheckFrontend<F> for RegistersReadWriteCheckingVerifier<F> {
+    fn input_output_claims() -> InputOutputClaims<F> {
+        let rs1_value: ClaimExpr<F> = VirtualPolynomial::Rs1Value.into();
+        let rs2_value: ClaimExpr<F> = VirtualPolynomial::Rs2Value.into();
+        let rd_write_value: ClaimExpr<F> = VirtualPolynomial::RdWriteValue.into();
+
+        let registers_val: ClaimExpr<F> = VirtualPolynomial::RegistersVal.into();
+        let rs1_ra: ClaimExpr<F> = VirtualPolynomial::Rs1Ra.into();
+        let rs2_ra: ClaimExpr<F> = VirtualPolynomial::Rs2Ra.into();
+        let rd_wa: ClaimExpr<F> = VirtualPolynomial::RdWa.into();
+        let rd_inc: ClaimExpr<F> = CommittedPolynomial::RdInc.into();
+
+        let eq_r_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
+            opening: PolynomialId::Virtual(VirtualPolynomial::RdWriteValue),
+            sumcheck: SumcheckId::RegistersClaimReduction,
+            part: ChallengePart::Cycle,
+        });
+
+        InputOutputClaims {
+            claims: vec![
+                Claim {
+                    input_sumcheck_id: SumcheckId::RegistersClaimReduction,
+                    input_claim_expr: rd_write_value,
+                    batching_poly: eq_r_stage1,
+                    expected_output_claim_expr: rd_wa * (registers_val.clone() + rd_inc.clone()),
+                },
+                Claim {
+                    input_sumcheck_id: SumcheckId::RegistersClaimReduction,
+                    input_claim_expr: rs1_value.clone(),
+                    batching_poly: eq_r_stage1,
+                    expected_output_claim_expr: rs1_ra.clone() * registers_val.clone(),
+                },
+                Claim {
+                    input_sumcheck_id: SumcheckId::RegistersClaimReduction,
+                    input_claim_expr: rs2_value.clone(),
+                    batching_poly: eq_r_stage1,
+                    expected_output_claim_expr: rs2_ra.clone() * registers_val.clone(),
+                },
+            ],
+            output_sumcheck_id: SumcheckId::RegistersReadWriteChecking,
+        }
     }
 }

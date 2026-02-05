@@ -146,6 +146,7 @@ impl<T> UnwrapOrSpoilProof<T> for Result<T, Secp256k1Error> {
 pub enum Secp256k1Error {
     InvalidFqElement, // input array does not correspond to a valid Fq element
     InvalidFrElement, // input array does not correspond to a valid Fr element
+    NotOnCurve,       // point is not on the secp256k1 curve
     QAtInfinity,      // public key is point at infinity
     ROrSZero,         // one of the signature components is zero
     RxMismatch,       // computed R.x does not match r
@@ -672,7 +673,7 @@ impl Secp256k1Point {
         if p.is_on_curve() {
             Ok(p)
         } else {
-            Err(Secp256k1Error::QAtInfinity)
+            Err(Secp256k1Error::NotOnCurve)
         }
     }
     /// creates a new Secp256k1Point from two Secp256k1Fq elements
@@ -843,27 +844,18 @@ impl Secp256k1Point {
             Secp256k1Point { x: x2, y: y2 }
         }
     }
-    // specialty routine for computing res = 2*self + other
-    // tries to avoid doubling as much as possible
-    // and avoids computing unnecessary intermediate values
+    /// computes 2*self + other using an optimized formula that saves one field operation
     #[inline(always)]
     pub fn double_and_add(&self, other: &Secp256k1Point) -> Self {
-        // if self is infinity, then return other
         if self.is_infinity() {
             other.clone()
-        // if other is infinity, then return 2*self
         } else if other.is_infinity() {
             self.add(self)
-        // if self is equal to other, naive double and add
         } else if self.x == other.x && self.y == other.y {
             self.add(self).add(other)
-        // if self and other are inverses, return self
         } else if self.x == other.x && self.y != other.y {
+            // self + other = infinity, so 2*self + other = self
             self.clone()
-        // general case, compute (self + other) + self
-        // saving an operation in the middle
-        // note that (self + other) cannot equal infinity or self here
-        // so no special cases needed
         } else {
             let ns = (self.y.sub(&other.y)).div_assume_nonzero(&other.x.sub(&self.x));
             let nx2 = other.x.sub(&ns.square());

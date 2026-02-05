@@ -69,6 +69,10 @@ inside the cloned repository.
 
 ```cd jolt; rustup show```.
 
+Install the Jolt CLI:
+
+```cargo install --path .```
+
 ## Build
 
 This repository uses workspaces, and each workspace can be built individually, e.g.
@@ -138,7 +142,8 @@ The above command will log memory usage info to the command line and output mult
 Tracer, Jolt's emulator, doesn't currently support attaching a debugger.
 
 However, it supports backtraces for panics that happen in guest programs.
-By default, DWARF symbols are stripped from the guest elf and backtraces won't have much information.
+By default, symbols are stripped from release guest ELFs and backtraces won't have much information.
+Debug/dev builds preserve symbols automatically.
 
 To enable symbolized backtraces, set the `JOLT_BACKTRACE` environment variable to `1` or `full`:
 
@@ -148,7 +153,9 @@ JOLT_BACKTRACE=1 cargo run --release -p example
 
 When `JOLT_BACKTRACE=full` is set, the backtraces include cycle counts and non-zero values of registers at each frame.
 
-To further assist in debugging, Jolt also supports prints via `jolt_print!` and `jolt_println!` macros, which can be used in guest programs.
+You can also control symbol preservation directly via `jolt build --backtrace enable`.
+
+To further assist in debugging, Jolt supports `print!` and `println!` macros in guest programs. For `no_std` guests, import the macros via `use jolt::println;`. When std is enabled, the standard `println!` works automatically.
 
 When debugging issues with guest programs, it's recommended to use the corresponding `trace_analyze` for your `#[jolt::provable]` functions. This skips instantiating the prover and allows for faster iteration.
 
