@@ -282,6 +282,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
 }
 
 impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycleMajorEntry<F, C> {
+    type AddressMajor = RegistersAddressMajorEntry<F>;
+
     fn row(&self) -> usize {
         (self.row_col & ROW_MASK) as usize
     }
@@ -406,6 +408,21 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
                 ]
             }
             (None, None) => panic!("Both entries are None"),
+        }
+    }
+
+    fn to_address_major(
+        self,
+        ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+        wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+    ) -> Self::AddressMajor {
+        RegistersAddressMajorEntry {
+            row_col: pack_row_col(self.row(), self.column() as u8),
+            prev_val: F::from_u64(self.prev_val),
+            next_val: F::from_u64(self.next_val),
+            val_coeff: self.val_coeff,
+            ra_coeff: self.ra_coeff.to_field(ra_lookup_table),
+            wa_coeff: self.wa_coeff.to_field(wa_lookup_table),
         }
     }
 }
@@ -579,19 +596,6 @@ pub struct RegistersAddressMajorEntry<F: JoltField> {
     pub val_coeff: F,
     pub ra_coeff: F,
     pub wa_coeff: F,
-}
-
-impl<F: JoltField> From<RegistersCycleMajorEntry<F, F>> for RegistersAddressMajorEntry<F> {
-    fn from(entry: RegistersCycleMajorEntry<F, F>) -> Self {
-        RegistersAddressMajorEntry {
-            row_col: pack_row_col(entry.row(), entry.column() as u8),
-            prev_val: F::from_u64(entry.prev_val),
-            next_val: F::from_u64(entry.next_val),
-            val_coeff: entry.val_coeff,
-            ra_coeff: entry.ra_coeff,
-            wa_coeff: entry.wa_coeff,
-        }
-    }
 }
 
 impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> {

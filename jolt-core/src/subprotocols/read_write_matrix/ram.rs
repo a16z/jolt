@@ -116,6 +116,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RamCycleMajorEntry<F>> {
 }
 
 impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
+    type AddressMajor = RamAddressMajorEntry<F>;
+
     fn row(&self) -> usize {
         self.row
     }
@@ -222,6 +224,21 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
             (None, None) => panic!("Both entries are None"),
         }
     }
+
+    fn to_address_major(
+        self,
+        _: Option<&OneHotCoeffLookupTable<F>>,
+        _: Option<&OneHotCoeffLookupTable<F>>,
+    ) -> Self::AddressMajor {
+        RamAddressMajorEntry {
+            row: self.row,
+            col: self.col,
+            prev_val: F::from_u64(self.prev_val),
+            next_val: F::from_u64(self.next_val),
+            val_coeff: self.val_coeff,
+            ra_coeff: self.ra_coeff,
+        }
+    }
 }
 
 impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RamCycleMajorEntry<F>> {
@@ -321,19 +338,6 @@ pub struct RamAddressMajorEntry<F: JoltField> {
     /// The ra coefficient for this matrix entry. Note that for RAM,
     /// ra and wa are the same polynomial.
     pub ra_coeff: F,
-}
-
-impl<F: JoltField> From<RamCycleMajorEntry<F>> for RamAddressMajorEntry<F> {
-    fn from(entry: RamCycleMajorEntry<F>) -> Self {
-        RamAddressMajorEntry {
-            row: entry.row,
-            col: entry.col,
-            prev_val: F::from_u64(entry.prev_val),
-            next_val: F::from_u64(entry.next_val),
-            val_coeff: entry.val_coeff,
-            ra_coeff: entry.ra_coeff,
-        }
-    }
 }
 
 impl<F: JoltField> AddressMajorMatrixEntry<F> for RamAddressMajorEntry<F> {

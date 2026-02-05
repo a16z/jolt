@@ -48,7 +48,7 @@ impl ReadWriteConfig {
             ram_rw_phase1_num_rounds: log_T as u8,
             ram_rw_phase2_num_rounds: ram_log_K as u8,
             registers_rw_phase1_num_rounds: log_T as u8,
-            registers_rw_phase2_num_rounds: 0_u8,
+            registers_rw_phase2_num_rounds: REGISTER_COUNT.ilog2() as u8,
         };
 
         // Validate the configuration

@@ -12,8 +12,12 @@ use rayon::prelude::*;
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::read_write_matrix::one_hot_coeffs::OneHotCoeffLookupTable;
+use crate::subprotocols::read_write_matrix::AddressMajorMatrixEntry;
 
 pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
+    /// Address-major counterpart
+    type AddressMajor: AddressMajorMatrixEntry<F>;
+
     /// The row index. Before binding, row \in [0, T)
     fn row(&self) -> usize;
 
@@ -54,6 +58,12 @@ pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
         ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
         wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> [F::Unreduced<8>; 2];
+
+    fn to_address_major(
+        self,
+        ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+        wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+    ) -> Self::AddressMajor;
 }
 
 /// Represents the ra(k, j) and Val(k, j) polynomials for the RAM

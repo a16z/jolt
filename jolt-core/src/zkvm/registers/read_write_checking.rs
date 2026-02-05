@@ -182,7 +182,6 @@ enum SparseMatrix<F: JoltField> {
         ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, LookupTableIndex>>,
     ),
     CycleMajor(ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>>),
-    #[allow(dead_code)]
     AddressMajor(ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>),
 }
 
@@ -261,7 +260,11 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             >::new(&trace, params.gamma);
             SparseMatrix::CycleMajorWithLookups(matrix)
         } else if phase2_rounds > 0 {
-            todo!()
+            let matrix = ReadWriteMatrixCycleMajor::<
+                _,
+                RegistersCycleMajorEntry<F, LookupTableIndex>,
+            >::new(&trace, params.gamma);
+            SparseMatrix::AddressMajor(matrix.into())
         } else {
             unimplemented!("Unsupported configuration: both phase 1 and phase 2 are 0 rounds")
         };
@@ -513,7 +516,15 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             self.merged_eq = Some(MultilinearPolynomial::LargeScalars(gruen_eq.merge()));
             let sparse_matrix = std::mem::take(sparse_matrix);
             if params.phase2_num_rounds > 0 {
-                todo!();
+                match sparse_matrix {
+                    SparseMatrix::CycleMajorWithLookups(matrix) => {
+                        self.sparse_matrix = SparseMatrix::AddressMajor(matrix.into());
+                    }
+                    SparseMatrix::CycleMajor(matrix) => {
+                        self.sparse_matrix = SparseMatrix::AddressMajor(matrix.into());
+                    }
+                    _ => unimplemented!("Unexpected SparseMatrix variant"),
+                }
             } else {
                 // Skip to phase 3: all cycle variables bound, no address variables bound yet
                 let T_prime = params.T >> params.phase1_num_rounds;
