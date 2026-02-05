@@ -6,40 +6,34 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that effic
 
 ## Essential Commands
 
-### Building
+
+### Linting and Formatting
 ```bash
-# Build all packages (use --message-format=short for cargo commands)
-cargo build --all --message-format=short
+# Check code style (use --message-format=short)
+# This is your main validation step
+cargo clippy --all --message-format=short -q --all-targets --features allocative,host -- -D warnings
 
-# Build release mode with optimizations
-cargo build --release --message-format=short
-
-# Build specific package
-cargo build -p jolt-core --message-format=short
+# Format code
+cargo fmt -q
 ```
 
 ### Testing
 ```bash
 # CRITICAL: Never use cargo test. Always use cargo nextest
-cargo nextest run
+cargo nextest run --cargo-quiet
 
-# Run specific test
-cargo nextest run test_name
-
-# Run tests in specific package
-cargo nextest run -p jolt-core
+# Run specific test in specific package
+cargo nextest run -p [package_name] [test_name] --cargo-quiet
 
 # CRITICAL: Generally you should ONLY run e2e muldiv test to verify correctness
-cargo nextest run -p jolt-core muldiv
+cargo nextest run -p jolt-core muldiv --cargo-quiet
 ```
 
-### Linting and Formatting
+### Building
 ```bash
-# Check code style (use --message-format=short)
-cargo clippy --all --message-format=short -- -D warnings
-
-# Format code
-cargo fmt -q
+# CRITICAL: Build only when you are preparing to execute binary. Use clippy otherwise
+# Build specific package
+cargo build -p jolt-core --message-format=short -q
 ```
 
 ## Architecture
@@ -82,7 +76,6 @@ cargo fmt -q
 ### Code Style
 - Use `cargo fmt` for formatting
 - Pass `cargo clippy` with no warnings
-- Prefer explicit types in performance-critical code
 - Use `#[inline]` judiciously in hot paths
 
 ### Comment Policy
@@ -105,10 +98,8 @@ cargo fmt -q
 
 ### Testing Strategy
 - Always use `cargo nextest` (never `cargo test`)
-- Test both debug and release modes
-- Write unit tests for all new functionality
+- Write unit tests for new functionality
 
 ### Memory and Allocation
-- Monitor allocations with allocative feature
 - Pre-allocate vectors unsafely when size is known
 - Avoid unnecessary clones in hot paths
