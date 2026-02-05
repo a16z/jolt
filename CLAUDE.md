@@ -1,82 +1,134 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Project Overview
 
-Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that efficiently proves and verifies program execution. It uses advanced cryptographic techniques including sumcheck, multilinear polynomial commitments, and lookups.
+Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that efficiently proves and verifies program execution. It uses sumcheck-based protocols, multilinear polynomial commitments (Dory), and the Twist/Shout lookup argument.
 
 ## Essential Commands
 
-
 ### Linting and Formatting
-```bash
-# Check code style (use --message-format=short)
-# This is your main validation step
-cargo clippy --all --message-format=short -q --all-targets --features allocative,host -- -D warnings
 
-# Format code
+```bash
+cargo clippy --all --message-format=short -q --all-targets --features allocative,host -- -D warnings
 cargo fmt -q
 ```
 
 ### Testing
+
 ```bash
-# CRITICAL: Never use cargo test. Always use cargo nextest
+# CRITICAL: Always use cargo nextest, never cargo test
 cargo nextest run --cargo-quiet
 
 # Run specific test in specific package
 cargo nextest run -p [package_name] [test_name] --cargo-quiet
 
-# CRITICAL: Generally you should ONLY run e2e muldiv test to verify correctness
+# CRITICAL: Primary correctness check — run muldiv e2e test
 cargo nextest run -p jolt-core muldiv --cargo-quiet
 ```
 
 ### Building
+
 ```bash
-# CRITICAL: Build only when you are preparing to execute binary. Use clippy otherwise
-# Build specific package
+# Prefer clippy over build for validation. Only build when preparing to execute a binary.
 cargo build -p jolt-core --message-format=short -q
+```
+
+### Profiling
+
+```bash
+# Execution trace (viewable in Perfetto)
+cargo run --release -p jolt-core profile --name sha3 --format chrome
+# --name options: sha2, sha3, sha2-chain, fibonacci, btreemap
+
+# Memory profiling (outputs SVG flamegraphs)
+RUST_LOG=debug cargo run --release --features allocative -p jolt-core profile --name sha3 --format chrome
 ```
 
 ## Architecture
 
-### Core Components
+### Crate Structure
 
-**jolt-core**
-- `host/`: Compilation of guest program
-- `zkvm/`: Implements the Jolt PIOP, including all sumchecks
-- `poly/`: Polynomial operations and commitments
-- `field/`: Finite field trait and implementations
-- `r1cs/`: R1CS constraint system
-- `utils/`: Parallel processing and utilities
+**jolt-core** — Core proving system
 
-**tracer**
-- RISC-V emulator that generates execution traces
-- Supports RV64IMAC instruction set
-- Handles memory operations and syscalls
+- `host/`: Guest ELF compilation and program analysis (feature-gated behind `host`)
+- `zkvm/`: Jolt PIOP — prover, verifier, R1CS/Spartan, memory checking, instruction lookups
+- `poly/`: Polynomial types, commitment schemes (Dory, HyperKZG), opening proofs
+- `field/`: `JoltField` trait and BN254 scalar field implementation
+- `subprotocols/`: Sumcheck (batched, streaming, univariate skip), booleanity checks
+- `msm/`: Multi-scalar multiplication
+- `transcripts/`: Fiat-Shamir transcripts (Blake2b, Keccak)
 
-**jolt-sdk**
-- SDK with `#[jolt::provable]` macro for ergonomic guest program development
+**tracer** — RISC-V emulator producing execution traces (`Cycle` per instruction)
 
-**jolt-inlines**
-- Jolt-optimized implementations of common cryptographic primitives (e.g. sha2, blake3, bigint, secp256k1)
-- Similar to "precompiles" in other zkVMs
+**jolt-sdk** — `#[jolt::provable]` macro generating prove/verify/analyze/preprocess functions
 
-**examples**
-- Guest/host example programs showcasing Jolt SDK (fibonacci, collatz, etc.)
-- Each example can be run as a standalone package
+**jolt-inlines** — Optimized cryptographic primitives (sha2, blake3, bigint, secp256k1, etc.) replacing guest-side computation with efficient constraint-native implementations
 
+### Key Type Parameters
+
+Most core types are generic over three parameters:
+
+```
+F: JoltField                              — scalar field (BN254 Fr)
+PCS: CommitmentScheme<Field = F>          — polynomial commitment (DoryCommitmentScheme)
+ProofTranscript: Transcript               — Fiat-Shamir transcript (Blake2bTranscript)
+```
+
+### Prover Pipeline
+
+1. **Trace**: Execute guest ELF in tracer emulator → `Vec<Cycle>` + `JoltDevice` (I/O)
+2. **Witness gen**: Trace → committed polynomials (Inc, Ra one-hot, advice)
+3. **Streaming commitment**: Dory tier-1 chunks → tier-2 aggregation → final commitments
+4. **Spartan**: R1CS constraint satisfaction via univariate skip + outer/product sumchecks
+5. **Sumcheck rounds**: Batched sumchecks for instruction lookups, bytecode, RAM/register read-write checking, Hamming booleanity, claim reductions
+6. **Opening proofs**: Batched Dory opening proofs via `ProverOpeningAccumulator`
+
+### Polynomial Types (poly/)
+
+- `DensePolynomial<F>`: Full field-element coefficients
+- `CompactPolynomial<T>`: Small scalar coefficients (u8–i128), promoted to field on bind
+- `RaPolynomial`: Lazy materialization via Round1→Round2→Round3→RoundN state machine
+- `SharedRaPolynomials`: Shares eq tables across N polynomials for memory efficiency
+- `PrefixSuffixDecomposition`: Splits polynomial as `Σ P_i(prefix) · Q_i(suffix)` for efficient sumcheck
+- `MultilinearPolynomial<F>`: Enum dispatching over all scalar types + OneHot/RLC variants
+
+### Witness Polynomials (zkvm/witness.rs)
+
+Committed: `RdInc`, `RamInc`, `InstructionRa(d)`, `BytecodeRa(d)`, `RamRa(d)`, `TrustedAdvice`, `UntrustedAdvice`
+
+Virtual (derived during proving): PC, register values, RAM values, instruction flags, lookup operands/outputs
+
+### zkvm/ Submodules
+
+- `spartan/`: Spartan IOP — outer sumcheck, product virtual sumcheck, shift, instruction input constraints
+- `r1cs/`: R1CS constraint system and `UniformSpartanKey`
+- `ram/`: RAM read-write checking, val evaluation, val final, output check, Hamming booleanity, RAF evaluation
+- `registers/`: Register read-write checking, val evaluation
+- `instruction_lookups/`: RA virtual sumcheck, read-RAF checking
+- `claim_reductions/`: Advice, Hamming weight, increment, instruction lookups, register, RAM RA reductions
+- `bytecode/`: Bytecode preprocessing and PC mapping, read-RAF checking
 
 ## Development Guidelines
 
-### Performance Requirements
+### Performance
+
 - PERFORMANCE IS CRITICAL AND TOP PRIORITY
-- No shortcuts in implementation
-- Use idiomatic Rust patterns
 - Profile before optimizing
+- Benchmark changes to `poly/` code — small regressions multiply across thousands of sumcheck rounds
+- Use `#[inline]` judiciously in hot paths
+- Pre-allocate vectors unsafely when size is known; avoid clones in hot paths
+
+### Prover Hot Paths
+
+- Sumcheck inner loop dominates: polynomial bind, sumcheck_evals, eq_poly evals
+- `CompactPolynomial` bind converts small scalars to field elements — keep scalars small
+- `SharedRaPolynomials` avoids per-polynomial memory duplication for RA indices
 
 ### Code Style
-- Use `cargo fmt` for formatting
-- Pass `cargo clippy` with no warnings
-- Use `#[inline]` judiciously in hot paths
+
+- `cargo fmt` + `cargo clippy` with zero warnings
 
 ### Comment Policy
 
@@ -94,24 +146,7 @@ cargo build -p jolt-core --message-format=short -q
 - Complex algorithm explanations (link to paper if applicable)
 - Public API docs that explain behavior, constraints, or invariants
 
-**Principle:** Code should be self-documenting. If you need a comment to explain WHAT code does, refactor to make it clearer.
+### Testing
 
-### Testing Strategy
 - Always use `cargo nextest` (never `cargo test`)
-- Write unit tests for new functionality
-
-### Memory and Allocation
-- Pre-allocate vectors unsafely when size is known
-- Avoid unnecessary clones in hot paths
-
-### Prover Hot Paths
-- Prover pipeline: trace → witness gen → commitment → sumcheck rounds → opening proofs
-- Sumcheck inner loop dominates sumcheck rounds time: polynomial bind, sumcheck_evals, eq_poly evals
-- Benchmark changes to `poly/` code — small regressions multiply across thousands of rounds
-
-### Polynomial Types (poly/)
-- `DensePolynomial`: full field-element coefficients
-- `CompactPolynomial<T>`: small scalar coefficients (u8, u16, etc.), promoted to field on bind
-- `RaPolynomial`: lazy materialization via Round1->Round2->Round3->RoundN enum
-- `SharedRaPolynomials`: same round pattern but shares eq tables across N polynomials
-- `PrefixSuffixDecomposition`: splits polynomial as Σ P_i(prefix) · Q_i(suffix) for efficient sumcheck
+- Run `muldiv` e2e test as primary correctness check
