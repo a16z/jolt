@@ -107,6 +107,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RamCycleMajorEntry<F>> {
 
         ReadWriteMatrixCycleMajor {
             entries,
+            ra_lookup_table: None,
+            wa_lookup_table: None,
             val_init: val_init.into(),
         }
     }

@@ -11,6 +11,7 @@ use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::subprotocols::read_write_matrix::one_hot_coeffs::OneHotCoeffLookupTable;
 
 pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
     /// The row index. Before binding, row \in [0, T)
@@ -63,6 +64,8 @@ pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
 #[derive(Allocative, Debug, Default, Clone)]
 pub struct ReadWriteMatrixCycleMajor<F: JoltField, E: CycleMajorMatrixEntry<F>> {
     pub entries: Vec<E>,
+    pub ra_lookup_table: Option<OneHotCoeffLookupTable<F>>,
+    pub wa_lookup_table: Option<OneHotCoeffLookupTable<F>>,
     pub(crate) val_init: MultilinearPolynomial<F>,
 }
 
@@ -284,6 +287,17 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
             bound_entries.set_len(bound_length);
         }
         self.entries = bound_entries;
+
+        if let Some(ra_lookup_table) = self.ra_lookup_table.as_mut() {
+            if !ra_lookup_table.is_saturated() {
+                ra_lookup_table.bind(r);
+            }
+        }
+        if let Some(wa_lookup_table) = self.wa_lookup_table.as_mut() {
+            if !wa_lookup_table.is_saturated() {
+                wa_lookup_table.bind(r);
+            }
+        }
     }
 
     /// For the given pair of adjacent rows, computes the pair's contribution to the prover's

@@ -1,8 +1,10 @@
 use crate::field::JoltField;
 use crate::field::OptimizedMul;
 use crate::utils::math::Math;
+use allocative::Allocative;
 use rayon::prelude::*;
 
+#[derive(Allocative, Debug, Default, Clone)]
 pub struct OneHotCoeffLookupTable<F: JoltField> {
     /// Grows exponentially with the number of sumcheck rounds
     lookup_table: Vec<F>,
@@ -32,7 +34,7 @@ impl<F: JoltField> OneHotCoeffLookupTable<F> {
         }
     }
 
-    pub fn bind(&mut self, r: F) {
+    pub fn bind(&mut self, r: F::Challenge) {
         assert!(self.lookup_table.len() < MAX_LOOKUP_TABLE_SIZE);
         // Expand lookup table
         self.lookup_table = self
@@ -47,23 +49,28 @@ impl<F: JoltField> OneHotCoeffLookupTable<F> {
     }
 }
 
-pub trait OneHotCoeff<F: JoltField> {
+pub trait OneHotCoeff<F: JoltField>: Send + Sync {
     fn bind(
         even: Option<&Self>,
         odd: Option<&Self>,
-        r: F,
-        lookup_table: &OneHotCoeffLookupTable<F>,
+        r: F::Challenge,
+        lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> Self;
 
     fn evals(
         even: Option<&Self>,
         odd: Option<&Self>,
-        lookup_table: &OneHotCoeffLookupTable<F>,
+        lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> [F; 2];
 }
 
 impl<F: JoltField> OneHotCoeff<F> for F {
-    fn bind(even: Option<&Self>, odd: Option<&Self>, r: F, _: &OneHotCoeffLookupTable<F>) -> Self {
+    fn bind(
+        even: Option<&Self>,
+        odd: Option<&Self>,
+        r: F::Challenge,
+        _: Option<&OneHotCoeffLookupTable<F>>,
+    ) -> Self {
         match (even, odd) {
             (Some(&even), Some(&odd)) => even + r.mul_0_optimized(odd - even),
             (Some(&even), None) => (F::one() - r).mul_1_optimized(even),
@@ -72,7 +79,11 @@ impl<F: JoltField> OneHotCoeff<F> for F {
         }
     }
 
-    fn evals(even: Option<&Self>, odd: Option<&Self>, _: &OneHotCoeffLookupTable<F>) -> [F; 2] {
+    fn evals(
+        even: Option<&Self>,
+        odd: Option<&Self>,
+        _: Option<&OneHotCoeffLookupTable<F>>,
+    ) -> [F; 2] {
         match (even, odd) {
             (Some(&even), Some(&odd)) => [even, odd - even],
             (Some(&even), None) => [even, -even],
@@ -86,9 +97,10 @@ impl<F: JoltField> OneHotCoeff<F> for LookupTableIndex {
     fn bind(
         even: Option<&Self>,
         odd: Option<&Self>,
-        _r: F,
-        lookup_table: &OneHotCoeffLookupTable<F>,
+        _r: F::Challenge,
+        lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> Self {
+        let lookup_table = lookup_table.unwrap();
         // The lookup table itself is bound to `_r` separately
         let lookup_index_bitwidth = lookup_table.lookup_index_bitwidth;
         debug_assert!(lookup_index_bitwidth <= 8);
@@ -104,8 +116,9 @@ impl<F: JoltField> OneHotCoeff<F> for LookupTableIndex {
     fn evals(
         even: Option<&Self>,
         odd: Option<&Self>,
-        lookup_table: &OneHotCoeffLookupTable<F>,
+        lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> [F; 2] {
+        let lookup_table = lookup_table.unwrap();
         match (even, odd) {
             (Some(&even), Some(&odd)) => {
                 [lookup_table[even], lookup_table[odd] - lookup_table[even]]

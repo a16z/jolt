@@ -176,7 +176,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
 
 #[derive(Allocative)]
 pub struct RegistersReadWriteCheckingProver<F: JoltField> {
-    sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>>,
+    sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>>,
     sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>,
     gruen_eq: Option<GruenSplitEqPolynomial<F>>,
     inc: MultilinearPolynomial<F>,
@@ -220,8 +220,10 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             &trace,
             None,
         );
-        let sparse_matrix =
-            ReadWriteMatrixCycleMajor::<_, RegistersCycleMajorEntry<F>>::new(&trace, params.gamma);
+        let sparse_matrix = ReadWriteMatrixCycleMajor::<_, RegistersCycleMajorEntry<F, F>>::new(
+            &trace,
+            params.gamma,
+        );
         let phase1_rounds = params.phase1_num_rounds;
         let phase2_rounds = params.phase2_num_rounds;
 
