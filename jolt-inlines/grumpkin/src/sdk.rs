@@ -212,7 +212,7 @@ impl GrumpkinFq {
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn div_unchecked(&self, other: &GrumpkinFq) -> Self {
+    pub fn div_assume_nonzero(&self, other: &GrumpkinFq) -> Self {
         let mut c = GrumpkinFq::zero();
         unsafe {
             use crate::{GRUMPKIN_DIVQ_ADV_FUNCT3, GRUMPKIN_FUNCT7, INLINE_OPCODE};
@@ -243,14 +243,14 @@ impl GrumpkinFq {
         if other.is_zero() {
             hcf();
         }
-        self.div_unchecked(other)
+        self.div_assume_nonzero(other)
     }
     #[cfg(all(
         not(feature = "host"),
         not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    pub fn div_unchecked(&self, _other: &GrumpkinFq) -> Self {
-        panic!("GrumpkinFq::div_unchecked called on non-RISC-V target without host feature");
+    pub fn div_assume_nonzero(&self, _other: &GrumpkinFq) -> Self {
+        panic!("GrumpkinFq::div_assume_nonzero called on non-RISC-V target without host feature");
     }
     #[cfg(all(
         not(feature = "host"),
@@ -261,7 +261,7 @@ impl GrumpkinFq {
     }
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn div_unchecked(&self, other: &GrumpkinFq) -> Self {
+    pub fn div_assume_nonzero(&self, other: &GrumpkinFq) -> Self {
         GrumpkinFq {
             e: self.e / other.e,
         }
@@ -272,7 +272,7 @@ impl GrumpkinFq {
         if other.is_zero() {
             panic!("division by zero in GrumpkinFq::div");
         }
-        self.div_unchecked(other)
+        self.div_assume_nonzero(other)
     }
 }
 
@@ -345,7 +345,7 @@ impl GrumpkinFr {
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn div_unchecked(&self, other: &GrumpkinFr) -> Self {
+    pub fn div_assume_nonzero(&self, other: &GrumpkinFr) -> Self {
         let mut c = GrumpkinFr::zero();
         unsafe {
             use crate::{GRUMPKIN_DIVR_ADV_FUNCT3, GRUMPKIN_FUNCT7, INLINE_OPCODE};
@@ -376,14 +376,14 @@ impl GrumpkinFr {
         if other.is_zero() {
             hcf();
         }
-        self.div_unchecked(other)
+        self.div_assume_nonzero(other)
     }
     #[cfg(all(
         not(feature = "host"),
         not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    pub fn div_unchecked(&self, _other: &GrumpkinFr) -> Self {
-        panic!("GrumpkinFr::div_unchecked called on non-RISC-V target without host feature");
+    pub fn div_assume_nonzero(&self, _other: &GrumpkinFr) -> Self {
+        panic!("GrumpkinFr::div_assume_nonzero called on non-RISC-V target without host feature");
     }
     #[cfg(all(
         not(feature = "host"),
@@ -394,7 +394,7 @@ impl GrumpkinFr {
     }
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn div_unchecked(&self, other: &GrumpkinFr) -> Self {
+    pub fn div_assume_nonzero(&self, other: &GrumpkinFr) -> Self {
         GrumpkinFr {
             e: self.e / other.e,
         }
@@ -405,7 +405,7 @@ impl GrumpkinFr {
         if other.is_zero() {
             panic!("division by zero in GrumpkinFr::div");
         }
-        self.div_unchecked(other)
+        self.div_assume_nonzero(other)
     }
 }
 
@@ -505,7 +505,7 @@ impl GrumpkinPoint {
         if self.y.is_zero() {
             GrumpkinPoint::infinity()
         } else {
-            let s = self.x.square().tpl().div_unchecked(&self.y.dbl());
+            let s = self.x.square().tpl().div_assume_nonzero(&self.y.dbl());
             let x2 = s.square().sub(&self.x.dbl());
             let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
             GrumpkinPoint { x: x2, y: y2 }
@@ -522,7 +522,7 @@ impl GrumpkinPoint {
         } else if self.x == other.x {
             GrumpkinPoint::infinity()
         } else {
-            let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
+            let s = (self.y.sub(&other.y)).div_assume_nonzero(&self.x.sub(&other.x));
             let x2 = s.square().sub(&self.x.add(&other.x));
             let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
             GrumpkinPoint { x: x2, y: y2 }
@@ -547,14 +547,14 @@ impl GrumpkinPoint {
             self.clone()
         } else {
             // ns = negated slope of line through P and Q
-            let ns = (self.y.sub(&other.y)).div_unchecked(&other.x.sub(&self.x));
+            let ns = (self.y.sub(&other.y)).div_assume_nonzero(&other.x.sub(&self.x));
             let nx2 = other.x.sub(&ns.square());
             let divisor = self.x.dbl().add(&nx2);
             // When divisor = 0, result is infinity. This happens when Q = -2P.
             if divisor.is_zero() {
                 return GrumpkinPoint::infinity();
             }
-            let t = self.y.dbl().div_unchecked(&divisor).add(&ns);
+            let t = self.y.dbl().div_assume_nonzero(&divisor).add(&ns);
             let x3 = t.square().add(&nx2);
             let y3 = t.mul(&(self.x.sub(&x3))).sub(&self.y);
             GrumpkinPoint { x: x3, y: y3 }
