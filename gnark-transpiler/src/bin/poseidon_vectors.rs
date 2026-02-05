@@ -97,42 +97,48 @@ fn main() {
 
 /// Extract Poseidon constants from light-poseidon for Go implementation
 fn extract_constants() {
-    use light_poseidon::parameters::bn254_x5;
+    use ark_bn254::Fr;
+    use light_poseidon::parameters::bn254_x5::get_poseidon_parameters;
 
+    let params = get_poseidon_parameters::<Fr>(4).unwrap();
+
+    println!("package poseidon");
+    println!();
+    println!("import \"math/big\"");
+    println!();
     println!("// Poseidon constants extracted from light-poseidon (circom-compatible)");
-    println!("// For unoptimized algorithm: full MDS in all rounds");
-    println!();
-    println!("// IMPORTANT: light-poseidon uses the unoptimized algorithm with full MDS");
-    println!("// matrix multiplication in ALL rounds (both full and partial).");
-    println!();
-    println!("// Round constants layout: ark[round * width + i] where:");
-    println!("// - round goes from 0 to (full_rounds + partial_rounds - 1)");
-    println!("// - i goes from 0 to (width - 1)");
+    println!("// For UNOPTIMIZED algorithm: full MDS in all rounds");
+    println!("// Width: 4, Full rounds: {}, Partial rounds: {}", params.full_rounds, params.partial_rounds);
     println!();
 
-    // Print partial rounds for each width
-    println!("// Partial rounds per width: {:?}", bn254_x5::PARTIAL_ROUNDS);
-    println!("// Full rounds: {}", bn254_x5::FULL_ROUNDS);
-    println!("// Alpha (S-box exponent): {}", bn254_x5::ALPHA);
+    // ARK constants
+    println!("var arkConstants []*big.Int");
+    println!();
+    println!("// MDS matrix (4x4)");
+    println!("var mdsMatrix [][]*big.Int");
+    println!();
+    println!("func init() {{");
+    println!("\tarkConstants = make([]*big.Int, {})", params.ark.len());
     println!();
 
-    // Width-4: index 3 in PARTIAL_ROUNDS array (widths start at 2)
-    let w4_partial = bn254_x5::PARTIAL_ROUNDS[2]; // index 2 for width 4
-    println!("// Width-4: {} full rounds + {} partial rounds = {} total", bn254_x5::FULL_ROUNDS, w4_partial, bn254_x5::FULL_ROUNDS + w4_partial);
+    for (i, c) in params.ark.iter().enumerate() {
+        println!("\tarkConstants[{}], _ = new(big.Int).SetString(\"{}\", 10)", i, c.into_bigint());
+    }
 
-    // Width-5: index 4 in PARTIAL_ROUNDS array
-    let w5_partial = bn254_x5::PARTIAL_ROUNDS[3]; // index 3 for width 5
-    println!("// Width-5: {} full rounds + {} partial rounds = {} total", bn254_x5::FULL_ROUNDS, w5_partial, bn254_x5::FULL_ROUNDS + w5_partial);
+    println!();
+    println!("\tmdsMatrix = make([][]*big.Int, 4)");
+    println!("\tfor i := 0; i < 4; i++ {{");
+    println!("\t\tmdsMatrix[i] = make([]*big.Int, 4)");
+    println!("\t}}");
     println!();
 
-    // For Go implementation, we need to match this algorithm:
-    // 1. ARK (add round constants)
-    // 2. FULL_ROUNDS/2 times: S-box all + MDS all + ARK
-    // 3. PARTIAL_ROUNDS times: S-box first element only + MDS all + ARK
-    // 4. FULL_ROUNDS/2 times: S-box all + MDS all + (ARK except last round)
-    //
-    // The key insight: light-poseidon always uses full MDS in partial rounds,
-    // not the sparse matrix optimization.
+    for i in 0..4 {
+        for j in 0..4 {
+            println!("\tmdsMatrix[{}][{}], _ = new(big.Int).SetString(\"{}\", 10)", i, j, params.mds[i][j].into_bigint());
+        }
+    }
+
+    println!("}}");
 }
 
 /// Debug Poseidon step by step

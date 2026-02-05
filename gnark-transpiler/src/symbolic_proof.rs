@@ -6,6 +6,7 @@
 use crate::ast_commitment_scheme::{AstCommitmentScheme, AstProof};
 use crate::MleOpeningAccumulator;
 use crate::PoseidonAstTranscript;
+use jolt_core::transcripts::Transcript;
 use jolt_core::poly::opening_proof::OpeningPoint;
 use jolt_core::poly::unipoly::CompressedUniPoly;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
@@ -61,7 +62,7 @@ impl Default for VarAllocator {
 /// Number of 32-byte chunks per commitment (384 bytes / 32 = 12)
 const CHUNKS_PER_COMMITMENT: usize = 12;
 
-/// Convert a real proof to a symbolic proof
+/// Convert a real proof to a symbolic proof (Poseidon transcript version)
 ///
 /// Returns:
 /// - The symbolic JoltProof
@@ -71,6 +72,17 @@ pub fn symbolize_proof(
     real_proof: &RV64IMACProof,
 ) -> (
     JoltProof<MleAst, AstCommitmentScheme, PoseidonAstTranscript>,
+    MleOpeningAccumulator,
+    VarAllocator,
+) {
+    symbolize_proof_generic::<PoseidonAstTranscript>(real_proof)
+}
+
+/// Generic proof symbolization over any Transcript type
+fn symbolize_proof_generic<ProofTranscript: Transcript>(
+    real_proof: &RV64IMACProof,
+) -> (
+    JoltProof<MleAst, AstCommitmentScheme, ProofTranscript>,
     MleOpeningAccumulator,
     VarAllocator,
 ) {
@@ -92,74 +104,69 @@ pub fn symbolize_proof(
     }
 
     // === Symbolize stage 1 uni-skip proof ===
-    let stage1_uni_skip = symbolize_uni_skip_proof(
+    let stage1_uni_skip = symbolize_uni_skip_proof::<_, ProofTranscript>(
         &real_proof.stage1_uni_skip_first_round_proof,
         &mut alloc,
         "stage1_uni_skip",
     );
 
     // === Symbolize stage 1 sumcheck proof ===
-    let stage1_sumcheck = symbolize_sumcheck_proof(
+    let stage1_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
         &real_proof.stage1_sumcheck_proof,
         &mut alloc,
         "stage1_sumcheck",
     );
 
     // === Symbolize stage 2 uni-skip proof ===
-    let stage2_uni_skip = symbolize_uni_skip_proof(
+    let stage2_uni_skip = symbolize_uni_skip_proof::<_, ProofTranscript>(
         &real_proof.stage2_uni_skip_first_round_proof,
         &mut alloc,
         "stage2_uni_skip",
     );
 
     // === Symbolize stage 2 sumcheck proof ===
-    let stage2_sumcheck = symbolize_sumcheck_proof(
+    let stage2_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
         &real_proof.stage2_sumcheck_proof,
         &mut alloc,
         "stage2_sumcheck",
     );
 
     // === Symbolize stage 3 sumcheck proof ===
-    let stage3_sumcheck = symbolize_sumcheck_proof(
+    let stage3_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
         &real_proof.stage3_sumcheck_proof,
         &mut alloc,
         "stage3_sumcheck",
     );
 
     // === Symbolize stage 4 sumcheck proof ===
-    let stage4_sumcheck = symbolize_sumcheck_proof(
+    let stage4_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
         &real_proof.stage4_sumcheck_proof,
         &mut alloc,
         "stage4_sumcheck",
     );
 
     // === Symbolize stage 5 sumcheck proof ===
-    let stage5_sumcheck = symbolize_sumcheck_proof(
+    let stage5_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
         &real_proof.stage5_sumcheck_proof,
         &mut alloc,
         "stage5_sumcheck",
     );
 
     // === Symbolize stage 6 sumcheck proof ===
-    let stage6_sumcheck = symbolize_sumcheck_proof(
+    let stage6_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
         &real_proof.stage6_sumcheck_proof,
         &mut alloc,
         "stage6_sumcheck",
     );
 
     // === Symbolize stage 7 sumcheck proof ===
-    let stage7_sumcheck = symbolize_sumcheck_proof(
+    let stage7_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
         &real_proof.stage7_sumcheck_proof,
         &mut alloc,
         "stage7_sumcheck",
     );
 
-    // === Symbolize stage 7 claims ===
-    let stage7_sumcheck_claims: Vec<MleAst> = (0..real_proof.stage7_sumcheck_claims.len())
-        .map(|i| alloc.alloc(&format!("stage7_claim_{}", i)))
-        .collect();
-
-    // === Symbolize advice commitments ===
+    // === Symbolize advice commitment (if present) ===
     let untrusted_advice_commitment = real_proof.untrusted_advice_commitment.as_ref().map(|_| {
         let chunks = alloc.alloc_n(CHUNKS_PER_COMMITMENT, "untrusted_advice_commitment");
         AstCommitment::new(chunks)
@@ -178,45 +185,41 @@ pub fn symbolize_proof(
         stage5_sumcheck_proof: stage5_sumcheck,
         stage6_sumcheck_proof: stage6_sumcheck,
         stage7_sumcheck_proof: stage7_sumcheck,
-        stage7_sumcheck_claims,
         joint_opening_proof: AstProof::default(),
-        #[cfg(test)]
-        joint_commitment_for_test: None,
-        trusted_advice_val_evaluation_proof: None,
-        trusted_advice_val_final_proof: None,
-        untrusted_advice_val_evaluation_proof: None,
-        untrusted_advice_val_final_proof: None,
         untrusted_advice_commitment,
         trace_length: real_proof.trace_length,
         ram_K: real_proof.ram_K,
         bytecode_K: real_proof.bytecode_K,
-        log_k_chunk: real_proof.log_k_chunk,
-        lookups_ra_virtual_log_k_chunk: real_proof.lookups_ra_virtual_log_k_chunk,
+        rw_config: real_proof.rw_config.clone(),
+        one_hot_config: real_proof.one_hot_config.clone(),
+        dory_layout: real_proof.dory_layout,
     };
 
     // Build the opening accumulator with the symbolic claims we created
     let mut accumulator = MleOpeningAccumulator::new();
     for (key, (_, claim)) in &symbolic_proof.opening_claims.0 {
-        accumulator.openings.insert(key.clone(), (vec![], claim.clone()));
+        accumulator
+            .openings
+            .insert(key.clone(), (vec![], claim.clone()));
     }
 
     (symbolic_proof, accumulator, alloc)
 }
 
-fn symbolize_uni_skip_proof<T: jolt_core::transcripts::Transcript>(
+fn symbolize_uni_skip_proof<T: Transcript, OutT: Transcript>(
     real: &UniSkipFirstRoundProof<ark_bn254::Fr, T>,
     alloc: &mut VarAllocator,
     prefix: &str,
-) -> UniSkipFirstRoundProof<MleAst, PoseidonAstTranscript> {
+) -> UniSkipFirstRoundProof<MleAst, OutT> {
     let coeffs = alloc.alloc_n(real.uni_poly.coeffs.len(), &format!("{}_coeff", prefix));
     UniSkipFirstRoundProof::new(jolt_core::poly::unipoly::UniPoly::from_coeff(coeffs))
 }
 
-fn symbolize_sumcheck_proof<T: jolt_core::transcripts::Transcript>(
+fn symbolize_sumcheck_proof<T: Transcript, OutT: Transcript>(
     real: &SumcheckInstanceProof<ark_bn254::Fr, T>,
     alloc: &mut VarAllocator,
     prefix: &str,
-) -> SumcheckInstanceProof<MleAst, PoseidonAstTranscript> {
+) -> SumcheckInstanceProof<MleAst, OutT> {
     let compressed_polys: Vec<CompressedUniPoly<MleAst>> = real
         .compressed_polys
         .iter()
@@ -239,9 +242,7 @@ fn symbolize_sumcheck_proof<T: jolt_core::transcripts::Transcript>(
 /// Returns a HashMap<variable_index, value_as_decimal_string>
 ///
 /// The indices match exactly what symbolize_proof allocates.
-pub fn extract_witness_values(
-    real_proof: &RV64IMACProof,
-) -> std::collections::HashMap<usize, String> {
+pub fn extract_witness_values(real_proof: &RV64IMACProof) -> std::collections::HashMap<usize, String> {
     use ark_ff::PrimeField;
     use ark_serialize::CanonicalSerialize;
     let mut values: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
@@ -269,13 +270,15 @@ pub fn extract_witness_values(
     // 2. Reverse bytes for BE/EVM format
     fn commitment_to_bytes<T: CanonicalSerialize>(commitment: &T) -> Vec<u8> {
         let mut bytes = Vec::new();
-        commitment.serialize_uncompressed(&mut bytes).expect("serialization failed");
+        commitment
+            .serialize_uncompressed(&mut bytes)
+            .expect("serialization failed");
         // Reverse bytes to match Poseidon transcript format (BE for EVM compatibility)
         bytes.reverse();
         bytes
     }
 
-    // === Commitments (41 commitments × 12 chunks each) ===
+    // === Commitments (N commitments × 12 chunks each) ===
     for commitment in &real_proof.commitments {
         let chunks = bytes_to_chunks(&commitment_to_bytes(commitment));
         for chunk in chunks {
@@ -356,12 +359,6 @@ pub fn extract_witness_values(
             values.insert(idx, format!("{}", coeff.into_bigint()));
             idx += 1;
         }
-    }
-
-    // === Stage 7 claims ===
-    for claim in &real_proof.stage7_sumcheck_claims {
-        values.insert(idx, format!("{}", claim.into_bigint()));
-        idx += 1;
     }
 
     // === Untrusted advice commitment (if present) ===
