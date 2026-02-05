@@ -18,11 +18,18 @@ zklean-extractor = { path = "../zklean-extractor" }
 common = { path = "../common" }
 light-poseidon = "0.4.0"
 num-bigint = "0.4"
+blake2 = "0.10"
+hex = "0.4"
 
-[[bin]]
-name = "gnark-transpiler"
-path = "src/main.rs"
+[features]
+default = []
+debug-expected-output = ["jolt-core/debug-expected-output"]
 
-[[bin]]
-name = "debug_transcript_full"
-path = "src/bin/debug_transcript_full.rs"
+# Main binaries disabled for now - need update for new Transcript API
+# [[bin]]
+# name = "gnark-transpiler"
+# path = "src/main.rs"
+
+# [[bin]]
+# name = "debug_transcript_full"
+# path = "src/bin/debug_transcript_full.rs"
