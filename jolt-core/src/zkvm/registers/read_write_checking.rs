@@ -268,17 +268,17 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let quadratic_coeffs: [F; DEGREE_BOUND - 1] = sparse_matrix
             .entries
             // Chunk by x_out (when E_in is bound, this is just row pairs)
-            .par_chunk_by(|a, b| ((a.row / 2) >> num_x_in_bits) == ((b.row / 2) >> num_x_in_bits))
+            .par_chunk_by(|a, b| ((a.row() / 2) >> num_x_in_bits) == ((b.row() / 2) >> num_x_in_bits))
             .map(|entries| {
-                let x_out = (entries[0].row / 2) >> num_x_in_bits;
+                let x_out = (entries[0].row() / 2) >> num_x_in_bits;
                 let E_out_eval = gruen_eq.E_out_current()[x_out];
 
                 let outer_sum_evals = entries
-                    .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
+                    .par_chunk_by(|a, b| a.row() / 2 == b.row() / 2)
                     .map(|entries| {
-                        let odd_row_start_index = entries.partition_point(|entry| entry.row.is_even());
+                        let odd_row_start_index = entries.partition_point(|entry| entry.row().is_even());
                         let (even_row, odd_row) = entries.split_at(odd_row_start_index);
-                        let j_prime = 2 * (entries[0].row / 2);
+                        let j_prime = 2 * (entries[0].row() / 2);
 
                         // When E_in is fully bound, x_in = 0 and E_in_eval = 1
                         let E_in_eval = if e_in_len <= 1 {
