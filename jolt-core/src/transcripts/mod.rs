@@ -15,4 +15,4 @@ pub use poseidon::{
     FqParams, FrParams, PoseidonParams, PoseidonTranscript, PoseidonTranscriptFq,
     PoseidonTranscriptFr,
 };
-pub use transcript::{AppendToTranscript, Transcript};
+pub use transcript::Transcript;

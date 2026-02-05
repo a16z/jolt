@@ -142,12 +142,12 @@ mod tests {
         use crate::transcripts::Transcript;
 
         let mut t1: PoseidonTranscriptFq = Transcript::new(b"test_determinism");
-        t1.append_u64(42);
-        t1.append_bytes(b"hello world");
+        t1.append_u64(b"num", 42);
+        t1.append_bytes(b"data", b"hello world");
 
         let mut t2: PoseidonTranscriptFq = Transcript::new(b"test_determinism");
-        t2.append_u64(42);
-        t2.append_bytes(b"hello world");
+        t2.append_u64(b"num", 42);
+        t2.append_bytes(b"data", b"hello world");
 
         // Same inputs should produce same state
         assert_eq!(t1.state, t2.state, "Fq transcript should be deterministic");

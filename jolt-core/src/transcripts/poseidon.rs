@@ -8,7 +8,6 @@ use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 use light_poseidon::{Poseidon, PoseidonHasher, PoseidonParameters};
-use std::borrow::Borrow;
 use std::marker::PhantomData;
 
 /// Poseidon hash width: 3 field elements (state, n_rounds, data).
@@ -134,11 +133,8 @@ impl<F: PrimeField, P: PoseidonParams<F>> PoseidonTranscript<F, P> {
         let mut poseidon = Self::hasher();
 
         // Convert state bytes to F (LE format, matching arkworks).
-        // Note: from_le_bytes_mod_order reduces inputs mod p, which is standard
-        // behavior but means values >= p map to values < p.
         let state_f = F::from_le_bytes_mod_order(&self.state);
         let round_f = F::from(self.n_rounds as u64);
-
         let input_f = F::from_le_bytes_mod_order(bytes);
 
         let output = poseidon
@@ -244,18 +240,20 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
         self.expected_state_history = Some(other.state_history);
     }
 
-    fn append_message(&mut self, msg: &'static [u8]) {
-        // We require all messages to fit into one evm word and then right pad them
+    // === Internal raw_append_* methods ===
+
+    fn raw_append_label(&mut self, label: &'static [u8]) {
+        // We require all labels to fit into one evm word and then right pad them
         // right padding matches the format of the strings when cast to bytes 32 in solidity
-        assert!(msg.len() <= 32);
+        assert!(label.len() <= 32);
         let mut packed = [0u8; 32];
-        packed[..msg.len()].copy_from_slice(msg);
+        packed[..label.len()].copy_from_slice(label);
         self.hash_bytes32_and_update(&packed);
     }
 
-    fn append_bytes(&mut self, bytes: &[u8]) {
+    fn raw_append_bytes(&mut self, bytes: &[u8]) {
         // Hash all bytes using Poseidon with domain separation via n_rounds.
-        // First chunk: hash(state, n_rounds, chunk), includes domain separator.
+        // First chunk: hash(state, n_rounds, chunk).
         // Subsequent chunks: hash(prev, 0, chunk), chained but without redundant n_rounds.
         // This matches Blake2b/Keccak semantics (n_rounds included once per append operation).
         let mut poseidon = Self::hasher();
@@ -296,45 +294,27 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
         self.update_state(new_state);
     }
 
-    fn append_u64(&mut self, x: u64) {
+    fn raw_append_u64(&mut self, x: u64) {
         // Allocate into a 32 byte region (BE-padded to match EVM word format)
         let mut packed = [0u8; 32];
         packed[24..].copy_from_slice(&x.to_be_bytes());
         self.hash_bytes32_and_update(&packed);
     }
 
-    fn append_scalar<JF: JoltField>(&mut self, scalar: &JF) {
+    fn raw_append_scalar<JF: JoltField>(&mut self, scalar: &JF) {
         let mut buf = vec![];
         scalar.serialize_uncompressed(&mut buf).unwrap();
         // Serialize uncompressed gives the scalar in LE byte order which is not
         // a natural representation in the EVM for scalar math so we reverse
         // to get an EVM compatible version.
         buf = buf.into_iter().rev().collect();
-        self.append_bytes(&buf);
+        self.raw_append_bytes(&buf);
     }
 
-    fn append_serializable<S: CanonicalSerialize>(&mut self, scalar: &S) {
-        let mut buf = vec![];
-        scalar.serialize_uncompressed(&mut buf).unwrap();
-        // Serialize uncompressed gives the scalar in LE byte order which is not
-        // a natural representation in the EVM for scalar math so we reverse
-        // to get an EVM compatible version.
-        buf = buf.into_iter().rev().collect();
-        self.append_bytes(&buf);
-    }
-
-    fn append_scalars<JF: JoltField>(&mut self, scalars: &[impl Borrow<JF>]) {
-        self.append_message(b"begin_append_vector");
-        for item in scalars.iter() {
-            self.append_scalar(item.borrow());
-        }
-        self.append_message(b"end_append_vector");
-    }
-
-    fn append_point<G: CurveGroup>(&mut self, point: &G) {
+    fn raw_append_point<G: CurveGroup>(&mut self, point: &G) {
         // If we add the point at infinity then we hash over a region of zeros
         if point.is_zero() {
-            self.append_bytes(&[0_u8; 64]);
+            self.raw_append_bytes(&[0_u8; 64]);
             return;
         }
 
@@ -350,22 +330,15 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
         y.serialize_compressed(&mut y_bytes).unwrap();
         y_bytes = y_bytes.into_iter().rev().collect();
 
-        // Concatenate x and y (64 bytes total), then hash using append_bytes.
-        // Blake2b does: hasher().chain_update(x).chain_update(y).finalize()
-        // which is equivalent to hasher().chain_update(x||y).finalize()
-        // append_bytes treats the 64 bytes as a single logical unit with one n_rounds increment.
+        // Concatenate x and y (64 bytes total), then hash using raw_append_bytes.
         let mut combined = x_bytes;
         combined.extend_from_slice(&y_bytes);
-        self.append_bytes(&combined);
+        self.raw_append_bytes(&combined);
     }
 
-    fn append_points<G: CurveGroup>(&mut self, points: &[G]) {
-        self.append_message(b"begin_append_vector");
-        for item in points.iter() {
-            self.append_point(item);
-        }
-        self.append_message(b"end_append_vector");
-    }
+    // Note: append_u64, append_scalar, etc. use the trait's default implementations
+    // which call raw_append_label + raw_append_*, resulting in two separate hashes.
+    // This matches Blake2b's behavior.
 
     fn challenge_u128(&mut self) -> u128 {
         let mut buf = vec![0u8; 16];
@@ -382,7 +355,6 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
     fn challenge_scalar_128_bits<JF: JoltField>(&mut self) -> JF {
         let mut buf = vec![0u8; 16];
         self.challenge_bytes(&mut buf);
-
         buf = buf.into_iter().rev().collect();
         JF::from_bytes(&buf)
     }
@@ -495,13 +467,13 @@ mod tests {
     fn test_deterministic_challenges() {
         // Same inputs should produce same challenges
         let mut transcript1 = TestTranscript::new(b"deterministic");
-        transcript1.append_u64(123);
-        transcript1.append_bytes(b"test data");
+        transcript1.append_u64(b"num", 123);
+        transcript1.append_bytes(b"data", b"test data");
         let challenge1: Fr = transcript1.challenge_scalar();
 
         let mut transcript2 = TestTranscript::new(b"deterministic");
-        transcript2.append_u64(123);
-        transcript2.append_bytes(b"test data");
+        transcript2.append_u64(b"num", 123);
+        transcript2.append_bytes(b"data", b"test data");
         let challenge2: Fr = transcript2.challenge_scalar();
 
         assert_eq!(challenge1, challenge2);
@@ -529,11 +501,12 @@ mod tests {
         let mut transcript1 = TestTranscript::new(b"empty_test");
         let mut transcript2 = TestTranscript::new(b"empty_test");
 
-        transcript1.append_bytes(&[]);
-        transcript2.append_bytes(&[0u8; 0]);
+        transcript1.append_bytes(b"empty", &[]);
+        transcript2.append_bytes(b"empty", &[0u8; 0]);
 
         assert_eq!(transcript1.state, transcript2.state);
-        assert_eq!(transcript1.n_rounds, 1);
+        // Now includes label hash + bytes hash = 2 rounds
+        assert_eq!(transcript1.n_rounds, 2);
     }
 
     #[test]
@@ -542,14 +515,14 @@ mod tests {
         let mut transcript2 = TestTranscript::new(b"scalar_test");
 
         let scalar = Fr::from(12345u64);
-        transcript1.append_scalar(&scalar);
-        transcript2.append_scalar(&scalar);
+        transcript1.append_scalar(b"s", &scalar);
+        transcript2.append_scalar(b"s", &scalar);
 
         assert_eq!(transcript1.state, transcript2.state);
 
         // Different scalar should produce different state
         let mut transcript3 = TestTranscript::new(b"scalar_test");
-        transcript3.append_scalar(&Fr::from(99999u64));
+        transcript3.append_scalar(b"s", &Fr::from(99999u64));
         assert_ne!(transcript1.state, transcript3.state);
     }
 
@@ -564,8 +537,8 @@ mod tests {
         let mut transcript1 = TestTranscript::new(b"point_test");
         let mut transcript2 = TestTranscript::new(b"point_test");
 
-        transcript1.append_point(&point);
-        transcript2.append_point(&point);
+        transcript1.append_point(b"pt", &point);
+        transcript2.append_point(b"pt", &point);
 
         assert_eq!(transcript1.state, transcript2.state);
     }
@@ -577,10 +550,10 @@ mod tests {
         let infinity = G1Projective::default(); // point at infinity
 
         let mut transcript = TestTranscript::new(b"infinity_test");
-        transcript.append_point(&infinity);
+        transcript.append_point(b"pt", &infinity);
 
-        // Should not panic and should update state
-        assert_eq!(transcript.n_rounds, 1);
+        // Should not panic and should update state (label + point = 2 rounds)
+        assert_eq!(transcript.n_rounds, 2);
     }
 
     #[test]
@@ -589,15 +562,15 @@ mod tests {
         let mut transcript2 = TestTranscript::new(b"scalars_test");
 
         let scalars: Vec<Fr> = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)];
-        transcript1.append_scalars(&scalars);
-        transcript2.append_scalars(&scalars);
+        transcript1.append_scalars(b"scalars", &scalars);
+        transcript2.append_scalars(b"scalars", &scalars);
 
         assert_eq!(transcript1.state, transcript2.state);
 
         // Different scalars should produce different state
         let mut transcript3 = TestTranscript::new(b"scalars_test");
         let other_scalars: Vec<Fr> = vec![Fr::from(4u64), Fr::from(5u64), Fr::from(6u64)];
-        transcript3.append_scalars(&other_scalars);
+        transcript3.append_scalars(b"scalars", &other_scalars);
         assert_ne!(transcript1.state, transcript3.state);
     }
 
@@ -612,8 +585,8 @@ mod tests {
         let mut transcript1 = TestTranscript::new(b"points_test");
         let mut transcript2 = TestTranscript::new(b"points_test");
 
-        transcript1.append_points(&points);
-        transcript2.append_points(&points);
+        transcript1.append_points(b"points", &points);
+        transcript2.append_points(b"points", &points);
 
         assert_eq!(transcript1.state, transcript2.state);
     }
@@ -624,8 +597,8 @@ mod tests {
         let mut transcript2 = TestTranscript::new(b"serializable_test");
 
         let scalar = Fr::from(12345u64);
-        transcript1.append_serializable(&scalar);
-        transcript2.append_serializable(&scalar);
+        transcript1.append_serializable(b"ser", &scalar);
+        transcript2.append_serializable(b"ser", &scalar);
 
         assert_eq!(transcript1.state, transcript2.state);
     }
@@ -692,8 +665,8 @@ mod tests {
     fn test_fq_transcript_works() {
         // Test that Fq transcript can be created and used
         let mut transcript: PoseidonTranscriptFq = Transcript::new(b"fq_test");
-        transcript.append_u64(12345);
-        transcript.append_bytes(b"test data");
+        transcript.append_u64(b"num", 12345);
+        transcript.append_bytes(b"data", b"test data");
 
         // Should produce valid challenges
         let challenge: Fq = Fq::from_le_bytes_mod_order(&{
