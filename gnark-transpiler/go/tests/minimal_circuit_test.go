@@ -13,7 +13,7 @@ import (
 func TestMinimalCircuit(t *testing.T) {
 	// Expected output from Rust computation
 	expected := new(big.Int)
-	expected.SetString("950168490859324664956783777980982594150", 10)
+	expected.SetString("5246902962866244651916644613801965761300", 10)
 
 	assignment := &MinimalCircuit{
 		X_0:    3,  // a

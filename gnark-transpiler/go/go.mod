@@ -5,6 +5,7 @@ go 1.21
 require (
 	github.com/consensys/gnark v0.10.0
 	github.com/consensys/gnark-crypto v0.13.0
+	golang.org/x/crypto v0.17.0
 )
 
 require (
@@ -23,7 +24,6 @@ require (
 	github.com/rs/zerolog v1.30.0 // indirect
 	github.com/stretchr/testify v1.8.4 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.17.0 // indirect
 	golang.org/x/sync v0.3.0 // indirect
 	golang.org/x/sys v0.15.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
