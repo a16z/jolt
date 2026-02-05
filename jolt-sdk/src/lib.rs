@@ -31,6 +31,7 @@ pub use jolt_sdk_macros::advice;
 pub use jolt_sdk_macros::provable;
 pub use postcard;
 
+use bytemuck::Pod;
 use serde::{Deserialize, Serialize};
 
 /// A wrapper type to mark guest program inputs as trusted_advice.
@@ -209,7 +210,7 @@ impl AdviceReader {
     }
     #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
     pub fn read_u8(&mut self) -> u8 {
-        panic!("Advice tape IO is not supported on non-RISC-V targets");
+        panic!("Advice tape I/O is not supported on non-RISC-V targets");
     }
     // Load a halfword (2 bytes) from the advice tape and return it
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
@@ -228,7 +229,7 @@ impl AdviceReader {
     }
     #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
     pub fn read_u16(&mut self) -> u16 {
-        panic!("Advice tape IO is not supported on non-RISC-V targets");
+        panic!("Advice tape I/O is not supported on non-RISC-V targets");
     }
     // Load a word (4 bytes) from the advice tape and return it
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
@@ -247,7 +248,7 @@ impl AdviceReader {
     }
     #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
     pub fn read_u32(&mut self) -> u32 {
-        panic!("Advice tape IO is not supported on non-RISC-V targets");
+        panic!("Advice tape I/O is not supported on non-RISC-V targets");
     }
     // Load a doubleword (8 bytes) from the advice tape and return it
     // on 32-bit targets, this is performed via two 4-byte reads
@@ -275,7 +276,7 @@ impl AdviceReader {
     }
     #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
     pub fn read_u64(&mut self) -> u64 {
-        panic!("Advice tape IO is not supported on non-RISC-V targets");
+        panic!("Advice tape I/O is not supported on non-RISC-V targets");
     }
     // Get the number of remaining bytes in the advice tape
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
@@ -296,7 +297,7 @@ impl AdviceReader {
     }
     #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
     pub fn bytes_remaining(&mut self) -> u64 {
-        panic!("Advice tape IO is not supported on non-RISC-V targets");
+        panic!("Advice tape I/O is not supported on non-RISC-V targets");
     }
     // Fill the provided buffer with advice data read from the advice tape
     // Attempts to read as much data as possible per instruction
@@ -354,23 +355,23 @@ impl AdviceReader {
     }
     #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
     fn read_slice(&mut self, _buf: &mut [u8]) {
-        panic!("Advice tape IO is not supported on non-RISC-V targets");
+        panic!("Advice tape I/O is not supported on non-RISC-V targets");
     }
 }
 
-// Trait for writing to and reading from the advice tape
+/// Trait for writing to and reading from the advice tape
 pub trait AdviceTapeIO: Sized {
     fn write_to_advice_tape(&self) {
-        panic!("Advice tape IO not implemented for this type/target");
+        panic!("AdviceTapeIO not implemented for this type/target");
     }
     fn new_from_advice_tape() -> Self {
-        panic!("Advice tape IO not implemented for this type/target");
+        panic!("AdviceTapeIO not implemented for this type/target");
     }
 }
 
-// Empty marker trait for types that are Pod (Plain Old Data)
-// This trait excludes Vec<_> explicitly to avoid conflicts with the Vec<T> implementation below
-pub trait JoltPod: bytemuck::Pod {}
+/// Empty marker trait for types that are Pod (Plain Old Data)
+/// This trait excludes Vec<_> explicitly to avoid conflicts with the Vec<T> implementation below
+pub trait JoltPod: Pod {}
 
 macro_rules! impl_joltpod {
     ($($t:ty),*) => {
@@ -382,7 +383,7 @@ macro_rules! impl_joltpod {
 
 impl_joltpod!(u8, u16, u32, u64, usize, i8, i16, i32, i64);
 
-// implement AdviceTapeIO for all Pod types using bytemuck
+/// implement AdviceTapeIO for all Pod types using bytemuck
 impl<T: JoltPod> AdviceTapeIO for T {
     fn write_to_advice_tape(&self) {
         let bytes = bytemuck::bytes_of(self);
@@ -403,7 +404,7 @@ impl<T: JoltPod> AdviceTapeIO for T {
     }
 }
 
-// implement AdviceTapeIO for tuples via a macro
+/// implement AdviceTapeIO for tuples via a macro
 macro_rules! impl_tuple_adviceio {
     ( $( $name:ident ),+ ) => {
         #[allow(non_snake_case)]
@@ -433,8 +434,8 @@ impl_tuple_adviceio!(A, B, C, D, E);
 impl_tuple_adviceio!(A, B, C, D, E, F);
 impl_tuple_adviceio!(A, B, C, D, E, F, G);
 
-// implement AdviceTapeIO for arrays of Pod types
-impl<T: JoltPod, const N: usize> AdviceTapeIO for [T; N] {
+/// implement AdviceTapeIO for arrays of Pod types
+impl<T: Pod, const N: usize> AdviceTapeIO for [T; N] {
     fn write_to_advice_tape(&self) {
         let bytes = bytemuck::cast_slice(self);
         let mut writer = AdviceWriter::get();
@@ -454,22 +455,26 @@ impl<T: JoltPod, const N: usize> AdviceTapeIO for [T; N] {
     }
 }
 
-// implement AdviceTapeIO for Vec<T> where T: Pod
+/// implement AdviceTapeIO for Vec<T> where T: Pod
 #[cfg(any(feature = "host", feature = "guest-std"))]
-impl<T: JoltPod> AdviceTapeIO for Vec<T> {
+impl<T: Pod> AdviceTapeIO for Vec<T> {
     fn write_to_advice_tape(&self) {
-        // Write the length of the Vec<T> first
+        // Write the length and capacity of the Vec<T> first
         self.len().write_to_advice_tape();
+        self.capacity().write_to_advice_tape();
         // Then write the contents of the Vec<T> to the advice tape as bytes
         let bytes = bytemuck::cast_slice(self.as_slice());
         let mut writer = AdviceWriter::get();
         AdviceWriter::write_bytes(&mut writer, bytes);
     }
     fn new_from_advice_tape() -> Self {
-        // First read the length of the Vec<T>
+        // First read the length and capacity of the Vec<T>
         let len = usize::new_from_advice_tape();
+        let capacity = usize::new_from_advice_tape();
+        // panic and spoil the proof if capacity < len
+        check_advice!(capacity >= len);
         // Create a vec of T with length len
-        let mut buf = Vec::<T>::with_capacity(len);
+        let mut buf = Vec::<T>::with_capacity(capacity);
         // Cast the Vec<T> to a byte slice of len * size_of::<T>()
         let bytes = unsafe {
             core::slice::from_raw_parts_mut(
