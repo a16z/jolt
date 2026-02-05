@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::PolynomialId;
 use crate::subprotocols::read_write_matrix::{
-    AddressMajorMatrixEntry, ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
-    RegistersAddressMajorEntry, RegistersCycleMajorEntry,
+    AddressMajorMatrixEntry, CycleMajorMatrixEntry, ReadWriteMatrixAddressMajor,
+    ReadWriteMatrixCycleMajor, RegistersAddressMajorEntry, RegistersCycleMajorEntry,
 };
 use crate::subprotocols::sumcheck_claim::{
     CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
