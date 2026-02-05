@@ -48,7 +48,7 @@ cargo fmt -q
 
 **jolt-core**
 - `host/`: Compilation of guest program
-- `zkvm/`: Implementats the Jolt PIOP, including all sumchecks
+- `zkvm/`: Implements the Jolt PIOP, including all sumchecks
 - `poly/`: Polynomial operations and commitments
 - `field/`: Finite field trait and implementations
 - `r1cs/`: R1CS constraint system
