@@ -128,7 +128,9 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
         even: Option<&Self>,
         odd: Option<&Self>,
         r: F::Challenge,
-        round: usize,
+        _round: usize,
+        _ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+        _wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> Self {
         match (even, odd) {
             (Some(even), Some(odd)) => {

@@ -182,6 +182,7 @@ enum SparseMatrix<F: JoltField> {
         ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, LookupTableIndex>>,
     ),
     CycleMajor(ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>>),
+    #[allow(dead_code)]
     AddressMajor(ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>),
 }
 
@@ -500,7 +501,9 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             SparseMatrix::CycleMajorWithLookups(matrix) => {
                 // If the lookup table cannnot expand further, dereference the
                 // ra/wa coeffs in the sparse matrix.
-                if matrix.wa_lookup_table.as_ref().unwrap().is_saturated() {
+                if matrix.wa_lookup_table.as_ref().unwrap().is_saturated()
+                    || matrix.ra_lookup_table.as_ref().unwrap().is_saturated()
+                {
                     let matrix = std::mem::take(matrix);
                     *sparse_matrix = SparseMatrix::CycleMajor(matrix.deref_coeffs());
                 }
