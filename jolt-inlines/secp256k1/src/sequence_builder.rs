@@ -41,7 +41,6 @@ impl Secp256k1GlvrAdv {
             cpu.mmu.load_doubleword(k_addr + 16).unwrap().0,
             cpu.mmu.load_doubleword(k_addr + 24).unwrap().0,
         ];
-        // convert k from montgomery form to normal form
         let k: NBigInt = Fr::new(BigInt(kr)).into_bigint().into();
         // constants for glv decomposition
         let r = NBigInt::from_bytes_le(

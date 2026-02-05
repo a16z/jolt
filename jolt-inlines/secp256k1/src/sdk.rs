@@ -700,7 +700,7 @@ impl Secp256k1Point {
         Secp256k1Point::new(x, y)
     }
     /// creates a Secp256k1Point from a [u64; 8] array
-    /// which is assumed to correspond to x and y coordinates in montgomery form
+    /// which is assumed to correspond to x and y coordinates in standard form
     /// performs no checks to ensure that the point is on the curve
     /// or that the coordinates are well formed
     #[inline(always)]
@@ -914,7 +914,7 @@ impl Secp256k1Point {
             );
         }
         // check that decomposition is correct
-        // this is check that k1 + k2 * lambda == k (mod r)/
+        // check that k1 + k2 * lambda == k (mod r)
         let lambda = Secp256k1Fr::from_u64_arr_unchecked(&[
             0xdf02967c1b23bd72,
             0x122e22ea20816678,
