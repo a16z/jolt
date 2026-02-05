@@ -7,20 +7,20 @@ pub const INLINE_OPCODE: u8 = 0x2B; // Inline instructions
 // funct3 values for CUSTOM_OPCODE (0x5B)
 pub const FUNCT3_VIRTUAL_REV8W: u8 = 0b000;
 pub const FUNCT3_VIRTUAL_ASSERT_EQ: u8 = 0b001;
-pub const FUNCT3_ADVICE_SB: u8 = 0b010; // Store byte from advice tape
-pub const FUNCT3_ADVICE_SH: u8 = 0b011; // Store halfword from advice tape
-pub const FUNCT3_ADVICE_SW: u8 = 0b100; // Store word from advice tape
-pub const FUNCT3_ADVICE_SD: u8 = 0b101; // Store doubleword from advice tape
+pub const FUNCT3_ADVICE_LB: u8 = 0b010; // Load byte from advice tape
+pub const FUNCT3_ADVICE_LH: u8 = 0b011; // Load halfword from advice tape
+pub const FUNCT3_ADVICE_LW: u8 = 0b100; // Load word from advice tape
+pub const FUNCT3_ADVICE_LD: u8 = 0b101; // Load doubleword from advice tape
 pub const FUNCT3_ADVICE_LEN: u8 = 0b110; // Get remaining bytes in advice tape
 
 use add::ADD;
 use addi::ADDI;
 use addiw::ADDIW;
 use addw::ADDW;
-use advice_sb::AdviceSB;
-use advice_sd::AdviceSD;
-use advice_sh::AdviceSH;
-use advice_sw::AdviceSW;
+use advice_lb::AdviceLB;
+use advice_ld::AdviceLD;
+use advice_lh::AdviceLH;
+use advice_lw::AdviceLW;
 use amoaddd::AMOADDD;
 use amoaddw::AMOADDW;
 use amoandd::AMOANDD;
@@ -161,10 +161,10 @@ pub mod add;
 pub mod addi;
 pub mod addiw;
 pub mod addw;
-pub mod advice_sb;
-pub mod advice_sd;
-pub mod advice_sh;
-pub mod advice_sw;
+pub mod advice_lb;
+pub mod advice_ld;
+pub mod advice_lh;
+pub mod advice_lw;
 pub mod amoaddd;
 pub mod amoaddw;
 pub mod amoandd;
@@ -660,7 +660,7 @@ define_rv32im_enums! {
         // RV64A (Atomic Memory Operations)
         LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
         // Virtual
-        AdviceSB, AdviceSD, AdviceSH, AdviceSW,
+        AdviceLB, AdviceLD, AdviceLH, AdviceLW,
         VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
         VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
@@ -973,10 +973,10 @@ impl Instruction {
                     FUNCT3_VIRTUAL_ASSERT_EQ => {
                         Ok(VirtualAssertEQ::new(instr, address, true, compressed).into())
                     }
-                    FUNCT3_ADVICE_SB => Ok(AdviceSB::new(instr, address, true, compressed).into()),
-                    FUNCT3_ADVICE_SH => Ok(AdviceSH::new(instr, address, true, compressed).into()),
-                    FUNCT3_ADVICE_SW => Ok(AdviceSW::new(instr, address, true, compressed).into()),
-                    FUNCT3_ADVICE_SD => Ok(AdviceSD::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_LB => Ok(AdviceLB::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_LH => Ok(AdviceLH::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_LW => Ok(AdviceLW::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_LD => Ok(AdviceLD::new(instr, address, true, compressed).into()),
                     FUNCT3_ADVICE_LEN => {
                         Ok(VirtualAdviceLen::new(instr, address, true, compressed).into())
                     }

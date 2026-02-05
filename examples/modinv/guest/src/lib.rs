@@ -10,8 +10,14 @@ use jolt::{end_cycle_tracking, start_cycle_tracking};
 /// The advice function wraps the result in `UntrustedAdvice<T>`, signaling that the value must be verified
 /// before use.
 #[jolt::advice]
-fn modinv_advice(a: u64, m: u64) -> jolt::UntrustedAdvice<u64> {
-    modinv_naive(a, m)
+fn modinv_advice(a: u64, m: u64) -> jolt::UntrustedAdvice<(u64, u64)> {
+    let inv = modinv_naive(a, m);
+    let quo = if m == 0 {
+        0
+    } else {
+        (a as u128 * inv as u128 / m as u128) as u64
+    };
+    (inv, quo)
 }
 
 /// Simple modular inverse example demonstrating runtime advice.
@@ -22,23 +28,23 @@ fn modinv_advice(a: u64, m: u64) -> jolt::UntrustedAdvice<u64> {
 fn modinv(a: u64, m: u64) -> u64 {
     let inv_advice = {
         start_cycle_tracking("modinv advice");
-        use core::ops::Deref;
 
-        // Get the modular inverse from the advice tape (precomputed on first pass)
-        let inv_advice = modinv_advice(a, m);
+        // Get the modular inverse and quotient from the advice tape
+        // (precomputed on first pass)
+        let adv = modinv_advice(a, m);
 
         // Extract the value from the UntrustedAdvice wrapper using Deref
-        let inv = *inv_advice.deref();
+        let (inv, quo) = *adv;
 
         // CRITICAL: Verify that the advice is correct!
-        // This checks that a * inv ≡ 1 (mod m)
-        // Using u128 to avoid overflow during multiplication
-        let product = ((a as u128) * (inv as u128)) % (m as u128);
-
-        // Use check_advice! to ensure the multiplication produces 1 mod m
-        jolt::check_advice!(product == 1);
+        // This uses check_advice! to ensure that a * inv ≡ 1 (mod m)
+        // and that inv < m
+        let product = (a as u128) * (inv as u128) - (quo as u128) * (m as u128);
+        jolt::check_advice!(product == 1u128 && inv < m);
 
         end_cycle_tracking("modinv advice");
+
+        // return checked inverse
         inv
     };
 

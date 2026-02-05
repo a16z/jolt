@@ -1247,13 +1247,11 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[cfg(feature = "compute_advice")]
         #(#fn_attrs)*
         #fn_vis fn #fn_name(#fn_inputs) #fn_output {
+            // execute body
             let result: #inner_type = #fn_body;
-
             // Serialize and write to advice tape
-            let mut writer = jolt::AdviceWriter::get();
-            jolt::postcard::to_eio(&result, &mut writer)
-                .expect("Failed to write advice to tape");
-
+            <#inner_type as jolt::AdviceTapeIO>::write_to_advice_tape(&result);
+            // return result
             jolt::UntrustedAdvice::new(result)
         }
 
@@ -1262,14 +1260,9 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[allow(unused_variables)]
         #(#fn_attrs)*
         #fn_vis fn #fn_name(#fn_inputs) #fn_output {
-            // Need a scratch buffer for postcard deserialization
-            // Using a reasonably sized buffer on the stack
-            let mut buffer = [0u8; 1024];
-            let mut reader = jolt::AdviceReader::get();
-
-            let (result, _) = jolt::postcard::from_eio((&mut reader, &mut buffer))
-                .expect("Failed to read advice from tape");
-
+            // get result from advice tape
+            let result: #inner_type = <#inner_type as jolt::AdviceTapeIO>::new_from_advice_tape();
+            // wrap in UntrustedAdvice and return
             jolt::UntrustedAdvice::new(result)
         }
     };

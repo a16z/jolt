@@ -44,6 +44,8 @@ malloc-shim = ["jolt-platform/malloc-shim"]
 [dependencies]
 jolt-platform.workspace = true
 postcard.workspace = true
+bytemuck.workspace = true
+bytemuck_derive.workspace = true
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 embedded-io = { version = "0.6", default-features = false }
 ark-ec = { workspace = true, default-features = false, optional = true }
