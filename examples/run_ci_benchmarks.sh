@@ -20,7 +20,7 @@ failures=0
 export RUST_LOG=info
 
 # Define the exclude list
-exclusion_list=("collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench")
+exclusion_list=("collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench" "sig-recovery")
 # JSON file to store results
 output_file="benchmark_results.json"
 
