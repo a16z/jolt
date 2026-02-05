@@ -502,7 +502,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         } = self;
         let gruen_eq = gruen_eq.as_mut().unwrap();
 
-        sparse_matrix.bind(r_j, round);
+        sparse_matrix.bind(r_j);
         gruen_eq.bind(r_j);
         inc.bind_parallel(r_j, BindingOrder::LowToHigh);
 

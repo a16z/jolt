@@ -187,11 +187,11 @@ enum SparseMatrix<F: JoltField> {
 }
 
 impl<F: JoltField> SparseMatrix<F> {
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    fn bind(&mut self, r_j: F::Challenge) {
         match self {
             SparseMatrix::None => panic!("Cannot bind None variant"),
-            SparseMatrix::CycleMajorWithLookups(matrix) => matrix.bind(r_j, round),
-            SparseMatrix::CycleMajor(matrix) => matrix.bind(r_j, round),
+            SparseMatrix::CycleMajorWithLookups(matrix) => matrix.bind(r_j),
+            SparseMatrix::CycleMajor(matrix) => matrix.bind(r_j),
             SparseMatrix::AddressMajor(matrix) => matrix.bind(r_j),
         }
     }
@@ -497,20 +497,17 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         gruen_eq.bind(r_j);
         inc.bind_parallel(r_j, BindingOrder::LowToHigh);
 
-        match sparse_matrix {
-            SparseMatrix::CycleMajorWithLookups(matrix) => {
-                // If the lookup table cannnot expand further, dereference the
-                // ra/wa coeffs in the sparse matrix.
-                if matrix.wa_lookup_table.as_ref().unwrap().is_saturated()
-                    || matrix.ra_lookup_table.as_ref().unwrap().is_saturated()
-                {
-                    let matrix = std::mem::take(matrix);
-                    *sparse_matrix = SparseMatrix::CycleMajor(matrix.deref_coeffs());
-                }
+        if let SparseMatrix::CycleMajorWithLookups(matrix) = sparse_matrix {
+            // If the lookup table cannot expand further, dereference the
+            // ra/wa coeffs in the sparse matrix.
+            if matrix.wa_lookup_table.as_ref().unwrap().is_saturated()
+                || matrix.ra_lookup_table.as_ref().unwrap().is_saturated()
+            {
+                let matrix = std::mem::take(matrix);
+                *sparse_matrix = SparseMatrix::CycleMajor(matrix.deref_coeffs());
             }
-            _ => {}
         };
-        sparse_matrix.bind(r_j, round);
+        sparse_matrix.bind(r_j);
 
         if round == params.phase1_num_rounds - 1 {
             self.merged_eq = Some(MultilinearPolynomial::LargeScalars(gruen_eq.merge()));
@@ -535,7 +532,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             ..
         } = self;
 
-        sparse_matrix.bind(r_j, round);
+        sparse_matrix.bind(r_j);
 
         if round == params.phase1_num_rounds + params.phase2_num_rounds - 1 {
             let sparse_matrix = std::mem::take(sparse_matrix);

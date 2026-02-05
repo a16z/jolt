@@ -81,8 +81,8 @@ const COL_SHIFT: u32 = 56;
 
 #[inline(always)]
 fn pack_row_col(row: usize, col: u8) -> u64 {
-    debug_assert!(row <= ROW_MASK as usize, "row {} exceeds 56-bit limit", row);
-    debug_assert!(col < REGISTER_COUNT, "col {} exceeds register count", col);
+    debug_assert!(row <= ROW_MASK as usize, "row {row} exceeds 56-bit limit");
+    debug_assert!(col < REGISTER_COUNT, "col {col} exceeds register count");
     (row as u64) | ((col as u64) << COL_SHIFT)
 }
 
@@ -294,7 +294,6 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
         even: Option<&Self>,
         odd: Option<&Self>,
         r: F::Challenge,
-        _round: usize,
         ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
         wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> Self {
