@@ -147,3 +147,13 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     /// Debug method to print current transcript state
     fn debug_state(&self, label: &str);
 }
+
+/// Trait for types that can append themselves to a transcript.
+/// Used by MleAst and other types that need to be hashed into the Fiat-Shamir transcript.
+pub trait AppendToTranscript {
+    fn append_to_transcript<ProofTranscript: Transcript>(
+        &self,
+        label: &'static [u8],
+        transcript: &mut ProofTranscript,
+    );
+}
