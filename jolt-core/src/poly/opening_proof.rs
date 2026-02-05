@@ -265,6 +265,73 @@ pub trait OpeningAccumulator<F: JoltField> {
         kind: AdviceKind,
         sumcheck: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)>;
+
+    fn append_virtual(
+        &mut self,
+        _polynomial: VirtualPolynomial,
+        _sumcheck: SumcheckId,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) where
+        Self: Sized,
+    {
+        unimplemented!("append_virtual only available for verifier accumulators")
+    }
+
+    fn append_untrusted_advice(
+        &mut self,
+        _sumcheck_id: SumcheckId,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) where
+        Self: Sized,
+    {
+        unimplemented!("append_untrusted_advice only available for verifier accumulators")
+    }
+
+    fn append_trusted_advice(
+        &mut self,
+        _sumcheck_id: SumcheckId,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) where
+        Self: Sized,
+    {
+        unimplemented!("append_trusted_advice only available for verifier accumulators")
+    }
+
+    fn append_dense(
+        &mut self,
+        _polynomial: CommittedPolynomial,
+        _sumcheck: SumcheckId,
+        _opening_point: Vec<F::Challenge>,
+    ) where
+        Self: Sized,
+    {
+        unimplemented!("append_dense only available for verifier accumulators")
+    }
+
+    fn append_sparse(
+        &mut self,
+        _polynomials: Vec<CommittedPolynomial>,
+        _sumcheck: SumcheckId,
+        _opening_point: Vec<F::Challenge>,
+    ) where
+        Self: Sized,
+    {
+        unimplemented!("append_sparse only available for verifier accumulators")
+    }
+
+    fn flush_to_transcript<T: Transcript>(&mut self, _transcript: &mut T)
+    where
+        Self: Sized,
+    {
+        unimplemented!("flush_to_transcript only available for verifier accumulators")
+    }
+
+    fn take_pending_claims(&mut self) -> Vec<F>
+    where
+        Self: Sized,
+    {
+        unimplemented!("take_pending_claims only available for verifier accumulators")
+    }
 }
 
 /// State for Dory batch opening (Stage 8).
@@ -630,6 +697,69 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
         let (point, claim) = self.openings.get(&key)?;
         Some((point.clone(), *claim))
     }
+
+    fn append_dense(
+        &mut self,
+        polynomial: CommittedPolynomial,
+        sumcheck: SumcheckId,
+        opening_point: Vec<F::Challenge>,
+    ) {
+        let key = OpeningId::committed(polynomial, sumcheck);
+        let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
+        self.populate_or_alias_opening(key, point);
+    }
+
+    fn append_sparse(
+        &mut self,
+        polynomials: Vec<CommittedPolynomial>,
+        sumcheck: SumcheckId,
+        opening_point: Vec<F::Challenge>,
+    ) {
+        let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
+        for label in polynomials.into_iter() {
+            let key = OpeningId::committed(label, sumcheck);
+            self.populate_or_alias_opening(key, point.clone());
+        }
+    }
+
+    fn append_virtual(
+        &mut self,
+        polynomial: VirtualPolynomial,
+        sumcheck: SumcheckId,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        let key = OpeningId::virt(polynomial, sumcheck);
+        self.populate_or_alias_opening(key, opening_point);
+    }
+
+    fn append_untrusted_advice(
+        &mut self,
+        sumcheck_id: SumcheckId,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        let key = OpeningId::UntrustedAdvice(sumcheck_id);
+        self.populate_or_alias_opening(key, opening_point);
+    }
+
+    fn append_trusted_advice(
+        &mut self,
+        sumcheck_id: SumcheckId,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        let key = OpeningId::TrustedAdvice(sumcheck_id);
+        self.populate_or_alias_opening(key, opening_point);
+    }
+
+    fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
+        for claim in self.pending_claims.drain(..) {
+            transcript.append_scalar(b"opening_claim", &claim);
+        }
+        self.pending_claim_ids.clear();
+    }
+
+    fn take_pending_claims(&mut self) -> Vec<F> {
+        std::mem::take(&mut self.pending_claims)
+    }
 }
 
 impl<F> VerifierOpeningAccumulator<F>
@@ -725,8 +855,6 @@ where
             return;
         }
 
-        // ZK mode: claims are not pre-populated — use zero placeholder (matching old behavior).
-        // In ZK mode the actual claim values are proven via BlindFold, not checked directly.
         let claim = F::zero();
         self.pending_claims.push(claim);
         self.pending_claim_ids.push(key);
@@ -734,74 +862,9 @@ where
         self.index_opening_id(key);
     }
 
-    /// Compare this accumulator to the corresponding `ProverOpeningAccumulator` and panic
-    /// if the openings appended differ from the prover's openings.
     #[cfg(test)]
     pub fn compare_to(&mut self, prover_openings: ProverOpeningAccumulator<F>) {
         self.prover_opening_accumulator = Some(prover_openings);
-    }
-
-    pub fn append_dense(
-        &mut self,
-        polynomial: CommittedPolynomial,
-        sumcheck: SumcheckId,
-        opening_point: Vec<F::Challenge>,
-    ) {
-        let key = OpeningId::committed(polynomial, sumcheck);
-        let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
-        self.populate_or_alias_opening(key, point);
-    }
-
-    pub fn append_sparse(
-        &mut self,
-        polynomials: Vec<CommittedPolynomial>,
-        sumcheck: SumcheckId,
-        opening_point: Vec<F::Challenge>,
-    ) {
-        let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
-        for label in polynomials.into_iter() {
-            let key = OpeningId::committed(label, sumcheck);
-            self.populate_or_alias_opening(key, point.clone());
-        }
-    }
-
-    pub fn append_virtual(
-        &mut self,
-        polynomial: VirtualPolynomial,
-        sumcheck: SumcheckId,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        let key = OpeningId::virt(polynomial, sumcheck);
-        self.populate_or_alias_opening(key, opening_point);
-    }
-
-    pub fn append_untrusted_advice(
-        &mut self,
-        sumcheck_id: SumcheckId,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        let key = OpeningId::UntrustedAdvice(sumcheck_id);
-        self.populate_or_alias_opening(key, opening_point);
-    }
-
-    pub fn append_trusted_advice(
-        &mut self,
-        sumcheck_id: SumcheckId,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        let key = OpeningId::TrustedAdvice(sumcheck_id);
-        self.populate_or_alias_opening(key, opening_point);
-    }
-
-    pub fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
-        for claim in self.pending_claims.drain(..) {
-            transcript.append_scalar(b"opening_claim", &claim);
-        }
-        self.pending_claim_ids.clear();
-    }
-
-    pub fn take_pending_claims(&mut self) -> Vec<F> {
-        std::mem::take(&mut self.pending_claims)
     }
 
     pub fn take_pending_claim_ids(&mut self) -> Vec<OpeningId> {
