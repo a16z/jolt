@@ -89,7 +89,6 @@ pub fn init_inlines() -> Result<(), String> {
 }
 
 pub fn store_inlines() -> Result<(), String> {
-    // Append secp256k1 mulq inline trace
     let inline_info = InlineDescriptor::new(
         SECP256K1_MULQ_NAME.to_string(),
         INLINE_OPCODE,
@@ -104,7 +103,7 @@ pub fn store_inlines() -> Result<(), String> {
         &inline_info,
         &inputs,
         &instructions,
-        AppendMode::Append,
+        AppendMode::Overwrite,
     )
     .map_err(|e| e.to_string())?;
     // Append secp256k1 squareq inline trace
@@ -161,7 +160,7 @@ pub fn store_inlines() -> Result<(), String> {
         AppendMode::Append,
     )
     .map_err(|e| e.to_string())?;
-    // Append secp256k1 squareq inline trace
+    // Append secp256k1 squarer inline trace
     let inline_info = InlineDescriptor::new(
         SECP256K1_SQUARER_NAME.to_string(),
         INLINE_OPCODE,

@@ -41,7 +41,7 @@ pub const SECP256K1_MULR_NAME: &str = "SECP256K1_MULR";
 pub const SECP256K1_SQUARER_FUNCT3: u32 = 0x05;
 pub const SECP256K1_SQUARER_NAME: &str = "SECP256K1_SQUARER";
 
-// base field (r) division helper
+// scalar field (r) division helper
 // that is, given a and b in Fr, compute a 256-bit c such that cb - wq = a
 pub const SECP256K1_DIVR_FUNCT3: u32 = 0x06;
 pub const SECP256K1_DIVR_NAME: &str = "SECP256K1_DIVR";

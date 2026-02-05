@@ -655,7 +655,7 @@ impl Secp256k1Fr {
 }
 
 /// secp256k1 point in affine form
-/// (as a pair of base field elements in montgomery form)
+/// (as a pair of base field elements in standard form)
 /// infinity is represented as (0, 0) because this point is not on the curve
 #[derive(Clone, PartialEq, Debug)]
 pub struct Secp256k1Point {
@@ -1090,7 +1090,6 @@ pub fn ecdsa_verify(
     let decomp_u = u1.as_u128_pair();
     let decomp_v = Secp256k1Point::decompose_scalar(&u2);
     // 3.2: get decomposed scalars as a 4x128-bit array
-    //let scalars = [decomp_u[0].1, decomp_u[1].1, decomp_v[0].1, decomp_v[1].1];
     let scalars = [decomp_u.0, decomp_u.1, decomp_v[0].1, decomp_v[1].1];
     // 3.3: prepare Q, and lambda*Q, appropriately negated
     let points = [
