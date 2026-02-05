@@ -5,8 +5,8 @@
 
 use ark_serialize::CanonicalDeserialize;
 use gnark_transpiler::{
-    symbolize_proof, extract_witness_values, AstCommitmentScheme, MleOpeningAccumulator,
-    PoseidonAstTranscript, MemoizedCodeGen, sanitize_go_name,
+    symbolize_proof, extract_witness_values, generate_circuit_from_bundle,
+    AstCommitmentScheme, MleOpeningAccumulator, PoseidonAstTranscript, sanitize_go_name,
 };
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::Transcript;
@@ -14,8 +14,8 @@ use jolt_core::zkvm::transpilable_verifier::TranspilableVerifier;
 use jolt_core::zkvm::verifier::JoltVerifierPreprocessing;
 use jolt_core::zkvm::RV64IMACProof;
 use common::jolt_device::JoltDevice;
-use zklean_extractor::mle_ast::{enable_constraint_mode, take_constraints as take_assertions, MleAst};
-use std::collections::{BTreeSet, HashMap};
+use zklean_extractor::mle_ast::{enable_constraint_mode, take_constraints as take_assertions, AstBundle, InputKind, MleAst};
+use std::collections::HashMap;
 
 fn main() {
     println!("=== Transpiling Jolt Verifier Stages 1-6 to Gnark ===\n");
@@ -107,173 +107,35 @@ fn main() {
     println!("\n=== Accumulated Assertions ===");
     println!("  Total assertions: {}", assertions.len());
 
-    // Debug: analyze each assertion to find problematic ones (constant vs constant)
-    use zklean_extractor::mle_ast::{get_node, Node, Atom, Edge};
+    // Build AstBundle — the central data structure for circuit generation
+    println!("\n=== Building AstBundle ===");
+    let mut bundle = AstBundle::new();
+    bundle.snapshot_arena();
 
-    fn is_constant(edge: &Edge) -> bool {
-        match edge {
-            Edge::Atom(Atom::Scalar(_)) => true,
-            Edge::Atom(Atom::Var(_)) => false,
-            Edge::Atom(Atom::NamedVar(_)) => false,
-            Edge::NodeRef(id) => is_node_constant(*id),
-        }
+    // All symbolic variables from symbolize_proof are proof data
+    for (idx, name) in var_alloc.descriptions() {
+        bundle.add_input(*idx, name.clone(), InputKind::ProofData);
     }
+    println!("  Inputs: {}", bundle.inputs.len());
 
-    fn is_node_constant(node_id: usize) -> bool {
-        let node = get_node(node_id);
-        match node {
-            Node::Atom(Atom::Scalar(_)) => true,
-            Node::Atom(Atom::Var(_)) => false,
-            Node::Atom(Atom::NamedVar(_)) => false,
-            Node::Neg(e) => is_constant(&e),
-            Node::Inv(e) => is_constant(&e),
-            Node::Add(a, b) | Node::Sub(a, b) | Node::Mul(a, b) | Node::Div(a, b) => {
-                is_constant(&a) && is_constant(&b)
-            }
-            Node::Poseidon(a, b, c) => is_constant(&a) && is_constant(&b) && is_constant(&c),
-            Node::Keccak256(e) | Node::ByteReverse(e) | Node::Truncate128Reverse(e)
-            | Node::Truncate128(e) | Node::MulTwoPow192(e) => is_constant(&e),
-        }
-    }
-
-    fn describe_node(node_id: usize, depth: usize) -> String {
-        if depth > 5 {
-            return "...".to_string();
-        }
-        let node = get_node(node_id);
-        match node {
-            Node::Atom(Atom::Scalar(limbs)) => {
-                if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
-                    format!("Scalar({})", limbs[0])
-                } else {
-                    format!("Scalar(large)")
-                }
-            }
-            Node::Atom(Atom::Var(idx)) => format!("Var({})", idx),
-            Node::Atom(Atom::NamedVar(idx)) => format!("NamedVar({})", idx),
-            Node::Neg(e) => format!("Neg({})", describe_edge(&e, depth + 1)),
-            Node::Inv(e) => format!("Inv({})", describe_edge(&e, depth + 1)),
-            Node::Add(a, b) => format!("Add({}, {})", describe_edge(&a, depth + 1), describe_edge(&b, depth + 1)),
-            Node::Sub(a, b) => format!("Sub({}, {})", describe_edge(&a, depth + 1), describe_edge(&b, depth + 1)),
-            Node::Mul(a, b) => format!("Mul({}, {})", describe_edge(&a, depth + 1), describe_edge(&b, depth + 1)),
-            Node::Div(a, b) => format!("Div({}, {})", describe_edge(&a, depth + 1), describe_edge(&b, depth + 1)),
-            Node::Poseidon(..) => format!("Poseidon(...)"),
-            Node::Keccak256(e) => format!("Keccak256({})", describe_edge(&e, depth + 1)),
-            Node::ByteReverse(e) => format!("ByteReverse({})", describe_edge(&e, depth + 1)),
-            Node::Truncate128Reverse(e) => format!("Truncate128Reverse({})", describe_edge(&e, depth + 1)),
-            Node::Truncate128(e) => format!("Truncate128({})", describe_edge(&e, depth + 1)),
-            Node::MulTwoPow192(e) => format!("MulTwoPow192({})", describe_edge(&e, depth + 1)),
-        }
-    }
-
-    fn describe_edge(edge: &Edge, depth: usize) -> String {
-        match edge {
-            Edge::Atom(Atom::Scalar(limbs)) => {
-                if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
-                    format!("{}", limbs[0])
-                } else {
-                    "large".to_string()
-                }
-            }
-            Edge::Atom(Atom::Var(idx)) => format!("Var({})", idx),
-            Edge::Atom(Atom::NamedVar(idx)) => format!("NamedVar({})", idx),
-            Edge::NodeRef(id) => describe_node(*id, depth),
-        }
-    }
-
-    // Check each assertion for constant-vs-constant issues
-    println!("\n=== Analyzing Assertions for Constant Issues ===");
-    let mut problematic_count = 0;
+    // All constraints from PartialEq::eq are EqualZero: (lhs - rhs) == 0
     for (i, assertion) in assertions.iter().enumerate() {
-        let root_id = assertion.root();
-        if is_node_constant(root_id) {
-            problematic_count += 1;
-            if problematic_count <= 10 {
-                println!("  [PROBLEMATIC] Assertion {}: entirely constant!", i);
-                println!("    Structure: {}", describe_node(root_id, 0));
-            }
-        }
+        bundle.add_constraint_eq_zero(format!("assertion_{}", i), assertion.root());
     }
-    if problematic_count > 10 {
-        println!("  ... and {} more problematic assertions", problematic_count - 10);
-    }
-    println!("  Total problematic assertions: {}", problematic_count);
+    println!("  Constraints: {}", bundle.constraints.len());
 
-    // Count multiplications by constant 0 in each assertion (with memoization)
-    fn count_mul_by_zero(node_id: usize, cache: &mut HashMap<usize, usize>) -> usize {
-        if let Some(&count) = cache.get(&node_id) {
-            return count;
-        }
-        let node = get_node(node_id);
-        let count = match node {
-            Node::Atom(_) => 0,
-            Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e)
-            | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::MulTwoPow192(e) => {
-                count_mul_by_zero_edge(&e, cache)
-            }
-            Node::Add(a, b) | Node::Sub(a, b) | Node::Div(a, b) => {
-                count_mul_by_zero_edge(&a, cache) + count_mul_by_zero_edge(&b, cache)
-            }
-            Node::Mul(a, b) => {
-                let is_zero_mul = match (&a, &b) {
-                    (_, Edge::Atom(Atom::Scalar(limbs))) | (Edge::Atom(Atom::Scalar(limbs)), _) => {
-                        limbs[0] == 0 && limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0
-                    }
-                    _ => false,
-                };
-                let base = if is_zero_mul { 1 } else { 0 };
-                base + count_mul_by_zero_edge(&a, cache) + count_mul_by_zero_edge(&b, cache)
-            }
-            Node::Poseidon(a, b, c) => {
-                count_mul_by_zero_edge(&a, cache) + count_mul_by_zero_edge(&b, cache) + count_mul_by_zero_edge(&c, cache)
-            }
-        };
-        cache.insert(node_id, count);
-        count
-    }
-
-    fn count_mul_by_zero_edge(edge: &Edge, cache: &mut HashMap<usize, usize>) -> usize {
-        match edge {
-            Edge::Atom(_) => 0,
-            Edge::NodeRef(id) => count_mul_by_zero(*id, cache),
-        }
-    }
-
-    println!("\n=== Checking for Mul-by-Zero Pattern ===");
-    let mut mul_zero_assertions = Vec::new();
-    let mut mul_zero_cache: HashMap<usize, usize> = HashMap::new();
-    for (i, assertion) in assertions.iter().enumerate() {
-        let count = count_mul_by_zero(assertion.root(), &mut mul_zero_cache);
-        if count > 0 {
-            mul_zero_assertions.push((i, count));
-        }
-    }
-
-    if !mul_zero_assertions.is_empty() {
-        println!("  Found {} assertions with mul-by-zero:", mul_zero_assertions.len());
-        for (i, count) in mul_zero_assertions.iter().take(20) {
-            println!("    Assertion {}: {} mul-by-zero operations", i, count);
-        }
-        if mul_zero_assertions.len() > 20 {
-            println!("    ... and {} more", mul_zero_assertions.len() - 20);
-        }
-    } else {
-        println!("  No mul-by-zero operations found");
-    }
-
-    // Build variable name mapping from VarAllocator
-    let var_names: HashMap<u16, String> = var_alloc
-        .descriptions()
-        .iter()
-        .map(|(idx, name)| (*idx, name.clone()))
-        .collect();
-
-    // Generate Gnark circuit
-    println!("\n=== Generating Gnark Circuit ===");
-    let circuit_code = generate_stages_circuit(&assertions, &var_names, "JoltStages16Circuit");
-
-    // Write to file
+    // Serialize bundle to JSON for future use (recursion, debugging)
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let bundle_path = format!("{}/go/stages16_bundle.json", manifest_dir);
+    bundle
+        .write_json(std::path::Path::new(&bundle_path))
+        .expect("Failed to write AstBundle JSON");
+    println!("  Bundle written to: {}", bundle_path);
+
+    // Generate Gnark circuit from bundle
+    println!("\n=== Generating Gnark Circuit ===");
+    let circuit_code = generate_circuit_from_bundle(&bundle, "JoltStages16Circuit");
+
     let output_path = format!("{}/go/stages16_circuit.go", manifest_dir);
     std::fs::write(&output_path, &circuit_code).expect("Failed to write circuit file");
     println!("  Circuit written to: {}", output_path);
@@ -300,111 +162,5 @@ fn main() {
 
     println!("\n=== SUCCESS ===");
     println!("TranspilableVerifier stages 1-6 transpiled to Gnark circuit.");
-}
-
-/// Generate Gnark circuit code from accumulated assertions
-///
-/// **Per-Assertion CSE**: To fix the node aliasing bug where structurally identical
-/// expressions from different assertions get merged, we now use per-assertion CSE contexts.
-/// Each assertion gets its own CSE namespace (cse_0_0, cse_0_1 for assertion 0, etc.).
-fn generate_stages_circuit(
-    assertions: &[MleAst],
-    var_names: &HashMap<u16, String>,
-    circuit_name: &str,
-) -> String {
-    // Per-assertion CSE: generate each assertion with its own CSE context
-    // This avoids the node aliasing bug where structurally identical expressions
-    // from different assertions get incorrectly merged.
-    let mut all_bindings_code = String::new();
-    let mut assertion_exprs: Vec<String> = Vec::new();
-    let mut all_vars: BTreeSet<u16> = BTreeSet::new();
-
-    for (assertion_idx, assertion) in assertions.iter().enumerate() {
-        // Create a fresh codegen context for this assertion with per-assertion CSE naming
-        let mut codegen = MemoizedCodeGen::with_var_names_and_constraint_idx(
-            var_names.clone(),
-            assertion_idx,
-        );
-
-        // Count references within this assertion only
-        codegen.count_refs(assertion.root());
-
-        // Generate expression for this assertion
-        let expr = codegen.generate_expr(assertion.root());
-        assertion_exprs.push(expr);
-
-        // Collect vars used in this assertion
-        all_vars.extend(codegen.vars().iter());
-
-        // Collect bindings for this assertion (already have prefixed names from codegen)
-        let constraint_bindings = codegen.bindings_code();
-        if !constraint_bindings.is_empty() {
-            all_bindings_code.push_str(&format!("\t// CSE bindings for assertion {}\n", assertion_idx));
-            all_bindings_code.push_str(&constraint_bindings);
-        }
-    }
-
-    let bindings_code = all_bindings_code;
-    let vars = &all_vars;
-
-    let mut output = String::new();
-
-    // Package and imports
-    output.push_str("package jolt_verifier\n\n");
-    output.push_str("import (\n");
-    output.push_str("\t\"github.com/consensys/gnark/frontend\"\n");
-    if bindings_code.contains("poseidon.Hash")
-        || assertion_exprs.iter().any(|e| e.contains("poseidon.Hash"))
-    {
-        output.push_str("\t\"jolt_verifier/poseidon\"\n");
-    }
-    output.push_str(")\n\n");
-
-    // Note: bigInt helper is defined in helpers.go
-
-    // Circuit struct
-    output.push_str(&format!("type {} struct {{\n", circuit_name));
-
-    // Add input variables - use sanitized names
-    for var_idx in vars.iter() {
-        let name = var_names
-            .get(var_idx)
-            .map(|n| sanitize_go_name(n))
-            .unwrap_or_else(|| format!("X{}", var_idx));
-        output.push_str(&format!(
-            "\t{} frontend.Variable `gnark:\",public\"`\n",
-            name
-        ));
-    }
-
-    output.push_str("}\n\n");
-
-    // Define method
-    output.push_str(&format!(
-        "func (circuit *{}) Define(api frontend.API) error {{\n",
-        circuit_name
-    ));
-
-    // CSE bindings
-    if !bindings_code.is_empty() {
-        output.push_str("\t// Memoized subexpressions (CSE)\n");
-        output.push_str(&bindings_code);
-        output.push_str("\n");
-    }
-
-    // Generate assertions - each expression must equal zero
-    output.push_str("\t// Verification assertions (each must equal 0)\n");
-    for (i, expr) in assertion_exprs.iter().enumerate() {
-        output.push_str(&format!("\ta{} := {}\n", i, expr));
-        output.push_str(&format!("\tapi.AssertIsEqual(a{}, 0)\n", i));
-        if (i + 1) % 100 == 0 {
-            output.push_str(&format!("\t// ... assertion {} of {}\n", i + 1, assertion_exprs.len()));
-        }
-    }
-
-    output.push_str("\n\treturn nil\n");
-    output.push_str("}\n");
-
-    output
 }
 
