@@ -368,320 +368,122 @@ pub trait AdviceTapeIO: Sized {
     }
 }
 
-// Implement AdviceTapeIO for primitive types
-impl AdviceTapeIO for u8 {
+// Empty marker trait for types that are Pod (Plain Old Data)
+// This trait excludes Vec<_> explicitly to avoid conflicts with the Vec<T> implementation below
+pub trait JoltPod: bytemuck::Pod {}
+
+macro_rules! impl_joltpod {
+    ($($t:ty),*) => {
+        $(
+            impl JoltPod for $t {}
+        )*
+    };
+}
+
+impl_joltpod!(u8, u16, u32, u64, usize, i8, i16, i32, i64);
+
+// implement AdviceTapeIO for all Pod types using bytemuck
+impl<T: JoltPod> AdviceTapeIO for T {
     fn write_to_advice_tape(&self) {
-        // write u8 to advice tape directly via ECALL
+        let bytes = bytemuck::bytes_of(self);
         let mut writer = AdviceWriter::get();
-        writer.write_u8(*self);
+        AdviceWriter::write_bytes(&mut writer, bytes);
     }
     fn new_from_advice_tape() -> Self {
-        // read u8 from advice tape directly
+        let mut value = core::mem::MaybeUninit::<T>::uninit();
+        let bytes = unsafe {
+            core::slice::from_raw_parts_mut(
+                value.as_mut_ptr() as *mut u8,
+                core::mem::size_of::<T>(),
+            )
+        };
         let mut reader = AdviceReader::get();
-        reader.read_u8()
+        AdviceReader::read_slice(&mut reader, bytes);
+        unsafe { value.assume_init() }
     }
 }
 
-impl AdviceTapeIO for u16 {
-    fn write_to_advice_tape(&self) {
-        // write u16 to advice tape directly via ECALL
-        let mut writer = AdviceWriter::get();
-        writer.write_u16(*self);
-    }
-    fn new_from_advice_tape() -> Self {
-        // read u16 from advice tape directly
-        let mut reader = AdviceReader::get();
-        reader.read_u16()
-    }
-}
-
-impl AdviceTapeIO for u32 {
-    fn write_to_advice_tape(&self) {
-        // write u32 to advice tape directly via ECALL
-        let mut writer = AdviceWriter::get();
-        writer.write_u32(*self);
-    }
-    fn new_from_advice_tape() -> Self {
-        // read u32 from advice tape directly
-        let mut reader = AdviceReader::get();
-        reader.read_u32()
-    }
-}
-
-impl AdviceTapeIO for u64 {
-    fn write_to_advice_tape(&self) {
-        // write u64 to advice tape directly via ECALL
-        let mut writer = AdviceWriter::get();
-        writer.write_u64(*self);
-    }
-    fn new_from_advice_tape() -> Self {
-        // read u64 from advice tape directly
-        let mut reader = AdviceReader::get();
-        reader.read_u64()
-    }
-}
-
-impl AdviceTapeIO for usize {
-    fn write_to_advice_tape(&self) {
-        // write usize to advice tape directly via ECALL
-        let mut writer = AdviceWriter::get();
-        // to_le_bytes implicitly handles 32 vs 64 bit usize
-        AdviceWriter::write_bytes(&mut writer, &self.to_le_bytes());
-    }
-    fn new_from_advice_tape() -> Self {
-        // if usize is 32 bits, read u32; if 64 bits, read u64
-        let mut reader = AdviceReader::get();
-        #[cfg(target_pointer_width = "32")]
+// implement AdviceTapeIO for tuples via a macro
+macro_rules! impl_tuple_adviceio {
+    ( $( $name:ident ),+ ) => {
+        #[allow(non_snake_case)]
+        impl<$( $name ),+> AdviceTapeIO for ( $( $name ),+ )
+        where
+            $( $name: AdviceTapeIO ),+
         {
-            reader.read_u32() as usize
+            fn write_to_advice_tape(&self) {
+                let ( $( $name ),+ ) = self;
+                $( $name.write_to_advice_tape(); )+
+            }
+
+            fn new_from_advice_tape() -> Self {
+                (
+                    $( <$name as AdviceTapeIO>::new_from_advice_tape(), )+
+                )
+            }
         }
-        #[cfg(target_pointer_width = "64")]
-        {
-            reader.read_u64() as usize
-        }
-    }
+    };
 }
 
-// Implement AdviceTapeIO for tuples and small arrays of AdviceTapeIO types
+// implement AdviceTapeIO for tuples up to size 7
+impl_tuple_adviceio!(A, B);
+impl_tuple_adviceio!(A, B, C);
+impl_tuple_adviceio!(A, B, C, D);
+impl_tuple_adviceio!(A, B, C, D, E);
+impl_tuple_adviceio!(A, B, C, D, E, F);
+impl_tuple_adviceio!(A, B, C, D, E, F, G);
 
-impl<S, T> AdviceTapeIO for (S, T)
-where
-    S: AdviceTapeIO,
-    T: AdviceTapeIO,
-{
+// implement AdviceTapeIO for arrays of Pod types
+impl<T: JoltPod, const N: usize> AdviceTapeIO for [T; N] {
     fn write_to_advice_tape(&self) {
-        self.0.write_to_advice_tape();
-        self.1.write_to_advice_tape();
-    }
-    fn new_from_advice_tape() -> Self {
-        (S::new_from_advice_tape(), T::new_from_advice_tape())
-    }
-}
-
-impl<S, T, U> AdviceTapeIO for (S, T, U)
-where
-    S: AdviceTapeIO,
-    T: AdviceTapeIO,
-    U: AdviceTapeIO,
-{
-    fn write_to_advice_tape(&self) {
-        self.0.write_to_advice_tape();
-        self.1.write_to_advice_tape();
-        self.2.write_to_advice_tape();
-    }
-    fn new_from_advice_tape() -> Self {
-        (
-            S::new_from_advice_tape(),
-            T::new_from_advice_tape(),
-            U::new_from_advice_tape(),
-        )
-    }
-}
-
-impl<S> AdviceTapeIO for [S; 2]
-where
-    S: AdviceTapeIO,
-{
-    fn write_to_advice_tape(&self) {
-        self[0].write_to_advice_tape();
-        self[1].write_to_advice_tape();
-    }
-    fn new_from_advice_tape() -> Self {
-        [S::new_from_advice_tape(), S::new_from_advice_tape()]
-    }
-}
-
-impl<S> AdviceTapeIO for [S; 3]
-where
-    S: AdviceTapeIO,
-{
-    fn write_to_advice_tape(&self) {
-        self[0].write_to_advice_tape();
-        self[1].write_to_advice_tape();
-        self[2].write_to_advice_tape();
-    }
-    fn new_from_advice_tape() -> Self {
-        [
-            S::new_from_advice_tape(),
-            S::new_from_advice_tape(),
-            S::new_from_advice_tape(),
-        ]
-    }
-}
-
-impl<S> AdviceTapeIO for [S; 4]
-where
-    S: AdviceTapeIO,
-{
-    fn write_to_advice_tape(&self) {
-        self[0].write_to_advice_tape();
-        self[1].write_to_advice_tape();
-        self[2].write_to_advice_tape();
-        self[3].write_to_advice_tape();
-    }
-    fn new_from_advice_tape() -> Self {
-        [
-            S::new_from_advice_tape(),
-            S::new_from_advice_tape(),
-            S::new_from_advice_tape(),
-            S::new_from_advice_tape(),
-        ]
-    }
-}
-
-// Implement AdviceTapeIO for Vecs of u8s, u16s, u32s, u64s, and usizes
-// Optimized to read/write in bulk rather than element-by-element
-#[cfg(any(feature = "host", feature = "guest-std"))]
-impl AdviceTapeIO for Vec<u8> {
-    fn write_to_advice_tape(&self) {
-        // Write the length of the Vec<u8> first
-        self.len().write_to_advice_tape();
-        // Then write the contents of the Vec<u8> to the advice tape
+        let bytes = bytemuck::cast_slice(self);
         let mut writer = AdviceWriter::get();
-        AdviceWriter::write_bytes(&mut writer, self);
-    }
-    fn new_from_advice_tape() -> Self {
-        // First read the length of the Vec<u8>
-        let len = usize::new_from_advice_tape();
-        // Create a vec of u8s with length len
-        let mut buf = Vec::<u8>::with_capacity(len);
-        // Cast the Vec<u8> to a byte slice of length len
-        let bytes = unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr(), len) };
-        // Read the contents into the byte slice
-        let mut reader = AdviceReader::get();
-        AdviceReader::read_slice(&mut reader, bytes);
-        // Adjust the length of the Vec<u8> after reading
-        unsafe {
-            buf.set_len(len);
-        }
-        // Return the filled Vec<u8>
-        buf
-    }
-}
-
-#[cfg(any(feature = "host", feature = "guest-std"))]
-impl AdviceTapeIO for Vec<u16> {
-    fn write_to_advice_tape(&self) {
-        // Write the length of the Vec<u16> first
-        self.len().write_to_advice_tape();
-        // Then write the contents of the Vec<u16> to the advice tape
-        let mut writer = AdviceWriter::get();
-        let bytes =
-            unsafe { core::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 2) };
         AdviceWriter::write_bytes(&mut writer, bytes);
     }
     fn new_from_advice_tape() -> Self {
-        // First read the length of the Vec<u16>
-        let len = usize::new_from_advice_tape();
-        // Create a vec of u16s with length len
-        let mut buf = Vec::<u16>::with_capacity(len);
-        // Cast the Vec<u16> to a byte slice of twice the length
-        let bytes =
-            unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 2 * len) };
-        // Read the contents into the byte slice
+        let mut value = core::mem::MaybeUninit::<[T; N]>::uninit();
+        let bytes = unsafe {
+            core::slice::from_raw_parts_mut(
+                value.as_mut_ptr() as *mut u8,
+                N * core::mem::size_of::<T>(),
+            )
+        };
         let mut reader = AdviceReader::get();
         AdviceReader::read_slice(&mut reader, bytes);
-        // Adjust the length of the Vec<u16> after reading
-        unsafe {
-            buf.set_len(len);
-        }
-        // Return the filled Vec<u16>
-        buf
+        unsafe { value.assume_init() }
     }
 }
 
-#[cfg(any(feature = "host", feature = "guest-std"))]
-impl AdviceTapeIO for Vec<u32> {
+// implement AdviceTapeIO for Vec<T> where T: Pod
+impl<T: JoltPod> AdviceTapeIO for Vec<T> {
     fn write_to_advice_tape(&self) {
-        // Write the length of the Vec<u32> first
+        // Write the length of the Vec<T> first
         self.len().write_to_advice_tape();
-        // Then write the contents of the Vec<u32> to the advice tape
+        // Then write the contents of the Vec<T> to the advice tape as bytes
+        let bytes = bytemuck::cast_slice(self.as_slice());
         let mut writer = AdviceWriter::get();
-        let bytes =
-            unsafe { core::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 4) };
         AdviceWriter::write_bytes(&mut writer, bytes);
     }
     fn new_from_advice_tape() -> Self {
-        // First read the length of the Vec<u32>
+        // First read the length of the Vec<T>
         let len = usize::new_from_advice_tape();
-        // Create a vec of u32s with length len
-        let mut buf = Vec::<u32>::with_capacity(len);
-        // Cast the Vec<u32> to a byte slice of 4x the length
-        let bytes =
-            unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 4 * len) };
+        // Create a vec of T with length len
+        let mut buf = Vec::<T>::with_capacity(len);
+        // Cast the Vec<T> to a byte slice of len * size_of::<T>()
+        let bytes = unsafe {
+            core::slice::from_raw_parts_mut(
+                buf.as_mut_ptr() as *mut u8,
+                len * core::mem::size_of::<T>(),
+            )
+        };
         // Read the contents into the byte slice
         let mut reader = AdviceReader::get();
         AdviceReader::read_slice(&mut reader, bytes);
-        // Adjust the length of the Vec<u32> after reading
+        // Adjust the length of the Vec<T> after reading
         unsafe {
             buf.set_len(len);
         }
-        // Return the filled Vec<u32>
-        buf
-    }
-}
-
-#[cfg(any(feature = "host", feature = "guest-std"))]
-impl AdviceTapeIO for Vec<u64> {
-    fn write_to_advice_tape(&self) {
-        // Write the length of the Vec<u64> first
-        self.len().write_to_advice_tape();
-        // Then write the contents of the Vec<u64> to the advice tape
-        let mut writer = AdviceWriter::get();
-        let bytes =
-            unsafe { core::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 8) };
-        AdviceWriter::write_bytes(&mut writer, bytes);
-    }
-    fn new_from_advice_tape() -> Self {
-        // First read the length of the Vec<u64>
-        let len = usize::new_from_advice_tape();
-        // Create a vec of u64s with length len
-        let mut buf = Vec::<u64>::with_capacity(len);
-        // Cast the Vec<u64> to a byte slice of 8x the length
-        let bytes =
-            unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 8 * len) };
-        // Read the contents into the byte slice
-        let mut reader = AdviceReader::get();
-        AdviceReader::read_slice(&mut reader, bytes);
-        // Adjust the length of the Vec<u64> after reading
-        unsafe {
-            buf.set_len(len);
-        }
-        // Return the filled Vec<u64>
-        buf
-    }
-}
-
-#[cfg(any(feature = "host", feature = "guest-std"))]
-impl AdviceTapeIO for Vec<usize> {
-    fn write_to_advice_tape(&self) {
-        // Write the length of the Vec<usize> first
-        self.len().write_to_advice_tape();
-        // Then write the contents of the Vec<usize> to the advice tape
-        for &item in self.iter() {
-            item.write_to_advice_tape();
-        }
-    }
-    fn new_from_advice_tape() -> Self {
-        // First read the length of the Vec<usize>
-        let len = usize::new_from_advice_tape();
-        // Create a vec of usizes with length len
-        let mut buf = Vec::<usize>::with_capacity(len);
-        // Cast the Vec<usize> to a byte slice of either 4x or 8x the length
-        #[cfg(target_pointer_width = "32")]
-        let bytes =
-            unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 4 * len) };
-        #[cfg(target_pointer_width = "64")]
-        let bytes =
-            unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 8 * len) };
-        // Read the contents into the byte slice
-        let mut reader = AdviceReader::get();
-        AdviceReader::read_slice(&mut reader, bytes);
-        // Adjust the length of the Vec<usize> after reading
-        unsafe {
-            buf.set_len(len);
-        }
-        // Return the filled Vec<usize>
+        // Return the filled Vec<T>
         buf
     }
 }

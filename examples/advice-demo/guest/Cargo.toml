@@ -9,3 +9,5 @@ compute_advice = []
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["guest-std"] }
+bytemuck = "1.23.2"
+bytemuck_derive = "1.10.1"
