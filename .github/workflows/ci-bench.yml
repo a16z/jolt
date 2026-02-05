@@ -32,6 +32,7 @@ jobs:
             ~/.cargo/git/db/
             target/
             ~/.zeroos
+            ~/.cache/dory
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install rust-src

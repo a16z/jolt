@@ -62,6 +62,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
         run: cargo install --path . --locked
       - name: Install nextest
@@ -83,6 +85,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
         run: cargo install --path . --locked
 
@@ -134,6 +138,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
         run: cargo install --path . --locked
       - name: Install nextest
