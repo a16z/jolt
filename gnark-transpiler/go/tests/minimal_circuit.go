@@ -14,7 +14,7 @@ type MinimalCircuit struct {
 }
 
 func (circuit *MinimalCircuit) Define(api frontend.API) error {
-	result := api.Mul(api.Mul(api.Add(circuit.X_0, circuit.X_1), circuit.X_2), poseidon.Truncate128Reverse(api, poseidon.Hash(api, poseidon.Hash(api, poseidon.Hash(api, 30506420032924013, 0, 0), 0, poseidon.ByteReverse(api, circuit.X_3)), 1, 0)))
+	result := api.Mul(api.Mul(api.Add(circuit.X_0, circuit.X_1), circuit.X_2), poseidon.Truncate128(api, poseidon.Hash(api, poseidon.Hash(api, poseidon.Hash(api, poseidon.Hash(api, 30506420032924013, 0, 0), 0, 100), 1, poseidon.ByteReverse(api, circuit.X_3)), 2, 0)))
 	api.AssertIsEqual(result, circuit.Output)
 	return nil
 }
