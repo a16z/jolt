@@ -455,6 +455,7 @@ impl<T: JoltPod, const N: usize> AdviceTapeIO for [T; N] {
 }
 
 // implement AdviceTapeIO for Vec<T> where T: Pod
+#[cfg(any(feature = "host", feature = "guest-std"))]
 impl<T: JoltPod> AdviceTapeIO for Vec<T> {
     fn write_to_advice_tape(&self) {
         // Write the length of the Vec<T> first
