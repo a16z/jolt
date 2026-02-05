@@ -17,6 +17,7 @@
 
 mod address_major;
 mod cycle_major;
+mod one_hot_coeffs;
 mod ram;
 mod registers;
 
