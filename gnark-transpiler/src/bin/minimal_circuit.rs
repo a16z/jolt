@@ -27,7 +27,7 @@ fn compute<F: JoltField, T: Transcript>(a: F, b: F, c: F, d: F, transcript: &mut
     let sum = a + b;
 
     // Append d to transcript (this triggers a Poseidon hash internally)
-    transcript.append_scalar(&d);
+    transcript.append_scalar(b"d", &d);
 
     // Get challenge from transcript (another Poseidon hash)
     let hash_challenge: F = transcript.challenge_scalar();

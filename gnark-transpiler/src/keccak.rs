@@ -4,10 +4,8 @@
 //! operations in MleAst instead of computing actual hashes.
 
 use ark_ec::CurveGroup;
-use ark_serialize::CanonicalSerialize;
 use jolt_core::field::JoltField;
 use jolt_core::transcripts::Transcript;
-use std::borrow::Borrow;
 use zklean_extractor::mle_ast::MleAst;
 
 /// Keccak transcript for symbolic execution.
@@ -50,45 +48,29 @@ impl Transcript for KeccakMleTranscript {
         }
     }
 
-    fn append_message(&mut self, _msg: &'static [u8]) {
+    // === Internal raw_append_* methods ===
+
+    fn raw_append_label(&mut self, _label: &'static [u8]) {
         self.hash_and_update(MleAst::from_i128(0));
     }
 
-    fn append_bytes(&mut self, _bytes: &[u8]) {
+    fn raw_append_bytes(&mut self, _bytes: &[u8]) {
         self.hash_and_update(MleAst::from_i128(0));
     }
 
-    fn append_u64(&mut self, x: u64) {
+    fn raw_append_u64(&mut self, x: u64) {
         self.hash_and_update(MleAst::from_i128(x as i128));
     }
 
-    fn append_scalar<F: JoltField>(&mut self, _scalar: &F) {
+    fn raw_append_scalar<F: JoltField>(&mut self, _scalar: &F) {
         self.hash_and_update(MleAst::from_i128(0));
     }
 
-    fn append_serializable<S: CanonicalSerialize>(&mut self, _scalar: &S) {
+    fn raw_append_point<G: CurveGroup>(&mut self, _point: &G) {
         self.hash_and_update(MleAst::from_i128(0));
     }
 
-    fn append_scalars<F: JoltField>(&mut self, scalars: &[impl Borrow<F>]) {
-        self.append_message(b"begin_append_vector");
-        for _ in scalars.iter() {
-            self.hash_and_update(MleAst::from_i128(0));
-        }
-        self.append_message(b"end_append_vector");
-    }
-
-    fn append_point<G: CurveGroup>(&mut self, _point: &G) {
-        self.hash_and_update(MleAst::from_i128(0));
-    }
-
-    fn append_points<G: CurveGroup>(&mut self, points: &[G]) {
-        self.append_message(b"begin_append_vector");
-        for _ in points.iter() {
-            self.hash_and_update(MleAst::from_i128(0));
-        }
-        self.append_message(b"end_append_vector");
-    }
+    // === Challenge generation methods ===
 
     fn challenge_u128(&mut self) -> u128 {
         let _ = self.challenge_mle();

@@ -10,7 +10,8 @@ use gnark_transpiler::{
 };
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::Transcript;
-use jolt_core::zkvm::transpilable_verifier::{JoltVerifierPreprocessing, TranspilableVerifier};
+use jolt_core::zkvm::transpilable_verifier::TranspilableVerifier;
+use jolt_core::zkvm::verifier::JoltVerifierPreprocessing;
 use jolt_core::zkvm::RV64IMACProof;
 use common::jolt_device::JoltDevice;
 use zklean_extractor::mle_ast::{enable_constraint_mode, take_constraints as take_assertions, MleAst};
@@ -29,6 +30,14 @@ fn main() {
     println!("  trace_length: {}", real_proof.trace_length);
     println!("  commitments: {}", real_proof.commitments.len());
 
+    // Debug: check commitment serialization size
+    if let Some(first_commitment) = real_proof.commitments.first() {
+        use ark_serialize::CanonicalSerialize;
+        let mut bytes = Vec::new();
+        first_commitment.serialize_uncompressed(&mut bytes).expect("serialize failed");
+        println!("  first commitment serialized size: {} bytes ({} chunks of 32)", bytes.len(), bytes.len() / 32);
+    }
+
     // Load io_device
     let io_device_path = "/tmp/fib_io_device.bin";
     println!("\nLoading io_device from: {}", io_device_path);
@@ -46,16 +55,14 @@ fn main() {
     let real_preprocessing: JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> =
         CanonicalDeserialize::deserialize_compressed(&preprocessing_bytes[..])
             .expect("Failed to deserialize preprocessing");
-    println!("  memory_layout: {:?}", real_preprocessing.memory_layout);
+    println!("  memory_layout: {:?}", real_preprocessing.shared.memory_layout);
 
     // Convert preprocessing to AstCommitmentScheme version
-    // (only generators change, bytecode/ram/memory_layout stay the same)
+    // (only generators change, shared stays the same)
     let symbolic_preprocessing: JoltVerifierPreprocessing<MleAst, AstCommitmentScheme> =
         JoltVerifierPreprocessing {
             generators: gnark_transpiler::ast_commitment_scheme::AstVerifierSetup,
-            bytecode: real_preprocessing.bytecode,
-            ram: real_preprocessing.ram,
-            memory_layout: real_preprocessing.memory_layout,
+            shared: real_preprocessing.shared.clone(),
         };
 
     // Symbolize the proof

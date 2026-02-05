@@ -12,7 +12,6 @@ use ark_ec::CurveGroup;
 use ark_serialize::CanonicalSerialize;
 use jolt_core::field::JoltField;
 use jolt_core::transcripts::Transcript;
-use std::borrow::Borrow;
 use zklean_extractor::mle_ast::{set_pending_challenge, take_pending_append, take_pending_commitment_chunks, MleAst};
 
 /// Convert 32 bytes (little-endian) to a [u64; 4] scalar.
@@ -172,12 +171,13 @@ impl Transcript for PoseidonAstTranscript {
         }
     }
 
-    fn append_message(&mut self, msg: &'static [u8]) {
+    // === Internal raw_append_* methods ===
+
+    fn raw_append_label(&mut self, label: &'static [u8]) {
         // Matches jolt-core: hash_bytes32_and_update which does immediate hashing.
-        // This is NOT batchable - it's a direct poseidon call per jolt-core semantics.
-        assert!(msg.len() <= 32);
+        assert!(label.len() <= 32);
         let mut padded = [0u8; 32];
-        padded[..msg.len()].copy_from_slice(msg);
+        padded[..label.len()].copy_from_slice(label);
         let limbs = bytes_to_scalar(&padded);
         let chunk_field = MleAst::from(limbs);
         let round = MleAst::from_u64(self.n_rounds as u64);
@@ -185,7 +185,7 @@ impl Transcript for PoseidonAstTranscript {
         self.n_rounds += 1;
     }
 
-    fn append_bytes(&mut self, bytes: &[u8]) {
+    fn raw_append_bytes(&mut self, bytes: &[u8]) {
         // Hash all bytes using Poseidon with domain separation via n_rounds.
         // First chunk: hash(state, n_rounds, chunk), includes domain separator.
         // Subsequent chunks: hash(prev, 0, chunk), chained but without redundant n_rounds.
@@ -217,11 +217,8 @@ impl Transcript for PoseidonAstTranscript {
         self.n_rounds += 1;
     }
 
-    fn append_u64(&mut self, x: u64) {
-        // Matches jolt-core: hash_bytes32_and_update which does immediate hashing.
-        // This is NOT batchable - it's a direct poseidon call per jolt-core semantics.
-        //
-        // PoseidonTranscript::append_u64 does:
+    fn raw_append_u64(&mut self, x: u64) {
+        // PoseidonTranscript::raw_append_u64 does:
         //   1. Pack u64 into 32-byte array with BE-padding: packed[24..32] = x.to_be_bytes()
         //   2. Interpret packed as LE field element via from_le_bytes_mod_order
         //   3. Mathematically: value * 2^192
@@ -232,10 +229,7 @@ impl Transcript for PoseidonAstTranscript {
         self.n_rounds += 1;
     }
 
-    fn append_scalar<F: JoltField>(&mut self, scalar: &F) {
-        // Matches jolt-core: serialize -> reverse -> hash_bytes32_and_update (immediate hashing).
-        // This is NOT batchable - it's a direct poseidon call per jolt-core semantics.
-        //
+    fn raw_append_scalar<F: JoltField>(&mut self, scalar: &F) {
         // Trigger serialization which stores MleAst in thread-local (if F = MleAst)
         let mut buf = vec![];
         let _ = scalar.serialize_uncompressed(&mut buf);
@@ -243,7 +237,7 @@ impl Transcript for PoseidonAstTranscript {
         // Retrieve the MleAst from thread-local (set by MleAst::serialize_with_mode)
         let round = MleAst::from_u64(self.n_rounds as u64);
         if let Some(mle_ast) = take_pending_append() {
-            // Apply byte-reverse to match PoseidonTranscript::append_scalar behavior:
+            // Apply byte-reverse to match PoseidonTranscript::raw_append_scalar behavior:
             // PoseidonTranscript does: serialize(LE) -> reverse -> from_le_bytes_mod_order -> hash
             let byte_reversed = MleAst::byte_reverse(&mle_ast);
             self.state = MleAst::poseidon(&self.state, &round, &byte_reversed);
@@ -255,58 +249,58 @@ impl Transcript for PoseidonAstTranscript {
         }
     }
 
-    fn append_serializable<S: CanonicalSerialize>(&mut self, scalar: &S) {
-        // The real PoseidonTranscript::append_serializable does:
-        // 1. serialize_uncompressed -> bytes (LE)
-        // 2. reverse bytes (for EVM compat)
-        // 3. append_bytes (which chunks into 32-byte pieces and hashes with chaining)
-        //
+    fn raw_append_point<G: CurveGroup>(&mut self, _point: &G) {
+        // For symbolic execution, we just hash a placeholder
+        self.hash_and_update(MleAst::from_u64(0));
+    }
+
+    // === Override append_serializable to handle AstCommitment chunks ===
+
+    fn append_serializable<T: CanonicalSerialize>(&mut self, label: &'static [u8], data: &T) {
         // For symbolic execution, serialization stores values in thread-local.
         let mut buf = vec![];
-        let _ = scalar.serialize_uncompressed(&mut buf);
+        let _ = data.serialize_uncompressed(&mut buf);
 
         // Check for commitment chunks first (12 MleAst for commitment hashing)
         // AstCommitment::serialize stores 12 chunks in PENDING_COMMITMENT_CHUNKS
         if let Some(chunks) = take_pending_commitment_chunks() {
-            // Hash all 12 chunks with proper chaining (like append_bytes does)
-            // This matches what PoseidonTranscript::append_serializable does:
-            // - First chunk: poseidon(state, n_rounds, chunk_0)
-            // - Remaining: poseidon(prev_hash, 0, chunk_i)
-            // - Only increment n_rounds once at the end
+            // CRITICAL: Match Transcript::append_serializable behavior:
+            // 1. Use 384 bytes (12 chunks × 32 bytes) for the label length.
+            //    Note: buf.len() is 0 because AstCommitment::serialize doesn't write bytes.
+            let commitment_byte_len = chunks.len() * 32; // 12 * 32 = 384
+            self.raw_append_label_with_len(label, commitment_byte_len as u64);
+
+            // 2. The witness values (extract_witness_values) apply buf.reverse() BEFORE
+            //    chunking, so:
+            //    - Var(0) contains chunk_11_reversed
+            //    - Var(1) contains chunk_10_reversed
+            //    - ...
+            //    - Var(11) contains chunk_0_reversed
+            //
+            //    The chunks array is [Var(0), Var(1), ..., Var(11)], which already
+            //    represents the correct hashing order (chunk_11_rev first).
+            //    NO reverse or ByteReverse needed - witness already has correct values.
+
+            // Hash all chunks with proper chaining (like raw_append_bytes does)
             self.append_field_elements(&chunks);
             return;
         }
 
         // Fallback: single MleAst (existing behavior for non-commitment types)
         if let Some(mle_ast) = take_pending_append() {
+            self.raw_append_label_with_len(label, buf.len() as u64);
             // Apply byte-reverse to match PoseidonTranscript::append_serializable behavior
             let byte_reversed = MleAst::byte_reverse(&mle_ast);
             self.hash_and_update(byte_reversed);
         } else {
-            // Fallback for non-MleAst types (shouldn't happen in transpilation)
-            self.hash_and_update(MleAst::from_u64(0));
+            // Fallback: use default implementation for concrete types
+            self.raw_append_label_with_len(label, buf.len() as u64);
+            buf.reverse();
+            self.raw_append_bytes(&buf);
         }
     }
 
-    fn append_scalars<F: JoltField>(&mut self, scalars: &[impl Borrow<F>]) {
-        self.append_message(b"begin_append_vector");
-        for scalar in scalars.iter() {
-            self.append_scalar(scalar.borrow());
-        }
-        self.append_message(b"end_append_vector");
-    }
-
-    fn append_point<G: CurveGroup>(&mut self, _point: &G) {
-        self.hash_and_update(MleAst::from_u64(0));
-    }
-
-    fn append_points<G: CurveGroup>(&mut self, points: &[G]) {
-        self.append_message(b"begin_append_vector");
-        for _ in points.iter() {
-            self.hash_and_update(MleAst::from_u64(0));
-        }
-        self.append_message(b"end_append_vector");
-    }
+    // === Challenge generation methods ===
 
     fn challenge_u128(&mut self) -> u128 {
         let _ = self.challenge_mle();
@@ -361,29 +355,10 @@ impl Transcript for PoseidonAstTranscript {
 
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
         // For MleAst: F::Challenge = MleAst, so we need to use the pending challenge mechanism
-        // Same as challenge_scalar_128_bits but returns F::Challenge
-        //
-        // Since F::Challenge doesn't have from_bytes in its trait bounds, but we know
-        // this implementation is only used with F = MleAst where F::Challenge = MleAst,
-        // we use the F::from_bytes and convert via Into.
         let hash = self.challenge_mle();
         let challenge = MleAst::truncate_128_reverse(&hash);
         set_pending_challenge(challenge);
-        // F has from_bytes, and the pending challenge mechanism works via JoltField::from_bytes
-        // For MleAst, this returns the pending challenge we just set
         let f_val: F = F::from_bytes(&[0u8; 16]);
-        // Now convert F to F::Challenge. Since F::Challenge: Into<F>, but we need F -> F::Challenge,
-        // and for MleAst where F = F::Challenge = MleAst, the Default is wrong.
-        // The clean solution: return the challenge directly since we know F::Challenge = MleAst
-        // Use unsafe transmute or just accept that this only works for MleAst
-        //
-        // Actually, the simplest fix: use Default but override with the pending challenge
-        // in the JoltField implementation. But that's circular.
-        //
-        // Best approach: since we set pending_challenge, and F::from_bytes returns it,
-        // we can return F::Challenge::default() but first convert f_val appropriately.
-        // For MleAst, f_val IS the challenge, and we can transmute since they're the same type.
-        //
         // Since this is MleAst-specific: use type punning via mem::transmute
         // This is safe because for MleAst, F = F::Challenge = MleAst
         unsafe { std::mem::transmute_copy::<F, F::Challenge>(&f_val) }
@@ -483,7 +458,7 @@ mod tests {
         let var = MleAst::from_var(42);
 
         // Append it to transcript
-        transcript.append_scalar(&var);
+        transcript.append_scalar(b"test_scalar", &var);
 
         // Check that the state now contains a Poseidon node with ByteReverse(variable)
         // append_scalar does: byte_reverse(var) -> hash

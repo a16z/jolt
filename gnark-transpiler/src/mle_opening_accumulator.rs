@@ -16,13 +16,14 @@
 //! 2. Points are `MleAst` derived from symbolic transcript challenges
 //! 3. The accumulator stores `(Vec<MleAst>, MleAst)` instead of `(Vec<F::Challenge>, F)`
 
-use zklean_extractor::mle_ast::MleAst;
 use jolt_core::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN,
+    OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, SumcheckId, BIG_ENDIAN,
 };
 use jolt_core::transcripts::Transcript;
+use jolt_core::zkvm::claim_reductions::AdviceKind;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use std::collections::BTreeMap;
+use zklean_extractor::mle_ast::MleAst;
 
 /// Opening accumulator for MleAst symbolic execution.
 ///
@@ -76,7 +77,10 @@ impl MleOpeningAccumulator {
     /// * `Self` - The populated accumulator
     /// * `Vec<(u16, OpeningId)>` - Mapping from variable index to OpeningId
     /// * `u16` - Next available variable index
-    pub fn from_opening_ids<I>(opening_ids: I, start_var_idx: u16) -> (Self, Vec<(u16, OpeningId)>, u16)
+    pub fn from_opening_ids<I>(
+        opening_ids: I,
+        start_var_idx: u16,
+    ) -> (Self, Vec<(u16, OpeningId)>, u16)
     where
         I: IntoIterator<Item = OpeningId>,
     {
@@ -115,7 +119,7 @@ impl MleOpeningAccumulator {
         sumcheck: SumcheckId,
         claim: MleAst,
     ) {
-        let key = OpeningId::Virtual(polynomial, sumcheck);
+        let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
         self.openings.insert(key, (vec![], claim));
     }
 
@@ -126,44 +130,43 @@ impl MleOpeningAccumulator {
         sumcheck: SumcheckId,
         claim: MleAst,
     ) {
-        let key = OpeningId::Committed(polynomial, sumcheck);
+        let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
         self.openings.insert(key, (vec![], claim));
     }
 
-    /// Update the opening point for a virtual polynomial.
-    ///
-    /// Called during verification when the point is derived from challenges.
-    /// The claim should already exist (added at initialization).
-    pub fn append_virtual(
+    /// Update the opening point for a virtual polynomial (internal helper).
+    #[allow(dead_code)]
+    fn set_virtual_point(
         &mut self,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
         point: Vec<MleAst>,
     ) {
-        let key = OpeningId::Virtual(polynomial, sumcheck);
+        let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
         if let Some((stored_point, _)) = self.openings.get_mut(&key) {
             *stored_point = point;
         } else {
             panic!(
-                "MleOpeningAccumulator::append_virtual: no claim found for {:?} {:?}",
+                "MleOpeningAccumulator::set_virtual_point: no claim found for {:?} {:?}",
                 polynomial, sumcheck
             );
         }
     }
 
-    /// Update the opening point for a committed polynomial.
-    pub fn append_committed(
+    /// Update the opening point for a committed polynomial (internal helper).
+    #[allow(dead_code)]
+    fn set_committed_point(
         &mut self,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
         point: Vec<MleAst>,
     ) {
-        let key = OpeningId::Committed(polynomial, sumcheck);
+        let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
         if let Some((stored_point, _)) = self.openings.get_mut(&key) {
             *stored_point = point;
         } else {
             panic!(
-                "MleOpeningAccumulator::append_committed: no claim found for {:?} {:?}",
+                "MleOpeningAccumulator::set_committed_point: no claim found for {:?} {:?}",
                 polynomial, sumcheck
             );
         }
@@ -197,7 +200,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, MleAst>, MleAst) {
-        let key = OpeningId::Virtual(polynomial, sumcheck);
+        let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
         let (point, claim) = self
             .openings
             .get(&key)
@@ -214,7 +217,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, MleAst>, MleAst) {
-        let key = OpeningId::Committed(polynomial, sumcheck);
+        let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
         let (point, claim) = self
             .openings
             .get(&key)
@@ -231,12 +234,11 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, MleAst>,
     ) {
-        let key = OpeningId::Virtual(polynomial, sumcheck);
+        let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
         if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
             // CRITICAL: Must append the claim to transcript, matching VerifierOpeningAccumulator behavior.
             // Without this, the transcript state diverges and challenges are incorrect.
-            // See: jolt-core/src/poly/opening_proof.rs lines 868-869 and 1097-1098
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
             *stored_point = opening_point.r;
         } else {
             panic!(
@@ -252,12 +254,10 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, MleAst>,
     ) {
-        // For MleAst, untrusted advice is stored as a virtual polynomial with a special marker
-        // We use VirtualPolynomial::UntrustedAdvice as the key
         let key = OpeningId::UntrustedAdvice(sumcheck_id);
         if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
             // CRITICAL: Must append the claim to transcript, matching VerifierOpeningAccumulator behavior.
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
             *stored_point = opening_point.r;
         } else {
             panic!(
@@ -273,11 +273,10 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, MleAst>,
     ) {
-        // For MleAst, trusted advice is stored similarly
         let key = OpeningId::TrustedAdvice(sumcheck_id);
         if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
             // CRITICAL: Must append the claim to transcript, matching VerifierOpeningAccumulator behavior.
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
             *stored_point = opening_point.r;
         } else {
             panic!(
@@ -294,10 +293,10 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         sumcheck: SumcheckId,
         opening_point: Vec<MleAst>,
     ) {
-        let key = OpeningId::Committed(polynomial, sumcheck);
+        let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
         if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
             // CRITICAL: Must append the claim to transcript, matching VerifierOpeningAccumulator behavior.
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
             *stored_point = opening_point;
         } else {
             panic!(
@@ -317,9 +316,9 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         // For sparse openings, we store each polynomial with the same point
         // CRITICAL: Must append ALL claims to transcript, matching VerifierOpeningAccumulator behavior.
         for polynomial in polynomials {
-            let key = OpeningId::Committed(polynomial, sumcheck);
+            let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
             if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
-                transcript.append_scalar(claim);
+                transcript.append_scalar(b"opening_claim", claim);
                 *stored_point = opening_point.clone();
             } else {
                 panic!(
@@ -330,21 +329,15 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         }
     }
 
-    fn get_untrusted_advice_opening(
+    fn get_advice_opening(
         &self,
+        kind: AdviceKind,
         sumcheck_id: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, MleAst>, MleAst)> {
-        let key = OpeningId::UntrustedAdvice(sumcheck_id);
-        let (point, claim) = self.openings.get(&key)?;
-        let opening_point = OpeningPoint::new(point.clone());
-        Some((opening_point, claim.clone()))
-    }
-
-    fn get_trusted_advice_opening(
-        &self,
-        sumcheck_id: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, MleAst>, MleAst)> {
-        let key = OpeningId::TrustedAdvice(sumcheck_id);
+        let key = match kind {
+            AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
+            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
+        };
         let (point, claim) = self.openings.get(&key)?;
         let opening_point = OpeningPoint::new(point.clone());
         Some((opening_point, claim.clone()))
@@ -365,10 +358,10 @@ mod tests {
 
         // Update point
         let point = vec![MleAst::from_var(1), MleAst::from_var(2)];
-        acc.append_virtual(VirtualPolynomial::Product, SumcheckId::SpartanOuter, point.clone());
+        acc.set_virtual_point(VirtualPolynomial::Product, SumcheckId::SpartanOuter, point.clone());
 
         // Retrieve
-        let (retrieved_point, retrieved_claim) = acc.get_virtual_polynomial_opening(
+        let (retrieved_point, _retrieved_claim) = acc.get_virtual_polynomial_opening(
             VirtualPolynomial::Product,
             SumcheckId::SpartanOuter,
         );
