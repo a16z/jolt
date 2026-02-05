@@ -14,8 +14,7 @@ use crate::poly::multilinear_polynomial::BindingOrder;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;

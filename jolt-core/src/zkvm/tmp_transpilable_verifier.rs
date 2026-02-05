@@ -1,70 +1,58 @@
-//! Transpilable Verifier - Generic version of JoltVerifier for symbolic execution.
-//!
-//! This module provides a verifier that is generic over the OpeningAccumulator,
-//! allowing it to be used with both:
-//! - `VerifierOpeningAccumulator<F>` for real verification
-//! - `MleOpeningAccumulator` for symbolic transpilation to Gnark
-//!
-//! The verification logic is identical to `verifier.rs`, ensuring that the
-//! transpiled circuit matches the real verifier exactly.
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::Path;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
-use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
+use crate::zkvm::spartan::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::{
-    bytecode::read_raf_checking::BytecodeReadRafSumcheckVerifier,
-    claim_reductions::{
-        IncClaimReductionSumcheckVerifier, InstructionLookupsClaimReductionSumcheckVerifier,
-        RamRaClaimReductionSumcheckVerifier,
+    bytecode::{
+        self, read_raf_checking::ReadRafSumcheckVerifier as BytecodeReadRafSumcheckVerifier,
+        BytecodePreprocessing,
     },
     fiat_shamir_preamble,
     instruction_lookups::{
-        ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
-        read_raf_checking::InstructionReadRafSumcheckVerifier,
+        self, ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
+        read_raf_checking::ReadRafSumcheckVerifier as LookupsReadRafSumcheckVerifier,
     },
     proof_serialization::JoltProof,
     r1cs::key::UniformSpartanKey,
     ram::{
-        hamming_booleanity::HammingBooleanitySumcheckVerifier,
-        output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
+        self, hamming_booleanity::HammingBooleanitySumcheckVerifier,
+        output_check::OutputSumcheckVerifier, ra_reduction::RamRaReductionSumcheckVerifier,
+        ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier,
         val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier,
-        verifier_accumulate_advice,
+        RAMPreprocessing,
     },
     registers::{
         read_write_checking::RegistersReadWriteCheckingVerifier,
         val_evaluation::ValEvaluationSumcheckVerifier as RegistersValEvaluationSumcheckVerifier,
     },
     spartan::{
+        claim_reductions::InstructionLookupsClaimReductionSumcheckVerifier,
         instruction_input::InstructionInputSumcheckVerifier, outer::OuterRemainingSumcheckVerifier,
         product::ProductVirtualRemainderVerifier, shift::ShiftSumcheckVerifier,
         verify_stage1_uni_skip, verify_stage2_uni_skip,
     },
-    verifier::JoltVerifierPreprocessing,
-    ProverDebugInfo,
+    ProverDebugInfo, Serializable,
 };
 use crate::{
     field::JoltField,
     poly::opening_proof::{OpeningAccumulator, OpeningPoint, VerifierOpeningAccumulator},
     pprof_scope,
-    subprotocols::{
-        booleanity::{BooleanitySumcheckParams, BooleanitySumcheckVerifier},
-        sumcheck_verifier::SumcheckInstanceVerifier,
-    },
+    subprotocols::sumcheck_verifier::SumcheckInstanceVerifier,
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
 };
 use anyhow::Context;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::jolt_device::MemoryLayout;
 use tracer::JoltDevice;
 
-/// Generic verifier that can be used for both real verification and symbolic transpilation.
-///
-/// The type parameter `A` is the OpeningAccumulator:
-/// - For real verification: `A = VerifierOpeningAccumulator<F>`
-/// - For transpilation: `A = MleOpeningAccumulator` (or similar symbolic accumulator)
 pub struct TranspilableVerifier<
     'a,
     F: JoltField,
@@ -82,7 +70,6 @@ pub struct TranspilableVerifier<
     pub one_hot_params: OneHotParams,
 }
 
-/// Constructor for real verification (with VerifierOpeningAccumulator).
 impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>
     TranspilableVerifier<'a, F, PCS, ProofTranscript, VerifierOpeningAccumulator<F>>
 {
@@ -94,13 +81,13 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<Self, ProofVerifyError> {
         // Memory layout checks
-        if program_io.memory_layout != preprocessing.shared.memory_layout {
+        if program_io.memory_layout != preprocessing.memory_layout {
             return Err(ProofVerifyError::MemoryLayoutMismatch);
         }
-        if program_io.inputs.len() > preprocessing.shared.memory_layout.max_input_size as usize {
+        if program_io.inputs.len() > preprocessing.memory_layout.max_input_size as usize {
             return Err(ProofVerifyError::InputTooLarge);
         }
-        if program_io.outputs.len() > preprocessing.shared.memory_layout.max_output_size as usize {
+        if program_io.outputs.len() > preprocessing.memory_layout.max_output_size as usize {
             return Err(ProofVerifyError::OutputTooLarge);
         }
 
@@ -135,21 +122,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
-
-        // Validate configs from the proof
-        proof
-            .one_hot_config
-            .validate()
-            .map_err(ProofVerifyError::InvalidOneHotConfig)?;
-
-        proof
-            .rw_config
-            .validate(proof.trace_length.log_2(), proof.ram_K.log_2())
-            .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
-
-        // Construct full params from the validated config
-        let one_hot_params =
-            OneHotParams::from_config(&proof.one_hot_config, proof.bytecode_K, proof.ram_K);
+        let one_hot_params = OneHotParams::new_with_log_k_chunk(
+            proof.log_k_chunk,
+            proof.lookups_ra_virtual_log_k_chunk,
+            proof.bytecode_K,
+            proof.ram_K,
+        );
 
         Ok(Self {
             trusted_advice_commitment,
@@ -164,19 +142,21 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
     }
 }
 
-/// Generic verification methods that work with any OpeningAccumulator.
-impl<
-        'a,
-        F: JoltField,
-        PCS: CommitmentScheme<Field = F>,
-        ProofTranscript: Transcript,
-        A: OpeningAccumulator<F>,
-    > TranspilableVerifier<'a, F, PCS, ProofTranscript, A>
+impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript, A: OpeningAccumulator<F>>
+    TranspilableVerifier<'a, F, PCS, ProofTranscript, A>
 {
     /// Create a TranspilableVerifier with a pre-configured opening accumulator.
     ///
     /// This constructor is used for symbolic transpilation where the accumulator
     /// is already populated with MleAst claims (or similar symbolic values).
+    ///
+    /// # Arguments
+    /// * `preprocessing` - Verifier preprocessing data
+    /// * `proof` - The Jolt proof to verify
+    /// * `program_io` - Program inputs/outputs
+    /// * `trusted_advice_commitment` - Optional trusted advice commitment
+    /// * `transcript` - Pre-configured transcript
+    /// * `opening_accumulator` - Pre-configured opening accumulator with claims
     pub fn new_with_accumulator(
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<F, PCS, ProofTranscript>,
@@ -186,8 +166,12 @@ impl<
         opening_accumulator: A,
     ) -> Self {
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
-        let one_hot_params =
-            OneHotParams::from_config(&proof.one_hot_config, proof.bytecode_K, proof.ram_K);
+        let one_hot_params = OneHotParams::new_with_log_k_chunk(
+            proof.log_k_chunk,
+            proof.lookups_ra_virtual_log_k_chunk,
+            proof.bytecode_K,
+            proof.ram_K,
+        );
 
         Self {
             trusted_advice_commitment,
@@ -201,14 +185,10 @@ impl<
         }
     }
 
-    /// Verify the Jolt proof (stages 1-6).
-    ///
-    /// Note: Stages 7-8 (batch opening and Dory verification) are not included
-    /// because they use VerifierOpeningAccumulator-specific methods. For Gnark
-    /// transpilation, these would be replaced by native Gnark pairing checks.
     #[tracing::instrument(skip_all)]
     pub fn verify(mut self) -> Result<(), anyhow::Error> {
         let _pprof_verify = pprof_scope!("verify");
+        // Parameters are computed from trace length as needed
 
         fiat_shamir_preamble(
             &self.program_io,
@@ -219,18 +199,17 @@ impl<
 
         // Append commitments to transcript
         for commitment in &self.proof.commitments {
-            self.transcript
-                .append_serializable(b"commitment", commitment);
+            self.transcript.append_serializable(commitment);
         }
         // Append untrusted advice commitment to transcript
         if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
             self.transcript
-                .append_serializable(b"untrusted_advice", untrusted_advice_commitment);
+                .append_serializable(untrusted_advice_commitment);
         }
         // Append trusted advice commitment to transcript
         if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
             self.transcript
-                .append_serializable(b"trusted_advice", trusted_advice_commitment);
+                .append_serializable(trusted_advice_commitment);
         }
 
         self.verify_stage1()?;
@@ -238,40 +217,15 @@ impl<
         self.verify_stage3()?;
         self.verify_stage4()?;
         self.verify_stage5()?;
-        self.verify_stage6()?;
-        // Stages 7-8 are NOT transpilable - they use VerifierOpeningAccumulator-specific
-        // methods for PCS (Dory) verification. For Gnark, these are replaced by
-        // native pairing checks.
+        // self.verify_stage6()?;
+        // TODO: These stages use VerifierOpeningAccumulator-specific methods
+        // and are not transpilable to Gnark. They handle PCS (Dory) verification.
+        // self.verify_trusted_advice_opening_proofs()?;
+        // self.verify_untrusted_advice_opening_proofs()?;
+        // self.verify_stage7()?;
+        // self.verify_stage8()?;
 
         Ok(())
-    }
-
-    /// Verify Stage 1 only with preamble (for testing Blake2b transpilation).
-    pub fn verify_only_stage1(mut self) -> Result<(), anyhow::Error> {
-        fiat_shamir_preamble(
-            &self.program_io,
-            self.proof.ram_K,
-            self.proof.trace_length,
-            &mut self.transcript,
-        );
-
-        // Append commitments to transcript
-        for commitment in &self.proof.commitments {
-            self.transcript
-                .append_serializable(b"commitment", commitment);
-        }
-        // Append untrusted advice commitment to transcript
-        if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
-            self.transcript
-                .append_serializable(b"untrusted_advice", untrusted_advice_commitment);
-        }
-        // Append trusted advice commitment to transcript
-        if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
-            self.transcript
-                .append_serializable(b"trusted_advice", trusted_advice_commitment);
-        }
-
-        self.verify_stage1()
     }
 
     fn verify_stage1(&mut self) -> Result<(), anyhow::Error> {
@@ -292,7 +246,7 @@ impl<
 
         let _r_stage1 = BatchedSumcheck::verify(
             &self.proof.stage1_sumcheck_proof,
-            vec![&spartan_outer_remaining as &dyn SumcheckInstanceVerifier<F, ProofTranscript, A>],
+            vec![&spartan_outer_remaining],
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
@@ -309,43 +263,38 @@ impl<
         )
         .context("Stage 2 univariate skip first round")?;
 
-        let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
-            &self.opening_accumulator,
-            &mut self.transcript,
-            &self.one_hot_params,
-            self.proof.trace_length,
-            &self.proof.rw_config,
-        );
-
         let spartan_product_virtual_remainder = ProductVirtualRemainderVerifier::new(
             self.proof.trace_length,
             uni_skip_params,
             &self.opening_accumulator,
         );
-
+        let ram_raf_evaluation = RamRafEvaluationSumcheckVerifier::new(
+            &self.program_io.memory_layout,
+            &self.one_hot_params,
+            &self.opening_accumulator,
+        );
+        let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
+            &self.opening_accumulator,
+            &mut self.transcript,
+            &self.one_hot_params,
+            self.proof.trace_length,
+        );
+        let ram_output_check =
+            OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
         let instruction_claim_reduction = InstructionLookupsClaimReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
         );
 
-        let ram_raf_evaluation = RamRafEvaluationSumcheckVerifier::new(
-            &self.program_io.memory_layout,
-            &self.one_hot_params,
-            &self.opening_accumulator,
-        );
-
-        let ram_output_check =
-            OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
-
         let _r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
             vec![
-                &ram_read_write_checking as &dyn SumcheckInstanceVerifier<F, ProofTranscript, A>,
                 &spartan_product_virtual_remainder,
-                &instruction_claim_reduction,
                 &ram_raf_evaluation,
+                &ram_read_write_checking,
                 &ram_output_check,
+                &instruction_claim_reduction,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -385,44 +334,50 @@ impl<
     }
 
     fn verify_stage4(&mut self) -> Result<(), anyhow::Error> {
-        verifier_accumulate_advice::<F, A>(
+        let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
+            self.proof.trace_length.log_2(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        ram::verifier_accumulate_advice(
             self.proof.ram_K,
             &self.program_io,
             self.proof.untrusted_advice_commitment.is_some(),
             self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-            self.proof
-                .rw_config
-                .needs_single_advice_opening(self.proof.trace_length.log_2()),
+            ram::read_write_checking::needs_single_advice_opening(self.proof.trace_length),
         );
-        let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
+        let ram_ra_booleanity = ram::new_ra_booleanity_verifier(
             self.proof.trace_length,
-            &self.opening_accumulator,
+            &self.one_hot_params,
             &mut self.transcript,
-            &self.proof.rw_config,
+        );
+        let initial_ram_state = ram::gen_ram_initial_memory_state::<F>(
+            self.proof.ram_K,
+            &self.preprocessing.ram,
+            &self.program_io,
         );
         let ram_val_evaluation = RamValEvaluationSumcheckVerifier::new(
-            &self.preprocessing.shared.ram,
+            &initial_ram_state,
             &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
             &self.opening_accumulator,
         );
         let ram_val_final = ValFinalSumcheckVerifier::new(
-            &self.preprocessing.shared.ram,
+            &initial_ram_state,
             &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
             &self.opening_accumulator,
-            &self.proof.rw_config,
         );
 
         let _r_stage4 = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
             vec![
-                &registers_read_write_checking
-                    as &dyn SumcheckInstanceVerifier<F, ProofTranscript, A>,
+                &registers_read_write_checking as &dyn SumcheckInstanceVerifier<F, ProofTranscript, A>,
+                &ram_ra_booleanity,
                 &ram_val_evaluation,
                 &ram_val_final,
             ],
@@ -436,28 +391,30 @@ impl<
 
     fn verify_stage5(&mut self) -> Result<(), anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
-
-        let lookups_read_raf = InstructionReadRafSumcheckVerifier::new(
-            n_cycle_vars,
-            &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
-        let ram_ra_reduction = RamRaClaimReductionSumcheckVerifier::new(
+        let registers_val_evaluation =
+            RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
+        let ram_hamming_booleanity =
+            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
+        let ram_ra_reduction = RamRaReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let registers_val_evaluation =
-            RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
+        let lookups_read_raf = LookupsReadRafSumcheckVerifier::new(
+            n_cycle_vars,
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         let _r_stage5 = BatchedSumcheck::verify(
             &self.proof.stage5_sumcheck_proof,
             vec![
-                &lookups_read_raf as &dyn SumcheckInstanceVerifier<F, ProofTranscript, A>,
+                &registers_val_evaluation as &dyn SumcheckInstanceVerifier<F, ProofTranscript, A>,
+                &ram_hamming_booleanity,
                 &ram_ra_reduction,
-                &registers_val_evaluation,
+                &lookups_read_raf,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -470,23 +427,23 @@ impl<
     fn verify_stage6(&mut self) -> Result<(), anyhow::Error> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
-            &self.preprocessing.shared.bytecode,
+            &self.preprocessing.bytecode,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-
-        let ram_hamming_booleanity =
-            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
-        let booleanity_params = BooleanitySumcheckParams::new(
-            n_cycle_vars,
+        let (bytecode_hamming_weight, bytecode_booleanity) = bytecode::new_ra_one_hot_verifiers(
+            self.proof.trace_length,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-
-        let booleanity = BooleanitySumcheckVerifier::new(booleanity_params);
+        let ram_hamming_weight = ram::new_ra_hamming_weight_verifier(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
         let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
@@ -498,33 +455,111 @@ impl<
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let inc_reduction = IncClaimReductionSumcheckVerifier::new(
-            self.proof.trace_length,
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
-
-        // Note: AdviceClaimReduction verifiers are not included here because they
-        // require VerifierOpeningAccumulator-specific state management across stages.
-        // For transpilation, advice handling would need a different approach.
-
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> = vec![
-            &bytecode_read_raf,
-            &booleanity,
-            &ram_hamming_booleanity,
-            &ram_ra_virtual,
-            &lookups_ra_virtual,
-            &inc_reduction,
-        ];
+        let (lookups_ra_booleanity, lookups_rs_hamming_weight) =
+            instruction_lookups::new_ra_one_hot_verifiers(
+                self.proof.trace_length,
+                &self.one_hot_params,
+                &self.opening_accumulator,
+                &mut self.transcript,
+            );
 
         let _r_stage6 = BatchedSumcheck::verify(
             &self.proof.stage6_sumcheck_proof,
-            instances,
+            vec![
+                &bytecode_read_raf as &dyn SumcheckInstanceVerifier<F, ProofTranscript, A>,
+                &bytecode_hamming_weight,
+                &bytecode_booleanity,
+                &ram_hamming_weight,
+                &ram_ra_virtual,
+                &lookups_ra_virtual,
+                &lookups_ra_booleanity,
+                &lookups_rs_hamming_weight,
+            ],
             &mut self.opening_accumulator,
             &mut self.transcript,
         )
         .context("Stage 6")?;
 
         Ok(())
+    }
+
+    // =========================================================================
+    // The following stages (7, 8, advice proofs) are NOT transpilable to Gnark.
+    // They use VerifierOpeningAccumulator-specific methods for PCS (Dory) verification.
+    // For Gnark transpilation, these would be replaced by native Gnark pairing checks.
+    // =========================================================================
+
+    // /// Stage 7: Batch opening reduction sumcheck verification.
+    // fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
+    //     self.opening_accumulator
+    //         .prepare_for_sumcheck(&self.proof.stage7_sumcheck_claims);
+    //     let r_sumcheck = self
+    //         .opening_accumulator
+    //         .verify_batch_opening_sumcheck(&self.proof.stage7_sumcheck_proof, &mut self.transcript)
+    //         .context("Stage 7")?;
+    //     self.opening_accumulator.finalize_batch_opening_sumcheck(
+    //         r_sumcheck,
+    //         &self.proof.stage7_sumcheck_claims,
+    //         &mut self.transcript,
+    //     );
+    //     Ok(())
+    // }
+
+    // /// Stage 8: Dory batch opening verification.
+    // fn verify_stage8(&mut self) -> Result<(), anyhow::Error> {
+    //     self.opening_accumulator.verify_stage8::<ProofTranscript, PCS>(
+    //         &self.one_hot_params,
+    //         &self.proof.commitments,
+    //         #[cfg(test)]
+    //         self.proof.joint_commitment_for_test.as_ref(),
+    //         &self.preprocessing.generators,
+    //         &self.proof.joint_opening_proof,
+    //         &mut self.transcript,
+    //     )
+    // }
+
+    // fn verify_trusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> { ... }
+    // fn verify_untrusted_advice_opening_proofs(&mut self) -> Result<(), anyhow::Error> { ... }
+}
+
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltVerifierPreprocessing<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    pub generators: PCS::VerifierSetup,
+    pub bytecode: BytecodePreprocessing,
+    pub ram: RAMPreprocessing,
+    pub memory_layout: MemoryLayout,
+}
+
+impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+}
+
+impl<F, PCS> JoltVerifierPreprocessing<F, PCS>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
+        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
+        let mut file = File::create(filename.as_path())?;
+        let mut data = Vec::new();
+        self.serialize_compressed(&mut data).unwrap();
+        file.write_all(&data)?;
+        Ok(())
+    }
+
+    pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self> {
+        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
+        let mut file = File::open(filename.as_path())?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
+        Ok(Self::deserialize_compressed(&*data).unwrap())
     }
 }

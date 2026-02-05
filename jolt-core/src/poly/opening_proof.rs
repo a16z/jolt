@@ -237,6 +237,73 @@ pub trait OpeningAccumulator<F: JoltField> {
         kind: AdviceKind,
         sumcheck: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)>;
+
+    fn append_virtual(
+        &mut self,
+        _polynomial: VirtualPolynomial,
+        _sumcheck: SumcheckId,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) where
+        Self: Sized,
+    {
+        unimplemented!("append_virtual only available for verifier accumulators")
+    }
+
+    fn append_untrusted_advice(
+        &mut self,
+        _sumcheck_id: SumcheckId,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) where
+        Self: Sized,
+    {
+        unimplemented!("append_untrusted_advice only available for verifier accumulators")
+    }
+
+    fn append_trusted_advice(
+        &mut self,
+        _sumcheck_id: SumcheckId,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) where
+        Self: Sized,
+    {
+        unimplemented!("append_trusted_advice only available for verifier accumulators")
+    }
+
+    fn append_dense(
+        &mut self,
+        _polynomial: CommittedPolynomial,
+        _sumcheck: SumcheckId,
+        _opening_point: Vec<F::Challenge>,
+    ) where
+        Self: Sized,
+    {
+        unimplemented!("append_dense only available for verifier accumulators")
+    }
+
+    fn append_sparse(
+        &mut self,
+        _polynomials: Vec<CommittedPolynomial>,
+        _sumcheck: SumcheckId,
+        _opening_point: Vec<F::Challenge>,
+    ) where
+        Self: Sized,
+    {
+        unimplemented!("append_sparse only available for verifier accumulators")
+    }
+
+    fn flush_to_transcript<T: Transcript>(&mut self, _transcript: &mut T)
+    where
+        Self: Sized,
+    {
+        unimplemented!("flush_to_transcript only available for verifier accumulators")
+    }
+
+    fn take_pending_claims(&mut self) -> Vec<F>
+    where
+        Self: Sized,
+    {
+        unimplemented!("take_pending_claims only available for verifier accumulators")
+    }
 }
 
 /// State for Dory batch opening (Stage 8).
@@ -523,31 +590,8 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
         let (point, claim) = self.openings.get(&opening_id)?;
         Some((point.clone(), *claim))
     }
-}
 
-impl<F> VerifierOpeningAccumulator<F>
-where
-    F: JoltField,
-{
-    pub fn new(log_T: usize, zk_mode: bool) -> Self {
-        Self {
-            openings: BTreeMap::new(),
-            #[cfg(test)]
-            prover_opening_accumulator: None,
-            log_T,
-            zk_mode,
-            pending_claims: Vec::new(),
-        }
-    }
-
-    /// Compare this accumulator to the corresponding `ProverOpeningAccumulator` and panic
-    /// if the openings appended differ from the prover's openings.
-    #[cfg(test)]
-    pub fn compare_to(&mut self, prover_openings: ProverOpeningAccumulator<F>) {
-        self.prover_opening_accumulator = Some(prover_openings);
-    }
-
-    pub fn append_dense(
+    fn append_dense(
         &mut self,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
@@ -569,7 +613,7 @@ where
         self.pending_claims.push(claim);
     }
 
-    pub fn append_sparse(
+    fn append_sparse(
         &mut self,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
@@ -593,7 +637,7 @@ where
         }
     }
 
-    pub fn append_virtual(
+    fn append_virtual(
         &mut self,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
@@ -609,7 +653,7 @@ where
         self.pending_claims.push(claim);
     }
 
-    pub fn append_untrusted_advice(
+    fn append_untrusted_advice(
         &mut self,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
@@ -624,7 +668,7 @@ where
         self.pending_claims.push(claim);
     }
 
-    pub fn append_trusted_advice(
+    fn append_trusted_advice(
         &mut self,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
@@ -639,14 +683,35 @@ where
         self.pending_claims.push(claim);
     }
 
-    pub fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
+    fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
         for claim in self.pending_claims.drain(..) {
             transcript.append_scalar(b"opening_claim", &claim);
         }
     }
 
-    pub fn take_pending_claims(&mut self) -> Vec<F> {
+    fn take_pending_claims(&mut self) -> Vec<F> {
         std::mem::take(&mut self.pending_claims)
+    }
+}
+
+impl<F> VerifierOpeningAccumulator<F>
+where
+    F: JoltField,
+{
+    pub fn new(log_T: usize, zk_mode: bool) -> Self {
+        Self {
+            openings: BTreeMap::new(),
+            #[cfg(test)]
+            prover_opening_accumulator: None,
+            log_T,
+            zk_mode,
+            pending_claims: Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn compare_to(&mut self, prover_openings: ProverOpeningAccumulator<F>) {
+        self.prover_opening_accumulator = Some(prover_openings);
     }
 }
 

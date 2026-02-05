@@ -583,7 +583,7 @@ impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for HammingWeightClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -592,7 +592,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let N = self.params.polynomial_types.len();
@@ -632,7 +632,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let N = self.params.polynomial_types.len();

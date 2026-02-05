@@ -16,8 +16,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,

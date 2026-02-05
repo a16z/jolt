@@ -60,8 +60,6 @@ pub mod r1cs;
 pub mod ram;
 pub mod registers;
 pub mod spartan;
-pub mod stage1_only_verifier;
-pub mod stepwise_verifier;
 pub mod transpilable_verifier;
 pub mod verifier;
 pub mod witness;

@@ -591,7 +591,7 @@ impl<F: JoltField> AdviceClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
     for AdviceClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -600,7 +600,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let params = self.params.borrow();
@@ -638,7 +638,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let mut params = self.params.borrow_mut();
