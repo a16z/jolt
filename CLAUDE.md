@@ -42,6 +42,9 @@ cargo build -p jolt-core --message-format=short -q
 cargo run --release -p jolt-core profile --name sha3 --format chrome
 # --name options: sha2, sha3, sha2-chain, fibonacci, btreemap
 
+# With CPU/memory monitoring (adds counter tracks to Perfetto trace)
+cargo run --release --features monitor -p jolt-core profile --name sha3 --format chrome
+
 # Memory profiling (outputs SVG flamegraphs)
 RUST_LOG=debug cargo run --release --features allocative -p jolt-core profile --name sha3 --format chrome
 ```
@@ -49,6 +52,8 @@ RUST_LOG=debug cargo run --release --features allocative -p jolt-core profile --
 ## Architecture
 
 ### Crate Structure
+
+Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shout` (patched via `[patch.crates-io]` in root `Cargo.toml`).
 
 **jolt-core** — Core proving system
 
@@ -65,6 +70,10 @@ RUST_LOG=debug cargo run --release --features allocative -p jolt-core profile --
 **jolt-sdk** — `#[jolt::provable]` macro generating prove/verify/analyze/preprocess functions
 
 **jolt-inlines** — Optimized cryptographic primitives (sha2, blake3, bigint, secp256k1, etc.) replacing guest-side computation with efficient constraint-native implementations
+
+**common** — Shared constants (`XLEN`, `REGISTER_COUNT`, thresholds) and `JoltDevice`/`MemoryLayout` types
+
+Feature flag hierarchy: `host` ⊃ `prover` ⊃ `minimal`. Most code is unconditional; `host/` is the main gated module.
 
 ### Key Type Parameters
 
@@ -109,6 +118,7 @@ Virtual (derived during proving): PC, register values, RAM values, instruction f
 - `instruction_lookups/`: RA virtual sumcheck, read-RAF checking
 - `claim_reductions/`: Advice, Hamming weight, increment, instruction lookups, register, RAM RA reductions
 - `bytecode/`: Bytecode preprocessing and PC mapping, read-RAF checking
+- `config.rs`: `OneHotParams`, `OneHotConfig`, `ReadWriteConfig` — control proof structure (chunk sizes, phase rounds)
 
 ## Development Guidelines
 
@@ -129,6 +139,7 @@ Virtual (derived during proving): PC, register values, RAM values, instruction f
 ### Code Style
 
 - `cargo fmt` + `cargo clippy` with zero warnings
+- Codebase uses `non_snake_case` convention for math variables: `log_T`, `ram_K`, `log_K`, etc.
 
 ### Comment Policy
 
