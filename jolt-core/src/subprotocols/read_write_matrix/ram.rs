@@ -10,6 +10,7 @@ use crate::field::OptimizedMul;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::read_write_matrix::address_major::AddressMajorMatrixEntry;
 use crate::subprotocols::read_write_matrix::cycle_major::CycleMajorMatrixEntry;
+use crate::subprotocols::read_write_matrix::OneHotCoeffLookupTable;
 use crate::subprotocols::read_write_matrix::ReadWriteMatrixAddressMajor;
 use crate::subprotocols::read_write_matrix::ReadWriteMatrixCycleMajor;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -123,7 +124,12 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
         self.col
     }
 
-    fn bind_entries(even: Option<&Self>, odd: Option<&Self>, r: F::Challenge) -> Self {
+    fn bind_entries(
+        even: Option<&Self>,
+        odd: Option<&Self>,
+        r: F::Challenge,
+        round: usize,
+    ) -> Self {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.row.is_even());
@@ -179,6 +185,8 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
         odd: Option<&Self>,
         inc_evals: [F; 2],
         gamma: F,
+        _ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+        _wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> [F::Unreduced<8>; 2] {
         match (even, odd) {
             (Some(even), Some(odd)) => {

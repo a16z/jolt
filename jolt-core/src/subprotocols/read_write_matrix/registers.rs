@@ -9,12 +9,16 @@ use num::Integer;
 use crate::field::JoltField;
 use crate::field::OptimizedMul;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::read_write_matrix::address_major::AddressMajorMatrixEntry;
 use crate::subprotocols::read_write_matrix::cycle_major::CycleMajorMatrixEntry;
+use crate::subprotocols::read_write_matrix::one_hot_coeffs::LookupTableIndex;
 use crate::subprotocols::read_write_matrix::one_hot_coeffs::OneHotCoeff;
 use crate::subprotocols::read_write_matrix::one_hot_coeffs::OneHotCoeffLookupTable;
 use crate::subprotocols::read_write_matrix::ReadWriteMatrixAddressMajor;
 use crate::subprotocols::read_write_matrix::ReadWriteMatrixCycleMajor;
+use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
@@ -82,7 +86,7 @@ fn pack_row_col(row: usize, col: u8) -> u64 {
     (row as u64) | ((col as u64) << COL_SHIFT)
 }
 
-impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> {
+impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, LookupTableIndex>> {
     /// Count how many distinct registers this cycle touches (0–3).
     #[inline]
     fn entry_count_for_cycle(cycle: &Cycle) -> u8 {
@@ -116,7 +120,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> 
     fn fill_entries_for_cycle(
         row: usize,
         cycle: &Cycle,
-        out: &mut [RegistersCycleMajorEntry<F, F>],
+        out: &mut [RegistersCycleMajorEntry<F, LookupTableIndex>],
         gamma: F,
         gamma_squared: F,
     ) {
@@ -130,7 +134,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> 
                 next_val: rs1_val,
                 val_coeff: F::from_u64(rs1_val),
                 ra_coeff: gamma,
-                wa_coeff: F::zero(),
+                wa_coeff: LookupTableIndex(0),
             };
             len += 1;
         }
@@ -145,7 +149,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> 
                     next_val: rs2_val,
                     val_coeff: F::from_u64(rs2_val),
                     ra_coeff: gamma_squared,
-                    wa_coeff: F::zero(),
+                    wa_coeff: LookupTableIndex(0),
                 };
                 len += 1;
             }
@@ -154,7 +158,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> 
         if let Some((rd, rd_pre_val, rd_post_val)) = cycle.rd_write() {
             if let Some(e) = out[..len].iter_mut().find(|e| e.column() as u8 == rd) {
                 // Same register is read and then written this cycle.
-                e.wa_coeff = F::one();
+                e.wa_coeff = LookupTableIndex(1);
                 e.next_val = rd_post_val;
             } else {
                 out[len] = RegistersCycleMajorEntry {
@@ -164,7 +168,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> 
                     // val_coeff stores the value *before* any access at this cycle.
                     val_coeff: F::from_u64(rd_pre_val),
                     ra_coeff: F::zero(),
-                    wa_coeff: F::one(),
+                    wa_coeff: LookupTableIndex(1),
                 };
                 len += 1;
             }
@@ -216,7 +220,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> 
         let total_entries = total;
 
         // ---- Allocate entries and set_len unsafely; we'll fill everything in pass 2 ----
-        let mut entries: Vec<RegistersCycleMajorEntry<F, F>> = Vec::with_capacity(total_entries);
+        let mut entries: Vec<RegistersCycleMajorEntry<F, LookupTableIndex>> =
+            Vec::with_capacity(total_entries);
         unsafe {
             entries.set_len(total_entries);
         }
@@ -231,7 +236,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> 
             }
 
             let start = offsets[j] as isize;
-            let entries_ptr = entries_ptr as *mut RegistersCycleMajorEntry<F, F>;
+            let entries_ptr = entries_ptr as *mut RegistersCycleMajorEntry<F, LookupTableIndex>;
             unsafe {
                 let dst = entries_ptr.offset(start);
                 let slice = std::slice::from_raw_parts_mut(dst, count);
@@ -246,6 +251,30 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> 
             val_init: vec![F::zero(); REGISTER_COUNT as usize].into(),
         }
     }
+
+    pub fn deref_coeffs(self) -> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> {
+        let val_init = self.val_init;
+        let wa_lookup_table = self.wa_lookup_table.unwrap();
+        let entries = self
+            .entries
+            .into_par_iter()
+            .map(|entry| RegistersCycleMajorEntry {
+                row_col: entry.row_col,
+                prev_val: entry.prev_val,
+                next_val: entry.next_val,
+                val_coeff: entry.val_coeff,
+                ra_coeff: entry.ra_coeff,
+                wa_coeff: wa_lookup_table[entry.wa_coeff],
+            })
+            .collect();
+
+        ReadWriteMatrixCycleMajor {
+            entries,
+            ra_lookup_table: None,
+            wa_lookup_table: None,
+            val_init,
+        }
+    }
 }
 
 impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycleMajorEntry<F, C> {
@@ -257,7 +286,12 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
         (self.row_col >> COL_SHIFT) as usize
     }
 
-    fn bind_entries(even: Option<&Self>, odd: Option<&Self>, r: F::Challenge) -> Self {
+    fn bind_entries(
+        even: Option<&Self>,
+        odd: Option<&Self>,
+        r: F::Challenge,
+        round: usize,
+    ) -> Self {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.row().is_even());
@@ -266,7 +300,12 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
                 RegistersCycleMajorEntry {
                     row_col: pack_row_col(even.row() / 2, even.column() as u8),
                     ra_coeff: even.ra_coeff + r.mul_01_optimized(odd.ra_coeff - even.ra_coeff),
-                    wa_coeff: OneHotCoeff::bind(Some(&even.wa_coeff), Some(&odd.wa_coeff), r, None),
+                    wa_coeff: OneHotCoeff::bind(
+                        Some(&even.wa_coeff),
+                        Some(&odd.wa_coeff),
+                        r,
+                        round,
+                    ),
                     val_coeff: even.val_coeff + r.mul_0_optimized(odd.val_coeff - even.val_coeff),
                     prev_val: even.prev_val,
                     next_val: odd.next_val,
@@ -282,7 +321,7 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
                 RegistersCycleMajorEntry {
                     row_col: pack_row_col(even.row() / 2, even.column() as u8),
                     ra_coeff: (F::one() - r).mul_01_optimized(even.ra_coeff),
-                    wa_coeff: OneHotCoeff::bind(Some(&even.wa_coeff), None, r, None),
+                    wa_coeff: OneHotCoeff::bind(Some(&even.wa_coeff), None, r, round),
                     val_coeff: even.val_coeff + r.mul_0_optimized(odd_val_coeff - even.val_coeff),
                     prev_val: even.prev_val,
                     next_val: even.next_val,
@@ -298,7 +337,7 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
                 RegistersCycleMajorEntry {
                     row_col: pack_row_col(odd.row() / 2, odd.column() as u8),
                     ra_coeff: r.mul_01_optimized(odd.ra_coeff),
-                    wa_coeff: OneHotCoeff::bind(None, Some(&odd.wa_coeff), r, None),
+                    wa_coeff: OneHotCoeff::bind(None, Some(&odd.wa_coeff), r, round),
                     val_coeff: even_val_coeff + r.mul_0_optimized(odd.val_coeff - even_val_coeff),
                     prev_val: odd.prev_val,
                     next_val: odd.next_val,
@@ -313,6 +352,8 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
         odd: Option<&Self>,
         inc_evals: [F; 2],
         _gamma: F,
+        ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+        wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> [F::Unreduced<8>; 2] {
         match (even, odd) {
             (Some(even), Some(odd)) => {
@@ -320,7 +361,8 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
                 debug_assert!(odd.row().is_odd());
                 debug_assert_eq!(even.column(), odd.column());
                 let ra_evals = [even.ra_coeff, odd.ra_coeff - even.ra_coeff];
-                let wa_evals = OneHotCoeff::evals(Some(&even.wa_coeff), Some(&odd.wa_coeff), None);
+                let wa_evals =
+                    OneHotCoeff::evals(Some(&even.wa_coeff), Some(&odd.wa_coeff), wa_lookup_table);
                 let val_evals = [even.val_coeff, odd.val_coeff - even.val_coeff];
                 [
                     ra_evals[0].mul_unreduced::<8>(val_evals[0])
@@ -332,7 +374,7 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
             (Some(even), None) => {
                 let odd_val_coeff = F::from_u64(even.next_val);
                 let ra_evals = [even.ra_coeff, -even.ra_coeff];
-                let wa_evals = OneHotCoeff::evals(Some(&even.wa_coeff), None, None);
+                let wa_evals = OneHotCoeff::evals(Some(&even.wa_coeff), None, wa_lookup_table);
                 let val_evals = [even.val_coeff, odd_val_coeff - even.val_coeff];
                 [
                     ra_evals[0].mul_unreduced::<8>(val_evals[0])
@@ -344,7 +386,7 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
             (None, Some(odd)) => {
                 let even_val_coeff = F::from_u64(odd.prev_val);
                 let ra_evals = [F::zero(), odd.ra_coeff];
-                let wa_evals = OneHotCoeff::evals(None, Some(&odd.wa_coeff), None);
+                let wa_evals = OneHotCoeff::evals(None, Some(&odd.wa_coeff), wa_lookup_table);
                 let val_evals = [even_val_coeff, odd.val_coeff - even_val_coeff];
                 [
                     F::Unreduced::zero(),
@@ -357,7 +399,7 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
     }
 }
 
-impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> {
+impl<F: JoltField, C: OneHotCoeff<F>> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, C>> {
     /// Materializes the ra, wa and Val polynomials represented by this `ReadWriteMatrixCycleMajor`.
     ///
     /// After partial binding of cycle and address variables, there are `K_prime` columns
@@ -399,12 +441,90 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> 
                 let wa_p = wa_ptr as *mut F;
                 let val_p = val_ptr as *mut F;
                 *ra_p.add(idx) = entry.ra_coeff;
-                *wa_p.add(idx) = entry.wa_coeff;
+                *wa_p.add(idx) = entry.wa_coeff.to_field(self.wa_lookup_table.as_ref());
                 *val_p.add(idx) = entry.val_coeff;
             }
         });
 
         [ra.into(), wa.into(), val.into()]
+    }
+
+    pub fn compute_message(
+        &self,
+        inc: &MultilinearPolynomial<F>,
+        gruen_eq: &GruenSplitEqPolynomial<F>,
+        gamma: F,
+        previous_claim: F,
+    ) -> UniPoly<F> {
+        // Compute quadratic coefficients using Gruen's optimization.
+        // When E_in is fully bound (len <= 1), we use E_in_eval = 1 and num_x_in_bits = 0,
+        // which makes the outer chunking degenerate to row pairs and skips the inner sum.
+        let e_in = gruen_eq.E_in_current();
+        let e_in_len = e_in.len();
+        let num_x_in_bits = e_in_len.max(1).log_2(); // max(1) so log_2 of 0 or 1 gives 0
+        let x_bitmask = (1 << num_x_in_bits) - 1;
+
+        let quadratic_coeffs: [F; 2] = self
+            .entries
+            // Chunk by x_out (when E_in is bound, this is just row pairs)
+            .par_chunk_by(|a, b| ((a.row() / 2) >> num_x_in_bits) == ((b.row() / 2) >> num_x_in_bits))
+            .map(|entries| {
+                let x_out = (entries[0].row() / 2) >> num_x_in_bits;
+                let E_out_eval = gruen_eq.E_out_current()[x_out];
+
+                let outer_sum_evals = entries
+                    .par_chunk_by(|a, b| a.row() / 2 == b.row() / 2)
+                    .map(|entries| {
+                        let odd_row_start_index = entries.partition_point(|entry| entry.row().is_even());
+                        let (even_row, odd_row) = entries.split_at(odd_row_start_index);
+                        let j_prime = 2 * (entries[0].row() / 2);
+
+                        // When E_in is fully bound, x_in = 0 and E_in_eval = 1
+                        let E_in_eval = if e_in_len <= 1 {
+                            F::one()
+                        } else {
+                            let x_in = (j_prime / 2) & x_bitmask;
+                            e_in[x_in]
+                        };
+
+                        let inc_evals = {
+                            let inc_0 = inc.get_bound_coeff(j_prime);
+                            let inc_1 = inc.get_bound_coeff(j_prime + 1);
+                            let inc_infty = inc_1 - inc_0;
+                            [inc_0, inc_infty]
+                        };
+
+                        let inner_sum_evals = self.prover_message_contribution(
+                            even_row,
+                            odd_row,
+                            inc_evals,
+                            gamma,
+                        );
+
+                        [
+                            E_in_eval.mul_unreduced::<9>(inner_sum_evals[0]),
+                            E_in_eval.mul_unreduced::<9>(inner_sum_evals[1]),
+                        ]
+                    })
+                    .reduce(
+                        || [F::Unreduced::<9>::zero(); 2],
+                        |running, new| [running[0] + new[0], running[1] + new[1]],
+                    )
+                    .map(F::from_montgomery_reduce);
+
+                [
+                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[0]),
+                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[1]),
+                ]
+            })
+            .reduce(
+                || [F::Unreduced::<9>::zero(); 2],
+                |running, new| [running[0] + new[0], running[1] + new[1]],
+            )
+            .map(F::from_montgomery_reduce);
+
+        // Convert quadratic coefficients to cubic evaluations
+        gruen_eq.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
     }
 }
 

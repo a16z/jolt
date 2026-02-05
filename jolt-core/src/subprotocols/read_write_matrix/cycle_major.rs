@@ -26,7 +26,8 @@ pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
     /// Either `even` or `odd` may be `None`, indicating that the corresponding matrix
     /// entry is not explicitly represented in the `ReadWriteMatrixCycleMajor` data structure.
     /// Instead, we can infer its values from the matrix entry that is `Some`.
-    fn bind_entries(even: Option<&Self>, odd: Option<&Self>, r: F::Challenge) -> Self;
+    fn bind_entries(even: Option<&Self>, odd: Option<&Self>, r: F::Challenge, round: usize)
+        -> Self;
 
     /// For the given pair of adjacent entries, computes the pair's contribution to the prover's
     /// sumcheck message, returning `Unreduced<8>` to avoid Montgomery reduction.
@@ -45,6 +46,8 @@ pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
         odd: Option<&Self>,
         inc_evals: [F; 2],
         gamma: F,
+        ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+        wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> [F::Unreduced<8>; 2];
 }
 
@@ -85,6 +88,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
         odd_row: &[E],
         r: F::Challenge,
         out: &mut [MaybeUninit<E>],
+        round: usize,
         dry_run: bool,
     ) -> usize {
         /// Threshold where we stop parallelizing and do a plain linear merge.
@@ -92,7 +96,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
 
         // small inputs: do the O(n) sequential merge
         if even_row.len() + odd_row.len() <= PAR_THRESHOLD {
-            return Self::seq_bind_rows(even_row, odd_row, r, out, dry_run);
+            return Self::seq_bind_rows(even_row, odd_row, r, out, round, dry_run);
         }
 
         // Split the longer row at its midpoint; find where that pivot would land in the other row.
@@ -126,6 +130,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
                     &odd_row[..odd_pivot_idx],
                     r,
                     left_out,
+                    round,
                     true,
                 )
             },
@@ -135,6 +140,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
                     &odd_row[odd_pivot_idx..],
                     r,
                     right_out,
+                    round,
                     true,
                 )
             },
@@ -151,6 +157,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
                         &odd_row[..odd_pivot_idx],
                         r,
                         left_out,
+                        round,
                         false,
                     )
                 },
@@ -160,6 +167,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
                         &odd_row[odd_pivot_idx..],
                         r,
                         right_out,
+                        round,
                         false,
                     )
                 },
@@ -183,6 +191,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
         odd: &[E],
         r: F::Challenge,
         out: &mut [MaybeUninit<E>],
+        round: usize,
         dry_run: bool,
     ) -> usize {
         // Even index
@@ -195,7 +204,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
         while i < even.len() && j < odd.len() {
             if even[i].column() == odd[j].column() {
                 if !dry_run {
-                    let bound_entry = E::bind_entries(Some(&even[i]), Some(&odd[j]), r);
+                    let bound_entry = E::bind_entries(Some(&even[i]), Some(&odd[j]), r, round);
                     out[k] = MaybeUninit::new(bound_entry);
                 }
                 i += 1;
@@ -203,14 +212,14 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
                 k += 1;
             } else if even[i].column() < odd[j].column() {
                 if !dry_run {
-                    let bound_entry = E::bind_entries(Some(&even[i]), None, r);
+                    let bound_entry = E::bind_entries(Some(&even[i]), None, r, round);
                     out[k] = MaybeUninit::new(bound_entry);
                 }
                 i += 1;
                 k += 1;
             } else {
                 if !dry_run {
-                    let bound_entry = E::bind_entries(None, Some(&odd[j]), r);
+                    let bound_entry = E::bind_entries(None, Some(&odd[j]), r, round);
                     out[k] = MaybeUninit::new(bound_entry);
                 }
                 j += 1;
@@ -225,12 +234,12 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
         }
 
         for remaining_even_entry in even[i..].iter() {
-            let bound_entry = E::bind_entries(Some(remaining_even_entry), None, r);
+            let bound_entry = E::bind_entries(Some(remaining_even_entry), None, r, round);
             out[k] = MaybeUninit::new(bound_entry);
             k += 1;
         }
         for remaining_odd_entry in odd[j..].iter() {
-            let bound_entry = E::bind_entries(None, Some(remaining_odd_entry), r);
+            let bound_entry = E::bind_entries(None, Some(remaining_odd_entry), r, round);
             out[k] = MaybeUninit::new(bound_entry);
             k += 1;
         }
@@ -241,7 +250,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
     /// Binds a cycle variable of the ra and Val polynomials represented by
     /// this `ReadWriteMatrixCycleMajor` to the random challenge `r`.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::bind")]
-    pub fn bind(&mut self, r: F::Challenge) {
+    pub fn bind(&mut self, r: F::Challenge, round: usize) {
         let row_lengths: Vec<_> = self
             .entries
             .par_chunk_by(|x, y| x.row() / 2 == y.row() / 2)
@@ -249,7 +258,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
                 let odd_row_start_index = entries.partition_point(|entry| entry.row().is_even());
                 let (even_row, odd_row) = entries.split_at(odd_row_start_index);
                 // Dry run to compute output length
-                let bound_len = Self::bind_rows(even_row, odd_row, r, &mut [], true);
+                let bound_len = Self::bind_rows(even_row, odd_row, r, &mut [], round, true);
                 (entries.len(), bound_len)
             })
             .collect();
@@ -280,7 +289,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
                 let odd_row_start_index =
                     input_slice.partition_point(|entry| entry.row().is_even());
                 let (even_row, odd_row) = input_slice.split_at(odd_row_start_index);
-                let _ = Self::bind_rows(even_row, odd_row, r, output_slice, false);
+                let _ = Self::bind_rows(even_row, odd_row, r, output_slice, round, false);
             });
 
         unsafe {
@@ -303,6 +312,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
     /// For the given pair of adjacent rows, computes the pair's contribution to the prover's
     /// sumcheck message. This is a recursive, parallel algorithm.
     pub fn prover_message_contribution(
+        &self,
         even_row: &[E],
         odd_row: &[E],
         inc_evals: [F; 2],
@@ -313,7 +323,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
 
         // small inputs: do the O(n) sequential algorithm
         if even_row.len() + odd_row.len() <= PAR_THRESHOLD {
-            return Self::seq_prover_message_contribution(even_row, odd_row, inc_evals, gamma);
+            return self.seq_prover_message_contribution(even_row, odd_row, inc_evals, gamma);
         }
 
         // Split the longer row at its midpoint; find where that pivot would land in the other row.
@@ -334,7 +344,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
         // and odd_row[odd_pivot_idx..]. Compute each half's contribution in parallel.
         let (left_evals, right_evals) = rayon::join(
             || {
-                Self::prover_message_contribution(
+                self.prover_message_contribution(
                     &even_row[..even_pivot_idx],
                     &odd_row[..odd_pivot_idx],
                     inc_evals,
@@ -342,7 +352,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
                 )
             },
             || {
-                Self::prover_message_contribution(
+                self.prover_message_contribution(
                     &even_row[even_pivot_idx..],
                     &odd_row[odd_pivot_idx..],
                     inc_evals,
@@ -361,6 +371,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
     /// Each `compute_evals_unreduced` returns `Unreduced<8>` (no reduction on the final multiply),
     /// and we accumulate into `Unreduced<9>` for headroom. Only one Montgomery reduction at the end.
     fn seq_prover_message_contribution(
+        &self,
         even: &[E],
         odd: &[E],
         inc_evals: [F; 2],
@@ -372,30 +383,65 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
 
         while i < even.len() && j < odd.len() {
             if even[i].column() == odd[j].column() {
-                let evals = E::compute_evals(Some(&even[i]), Some(&odd[j]), inc_evals, gamma);
+                let evals = E::compute_evals(
+                    Some(&even[i]),
+                    Some(&odd[j]),
+                    inc_evals,
+                    gamma,
+                    self.ra_lookup_table.as_ref(),
+                    self.wa_lookup_table.as_ref(),
+                );
                 evals_accumulator[0] += evals[0];
                 evals_accumulator[1] += evals[1];
                 i += 1;
                 j += 1;
             } else if even[i].column() < odd[j].column() {
-                let evals = E::compute_evals(Some(&even[i]), None, inc_evals, gamma);
+                let evals = E::compute_evals(
+                    Some(&even[i]),
+                    None,
+                    inc_evals,
+                    gamma,
+                    self.ra_lookup_table.as_ref(),
+                    self.wa_lookup_table.as_ref(),
+                );
                 evals_accumulator[0] += evals[0];
                 evals_accumulator[1] += evals[1];
                 i += 1;
             } else {
-                let evals = E::compute_evals(None, Some(&odd[j]), inc_evals, gamma);
+                let evals = E::compute_evals(
+                    None,
+                    Some(&odd[j]),
+                    inc_evals,
+                    gamma,
+                    self.ra_lookup_table.as_ref(),
+                    self.wa_lookup_table.as_ref(),
+                );
                 evals_accumulator[0] += evals[0];
                 evals_accumulator[1] += evals[1];
                 j += 1;
             }
         }
         for remaining_even_entry in even[i..].iter() {
-            let evals = E::compute_evals(Some(remaining_even_entry), None, inc_evals, gamma);
+            let evals = E::compute_evals(
+                Some(remaining_even_entry),
+                None,
+                inc_evals,
+                gamma,
+                self.ra_lookup_table.as_ref(),
+                self.wa_lookup_table.as_ref(),
+            );
             evals_accumulator[0] += evals[0];
             evals_accumulator[1] += evals[1];
         }
         for remaining_odd_entry in odd[j..].iter() {
-            let evals = E::compute_evals(None, Some(remaining_odd_entry), inc_evals, gamma);
+            let evals = E::compute_evals(
+                None,
+                Some(remaining_odd_entry),
+                inc_evals,
+                gamma,
+                self.ra_lookup_table.as_ref(),
+                self.wa_lookup_table.as_ref(),
+            );
             evals_accumulator[0] += evals[0];
             evals_accumulator[1] += evals[1];
         }

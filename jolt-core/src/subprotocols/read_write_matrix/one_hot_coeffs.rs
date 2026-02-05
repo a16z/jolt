@@ -13,8 +13,8 @@ pub struct OneHotCoeffLookupTable<F: JoltField> {
 
 const MAX_LOOKUP_TABLE_SIZE: usize = 1 << 16;
 
-#[derive(Clone, Copy)]
-pub struct LookupTableIndex(u16);
+#[derive(Clone, Copy, Default, Allocative)]
+pub struct LookupTableIndex(pub u16);
 
 impl<F: JoltField> std::ops::Index<LookupTableIndex> for OneHotCoeffLookupTable<F> {
     type Output = F;
@@ -50,27 +50,19 @@ impl<F: JoltField> OneHotCoeffLookupTable<F> {
 }
 
 pub trait OneHotCoeff<F: JoltField>: Send + Sync {
-    fn bind(
-        even: Option<&Self>,
-        odd: Option<&Self>,
-        r: F::Challenge,
-        lookup_table: Option<&OneHotCoeffLookupTable<F>>,
-    ) -> Self;
+    fn bind(even: Option<&Self>, odd: Option<&Self>, r: F::Challenge, round: usize) -> Self;
 
     fn evals(
         even: Option<&Self>,
         odd: Option<&Self>,
         lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> [F; 2];
+
+    fn to_field(&self, lookup_table: Option<&OneHotCoeffLookupTable<F>>) -> F;
 }
 
 impl<F: JoltField> OneHotCoeff<F> for F {
-    fn bind(
-        even: Option<&Self>,
-        odd: Option<&Self>,
-        r: F::Challenge,
-        _: Option<&OneHotCoeffLookupTable<F>>,
-    ) -> Self {
+    fn bind(even: Option<&Self>, odd: Option<&Self>, r: F::Challenge, _: usize) -> Self {
         match (even, odd) {
             (Some(&even), Some(&odd)) => even + r.mul_0_optimized(odd - even),
             (Some(&even), None) => (F::one() - r).mul_1_optimized(even),
@@ -91,18 +83,17 @@ impl<F: JoltField> OneHotCoeff<F> for F {
             (None, None) => panic!("Both entries are None"),
         }
     }
+
+    fn to_field(&self, _: Option<&OneHotCoeffLookupTable<F>>) -> F {
+        *self
+    }
 }
 
 impl<F: JoltField> OneHotCoeff<F> for LookupTableIndex {
-    fn bind(
-        even: Option<&Self>,
-        odd: Option<&Self>,
-        _r: F::Challenge,
-        lookup_table: Option<&OneHotCoeffLookupTable<F>>,
-    ) -> Self {
-        let lookup_table = lookup_table.unwrap();
+    fn bind(even: Option<&Self>, odd: Option<&Self>, _r: F::Challenge, round: usize) -> Self {
         // The lookup table itself is bound to `_r` separately
-        let lookup_index_bitwidth = lookup_table.lookup_index_bitwidth;
+
+        let lookup_index_bitwidth = 1 << round;
         debug_assert!(lookup_index_bitwidth <= 8);
 
         match (even, odd) {
@@ -127,5 +118,10 @@ impl<F: JoltField> OneHotCoeff<F> for LookupTableIndex {
             (None, Some(&odd)) => [F::zero(), lookup_table[odd]],
             (None, None) => panic!("Both entries are None"),
         }
+    }
+
+    fn to_field(&self, lookup_table: Option<&OneHotCoeffLookupTable<F>>) -> F {
+        let lookup_table = lookup_table.unwrap();
+        lookup_table[*self]
     }
 }

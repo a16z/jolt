@@ -278,7 +278,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                             [inc_0, inc_infty]
                         };
 
-                        let inner_sum_evals = ReadWriteMatrixCycleMajor::prover_message_contribution(
+                        let inner_sum_evals = sparse_matrix.prover_message_contribution(
                             even_row,
                             odd_row,
                             inc_evals,
@@ -502,7 +502,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
         } = self;
         let gruen_eq = gruen_eq.as_mut().unwrap();
 
-        sparse_matrix.bind(r_j);
+        sparse_matrix.bind(r_j, round);
         gruen_eq.bind(r_j);
         inc.bind_parallel(r_j, BindingOrder::LowToHigh);
 
