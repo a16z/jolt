@@ -7,7 +7,7 @@ This mechanism is powerful because it allows succinct verification of polynomial
 
 ## Usage
 
-A PCS comprises three algorithms (plus sometimes a preprocessing step): $\mathsf{Commit}$, $\mathsf{Prove}$, or $\mathsf{Verify}$.
+A PCS comprises three algorithms (plus sometimes a preprocessing step): $\mathsf{Commit}$, $\mathsf{Prove}$, and $\mathsf{Verify}$.
 In the context of a larger proof system like Jolt, polynomial commitment schemes are typically used in some variation of the following flow:
 
 0. Depending on the PCS, there may be a preprocessing step, where some public data is generated. This data may be needed for $\mathsf{Commit}$, $\mathsf{Prove}$, or $\mathsf{Verify}$. This preprocessing could involve a [trusted setup](https://vitalik.eth.limo/general/2022/03/14/trustedsetup.html) (if not, it is called a *transparent* setup/PCS).

@@ -91,8 +91,7 @@ use alloc::collections::VecDeque;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 use jolt_platform::{
-    JOLT_ADVICE_WRITE_ECALL_NUM, JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START,
-    JOLT_CYCLE_TRACK_ECALL_NUM, JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
+    JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
 };
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
@@ -172,8 +171,9 @@ pub struct Cpu {
     pub(crate) pc: u64,
     csr: [u64; CSR_CAPACITY],
     pub mmu: Mmu,
-    reservation: u64, // @TODO: Should support multiple address reservations
+    reservation: u64,
     is_reservation_set: bool,
+    reservation_width: ReservationWidth,
     _dump_flag: bool,
     unsigned_data_mask: u64,
     // pub trace: Vec<Cycle>,
@@ -191,6 +191,12 @@ pub struct Cpu {
 pub enum Xlen {
     Bit32,
     Bit64, // @TODO: Support Bit128
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ReservationWidth {
+    Word,       // 32-bit (LR.W/SC.W)
+    Doubleword, // 64-bit (LR.D/SC.D)
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -341,6 +347,7 @@ impl Cpu {
             mmu: Mmu::new(Xlen::Bit64, terminal),
             reservation: 0,
             is_reservation_set: false,
+            reservation_width: ReservationWidth::Word,
             _dump_flag: false,
             unsigned_data_mask: 0xffffffffffffffff,
             // trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
@@ -401,9 +408,10 @@ impl Cpu {
     }
 
     /// Sets the reservation address for atomic memory operations
-    pub fn set_reservation(&mut self, address: u64) {
+    pub fn set_reservation(&mut self, address: u64, width: ReservationWidth) {
         self.reservation = address;
         self.is_reservation_set = true;
+        self.reservation_width = width;
     }
 
     /// Clears the reservation for atomic memory operations
@@ -411,9 +419,9 @@ impl Cpu {
         self.is_reservation_set = false;
     }
 
-    /// Checks if a reservation is set for the given address
-    pub fn has_reservation(&self, address: u64) -> bool {
-        self.is_reservation_set && self.reservation == address
+    /// Checks if a reservation is set for the given address and width
+    pub fn has_reservation(&self, address: u64, width: ReservationWidth) -> bool {
+        self.is_reservation_set && self.reservation == address && self.reservation_width == width
     }
 
     pub fn is_reservation_set(&self) -> bool {
@@ -597,53 +605,6 @@ impl Cpu {
     }
 
     fn handle_trap(&mut self, trap: Trap, instruction_address: u64, is_interrupt: bool) -> bool {
-        // non-interrupt case is an ECALL
-        if !is_interrupt
-            && matches!(
-                trap.trap_type,
-                TrapType::EnvironmentCallFromUMode
-                    | TrapType::EnvironmentCallFromSMode
-                    | TrapType::EnvironmentCallFromMMode
-            )
-        {
-            let call_id = self.x[10] as u32; // a0
-            if call_id == JOLT_CYCLE_TRACK_ECALL_NUM {
-                let marker_ptr = self.x[11] as u32; // a1
-                let marker_len = self.x[12] as u32; // a2
-                let event_type = self.x[13] as u32; // a3
-
-                // Read / update the per-label counters.
-                //
-                // Any fault raised while touching guest memory (e.g. a bad
-                // string pointer) is swallowed here and will manifest as the
-                // usual access-fault on the *next* instruction fetch.
-                let _ = self.handle_jolt_cycle_marker(marker_ptr, marker_len, event_type);
-
-                return false; // we don't take the trap
-            } else if call_id == JOLT_PRINT_ECALL_NUM {
-                let string_ptr = self.x[11] as u32; // a0
-                let string_len = self.x[12] as u32; // a1
-                let event_type = self.x[13] as u32; // a2
-
-                // Any fault raised while touching guest memory (e.g. a bad
-                // string pointer) is swallowed here and will manifest as the
-                // usual access-fault on the *next* instruction fetch.
-                let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
-
-                return false;
-            } else if call_id == JOLT_ADVICE_WRITE_ECALL_NUM {
-                let src_ptr = self.x[11] as u64; // a1
-                let len = self.x[12] as u64; // a2
-
-                // Any fault raised while touching guest memory (e.g. a bad
-                // pointer) is swallowed here and will manifest as the
-                // usual access-fault on the *next* instruction fetch.
-                let _ = self.handle_advice_write(src_ptr, len);
-
-                return false;
-            }
-        }
-
         let current_privilege_encoding = get_privilege_encoding(&self.privilege_mode) as u64;
         let cause = get_trap_cause(&trap, &self.xlen);
 
@@ -846,7 +807,6 @@ impl Cpu {
             }
             PrivilegeMode::Reserved => panic!(), // shouldn't happen
         };
-        //println!("Trap! {:x} Clock:{:x}", cause, self.clock);
         true
     }
 
@@ -903,7 +863,7 @@ impl Cpu {
     }
 
     // SSTATUS, SIE, and SIP are subsets of MSTATUS, MIE, and MIP
-    fn read_csr_raw(&self, address: u16) -> u64 {
+    pub fn read_csr_raw(&self, address: u16) -> u64 {
         match address {
             // @TODO: Mask should consider of 32-bit mode
             CSR_FFLAGS_ADDRESS => self.csr[CSR_FCSR_ADDRESS as usize] & 0x1f,
@@ -916,7 +876,7 @@ impl Cpu {
         }
     }
 
-    fn write_csr_raw(&mut self, address: u16, value: u64) {
+    pub fn write_csr_raw(&mut self, address: u16, value: u64) {
         match address {
             CSR_FFLAGS_ADDRESS => {
                 self.csr[CSR_FCSR_ADDRESS as usize] &= !0x1f;
@@ -1070,7 +1030,7 @@ impl Cpu {
         &mut self.mmu
     }
 
-    fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
+    pub fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
         match event {
             JOLT_CYCLE_MARKER_START => {
                 let label = self.read_string(ptr, len)?; // guest NUL-string
@@ -1097,10 +1057,11 @@ impl Cpu {
             JOLT_CYCLE_MARKER_END => {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
-                    let virt = self.trace_len - mark.start_trace_len;
+                    let total = self.trace_len - mark.start_trace_len;
+                    let virtual_instrs = total - real as usize;
                     info!(
-                        "\"{}\": {} RV64IMAC cycles, {} virtual cycles",
-                        mark.label, real, virt
+                        "\"{}\": {} RV64IMAC cycles + {} virtual instructions = {} total cycles",
+                        mark.label, real, virtual_instrs, total
                     );
                 } else {
                     warn!("Attempt to end a marker (ptr: 0x{ptr:x}) that was never started");
@@ -1113,11 +1074,11 @@ impl Cpu {
         Ok(())
     }
 
-    fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u8) -> Result<(), Trap> {
+    pub fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u32) -> Result<(), Trap> {
         let message = self.read_string(ptr, len)?;
-        if event_type == JOLT_PRINT_STRING as u8 {
+        if event_type == JOLT_PRINT_STRING {
             print!("{message}");
-        } else if event_type == JOLT_PRINT_LINE as u8 {
+        } else if event_type == JOLT_PRINT_LINE {
             println!("{message}");
         } else {
             panic!("Unexpected event type: {event_type}");
@@ -1125,7 +1086,7 @@ impl Cpu {
         Ok(())
     }
 
-    fn handle_advice_write(&mut self, ptr: u64, len: u64) -> Result<(), Trap> {
+    pub fn handle_advice_write(&mut self, ptr: u64, len: u64) -> Result<(), Trap> {
         // Read bytes from guest memory and write to advice tape
         let mut bytes = Vec::with_capacity(len as usize);
         for i in 0..len {
@@ -1184,6 +1145,7 @@ impl Cpu {
             mmu: self.mmu.save_state_with_empty_memory(),
             reservation: self.reservation,
             is_reservation_set: self.is_reservation_set,
+            reservation_width: self.reservation_width,
             _dump_flag: self._dump_flag,
             unsigned_data_mask: self.unsigned_data_mask,
             trace_len: self.trace_len,

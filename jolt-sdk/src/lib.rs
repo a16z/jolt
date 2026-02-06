@@ -10,15 +10,15 @@ pub const CUSTOM_OPCODE: u32 = 0x5B; // Custom instructions opcode
 #[doc(hidden)]
 pub const FUNCT3_VIRTUAL_ASSERT_EQ: u32 = 0b001; // VirtualAssertEQ funct3
 #[doc(hidden)]
-pub const FUNCT3_ADVICE_LB: u32 = 0b010; // Load byte from advice tape
+pub const FUNCT3_ADVICE_LB: u32 = 0b011; // Load byte from advice tape
 #[doc(hidden)]
-pub const FUNCT3_ADVICE_LH: u32 = 0b011; // Load halfword from advice tape
+pub const FUNCT3_ADVICE_LH: u32 = 0b100; // Load halfword from advice tape
 #[doc(hidden)]
-pub const FUNCT3_ADVICE_LW: u32 = 0b100; // Load word from advice tape
+pub const FUNCT3_ADVICE_LW: u32 = 0b101; // Load word from advice tape
 #[doc(hidden)]
-pub const FUNCT3_ADVICE_LD: u32 = 0b101; // Load doubleword from advice tape
+pub const FUNCT3_ADVICE_LD: u32 = 0b110; // Load doubleword from advice tape
 #[doc(hidden)]
-pub const FUNCT3_ADVICE_LEN: u32 = 0b110; // Get number of remaining bytes in advice tape
+pub const FUNCT3_ADVICE_LEN: u32 = 0b111; // Get number of remaining bytes in advice tape
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub mod host_utils;
@@ -302,7 +302,7 @@ impl AdviceReader {
         let x;
         unsafe {
             core::arch::asm!(
-                ".insn i {opcode}, {funct3}, {rd}, x0, 8",
+                ".insn i {opcode}, {funct3}, {rd}, x0, 0",
                 opcode = const CUSTOM_OPCODE,
                 funct3 = const FUNCT3_ADVICE_LD,
                 rd = out(reg) x,
@@ -530,3 +530,6 @@ impl<T: Pod> AdviceTapeIO for Vec<T> {
         buf
     }
 }
+
+#[cfg(target_arch = "riscv64")]
+pub mod runtime;

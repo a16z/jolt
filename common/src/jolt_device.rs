@@ -8,9 +8,9 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 use crate::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
-    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, RAM_START_ADDRESS,
-    STACK_CANARY_SIZE,
+    DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE,
+    DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
+    RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 
 #[allow(clippy::too_long_first_doc_paragraph)]
@@ -158,7 +158,7 @@ pub struct MemoryConfig {
     pub max_untrusted_advice_size: u64,
     pub max_output_size: u64,
     pub stack_size: u64,
-    pub memory_size: u64,
+    pub heap_size: u64,
     pub program_size: Option<u64>,
 }
 
@@ -170,7 +170,7 @@ impl Default for MemoryConfig {
             max_untrusted_advice_size: DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
-            memory_size: DEFAULT_MEMORY_SIZE,
+            heap_size: DEFAULT_HEAP_SIZE,
             program_size: None,
         }
     }
@@ -202,11 +202,9 @@ pub struct MemoryLayout {
     pub output_start: u64,
     pub output_end: u64,
     pub stack_size: u64,
-    /// Stack starts from (RAM_START_ADDRESS + `program_size` + `stack_size`) and grows in descending addresses by `stack_size` bytes.
     pub stack_end: u64,
-    pub memory_size: u64,
-    /// Heap starts just after the start of the stack and is `memory_size` bytes.
-    pub memory_end: u64,
+    pub heap_size: u64,
+    pub heap_end: u64,
     pub panic: u64,
     pub termination: u64,
     /// End of the memory region containing inputs, outputs, the panic bit,
@@ -244,8 +242,8 @@ impl core::fmt::Debug for MemoryLayout {
             .field("output_end", &format_args!("{:#X}", self.output_end))
             .field("stack_size", &format_args!("{:#X}", self.stack_size))
             .field("stack_end", &format_args!("{:#X}", self.stack_end))
-            .field("memory_size", &format_args!("{:#X}", self.memory_size))
-            .field("memory_end", &format_args!("{:#X}", self.memory_end))
+            .field("heap_size", &format_args!("{:#X}", self.heap_size))
+            .field("heap_end", &format_args!("{:#X}", self.heap_end))
             .field("panic", &format_args!("{:#X}", self.panic))
             .field("termination", &format_args!("{:#X}", self.termination))
             .field("io_end", &format_args!("{:#X}", self.io_end))
@@ -281,7 +279,7 @@ impl MemoryLayout {
         let max_input_size = align_up(config.max_input_size, 8);
         let max_output_size = align_up(config.max_output_size, 8);
         let stack_size = align_up(config.stack_size, 8);
-        let memory_size = align_up(config.memory_size, 8);
+        let heap_size = align_up(config.heap_size, 8);
 
         // Critical for ValEvaluation and ValFinal sumchecks in RAM
         assert!(
@@ -359,18 +357,19 @@ impl MemoryLayout {
 
         let program_size = config.program_size.unwrap();
 
-        // stack grows downwards (decreasing addresses) from the bytecode_end + stack_size up to bytecode_end
+        // stack grows downwards (decreasing addresses) from the top of the stack down to stack_end
         let stack_end = RAM_START_ADDRESS
             .checked_add(program_size)
             .expect("stack_end overflow");
         let stack_start = stack_end
-            .checked_add(stack_size)
+            .checked_add(STACK_CANARY_SIZE)
+            .and_then(|s| s.checked_add(stack_size))
             .expect("stack_start overflow");
 
-        // heap grows *up* (increasing addresses) from the stack of the stack
-        let memory_end = stack_start
-            .checked_add(memory_size)
-            .expect("memory_end overflow");
+        // heap grows *up* (increasing addresses) from the top of the stack
+        let heap_end = stack_start
+            .checked_add(heap_size)
+            .expect("heap_end overflow");
 
         Self {
             program_size,
@@ -388,8 +387,8 @@ impl MemoryLayout {
             output_end,
             stack_size,
             stack_end,
-            memory_size,
-            memory_end,
+            heap_size,
+            heap_end,
             panic,
             termination,
             io_end,
@@ -401,8 +400,8 @@ impl MemoryLayout {
         self.trusted_advice_start.min(self.untrusted_advice_start)
     }
 
-    /// Returns the total emulator memory
+    /// Returns the total emulator memory (program + canary + stack + heap).
     pub fn get_total_memory_size(&self) -> u64 {
-        self.memory_size + self.stack_size + STACK_CANARY_SIZE
+        self.heap_end - RAM_START_ADDRESS
     }
 }

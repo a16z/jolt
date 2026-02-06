@@ -25,11 +25,6 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 [features]
 default = ["host"]
 host = [
-    "dep:reqwest",
-    "dep:tokio",
-    "dep:indicatif",
-    "dep:dirs",
-    "dep:target-lexicon",
     "prover",
     "dep:jolt-inlines-sha2",
     "dep:jolt-inlines-keccak256",
@@ -83,15 +78,10 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-chrome.workspace = true
 tracing-subscriber.workspace = true
-target-lexicon = { workspace = true, optional = true }
-reqwest = { workspace = true, optional = true }
-dirs = { workspace = true, optional = true }
 eyre.workspace = true
-indicatif = { workspace = true, optional = true }
 common.workspace = true
 tracer = { workspace = true, default-features = false, features = ["std"] }
 bincode.workspace = true
-tokio = { workspace = true, optional = true }
 rand_distr.workspace = true
 anyhow.workspace = true
 derive_more.workspace = true
@@ -165,4 +155,3 @@ required-features = ["host"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats.workspace = true
-tokio = { workspace = true, optional = true, features = ["rt-multi-thread"] }

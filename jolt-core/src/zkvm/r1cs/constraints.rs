@@ -39,7 +39,7 @@
 use super::inputs::JoltR1CSInputs;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::witness::VirtualPolynomial;
-use strum::EnumCount;
+use strum::EnumCount as EnumCountTrait;
 use strum_macros::{EnumCount, EnumIter};
 
 pub use super::ops::{Term, LC};
@@ -378,12 +378,16 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
                 - { 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) }
                 - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } )
     ),
-    // if Inline {
+    // if VirtualInstruction && !IsLastInSequence {
     //     assert!(NextPC == PC + 1)
     // }
+    // Guard = OpFlags(VirtualInstruction) − OpFlags(IsLastInSequence).
+    // For valid boolean inputs where IsLast=1 implies VI=1, this equals VI && !IsLast.
+    // Skips the constraint when JALR terminates a virtual sequence (NextPC may jump
+    // to a trap handler) and when the instruction is not part of an inline sequence.
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::NextPCEqPCPlusOneIfInline,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) } }
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) } - { JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence) } }
         => ( { JoltR1CSInputs::NextPC } ) == ( { JoltR1CSInputs::PC } + { 1i128 } )
     ),
     // if NextIsVirtual && !NextIsFirstInSequence {

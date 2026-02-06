@@ -1,14 +1,24 @@
-//! ECALL (SYSTEM 0x0000_0073) — currently only serves for Jolt cycle-tracking.
-//! Although, this will be used for "pseudo-precompiles"
+//! ECALL (SYSTEM 0x0000_0073) — Environment call, always traps to mtvec.
+//!
+//! The inline sequence writes mepc, mcause, mtval, and mstatus to their
+//! virtual registers, then jumps unconditionally to the trap handler.
 
+use jolt_platform::JOLT_ADVICE_WRITE_ECALL_NUM;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
-    emulator::cpu::{Cpu, PrivilegeMode, Trap, TrapType},
+    emulator::cpu::{Cpu, PrivilegeMode, Trap, TrapType, Xlen},
+    utils::inline_helpers::InstrAssembler,
+    utils::virtual_registers::VirtualRegisterAllocator,
 };
 
-use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
+use super::{
+    addi::ADDI, auipc::AUIPC, format::format_i::FormatI, jalr::JALR, slli::SLLI, Cycle,
+    Instruction, RISCVInstruction, RISCVTrace,
+};
+
+const MCAUSE_ECALL_FROM_MMODE: u64 = 11;
 
 declare_riscv_instr!(
     name   = ECALL,
@@ -19,8 +29,6 @@ declare_riscv_instr!(
 );
 
 impl ECALL {
-    /// **No architectural effects**
-    /// Signals to emulator to record cycles through early exit of trap
     fn exec(&self, cpu: &mut Cpu, _: &mut <ECALL as RISCVInstruction>::RAMAccess) {
         let trap_type = match cpu.privilege_mode {
             PrivilegeMode::User => TrapType::EnvironmentCallFromUMode,
@@ -38,4 +46,58 @@ impl ECALL {
     }
 }
 
-impl RISCVTrace for ECALL {}
+impl RISCVTrace for ECALL {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        // Special case for ADVICE_WRITE, which is only used in the
+        // first of two emulation passes. The trace for the first pass
+        // is discarded, so we can return early.
+        if cpu.x[10] as u32 == JOLT_ADVICE_WRITE_ECALL_NUM {
+            let src_ptr = cpu.x[11] as u64; // a1
+            let len = cpu.x[12] as u64; // a2
+
+            // Any fault raised while touching guest memory (e.g. a bad
+            // pointer) is swallowed here and will manifest as the
+            // usual access-fault on the *next* instruction fetch.
+            let _ = cpu.handle_advice_write(src_ptr, len);
+            return;
+        }
+
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_trap_handler_reg = allocator.trap_handler_register();
+        let vr_mepc = allocator.mepc_register();
+        let vr_mcause = allocator.mcause_register();
+        let vr_mtval = allocator.mtval_register();
+        let vr_mstatus = allocator.mstatus_register();
+
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+
+        let ecall_addr = allocator.allocate();
+        asm.emit_u::<AUIPC>(*ecall_addr, 0);
+        asm.emit_i::<ADDI>(vr_mepc, *ecall_addr, 0);
+        drop(ecall_addr);
+
+        asm.emit_i::<ADDI>(vr_mcause, 0, MCAUSE_ECALL_FROM_MMODE);
+        asm.emit_i::<ADDI>(vr_mtval, 0, 0);
+
+        // mstatus = 0x1800 (MPP=3 at bits 12:11)
+        let three = allocator.allocate();
+        asm.emit_i::<ADDI>(*three, 0, 3);
+        asm.emit_i::<SLLI>(vr_mstatus, *three, 11);
+        drop(three);
+
+        asm.emit_i::<JALR>(0, v_trap_handler_reg, 0);
+
+        asm.finalize()
+    }
+}

@@ -20,7 +20,7 @@ impl JoltParameterSet for RV64IParameterSet {
         max_input_size: constants::DEFAULT_MAX_INPUT_SIZE,
         max_output_size: constants::DEFAULT_MAX_OUTPUT_SIZE,
         stack_size: constants::DEFAULT_STACK_SIZE,
-        memory_size: constants::DEFAULT_MEMORY_SIZE,
+        heap_size: constants::DEFAULT_HEAP_SIZE,
         program_size: None,
         max_trusted_advice_size: constants::DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
         max_untrusted_advice_size: constants::DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,

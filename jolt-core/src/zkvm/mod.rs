@@ -116,22 +116,21 @@ where
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
-// TODO: Perhaps better we have something like a JoltClaim with this stuff in
-// it and have a method on that to append that to the transcript.
+/// Absorb public instance data into the transcript for Fiat-Shamir.
 pub fn fiat_shamir_preamble(
     program_io: &JoltDevice,
     ram_K: usize,
     trace_length: usize,
     transcript: &mut impl Transcript,
 ) {
-    transcript.append_u64(program_io.memory_layout.max_input_size);
-    transcript.append_u64(program_io.memory_layout.max_output_size);
-    transcript.append_u64(program_io.memory_layout.memory_size);
-    transcript.append_bytes(&program_io.inputs);
-    transcript.append_bytes(&program_io.outputs);
-    transcript.append_u64(program_io.panic as u64);
-    transcript.append_u64(ram_K as u64);
-    transcript.append_u64(trace_length as u64);
+    transcript.append_u64(b"max_input_size", program_io.memory_layout.max_input_size);
+    transcript.append_u64(b"max_output_size", program_io.memory_layout.max_output_size);
+    transcript.append_u64(b"heap_size", program_io.memory_layout.heap_size);
+    transcript.append_bytes(b"inputs", &program_io.inputs);
+    transcript.append_bytes(b"outputs", &program_io.outputs);
+    transcript.append_u64(b"panic", program_io.panic as u64);
+    transcript.append_u64(b"ram_K", ram_K as u64);
+    transcript.append_u64(b"trace_length", trace_length as u64);
 }
 
 #[cfg(feature = "prover")]

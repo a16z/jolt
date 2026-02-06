@@ -103,22 +103,20 @@ fn alloc(n: u32) -> u32 {
 ```
 
 ## Print statements
-Jolt provides utilities emulating `print!` and `println!` in a guest program.
+Jolt supports standard `print!` and `println!` macros in guest programs.
 
 ### Example
 
 ```rust
-use jolt::{jolt_print, jolt_println};
-
-#[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
+#[jolt::provable(heap_size = 10240, max_trace_length = 65536)]
 fn int_to_string(n: i32) -> String {
-    jolt_print!("Hello, ")
-    jolt_println!("from int_to_string({n})!");
+    print!("Hello, ");
+    println!("from int_to_string({n})!");
     n.to_string()
 }
 ```
 
-Note that `jolt_print` and `jolt_println` support format strings. The printed strings are written to stdout during RISC-V emulation of the guest.
+The printed strings are written to stdout during RISC-V emulation of the guest.
 
 ## Optimization level
 

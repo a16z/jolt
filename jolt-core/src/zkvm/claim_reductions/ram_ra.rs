@@ -1,8 +1,7 @@
 //! RAM RA claim reduction sumcheck.
 //!
 //! Consolidates the four RAM RA claims (from RafEvaluation, ReadWriteChecking, ValEvaluation,
-//! ValFinal) into a single claim for the RA virtualization sumcheck. See `mod.rs` for claim
-//! coincidence constraints.
+//! ValFinal) into a single claim for the RA virtualization sumcheck.
 //!
 //! ## Sumcheck Identity
 //!
