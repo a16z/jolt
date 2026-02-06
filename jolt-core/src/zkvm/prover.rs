@@ -1319,7 +1319,7 @@ impl<
         &mut self,
         stage8_data: &Stage8ZkData<F>,
         joint_opening_proof: &PCS::Proof,
-    ) -> (BlindFoldProof<F, C>, [F; 9]) {
+    ) -> (BlindFoldProof<F, C, PCS>, [F; 9]) {
         tracing::info!("BlindFold proving");
 
         let mut rng = rand::thread_rng();
@@ -1620,7 +1620,12 @@ impl<
 
         // Run BlindFold protocol
         let eval_commitment_gens = PCS::eval_commitment_gens(&self.preprocessing.generators);
-        let prover = BlindFoldProver::new(&pedersen_generators, &r1cs, eval_commitment_gens);
+        let prover = BlindFoldProver::<_, _, PCS>::new(
+            &pedersen_generators,
+            &r1cs,
+            eval_commitment_gens,
+            &self.preprocessing.generators,
+        );
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
         let proof = prover.prove(&real_instance, &real_witness, &z, &mut blindfold_transcript);
@@ -3136,9 +3141,14 @@ mod tests {
             &mut rng,
         );
 
-        // Run BlindFold protocol
-        let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        use crate::poly::commitment::mock::MockCommitScheme;
+        type TestPCS = MockCommitScheme<Fr>;
+
+        let pcs_prover_setup = ();
+        let pcs_verifier_setup = ();
+        let prover = BlindFoldProver::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_prover_setup);
+        let verifier =
+            BlindFoldVerifier::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_verifier_setup);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_E2E");
         let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);

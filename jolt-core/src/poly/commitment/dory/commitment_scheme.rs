@@ -50,7 +50,9 @@ impl DoryOpeningProofHint {
     fn new(row_commitments: Vec<ArkG1>) -> Self {
         let pad = match DoryGlobals::current_context() {
             DoryContext::Main => DoryHintPad::Replicate,
-            DoryContext::TrustedAdvice | DoryContext::UntrustedAdvice => DoryHintPad::ZeroPad,
+            DoryContext::TrustedAdvice | DoryContext::UntrustedAdvice | DoryContext::BlindFoldE => {
+                DoryHintPad::ZeroPad
+            }
         };
         Self {
             row_commitments,

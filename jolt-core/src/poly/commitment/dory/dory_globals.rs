@@ -22,7 +22,12 @@ static mut UNTRUSTED_ADVICE_T: OnceLock<usize> = OnceLock::new();
 static mut UNTRUSTED_ADVICE_MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
 static mut UNTRUSTED_ADVICE_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
 
-// Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice
+// BlindFold E polynomial globals
+static mut BLINDFOLD_E_T: OnceLock<usize> = OnceLock::new();
+static mut BLINDFOLD_E_MAX_NUM_ROWS: OnceLock<usize> = OnceLock::new();
+static mut BLINDFOLD_E_NUM_COLUMNS: OnceLock<usize> = OnceLock::new();
+
+// Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice, 3=BlindFoldE
 static CURRENT_CONTEXT: AtomicU8 = AtomicU8::new(0);
 
 /// Dory commitment context - determines which set of global parameters to use
@@ -31,6 +36,7 @@ pub enum DoryContext {
     Main = 0,
     TrustedAdvice = 1,
     UntrustedAdvice = 2,
+    BlindFoldE = 3,
 }
 
 impl From<u8> for DoryContext {
@@ -39,6 +45,7 @@ impl From<u8> for DoryContext {
             0 => DoryContext::Main,
             1 => DoryContext::TrustedAdvice,
             2 => DoryContext::UntrustedAdvice,
+            3 => DoryContext::BlindFoldE,
             _ => panic!("Invalid DoryContext value: {value}"),
         }
     }
@@ -124,6 +131,9 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => {
                     let _ = UNTRUSTED_ADVICE_MAX_NUM_ROWS.set(max_num_rows);
                 }
+                DoryContext::BlindFoldE => {
+                    let _ = BLINDFOLD_E_MAX_NUM_ROWS.set(max_num_rows);
+                }
             }
         }
     }
@@ -140,6 +150,9 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => *UNTRUSTED_ADVICE_MAX_NUM_ROWS
                     .get()
                     .expect("untrusted_advice max_num_rows not initialized"),
+                DoryContext::BlindFoldE => *BLINDFOLD_E_MAX_NUM_ROWS
+                    .get()
+                    .expect("blindfold_e max_num_rows not initialized"),
             }
         }
     }
@@ -157,6 +170,9 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => {
                     let _ = UNTRUSTED_ADVICE_NUM_COLUMNS.set(num_columns);
                 }
+                DoryContext::BlindFoldE => {
+                    let _ = BLINDFOLD_E_NUM_COLUMNS.set(num_columns);
+                }
             }
         }
     }
@@ -173,6 +189,9 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => *UNTRUSTED_ADVICE_NUM_COLUMNS
                     .get()
                     .expect("untrusted_advice num_columns not initialized"),
+                DoryContext::BlindFoldE => *BLINDFOLD_E_NUM_COLUMNS
+                    .get()
+                    .expect("blindfold_e num_columns not initialized"),
             }
         }
     }
@@ -190,6 +209,9 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => {
                     let _ = UNTRUSTED_ADVICE_T.set(t);
                 }
+                DoryContext::BlindFoldE => {
+                    let _ = BLINDFOLD_E_T.set(t);
+                }
             }
         }
     }
@@ -206,6 +228,9 @@ impl DoryGlobals {
                 DoryContext::UntrustedAdvice => *UNTRUSTED_ADVICE_T
                     .get()
                     .expect("untrusted_advice t not initialized"),
+                DoryContext::BlindFoldE => {
+                    *BLINDFOLD_E_T.get().expect("blindfold_e t not initialized")
+                }
             }
         }
     }
@@ -257,23 +282,23 @@ impl DoryGlobals {
     pub fn reset() {
         #[allow(static_mut_refs)]
         unsafe {
-            // Reset main globals
             let _ = GLOBAL_T.take();
             let _ = MAX_NUM_ROWS.take();
             let _ = NUM_COLUMNS.take();
 
-            // Reset trusted advice globals
             let _ = TRUSTED_ADVICE_T.take();
             let _ = TRUSTED_ADVICE_MAX_NUM_ROWS.take();
             let _ = TRUSTED_ADVICE_NUM_COLUMNS.take();
 
-            // Reset untrusted advice globals
             let _ = UNTRUSTED_ADVICE_T.take();
             let _ = UNTRUSTED_ADVICE_MAX_NUM_ROWS.take();
             let _ = UNTRUSTED_ADVICE_NUM_COLUMNS.take();
+
+            let _ = BLINDFOLD_E_T.take();
+            let _ = BLINDFOLD_E_MAX_NUM_ROWS.take();
+            let _ = BLINDFOLD_E_NUM_COLUMNS.take();
         }
 
-        // Reset context to Main
         CURRENT_CONTEXT.store(0, Ordering::SeqCst);
     }
 

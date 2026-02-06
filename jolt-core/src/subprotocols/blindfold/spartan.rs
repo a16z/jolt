@@ -99,22 +99,21 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BlindFoldSpartanParams<F> {
 ///
 /// Proves: Σ_x eq(τ,x) · [Az(x)·Bz(x) - u·Cz(x) - E(x)] = 0
 pub struct BlindFoldSpartanProver<'a, F: JoltField> {
-    /// Parameters
     params: BlindFoldSpartanParams<F>,
-    /// A·Z evaluated at each constraint row, padded to power of 2
     az: DensePolynomial<F>,
-    /// B·Z evaluated at each constraint row, padded to power of 2
     bz: DensePolynomial<F>,
-    /// C·Z evaluated at each constraint row, padded to power of 2
     cz: DensePolynomial<F>,
-    /// Error vector E, padded to power of 2
-    e: DensePolynomial<F>,
-    /// eq(τ, ·) polynomial as expandable table
+    pub(super) e: DensePolynomial<F>,
     eq_tau: DensePolynomial<F>,
-    /// Reference to R1CS for opening computation
     r1cs: &'a VerifierR1CS<F>,
-    /// Full Z vector (for opening proofs)
     z: Vec<F>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: JoltField> allocative::Allocative for BlindFoldSpartanProver<'_, F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let _ = visitor;
+    }
 }
 
 impl<'a, F: JoltField> BlindFoldSpartanProver<'a, F> {
@@ -577,8 +576,7 @@ mod tests {
 
         assert_eq!(
             bound_result, mle_result,
-            "EqPolynomial binding mismatch: bound={:?}, mle={:?}",
-            bound_result, mle_result
+            "EqPolynomial binding mismatch: bound={bound_result:?}, mle={mle_result:?}",
         );
     }
 

@@ -19,6 +19,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::unipoly::CompressedUniPoly;
 use crate::transcripts::{AppendToTranscript, Transcript};
@@ -50,38 +51,38 @@ pub struct FinalOutputInfo {
 /// The witness is never revealed. A Spartan sumcheck proves that the
 /// folded R1CS is satisfied. Opening proofs are deferred to joint verification.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
-    /// Commitment to the BlindFold witness W (only data unique to BlindFold)
+pub struct BlindFoldProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>> {
     pub witness_commitment: C::G1,
-    /// Commitment to cross-term T
     pub cross_term_commitment: C::G1,
-    /// Spartan sumcheck round polynomials (compressed)
     pub spartan_proof: Vec<CompressedUniPoly<F>>,
-    /// Information about final_output variables for verifier coefficient consistency checking
     pub final_output_info: Vec<FinalOutputInfo>,
+    pub e_commitment: PCS::Commitment,
+    pub e_claim: F,
+    pub e_opening_proof: PCS::Proof,
 }
 
 /// BlindFold prover.
-pub struct BlindFoldProver<'a, F: JoltField, C: JoltCurve> {
-    /// Pedersen generators for commitments
+pub struct BlindFoldProver<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>> {
     gens: &'a PedersenGenerators<C>,
-    /// Verifier R1CS for sumcheck verification
     r1cs: &'a VerifierR1CS<F>,
-    /// Generators for evaluation commitments (g1_0, h1)
     eval_commitment_gens: Option<(C::G1, C::G1)>,
+    pcs_setup: &'a PCS::ProverSetup,
 }
 
-impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
-    /// Create a new BlindFold prover.
+impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
+    BlindFoldProver<'a, F, C, PCS>
+{
     pub fn new(
         gens: &'a PedersenGenerators<C>,
         r1cs: &'a VerifierR1CS<F>,
         eval_commitment_gens: Option<(C::G1, C::G1)>,
+        pcs_setup: &'a PCS::ProverSetup,
     ) -> Self {
         Self {
             gens,
             r1cs,
             eval_commitment_gens,
+            pcs_setup,
         }
     }
 
@@ -102,8 +103,11 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         real_witness: &RelaxedR1CSWitness<F>,
         real_z: &[F],
         transcript: &mut T,
-    ) -> BlindFoldProof<F, C> {
+    ) -> BlindFoldProof<F, C, PCS> {
         use super::spartan::BlindFoldSpartanProver;
+        use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
+        use crate::poly::dense_mlpoly::DensePolynomial;
+        use crate::poly::multilinear_polynomial::MultilinearPolynomial;
         use crate::utils::math::Math;
         use rand_chacha::ChaCha20Rng;
         use rand_core::SeedableRng;
@@ -178,21 +182,44 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
 
         // Run sumcheck rounds
         let mut spartan_proof = Vec::with_capacity(num_vars);
+        let mut spartan_challenges: Vec<F::Challenge> = Vec::with_capacity(num_vars);
         let mut claim = F::zero(); // Spartan starts at 0
 
         for _ in 0..num_vars {
             let poly = spartan_prover.compute_round_polynomial(claim);
 
-            // Append polynomial to transcript
             let compressed = poly.compress();
             compressed.append_to_transcript(transcript);
             spartan_proof.push(compressed);
 
-            // Get challenge and update
             let r_j = transcript.challenge_scalar_optimized::<F>();
             claim = poly.evaluate(&r_j);
             spartan_prover.bind_challenge(r_j);
+            spartan_challenges.push(r_j);
         }
+
+        let final_claims = spartan_prover.final_claims();
+        let e_claim = final_claims.e_r;
+
+        // Commit E polynomial using Dory
+        let padded_len = self.r1cs.num_constraints.next_power_of_two();
+        let mut e_padded = folded_witness.E;
+        e_padded.resize(padded_len, F::zero());
+
+        DoryGlobals::initialize_context(1, padded_len, DoryContext::BlindFoldE);
+        let _guard = DoryGlobals::with_context(DoryContext::BlindFoldE);
+
+        let e_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(e_padded));
+        let (e_commitment, e_hint) = PCS::commit(&e_poly, self.pcs_setup);
+        e_commitment.append_to_transcript(transcript);
+
+        let (e_opening_proof, _) = PCS::prove(
+            self.pcs_setup,
+            &e_poly,
+            &spartan_challenges,
+            Some(e_hint),
+            transcript,
+        );
 
         // Collect final_output info for verifier
         let final_output_info: Vec<FinalOutputInfo> = self
@@ -227,6 +254,9 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             cross_term_commitment: T_bar,
             spartan_proof,
             final_output_info,
+            e_commitment,
+            e_claim,
+            e_opening_proof,
         }
     }
 }
@@ -244,24 +274,21 @@ fn estimate_aux_var_count(constraint: &super::OutputClaimConstraint) -> usize {
 }
 
 /// BlindFold verifier.
-pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve> {
-    /// Pedersen generators (for opening proof verification)
+pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>> {
     #[allow(dead_code)]
     gens: &'a PedersenGenerators<C>,
-    /// Verifier R1CS for sumcheck verification
     r1cs: &'a VerifierR1CS<F>,
-    /// Generators for evaluation commitments (for opening proof verification)
     #[allow(dead_code)]
     eval_commitment_gens: Option<(C::G1, C::G1)>,
+    pcs_setup: &'a PCS::VerifierSetup,
 }
 
 /// Error type for BlindFold verification.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BlindFoldVerifyError {
-    /// Spartan sumcheck round polynomial failed verification at specified round
     SpartanSumcheckFailed(usize),
-    /// Wrong number of Spartan proof rounds
     WrongSpartanProofLength { expected: usize, got: usize },
+    EOpeningFailed,
 }
 
 /// Data needed by verifier to reconstruct the real instance.
@@ -274,17 +301,20 @@ pub struct BlindFoldVerifierInput<F: JoltField, C: JoltCurve> {
     pub eval_commitments: Vec<C::G1>,
 }
 
-impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
-    /// Create a new BlindFold verifier.
+impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
+    BlindFoldVerifier<'a, F, C, PCS>
+{
     pub fn new(
         gens: &'a PedersenGenerators<C>,
         r1cs: &'a VerifierR1CS<F>,
         eval_commitment_gens: Option<(C::G1, C::G1)>,
+        pcs_setup: &'a PCS::VerifierSetup,
     ) -> Self {
         Self {
             gens,
             r1cs,
             eval_commitment_gens,
+            pcs_setup,
         }
     }
 
@@ -303,10 +333,11 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
     /// - eval_commitments: from the joint opening proof
     pub fn verify<T: Transcript>(
         &self,
-        proof: &BlindFoldProof<F, C>,
+        proof: &BlindFoldProof<F, C, PCS>,
         input: &BlindFoldVerifierInput<F, C>,
         transcript: &mut T,
     ) -> Result<(), BlindFoldVerifyError> {
+        use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
         use crate::utils::math::Math;
 
         // Step 1: Reconstruct the real instance from inputs
@@ -366,38 +397,38 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         // Generate tau and verify sumcheck rounds
         let _tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
         let mut claim = F::zero(); // Spartan starts at 0
-        let mut _challenges = Vec::with_capacity(num_vars);
+        let mut challenges: Vec<F::Challenge> = Vec::with_capacity(num_vars);
 
         for (round, compressed_poly) in proof.spartan_proof.iter().enumerate() {
-            // Append polynomial to transcript (for Fiat-Shamir)
             compressed_poly.append_to_transcript(transcript);
 
-            // Decompress and verify: p(0) + p(1) = claim
             let poly = compressed_poly.decompress(&claim);
-            // Evaluate at 0 and 1 using F directly
             let sum = poly.coeffs[0] + poly.coeffs.iter().sum::<F>(); // p(0) + p(1)
             if sum != claim {
                 return Err(BlindFoldVerifyError::SpartanSumcheckFailed(round));
             }
 
-            // Get challenge and update claim
             let r_j = transcript.challenge_scalar_optimized::<F>();
-            _challenges.push(r_j);
+            challenges.push(r_j);
             claim = poly.evaluate(&r_j);
         }
 
-        // The final claim will be verified via polynomial opening proofs
-        // (deferred to joint verification with Dory)
-        //
-        // Final check would be:
-        // claim == eq(tau, r) * (Az(r)*Bz(r) - u*Cz(r) - E(r))
-        //
-        // Where:
-        // - Az(r) = pub_az + w_az (public + witness contribution)
-        // - w_az, w_bz, w_cz come from inner product of W with A', B', C'
-        // - E(r) comes from inner product of E with eq(r, ·)
-        //
-        // These opening claims are batched into the joint Dory proof.
+        // Verify E polynomial opening
+        let padded_len = self.r1cs.num_constraints.next_power_of_two();
+        DoryGlobals::initialize_context(1, padded_len, DoryContext::BlindFoldE);
+        let _guard = DoryGlobals::with_context(DoryContext::BlindFoldE);
+
+        proof.e_commitment.append_to_transcript(transcript);
+
+        PCS::verify(
+            &proof.e_opening_proof,
+            self.pcs_setup,
+            transcript,
+            &challenges,
+            &proof.e_claim,
+            &proof.e_commitment,
+        )
+        .map_err(|_| BlindFoldVerifyError::EOpeningFailed)?;
 
         let _ = folded_instance; // Will be used for opening verification
 
@@ -451,12 +482,15 @@ mod tests {
     use super::*;
     use crate::curve::Bn254Curve;
     use crate::curve::JoltCurve;
+    use crate::poly::commitment::mock::MockCommitScheme;
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
     use crate::subprotocols::blindfold::StageConfig;
     use crate::transcripts::KeccakTranscript;
     use ark_bn254::Fr;
     use rand::thread_rng;
+
+    type TestPCS = MockCommitScheme<Fr>;
 
     fn round_commitment_data<F: JoltField, C: JoltCurve, R: rand_core::RngCore>(
         gens: &PedersenGenerators<C>,
@@ -527,9 +561,11 @@ mod tests {
             &mut rng,
         );
 
-        // Create prover and verifier
-        let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let pcs_prover_setup = ();
+        let pcs_verifier_setup = ();
+        let prover = BlindFoldProver::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_prover_setup);
+        let verifier =
+            BlindFoldVerifier::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_verifier_setup);
 
         // Generate proof
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
@@ -592,10 +628,12 @@ mod tests {
             &mut rng,
         );
 
-        let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let pcs_prover_setup = ();
+        let pcs_verifier_setup = ();
+        let prover = BlindFoldProver::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_prover_setup);
+        let verifier =
+            BlindFoldVerifier::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_verifier_setup);
 
-        // Generate valid proof
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
 
@@ -694,8 +732,11 @@ mod tests {
             &mut rng,
         );
 
-        let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let pcs_prover_setup = ();
+        let pcs_verifier_setup = ();
+        let prover = BlindFoldProver::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_prover_setup);
+        let verifier =
+            BlindFoldVerifier::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_verifier_setup);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_multi");
         let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
