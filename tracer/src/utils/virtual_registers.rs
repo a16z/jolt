@@ -57,9 +57,6 @@ pub struct VirtualRegisterAllocator {
     /// At the end of the inline execution all registers have to be reset to 0
     /// This variable tracks which registers were allocated during inline execution
     pending_clearing_inline: Arc<Mutex<Vec<u8>>>,
-    /// Tracks whether the current ECALL is a CSR ECALL (for trap handler setup).
-    /// Set by cpu.handle_syscall(), read by ECALL.trace() to determine inline sequence.
-    is_csr_ecall: Arc<Mutex<bool>>,
 }
 
 impl VirtualRegisterAllocator {
@@ -67,7 +64,6 @@ impl VirtualRegisterAllocator {
         Self {
             allocated: Arc::new(Mutex::new([false; NUM_VIRTUAL_REGISTERS])),
             pending_clearing_inline: Arc::new(Mutex::new(Vec::new())),
-            is_csr_ecall: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -133,24 +129,6 @@ impl VirtualRegisterAllocator {
         }
     }
 
-    /// Set whether the current ECALL is a CSR ECALL (for trap handler setup).
-    /// Called by cpu.handle_syscall() to communicate with ECALL.trace().
-    pub fn set_is_csr_ecall(&self, value: bool) {
-        *self
-            .is_csr_ecall
-            .lock()
-            .expect("Failed to lock is_csr_ecall") = value;
-    }
-
-    /// Get whether the current ECALL is a CSR ECALL.
-    /// Called by ECALL.trace() to determine which inline sequence to use.
-    pub fn is_csr_ecall(&self) -> bool {
-        *self
-            .is_csr_ecall
-            .lock()
-            .expect("Failed to lock is_csr_ecall")
-    }
-
     /// Allocate virtual register that can be used in the inline sequence of
     /// an instruction. Skips reserved registers (32-39) and uses registers 40-46.
     pub(crate) fn allocate(&self) -> VirtualRegisterGuard {
@@ -177,8 +155,10 @@ impl VirtualRegisterAllocator {
 
     /// Allocate virtual register that can be used in an inline.
     /// Uses registers 47+ (skips reserved 32-39 and instruction 40-46).
+    ///
+    /// A register may be allocated multiple times (e.g., separately by advice and inline
+    /// sequence), but only cleared once.
     pub fn allocate_for_inline(&self) -> VirtualRegisterGuard {
-        // Skip reserved registers (32-39) and instruction registers (40-46)
         let skip_count = NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS;
         for (i, allocated) in self
             .allocated
@@ -190,12 +170,16 @@ impl VirtualRegisterAllocator {
         {
             if !*allocated {
                 *allocated = true;
-                self.pending_clearing_inline
+                let reg = i as u8 + RISCV_REGISTER_BASE;
+                let mut pending = self
+                    .pending_clearing_inline
                     .lock()
-                    .expect("Failed to lock virtual register allocator")
-                    .push(i as u8 + RISCV_REGISTER_BASE);
+                    .expect("Failed to lock virtual register allocator");
+                if !pending.contains(&reg) {
+                    pending.push(reg);
+                }
                 return VirtualRegisterGuard {
-                    index: i as u8 + RISCV_REGISTER_BASE,
+                    index: reg,
                     allocator: self.clone(),
                 };
             }
@@ -420,21 +404,5 @@ mod tests {
 
         // Test unsupported CSR
         assert_eq!(allocator.csr_to_virtual_register(0x999), None);
-    }
-
-    #[test]
-    fn test_is_csr_ecall() {
-        let allocator = VirtualRegisterAllocator::new();
-
-        // Default is false
-        assert!(!allocator.is_csr_ecall());
-
-        // Set to true
-        allocator.set_is_csr_ecall(true);
-        assert!(allocator.is_csr_ecall());
-
-        // Set back to false
-        allocator.set_is_csr_ecall(false);
-        assert!(!allocator.is_csr_ecall());
     }
 }

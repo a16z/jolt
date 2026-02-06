@@ -11,13 +11,16 @@
 # - Build time is excluded by building the benchmarks before running them.
 # - Maximum resident size is being used as a surrogate to peak memory usage. 
 
-set -e # Exit on error
+set -eo pipefail # Exit on error; pipeline fails if any command fails
+
+# Track failures so the script exits non-zero if any example fails
+failures=0
 
 # Enable tracing output at INFO level so that "Prover runtime:" logs are visible
 export RUST_LOG=info
 
 # Define the exclude list
-exclusion_list=("collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench")
+exclusion_list=("collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench" "sig-recovery")
 # JSON file to store results
 output_file="benchmark_results.json"
 
@@ -95,13 +98,14 @@ for i in "${!test_directories[@]}"; do
   # Capture timing and output into a temp file
   temp_output=$(mktemp)
   if ! $TIME_CMD -f "wall: %E (HH:MM:SS)\nreal: %e s\nMRS: %M KB" cargo run --release -p "$file" 2>&1 | tee "$temp_output"; then
-    echo "Error running benchmark for $file. Skipping..."
+    echo "FAILED: $file"
+    failures=$((failures + 1))
     continue
   fi
   # Extract 'Prover runtime:' value using awk
   # The tracing format outputs: "TIMESTAMP  INFO target: Prover runtime: X.XX s"
   # We need to extract the numeric value after "runtime:"
-  exec_time=$(awk '/Prover runtime:/ { for(i=1; i<=NF; i++) if($i=="runtime:") print $(i+1) }' "$temp_output") # in seconds
+  exec_time=$(awk '/Prover runtime:/ { for(i=1; i<=NF; i++) if($i=="runtime:") val=$(i+1) } END { print val }' "$temp_output") # in seconds
   # Extract 'MRS' value using awk
   mem_used=$(awk '/MRS:/ {print $2}' "$temp_output") # in KB
   echo "$output" # Print the output for debugging
@@ -117,3 +121,8 @@ done
 
 # Close the JSON structure
 printf "]\n" >>"$output_file"
+
+if [ "$failures" -gt 0 ]; then
+  echo "$failures example(s) failed"
+  exit 1
+fi

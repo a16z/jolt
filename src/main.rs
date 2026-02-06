@@ -14,7 +14,7 @@ use rand::prelude::SliceRandom;
 use sysinfo::System;
 
 use build_wasm::{build_wasm, modify_cargo_toml};
-use zeroos_build::cmds::{BuildArgs, StdMode};
+use zeroos_build::cmds::{build::BacktraceMode, BuildArgs, StdMode};
 use zeroos_build::spec::TargetRenderOptions;
 
 #[global_allocator]
@@ -190,22 +190,57 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     };
 
     let opt_flag = guest_opt_flag();
-    let jolt_rustflags: &[&str] = &[
+
+    // Strip symbols for smaller ELFs. Preserve them when JOLT_BACKTRACE is set
+    // or --backtrace enable is passed, so the tracer can symbolize panic backtraces.
+    // In auto mode (default), strip for release and preserve for debug/dev profiles.
+    let backtrace_via_env = std::env::var("JOLT_BACKTRACE")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
+    let preserve_symbols = backtrace_via_env
+        || match args.base.backtrace {
+            BacktraceMode::Enable => true,
+            BacktraceMode::Disable => false,
+            BacktraceMode::Auto => {
+                let profile = zeroos_build::project::detect_profile(&args.base.cargo_args);
+                matches!(profile.as_str(), "debug" | "dev")
+            }
+        };
+
+    let mut jolt_rustflags: Vec<&str> = vec![
         "-Cpasses=lower-atomic",
         "-Cpanic=abort",
         &opt_flag,
-        // Disable LLVM's MachineOutliner: it generates a faulty calling pattern on RISC-V
-        // that creates infinite loops (auipc t1,0; jr offset(t1); ... jr t1 returns to auipc).
+        // Disable MachineOutliner: generates broken call patterns on RISC-V (infinite loops).
         "-Cllvm-args=-enable-machine-outliner=never",
         "--cfg=getrandom_backend=\"custom\"",
     ];
+
+    // Also set medany for C code (cc crate reads CFLAGS_{target}).
+    let cflags_target = match args.base.mode {
+        StdMode::Std => "riscv64imac_zero_linux_musl",
+        StdMode::NoStd => "riscv64imac_unknown_none_elf",
+    };
+    let cflags_key = format!("CFLAGS_{cflags_target}");
+    let mut cflags = std::env::var(&cflags_key).unwrap_or_default();
+    if !cflags.contains("-mcmodel=medany") {
+        if !cflags.is_empty() {
+            cflags.push(' ');
+        }
+        cflags.push_str("-mcmodel=medany");
+        std::env::set_var(&cflags_key, &cflags);
+    }
+
+    if !preserve_symbols {
+        jolt_rustflags.push("-Cstrip=symbols");
+    }
 
     zeroos_build::cmds::build_binary_with_rustflags(
         &workspace_root,
         &args.base,
         toolchain_paths,
         Some(linker_tpl),
-        Some(jolt_rustflags),
+        Some(&jolt_rustflags),
     )?;
 
     Ok(())
