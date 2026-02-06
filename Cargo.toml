@@ -77,6 +77,8 @@ members = [
     "examples/merkle-tree/guest",
     "examples/hash-bench",
     "examples/hash-bench/guest",
+    "examples/msm",
+    "examples/msm/guest",
     "examples/sig-recovery/host",
     "examples/sig-recovery/guest",
     "zklean-extractor",

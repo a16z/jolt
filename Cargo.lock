@@ -3340,6 +3340,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "msm-bench"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "jolt-inlines-grumpkin",
+ "jolt-sdk",
+ "msm-bench-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "msm-bench-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-grumpkin",
+ "jolt-sdk",
+]
+
+[[package]]
 name = "muldiv"
 version = "0.1.0"
 dependencies = [

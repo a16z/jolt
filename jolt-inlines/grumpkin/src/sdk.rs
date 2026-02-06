@@ -1,58 +1,77 @@
 //! grumpkin operations optimized for Jolt zkVM.
 
+#[cfg(feature = "host")]
+use ark_ff::BigInteger;
 use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField, Zero};
 use ark_grumpkin::{Fq, Fr};
+
+#[cfg(feature = "host")]
+use num_bigint::BigInt as NBigInt;
+#[cfg(feature = "host")]
+use num_bigint::Sign;
+#[cfg(feature = "host")]
+use num_integer::Integer;
 
 use serde::{Deserialize, Serialize};
 
 /// Returns `true` iff `x >= p` (Fq modulus), i.e., `x` is non-canonical.
-/// Manually unrolled for performance.
+/// Specialized: since p's upper 3 limbs are all u64::MAX, x >= p iff
+/// all upper 3 limbs are MAX and limb[0] >= Fq::MODULUS.0[0].
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 #[inline(always)]
 fn is_fq_non_canonical(x: &[u64; 4]) -> bool {
-    if x[3] < Fq::MODULUS.0[3] {
-        return false;
-    } else if x[3] > Fq::MODULUS.0[3] {
+    let m = Fq::MODULUS.0;
+    if x[3] > m[3] {
         return true;
-    } else if x[2] < Fq::MODULUS.0[2] {
-        return false;
-    } else if x[2] > Fq::MODULUS.0[2] {
-        return true;
-    } else if x[1] < Fq::MODULUS.0[1] {
-        return false;
-    } else if x[1] > Fq::MODULUS.0[1] {
-        return true;
-    } else {
-        x[0] >= Fq::MODULUS.0[0]
     }
+    if x[3] < m[3] {
+        return false;
+    }
+    if x[2] > m[2] {
+        return true;
+    }
+    if x[2] < m[2] {
+        return false;
+    }
+    if x[1] > m[1] {
+        return true;
+    }
+    if x[1] < m[1] {
+        return false;
+    }
+    x[0] >= m[0]
 }
 
 /// Returns `true` iff `x >= n` (Fr modulus), i.e., `x` is non-canonical.
-/// Manually unrolled for performance.
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 #[inline(always)]
 fn is_fr_non_canonical(x: &[u64; 4]) -> bool {
-    if x[3] < Fr::MODULUS.0[3] {
-        return false;
-    } else if x[3] > Fr::MODULUS.0[3] {
+    let m = Fr::MODULUS.0;
+    if x[3] > m[3] {
         return true;
-    } else if x[2] < Fr::MODULUS.0[2] {
-        return false;
-    } else if x[2] > Fr::MODULUS.0[2] {
-        return true;
-    } else if x[1] < Fr::MODULUS.0[1] {
-        return false;
-    } else if x[1] > Fr::MODULUS.0[1] {
-        return true;
-    } else {
-        x[0] >= Fr::MODULUS.0[0]
     }
+    if x[3] < m[3] {
+        return false;
+    }
+    if x[2] > m[2] {
+        return true;
+    }
+    if x[2] < m[2] {
+        return false;
+    }
+    if x[1] > m[1] {
+        return true;
+    }
+    if x[1] < m[1] {
+        return false;
+    }
+    x[0] >= m[0]
 }
 
 #[cfg(all(
@@ -114,12 +133,42 @@ impl<T> UnwrapOrSpoilProof<T> for Result<T, GrumpkinError> {
     }
 }
 
+impl<T> UnwrapOrSpoilProof<T> for Option<T> {
+    #[inline(always)]
+    fn unwrap_or_spoil_proof(self) -> T {
+        match self {
+            Some(v) => v,
+            None => {
+                hcf();
+                unreachable!()
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum GrumpkinError {
     InvalidFqElement,
     InvalidFrElement,
     NotOnCurve,
 }
+
+// Grumpkin GLV endomorphism constants (Montgomery form).
+// The endomorphism is (x, y) -> (beta * x, y), where beta^3 = 1.
+pub(crate) const GRUMPKIN_ENDO_BETA_LIMBS: [u64; 4] = [
+    244305545194690131,
+    8351807910065594880,
+    14266533074055306532,
+    404339206190769364,
+];
+
+#[allow(dead_code)]
+pub(crate) const GRUMPKIN_GLV_LAMBDA_LIMBS: [u64; 4] = [
+    3697675806616062876,
+    9065277094688085689,
+    6918009208039626314,
+    2775033306905974752,
+];
 
 /// Wrapper around ark_grumpkin::Fq with inline-accelerated division
 #[derive(Clone, PartialEq, Debug)]
@@ -228,9 +277,8 @@ impl GrumpkinFq {
             );
         }
         let tmp = other.mul(&c);
-        // Verify advice: c must be canonical and other * c == self
         if is_fq_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
-            hcf(); // Spoils proof - assert_eq! alone doesn't suffice
+            hcf();
         }
         c
     }
@@ -361,9 +409,8 @@ impl GrumpkinFr {
             );
         }
         let tmp = other.mul(&c);
-        // Verify advice: c must be canonical and other * c == self
         if is_fr_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
-            hcf(); // Spoils proof - assert_eq! alone doesn't suffice
+            hcf();
         }
         c
     }
@@ -438,6 +485,16 @@ impl GrumpkinPoint {
         arr[4..8].copy_from_slice(&self.y.e.0 .0);
         arr
     }
+
+    /// Converts the point to a `[u64; 8]` array in canonical (non-Montgomery) form.
+    #[inline(always)]
+    pub fn to_u64_arr_canonical(&self) -> [u64; 8] {
+        let mut arr = [0u64; 8];
+        arr[0..4].copy_from_slice(&self.x.e.into_bigint().0);
+        arr[4..8].copy_from_slice(&self.y.e.into_bigint().0);
+        arr
+    }
+
     /// Converts from standard form, validates on-curve.
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 8]) -> Result<Self, GrumpkinError> {
@@ -466,6 +523,140 @@ impl GrumpkinPoint {
             x: GrumpkinFq::new(ark_grumpkin::G_GENERATOR_X),
             y: GrumpkinFq::new(ark_grumpkin::G_GENERATOR_Y),
         }
+    }
+    #[inline(always)]
+    pub fn generator_w_endomorphism() -> Self {
+        Self::generator().endomorphism()
+    }
+    /// Returns beta * self where beta is the GLV endomorphism coefficient
+    #[inline(always)]
+    pub fn endomorphism(&self) -> Self {
+        if self.is_infinity() {
+            GrumpkinPoint::infinity()
+        } else {
+            let beta = GrumpkinFq::from_u64_arr_unchecked(&GRUMPKIN_ENDO_BETA_LIMBS);
+            GrumpkinPoint {
+                x: self.x.mul(&beta),
+                y: self.y.clone(),
+            }
+        }
+    }
+    /// Given k, return k1 and k2 such that k = k1 + k2 * lambda and |k1|, |k2| < 2^128
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn decompose_scalar(k: &GrumpkinFr) -> [(bool, u128); 2] {
+        let mut out = [0u64; 6];
+        unsafe {
+            use crate::{GRUMPKIN_FUNCT7, GRUMPKIN_GLVR_ADV_FUNCT3, INLINE_OPCODE};
+            core::arch::asm!(
+                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, x0",
+                opcode = const INLINE_OPCODE,
+                funct3 = const GRUMPKIN_GLVR_ADV_FUNCT3,
+                funct7 = const GRUMPKIN_FUNCT7,
+                rd = in(reg) out.as_mut_ptr(),
+                rs1 = in(reg) k.e.0.0.as_ptr(),
+                options(nostack)
+            );
+        }
+        let lambda = Fr::new_unchecked(BigInt {
+            0: GRUMPKIN_GLV_LAMBDA_LIMBS,
+        });
+        let mut k1 = Fr::from_bigint(BigInt {
+            0: [out[1], out[2], 0u64, 0u64],
+        })
+        .unwrap_or_spoil_proof();
+        if out[0] == 1u64 {
+            k1 = -k1;
+        }
+        let mut k2 = Fr::from_bigint(BigInt {
+            0: [out[4], out[5], 0u64, 0u64],
+        })
+        .unwrap_or_spoil_proof();
+        if out[3] == 1u64 {
+            k2 = -k2;
+        }
+        let recomposed_k = k1 + k2 * lambda;
+        if recomposed_k != k.e {
+            hcf();
+        }
+        [
+            (out[0] == 1u64, (out[1] as u128) | ((out[2] as u128) << 64)),
+            (out[3] == 1u64, (out[4] as u128) | ((out[5] as u128) << 64)),
+        ]
+    }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn decompose_scalar(_k: &GrumpkinFr) -> [(bool, u128); 2] {
+        panic!("GrumpkinPoint::decompose_scalar called on non-RISC-V target without host feature");
+    }
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn decompose_scalar(k: &GrumpkinFr) -> [(bool, u128); 2] {
+        let k_fr = k.e;
+        let k_bigint: NBigInt = k_fr.into_bigint().into();
+        let r = NBigInt::from_bytes_le(Sign::Plus, &Fr::MODULUS.to_bytes_le());
+        let n11 = NBigInt::from(147946756881789319000765030803803410729i128);
+        let n12 = NBigInt::from(-9931322734385697762i128);
+        let n21 = NBigInt::from(9931322734385697762i128);
+        let n22 = NBigInt::from(147946756881789319010696353538189108491i128);
+        let beta_1 = {
+            let (mut div, rem) = (&k_bigint * &n22).div_rem(&r);
+            if (&rem + &rem) > r {
+                div += NBigInt::from(1u8);
+            }
+            div
+        };
+        let beta_2 = {
+            let n12_neg = -n12.clone();
+            let (mut div, rem) = (&k_bigint * &n12_neg).div_rem(&r);
+            if (&rem + &rem) > r {
+                div += NBigInt::from(1u8);
+            }
+            div
+        };
+        let k1 = &k_bigint - &beta_1 * &n11 - &beta_2 * &n21;
+        let k2 = -(&beta_1 * &n12 + &beta_2 * &n22);
+        let serialize_k = |k: NBigInt| -> (u64, [u64; 2]) {
+            let sign = if k.sign() == Sign::Minus { 1u64 } else { 0u64 };
+            let abs_k = if sign == 1 { -k } else { k };
+            let bytes = abs_k.to_bytes_le().1;
+            assert!(
+                bytes.len() <= 16,
+                "GLV decomposition produced out-of-range half-scalar"
+            );
+            let mut arr = [0u64; 2];
+            for (i, b) in bytes.iter().enumerate() {
+                arr[i / 8] |= (*b as u64) << ((i % 8) * 8);
+            }
+            (sign, arr)
+        };
+        let (s1, k1_arr) = serialize_k(k1);
+        let (s2, k2_arr) = serialize_k(k2);
+        let k1_u = (k1_arr[0] as u128) | ((k1_arr[1] as u128) << 64);
+        let k2_u = (k2_arr[0] as u128) | ((k2_arr[1] as u128) << 64);
+        let out = [(s1 == 1u64, k1_u), (s2 == 1u64, k2_u)];
+        debug_assert!(
+            {
+                let lambda = Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS));
+                let mut k1_fr_check = Fr::from(out[0].1);
+                if out[0].0 {
+                    k1_fr_check = -k1_fr_check;
+                }
+                let mut k2_fr_check = Fr::from(out[1].1);
+                if out[1].0 {
+                    k2_fr_check = -k2_fr_check;
+                }
+                let recomposed = k1_fr_check + k2_fr_check * lambda;
+                recomposed == k_fr
+            },
+            "GLV decomposition recomposition failed"
+        );
+        out
     }
     /// (0, 0) represents infinity since it's not on the curve y² = x³ - 17
     #[inline(always)]
@@ -528,12 +719,7 @@ impl GrumpkinPoint {
             GrumpkinPoint { x: x2, y: y2 }
         }
     }
-    /// computes 2*self + other using an optimized formula that saves one field operation
-    /// compared to naive double-then-add
-    ///
-    /// Formula derivation: Let R = P + Q (intermediate point). We compute R + P directly
-    /// using the identity: the slope from P to R+P can be expressed in terms of
-    /// known quantities without explicitly computing R's y-coordinate.
+    /// Computes 2*self + other
     #[inline(always)]
     pub fn double_and_add(&self, other: &GrumpkinPoint) -> Self {
         if self.is_infinity() {
@@ -543,7 +729,6 @@ impl GrumpkinPoint {
         } else if self.x == other.x && self.y == other.y {
             self.add(self).add(other)
         } else if self.x == other.x && self.y != other.y {
-            // self + other = infinity, so 2*self + other = self
             self.clone()
         } else {
             // ns = negated slope of line through P and Q
