@@ -14,11 +14,10 @@ use rayon::prelude::*;
 ///
 /// Starts with a small set of initial values (e.g., [0, gamma, gamma^2, gamma + gamma^2])
 /// and expands by binding with random challenges. Saturates at MAX_LOOKUP_TABLE_SIZE.
-#[derive(Allocative, Debug, Default, Clone)]
+#[derive(Allocative, Debug, Clone, Default)]
 pub struct OneHotCoeffLookupTable<F: JoltField> {
     /// Grows exponentially with the number of sumcheck rounds
     lookup_table: Vec<F>,
-    pub lookup_index_bitwidth: usize,
 }
 
 /// Maximum size of lookup table (2^16 entries).
@@ -43,11 +42,10 @@ impl<F: JoltField> OneHotCoeffLookupTable<F> {
         debug_assert!(table_size.is_power_of_two());
         Self {
             lookup_table: init_coeffs,
-            lookup_index_bitwidth: table_size.log_2(),
         }
     }
 
-    /// Binds the lookup table with challenge `r`, doubling its size.
+    /// Binds the lookup table with challenge `r`, squaring its size (from N to N²).
     ///
     /// Each new entry is computed as: b + r * (a - b) for all pairs (a, b).
     pub fn bind(&mut self, r: F::Challenge) {
