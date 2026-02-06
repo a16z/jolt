@@ -31,6 +31,7 @@ impl Program {
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             std: false,
             elf: None,
+            elf_compute_advice: None,
         }
     }
 
@@ -75,8 +76,12 @@ impl Program {
         self.max_output_size = size;
     }
 
-    #[tracing::instrument(skip_all, name = "Program::build")]
     pub fn build(&mut self, target_dir: &str) {
+        self.build_with_features(target_dir, &[]);
+    }
+
+    #[tracing::instrument(skip_all, name = "Program::build_with_features")]
+    pub fn build_with_features(&mut self, target_dir: &str, extra_features: &[&str]) {
         if self.elf.is_none() {
             // Use jolt CLI to build the guest program
             // JOLT_PATH can be set to override (for development/testing)
@@ -98,13 +103,22 @@ impl Program {
             args.push("--heap-size".to_string());
             args.push(self.heap_size.to_string());
 
-            // Create per-guest target directory (isolates builds)
-            let guest_target_dir = format!(
-                "{}/{}-{}",
-                target_dir,
-                self.guest,
-                self.func.as_ref().unwrap_or(&"".to_string())
-            );
+            // Add suffix to target dir if building with compute_advice feature
+            let guest_target_dir = if extra_features.contains(&"compute_advice") {
+                format!(
+                    "{}/{}-{}-compute-advice",
+                    target_dir,
+                    self.guest,
+                    self.func.as_ref().unwrap_or(&"".to_string())
+                )
+            } else {
+                format!(
+                    "{}/{}-{}",
+                    target_dir,
+                    self.guest,
+                    self.func.as_ref().unwrap_or(&"".to_string())
+                )
+            };
 
             // Add separator for cargo passthrough args
             args.push("--".to_string());
@@ -119,7 +133,10 @@ impl Program {
             // Always pass --features guest to enable the guest feature on the example package
             // (this is separate from the jolt-sdk features specified in the example's Cargo.toml)
             args.push("--features".to_string());
-            args.push("guest".to_string());
+            let mut features = vec!["guest"];
+            features.extend_from_slice(extra_features);
+            let features_str = features.join(",");
+            args.push(features_str);
 
             let cmd_line = compose_command_line(
                 &jolt_path,
@@ -141,10 +158,16 @@ impl Program {
                 .expect("failed to run jolt - make sure it's installed (cargo install --path .)");
 
             if !output.status.success() {
-                io::stderr().write_all(&output.stderr).unwrap();
-                let output_msg = format!("::build command: \n{cmd_line}\n");
-                io::stderr().write_all(output_msg.as_bytes()).unwrap();
-                panic!("failed to compile guest with jolt");
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if stderr.contains("does not contain this feature: compute_advice") {
+                    info!("guest does not support compute_advice feature");
+                    return;
+                } else {
+                    io::stderr().write_all(&output.stderr).unwrap();
+                    let output_msg = format!("::build command: \n{cmd_line}\n");
+                    io::stderr().write_all(output_msg.as_bytes()).unwrap();
+                    panic!("failed to compile guest with jolt");
+                }
             }
 
             // Determine the ELF path based on std mode
@@ -168,15 +191,32 @@ impl Program {
                 );
             }
 
-            // Store the main ELF path
-            self.elf = Some(elf_path.clone());
-
-            info!("Built guest binary with jolt: {}", elf_path.display());
+            // If extra_features contains "compute_advice", store in elf_compute_advice
+            // Otherwise store in elf
+            if extra_features.contains(&"compute_advice") {
+                self.elf_compute_advice = Some(elf_path.clone());
+                info!("Built compute_advice guest binary: {}", elf_path.display());
+            } else {
+                self.elf = Some(elf_path.clone());
+                info!("Built guest binary with jolt: {}", elf_path.display());
+            }
         }
     }
 
     pub fn get_elf_contents(&self) -> Option<Vec<u8>> {
         if let Some(elf) = &self.elf {
+            let mut elf_file =
+                File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+            let mut elf_contents = Vec::new();
+            elf_file.read_to_end(&mut elf_contents).unwrap();
+            Some(elf_contents)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>> {
+        if let Some(elf) = &self.elf_compute_advice {
             let mut elf_file =
                 File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
             let mut elf_contents = Vec::new();
@@ -224,14 +264,16 @@ impl Program {
             program_size: Some(program_size),
         };
 
-        guest::program::trace(
+        let (lazy_trace, trace, memory, jolt_device, _advice_tape) = guest::program::trace(
             &elf_contents,
             self.elf.as_ref(),
             inputs,
             untrusted_advice,
             trusted_advice,
             &memory_config,
-        )
+            None,
+        );
+        (lazy_trace, trace, memory, jolt_device)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]

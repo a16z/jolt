@@ -25,6 +25,7 @@ pub mod instruction;
 pub mod utils;
 
 pub use common::jolt_device::JoltDevice;
+pub use cpu::{advice_tape_read, advice_tape_remaining, advice_tape_write, AdviceTape};
 pub use instruction::inline::{list_registered_inlines, register_inline};
 
 use crate::{
@@ -81,7 +82,14 @@ pub fn trace(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
-) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+    advice_tape: Option<cpu::AdviceTape>,
+) -> (
+    LazyTraceIterator,
+    Vec<Cycle>,
+    Memory,
+    JoltDevice,
+    cpu::AdviceTape,
+) {
     let mut lazy_trace_iter = trace_lazy(
         elf_contents,
         elf_path,
@@ -89,16 +97,23 @@ pub fn trace(
         untrusted_advice,
         trusted_advice,
         memory_config,
+        advice_tape,
     );
     let lazy_trace_iter_ = lazy_trace_iter.clone();
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
+
+    // Extract the populated advice tape before moving lazy_tracer
+    let advice_tape_result = lazy_trace_iter.lazy_tracer.take_advice_tape();
+
     let final_memory_state =
         std::mem::take(&mut lazy_trace_iter.lazy_tracer.final_memory_state).unwrap();
+    let jolt_device = lazy_trace_iter.lazy_tracer.get_jolt_device();
     (
-        lazy_trace_iter_,
+        lazy_trace_iter_, // Return the clone since lazy_tracer was moved
         trace,
         final_memory_state,
-        lazy_trace_iter.lazy_tracer.get_jolt_device(),
+        jolt_device,
+        advice_tape_result, // Return the populated advice tape
     )
 }
 
@@ -125,6 +140,7 @@ pub fn trace_to_file(
         untrusted_advice,
         trusted_advice,
         memory_config,
+        None,
     );
 
     for cycle in &mut lazy {
@@ -149,6 +165,7 @@ pub fn trace_lazy(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
+    advice_tape: Option<cpu::AdviceTape>,
 ) -> LazyTraceIterator {
     LazyTraceIterator::new(CheckpointingTracer::new(setup_emulator_with_backtraces(
         elf_contents,
@@ -157,6 +174,7 @@ pub fn trace_lazy(
         untrusted_advice,
         trusted_advice,
         memory_config,
+        advice_tape,
     )))
 }
 
@@ -221,6 +239,7 @@ fn setup_emulator(
         untrusted_advice,
         trusted_advice,
         memory_config,
+        None, // No advice tape by default
     )
 }
 
@@ -233,10 +252,16 @@ fn setup_emulator_with_backtraces(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
+    advice_tape: Option<cpu::AdviceTape>,
 ) -> Emulator {
     let term = DefaultTerminal::default();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
+
+    // Set the advice tape if provided
+    if let Some(tape) = advice_tape {
+        emulator.set_advice_tape(tape);
+    }
 
     assert!(
         trusted_advice.len() as u64 <= memory_config.max_trusted_advice_size,
@@ -550,6 +575,11 @@ impl CheckpointingTracer {
 
         new_processor_state
     }
+
+    /// Take ownership of the advice tape from the emulator, replacing it with an empty one
+    pub fn take_advice_tape(&mut self) -> cpu::AdviceTape {
+        self.emulator_state.take_advice_tape()
+    }
 }
 
 impl LazyTracer for CheckpointingTracer {
@@ -835,7 +865,8 @@ mod tests {
             program_size: Some(elf.len() as u64),
             ..Default::default()
         };
-        let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
+        let (_, execution_trace, _, _, _) =
+            trace(&elf, None, &INPUTS, &[], &[], &memory_config, None);
         let (checkpoints, _) = trace_checkpoints(&elf, &INPUTS, &[], &[], &memory_config, n);
         assert!(
             !execution_trace.is_empty(),
@@ -861,7 +892,8 @@ mod tests {
             ..Default::default()
         };
 
-        let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
+        let (_, execution_trace, _, _, _) =
+            trace(&elf, None, &INPUTS, &[], &[], &memory_config, None);
         let mut emulator: Emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];

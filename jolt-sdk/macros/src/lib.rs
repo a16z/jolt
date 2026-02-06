@@ -414,7 +414,12 @@ impl MacroBuilder {
                 program.set_func(#fn_name_str);
                 #set_std
                 #set_mem_size
-                program.build(target_dir);
+
+                // Build the compute_advice version first
+                program.build_with_features(target_dir, &["compute_advice"]);
+
+                // Build the normal version (without compute_advice)
+                program.build_with_features(target_dir, &[]);
 
                 program
             }
@@ -679,6 +684,43 @@ impl MacroBuilder {
                 let mut trusted_advice_bytes = vec![];
                 #(#set_program_trusted_advice_args;)*
 
+                // Two-pass strategy: First run compute_advice version to populate advice tape
+                let advice_tape = if let Some(compute_advice_elf_contents) = program.get_elf_compute_advice_contents() {
+                    use jolt::guest::program::{trace as guest_trace, decode as guest_decode};
+
+                    // Decode compute_advice ELF to get its program size
+                    let (_, _, compute_advice_program_size) = guest_decode(&compute_advice_elf_contents);
+
+                    let memory_config = MemoryConfig {
+                        max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
+                        max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
+                        max_input_size: preprocessing.shared.memory_layout.max_input_size,
+                        max_output_size: preprocessing.shared.memory_layout.max_output_size,
+                        stack_size: preprocessing.shared.memory_layout.stack_size,
+                        heap_size: preprocessing.shared.memory_layout.heap_size,
+                        program_size: Some(compute_advice_program_size),
+                    };
+
+                    // First pass: run compute_advice version to populate advice tape
+                    let (_lazy_trace, _, _, _, advice_tape) = guest_trace(
+                        &compute_advice_elf_contents,
+                        None,
+                        &input_bytes,
+                        &untrusted_advice_bytes,
+                        &trusted_advice_bytes,
+                        &memory_config,
+                        None, // Start with empty advice tape
+                    );
+
+                    // Reset read position for second pass
+                    let mut tape_for_second_pass = advice_tape;
+                    tape_for_second_pass.reset_read_position();
+                    Some(tape_for_second_pass)
+                } else {
+                    None
+                };
+
+                // Second pass: run normal version with populated advice tape to generate proof
                 let elf_contents_opt = program.get_elf_contents();
                 let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
                 let prover = RV64IMACProver::gen_from_elf(&preprocessing,
@@ -687,6 +729,7 @@ impl MacroBuilder {
                     &untrusted_advice_bytes,
                     &trusted_advice_bytes,
                     #commitment_arg,
+                    advice_tape,
                 );
                 let io_device = prover.program_io.clone();
                 let (jolt_proof, _) = prover.prove();
@@ -866,6 +909,7 @@ impl MacroBuilder {
                 MemoryConfig,
                 MemoryLayout,
                 JoltDevice,
+                AdviceTape,
             };
             use jolt::{
                 JoltVerifierPreprocessing,
@@ -1084,4 +1128,116 @@ impl MacroBuilder {
             }
         }
     }
+}
+
+/// Proc macro for advice functions.
+///
+/// Generates two versions of the function:
+/// - With `compute_advice` feature: executes the original body and writes result to advice tape
+/// - Without `compute_advice` feature: reads result from advice tape
+///
+/// The return type must be wrapped in `UntrustedAdvice<T>`.
+#[proc_macro_attribute]
+pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let func = parse_macro_input!(item as ItemFn);
+
+    // Extract function components
+    let fn_name = &func.sig.ident;
+    let fn_vis = &func.vis;
+    let fn_inputs = &func.sig.inputs;
+    let fn_output = &func.sig.output;
+    let fn_body = &func.block;
+    let fn_attrs = &func.attrs;
+
+    // Validate that no inputs are mutable
+    for arg in fn_inputs {
+        if let syn::FnArg::Typed(pat_type) = arg {
+            // Case 1: mut x: T
+            if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                if pat_ident.mutability.is_some() {
+                    panic!(
+                        "#[jolt::advice] mutable argument '{}' in function '{}'. Mutable arguments are not allowed in advice functions",
+                        pat_ident.ident, fn_name
+                    );
+                }
+            }
+            // Case 2: x: &mut T
+            if let syn::Type::Reference(type_ref) = &*pat_type.ty {
+                if type_ref.mutability.is_some() {
+                    panic!(
+                        "#[jolt::advice] mutable argument '{}' in function '{}'. Mutable arguments are not allowed in advice functions",
+                        if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                            pat_ident.ident.to_string()
+                        } else {
+                            "<unknown>".to_string()
+                        },
+                        fn_name
+                    );
+                }
+            }
+        }
+    }
+
+    // Validate return type is UntrustedAdvice<T>
+    let inner_type = match fn_output {
+        ReturnType::Type(_, ty) => {
+            // Check if type is UntrustedAdvice<T>
+            if let Type::Path(type_path) = &**ty {
+                if let Some(segment) = type_path.path.segments.last() {
+                    if segment.ident == "UntrustedAdvice" {
+                        // Extract T from UntrustedAdvice<T>
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                            if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                                inner.clone()
+                            } else {
+                                panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+                            }
+                        } else {
+                            panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+                        }
+                    } else {
+                        panic!(
+                            "#[jolt::advice] return type must be UntrustedAdvice<T>, found {}",
+                            segment.ident
+                        );
+                    }
+                } else {
+                    panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+                }
+            } else {
+                panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+            }
+        }
+        ReturnType::Default => {
+            panic!("#[jolt::advice] function must return UntrustedAdvice<T>");
+        }
+    };
+
+    // Generate the dual-mode function
+    let expanded = quote! {
+        // Version with compute_advice: execute body and write to advice tape
+        #[cfg(feature = "compute_advice")]
+        #(#fn_attrs)*
+        #fn_vis fn #fn_name(#fn_inputs) #fn_output {
+            // execute body
+            let result: #inner_type = #fn_body;
+            // Serialize and write to advice tape
+            <#inner_type as jolt::AdviceTapeIO>::write_to_advice_tape(&result);
+            // return result
+            jolt::UntrustedAdvice::new(result)
+        }
+
+        // Version without compute_advice: read from advice tape
+        #[cfg(not(feature = "compute_advice"))]
+        #[allow(unused_variables)]
+        #(#fn_attrs)*
+        #fn_vis fn #fn_name(#fn_inputs) #fn_output {
+            // get result from advice tape
+            let result: #inner_type = <#inner_type as jolt::AdviceTapeIO>::new_from_advice_tape();
+            // wrap in UntrustedAdvice and return
+            jolt::UntrustedAdvice::new(result)
+        }
+    };
+
+    TokenStream::from(expanded)
 }

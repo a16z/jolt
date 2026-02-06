@@ -1,9 +1,27 @@
 #![allow(clippy::upper_case_acronyms)]
 
+// Opcode constants
+pub const CUSTOM_OPCODE: u8 = 0x5B; // Custom instructions (virtual sequences, advice, etc.)
+pub const INLINE_OPCODE: u8 = 0x2B; // Inline instructions
+
+// funct3 values for CUSTOM_OPCODE (0x5B)
+pub const FUNCT3_VIRTUAL_REV8W: u8 = 0b000;
+pub const FUNCT3_VIRTUAL_ASSERT_EQ: u8 = 0b001;
+pub const FUNCT3_VIRTUAL_HOST_IO: u8 = 0b010;
+pub const FUNCT3_ADVICE_LB: u8 = 0b011; // Load byte from advice tape
+pub const FUNCT3_ADVICE_LH: u8 = 0b100; // Load halfword from advice tape
+pub const FUNCT3_ADVICE_LW: u8 = 0b101; // Load word from advice tape
+pub const FUNCT3_ADVICE_LD: u8 = 0b110; // Load doubleword from advice tape
+pub const FUNCT3_ADVICE_LEN: u8 = 0b111; // Get remaining bytes in advice tape
+
 use add::ADD;
 use addi::ADDI;
 use addiw::ADDIW;
 use addw::ADDW;
+use advice_lb::AdviceLB;
+use advice_ld::AdviceLD;
+use advice_lh::AdviceLH;
+use advice_lw::AdviceLW;
 use amoaddd::AMOADDD;
 use amoaddw::AMOADDW;
 use amoandd::AMOANDD;
@@ -99,6 +117,8 @@ use xor::XOR;
 use xori::XORI;
 
 use virtual_advice::VirtualAdvice;
+use virtual_advice_len::VirtualAdviceLen;
+use virtual_advice_load::VirtualAdviceLoad;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use virtual_assert_lte::VirtualAssertLTE;
@@ -147,6 +167,10 @@ pub mod add;
 pub mod addi;
 pub mod addiw;
 pub mod addw;
+pub mod advice_lb;
+pub mod advice_ld;
+pub mod advice_lh;
+pub mod advice_lw;
 pub mod amoaddd;
 pub mod amoaddw;
 pub mod amoandd;
@@ -234,6 +258,8 @@ pub mod sub;
 pub mod subw;
 pub mod sw;
 pub mod virtual_advice;
+pub mod virtual_advice_len;
+pub mod virtual_advice_load;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
@@ -646,7 +672,10 @@ define_rv32im_enums! {
         // RV64A (Atomic Memory Operations)
         LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
         // Virtual
-        VirtualAdvice, VirtualHostIO, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
+        AdviceLB, AdviceLD, AdviceLH, AdviceLW,
+        VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
+        VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
+        VirtualHostIO,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
         VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,
@@ -965,14 +994,27 @@ impl Instruction {
             0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
-            // 0x5B is reserved for virtual instructions.
+            // 0x5B is reserved for custom/virtual instructions.
             0b1011011 => {
                 let funct3 = (instr >> 12) & 0x7;
-                match funct3 {
-                    0b000 => Ok(VirtualRev8W::new(instr, address, true, compressed).into()),
-                    0b001 => Ok(VirtualAssertEQ::new(instr, address, true, compressed).into()),
-                    0b010 => Ok(VirtualHostIO::new(instr, address, true, compressed).into()),
-                    _ => Err("Invalid virtual instruction"),
+                match funct3 as u8 {
+                    FUNCT3_VIRTUAL_REV8W => {
+                        Ok(VirtualRev8W::new(instr, address, true, compressed).into())
+                    }
+                    FUNCT3_VIRTUAL_ASSERT_EQ => {
+                        Ok(VirtualAssertEQ::new(instr, address, true, compressed).into())
+                    }
+                    FUNCT3_VIRTUAL_HOST_IO => {
+                        Ok(VirtualHostIO::new(instr, address, true, compressed).into())
+                    }
+                    FUNCT3_ADVICE_LB => Ok(AdviceLB::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_LH => Ok(AdviceLH::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_LW => Ok(AdviceLW::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_LD => Ok(AdviceLD::new(instr, address, true, compressed).into()),
+                    FUNCT3_ADVICE_LEN => {
+                        Ok(VirtualAdviceLen::new(instr, address, true, compressed).into())
+                    }
+                    _ => Err("Invalid custom/virtual instruction"),
                 }
             }
             _ => Err("Unknown opcode"),

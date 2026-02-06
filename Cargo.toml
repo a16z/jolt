@@ -77,6 +77,10 @@ members = [
     "examples/merkle-tree/guest",
     "examples/hash-bench",
     "examples/hash-bench/guest",
+    "examples/modinv",
+    "examples/modinv/guest",
+    "examples/advice-demo",
+    "examples/advice-demo/guest",
     "examples/sig-recovery/host",
     "examples/sig-recovery/guest",
     "zklean-extractor",
@@ -186,8 +190,10 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0.108", default-features = false }
 rmp-serde = "1.3.0"
 bincode = "1.3.3"
-postcard = { version = "1.0.8", default-features = false }
+postcard = { version = "1.0.8", default-features = false, features = ["embedded-io-06"] }
 toml_edit = "0.22.14"
+bytemuck = "1.23.2"
+bytemuck_derive = "1.10.1"
 
 # Numeric
 num = "0.4.3"

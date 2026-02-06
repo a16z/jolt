@@ -54,6 +54,7 @@ pub fn prove<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transc
         trusted_advice_bytes,
         trusted_advice_commitment,
         trusted_advice_hint,
+        None,
     );
     let io_device = prover.program_io.clone();
     let (proof, debug_info) = prover.prove();

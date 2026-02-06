@@ -166,6 +166,7 @@ pub struct JoltCpuProver<
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn gen_from_elf(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         elf_contents: &[u8],
@@ -174,6 +175,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice: &[u8],
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
+        advice_tape: Option<tracer::AdviceTape>,
     ) -> Self {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
@@ -185,7 +187,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
-        let (lazy_trace, trace, final_memory_state, program_io) = {
+        let (lazy_trace, trace, final_memory_state, program_io, _advice_tape_out) = {
             let _pprof_trace = pprof_scope!("trace");
             guest::program::trace(
                 elf_contents,
@@ -194,6 +196,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 untrusted_advice,
                 trusted_advice,
                 &memory_config,
+                advice_tape,
             )
         };
 
@@ -1648,6 +1651,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -1693,6 +1697,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -1755,6 +1760,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -1815,6 +1821,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -1882,6 +1889,7 @@ mod tests {
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2004,6 +2012,7 @@ mod tests {
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2154,6 +2163,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2200,6 +2210,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2244,6 +2255,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -2379,6 +2391,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (proof, debug_info) = prover.prove();
@@ -2432,6 +2445,7 @@ mod tests {
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
