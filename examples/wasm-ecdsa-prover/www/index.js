@@ -199,7 +199,7 @@ async function main() {
             console.error(e);
         };
 
-        const numThreads = Math.min(navigator.hardwareConcurrency || 4, 6);
+        const numThreads = Math.min(navigator.hardwareConcurrency || 4, 12);
         setStatus(`Initializing WASM (${numThreads} threads)...`, 'loading');
 
         worker.postMessage({
