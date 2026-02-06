@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1770413997982,
+  "lastUpdate": 1770416528028,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -51586,6 +51586,222 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 792628,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mchl.zhu.96@gmail.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0effbae6d3fbe7716417ef03514f5c26903d7b57",
+          "message": "Jolt runtime advice (#1223)\n\n* Add advice store and virtual assert instructions\n\nImplement advice store instructions (AdviceSB/SH/SW/SD) and a\nVirtualAssert instruction across tracer and jolt-core so the tracer and\nproof system can handle \"runtime advice\" per the design doc. These\nchanges add instruction modules, hook them into instruction enumerations\nand lookups, and implement a persisted AdviceTape in the tracer CPU to\nrecord advice bytes during the first emulation pass and read them during\nthe second pass. Also add a JOLT_ADVICE_WRITE_ECALL_NUM constant and\nhandling to write guest memory into the advice tape. This allows advice\ndata to be serialized during the compute_advice run and consumed later\nduring normal emulation for correct tracing and proof generation.\n\n* Use virtual sequences for advice S instructions\n\nMake advice store instructions (ADVICE_SB/SH/SW) use virtual instruction\nsequences like their non-advice counterparts so 64-bit handling and\ncomplex sequences are generated through inline virtual instructions. Add\na new FormatAdviceS to represent advice-store operands (only rs1+imm, no\nrs2), and introduce VirtualAdviceLoad/VirtualAdviceSB/VirtualAdviceSW\nvirtual instructions to read from the advice tape and either return\nvalues or perform stores. Update inline assembler helpers with\nemit_advice_s and helpers for advice-to-register reads. This change\nensures advice instructions produce correct virtual sequences (and\ncorrect 64-bit lowering) and centralizes advice tape reads into virtual\nops.\n\n* Add virtual advice load/store helpers and inline sequences\n\nIntroduce explicit virtual advice instructions for\nbyte/halfword/word/doubleword load and store variants and wire them into\nboth the zkvm and tracer instruction registries. These new files\nimplement lookup, flag reporting, and tracing behavior for\nVirtualAdviceLoad, VirtualAdviceSB/SD/SH/SW and VirtualAdviceSD/SH exec\nlogic in the tracer. Update AdviceSB/SH/SD tracer instructions to emit\ninline sequences that use the new virtual advice ops and virtual memory\nhelpers (including InstrAssembler changes, format_advice_s, and virtual\nregister allocation). Also add imports and module declarations across\njolt-core and tracer modules and remove an unused emit helper. This\nchange was needed to fully implement inline expansion and lookup\nbehavior for sub-word and small advice-based stores/loads so the VM can\nmaterialize and trace advice reads/writes correctly.\n\n* Remove unused VirtualAdviceSB/VirtualAdviceSH\n\nCleanup: remove obsolete virtual advice byte/halfword instructions from\ntracer and jolt-core. VirtualAdviceLoad covers sub-word advice reads and\nVirtualAdviceSW/VirtualAdviceSD remain for direct stores, so the\nVirtualAdviceSB and VirtualAdviceSH implementations and their module\nregistrations were unnecessary and caused unused-import warnings. This\ndeletes the unused files and removes their references from mod.rs and\ninstruction enums to keep the codebase consistent and warning-free.\n\n* Remove VirtualAdviceSD/SW in favor of VirtualAdviceLoad + stores\n\nVirtualAdviceSD and VirtualAdviceSW types and modules were removed and\ninstruction lists updated because 64-bit doubleword and 32-bit word\nadvice stores are now implemented by reading from the advice tape into a\nvirtual register (VirtualAdviceLoad) and then performing a regular store\n(SD/VirtualSW). This simplifies the tracer and zkvm instruction set by\nreusing the existing virtual load and store operations instead of\nseparate virtual store instructions.\n\nChanges:\n- Deleted virtual_advice_sd and virtual_advice_sw modules in both jolt-core and tracer.\n- Removed references to VirtualAdviceSD and VirtualAdviceSW from instruction enums and mod lists.\n- Updated AdviceSD and AdviceSW inline sequences to emit VirtualAdviceLoad + SD/VirtualSW stores.\n- Adjusted tracer advice instructions to use VirtualAdviceLoad and existing store instructions for the new sequence.\n\n* Remove advice store instructions from jolt-core\n\nAdviceSB, AdviceSD, AdviceSH, and AdviceSW are removed from the\njolt-core instruction set because these are expanded into virtual\nsequences elsewhere and no longer needed on the core side. This\neliminates their module files and removes their enum variants and module\ndeclarations to avoid redundant handling of advice store instructions.\n\n* Move advice ECALL constant to advice module\n\nExtract JOLT_ADVICE_WRITE_ECALL_NUM from cycle_tracking into a new\nadvice.rs to better separate concerns: cycle_tracking now only contains\ncycle-related constants, while the new advice module holds runtime\nadvice system constants and utilities. Update lib.rs to expose the new\nmodule so the constant remains available project-wide.\n\n* Fix clippy/format issues and clean up imports\n\nAddress various clippy and formatting failures reported by CI by:\n\n- Add Default derive and use Self::default() for AdviceTape to simplify construction and satisfy clippy.\n- Collapse simple closures to single-expression closures for readability (advice_tape_read).\n- Reorder and group imports consistently (place functions like advice_tape_read before types) and expand multi-imports across lines to satisfy rustfmt and clippy.\n- Remove an unnecessary temporary split in a comparison by merging the assertion arguments into a single line.\n\nThese changes were needed to make the codebase pass CI linting (fmt and\nclippy) without changing runtime behavior.\n\n* Use FormatJ for VirtualAdviceLoad; rename/assert formats to FormatAssert\n\nSwitch VirtualAdviceLoad to the J-format (FormatJ) since it does not use\nrs1 and the assembler calls now use emit_j with the byte count. Rename\nthe assert alignment format and its types to\nFormatAssert/RegisterStateFormatAssert, update all references and\nimports, and document that some assert instructions that take two source\nregisters use FormatB. These changes unify the format usage for virtual\nadvice loads and normalize assert instruction formats across the\ncodebase, preventing mismatched formats and clarifying which assert\nvariants use alternate formats.\n\n* Delete VirtualAssert (can just use VirtualAssertEq)\n\n* Remove unused emit_advice_s function\n\n* remove unused `parse` implementation for FormatAdviceS\n\n* clean up\n\n* Update jolt-platform/src/advice.rs\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\n\n* Add advice store and virtual assert instructions\n\nImplement advice store instructions (AdviceSB/SH/SW/SD) and a\nVirtualAssert instruction across tracer and jolt-core so the tracer and\nproof system can handle \"runtime advice\" per the design doc. These\nchanges add instruction modules, hook them into instruction enumerations\nand lookups, and implement a persisted AdviceTape in the tracer CPU to\nrecord advice bytes during the first emulation pass and read them during\nthe second pass. Also add a JOLT_ADVICE_WRITE_ECALL_NUM constant and\nhandling to write guest memory into the advice tape. This allows advice\ndata to be serialized during the compute_advice run and consumed later\nduring normal emulation for correct tracing and proof generation.\n\n* Use virtual sequences for advice S instructions\n\nMake advice store instructions (ADVICE_SB/SH/SW) use virtual instruction\nsequences like their non-advice counterparts so 64-bit handling and\ncomplex sequences are generated through inline virtual instructions. Add\na new FormatAdviceS to represent advice-store operands (only rs1+imm, no\nrs2), and introduce VirtualAdviceLoad/VirtualAdviceSB/VirtualAdviceSW\nvirtual instructions to read from the advice tape and either return\nvalues or perform stores. Update inline assembler helpers with\nemit_advice_s and helpers for advice-to-register reads. This change\nensures advice instructions produce correct virtual sequences (and\ncorrect 64-bit lowering) and centralizes advice tape reads into virtual\nops.\n\n* Add virtual advice load/store helpers and inline sequences\n\nIntroduce explicit virtual advice instructions for\nbyte/halfword/word/doubleword load and store variants and wire them into\nboth the zkvm and tracer instruction registries. These new files\nimplement lookup, flag reporting, and tracing behavior for\nVirtualAdviceLoad, VirtualAdviceSB/SD/SH/SW and VirtualAdviceSD/SH exec\nlogic in the tracer. Update AdviceSB/SH/SD tracer instructions to emit\ninline sequences that use the new virtual advice ops and virtual memory\nhelpers (including InstrAssembler changes, format_advice_s, and virtual\nregister allocation). Also add imports and module declarations across\njolt-core and tracer modules and remove an unused emit helper. This\nchange was needed to fully implement inline expansion and lookup\nbehavior for sub-word and small advice-based stores/loads so the VM can\nmaterialize and trace advice reads/writes correctly.\n\n* Remove unused VirtualAdviceSB/VirtualAdviceSH\n\nCleanup: remove obsolete virtual advice byte/halfword instructions from\ntracer and jolt-core. VirtualAdviceLoad covers sub-word advice reads and\nVirtualAdviceSW/VirtualAdviceSD remain for direct stores, so the\nVirtualAdviceSB and VirtualAdviceSH implementations and their module\nregistrations were unnecessary and caused unused-import warnings. This\ndeletes the unused files and removes their references from mod.rs and\ninstruction enums to keep the codebase consistent and warning-free.\n\n* Remove VirtualAdviceSD/SW in favor of VirtualAdviceLoad + stores\n\nVirtualAdviceSD and VirtualAdviceSW types and modules were removed and\ninstruction lists updated because 64-bit doubleword and 32-bit word\nadvice stores are now implemented by reading from the advice tape into a\nvirtual register (VirtualAdviceLoad) and then performing a regular store\n(SD/VirtualSW). This simplifies the tracer and zkvm instruction set by\nreusing the existing virtual load and store operations instead of\nseparate virtual store instructions.\n\nChanges:\n- Deleted virtual_advice_sd and virtual_advice_sw modules in both jolt-core and tracer.\n- Removed references to VirtualAdviceSD and VirtualAdviceSW from instruction enums and mod lists.\n- Updated AdviceSD and AdviceSW inline sequences to emit VirtualAdviceLoad + SD/VirtualSW stores.\n- Adjusted tracer advice instructions to use VirtualAdviceLoad and existing store instructions for the new sequence.\n\n* Remove advice store instructions from jolt-core\n\nAdviceSB, AdviceSD, AdviceSH, and AdviceSW are removed from the\njolt-core instruction set because these are expanded into virtual\nsequences elsewhere and no longer needed on the core side. This\neliminates their module files and removes their enum variants and module\ndeclarations to avoid redundant handling of advice store instructions.\n\n* Move advice ECALL constant to advice module\n\nExtract JOLT_ADVICE_WRITE_ECALL_NUM from cycle_tracking into a new\nadvice.rs to better separate concerns: cycle_tracking now only contains\ncycle-related constants, while the new advice module holds runtime\nadvice system constants and utilities. Update lib.rs to expose the new\nmodule so the constant remains available project-wide.\n\n* Fix clippy/format issues and clean up imports\n\nAddress various clippy and formatting failures reported by CI by:\n\n- Add Default derive and use Self::default() for AdviceTape to simplify construction and satisfy clippy.\n- Collapse simple closures to single-expression closures for readability (advice_tape_read).\n- Reorder and group imports consistently (place functions like advice_tape_read before types) and expand multi-imports across lines to satisfy rustfmt and clippy.\n- Remove an unnecessary temporary split in a comparison by merging the assertion arguments into a single line.\n\nThese changes were needed to make the codebase pass CI linting (fmt and\nclippy) without changing runtime behavior.\n\n* Use FormatJ for VirtualAdviceLoad; rename/assert formats to FormatAssert\n\nSwitch VirtualAdviceLoad to the J-format (FormatJ) since it does not use\nrs1 and the assembler calls now use emit_j with the byte count. Rename\nthe assert alignment format and its types to\nFormatAssert/RegisterStateFormatAssert, update all references and\nimports, and document that some assert instructions that take two source\nregisters use FormatB. These changes unify the format usage for virtual\nadvice loads and normalize assert instruction formats across the\ncodebase, preventing mismatched formats and clarifying which assert\nvariants use alternate formats.\n\n* Delete VirtualAssert (can just use VirtualAssertEq)\n\n* Remove unused emit_advice_s function\n\n* remove unused `parse` implementation for FormatAdviceS\n\n* clean up\n\n* Update jolt-platform/src/advice.rs\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\n\n* Implement runtime advice support and #[jolt::advice] macro\n\nAdd runtime advice primitives to the SDK to implement the minimal\nruntime_advice plan: introduce embedded-io as a dependency and provide\nAdviceWriter and AdviceReader that implement embedded_io::Write/Read and\nuse JOLT_ADVICE_WRITE ECALL and new advice store RISC-V instructions\nrespectively. Add check_advice! macro that invokes a custom\nVirtualAssert instruction on RISC-V (falls back to assert on host/other\ntargets). Implement the #[jolt::advice] proc-macro to generate dual-mode\nadvice functions (compute_advice: execute and write result; non-compute:\nread result from advice tape using postcard). Update tracer instruction\nmasks/matches for advice SB/SH/SW/SD and VirtualAssert to proper\nopcode/funct3 encodings.\n\nThese changes were needed to wire up the guest-side runtime support for\nadvice: the macros and reader/writer let SDK code serialize/deserialize\nadvice values via postcard, check_advice! emits the VirtualAssert for\nverifier enforcement, and tracer updates ensure the emulator/tracer\nrecognizes the new custom advice and virtual-assert instructions.\n\n* Use VirtualAssertEQ and opcode 0x5B for advice instructions\n\nSwitch check_advice! to emit VirtualAssertEQ and update all advice\ninstruction opcodes to 0x5B. The change was needed because custom\ninstructions use opcode 0x5B (0x2B is reserved for inlines) and the\nassertion must use the equality-form virtual instruction\n(VirtualAssertEQ) rather than the removed VirtualAssert. This also\nremoves the obsolete VirtualAssert instruction and updates AdviceReader\ninline asm to the correct opcode so advice reads and prover-enforced\nassertions behave correctly.\n\n* Introduce named opcode and funct3 constants; add advice instructions\n\nAdd named constants for opcodes and CUSTOM_OPCODE funct3 values to make\nthe intent clearer and centralize magic values. Update\nInstruction::decode to use these constants and to recognize new custom\n\"advice\" instructions (AdviceSB/SH/SW/SD) in addition to the existing\nvirtual instructions. Adjust matching values for the advice and\nVirtualAssertEQ encodings and update instruction declarations to use the\ncorrected funct3 bits. This is needed to implement the runtime advice\ninfrastructure for the Jolt VM and avoid overlapping/incorrect funct3\nencodings (e.g. fix VirtualAssertEQ to funct3=1 and introduce distinct\nfunct3 values for advice ops).\n\n* Use funct3 2-5 for advice, remove virtual instr mask/match, add SDK constants\n\nUpdate the instruction encoding to use funct3 values 2,3,4,5 for the\nadvice instructions (SB, SH, SW, SD) and remove the mask/match values\nfor the unused virtual instruction. Add named opcode/funct3 constants to\nthe SDK for documentation/validation and replace hardcoded funct3\nliterals in assembly sequences with the new constants. This aligns\ntracer and SDK encodings, makes the code clearer by using named\nconstants, and removes unused virtual instruction encoding so it won't\nbe accidentally matched.\n\n* Use consts in inline asm and simplify advice instruction matching\n\nUse the named constants as const parameters inside inline assembly so\nthe compiler recognizes their usage from inline asm contexts, and change\nthe custom instruction constants to u32 to match that usage. Replace\nhardcoded opcode/funct3 values in .insn templates with const arguments.\nRemove unused local const bindings and simplify the advice instruction\nhandling by eliminating masks and match fields (set them to 0) in tracer\ninstruction declarations. These changes make inline assembly safer and\nclearer, and remove redundant mask/match checks for advice instructions\nin the tracer.\n\n* Clean up\n\n* Implement runtime advice infrastructure and add modinv example\n\nAdd runtime advice support and a modular inverse example so\nadvice-backed helpers work across host and guest builds. Update jolt-sdk\nto expose instruction constants, implement AdviceReader/AdviceWriter\nstubs for non-RISC-V targets, adjust postcard usage, and enable\nadvice-related features in Cargo. Add examples/modinv (guest and host)\ndemonstrating an advice macro (compute_modinv) and provable modinv flow,\nand include an end-to-end test in jolt-core to verify the modinv\nexample.\n\nThese changes finish the advice proc-macro implementation and provide\nthe runtime plumbing needed for advice serialization/deserialization\nacross build targets. The modinv example exercises the advice macro\nend-to-end (compute on first pass, read and check on verification),\nensures host-side wiring (Cargo updates and features), and adds a test\nto catch regressions in advice handling.\n\n* Implement parse for FormatAdviceS\n\nAdd runtime advice instruction parsing for tracer\n\nImplement the parse function for FormatAdviceS to decode rs1 and the\nS-format immediate from a 32-bit instruction word. This enables parsing\nof the virtual \"advice.s\" instruction so the tracer can extract the\nsource register and sign-extended 12-bit immediate correctly. The change\nwas needed to support the runtime advice infrastructure in the Jolt VM\nand allow the tracer to interpret advice-related instructions during\nexecution.\n\n* Implement two-pass runtime-advice build/run flow\n\nAdd support for building and running a compute_advice variant of guest\nprograms so we can populate an advice tape before the normal proving\nrun. The Program struct now optionally holds a second ELF for the\ncompute_advice build, and Program::build got a build_with_features\nhelper that can build with the \"compute_advice\" feature. The modinv\nexample enables a compute_advice feature. The host build and run path in\nthe advice proc-macro-generated helpers now:\n\n- builds the compute_advice binary first and stores its ELF path in elf_compute_advice\n- builds the normal binary afterwards and stores it in elf\n- at runtime, if an elf_compute_advice exists, decodes and traces the compute_advice ELF to populate the advice tape, resets it, then runs the normal guest to generate the proof\n\nThis change was needed to implement the two-pass strategy from the\nruntime advice design doc: the first pass computes and records untrusted\nadvice (compute_advice) and the second pass consumes and verifies that\nadvice while producing the proof.\n\n* Add advice_tape_len helper and expose it across crates\n\nProvide a runtime helper to inspect the current size of the advice tape\nfor debugging and runtime advice infrastructure in the Jolt VM. This\nadds advice_tape_len() in the tracer CPU module, exposes it from\ntracer::cpu, and re-exports it through tracer, host_utils, and the\nmacros usage so callers can log and check the tape size (used once after\nthe first pass before resetting). This helps debug and build runtime\nadvice features by making tape length observable.\n\n* Add runtime advice length query and support VirtualAdviceLen\n\nProvide ECALL and funct3 support to query remaining bytes in the advice\ntape so guest code (and the embedded_io Read implementation) can detect\nEOF and avoid overreads. Implement a VirtualAdviceLen instruction and\nwire it into the tracer instruction set, expose advice_tape_remaining()\nin the CPU/emulator, and adjust AdviceReader to call the new instruction\nto obtain the remaining byte count before reading. Also add minor\nlogging and make advice load tolerate EOF by returning 0 when no bytes\nremain.\n\n* Add VirtualAdviceLen instruction support\n\nImplement VirtualAdviceLen similar to VirtualAdvice: add the new\ninstruction variant and module, provide Flags and InstructionLookup\nimplementations, and wire up LookupQuery to read the advice value from\nregister_state.rd.1 (the value written to rd after execution). Update\ntracer instruction metadata to use FormatI for VirtualAdviceLen.\n\n* Add compute_advice support to guest Program\n\nAdd fields and constructors to Program to carry an optional\ncompute_advice ELF and its bytes, plus a new run_to_populate_advice\nmethod that runs the compute_advice ELF to populate and return the\nadvice tape. Re-export advice tape helpers from lib.rs and add\nadvice_tape_get_all() in tracer's CPU to extract the tape contents.\nThese changes mirror the host Program updates and implement the runtime\nadvice infrastructure needed to run a separate compute_advice pass and\nretrieve its generated advice for the Jolt VM.\n\n* human intervention\n\n* Add per-CPU AdviceTape and pass it through tracing\n\nIntroduce a runtime AdviceTape that is owned by the Cpu and passed\nthrough the emulator/tracer instead of a thread-local static. This\nchange prevents streaming the lazy trace from implicitly sharing a\nglobal advice tape across multiple emulation passes and enables the\nfirst (advice-producing) pass to hand a populated tape to subsequent\npasses.\n\nChanges:\n- Move AdviceTape ownership onto Cpu and clone/take/accessors on the emulator API.\n- Replace global thread_local ADVICE_TAPE and its helpers with cpu-scoped functions (advice_tape_write/read/remaining) that take &mut Cpu or &Cpu where appropriate.\n- Update advice and virtual instructions to use the Cpu-scoped read/write APIs.\n- Re-export AdviceTape from jolt-core and update host utils to use the new type.\n- Remove legacy helper functions and code that extracted the tape via a global API.\n\nThis ensures robust multi-pass emulation where the populated advice tape\nfrom the first pass is explicitly provided to later passes rather than\nimplicitly shared via a static.\n\n* Thread advice tape through tracing and prover\n\nReplace global/thread-local AdviceTape with an owned per-CPU tape and\nthread it through the tracing and prover call chain so the advice\nproduced in the first pass is available to subsequent passes. This\nchange adds an AdviceTape field to Cpu and emulator accessor methods,\nupdates all advice instruction implementations to use the Cpu-bound\ntape, and introduces trace_with_advice / trace_lazy_with_advice helpers\nthat accept an optional AdviceTape. The provers and macro-generated\ntwo-pass logic were updated to extract the populated tape after the\nfirst pass and pass it into the second pass, and CheckpointingTracer\nexposes take_advice_tape() to enable the macro to retrieve the tape from\nthe internal emulator state.\n\n* Use optional AdviceTape parameter and remove debug prints\n\nReplace the separate *_with_advice functions with an Option<AdviceTape>\nparameter on the existing trace APIs and update call sites to pass None\nwhere appropriate. This simplifies the API surface by consolidating\ntracing functions, enables optional runtime advice without duplicating\nfunctions, and removes leftover debugging prints introduced in a prior\ncommit (eb513cc65) to clean up noisy stderr output. The change also\nadapts callers (guest/host/prover/sdk/bench) to the unified signature\nand eliminates unnecessary advice-tape logging.\n\n* Compare modinv with advice to naive cycles\n\n* fix compiler warnings\n\n* fmt\n\n* clippy + tests\n\n* clean up\n\n* Swallow error if guest doesn't have compute_advice feature\n\n* error out if advice function has a mutable argument (#1233)\n\n* remove unused jolt::provable\n\n* Skeleton for eliminating (most) runtime advice overhead. (#1235)\n\n* error out if advice function has a mutable argument\n\n* add support for custom procedures for reading and writing to the advice tape. Optimize example modinv script accordingly\n\n* core instead of std for MaybeUninit\n\n* swap advice stores for loads to registers to tighten cycle counts. Various bugfixes related to unaligned writes\n\n* make clippy happy\n\n* avoid division by 0\n\n* remove postcard from advice. Bugfixes. Example showing off features. Support for vecs with packed loads\n\n* gate Vec AdviceTapeIO impls behind std\n\n* fix bug in AdviceTapeIO impl for Vec<u8>\n\n* make clippy happy\n\n* avoid misaligned writes in read_slice\n\n* major cleanup using bytemuck\n\n* gate vec behind guest-std to prevent failing tests\n\n* address comments, fix small typos, modify Vec to include capacity in advice\n\n* add check_advice_eq macro to save a few instructions and add optional error message to advice checks\n\n* Use VirtualHostIo for writing to advice tape\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: Zachary DeStefano <zachdestefano@gmail.com>",
+          "timestamp": "2026-02-06T16:29:34-05:00",
+          "tree_id": "76a30fdbadba94d0a1a2ebec4ffe19da43848468",
+          "url": "https://github.com/a16z/jolt/commit/0effbae6d3fbe7716417ef03514f5c26903d7b57"
+        },
+        "date": 1770416526709,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.4184,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 789988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.475,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 473732,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 467412,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0382,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 471280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.0282,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 474500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8484,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 460072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.8538,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 790224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.9972,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 464144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.9507,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 471896,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7654,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 470032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 31.2011,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1132880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.0928,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 604940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 80.8794,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2160076,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.6088,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 459368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.639,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 464112,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.8026,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 790876,
             "unit": "KB",
             "extra": ""
           }
