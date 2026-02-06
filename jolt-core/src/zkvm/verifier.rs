@@ -9,8 +9,9 @@ use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitm
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::subprotocols::blindfold::{
-    pedersen_generator_count_for_r1cs, BlindFoldVerifier, FinalOutputConfig, InputClaimConstraint,
-    OutputClaimConstraint, StageConfig, ValueSource, VerifierR1CSBuilder,
+    pedersen_generator_count_for_r1cs, BlindFoldVerifier, BlindFoldVerifierInput,
+    FinalOutputConfig, InputClaimConstraint, OutputClaimConstraint, StageConfig, ValueSource,
+    VerifierR1CSBuilder,
 };
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
@@ -1051,7 +1052,6 @@ impl<
         >();
 
         let mut stage_configs = Vec::new();
-        let mut total_rounds = 0usize;
         // Track which stage_config index corresponds to uni-skip and regular first rounds
         let mut uniskip_indices: Vec<usize> = Vec::new(); // Only 2 elements for stages 0-1
         let mut regular_first_round_indices: Vec<usize> = Vec::new(); // 7 elements for all stages
@@ -1082,7 +1082,6 @@ impl<
                     StageConfig::new_uniskip_chain(poly_degree, power_sums)
                 };
                 stage_configs.push(config);
-                total_rounds += 1;
             }
 
             // Record first regular round index for its input constraint
@@ -1110,7 +1109,6 @@ impl<
                     StageConfig::new(1, poly_degree)
                 };
                 stage_configs.push(config);
-                total_rounds += 1;
             }
 
             // Record the last round index for output constraint
@@ -1168,97 +1166,32 @@ impl<
         let builder = VerifierR1CSBuilder::new_with_extra(&stage_configs, &extra_constraints);
         let r1cs = builder.build();
 
-        // SECURITY: Verify that challenges in BlindFold proof match those derived from main transcript.
-        // Public inputs in real_instance.x are laid out as: [challenges..., initial_claims...]
-        // Challenges include uni-skip challenges for stages 0-1, then regular sumcheck challenges.
-        let mut challenge_idx = 0;
+        // Build public_inputs for BlindFold verifier from expected values.
+        // Layout: [challenges..., initial_claims..., constraint_challenges...]
+        let mut public_inputs: Vec<F> = Vec::new();
+
+        // 1. Add challenges (uni-skip + regular sumcheck challenges)
         for (stage_idx, stage_challenges) in sumcheck_challenges.iter().enumerate() {
-            // For stages 0 and 1, verify uni-skip challenge first
+            // For stages 0 and 1, add uni-skip challenge first
             if stage_idx < 2 {
-                let expected_field: F = uniskip_challenges[stage_idx].into();
-                let actual_field = self.proof.blindfold_proof.real_instance.x[challenge_idx];
-                if expected_field != actual_field {
-                    return Err(anyhow::anyhow!(
-                        "BlindFold uni-skip challenge mismatch at stage {stage_idx}: \
-                         expected {expected_field:?}, got {actual_field:?}"
-                    ));
-                }
-                challenge_idx += 1;
+                public_inputs.push(uniskip_challenges[stage_idx].into());
             }
-
-            // Verify regular sumcheck challenges
-            for (round_idx, expected_challenge) in stage_challenges.iter().enumerate() {
-                let expected_field: F = (*expected_challenge).into();
-                let actual_field = self.proof.blindfold_proof.real_instance.x[challenge_idx];
-                if expected_field != actual_field {
-                    return Err(anyhow::anyhow!(
-                        "BlindFold challenge mismatch at stage {stage_idx} round {round_idx}: \
-                         expected {expected_field:?}, got {actual_field:?}"
-                    ));
-                }
-                challenge_idx += 1;
+            // Add regular sumcheck challenges
+            for challenge in stage_challenges.iter() {
+                public_inputs.push((*challenge).into());
             }
         }
 
-        // Verify that the initial claims in the BlindFold proof match those in the Jolt proof.
-        // Initial claims start at index total_rounds (after all challenges).
-        // 7 chains: 1 for stage 0 (uni-skip), 1 for stage 1 (uni-skip), 5 for stages 2-6
-        let num_chains = 9;
-        let initial_claims_in_blindfold =
-            &self.proof.blindfold_proof.real_instance.x[total_rounds..total_rounds + num_chains];
+        // 2. Add initial claims (9 chains)
+        public_inputs.extend_from_slice(&self.proof.blindfold_initial_claims);
 
-        for (i, (expected, actual)) in self
-            .proof
-            .blindfold_initial_claims
-            .iter()
-            .zip(initial_claims_in_blindfold.iter())
-            .enumerate()
-        {
-            if expected != actual {
-                return Err(anyhow::anyhow!(
-                    "BlindFold initial claim mismatch at stage {i}: expected {expected:?}, got {actual:?}"
-                ));
-            }
+        // 3. Add output constraint challenge values
+        for expected_values in output_constraint_challenge_values.iter() {
+            public_inputs.extend_from_slice(expected_values);
         }
 
-        // SECURITY: Verify constraint challenge values (gammas, eq_evals, etc.) match transcript.
-        // These are public inputs in the BlindFold R1CS that bind the sumcheck output constraints
-        // to the correct verifier-derived challenge values.
-        // Layout in real_instance.x: [challenges..., initial_claims..., batching_coeffs..., constraint_challenges...]
-        let total_batching_coeffs: usize = stage_configs
-            .iter()
-            .filter_map(|s| s.final_output.as_ref())
-            .filter(|fo| fo.constraint.is_none())
-            .map(|fo| fo.num_evaluations)
-            .sum();
-
-        let constraint_challenges_start = total_rounds + num_chains + total_batching_coeffs;
-        let mut constraint_challenge_idx = constraint_challenges_start;
-
-        tracing::debug!(
-            "BlindFold constraint challenges: start={constraint_challenges_start}, \
-             total_rounds={total_rounds}, num_chains={num_chains}, total_batching_coeffs={total_batching_coeffs}"
-        );
-
-        for (stage_idx, expected_values) in output_constraint_challenge_values.iter().enumerate() {
-            for (value_idx, expected) in expected_values.iter().enumerate() {
-                let actual = self.proof.blindfold_proof.real_instance.x[constraint_challenge_idx];
-                if *expected != actual {
-                    return Err(anyhow::anyhow!(
-                        "BlindFold output constraint challenge mismatch at stage {stage_idx} index {value_idx}: \
-                         expected {expected:?}, got {actual:?}. \
-                         Stage has {} values total. constraint_challenge_idx={}",
-                        expected_values.len(),
-                        constraint_challenge_idx
-                    ));
-                }
-                constraint_challenge_idx += 1;
-            }
-        }
-
-        // Verify input constraint challenge values
-        // Order in R1CS: [stage0_uniskip, stage0_regular, stage1_uniskip, stage1_regular, stage2, ..., stage6]
-        // Total 9 chains with input constraints
+        // 4. Add input constraint challenge values
+        // Order: [stage0_uniskip, stage0_regular, stage1_uniskip, stage1_regular, stage2, ..., stage6]
         let all_input_challenge_values: [&[F]; 9] = [
             &input_constraint_challenge_values[0], // Stage 0 uni-skip
             stage1_batched_input_values,           // Stage 0 regular
@@ -1270,38 +1203,15 @@ impl<
             &input_constraint_challenge_values[5], // Stage 5
             &input_constraint_challenge_values[6], // Stage 6
         ];
-        for (chain_idx, expected_values) in all_input_challenge_values.iter().enumerate() {
-            for (value_idx, expected) in expected_values.iter().enumerate() {
-                let actual = self.proof.blindfold_proof.real_instance.x[constraint_challenge_idx];
-                if *expected != actual {
-                    return Err(anyhow::anyhow!(
-                        "BlindFold input constraint challenge mismatch at chain {chain_idx} index {value_idx}: \
-                         expected {expected:?}, got {actual:?}. \
-                         Chain has {} values total. constraint_challenge_idx={}",
-                        expected_values.len(),
-                        constraint_challenge_idx
-                    ));
-                }
-                constraint_challenge_idx += 1;
-            }
+        for expected_values in all_input_challenge_values.iter() {
+            public_inputs.extend_from_slice(expected_values);
         }
 
-        // Verify extra constraint challenge values (PCS binding)
-        for (value_idx, expected) in stage8_data.constraint_coeffs.iter().enumerate() {
-            let actual = self.proof.blindfold_proof.real_instance.x[constraint_challenge_idx];
-            if *expected != actual {
-                return Err(anyhow::anyhow!(
-                    "BlindFold extra constraint challenge mismatch at index {value_idx}: \
-                     expected {expected:?}, got {actual:?}"
-                ));
-            }
-            constraint_challenge_idx += 1;
-        }
+        // 5. Add extra constraint challenge values (PCS binding)
+        public_inputs.extend_from_slice(&stage8_data.constraint_coeffs);
 
-        // SECURITY: Verify round commitments in BlindFold match those in sumcheck proofs.
-        // This prevents prover from using different polynomials in BlindFold vs sumcheck.
-        let mut expected_round_commitments: Vec<C::G1> = Vec::new();
-
+        // 6. Build round_commitments from main sumcheck proofs
+        let mut round_commitments: Vec<C::G1> = Vec::new();
         for (stage_idx, proof) in stage_proofs.iter().enumerate() {
             // For stages 0-1, include uni-skip commitment first
             if stage_idx < 2 {
@@ -1311,32 +1221,26 @@ impl<
                     &self.proof.stage2_uni_skip_first_round_proof
                 };
                 if let UniSkipFirstRoundProofVariant::Zk(zk_uniskip) = uniskip_proof {
-                    expected_round_commitments.push(zk_uniskip.commitment);
+                    round_commitments.push(zk_uniskip.commitment);
                 }
             }
-
             // Add regular sumcheck round commitments
             if let SumcheckInstanceProof::Zk(zk_proof) = proof {
-                expected_round_commitments.extend(zk_proof.round_commitments.iter().cloned());
+                round_commitments.extend(zk_proof.round_commitments.iter().cloned());
             }
         }
 
-        if expected_round_commitments != self.proof.blindfold_proof.real_instance.round_commitments
-        {
-            return Err(anyhow::anyhow!(
-                "BlindFold round commitments do not match sumcheck proof commitments"
-            ));
-        }
-
-        // SECURITY: Verify eval commitments in BlindFold match the PCS proof.
-        let expected_eval_commitment = PCS::eval_commitment(&self.proof.joint_opening_proof)
+        // 7. Build eval_commitments from PCS proof
+        let eval_commitment = PCS::eval_commitment(&self.proof.joint_opening_proof)
             .ok_or_else(|| anyhow::anyhow!("Missing evaluation commitment in PCS proof"))?;
-        let eval_commitments = &self.proof.blindfold_proof.real_instance.eval_commitments;
-        if eval_commitments.len() != 1 || eval_commitments[0] != expected_eval_commitment {
-            return Err(anyhow::anyhow!(
-                "BlindFold eval commitment does not match PCS proof"
-            ));
-        }
+        let eval_commitments = vec![eval_commitment];
+
+        // Create BlindFold verifier input
+        let verifier_input = BlindFoldVerifierInput {
+            public_inputs,
+            round_commitments,
+            eval_commitments,
+        };
 
         // Create BlindFold verifier and verify the proof
         let eval_commitment_gens =
@@ -1347,7 +1251,11 @@ impl<
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
         verifier
-            .verify(&self.proof.blindfold_proof, &mut blindfold_transcript)
+            .verify(
+                &self.proof.blindfold_proof,
+                &verifier_input,
+                &mut blindfold_transcript,
+            )
             .map_err(|e| anyhow::anyhow!("BlindFold verification failed: {e:?}"))?;
 
         tracing::debug!(

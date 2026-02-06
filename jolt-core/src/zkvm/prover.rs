@@ -1623,13 +1623,7 @@ impl<
         let prover = BlindFoldProver::new(&pedersen_generators, &r1cs, eval_commitment_gens);
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
-        let proof = prover.prove(
-            &real_instance,
-            &real_witness,
-            &z,
-            &mut blindfold_transcript,
-            &mut rng,
-        );
+        let proof = prover.prove(&real_instance, &real_witness, &z, &mut blindfold_transcript);
 
         (proof, initial_claims_array)
     }
@@ -3080,8 +3074,8 @@ mod tests {
     fn blindfold_protocol_e2e() {
         use crate::curve::Bn254Curve;
         use crate::subprotocols::blindfold::{
-            BlindFoldProver, BlindFoldVerifier, BlindFoldWitness, RelaxedR1CSInstance,
-            RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
+            BlindFoldProver, BlindFoldVerifier, BlindFoldVerifierInput, BlindFoldWitness,
+            RelaxedR1CSInstance, RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
         };
         use crate::transcripts::{KeccakTranscript, Transcript};
         use rand::thread_rng;
@@ -3147,17 +3141,18 @@ mod tests {
         let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_E2E");
-        let proof = prover.prove(
-            &real_instance,
-            &real_witness,
-            &z,
-            &mut prover_transcript,
-            &mut rng,
-        );
+        let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+
+        // Create verifier input from real_instance data
+        let verifier_input = BlindFoldVerifierInput {
+            public_inputs: real_instance.x.clone(),
+            round_commitments: real_instance.round_commitments.clone(),
+            eval_commitments: real_instance.eval_commitments.clone(),
+        };
 
         // Verify the proof
         let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_E2E");
-        let result = verifier.verify(&proof, &mut verifier_transcript);
+        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
 
         assert!(
             result.is_ok(),
@@ -3170,10 +3165,7 @@ mod tests {
             r1cs.num_constraints, r1cs.num_vars
         );
         println!("Witness size: {} field elements", witness.len());
-        println!(
-            "Folded error vector size: {} field elements",
-            proof.folded_witness.E.len()
-        );
+        println!("Spartan sumcheck rounds: {}", proof.spartan_proof.len());
         println!("Protocol verification: SUCCESS");
     }
 }

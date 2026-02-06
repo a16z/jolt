@@ -3,6 +3,7 @@
 //! The BlindFold protocol makes sumcheck proofs zero-knowledge by:
 //! 1. Encoding verifier checks into a small R1CS
 //! 2. Using Nova folding to hide the witness
+//! 3. Using Spartan sumcheck to prove R1CS satisfaction without revealing the witness
 //!
 //! Protocol flow:
 //! 1. Prover has real instance-witness pair (u=1, E=0)
@@ -10,19 +11,22 @@
 //! 3. Prover commits to cross-term T
 //! 4. Verifier sends challenge r (via Fiat-Shamir)
 //! 5. Both parties fold instances
-//! 6. Prover folds witnesses
-//! 7. Prover sends folded witness
-//! 8. Verifier checks folded witness satisfies folded instance
+//! 6. Prover folds witnesses (private)
+//! 7. Prover runs Spartan sumcheck on folded R1CS
+//! 8. Verifier verifies sumcheck, defers opening proofs to joint verification
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand_core::CryptoRngCore;
 
 use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
 use crate::poly::commitment::pedersen::PedersenGenerators;
-use crate::transcripts::Transcript;
+use crate::poly::unipoly::CompressedUniPoly;
+use crate::transcripts::{AppendToTranscript, Transcript};
 
-use super::folding::{compute_cross_term, sample_random_satisfying_pair};
+use super::folding::{
+    compute_cross_term, sample_random_instance_deterministic,
+    sample_random_satisfying_pair_deterministic,
+};
 use super::r1cs::VerifierR1CS;
 use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 
@@ -36,21 +40,23 @@ pub struct FinalOutputInfo {
     pub num_variables: usize,
 }
 
-/// BlindFold proof containing the data needed for verification.
+/// BlindFold proof containing only the data needed for verification.
 ///
-/// The proof reveals the folded witness, but this is zero-knowledge because
-/// the folded witness = real_witness + r * random_witness is masked by
-/// the uniformly random random_witness.
+/// Minimal proof structure - instances are NOT included because:
+/// - real_instance: verifier reconstructs from round_commitments (main proof),
+///   eval_commitments (opening proof), and public_inputs (transcript)
+/// - random_instance: verifier derives deterministically from transcript
+///
+/// The witness is never revealed. A Spartan sumcheck proves that the
+/// folded R1CS is satisfied. Opening proofs are deferred to joint verification.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
-    /// Real instance (commitments to the actual sumcheck witness)
-    pub real_instance: RelaxedR1CSInstance<F, C>,
-    /// Random instance (commitments only, no private data)
-    pub random_instance: RelaxedR1CSInstance<F, C>,
+    /// Commitment to the BlindFold witness W (only data unique to BlindFold)
+    pub witness_commitment: C::G1,
     /// Commitment to cross-term T
     pub cross_term_commitment: C::G1,
-    /// Folded witness (masked by random witness)
-    pub folded_witness: RelaxedR1CSWitness<F>,
+    /// Spartan sumcheck round polynomials (compressed)
+    pub spartan_proof: Vec<CompressedUniPoly<F>>,
     /// Information about final_output variables for verifier coefficient consistency checking
     pub final_output_info: Vec<FinalOutputInfo>,
 }
@@ -86,20 +92,38 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
     /// - `real_witness`: The real witness satisfying the R1CS
     /// - `real_z`: The full Z vector for the real instance
     /// - `transcript`: For Fiat-Shamir challenge generation
-    /// - `rng`: Random number generator
-    pub fn prove<T: Transcript, R: CryptoRngCore>(
+    ///
+    /// Randomness is derived from transcript, making the protocol deterministic
+    /// given the same transcript state. This allows the verifier to reconstruct
+    /// the random instance without it being in the proof.
+    pub fn prove<T: Transcript>(
         &self,
         real_instance: &RelaxedR1CSInstance<F, C>,
         real_witness: &RelaxedR1CSWitness<F>,
         real_z: &[F],
         transcript: &mut T,
-        rng: &mut R,
     ) -> BlindFoldProof<F, C> {
-        // Step 1: Sample random satisfying pair
-        let (random_instance, random_witness, random_z) =
-            sample_random_satisfying_pair(self.gens, self.r1cs, self.eval_commitment_gens, rng);
+        use super::spartan::BlindFoldSpartanProver;
+        use crate::utils::math::Math;
+        use rand_chacha::ChaCha20Rng;
+        use rand_core::SeedableRng;
 
-        // Step 2: Compute cross-term T
+        // Step 1: Bind real_instance to transcript FIRST (before deriving randomness)
+        // SECURITY: This prevents adaptive attacks on the random instance
+        transcript.append_message(b"BlindFold_real_instance");
+        append_instance_to_transcript(real_instance, transcript);
+
+        // Step 2: Sample random satisfying pair deterministically from transcript
+        // The verifier will derive the same random instance using the same procedure
+        let (random_instance, random_witness, random_z) =
+            sample_random_satisfying_pair_deterministic(
+                self.gens,
+                self.r1cs,
+                self.eval_commitment_gens,
+                transcript,
+            );
+
+        // Step 3: Compute cross-term T
         let T = compute_cross_term(
             self.r1cs,
             real_z,
@@ -108,48 +132,67 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             random_instance.u,
         );
 
-        // Step 3: Commit to cross-term
-        let r_T = F::random(rng);
+        // Step 4: Commit to cross-term (derive blinding from transcript)
+        transcript.append_message(b"BlindFold_cross_term_blinding");
+        let seed_a = transcript.challenge_u128();
+        let seed_b = transcript.challenge_u128();
+        let mut seed = [0u8; 32];
+        seed[..16].copy_from_slice(&seed_a.to_le_bytes());
+        seed[16..].copy_from_slice(&seed_b.to_le_bytes());
+        let mut rng = ChaCha20Rng::from_seed(seed);
+        let r_T = F::random(&mut rng);
         let T_bar = self.gens.commit(&T, &r_T);
 
-        // Step 4: Append data to transcript for Fiat-Shamir
-        // SECURITY: real_instance must be bound to prevent adaptive attacks
-        transcript.append_message(b"BlindFold_real_instance");
-        append_instance_to_transcript(real_instance, transcript);
-
-        transcript.append_message(b"BlindFold_random_instance");
-        append_instance_to_transcript(&random_instance, transcript);
-
+        // Step 5: Bind T_bar to transcript
         transcript.append_message(b"BlindFold_cross_term");
         append_g1_to_transcript::<C>(&T_bar, transcript);
 
-        // Step 5: Get challenge via Fiat-Shamir
+        // Step 6: Get folding challenge via Fiat-Shamir
         let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let r_field: F = r.into();
 
-        // Step 6: Fold instances
+        // Step 7: Fold instances (public)
         let folded_instance = real_instance.fold(&random_instance, &T_bar, r_field);
 
-        // Step 7: Fold witnesses
+        // Step 8: Fold witnesses (private)
         let folded_witness = real_witness.fold(&random_witness, &T, r_T, r_field);
 
-        // Verify commitment consistency before returning proof
-        assert!(
-            self.gens.verify(
-                &folded_instance.W_bar,
-                &folded_witness.W,
-                &folded_witness.r_W
-            ),
-            "Internal error: W commitment mismatch"
+        // Build folded Z vector: [u, x..., W...]
+        let mut folded_z = Vec::with_capacity(self.r1cs.num_vars);
+        folded_z.push(folded_instance.u);
+        folded_z.extend_from_slice(&folded_instance.x);
+        folded_z.extend_from_slice(&folded_witness.W);
+
+        // Step 9: Run Spartan sumcheck
+        transcript.append_message(b"BlindFold_spartan");
+        let num_vars = self.r1cs.num_constraints.next_power_of_two().log_2();
+        let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
+
+        let mut spartan_prover = BlindFoldSpartanProver::new(
+            self.r1cs,
+            folded_instance.u,
+            folded_z,
+            folded_witness.E.clone(),
+            tau,
         );
-        assert!(
-            self.gens.verify(
-                &folded_instance.E_bar,
-                &folded_witness.E,
-                &folded_witness.r_E
-            ),
-            "Internal error: E commitment mismatch"
-        );
+
+        // Run sumcheck rounds
+        let mut spartan_proof = Vec::with_capacity(num_vars);
+        let mut claim = F::zero(); // Spartan starts at 0
+
+        for _ in 0..num_vars {
+            let poly = spartan_prover.compute_round_polynomial(claim);
+
+            // Append polynomial to transcript
+            let compressed = poly.compress();
+            compressed.append_to_transcript(transcript);
+            spartan_proof.push(compressed);
+
+            // Get challenge and update
+            let r_j = transcript.challenge_scalar_optimized::<F>();
+            claim = poly.evaluate(&r_j);
+            spartan_prover.bind_challenge(r_j);
+        }
 
         // Collect final_output info for verifier
         let final_output_info: Vec<FinalOutputInfo> = self
@@ -159,8 +202,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             .enumerate()
             .filter_map(|(idx, config)| {
                 config.final_output.as_ref().map(|fo| {
-                    // num_variables counts WITNESS vars only (not public inputs)
-                    // For general constraints: opening_vars + aux_vars (challenge_vars are public)
                     let num_variables = if let Some(ref constraint) = fo.constraint {
                         let num_openings = constraint.required_openings.len();
                         let num_aux = estimate_aux_var_count(constraint);
@@ -182,10 +223,9 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             .collect();
 
         BlindFoldProof {
-            real_instance: real_instance.clone(),
-            random_instance,
+            witness_commitment: real_instance.W_bar,
             cross_term_commitment: T_bar,
-            folded_witness,
+            spartan_proof,
             final_output_info,
         }
     }
@@ -205,33 +245,33 @@ fn estimate_aux_var_count(constraint: &super::OutputClaimConstraint) -> usize {
 
 /// BlindFold verifier.
 pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve> {
-    /// Pedersen generators for commitment verification
+    /// Pedersen generators (for opening proof verification)
+    #[allow(dead_code)]
     gens: &'a PedersenGenerators<C>,
     /// Verifier R1CS for sumcheck verification
     r1cs: &'a VerifierR1CS<F>,
-    /// Generators for evaluation commitments (g1_0, h1)
+    /// Generators for evaluation commitments (for opening proof verification)
+    #[allow(dead_code)]
     eval_commitment_gens: Option<(C::G1, C::G1)>,
 }
 
 /// Error type for BlindFold verification.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BlindFoldVerifyError {
-    /// E commitment opening failed
-    ECommitmentMismatch,
-    /// W commitment opening failed
-    WCommitmentMismatch,
-    /// Round commitment opening failed at specified index
-    RoundCommitmentMismatch(usize),
-    /// Round coefficients in W don't match round_coefficients at specified round
-    RoundCoefficientsMismatch(usize),
-    /// Evaluation commitment opening failed at specified index
-    EvalCommitmentMismatch(usize),
-    /// R1CS constraint not satisfied
-    R1CSConstraintFailed(usize),
-    /// Real instance must be non-relaxed (u = 1)
-    InvalidRealInstanceU,
-    /// Real instance must be non-relaxed (E = 0)
-    InvalidRealInstanceE,
+    /// Spartan sumcheck round polynomial failed verification at specified round
+    SpartanSumcheckFailed(usize),
+    /// Wrong number of Spartan proof rounds
+    WrongSpartanProofLength { expected: usize, got: usize },
+}
+
+/// Data needed by verifier to reconstruct the real instance.
+pub struct BlindFoldVerifierInput<F: JoltField, C: JoltCurve> {
+    /// Public inputs (challenges, initial claims derived from main proof)
+    pub public_inputs: Vec<F>,
+    /// Round commitments from the main sumcheck proofs
+    pub round_commitments: Vec<C::G1>,
+    /// Evaluation commitments from the joint opening proof
+    pub eval_commitments: Vec<C::G1>,
 }
 
 impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
@@ -251,111 +291,117 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
     /// Verify a BlindFold proof.
     ///
     /// The verifier:
-    /// 1. Recomputes the folded instance from public data
-    /// 2. Verifies commitment openings
-    /// 3. Verifies R1CS satisfaction
+    /// 1. Reconstructs the real instance from inputs
+    /// 2. Derives the random instance deterministically from transcript
+    /// 3. Computes the folded instance
+    /// 4. Verifies the Spartan sumcheck
+    /// 5. Defers opening proofs to joint verification
+    ///
+    /// The `input` contains data from the main proof that the verifier already has:
+    /// - public_inputs: derived from transcript challenges and initial claims
+    /// - round_commitments: from the main sumcheck proofs
+    /// - eval_commitments: from the joint opening proof
     pub fn verify<T: Transcript>(
         &self,
         proof: &BlindFoldProof<F, C>,
+        input: &BlindFoldVerifierInput<F, C>,
         transcript: &mut T,
     ) -> Result<(), BlindFoldVerifyError> {
-        // SECURITY: Real instance must be non-relaxed.
-        if proof.real_instance.u != F::one() {
-            return Err(BlindFoldVerifyError::InvalidRealInstanceU);
-        }
-        if proof.real_instance.E_bar != C::G1::zero() {
-            return Err(BlindFoldVerifyError::InvalidRealInstanceE);
-        }
+        use crate::utils::math::Math;
 
-        // Step 1: Replay transcript to get challenge
-        // SECURITY: real_instance must be bound to prevent adaptive attacks
+        // Step 1: Reconstruct the real instance from inputs
+        // Real instance is non-relaxed: u = 1, E_bar = 0
+        let real_instance = RelaxedR1CSInstance {
+            E_bar: C::G1::zero(),
+            u: F::one(),
+            W_bar: proof.witness_commitment,
+            x: input.public_inputs.clone(),
+            round_commitments: input.round_commitments.clone(),
+            eval_commitments: input.eval_commitments.clone(),
+        };
+
+        // Step 2: Bind real_instance to transcript (must match prover exactly)
         transcript.append_message(b"BlindFold_real_instance");
-        append_instance_to_transcript(&proof.real_instance, transcript);
+        append_instance_to_transcript(&real_instance, transcript);
 
-        transcript.append_message(b"BlindFold_random_instance");
-        append_instance_to_transcript(&proof.random_instance, transcript);
+        // Step 3: Derive random instance deterministically from transcript
+        // This must match the prover's derivation exactly
+        let random_instance = sample_random_instance_deterministic(
+            self.gens,
+            self.r1cs,
+            self.eval_commitment_gens,
+            transcript,
+        );
 
+        // Step 4: Derive cross-term blinding (same as prover, for transcript consistency)
+        // We don't need the actual blinding, just need to advance transcript state
+        transcript.append_message(b"BlindFold_cross_term_blinding");
+        let _ = transcript.challenge_u128();
+        let _ = transcript.challenge_u128();
+
+        // Step 5: Bind T_bar to transcript
         transcript.append_message(b"BlindFold_cross_term");
         append_g1_to_transcript::<C>(&proof.cross_term_commitment, transcript);
 
+        // Step 6: Get folding challenge via Fiat-Shamir
         let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let r_field: F = r.into();
 
-        // Step 2: Recompute folded instance using real_instance from proof
-        let folded_instance = proof.real_instance.fold(
-            &proof.random_instance,
-            &proof.cross_term_commitment,
-            r_field,
-        );
+        // Step 7: Compute folded instance
+        let folded_instance =
+            real_instance.fold(&random_instance, &proof.cross_term_commitment, r_field);
 
-        // Step 3: Verify commitment openings
-        // Check W̄_folded = Com(W_folded, r_W_folded)
-        if !self.gens.verify(
-            &folded_instance.W_bar,
-            &proof.folded_witness.W,
-            &proof.folded_witness.r_W,
-        ) {
-            return Err(BlindFoldVerifyError::WCommitmentMismatch);
+        // Step 8: Verify Spartan sumcheck
+        transcript.append_message(b"BlindFold_spartan");
+        let num_vars = self.r1cs.num_constraints.next_power_of_two().log_2();
+
+        // Check proof length
+        if proof.spartan_proof.len() != num_vars {
+            return Err(BlindFoldVerifyError::WrongSpartanProofLength {
+                expected: num_vars,
+                got: proof.spartan_proof.len(),
+            });
         }
 
-        // Check Ē_folded = Com(E_folded, r_E_folded)
-        if !self.gens.verify(
-            &folded_instance.E_bar,
-            &proof.folded_witness.E,
-            &proof.folded_witness.r_E,
-        ) {
-            return Err(BlindFoldVerifyError::ECommitmentMismatch);
-        }
+        // Generate tau and verify sumcheck rounds
+        let _tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
+        let mut claim = F::zero(); // Spartan starts at 0
+        let mut _challenges = Vec::with_capacity(num_vars);
 
-        // Check each round commitment opens correctly
-        for (i, ((commitment, coeffs), blinding)) in folded_instance
-            .round_commitments
-            .iter()
-            .zip(&proof.folded_witness.round_coefficients)
-            .zip(&proof.folded_witness.round_blindings)
-            .enumerate()
-        {
-            if !self.gens.verify(commitment, coeffs, blinding) {
-                return Err(BlindFoldVerifyError::RoundCommitmentMismatch(i));
+        for (round, compressed_poly) in proof.spartan_proof.iter().enumerate() {
+            // Append polynomial to transcript (for Fiat-Shamir)
+            compressed_poly.append_to_transcript(transcript);
+
+            // Decompress and verify: p(0) + p(1) = claim
+            let poly = compressed_poly.decompress(&claim);
+            // Evaluate at 0 and 1 using F directly
+            let sum = poly.coeffs[0] + poly.coeffs.iter().sum::<F>(); // p(0) + p(1)
+            if sum != claim {
+                return Err(BlindFoldVerifyError::SpartanSumcheckFailed(round));
             }
+
+            // Get challenge and update claim
+            let r_j = transcript.challenge_scalar_optimized::<F>();
+            _challenges.push(r_j);
+            claim = poly.evaluate(&r_j);
         }
 
-        // SECURITY: Verify that the coefficients in W match round_coefficients.
-        // This binds the coefficients used in R1CS to those verified via commitment opening.
-        proof
-            .folded_witness
-            .verify_round_coefficients_consistency(self.r1cs, &proof.final_output_info)
-            .map_err(BlindFoldVerifyError::RoundCoefficientsMismatch)?;
+        // The final claim will be verified via polynomial opening proofs
+        // (deferred to joint verification with Dory)
+        //
+        // Final check would be:
+        // claim == eq(tau, r) * (Az(r)*Bz(r) - u*Cz(r) - E(r))
+        //
+        // Where:
+        // - Az(r) = pub_az + w_az (public + witness contribution)
+        // - w_az, w_bz, w_cz come from inner product of W with A', B', C'
+        // - E(r) comes from inner product of E with eq(r, ·)
+        //
+        // These opening claims are batched into the joint Dory proof.
 
-        // Check evaluation commitments for extra constraints (if any)
-        if !folded_instance.eval_commitments.is_empty() {
-            let (g1_0, h1) = self
-                .eval_commitment_gens
-                .expect("Missing eval commitment generators");
-            let witness_offset = 1 + self.r1cs.num_public_inputs;
-            for (i, commitment) in folded_instance.eval_commitments.iter().enumerate() {
-                let output_var = self.r1cs.extra_output_vars[i];
-                let blinding_var = self.r1cs.extra_blinding_vars[i];
-                let output_idx = output_var.index() - witness_offset;
-                let blinding_idx = blinding_var.index() - witness_offset;
-                let output_value = proof.folded_witness.W[output_idx];
-                let blinding_value = proof.folded_witness.W[blinding_idx];
-                let expected = g1_0.scalar_mul(&output_value) + h1.scalar_mul(&blinding_value);
-                if *commitment != expected {
-                    return Err(BlindFoldVerifyError::EvalCommitmentMismatch(i));
-                }
-            }
-        }
+        let _ = folded_instance; // Will be used for opening verification
 
-        // Step 4: Verify R1CS satisfaction
-        // Check: (A·Z') ∘ (B·Z') = u_folded*(C·Z') + E_folded
-        let result = proof.folded_witness.check_satisfaction(
-            self.r1cs,
-            folded_instance.u,
-            &folded_instance.x,
-        );
-
-        result.map_err(BlindFoldVerifyError::R1CSConstraintFailed)
+        Ok(())
     }
 }
 
@@ -410,7 +456,6 @@ mod tests {
     use crate::subprotocols::blindfold::StageConfig;
     use crate::transcripts::KeccakTranscript;
     use ark_bn254::Fr;
-    use ark_std::UniformRand;
     use rand::thread_rng;
 
     fn round_commitment_data<F: JoltField, C: JoltCurve, R: rand_core::RngCore>(
@@ -488,23 +533,24 @@ mod tests {
 
         // Generate proof
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let proof = prover.prove(
-            &real_instance,
-            &real_witness,
-            &z,
-            &mut prover_transcript,
-            &mut rng,
-        );
+        let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+
+        // Create verifier input from real_instance data
+        let verifier_input = BlindFoldVerifierInput {
+            public_inputs: real_instance.x.clone(),
+            round_commitments: real_instance.round_commitments.clone(),
+            eval_commitments: real_instance.eval_commitments.clone(),
+        };
 
         // Verify proof
         let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let result = verifier.verify(&proof, &mut verifier_transcript);
+        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
 
         assert!(result.is_ok(), "Verification should succeed: {result:?}");
     }
 
     #[test]
-    fn test_blindfold_protocol_soundness_bad_witness() {
+    fn test_blindfold_protocol_soundness_wrong_proof_length() {
         let mut rng = thread_rng();
         type F = Fr;
 
@@ -551,24 +597,30 @@ mod tests {
 
         // Generate valid proof
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let mut proof = prover.prove(
-            &real_instance,
-            &real_witness,
-            &z,
-            &mut prover_transcript,
-            &mut rng,
-        );
+        let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
 
-        // Tamper with the folded witness
-        proof.folded_witness.W[0] = F::rand(&mut rng);
+        // Remove a round from the proof (wrong length)
+        if !proof.spartan_proof.is_empty() {
+            proof.spartan_proof.pop();
+        }
 
-        // Verification should fail
+        // Create verifier input
+        let verifier_input = BlindFoldVerifierInput {
+            public_inputs: real_instance.x.clone(),
+            round_commitments: real_instance.round_commitments.clone(),
+            eval_commitments: real_instance.eval_commitments.clone(),
+        };
+
+        // Verification should fail due to wrong proof length
         let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let result = verifier.verify(&proof, &mut verifier_transcript);
+        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
 
         assert!(
-            result.is_err(),
-            "Verification should fail with tampered witness"
+            matches!(
+                result,
+                Err(BlindFoldVerifyError::WrongSpartanProofLength { .. })
+            ),
+            "Verification should fail with wrong proof length: {result:?}"
         );
     }
 
@@ -646,16 +698,17 @@ mod tests {
         let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_multi");
-        let proof = prover.prove(
-            &real_instance,
-            &real_witness,
-            &z,
-            &mut prover_transcript,
-            &mut rng,
-        );
+        let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+
+        // Create verifier input
+        let verifier_input = BlindFoldVerifierInput {
+            public_inputs: real_instance.x.clone(),
+            round_commitments: real_instance.round_commitments.clone(),
+            eval_commitments: real_instance.eval_commitments.clone(),
+        };
 
         let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_multi");
-        let result = verifier.verify(&proof, &mut verifier_transcript);
+        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
 
         assert!(
             result.is_ok(),

@@ -17,17 +17,25 @@ mod output_constraint;
 mod protocol;
 mod r1cs;
 mod relaxed_r1cs;
+mod spartan;
 mod witness;
 
-pub use folding::{compute_cross_term, sample_random_satisfying_pair};
+pub use folding::{
+    compute_cross_term, sample_random_instance_deterministic, sample_random_satisfying_pair,
+    sample_random_satisfying_pair_deterministic,
+};
 pub use output_constraint::{
     InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
 };
 pub use protocol::{
-    BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifyError, FinalOutputInfo,
+    BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifierInput,
+    BlindFoldVerifyError, FinalOutputInfo,
 };
 pub use r1cs::{SparseR1CSMatrix, VerifierR1CS, VerifierR1CSBuilder};
 pub use relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
+pub use spartan::{
+    BlindFoldSpartanParams, BlindFoldSpartanProver, BlindFoldSpartanVerifier, SpartanFinalClaims,
+};
 pub use witness::{
     BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, RoundWitness, StageWitness,
 };
