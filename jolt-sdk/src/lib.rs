@@ -189,12 +189,13 @@ impl AdviceWriter {
         unsafe {
             let src_ptr = buf.as_ptr() as u64;
             let len = buf.len() as u64;
+
             core::arch::asm!(
-                "ecall",
-                in("a0") JOLT_ADVICE_WRITE_ECALL_NUM,
+                ".insn i 0x5B, 2, x0, x0, 0", // VirtualHostIO (opcode=0x5B, funct3=2)
+                in("a0") JOLT_ADVICE_WRITE_CALL_ID,
                 in("a1") src_ptr,
                 in("a2") len,
-                options(nostack)
+                options(nostack, preserves_flags)
             );
         }
         buf.len()

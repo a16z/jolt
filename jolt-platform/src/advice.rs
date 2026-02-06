@@ -20,11 +20,11 @@
 //!   proof enforces that the guest used exactly those values.
 //!
 //! Practically, the guest writes this data during the first emulation pass using
-//! the advice interface (see the ECALL constant below). During the second
-//! (proving) pass, advice instructions read the recorded values, and the proof
-//! system ensures that the execution is consistent with the supplied advice.
+//! the advice interface. During the second (proving) pass, advice instructions
+//! read the recorded values, and the proof system ensures that the execution is
+//! consistent with the supplied advice.
 
-/// ECALL number for writing advice data during emulation.
+/// Identifier for writing advice data during emulation.
 /// The advice tape stores data from the first emulation pass that can be read
 /// during the second (proving) pass via advice instructions.
-pub const JOLT_ADVICE_WRITE_ECALL_NUM: u32 = 0xADBABE;
+pub const JOLT_ADVICE_WRITE_CALL_ID: u32 = 0xADBABE;

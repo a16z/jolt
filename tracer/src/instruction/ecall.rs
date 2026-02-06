@@ -3,7 +3,6 @@
 //! The inline sequence writes mepc, mcause, mtval, and mstatus to their
 //! virtual registers, then jumps unconditionally to the trap handler.
 
-use jolt_platform::JOLT_ADVICE_WRITE_ECALL_NUM;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -48,20 +47,6 @@ impl ECALL {
 
 impl RISCVTrace for ECALL {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // Special case for ADVICE_WRITE, which is only used in the
-        // first of two emulation passes. The trace for the first pass
-        // is discarded, so we can return early.
-        if cpu.x[10] as u32 == JOLT_ADVICE_WRITE_ECALL_NUM {
-            let src_ptr = cpu.x[11] as u64; // a1
-            let len = cpu.x[12] as u64; // a2
-
-            // Any fault raised while touching guest memory (e.g. a bad
-            // pointer) is swallowed here and will manifest as the
-            // usual access-fault on the *next* instruction fetch.
-            let _ = cpu.handle_advice_write(src_ptr, len);
-            return;
-        }
-
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
