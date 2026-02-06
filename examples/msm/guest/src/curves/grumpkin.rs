@@ -2,10 +2,6 @@ use crate::fixed_base::FixedBaseTable as GenericFixedBaseTable;
 use crate::traits::{GlvCapable, MsmGroup};
 use jolt_inlines_grumpkin::{GrumpkinFr, GrumpkinPoint, UnwrapOrSpoilProof};
 
-// ============================================================
-// Curve Parameters
-// ============================================================
-
 pub const SCALAR_BITS: usize = 256;
 pub const GLV_SCALAR_BITS: usize = 128;
 
@@ -26,10 +22,6 @@ pub const FIXED_BASE_WINDOWS: usize = SCALAR_BITS.div_ceil(FIXED_BASE_WINDOW);
 
 pub type FixedBaseTable =
     GenericFixedBaseTable<GrumpkinPoint, FIXED_BASE_WINDOWS, FIXED_BASE_BUCKETS>;
-
-// ============================================================
-// Trait Implementations
-// ============================================================
 
 impl MsmGroup for GrumpkinPoint {
     #[inline(always)]
@@ -77,10 +69,6 @@ impl GlvCapable for GrumpkinPoint {
         GrumpkinPoint::decompose_scalar(k)
     }
 }
-
-// ============================================================
-// Benchmark Helpers
-// ============================================================
 
 /// Grumpkin Fr modulus limbs for scalar reduction.
 const FR_MODULUS_LIMBS: [u64; 4] = [

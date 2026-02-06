@@ -133,6 +133,19 @@ impl<T> UnwrapOrSpoilProof<T> for Result<T, GrumpkinError> {
     }
 }
 
+impl<T> UnwrapOrSpoilProof<T> for Option<T> {
+    #[inline(always)]
+    fn unwrap_or_spoil_proof(self) -> T {
+        match self {
+            Some(v) => v,
+            None => {
+                hcf();
+                unreachable!()
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum GrumpkinError {
     InvalidFqElement,
@@ -554,14 +567,14 @@ impl GrumpkinPoint {
         let mut k1 = Fr::from_bigint(BigInt {
             0: [out[1], out[2], 0u64, 0u64],
         })
-        .unwrap();
+        .unwrap_or_spoil_proof();
         if out[0] == 1u64 {
             k1 = -k1;
         }
         let mut k2 = Fr::from_bigint(BigInt {
             0: [out[4], out[5], 0u64, 0u64],
         })
-        .unwrap();
+        .unwrap_or_spoil_proof();
         if out[3] == 1u64 {
             k2 = -k2;
         }
