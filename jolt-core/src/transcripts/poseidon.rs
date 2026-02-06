@@ -63,10 +63,7 @@ impl PoseidonParams<Fq> for FqParams {
     }
 }
 
-/// Type alias for the original Fr-based transcript (backwards compatible)
 pub type PoseidonTranscriptFr = PoseidonTranscript<Fr, FrParams>;
-
-/// Type alias for Fq-based transcript (for SNARK composition / Grumpkin Fr)
 pub type PoseidonTranscriptFq = PoseidonTranscript<Fq, FqParams>;
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript using Poseidon.
