@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1770329602312,
+  "lastUpdate": 1770413997982,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -51394,6 +51394,198 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 793660,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mchl.zhu.96@gmail.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2f831c0b9151dbc7e121cd34fed8d14d98ab1c13",
+          "message": "Optimize registers read/write-checking memory (#1253)\n\n* Pack row and column into a single u64\n\nReduce memory usage by packing the `row` (56 bits) and `col` (8 bits)\ninto a single u64 field `row_col` on RegistersCycleMajorEntry. Add\naccessor methods (row(), col()), a pack helper, and update all usages to\nconstruct and read the packed field. This reduces per-entry size and\nimproves memory efficiency while preserving semantics.\n\nSummary of changes:\n- Replace separate `row: usize` and `col: u8` fields with `row_col: u64` and document the bit layout.\n- Add constants, a pack_row_col helper, and inline accessors `row()` and `col()`.\n- Update all construction sites to use pack_row_col and all reads to use the accessors.\n- Adjust comparisons, sorting, binding, evaluation code, and conversions to use the new accessors.\n- Add debug assertions to ensure row/col are within the expected bit limits.\n\n* Use packed row/col in RegistersAddressMajorEntry\n\nSwitch RegistersAddressMajorEntry to store row and column in a single\npacked u64 (row_col) and add helper methods (row, col, pack_row_col).\nUpdate conversions and all callsites to use the packed representation\nand the new accessors. This reduces memory per entry, keeps row/col\nbounds-checked, and aligns the address-major entry with the cycle-major\npacked representation.\n\n* refactor\n\n* OneHotCoeffLookupTable and OneHotCoeff trait\n\n* Partially integrate OneHotCoeff\n\n* Use lookup table for register wa coeffs\n\n* Use lookup table for register ra coeffs\n\nPass OneHotCoeff lookup tables through ReadWriteMatrix bind pipeline so\nOneHotCoeff::bind can access them. This updates bind_entries signatures\nand call sites to accept ra/wa lookup tables, threads those options\nthrough bind_rows/seq_bind_rows/ bind, and uses the lookup tables when\nbinding register/lookup indices and dereferencing lookup-backed coeffs.\nAdditionally, initialize ra/wa lookup tables for registers and ensure\nsaturation checks consider both ra and wa tables.\n\n* clean up\n\n* Add concise docs for one-hot coefficient lookup table\n\nAdd documentation comments to one_hot_coeffs.rs describing the lookup\ntable optimization, its growth and saturation behavior, and the\nLookupTableIndex usage. Document key methods (new, bind, is_saturated)\nand the OneHotCoeff trait methods to clarify their responsibilities and\nhow implementations interact with the lookup table. These comments make\nthe code easier to understand and maintain for future work on sumcheck\nbinding and memory optimizations.\n\n* Refactor cycle-major -> address-major conversion\n\n* graphite suggestions\n\n* Reorder struct fields instaed of packing row and col",
+          "timestamp": "2026-02-06T15:54:38-05:00",
+          "tree_id": "3150f72dca3ed2ef78d64ce38899d256bf5b8ac2",
+          "url": "https://github.com/a16z/jolt/commit/2f831c0b9151dbc7e121cd34fed8d14d98ab1c13"
+        },
+        "date": 1770413996667,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 1.4639,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 456048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463244,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0373,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 456936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.0363,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 456596,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8447,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 454220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 1.002,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 456628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.9823,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 455452,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.8043,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 457520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 31.317,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1138356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.2125,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 621348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 82.0406,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2148280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.6121,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 453920,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6692,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 454436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.8,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 792628,
             "unit": "KB",
             "extra": ""
           }
