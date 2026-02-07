@@ -187,6 +187,7 @@ impl JoltState {
             &self.flags[CircuitFlags::IsCompressed as usize],
             &self.flags[CircuitFlags::IsFirstInSequence as usize],
             &self.flags[CircuitFlags::IsLastInSequence as usize],
+            &self.flags[CircuitFlags::IsRdZero as usize],
         ]
     }
 
@@ -214,8 +215,8 @@ impl JoltState {
             VirtualPolynomial::LeftInstructionInput => &self.left_input,
             VirtualPolynomial::RightInstructionInput => &self.right_input,
             VirtualPolynomial::Product => &self.product,
-            VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero) => {
-                &self.instruction_flags[InstructionFlags::IsRdNotZero as usize]
+            VirtualPolynomial::OpFlags(CircuitFlags::IsRdZero) => {
+                &self.flags[CircuitFlags::IsRdZero as usize]
             }
             VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD) => {
                 &self.flags[CircuitFlags::WriteLookupOutputToRD as usize]
@@ -275,9 +276,9 @@ impl JoltState {
             //(&self.next_pc).ne(&other.next_pc),
             self.next_unexpanded_pc.ne(&other.next_unexpanded_pc),
             // write to rd differs
-            self.instruction_flags[InstructionFlags::IsRdNotZero as usize]
-                .ne(&other.instruction_flags[InstructionFlags::IsRdNotZero as usize]),
-            &self.instruction_flags[InstructionFlags::IsRdNotZero as usize].eq(Int::from(1))
+            self.flags[CircuitFlags::IsRdZero as usize]
+                .ne(&other.flags[CircuitFlags::IsRdZero as usize]),
+            &self.flags[CircuitFlags::IsRdZero as usize].eq(Int::from(0))
                 & (self.rd_write_value.ne(&other.rd_write_value)),
             // lookup inputs differ
             self.left_lookup.ne(&other.left_lookup),

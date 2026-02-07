@@ -86,6 +86,8 @@ pub enum CircuitFlags {
     /// Is instruction at the end of a virtual sequence (virtual_sequence_remaining == Some(0)).
     /// Used to skip NextPCEqPCPlusOneIfInline for ECALL sequences that may jump to trap handlers.
     IsLastInSequence,
+    /// 1 if Rd index is 0
+    IsRdZero,
 }
 
 /// Boolean flags that are not part of Jolt's R1CS constraints
@@ -117,8 +119,6 @@ pub enum InstructionFlags {
     Branch,
     /// Is noop instruction
     IsNoop,
-    /// Is Rd index 0
-    IsRdNotZero,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;

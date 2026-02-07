@@ -213,6 +213,7 @@ pub struct AzSecondGroup {
     pub write_pc_to_rd: bool,         // write_pc_to_rd_addr (Rd != 0)
     pub should_branch: bool,          // ShouldBranch
     pub not_jump_or_branch: bool,     // !(Jump || ShouldBranch)
+    pub is_rd_zero: bool,             // IsRdZero (Rd == x0)
 }
 
 impl AzSecondGroup {
@@ -234,6 +235,7 @@ impl AzSecondGroup {
         acc.fmadd(&w[6], &self.write_pc_to_rd);
         acc.fmadd(&w[7], &self.should_branch);
         acc.fmadd(&w[8], &self.not_jump_or_branch);
+        acc.fmadd(&w[9], &self.is_rd_zero);
     }
 }
 
@@ -249,6 +251,7 @@ pub struct BzSecondGroup {
     pub rd_write_minus_pc_plus_const: S64, // RdWrite - (UnexpandedPC + const)
     pub next_unexp_pc_minus_pc_plus_imm: i128, // NextUnexpandedPC - (UnexpandedPC + Imm)
     pub next_unexp_pc_minus_expected: S64, // NextUnexpandedPC - (UnexpandedPC + const)
+    pub rd_write_value: i128,              // RdWriteValue (for x0-always-zero)
 }
 
 impl BzSecondGroup {
@@ -270,6 +273,7 @@ impl BzSecondGroup {
         acc.fmadd(&w[6], &self.rd_write_minus_pc_plus_const);
         acc.fmadd(&w[7], &self.next_unexp_pc_minus_pc_plus_imm);
         acc.fmadd(&w[8], &self.next_unexp_pc_minus_expected);
+        acc.fmadd(&w[9], &self.rd_write_value);
     }
 }
 
@@ -562,6 +566,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             write_pc_to_rd: self.row.write_pc_to_rd_addr,
             should_branch: self.row.should_branch,
             not_jump_or_branch: next_update_otherwise,
+            is_rd_zero: flags[CircuitFlags::IsRdZero],
         }
     }
 
@@ -628,6 +633,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             rd_write_minus_pc_plus_const,
             next_unexp_pc_minus_pc_plus_imm,
             next_unexp_pc_minus_expected,
+            rd_write_value: self.row.rd_write_value as i128,
         }
     }
 
@@ -645,6 +651,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[6], &az.write_pc_to_rd);
         acc.fmadd(&w[7], &az.should_branch);
         acc.fmadd(&w[8], &az.not_jump_or_branch);
+        acc.fmadd(&w[9], &az.is_rd_zero);
         acc.barrett_reduce()
     }
 
@@ -662,6 +669,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[6], &bz.rd_write_minus_pc_plus_const);
         acc.fmadd(&w[7], &bz.next_unexp_pc_minus_pc_plus_imm);
         acc.fmadd(&w[8], &bz.next_unexp_pc_minus_expected);
+        acc.fmadd(&w[9], &bz.rd_write_value);
         acc.barrett_reduce()
     }
 
@@ -756,6 +764,13 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             bz_eval_s192.fmadd(&c8, &bz.next_unexp_pc_minus_expected);
         }
 
+        let c9 = coeffs_i32[9];
+        if az.is_rd_zero {
+            az_eval_i32 += c9;
+        } else {
+            bz_eval_s192.fmadd(&c9, &bz.rd_write_value);
+        }
+
         let az_eval_s64 = S64::from_i64(az_eval_i32 as i64);
         az_eval_s64.mul_trunc::<3, 3>(&bz_eval_s192.sum)
     }
@@ -811,6 +826,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             az.not_jump_or_branch,
             bz.next_unexp_pc_minus_expected.is_zero(),
         );
+        self.assert_constraint_second_group(9, az.is_rd_zero, bz.rd_write_value == 0i128);
     }
 
     /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
@@ -980,8 +996,8 @@ impl ProductVirtualEval {
         // Left: u64/u8/bool
         let mut left_acc: Acc6U<F> = Acc6U::zero();
         left_acc.fmadd(&weights_at_r0[0], &row.instruction_left_input);
-        left_acc.fmadd(&weights_at_r0[1], &row.is_rd_not_zero);
-        left_acc.fmadd(&weights_at_r0[2], &row.is_rd_not_zero);
+        left_acc.fmadd(&weights_at_r0[1], &(!row.is_rd_zero));
+        left_acc.fmadd(&weights_at_r0[2], &(!row.is_rd_zero));
         left_acc.fmadd(&weights_at_r0[3], &row.should_branch_lookup_output);
         left_acc.fmadd(&weights_at_r0[4], &row.jump_flag);
 
@@ -1011,16 +1027,16 @@ impl ProductVirtualEval {
         left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128);
         right_w[0] = (c[0] as i128) * row.instruction_right_input;
 
-        // 1: WriteLookupOutputToRD (IsRdNotZero × WriteLookupOutputToRD_flag)
-        left_w[1] = if row.is_rd_not_zero { c[1] as i128 } else { 0 };
+        // 1: WriteLookupOutputToRD ((1 − IsRdZero) × WriteLookupOutputToRD_flag)
+        left_w[1] = if !row.is_rd_zero { c[1] as i128 } else { 0 };
         right_w[1] = if row.write_lookup_output_to_rd_flag {
             c[1] as i128
         } else {
             0
         };
 
-        // 2: WritePCtoRD (IsRdNotZero × Jump_flag)
-        left_w[2] = if row.is_rd_not_zero { c[2] as i128 } else { 0 };
+        // 2: WritePCtoRD ((1 − IsRdZero) × Jump_flag)
+        left_w[2] = if !row.is_rd_zero { c[2] as i128 } else { 0 };
         right_w[2] = if row.jump_flag { c[2] as i128 } else { 0 };
 
         // 3: ShouldBranch (LookupOutput × Branch_flag)
@@ -1053,7 +1069,7 @@ impl ProductVirtualEval {
     /// Order of outputs matches PRODUCT_UNIQUE_FACTOR_VIRTUALS:
     /// 0: LeftInstructionInput (u64)
     /// 1: RightInstructionInput (i128)
-    /// 2: IsRdNotZero (bool)
+    /// 2: IsRdZero (bool)
     /// 3: OpFlags(WriteLookupOutputToRD) (bool)
     /// 4: OpFlags(Jump) (bool)
     /// 5: LookupOutput (u64)
@@ -1096,8 +1112,8 @@ impl ProductVirtualEval {
                     acc_left_u64.fmadd(&e_in, &row.instruction_left_input);
                     // 1: RightInstructionInput (i128)
                     acc_right_i128.fmadd(&e_in, &row.instruction_right_input);
-                    // 2: IsRdNotZero (bool)
-                    acc_rd_zero_flag.fmadd(&e_in, &(row.is_rd_not_zero));
+                    // 2: IsRdZero (bool)
+                    acc_rd_zero_flag.fmadd(&e_in, &row.is_rd_zero);
                     // 3: OpFlags(WriteLookupOutputToRD) (bool)
                     acc_wl_flag.fmadd(&e_in, &row.write_lookup_output_to_rd_flag);
                     // 4: OpFlags(Jump) (bool)

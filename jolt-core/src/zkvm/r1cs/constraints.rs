@@ -172,6 +172,7 @@ pub enum R1CSConstraintLabel {
     NextUnexpPCUpdateOtherwise,
     NextPCEqPCPlusOneIfInline,
     MustStartSequenceFromBeginning,
+    RdWriteZeroIfRdIsX0,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -399,6 +400,14 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
         if { { JoltR1CSInputs::NextIsVirtual } - { JoltR1CSInputs::NextIsFirstInSequence } }
         => ( { 1i128 } ) == ( { JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) } )
     ),
+    // if IsRdZero {
+    //     assert!(RdWriteValue == 0)
+    // }
+    r1cs_eq_conditional!(
+        label: R1CSConstraintLabel::RdWriteZeroIfRdIsX0,
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::IsRdZero) } }
+        => ( { JoltR1CSInputs::RdWriteValue } ) == ( { 0i128 } )
+    ),
 ];
 
 /// Degree of univariate skip, defined to be `(NUM_R1CS_CONSTRAINTS - 1) / 2`
@@ -572,23 +581,19 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
         right: ProductFactorExpr::Var(VirtualPolynomial::RightInstructionInput),
         output: VirtualPolynomial::Product,
     },
-    // 1: WriteLookupOutputToRD = IsRdNotZero · OpFlags(WriteLookupOutputToRD)
+    // 1: WriteLookupOutputToRD = (1 − IsRdZero) · OpFlags(WriteLookupOutputToRD)
     ProductConstraint {
         label: ProductConstraintLabel::WriteLookupOutputToRD,
-        left: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
-            InstructionFlags::IsRdNotZero,
-        )),
+        left: ProductFactorExpr::OneMinus(VirtualPolynomial::OpFlags(CircuitFlags::IsRdZero)),
         right: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(
             CircuitFlags::WriteLookupOutputToRD,
         )),
         output: VirtualPolynomial::WriteLookupOutputToRD,
     },
-    // 2: WritePCtoRD = IsRdNotZero · OpFlags(Jump)
+    // 2: WritePCtoRD = (1 − IsRdZero) · OpFlags(Jump)
     ProductConstraint {
         label: ProductConstraintLabel::WritePCtoRD,
-        left: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
-            InstructionFlags::IsRdNotZero,
-        )),
+        left: ProductFactorExpr::OneMinus(VirtualPolynomial::OpFlags(CircuitFlags::IsRdZero)),
         right: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
         output: VirtualPolynomial::WritePCtoRD,
     },
