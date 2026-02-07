@@ -16,6 +16,8 @@ mod r1cs;
 use crate::r1cs::*;
 mod sumchecks;
 use crate::sumchecks::*;
+mod lookup_table_flags;
+use crate::lookup_table_flags::*;
 mod lean_tests;
 use crate::lean_tests::*;
 mod modules;
@@ -78,25 +80,27 @@ fn write_flat_file(
 
 type ParameterSet = RV64IParameterSet;
 
-fn main() -> Result<(), FSError> {
-    let args = Args::parse();
+fn extract_modules<const XLEN: usize>() -> Vec<Box<dyn AsModule>> {
     let mut rng = rand_core::OsRng;
 
-    let modules: Vec<Box<dyn AsModule>> = vec![
+    vec![
         Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
         Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
-        Box::new(ZkLeanSumchecks::<ark_bn254::Fr>::extract()),
-        match ParameterSet::XLEN {
-            32 => Box::new(ZkLeanLookupTables::<32>::extract()),
-            64 => Box::new(ZkLeanLookupTables::<64>::extract()),
-            _ => panic!("Unsupported architecture size"),
-        },
-        match ParameterSet::XLEN {
-            32 => Box::new(ZkLeanTests::<32>::extract(&mut rng)),
-            64 => Box::new(ZkLeanTests::<64>::extract(&mut rng)),
-            _ => panic!("Unsupported architecture size"),
-        },
-    ];
+        Box::new(ZkLeanSumchecks::<ark_bn254::Fr>::extract::<XLEN>()),
+        Box::new(ZkLeanLookupTables::<XLEN>::extract()),
+        Box::new(ZkLeanLookupTableFlags::<XLEN>::extract()),
+        Box::new(ZkLeanTests::<XLEN>::extract(&mut rng)),
+    ]
+}
+
+fn main() -> Result<(), FSError> {
+    let args = Args::parse();
+
+    let modules = match ParameterSet::XLEN {
+        32 => extract_modules::<32>(),
+        64 => extract_modules::<64>(),
+        _ => panic!("Unsupported architecture size"),
+    };
 
     if let Some(package_path) = args.package_path {
         let tree = make_jolt_zk_lean_package(&args.template_dir, modules)?;
