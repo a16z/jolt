@@ -905,10 +905,10 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
                 // Stage 2 (product virtualization, de-duplicated factors)
                 // Val(k) = jump_flag(k) + γ·branch_flag(k)
-                //          + γ²·is_rd_not_zero_flag(k) + γ³·write_lookup_output_to_rd_flag(k)
+                //          + γ²·is_rd_zero_flag(k) + γ³·write_lookup_output_to_rd_flag(k)
                 // where jump_flag(k) = 1 if instruction k is a jump, 0 otherwise;
                 //       branch_flag(k) = 1 if instruction k is a branch, 0 otherwise;
-                //       is_rd_not_zero_flag(k) = 1 if instruction k has rd != 0;
+                //       is_rd_zero_flag(k) = 1 if instruction k has rd == 0, 0 otherwise;
                 //       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd.
                 //       virtual_instruction(k) = 1 if instruction k is a virtual instruction.
                 // This Val matches the fused product sumcheck.
@@ -920,7 +920,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                     if instr_flags[InstructionFlags::Branch] {
                         lc += stage2_gammas[1];
                     }
-                    if instr_flags[InstructionFlags::IsRdNotZero] {
+                    if instr_flags[InstructionFlags::IsRdZero] {
                         lc += stage2_gammas[2];
                     }
                     if circuit_flags[CircuitFlags::WriteLookupOutputToRD] {
@@ -1056,8 +1056,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
             SumcheckId::SpartanProductVirtualization,
         );
-        let (_, rd_wa_claim) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
+        let (_, is_rd_zero_claim) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdZero),
             SumcheckId::SpartanProductVirtualization,
         );
         let (_, write_lookup_output_to_rd_flag_claim) = opening_accumulator
@@ -1073,7 +1073,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         [
             jump_claim,
             branch_claim,
-            rd_wa_claim,
+            is_rd_zero_claim,
             write_lookup_output_to_rd_flag_claim,
             virtual_instruction_claim,
         ]

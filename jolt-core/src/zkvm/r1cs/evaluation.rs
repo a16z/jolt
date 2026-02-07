@@ -980,8 +980,8 @@ impl ProductVirtualEval {
         // Left: u64/u8/bool
         let mut left_acc: Acc6U<F> = Acc6U::zero();
         left_acc.fmadd(&weights_at_r0[0], &row.instruction_left_input);
-        left_acc.fmadd(&weights_at_r0[1], &row.is_rd_not_zero);
-        left_acc.fmadd(&weights_at_r0[2], &row.is_rd_not_zero);
+        left_acc.fmadd(&weights_at_r0[1], &(!row.is_rd_zero));
+        left_acc.fmadd(&weights_at_r0[2], &(!row.is_rd_zero));
         left_acc.fmadd(&weights_at_r0[3], &row.should_branch_lookup_output);
         left_acc.fmadd(&weights_at_r0[4], &row.jump_flag);
 
@@ -1011,16 +1011,16 @@ impl ProductVirtualEval {
         left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128);
         right_w[0] = (c[0] as i128) * row.instruction_right_input;
 
-        // 1: WriteLookupOutputToRD (IsRdNotZero × WriteLookupOutputToRD_flag)
-        left_w[1] = if row.is_rd_not_zero { c[1] as i128 } else { 0 };
+        // 1: WriteLookupOutputToRD ((1 − IsRdZero) × WriteLookupOutputToRD_flag)
+        left_w[1] = if !row.is_rd_zero { c[1] as i128 } else { 0 };
         right_w[1] = if row.write_lookup_output_to_rd_flag {
             c[1] as i128
         } else {
             0
         };
 
-        // 2: WritePCtoRD (IsRdNotZero × Jump_flag)
-        left_w[2] = if row.is_rd_not_zero { c[2] as i128 } else { 0 };
+        // 2: WritePCtoRD ((1 − IsRdZero) × Jump_flag)
+        left_w[2] = if !row.is_rd_zero { c[2] as i128 } else { 0 };
         right_w[2] = if row.jump_flag { c[2] as i128 } else { 0 };
 
         // 3: ShouldBranch (LookupOutput × Branch_flag)
@@ -1053,7 +1053,7 @@ impl ProductVirtualEval {
     /// Order of outputs matches PRODUCT_UNIQUE_FACTOR_VIRTUALS:
     /// 0: LeftInstructionInput (u64)
     /// 1: RightInstructionInput (i128)
-    /// 2: IsRdNotZero (bool)
+    /// 2: IsRdZero (bool)
     /// 3: OpFlags(WriteLookupOutputToRD) (bool)
     /// 4: OpFlags(Jump) (bool)
     /// 5: LookupOutput (u64)
@@ -1096,8 +1096,8 @@ impl ProductVirtualEval {
                     acc_left_u64.fmadd(&e_in, &row.instruction_left_input);
                     // 1: RightInstructionInput (i128)
                     acc_right_i128.fmadd(&e_in, &row.instruction_right_input);
-                    // 2: IsRdNotZero (bool)
-                    acc_rd_zero_flag.fmadd(&e_in, &(row.is_rd_not_zero));
+                    // 2: IsRdZero (bool)
+                    acc_rd_zero_flag.fmadd(&e_in, &row.is_rd_zero);
                     // 3: OpFlags(WriteLookupOutputToRD) (bool)
                     acc_wl_flag.fmadd(&e_in, &row.write_lookup_output_to_rd_flag);
                     // 4: OpFlags(Jump) (bool)

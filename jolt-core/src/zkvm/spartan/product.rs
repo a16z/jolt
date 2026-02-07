@@ -183,8 +183,8 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
     ///
     /// Small-value lifting rules for integer accumulation before converting to the field:
     /// - Instruction: LeftInstructionInput is u64 → lift to i128; RightInstructionInput is S64 → i128.
-    /// - WriteLookupOutputToRD: IsRdNotZero is bool/u8 → i32; flag is bool/u8 → i32.
-    /// - WritePCtoRD: IsRdNotZero is bool/u8 → i32; Jump flag is bool/u8 → i32.
+    /// - WriteLookupOutputToRD: (1 − IsRdZero) is bool/u8 → i32; flag is bool/u8 → i32.
+    /// - WritePCtoRD: (1 − IsRdZero) is bool/u8 → i32; Jump flag is bool/u8 → i32.
     /// - ShouldBranch: LookupOutput is u64 → i128; Branch flag is bool/u8 → i32.
     /// - ShouldJump: Jump flag (left) is bool/u8 → i32; Right^eff = (1 − NextIsNoop) is bool/u8 → i32.
     fn compute_univariate_skip_extended_evals(
@@ -687,9 +687,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 SumcheckId::SpartanProductVirtualization,
             )
             .1;
-        let is_rd_not_zero = accumulator
+        let is_rd_zero = accumulator
             .get_virtual_polynomial_opening(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
+                VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdZero),
                 SumcheckId::SpartanProductVirtualization,
             )
             .1;
@@ -724,9 +724,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             )
             .1;
 
+        let rd_nonzero = F::one() - is_rd_zero;
         let fused_left = w[0] * l_inst
-            + w[1] * is_rd_not_zero
-            + w[2] * is_rd_not_zero
+            + w[1] * rd_nonzero
+            + w[2] * rd_nonzero
             + w[3] * lookup_out
             + w[4] * j_flag;
         let fused_right = w[0] * r_inst
