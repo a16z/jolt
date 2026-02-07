@@ -1,4 +1,4 @@
-import ZkLean
+import zkLean
 import Jolt.R1CS
 import Jolt.Sumchecks
 

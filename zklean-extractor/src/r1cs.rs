@@ -132,7 +132,7 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
     }
 
     pub fn zklean_imports(&self) -> Vec<String> {
-        vec![String::from("ZKLean")]
+        vec![String::from("zkLean")]
     }
 }
 

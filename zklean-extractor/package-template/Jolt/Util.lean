@@ -1,4 +1,4 @@
-import ZKLean
+import zkLean
 
 def mux [ZKField f]
   (cases : Array (ZKExpr f × ZKExpr f))
