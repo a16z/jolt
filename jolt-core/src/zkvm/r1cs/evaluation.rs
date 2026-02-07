@@ -213,6 +213,7 @@ pub struct AzSecondGroup {
     pub write_pc_to_rd: bool,         // write_pc_to_rd_addr (Rd != 0)
     pub should_branch: bool,          // ShouldBranch
     pub not_jump_or_branch: bool,     // !(Jump || ShouldBranch)
+    pub is_rd_zero: bool,             // IsRdZero (Rd == x0)
 }
 
 impl AzSecondGroup {
@@ -234,6 +235,7 @@ impl AzSecondGroup {
         acc.fmadd(&w[6], &self.write_pc_to_rd);
         acc.fmadd(&w[7], &self.should_branch);
         acc.fmadd(&w[8], &self.not_jump_or_branch);
+        acc.fmadd(&w[9], &self.is_rd_zero);
     }
 }
 
@@ -249,6 +251,7 @@ pub struct BzSecondGroup {
     pub rd_write_minus_pc_plus_const: S64, // RdWrite - (UnexpandedPC + const)
     pub next_unexp_pc_minus_pc_plus_imm: i128, // NextUnexpandedPC - (UnexpandedPC + Imm)
     pub next_unexp_pc_minus_expected: S64, // NextUnexpandedPC - (UnexpandedPC + const)
+    pub rd_write_value: i128,              // RdWriteValue (for x0-always-zero)
 }
 
 impl BzSecondGroup {
@@ -270,6 +273,7 @@ impl BzSecondGroup {
         acc.fmadd(&w[6], &self.rd_write_minus_pc_plus_const);
         acc.fmadd(&w[7], &self.next_unexp_pc_minus_pc_plus_imm);
         acc.fmadd(&w[8], &self.next_unexp_pc_minus_expected);
+        acc.fmadd(&w[9], &self.rd_write_value);
     }
 }
 
@@ -562,6 +566,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             write_pc_to_rd: self.row.write_pc_to_rd_addr,
             should_branch: self.row.should_branch,
             not_jump_or_branch: next_update_otherwise,
+            is_rd_zero: self.row.is_rd_zero,
         }
     }
 
@@ -628,6 +633,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             rd_write_minus_pc_plus_const,
             next_unexp_pc_minus_pc_plus_imm,
             next_unexp_pc_minus_expected,
+            rd_write_value: self.row.rd_write_value as i128,
         }
     }
 
@@ -645,6 +651,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[6], &az.write_pc_to_rd);
         acc.fmadd(&w[7], &az.should_branch);
         acc.fmadd(&w[8], &az.not_jump_or_branch);
+        acc.fmadd(&w[9], &az.is_rd_zero);
         acc.barrett_reduce()
     }
 
@@ -662,6 +669,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[6], &bz.rd_write_minus_pc_plus_const);
         acc.fmadd(&w[7], &bz.next_unexp_pc_minus_pc_plus_imm);
         acc.fmadd(&w[8], &bz.next_unexp_pc_minus_expected);
+        acc.fmadd(&w[9], &bz.rd_write_value);
         acc.barrett_reduce()
     }
 
@@ -756,6 +764,13 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             bz_eval_s192.fmadd(&c8, &bz.next_unexp_pc_minus_expected);
         }
 
+        let c9 = coeffs_i32[9];
+        if az.is_rd_zero {
+            az_eval_i32 += c9;
+        } else {
+            bz_eval_s192.fmadd(&c9, &bz.rd_write_value);
+        }
+
         let az_eval_s64 = S64::from_i64(az_eval_i32 as i64);
         az_eval_s64.mul_trunc::<3, 3>(&bz_eval_s192.sum)
     }
@@ -811,6 +826,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             az.not_jump_or_branch,
             bz.next_unexp_pc_minus_expected.is_zero(),
         );
+        self.assert_constraint_second_group(9, az.is_rd_zero, bz.rd_write_value == 0i128);
     }
 
     /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
@@ -856,6 +872,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                 let mut acc_next_pc: Acc6U<F> = Acc6U::zero();
                 let mut acc_lookup_output: Acc6U<F> = Acc6U::zero();
                 let mut acc_sj_flag: Acc5U<F> = Acc5U::zero();
+                let mut acc_is_rd_zero: Acc5U<F> = Acc5U::zero();
                 let mut acc_next_is_virtual: Acc5U<F> = Acc5U::zero();
                 let mut acc_next_is_first_in_sequence: Acc5U<F> = Acc5U::zero();
                 let mut acc_flags: Vec<Acc5U<F>> =
@@ -890,6 +907,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     acc_next_pc.fmadd(&e_in, &row.next_pc);
                     acc_lookup_output.fmadd(&e_in, &row.lookup_output);
                     acc_sj_flag.fmadd(&e_in, &row.should_jump);
+                    acc_is_rd_zero.fmadd(&e_in, &row.is_rd_zero);
                     acc_next_is_virtual.fmadd(&e_in, &row.next_is_virtual);
                     acc_next_is_first_in_sequence.fmadd(&e_in, &row.next_is_first_in_sequence);
                     for flag in CircuitFlags::iter() {
@@ -941,6 +959,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     eq1_val.mul_unreduced::<9>(acc_lookup_output.barrett_reduce());
                 out_unr[JoltR1CSInputs::ShouldJump.to_index()] =
                     eq1_val.mul_unreduced::<9>(acc_sj_flag.barrett_reduce());
+                out_unr[JoltR1CSInputs::IsRdZero.to_index()] =
+                    eq1_val.mul_unreduced::<9>(acc_is_rd_zero.barrett_reduce());
                 out_unr[JoltR1CSInputs::NextIsVirtual.to_index()] =
                     eq1_val.mul_unreduced::<9>(acc_next_is_virtual.barrett_reduce());
                 out_unr[JoltR1CSInputs::NextIsFirstInSequence.to_index()] =

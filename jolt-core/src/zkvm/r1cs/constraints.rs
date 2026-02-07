@@ -172,6 +172,7 @@ pub enum R1CSConstraintLabel {
     NextUnexpPCUpdateOtherwise,
     NextPCEqPCPlusOneIfInline,
     MustStartSequenceFromBeginning,
+    RdWriteZeroIfRdIsX0,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -398,6 +399,14 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
         label: R1CSConstraintLabel::MustStartSequenceFromBeginning,
         if { { JoltR1CSInputs::NextIsVirtual } - { JoltR1CSInputs::NextIsFirstInSequence } }
         => ( { 1i128 } ) == ( { JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) } )
+    ),
+    // if IsRdZero {
+    //     assert!(RdWriteValue == 0)
+    // }
+    r1cs_eq_conditional!(
+        label: R1CSConstraintLabel::RdWriteZeroIfRdIsX0,
+        if { { JoltR1CSInputs::IsRdZero } }
+        => ( { JoltR1CSInputs::RdWriteValue } ) == ( { 0i128 } )
     ),
 ];
 

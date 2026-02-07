@@ -736,7 +736,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         let bytecode = &bytecode_preprocessing.bytecode;
 
         // Generate all stage-specific gamma powers upfront (order must match verifier)
-        let stage1_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
+        let stage1_gammas: Vec<F> = transcript.challenge_scalar_powers(3 + NUM_CIRCUIT_FLAGS);
         let stage2_gammas: Vec<F> = transcript.challenge_scalar_powers(5);
         let stage3_gammas: Vec<F> = transcript.challenge_scalar_powers(9);
         let stage4_gammas: Vec<F> = transcript.challenge_scalar_powers(3);
@@ -885,7 +885,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
                 // Stage 1 (Spartan outer sumcheck)
                 // Val(k) = unexpanded_pc(k) + γ·imm(k)
-                //          + γ²·circuit_flags[0](k) + γ³·circuit_flags[1](k) + ...
+                //          + γ²·circuit_flags[0](k) + ... + γ^(n+1)·circuit_flags[n-1](k)
+                //          + γ^(n+2)·is_rd_zero(k)
                 // This virtualizes claims output by Spartan's "outer" sumcheck.
                 {
                     let mut lc = F::from_u64(instr.address as u64);
@@ -899,6 +900,9 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                         if *flag {
                             lc += *gamma_power;
                         }
+                    }
+                    if instr_flags[InstructionFlags::IsRdZero] {
+                        lc += stage1_gammas[2 + NUM_CIRCUIT_FLAGS];
                     }
                     *o0 = lc;
                 }
@@ -1036,9 +1040,15 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             })
             .collect();
 
+        let (_, is_rd_zero_claim) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdZero),
+            SumcheckId::SpartanOuter,
+        );
+
         std::iter::once(unexpanded_pc_claim)
             .chain(std::iter::once(imm_claim))
             .chain(circuit_flag_claims)
+            .chain(std::iter::once(is_rd_zero_claim))
             .zip_eq(gamma_powers)
             .map(|(claim, gamma)| claim * gamma)
             .sum()
