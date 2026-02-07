@@ -405,7 +405,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     // }
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::RdWriteZeroIfRdIsX0,
-        if { { JoltR1CSInputs::IsRdZero } }
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::IsRdZero) } }
         => ( { JoltR1CSInputs::RdWriteValue } ) == ( { 0i128 } )
     ),
 ];
@@ -584,9 +584,7 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
     // 1: WriteLookupOutputToRD = (1 − IsRdZero) · OpFlags(WriteLookupOutputToRD)
     ProductConstraint {
         label: ProductConstraintLabel::WriteLookupOutputToRD,
-        left: ProductFactorExpr::OneMinus(VirtualPolynomial::InstructionFlags(
-            InstructionFlags::IsRdZero,
-        )),
+        left: ProductFactorExpr::OneMinus(VirtualPolynomial::OpFlags(CircuitFlags::IsRdZero)),
         right: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(
             CircuitFlags::WriteLookupOutputToRD,
         )),
@@ -595,9 +593,7 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
     // 2: WritePCtoRD = (1 − IsRdZero) · OpFlags(Jump)
     ProductConstraint {
         label: ProductConstraintLabel::WritePCtoRD,
-        left: ProductFactorExpr::OneMinus(VirtualPolynomial::InstructionFlags(
-            InstructionFlags::IsRdZero,
-        )),
+        left: ProductFactorExpr::OneMinus(VirtualPolynomial::OpFlags(CircuitFlags::IsRdZero)),
         right: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
         output: VirtualPolynomial::WritePCtoRD,
     },

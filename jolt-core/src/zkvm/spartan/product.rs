@@ -689,7 +689,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             .1;
         let is_rd_zero = accumulator
             .get_virtual_polynomial_opening(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdZero),
+                VirtualPolynomial::OpFlags(CircuitFlags::IsRdZero),
                 SumcheckId::SpartanProductVirtualization,
             )
             .1;

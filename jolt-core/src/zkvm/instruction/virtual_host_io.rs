@@ -1,4 +1,4 @@
-use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
+use crate::zkvm::instruction::NUM_INSTRUCTION_FLAGS;
 use tracer::instruction::{virtual_host_io::VirtualHostIO, RISCVCycle};
 
 use crate::zkvm::lookup_table::LookupTables;
@@ -16,13 +16,12 @@ impl Flags for VirtualHostIO {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::IsFirstInSequence] = self.is_first_in_sequence;
         flags[CircuitFlags::IsCompressed] = self.is_compressed;
+        flags[CircuitFlags::IsRdZero] = self.operands.rd == 0;
         flags
     }
 
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
-        let mut flags = [false; NUM_INSTRUCTION_FLAGS];
-        flags[InstructionFlags::IsRdZero] = self.operands.rd == 0;
-        flags
+        [false; NUM_INSTRUCTION_FLAGS]
     }
 }
 

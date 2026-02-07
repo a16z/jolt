@@ -21,13 +21,13 @@ impl Flags for LUI {
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsFirstInSequence] = self.is_first_in_sequence;
         flags[CircuitFlags::IsCompressed] = self.is_compressed;
+        flags[CircuitFlags::IsRdZero] = self.operands.rd == 0;
         flags
     }
 
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
         let mut flags = [false; NUM_INSTRUCTION_FLAGS];
         flags[InstructionFlags::RightOperandIsImm] = true;
-        flags[InstructionFlags::IsRdZero] = self.operands.rd == 0;
         flags
     }
 }
