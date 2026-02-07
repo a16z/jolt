@@ -71,11 +71,7 @@ use crate::{
             ra_virtual::RamRaVirtualParams,
             raf_evaluation::RafEvaluationSumcheckParams,
             read_write_checking::RamReadWriteCheckingParams,
-            val_evaluation::{
-                ValEvaluationSumcheckParams,
-                ValEvaluationSumcheckProver as RamValEvaluationSumcheckProver,
-            },
-            val_final::{ValFinalSumcheckParams, ValFinalSumcheckProver},
+            val_fused::{RamValFusedSumcheckParams, RamValFusedSumcheckProver},
         },
         registers::{
             read_write_checking::RegistersReadWriteCheckingParams,
@@ -930,6 +926,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
+        let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+            &self.rw_config,
+        );
         prover_accumulate_advice(
             &self.advice.untrusted_advice_polynomial,
             &self.advice.trusted_advice_polynomial,
@@ -940,21 +942,15 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             self.rw_config
                 .needs_single_advice_opening(self.trace.len().log_2()),
         );
-
-        let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
-            self.trace.len(),
-            &self.opening_accumulator,
-            &mut self.transcript,
-            &self.rw_config,
-        );
-        let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
+        self.transcript.append_message(b"ram_val_fused_gamma");
+        let ram_val_fused_gamma: F = self.transcript.challenge_scalar::<F>();
+        let ram_val_fused_params = RamValFusedSumcheckParams::new_from_prover(
             &self.one_hot_params,
             &self.opening_accumulator,
             &self.initial_ram_state,
             self.trace.len(),
+            ram_val_fused_gamma,
         );
-        let ram_val_final_params =
-            ValFinalSumcheckParams::new_from_prover(self.trace.len(), &self.opening_accumulator);
 
         let registers_read_write_checking = RegistersReadWriteCheckingProver::initialize(
             registers_read_write_checking_params,
@@ -962,14 +958,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
         );
-        let ram_val_evaluation = RamValEvaluationSumcheckProver::initialize(
-            ram_val_evaluation_params,
-            &self.trace,
-            &self.preprocessing.shared.bytecode,
-            &self.program_io.memory_layout,
-        );
-        let ram_val_final = ValFinalSumcheckProver::initialize(
-            ram_val_final_params,
+        let ram_val_fused = RamValFusedSumcheckProver::initialize(
+            ram_val_fused_params,
             &self.trace,
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
@@ -981,14 +971,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "RegistersReadWriteCheckingProver",
                 &registers_read_write_checking,
             );
-            print_data_structure_heap_usage("RamValEvaluationSumcheckProver", &ram_val_evaluation);
-            print_data_structure_heap_usage("ValFinalSumcheckProver", &ram_val_final);
+            print_data_structure_heap_usage("RamValFusedSumcheckProver", &ram_val_fused);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(registers_read_write_checking),
-            Box::new(ram_val_evaluation),
-            Box::new(ram_val_final),
+            Box::new(ram_val_fused),
         ];
 
         #[cfg(feature = "allocative")]
