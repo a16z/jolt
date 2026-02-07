@@ -566,7 +566,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             write_pc_to_rd: self.row.write_pc_to_rd_addr,
             should_branch: self.row.should_branch,
             not_jump_or_branch: next_update_otherwise,
-            is_rd_zero: self.row.is_rd_zero,
+            is_rd_zero: flags[CircuitFlags::IsRdZero],
         }
     }
 
@@ -872,7 +872,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                 let mut acc_next_pc: Acc6U<F> = Acc6U::zero();
                 let mut acc_lookup_output: Acc6U<F> = Acc6U::zero();
                 let mut acc_sj_flag: Acc5U<F> = Acc5U::zero();
-                let mut acc_is_rd_zero: Acc5U<F> = Acc5U::zero();
                 let mut acc_next_is_virtual: Acc5U<F> = Acc5U::zero();
                 let mut acc_next_is_first_in_sequence: Acc5U<F> = Acc5U::zero();
                 let mut acc_flags: Vec<Acc5U<F>> =
@@ -907,7 +906,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     acc_next_pc.fmadd(&e_in, &row.next_pc);
                     acc_lookup_output.fmadd(&e_in, &row.lookup_output);
                     acc_sj_flag.fmadd(&e_in, &row.should_jump);
-                    acc_is_rd_zero.fmadd(&e_in, &row.is_rd_zero);
                     acc_next_is_virtual.fmadd(&e_in, &row.next_is_virtual);
                     acc_next_is_first_in_sequence.fmadd(&e_in, &row.next_is_first_in_sequence);
                     for flag in CircuitFlags::iter() {
@@ -959,8 +957,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     eq1_val.mul_unreduced::<9>(acc_lookup_output.barrett_reduce());
                 out_unr[JoltR1CSInputs::ShouldJump.to_index()] =
                     eq1_val.mul_unreduced::<9>(acc_sj_flag.barrett_reduce());
-                out_unr[JoltR1CSInputs::IsRdZero.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_is_rd_zero.barrett_reduce());
                 out_unr[JoltR1CSInputs::NextIsVirtual.to_index()] =
                     eq1_val.mul_unreduced::<9>(acc_next_is_virtual.barrett_reduce());
                 out_unr[JoltR1CSInputs::NextIsFirstInSequence.to_index()] =

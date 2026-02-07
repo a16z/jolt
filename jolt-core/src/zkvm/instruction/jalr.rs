@@ -25,6 +25,7 @@ impl Flags for JALR {
         // This skips the NextPCEqPCPlusOneIfInline constraint for ECALL sequences
         // that may jump to trap handlers (NextPC != PC + 1).
         flags[CircuitFlags::IsLastInSequence] = self.virtual_sequence_remaining == Some(0);
+        flags[CircuitFlags::IsRdZero] = self.operands.rd == 0;
         flags
     }
 
@@ -32,7 +33,6 @@ impl Flags for JALR {
         let mut flags = [false; NUM_INSTRUCTION_FLAGS];
         flags[InstructionFlags::LeftOperandIsRs1Value] = true;
         flags[InstructionFlags::RightOperandIsImm] = true;
-        flags[InstructionFlags::IsRdZero] = self.operands.rd == 0;
         flags
     }
 }
