@@ -55,6 +55,14 @@ A program can use any combination of these three input types. In guest code, you
 
 For a complete example of advice inputs, see the [merkle-tree example](https://github.com/a16z/jolt/tree/main/examples/merkle-tree).
 
+### Advice inputs vs. runtime advice
+
+Advice inputs described above are *host-provided*: the host supplies the data before execution, and it is written into a preallocated memory region that the guest reads from. The guest program runs once, and the advice values are fixed before execution begins.
+
+[Runtime advice](../runtime_advice.md) is a separate mechanism where the *guest itself* computes advice values during a first-pass execution, and those values are fed back via an advice tape for the proving pass. This is useful when the advice depends on the guest's own execution (e.g. computing a modular inverse or finding factors) and checking the result is cheaper than computing it. Runtime advice uses `#[jolt::advice]` functions rather than `UntrustedAdvice<T>` / `TrustedAdvice<T>` parameters on `#[jolt::provable]`.
+
+Both mechanisms use the `UntrustedAdvice<T>` wrapper to signal that the data is untrusted and must be verified by the guest, but they differ in where the data originates and how it is serialized (advice inputs use `serde`; runtime advice uses `AdviceTapeIO`).
+
 ## Standard Library
 Jolt supports the Rust standard library. To enable support, simply add the `guest-std` feature to the Jolt import in the guest's `Cargo.toml` file and remove the `#![cfg_attr(feature = "guest", no_std)]` directive from the guest code.
 
