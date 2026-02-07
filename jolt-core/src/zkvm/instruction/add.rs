@@ -28,7 +28,7 @@ impl Flags for ADD {
         let mut flags = [false; NUM_INSTRUCTION_FLAGS];
         flags[InstructionFlags::LeftOperandIsRs1Value] = true;
         flags[InstructionFlags::RightOperandIsRs2Value] = true;
-        flags[InstructionFlags::IsRdNotZero] = self.operands.rd != 0;
+        flags[InstructionFlags::IsRdZero] = self.operands.rd == 0;
         flags
     }
 }

@@ -572,22 +572,22 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
         right: ProductFactorExpr::Var(VirtualPolynomial::RightInstructionInput),
         output: VirtualPolynomial::Product,
     },
-    // 1: WriteLookupOutputToRD = IsRdNotZero · OpFlags(WriteLookupOutputToRD)
+    // 1: WriteLookupOutputToRD = (1 − IsRdZero) · OpFlags(WriteLookupOutputToRD)
     ProductConstraint {
         label: ProductConstraintLabel::WriteLookupOutputToRD,
-        left: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
-            InstructionFlags::IsRdNotZero,
+        left: ProductFactorExpr::OneMinus(VirtualPolynomial::InstructionFlags(
+            InstructionFlags::IsRdZero,
         )),
         right: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(
             CircuitFlags::WriteLookupOutputToRD,
         )),
         output: VirtualPolynomial::WriteLookupOutputToRD,
     },
-    // 2: WritePCtoRD = IsRdNotZero · OpFlags(Jump)
+    // 2: WritePCtoRD = (1 − IsRdZero) · OpFlags(Jump)
     ProductConstraint {
         label: ProductConstraintLabel::WritePCtoRD,
-        left: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
-            InstructionFlags::IsRdNotZero,
+        left: ProductFactorExpr::OneMinus(VirtualPolynomial::InstructionFlags(
+            InstructionFlags::IsRdZero,
         )),
         right: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
         output: VirtualPolynomial::WritePCtoRD,

@@ -254,9 +254,9 @@ pub struct R1CSCycleInputs {
     /// Derived: `Branch && (LookupOutput == 1)`.
     pub should_branch: bool,
 
-    /// `IsRdNotZero` && ` `WriteLookupOutputToRD`
+    /// `!IsRdZero` && `WriteLookupOutputToRD`
     pub write_lookup_output_to_rd_addr: bool,
-    /// `IsRdNotZero` && `Jump`
+    /// `!IsRdZero` && `Jump`
     pub write_pc_to_rd_addr: bool,
 
     /// `VirtualInstruction` flag for the next cycle (false for last cycle).
@@ -357,9 +357,9 @@ impl R1CSCycleInputs {
 
         // Write-to-Rd selectors (masked by flags)
         let write_lookup_output_to_rd_addr = flags_view[CircuitFlags::WriteLookupOutputToRD]
-            && instruction_flags[InstructionFlags::IsRdNotZero];
+            && !instruction_flags[InstructionFlags::IsRdZero];
         let write_pc_to_rd_addr =
-            flags_view[CircuitFlags::Jump] && instruction_flags[InstructionFlags::IsRdNotZero];
+            flags_view[CircuitFlags::Jump] && !instruction_flags[InstructionFlags::IsRdZero];
 
         let (next_is_virtual, next_is_first_in_sequence) = if let Some(nc) = next_cycle {
             let flags = nc.instruction().circuit_flags();
@@ -436,7 +436,7 @@ impl R1CSCycleInputs {
 /// Order:
 /// 0: LeftInstructionInput
 /// 1: RightInstructionInput
-/// 2: InstructionFlags(IsRdNotZero)
+/// 2: InstructionFlags(IsRdZero)
 /// 3: OpFlags(WriteLookupOutputToRD)
 /// 4: OpFlags(Jump)
 /// 5: LookupOutput
@@ -446,7 +446,7 @@ impl R1CSCycleInputs {
 pub const PRODUCT_UNIQUE_FACTOR_VIRTUALS: [VirtualPolynomial; 9] = [
     VirtualPolynomial::LeftInstructionInput,
     VirtualPolynomial::RightInstructionInput,
-    VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
+    VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdZero),
     VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
     VirtualPolynomial::OpFlags(CircuitFlags::Jump),
     VirtualPolynomial::LookupOutput,
@@ -478,8 +478,8 @@ pub struct ProductCycleInputs {
     pub should_branch_flag: bool,
     /// ShouldJump right flag (1 - NextIsNoop)
     pub not_next_noop: bool,
-    /// IsRdNotZero instruction flag (boolean)
-    pub is_rd_not_zero: bool,
+    /// IsRdZero instruction flag (boolean)
+    pub is_rd_zero: bool,
     /// VirtualInstruction flag (boolean) — opened at product cycle point for downstream stages
     pub virtual_instruction_flag: bool,
 }
@@ -518,7 +518,7 @@ impl ProductCycleInputs {
             }
         };
 
-        let is_rd_not_zero = instruction_flags[InstructionFlags::IsRdNotZero];
+        let is_rd_zero = instruction_flags[InstructionFlags::IsRdZero];
 
         // WriteLookupOutputToRD flag
         let write_lookup_output_to_rd_flag = flags_view[CircuitFlags::WriteLookupOutputToRD];
@@ -533,7 +533,7 @@ impl ProductCycleInputs {
             should_branch_flag: branch_flag,
             jump_flag,
             not_next_noop,
-            is_rd_not_zero,
+            is_rd_zero,
             virtual_instruction_flag,
         }
     }
