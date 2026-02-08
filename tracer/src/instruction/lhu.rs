@@ -84,21 +84,19 @@ impl LHU {
     /// 5. Shift halfword to bits [31:16]
     /// 6. Logical right shift by 16 to zero-extend
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        // Virtual registers used in sequence
-        let v_address = allocator.allocate();
-        let v_word_address = allocator.allocate();
-        let v_word = allocator.allocate();
-        let v_shift = allocator.allocate();
+        let v0 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
+
         asm.emit_align::<VirtualAssertHalfwordAlignment>(self.operands.rs1, self.operands.imm);
-        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
-        asm.emit_i::<ANDI>(*v_word_address, *v_address, -4i64 as u64);
-        asm.emit_i::<VirtualLW>(*v_word, *v_word_address, 0);
-        asm.emit_i::<XORI>(*v_shift, *v_address, 2);
-        asm.emit_i::<SLLI>(*v_shift, *v_shift, 3);
-        asm.emit_r::<SLL>(self.operands.rd, *v_word, *v_shift);
+        asm.emit_i::<ADDI>(*v0, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(self.operands.rd, *v0, -4i64 as u64);
+        asm.emit_i::<VirtualLW>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<XORI>(*v0, *v0, 2);
+        asm.emit_i::<SLLI>(*v0, *v0, 3);
+        asm.emit_r::<SLL>(self.operands.rd, self.operands.rd, *v0);
         asm.emit_i::<SRLI>(self.operands.rd, self.operands.rd, 16);
+
         asm.finalize()
     }
 
@@ -109,21 +107,19 @@ impl LHU {
     /// 2. Shift halfword to bits [63:48]
     /// 3. Logical right shift by 48 to zero-extend
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        // Virtual registers used in sequence
-        let v_address = allocator.allocate();
-        let v_dword_address = allocator.allocate();
-        let v_dword = allocator.allocate();
-        let v_shift = allocator.allocate();
+        let v0 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
+
         asm.emit_align::<VirtualAssertHalfwordAlignment>(self.operands.rs1, self.operands.imm);
-        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
-        asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
-        asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
-        asm.emit_i::<XORI>(*v_shift, *v_address, 6);
-        asm.emit_i::<SLLI>(*v_shift, *v_shift, 3);
-        asm.emit_r::<SLL>(self.operands.rd, *v_dword, *v_shift);
+        asm.emit_i::<ADDI>(*v0, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(self.operands.rd, *v0, -8i64 as u64);
+        asm.emit_ld::<LD>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<XORI>(*v0, *v0, 6);
+        asm.emit_i::<SLLI>(*v0, *v0, 3);
+        asm.emit_r::<SLL>(self.operands.rd, self.operands.rd, *v0);
         asm.emit_i::<SRLI>(self.operands.rd, self.operands.rd, 48);
+
         asm.finalize()
     }
 }
