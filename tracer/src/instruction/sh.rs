@@ -91,27 +91,26 @@ impl SH {
     /// 7. Use XOR operations to replace the target halfword
     /// 8. Store the modified word back to memory
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        // Virtual registers used in sequence
-        let v_address = allocator.allocate();
-        let v_word_address = allocator.allocate();
-        let v_word = allocator.allocate();
-        let v_shift = allocator.allocate();
-        let v_mask = allocator.allocate();
-        let v_halfword = allocator.allocate();
+        let v0 = allocator.allocate();
+        let v1 = allocator.allocate();
+        let v2 = allocator.allocate();
+        let v3 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
+
         asm.emit_align::<VirtualAssertHalfwordAlignment>(self.operands.rs1, self.operands.imm);
-        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
-        asm.emit_i::<ANDI>(*v_word_address, *v_address, -4i64 as u64);
-        asm.emit_i::<VirtualLW>(*v_word, *v_word_address, 0);
-        asm.emit_i::<SLLI>(*v_shift, *v_address, 3);
-        asm.emit_u::<LUI>(*v_mask, 0xffff);
-        asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
-        asm.emit_r::<SLL>(*v_halfword, self.operands.rs2, *v_shift);
-        asm.emit_r::<XOR>(*v_halfword, *v_word, *v_halfword);
-        asm.emit_r::<AND>(*v_halfword, *v_halfword, *v_mask);
-        asm.emit_r::<XOR>(*v_word, *v_word, *v_halfword);
-        asm.emit_s::<VirtualSW>(*v_word_address, *v_word, 0);
+        asm.emit_i::<ADDI>(*v0, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(*v1, *v0, -4i64 as u64);
+        asm.emit_i::<VirtualLW>(*v2, *v1, 0);
+        asm.emit_i::<SLLI>(*v3, *v0, 3);
+        asm.emit_u::<LUI>(*v0, 0xffff);
+        asm.emit_r::<SLL>(*v0, *v0, *v3);
+        asm.emit_r::<SLL>(*v3, self.operands.rs2, *v3);
+        asm.emit_r::<XOR>(*v3, *v2, *v3);
+        asm.emit_r::<AND>(*v3, *v3, *v0);
+        asm.emit_r::<XOR>(*v2, *v2, *v3);
+        asm.emit_s::<VirtualSW>(*v1, *v2, 0);
+
         asm.finalize()
     }
 
@@ -121,27 +120,26 @@ impl SH {
     /// The halfword position is determined by bits 1-2 of the address
     /// (4 possible halfword positions within an 8-byte doubleword).
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        // Virtual registers used in sequence
-        let v_address = allocator.allocate();
-        let v_dword_address = allocator.allocate();
-        let v_dword = allocator.allocate();
-        let v_shift = allocator.allocate();
-        let v_mask = allocator.allocate();
-        let v_halfword = allocator.allocate();
+        let v0 = allocator.allocate();
+        let v1 = allocator.allocate();
+        let v2 = allocator.allocate();
+        let v3 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
+
         asm.emit_align::<VirtualAssertHalfwordAlignment>(self.operands.rs1, self.operands.imm);
-        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
-        asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
-        asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
-        asm.emit_i::<SLLI>(*v_shift, *v_address, 3);
-        asm.emit_u::<LUI>(*v_mask, 0xffff);
-        asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
-        asm.emit_r::<SLL>(*v_halfword, self.operands.rs2, *v_shift);
-        asm.emit_r::<XOR>(*v_halfword, *v_dword, *v_halfword);
-        asm.emit_r::<AND>(*v_halfword, *v_halfword, *v_mask);
-        asm.emit_r::<XOR>(*v_dword, *v_dword, *v_halfword);
-        asm.emit_s::<SD>(*v_dword_address, *v_dword, 0);
+        asm.emit_i::<ADDI>(*v0, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(*v1, *v0, -8i64 as u64);
+        asm.emit_ld::<LD>(*v2, *v1, 0);
+        asm.emit_i::<SLLI>(*v3, *v0, 3);
+        asm.emit_u::<LUI>(*v0, 0xffff);
+        asm.emit_r::<SLL>(*v0, *v0, *v3);
+        asm.emit_r::<SLL>(*v3, self.operands.rs2, *v3);
+        asm.emit_r::<XOR>(*v3, *v2, *v3);
+        asm.emit_r::<AND>(*v3, *v3, *v0);
+        asm.emit_r::<XOR>(*v2, *v2, *v3);
+        asm.emit_s::<SD>(*v1, *v2, 0);
+
         asm.finalize()
     }
 }
