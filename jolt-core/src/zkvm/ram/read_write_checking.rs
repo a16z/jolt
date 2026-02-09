@@ -508,6 +508,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
         if round == params.phase1_num_rounds - 1 {
             self.merged_eq = Some(MultilinearPolynomial::LargeScalars(gruen_eq.merge()));
+            self.gruen_eq = None;
             let sparse_matrix = std::mem::take(sparse_matrix);
             if params.phase2_num_rounds > 0 {
                 self.sparse_matrix_phase2 = sparse_matrix.into();
