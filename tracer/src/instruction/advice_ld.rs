@@ -24,7 +24,7 @@ impl AdviceLD {
         // Read 8 bytes (doubleword) from the advice tape
         let advice_value = advice_tape_read(cpu, 8).expect("Failed to read from advice tape");
         // Store the advice value to register rd
-        cpu.x[self.operands.rd as usize] = advice_value as i64;
+        cpu.write_register(self.operands.rd as usize, advice_value as i64);
     }
 }
 

@@ -30,7 +30,7 @@ impl VirtualROTRI {
             }
         };
 
-        cpu.x[self.operands.rd as usize] = cpu.sign_extend(rotated);
+        cpu.write_register(self.operands.rd as usize, cpu.sign_extend(rotated));
     }
 }
 

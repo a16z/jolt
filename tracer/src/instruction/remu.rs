@@ -27,10 +27,13 @@ impl REMU {
     fn exec(&self, cpu: &mut Cpu, _: &mut <REMU as RISCVInstruction>::RAMAccess) {
         let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]);
         let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]);
-        cpu.x[self.operands.rd as usize] = match divisor {
-            0 => cpu.sign_extend(dividend as i64),
-            _ => cpu.sign_extend(dividend.wrapping_rem(divisor) as i64),
-        };
+        cpu.write_register(
+            self.operands.rd as usize,
+            match divisor {
+                0 => cpu.sign_extend(dividend as i64),
+                _ => cpu.sign_extend(dividend.wrapping_rem(divisor) as i64),
+            },
+        );
     }
 }
 

@@ -29,7 +29,7 @@ declare_riscv_instr!(
 
 impl LB {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LB as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd as usize] = match cpu
+        let value = match cpu
             .mmu
             .load(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)
         {
@@ -39,6 +39,7 @@ impl LB {
             }
             Err(_) => panic!("MMU load error"),
         };
+        cpu.write_register(self.operands.rd as usize, value);
     }
 }
 

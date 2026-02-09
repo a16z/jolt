@@ -25,7 +25,7 @@ macro_rules! declare_xorrotw {
                         let rs2_val = cpu.x[self.operands.rs2 as usize] as u32;
                         let xor_result = rs1_val ^ rs2_val;
                         let rotated = xor_result.rotate_right($rotation);
-                        cpu.x[self.operands.rd as usize] = rotated as i64;
+                        cpu.write_register(self.operands.rd as usize, rotated as i64);
                     }
                 }
             }

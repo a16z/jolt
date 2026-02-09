@@ -47,7 +47,7 @@ impl CSRRS {
 
         // Write old value to rd (if rd != x0)
         if self.operands.rd != 0 {
-            cpu.x[self.operands.rd as usize] = cpu.sign_extend(old_val as i64);
+            cpu.write_register(self.operands.rd as usize, cpu.sign_extend(old_val as i64));
         }
     }
 }

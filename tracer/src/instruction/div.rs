@@ -31,11 +31,14 @@ impl DIV {
         let dividend = cpu.x[self.operands.rs1 as usize];
         let divisor = cpu.x[self.operands.rs2 as usize];
         if divisor == 0 {
-            cpu.x[self.operands.rd as usize] = -1;
+            cpu.write_register(self.operands.rd as usize, -1);
         } else if dividend == cpu.most_negative() && divisor == -1 {
-            cpu.x[self.operands.rd as usize] = dividend;
+            cpu.write_register(self.operands.rd as usize, dividend);
         } else {
-            cpu.x[self.operands.rd as usize] = cpu.sign_extend(dividend.wrapping_div(divisor))
+            cpu.write_register(
+                self.operands.rd as usize,
+                cpu.sign_extend(dividend.wrapping_div(divisor)),
+            );
         }
     }
 }

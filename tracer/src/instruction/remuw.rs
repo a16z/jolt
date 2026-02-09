@@ -32,11 +32,14 @@ impl REMUW {
         // including on a divide by zero.
         let dividend = cpu.x[self.operands.rs1 as usize] as u32;
         let divisor = cpu.x[self.operands.rs2 as usize] as u32;
-        cpu.x[self.operands.rd as usize] = (if divisor == 0 {
-            dividend
-        } else {
-            dividend.wrapping_rem(divisor)
-        }) as i32 as i64;
+        cpu.write_register(
+            self.operands.rd as usize,
+            (if divisor == 0 {
+                dividend
+            } else {
+                dividend.wrapping_rem(divisor)
+            }) as i32 as i64,
+        );
     }
 }
 

@@ -17,8 +17,11 @@ declare_riscv_instr!(
 
 impl ORI {
     fn exec(&self, cpu: &mut Cpu, _: &mut <ORI as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
-            cpu.x[self.operands.rs1 as usize] | normalize_imm(self.operands.imm, &cpu.xlen),
+        cpu.write_register(
+            self.operands.rd as usize,
+            cpu.sign_extend(
+                cpu.x[self.operands.rs1 as usize] | normalize_imm(self.operands.imm, &cpu.xlen),
+            ),
         );
     }
 }

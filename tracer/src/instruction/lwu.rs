@@ -31,14 +31,17 @@ impl LWU {
         let address = cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64;
         let value = cpu.mmu.load_word(address);
 
-        cpu.x[self.operands.rd as usize] = match value {
-            Ok((word, memory_read)) => {
-                *ram_access = memory_read;
-                // Zero extension for unsigned word load
-                word as i64
-            }
-            Err(_) => panic!("MMU load error"),
-        };
+        cpu.write_register(
+            self.operands.rd as usize,
+            match value {
+                Ok((word, memory_read)) => {
+                    *ram_access = memory_read;
+                    // Zero extension for unsigned word load
+                    word as i64
+                }
+                Err(_) => panic!("MMU load error"),
+            },
+        );
     }
 }
 
