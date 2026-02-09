@@ -8,7 +8,7 @@ use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumu
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::transcripts::{AppendToTranscript, Transcript};
+use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
@@ -47,7 +47,7 @@ impl BatchedSumcheck {
         // Append input claims to transcript
         sumcheck_instances.iter().for_each(|sumcheck| {
             let input_claim = sumcheck.input_claim(opening_accumulator);
-            transcript.append_scalar(&input_claim);
+            transcript.append_scalar(b"sumcheck_claim", &input_claim);
         });
 
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
@@ -121,7 +121,7 @@ impl BatchedSumcheck {
             let compressed_poly = batched_univariate_poly.compress();
 
             // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
+            transcript.append_scalars(b"sumcheck_poly", &compressed_poly.coeffs_except_linear_term);
             let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
 
@@ -222,7 +222,7 @@ impl BatchedSumcheck {
             .map(|sumcheck| sumcheck.input_claim(opening_accumulator))
             .collect();
         for claim in &input_claims {
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"sumcheck_claim", claim);
         }
 
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
@@ -294,8 +294,7 @@ impl BatchedSumcheck {
                 .expect("Serialization should not fail");
 
             // Append commitment to transcript (instead of raw coefficients)
-            transcript.append_message(b"UniPolyCommitment");
-            transcript.append_bytes(&commitment_bytes);
+            transcript.append_bytes(b"sumcheck_commitment", &commitment_bytes);
 
             let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
@@ -428,7 +427,7 @@ impl BatchedSumcheck {
         // Append input claims to transcript
         sumcheck_instances.iter().for_each(|sumcheck| {
             let input_claim = sumcheck.input_claim(opening_accumulator);
-            transcript.append_scalar(&input_claim);
+            transcript.append_scalar(b"sumcheck_claim", &input_claim);
         });
 
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
@@ -506,7 +505,7 @@ impl BatchedSumcheck {
         // (must match ordering in BatchedSumcheck::prove)
         sumcheck_instances.iter().for_each(|sumcheck| {
             let input_claim = sumcheck.input_claim(opening_accumulator);
-            transcript.append_scalar(&input_claim);
+            transcript.append_scalar(b"sumcheck_claim", &input_claim);
         });
 
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
@@ -579,7 +578,13 @@ impl<F: JoltField, ProofTranscript: Transcript> StandardSumcheckProof<F, ProofTr
                 ));
             }
 
-            self.compressed_polys[i].append_to_transcript(transcript);
+            // append the prover's message to the transcript
+            transcript.append_scalars(
+                b"sumcheck_poly",
+                &self.compressed_polys[i].coeffs_except_linear_term,
+            );
+
+            //derive the verifier's challenge for the next round
             let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
             r.push(r_i);
             e = self.compressed_polys[i].eval_from_hint(&e, &r_i);
@@ -694,8 +699,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
                 .serialize_compressed(&mut commitment_bytes)
                 .expect("Serialization should not fail");
 
-            transcript.append_message(b"UniPolyCommitment");
-            transcript.append_bytes(&commitment_bytes);
+            transcript.append_bytes(b"sumcheck_commitment", &commitment_bytes);
 
             let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
             r.push(r_i);

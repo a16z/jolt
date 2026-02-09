@@ -2,14 +2,19 @@ use common::jolt_device::MemoryLayout;
 use num::Integer;
 use num_traits::Zero;
 
+use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-use crate::poly::opening_proof::OpeningAccumulator;
+use crate::poly::opening_proof::{OpeningAccumulator, PolynomialId};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::read_write_matrix::{
     AddressMajorMatrixEntry, RamAddressMajorEntry, RamCycleMajorEntry, ReadWriteMatrixAddressMajor,
     ReadWriteMatrixCycleMajor,
+};
+use crate::subprotocols::sumcheck_claim::{
+    CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
+    VerifierEvaluablePolynomial,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
@@ -18,7 +23,6 @@ use crate::zkvm::config::{OneHotParams, ReadWriteConfig};
 use crate::{
     field::JoltField,
     poly::{
-        eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -150,10 +154,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let rv_opening =
-            OpeningId::Virtual(VirtualPolynomial::RamReadValue, SumcheckId::SpartanOuter);
-        let wv_opening =
-            OpeningId::Virtual(VirtualPolynomial::RamWriteValue, SumcheckId::SpartanOuter);
+        let rv_opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamReadValue),
+            SumcheckId::SpartanOuter,
+        );
+        let wv_opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamWriteValue),
+            SumcheckId::SpartanOuter,
+        );
 
         let terms = vec![
             ProductTerm::single(ValueSource::Opening(rv_opening)),
@@ -176,12 +184,16 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
         // Challenge layout:
         //   Challenge(0) = eq_eval * (1 + γ)
         //   Challenge(1) = eq_eval * γ
-        let ra_opening =
-            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking);
-        let val_opening =
-            OpeningId::Virtual(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
-        let inc_opening = OpeningId::Committed(
-            CommittedPolynomial::RamInc,
+        let ra_opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamRa),
+            SumcheckId::RamReadWriteChecking,
+        );
+        let val_opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamVal),
+            SumcheckId::RamReadWriteChecking,
+        );
+        let inc_opening = OpeningId::Polynomial(
+            PolynomialId::Committed(CommittedPolynomial::RamInc),
             SumcheckId::RamReadWriteChecking,
         );
 
@@ -352,7 +364,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                             [inc_0, inc_infty]
                         };
 
-                        let inner_sum_evals = ReadWriteMatrixCycleMajor::prover_message_contribution(
+                        let inner_sum_evals = sparse_matrix.prover_message_contribution(
                             even_row,
                             odd_row,
                             inc_evals,
@@ -728,6 +740,24 @@ impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RamReadWriteCheckingVerifier<F>
 {
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        let result = self.params.input_claim(accumulator);
+
+        #[cfg(test)]
+        {
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result =
+                Self::input_output_claims().input_claim(&gamma_pows, accumulator);
+            assert_eq!(result, reference_result);
+        }
+
+        result
+    }
+
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -740,7 +770,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         let (_, r_cycle) = r.split_at(self.params.K.log_2());
 
-        let eq_eval_cycle = EqPolynomial::mle_endian(&self.params.r_cycle, &r_cycle);
+        let (r_cycle_stage_1, _) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamReadValue,
+            SumcheckId::SpartanOuter,
+        );
+        let eq_eval_cycle = EqPolynomial::mle_endian(&r_cycle_stage_1, &r_cycle);
 
         let (_, ra_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamRa,
@@ -754,8 +788,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
         );
+        let result =
+            eq_eval_cycle * ra_claim * (val_claim + self.params.gamma * (val_claim + inc_claim));
 
-        eq_eval_cycle * ra_claim * (val_claim + self.params.gamma * (val_claim + inc_claim))
+        #[cfg(test)]
+        {
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result = claims.expected_output_claim(&r_cycle, &gamma_pows, accumulator);
+
+            assert_eq!(result, reference_result);
+        }
+
+        result
     }
 
     fn cache_openings(
@@ -785,5 +833,40 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,
         );
+    }
+}
+
+impl<F: JoltField> SumcheckFrontend<F> for RamReadWriteCheckingVerifier<F> {
+    fn input_output_claims() -> InputOutputClaims<F> {
+        let ram_read_value = VirtualPolynomial::RamReadValue.into();
+        let ram_write_value = VirtualPolynomial::RamWriteValue.into();
+
+        let ram_ra: ClaimExpr<F> = VirtualPolynomial::RamRa.into();
+        let ram_val: ClaimExpr<F> = VirtualPolynomial::RamVal.into();
+        let ram_inc: ClaimExpr<F> = CommittedPolynomial::RamInc.into();
+
+        let eq_cycle_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
+            opening: PolynomialId::Virtual(VirtualPolynomial::RamReadValue),
+            sumcheck: SumcheckId::SpartanOuter,
+            part: ChallengePart::Cycle,
+        });
+
+        InputOutputClaims {
+            claims: vec![
+                Claim {
+                    input_sumcheck_id: SumcheckId::SpartanOuter,
+                    input_claim_expr: ram_read_value,
+                    batching_poly: eq_cycle_stage1,
+                    expected_output_claim_expr: ram_ra.clone() * ram_val.clone(),
+                },
+                Claim {
+                    input_sumcheck_id: SumcheckId::SpartanOuter,
+                    input_claim_expr: ram_write_value,
+                    batching_poly: eq_cycle_stage1,
+                    expected_output_claim_expr: ram_ra * (ram_val + ram_inc),
+                },
+            ],
+            output_sumcheck_id: SumcheckId::RamReadWriteChecking,
+        }
     }
 }

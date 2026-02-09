@@ -33,8 +33,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::BindingOrder,
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         shared_ra_polys::{compute_all_G_and_ra_indices, RaIndices, SharedRaPolynomials},
         split_eq_poly::GruenSplitEqPolynomial,
@@ -115,7 +115,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BooleanitySumcheckParams<F> {
 
         let mut terms = Vec::with_capacity(2 * n);
         for (i, poly_type) in self.polynomial_types.iter().enumerate() {
-            let opening = OpeningId::Committed(*poly_type, SumcheckId::Booleanity);
+            let opening =
+                OpeningId::Polynomial(PolynomialId::Committed(*poly_type), SumcheckId::Booleanity);
 
             terms.push(ProductTerm::scaled(
                 ValueSource::Challenge(2 * i),

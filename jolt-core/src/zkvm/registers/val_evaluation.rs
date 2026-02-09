@@ -9,8 +9,8 @@ use crate::{
         lt_poly::LtPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
@@ -94,8 +94,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersValEvaluationSumcheckP
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let opening = OpeningId::Virtual(
-            VirtualPolynomial::RegistersVal,
+        let opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RegistersVal),
             SumcheckId::RegistersReadWriteChecking,
         );
         InputClaimConstraint::direct(opening)
@@ -106,12 +106,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersValEvaluationSumcheckP
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let inc_opening = OpeningId::Committed(
-            CommittedPolynomial::RdInc,
+        let inc_opening = OpeningId::Polynomial(
+            PolynomialId::Committed(CommittedPolynomial::RdInc),
             SumcheckId::RegistersValEvaluation,
         );
-        let wa_opening =
-            OpeningId::Virtual(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation);
+        let wa_opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RdWa),
+            SumcheckId::RegistersValEvaluation,
+        );
 
         let terms = vec![ProductTerm::scaled(
             ValueSource::Challenge(0),

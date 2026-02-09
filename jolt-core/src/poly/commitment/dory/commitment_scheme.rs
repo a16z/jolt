@@ -1,11 +1,12 @@
 //! Dory polynomial commitment scheme implementation
 
-use super::dory_globals::{DoryContext, DoryGlobals};
+use super::dory_globals::{DoryGlobals, DoryLayout};
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 use super::wrappers::{
     ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup,
     ArkworksVerifierSetup, JoltToDoryTranscript, BN254,
 };
+use crate::poly::commitment::dory::DoryContext;
 use crate::{
     curve::JoltCurve,
     field::JoltField,
@@ -70,16 +71,14 @@ fn bind_opening_inputs<ProofTranscript: Transcript>(
     opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
     opening: &ark_bn254::Fr,
 ) {
-    transcript.append_message(b"dory_opening_point");
     let mut point_scalars = Vec::with_capacity(opening_point.len());
     for point in opening_point {
         let scalar: ark_bn254::Fr = (*point).into();
         point_scalars.push(scalar);
     }
-    transcript.append_scalars(&point_scalars);
+    transcript.append_scalars(b"dory_opening_point", &point_scalars);
 
-    transcript.append_message(b"dory_opening_eval");
-    transcript.append_scalar(opening);
+    transcript.append_scalar(b"dory_opening_eval", opening);
 }
 
 impl CommitmentScheme for DoryCommitmentScheme {
@@ -176,10 +175,12 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = num_cols.log_2();
         let nu = num_rows.log_2();
 
+        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
+
         // Dory uses the opposite endian-ness as Jolt
-        let ark_point: Vec<ArkFr> = opening_point
+        let ark_point: Vec<ArkFr> = reordered_point
             .iter()
-            .rev()  // Reverse the order for Dory
+            .rev() // Reverse the order for Dory
             .map(|p| {
                 let f_val: ark_bn254::Fr = (*p).into();
                 jolt_to_ark(&f_val)
@@ -214,12 +215,12 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> Result<(), ProofVerifyError> {
         let _span = trace_span!("DoryCommitmentScheme::verify").entered();
 
-        bind_opening_inputs(transcript, opening_point, opening);
+        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
 
         // Dory uses the opposite endian-ness as Jolt
-        let ark_point: Vec<ArkFr> = opening_point
+        let ark_point: Vec<ArkFr> = reordered_point
             .iter()
-            .rev()  // Reverse the order for Dory
+            .rev()
             .map(|p| {
                 let f_val: ark_bn254::Fr = (*p).into();
                 jolt_to_ark(&f_val)
@@ -477,5 +478,26 @@ where
         let g1_0 = C::G1::from(setup.0.g1_0);
         let h1 = C::G1::from(setup.0.h1);
         Some((g1_0, h1))
+    }
+}
+
+/// Reorders opening_point for AddressMajor layout.
+///
+/// For AddressMajor layout, reorders opening_point from [r_address, r_cycle] to [r_cycle, r_address].
+/// This ensures that after Dory's reversal and splitting:
+/// - Column (right) vector gets address variables (matching AddressMajor column indexing)
+/// - Row (left) vector gets cycle variables (matching AddressMajor row indexing)
+///
+/// For CycleMajor layout, returns the point unchanged.
+fn reorder_opening_point_for_layout<F: JoltField>(
+    opening_point: &[F::Challenge],
+) -> Vec<F::Challenge> {
+    if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+        let log_T = DoryGlobals::get_T().log_2();
+        let log_K = opening_point.len().saturating_sub(log_T);
+        let (r_address, r_cycle) = opening_point.split_at(log_K);
+        [r_cycle, r_address].concat()
+    } else {
+        opening_point.to_vec()
     }
 }

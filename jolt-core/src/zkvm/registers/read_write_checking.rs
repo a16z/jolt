@@ -1,9 +1,14 @@
 use std::sync::Arc;
 
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+use crate::poly::opening_proof::PolynomialId;
 use crate::subprotocols::read_write_matrix::{
-    AddressMajorMatrixEntry, ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
-    RegistersAddressMajorEntry, RegistersCycleMajorEntry,
+    AddressMajorMatrixEntry, LookupTableIndex, ReadWriteMatrixAddressMajor,
+    ReadWriteMatrixCycleMajor, RegistersAddressMajorEntry, RegistersCycleMajorEntry,
+};
+use crate::subprotocols::sumcheck_claim::{
+    CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
+    VerifierEvaluablePolynomial,
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::ReadWriteConfig;
@@ -170,16 +175,16 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let rd_wv = OpeningId::Virtual(
-            VirtualPolynomial::RdWriteValue,
+        let rd_wv = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RdWriteValue),
             SumcheckId::RegistersClaimReduction,
         );
-        let rs1_rv = OpeningId::Virtual(
-            VirtualPolynomial::Rs1Value,
+        let rs1_rv = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::Rs1Value),
             SumcheckId::RegistersClaimReduction,
         );
-        let rs2_rv = OpeningId::Virtual(
-            VirtualPolynomial::Rs2Value,
+        let rs2_rv = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::Rs2Value),
             SumcheckId::RegistersClaimReduction,
         );
 
@@ -215,24 +220,24 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
         // - Challenge(1) = γ
         // - Challenge(2) = γ²
 
-        let val = OpeningId::Virtual(
-            VirtualPolynomial::RegistersVal,
+        let val = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RegistersVal),
             SumcheckId::RegistersReadWriteChecking,
         );
-        let rs1_ra = OpeningId::Virtual(
-            VirtualPolynomial::Rs1Ra,
+        let rs1_ra = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::Rs1Ra),
             SumcheckId::RegistersReadWriteChecking,
         );
-        let rs2_ra = OpeningId::Virtual(
-            VirtualPolynomial::Rs2Ra,
+        let rs2_ra = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::Rs2Ra),
             SumcheckId::RegistersReadWriteChecking,
         );
-        let rd_wa = OpeningId::Virtual(
-            VirtualPolynomial::RdWa,
+        let rd_wa = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RdWa),
             SumcheckId::RegistersReadWriteChecking,
         );
-        let inc = OpeningId::Committed(
-            CommittedPolynomial::RdInc,
+        let inc = OpeningId::Polynomial(
+            PolynomialId::Committed(CommittedPolynomial::RdInc),
             SumcheckId::RegistersReadWriteChecking,
         );
 
@@ -288,10 +293,40 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
     }
 }
 
+#[derive(Allocative, Default)]
+enum SparseMatrix<F: JoltField> {
+    #[default]
+    None,
+    CycleMajorWithLookups(
+        ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, LookupTableIndex>>,
+    ),
+    CycleMajor(ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>>),
+    AddressMajor(ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>),
+}
+
+impl<F: JoltField> SparseMatrix<F> {
+    fn bind(&mut self, r_j: F::Challenge) {
+        match self {
+            SparseMatrix::None => panic!("Cannot bind None variant"),
+            SparseMatrix::CycleMajorWithLookups(matrix) => matrix.bind(r_j),
+            SparseMatrix::CycleMajor(matrix) => matrix.bind(r_j),
+            SparseMatrix::AddressMajor(matrix) => matrix.bind(r_j),
+        }
+    }
+
+    fn materialize(self, K_: usize, T: usize) -> [MultilinearPolynomial<F>; 3] {
+        match self {
+            SparseMatrix::None => panic!("Cannot materialize None variant"),
+            SparseMatrix::CycleMajorWithLookups(matrix) => matrix.materialize(K_, T),
+            SparseMatrix::CycleMajor(matrix) => matrix.materialize(K_, T),
+            SparseMatrix::AddressMajor(matrix) => matrix.materialize(K_, T),
+        }
+    }
+}
+
 #[derive(Allocative)]
 pub struct RegistersReadWriteCheckingProver<F: JoltField> {
-    sparse_matrix_phase1: ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F>>,
-    sparse_matrix_phase2: ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>,
+    sparse_matrix: SparseMatrix<F>,
     gruen_eq: Option<GruenSplitEqPolynomial<F>>,
     inc: MultilinearPolynomial<F>,
     #[allocative(skip)]
@@ -334,22 +369,27 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             &trace,
             None,
         );
-        let sparse_matrix =
-            ReadWriteMatrixCycleMajor::<_, RegistersCycleMajorEntry<F>>::new(&trace, params.gamma);
         let phase1_rounds = params.phase1_num_rounds;
         let phase2_rounds = params.phase2_num_rounds;
 
-        let (sparse_matrix_phase1, sparse_matrix_phase2) = if phase1_rounds > 0 {
-            (sparse_matrix, Default::default())
+        let sparse_matrix = if phase1_rounds > 0 {
+            let matrix = ReadWriteMatrixCycleMajor::<
+                _,
+                RegistersCycleMajorEntry<F, LookupTableIndex>,
+            >::new(&trace, params.gamma);
+            SparseMatrix::CycleMajorWithLookups(matrix)
         } else if phase2_rounds > 0 {
-            (Default::default(), sparse_matrix.into())
+            let matrix = ReadWriteMatrixCycleMajor::<
+                _,
+                RegistersCycleMajorEntry<F, LookupTableIndex>,
+            >::new(&trace, params.gamma);
+            SparseMatrix::AddressMajor(matrix.into())
         } else {
             unimplemented!("Unsupported configuration: both phase 1 and phase 2 are 0 rounds")
         };
 
         Self {
-            sparse_matrix_phase1,
-            sparse_matrix_phase2,
+            sparse_matrix,
             gruen_eq,
             merged_eq,
             inc,
@@ -366,93 +406,38 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             inc,
             gruen_eq,
             params,
-            sparse_matrix_phase1: sparse_matrix,
+            sparse_matrix,
             ..
         } = self;
         let gruen_eq = gruen_eq.as_ref().unwrap();
 
-        // Compute quadratic coefficients using Gruen's optimization.
-        // When E_in is fully bound (len <= 1), we use E_in_eval = 1 and num_x_in_bits = 0,
-        // which makes the outer chunking degenerate to row pairs and skips the inner sum.
-        let e_in = gruen_eq.E_in_current();
-        let e_in_len = e_in.len();
-        let num_x_in_bits = e_in_len.max(1).log_2(); // max(1) so log_2 of 0 or 1 gives 0
-        let x_bitmask = (1 << num_x_in_bits) - 1;
-
-        let quadratic_coeffs: [F; DEGREE_BOUND - 1] = sparse_matrix
-            .entries
-            // Chunk by x_out (when E_in is bound, this is just row pairs)
-            .par_chunk_by(|a, b| ((a.row / 2) >> num_x_in_bits) == ((b.row / 2) >> num_x_in_bits))
-            .map(|entries| {
-                let x_out = (entries[0].row / 2) >> num_x_in_bits;
-                let E_out_eval = gruen_eq.E_out_current()[x_out];
-
-                let outer_sum_evals = entries
-                    .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
-                    .map(|entries| {
-                        let odd_row_start_index = entries.partition_point(|entry| entry.row.is_even());
-                        let (even_row, odd_row) = entries.split_at(odd_row_start_index);
-                        let j_prime = 2 * (entries[0].row / 2);
-
-                        // When E_in is fully bound, x_in = 0 and E_in_eval = 1
-                        let E_in_eval = if e_in_len <= 1 {
-                            F::one()
-                        } else {
-                            let x_in = (j_prime / 2) & x_bitmask;
-                            e_in[x_in]
-                        };
-
-                        let inc_evals = {
-                            let inc_0 = inc.get_bound_coeff(j_prime);
-                            let inc_1 = inc.get_bound_coeff(j_prime + 1);
-                            let inc_infty = inc_1 - inc_0;
-                            [inc_0, inc_infty]
-                        };
-
-                        let inner_sum_evals = ReadWriteMatrixCycleMajor::prover_message_contribution(
-                            even_row,
-                            odd_row,
-                            inc_evals,
-                            params.gamma,
-                        );
-
-                        [
-                            E_in_eval.mul_unreduced::<9>(inner_sum_evals[0]),
-                            E_in_eval.mul_unreduced::<9>(inner_sum_evals[1]),
-                        ]
-                    })
-                    .reduce(
-                        || [F::Unreduced::<9>::zero(); DEGREE_BOUND - 1],
-                        |running, new| [running[0] + new[0], running[1] + new[1]],
-                    )
-                    .map(F::from_montgomery_reduce);
-
-                [
-                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[0]),
-                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[1]),
-                ]
-            })
-            .reduce(
-                || [F::Unreduced::<9>::zero(); DEGREE_BOUND - 1],
-                |running, new| [running[0] + new[0], running[1] + new[1]],
-            )
-            .map(F::from_montgomery_reduce);
-
-        // Convert quadratic coefficients to cubic evaluations
-        gruen_eq.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
+        match sparse_matrix {
+            SparseMatrix::CycleMajorWithLookups(sparse_matrix) => {
+                sparse_matrix.compute_message(inc, gruen_eq, params.gamma, previous_claim)
+            }
+            SparseMatrix::CycleMajor(sparse_matrix) => {
+                sparse_matrix.compute_message(inc, gruen_eq, params.gamma, previous_claim)
+            }
+            _ => panic!("Unexpected SparseMatrix variant"),
+        }
     }
 
     fn phase2_compute_message(&self, previous_claim: F) -> UniPoly<F> {
         let Self {
             inc,
             merged_eq,
-            sparse_matrix_phase2,
+            sparse_matrix,
             params,
             ..
         } = self;
         let merged_eq = merged_eq.as_ref().unwrap();
 
-        let evals = sparse_matrix_phase2
+        let sparse_matrix = match sparse_matrix {
+            SparseMatrix::AddressMajor(sparse_matrix) => sparse_matrix,
+            _ => panic!("Unexpected SparseMatrix variant"),
+        };
+
+        let evals = sparse_matrix
             .entries
             .par_chunk_by(|x, y| x.column() / 2 == y.column() / 2)
             .map(|entries| {
@@ -463,8 +448,8 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                 ReadWriteMatrixAddressMajor::prover_message_contribution(
                     even_col,
                     odd_col,
-                    sparse_matrix_phase2.val_init.get_bound_coeff(even_col_idx),
-                    sparse_matrix_phase2.val_init.get_bound_coeff(odd_col_idx),
+                    sparse_matrix.val_init.get_bound_coeff(even_col_idx),
+                    sparse_matrix.val_init.get_bound_coeff(odd_col_idx),
                     inc,
                     merged_eq,
                     params.gamma,
@@ -623,7 +608,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
 
     fn phase1_bind(&mut self, r_j: F::Challenge, round: usize) {
         let Self {
-            sparse_matrix_phase1: sparse_matrix,
+            sparse_matrix,
             inc,
             gruen_eq,
             params,
@@ -631,15 +616,34 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         } = self;
         let gruen_eq = gruen_eq.as_mut().unwrap();
 
-        sparse_matrix.bind(r_j);
         gruen_eq.bind(r_j);
         inc.bind_parallel(r_j, BindingOrder::LowToHigh);
+
+        if let SparseMatrix::CycleMajorWithLookups(matrix) = sparse_matrix {
+            // If the lookup table cannot expand further, dereference the
+            // ra/wa coeffs in the sparse matrix.
+            if matrix.wa_lookup_table.as_ref().unwrap().is_saturated()
+                || matrix.ra_lookup_table.as_ref().unwrap().is_saturated()
+            {
+                let matrix = std::mem::take(matrix);
+                *sparse_matrix = SparseMatrix::CycleMajor(matrix.deref_coeffs());
+            }
+        };
+        sparse_matrix.bind(r_j);
 
         if round == params.phase1_num_rounds - 1 {
             self.merged_eq = Some(MultilinearPolynomial::LargeScalars(gruen_eq.merge()));
             let sparse_matrix = std::mem::take(sparse_matrix);
             if params.phase2_num_rounds > 0 {
-                self.sparse_matrix_phase2 = sparse_matrix.into();
+                match sparse_matrix {
+                    SparseMatrix::CycleMajorWithLookups(matrix) => {
+                        self.sparse_matrix = SparseMatrix::AddressMajor(matrix.into());
+                    }
+                    SparseMatrix::CycleMajor(matrix) => {
+                        self.sparse_matrix = SparseMatrix::AddressMajor(matrix.into());
+                    }
+                    _ => unimplemented!("Unexpected SparseMatrix variant"),
+                }
             } else {
                 // Skip to phase 3: all cycle variables bound, no address variables bound yet
                 let T_prime = params.T >> params.phase1_num_rounds;
@@ -654,7 +658,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     fn phase2_bind(&mut self, r_j: F::Challenge, round: usize) {
         let Self {
             params,
-            sparse_matrix_phase2: sparse_matrix,
+            sparse_matrix,
             ..
         } = self;
 
@@ -919,6 +923,23 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RegistersReadWriteCheckingVerifier<F>
 {
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        let result = self.params.input_claim(accumulator);
+
+        #[cfg(test)]
+        {
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result = claims.input_claim(&gamma_pows, accumulator);
+            assert_eq!(result, reference_result);
+        }
+
+        result
+    }
+
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -956,9 +977,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let rs1_value_claim = rs1_ra_claim * val_claim;
         let rs2_value_claim = rs2_ra_claim * val_claim;
 
-        EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle)
+        let result = EqPolynomial::mle_endian(&r_cycle, &self.params.r_cycle)
             * (rd_write_value_claim
-                + self.params.gamma * (rs1_value_claim + self.params.gamma * rs2_value_claim))
+                + self.params.gamma * (rs1_value_claim + self.params.gamma * rs2_value_claim));
+
+        #[cfg(test)]
+        {
+            let claims = Self::input_output_claims();
+            let gamma_pows: Vec<F> =
+                std::iter::successors(Some(F::one()), |prev| Some(*prev * self.params.gamma))
+                    .take(claims.claims.len())
+                    .collect();
+            let reference_result = claims.expected_output_claim(&r_cycle, &gamma_pows, accumulator);
+
+            assert_eq!(result, reference_result);
+        }
+
+        result
     }
 
     fn cache_openings(
@@ -1000,5 +1035,49 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RegistersReadWriteChecking,
             r_cycle.r,
         );
+    }
+}
+
+impl<F: JoltField> SumcheckFrontend<F> for RegistersReadWriteCheckingVerifier<F> {
+    fn input_output_claims() -> InputOutputClaims<F> {
+        let rs1_value: ClaimExpr<F> = VirtualPolynomial::Rs1Value.into();
+        let rs2_value: ClaimExpr<F> = VirtualPolynomial::Rs2Value.into();
+        let rd_write_value: ClaimExpr<F> = VirtualPolynomial::RdWriteValue.into();
+
+        let registers_val: ClaimExpr<F> = VirtualPolynomial::RegistersVal.into();
+        let rs1_ra: ClaimExpr<F> = VirtualPolynomial::Rs1Ra.into();
+        let rs2_ra: ClaimExpr<F> = VirtualPolynomial::Rs2Ra.into();
+        let rd_wa: ClaimExpr<F> = VirtualPolynomial::RdWa.into();
+        let rd_inc: ClaimExpr<F> = CommittedPolynomial::RdInc.into();
+
+        let eq_r_stage1 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
+            opening: PolynomialId::Virtual(VirtualPolynomial::RdWriteValue),
+            sumcheck: SumcheckId::RegistersClaimReduction,
+            part: ChallengePart::Cycle,
+        });
+
+        InputOutputClaims {
+            claims: vec![
+                Claim {
+                    input_sumcheck_id: SumcheckId::RegistersClaimReduction,
+                    input_claim_expr: rd_write_value,
+                    batching_poly: eq_r_stage1,
+                    expected_output_claim_expr: rd_wa * (registers_val.clone() + rd_inc.clone()),
+                },
+                Claim {
+                    input_sumcheck_id: SumcheckId::RegistersClaimReduction,
+                    input_claim_expr: rs1_value.clone(),
+                    batching_poly: eq_r_stage1,
+                    expected_output_claim_expr: rs1_ra.clone() * registers_val.clone(),
+                },
+                Claim {
+                    input_sumcheck_id: SumcheckId::RegistersClaimReduction,
+                    input_claim_expr: rs2_value.clone(),
+                    batching_poly: eq_r_stage1,
+                    expected_output_claim_expr: rs2_ra.clone() * registers_val.clone(),
+                },
+            ],
+            output_sumcheck_id: SumcheckId::RegistersReadWriteChecking,
+        }
     }
 }

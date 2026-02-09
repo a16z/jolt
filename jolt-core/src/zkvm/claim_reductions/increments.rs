@@ -58,8 +58,8 @@ use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+    SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::blindfold::{
@@ -181,17 +181,20 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let v_1 = OpeningId::Committed(
-            CommittedPolynomial::RamInc,
+        let v_1 = OpeningId::Polynomial(
+            PolynomialId::Committed(CommittedPolynomial::RamInc),
             SumcheckId::RamReadWriteChecking,
         );
-        let v_2 = OpeningId::Committed(CommittedPolynomial::RamInc, SumcheckId::RamValEvaluation);
-        let w_1 = OpeningId::Committed(
-            CommittedPolynomial::RdInc,
+        let v_2 = OpeningId::Polynomial(
+            PolynomialId::Committed(CommittedPolynomial::RamInc),
+            SumcheckId::RamValEvaluation,
+        );
+        let w_1 = OpeningId::Polynomial(
+            PolynomialId::Committed(CommittedPolynomial::RdInc),
             SumcheckId::RegistersReadWriteChecking,
         );
-        let w_2 = OpeningId::Committed(
-            CommittedPolynomial::RdInc,
+        let w_2 = OpeningId::Polynomial(
+            PolynomialId::Committed(CommittedPolynomial::RdInc),
             SumcheckId::RegistersValEvaluation,
         );
 
@@ -210,10 +213,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let ram_inc_opening =
-            OpeningId::Committed(CommittedPolynomial::RamInc, SumcheckId::IncClaimReduction);
-        let rd_inc_opening =
-            OpeningId::Committed(CommittedPolynomial::RdInc, SumcheckId::IncClaimReduction);
+        let ram_inc_opening = OpeningId::Polynomial(
+            PolynomialId::Committed(CommittedPolynomial::RamInc),
+            SumcheckId::IncClaimReduction,
+        );
+        let rd_inc_opening = OpeningId::Polynomial(
+            PolynomialId::Committed(CommittedPolynomial::RdInc),
+            SumcheckId::IncClaimReduction,
+        );
 
         let terms = vec![
             ProductTerm::scaled(

@@ -12,8 +12,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
@@ -95,7 +95,7 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
     }
 
     pub fn new_from_verifier(
-        initial_ram_state: &[u64],
+        ram_preprocessing: &super::RAMPreprocessing,
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
@@ -135,13 +135,13 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
             n_memory_vars,
         );
 
-        // Compute the public part of val_init evaluation
-        let val_init_public: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
+        // Compute the public part of val_init evaluation (bytecode + inputs) without
+        // materializing the full length-K initial RAM state.
+        let val_init_public_eval =
+            super::eval_initial_ram_mle::<F>(ram_preprocessing, program_io, &r_address.r);
 
         // Combine all contributions: untrusted + trusted + public
-        let init_eval =
-            untrusted_contribution + trusted_contribution + val_init_public.evaluate(&r_address.r);
+        let init_eval = untrusted_contribution + trusted_contribution + val_init_public_eval;
 
         ValEvaluationSumcheckParams {
             init_eval,
@@ -178,8 +178,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ValEvaluationSumcheckParams<F> 
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let opening =
-            OpeningId::Virtual(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
+        let opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamVal),
+            SumcheckId::RamReadWriteChecking,
+        );
         let terms = vec![
             ProductTerm::single(ValueSource::Opening(opening)),
             ProductTerm::single(ValueSource::Challenge(0)),
@@ -192,8 +194,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ValEvaluationSumcheckParams<F> 
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let inc = OpeningId::Committed(CommittedPolynomial::RamInc, SumcheckId::RamValEvaluation);
-        let wa = OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation);
+        let inc = OpeningId::Polynomial(
+            PolynomialId::Committed(CommittedPolynomial::RamInc),
+            SumcheckId::RamValEvaluation,
+        );
+        let wa = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamRa),
+            SumcheckId::RamValEvaluation,
+        );
 
         let lt_eval = ValueSource::Challenge(0);
 
@@ -366,14 +374,14 @@ pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
     pub fn new(
-        initial_ram_state: &[u64],
+        ram_preprocessing: &super::RAMPreprocessing,
         program_io: &JoltDevice,
         trace_len: usize,
         ram_K: usize,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let params = ValEvaluationSumcheckParams::new_from_verifier(
-            initial_ram_state,
+            ram_preprocessing,
             program_io,
             trace_len,
             ram_K,

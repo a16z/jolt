@@ -356,12 +356,12 @@ impl InputClaimConstraint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::poly::opening_proof::SumcheckId;
+    use crate::poly::opening_proof::{PolynomialId, SumcheckId};
     use crate::zkvm::witness::CommittedPolynomial;
 
     fn test_opening(idx: usize) -> OpeningId {
-        OpeningId::Committed(
-            CommittedPolynomial::RamRa(idx),
+        OpeningId::Polynomial(
+            PolynomialId::Committed(CommittedPolynomial::RamRa(idx)),
             SumcheckId::RamReadWriteChecking,
         )
     }

@@ -10,8 +10,8 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialBinding;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+    SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::blindfold::{
@@ -94,14 +94,16 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         // input = LookupOutput + γ*LeftLookupOperand + γ²*RightLookupOperand
         // where openings are from SpartanOuter sumcheck
-        let lookup_output =
-            OpeningId::Virtual(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter);
-        let left_operand = OpeningId::Virtual(
-            VirtualPolynomial::LeftLookupOperand,
+        let lookup_output = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::LookupOutput),
             SumcheckId::SpartanOuter,
         );
-        let right_operand = OpeningId::Virtual(
-            VirtualPolynomial::RightLookupOperand,
+        let left_operand = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::LeftLookupOperand),
+            SumcheckId::SpartanOuter,
+        );
+        let right_operand = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RightLookupOperand),
             SumcheckId::SpartanOuter,
         );
 
@@ -135,16 +137,16 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
         //   Challenge(0) = Eq
         //   Challenge(1) = Eq * γ
         //   Challenge(2) = Eq * γ²
-        let lookup_output_opening = OpeningId::Virtual(
-            VirtualPolynomial::LookupOutput,
+        let lookup_output_opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::LookupOutput),
             SumcheckId::InstructionClaimReduction,
         );
-        let left_operand_opening = OpeningId::Virtual(
-            VirtualPolynomial::LeftLookupOperand,
+        let left_operand_opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::LeftLookupOperand),
             SumcheckId::InstructionClaimReduction,
         );
-        let right_operand_opening = OpeningId::Virtual(
-            VirtualPolynomial::RightLookupOperand,
+        let right_operand_opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RightLookupOperand),
             SumcheckId::InstructionClaimReduction,
         );
 

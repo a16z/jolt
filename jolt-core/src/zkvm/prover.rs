@@ -1,6 +1,5 @@
-use crate::{
-    subprotocols::streaming_schedule::LinearOnlySchedule,
-    zkvm::{config::OneHotConfig, stage8_opening_ids},
+use crate::zkvm::{
+    claim_reductions::advice::ReductionPhase, config::OneHotConfig, stage8_opening_ids,
 };
 use std::{
     collections::HashMap,
@@ -31,7 +30,7 @@ use crate::{
     poly::{
         commitment::{
             commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment},
-            dory::DoryGlobals,
+            dory::{DoryGlobals, DoryLayout},
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
@@ -49,6 +48,7 @@ use crate::{
             ValueSource, VerifierR1CSBuilder,
         },
         booleanity::{BooleanitySumcheckParams, BooleanitySumcheckProver},
+        streaming_schedule::LinearOnlySchedule,
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
         univariate_skip::{prove_uniskip_round_zk, UniSkipFirstRoundProofVariant},
@@ -58,8 +58,7 @@ use crate::{
     zkvm::{
         bytecode::read_raf_checking::BytecodeReadRafSumcheckParams,
         claim_reductions::{
-            AdviceClaimReductionPhase1Params, AdviceClaimReductionPhase1Prover,
-            AdviceClaimReductionPhase2Params, AdviceClaimReductionPhase2Prover, AdviceKind,
+            AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceKind,
             HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
             IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
@@ -166,10 +165,12 @@ pub struct JoltCpuProver<
     pub lazy_trace: LazyTraceIterator,
     pub trace: Arc<Vec<Cycle>>,
     pub advice: JoltAdvice<F, PCS>,
-    /// Phase-bridge randomness for two-phase advice claim reduction.
-    /// Stored after Stage 6 initialization and reused in Stage 7.
-    advice_reduction_gamma_trusted: Option<F>,
-    advice_reduction_gamma_untrusted: Option<F>,
+    /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
+    /// Cache the prover state here between stages.
+    advice_reduction_prover_trusted: Option<AdviceClaimReductionProver<F>>,
+    /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
+    /// Cache the prover state here between stages.
+    advice_reduction_prover_untrusted: Option<AdviceClaimReductionProver<F>>,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
     pub transcript: ProofTranscript,
@@ -198,6 +199,7 @@ impl<
         ProofTranscript: Transcript,
     > JoltCpuProver<'a, F, C, PCS, ProofTranscript>
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn gen_from_elf(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         elf_contents: &[u8],
@@ -206,6 +208,7 @@ impl<
         trusted_advice: &[u8],
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
+        advice_tape: Option<tracer::AdviceTape>,
     ) -> Self {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
@@ -213,11 +216,11 @@ impl<
             max_input_size: preprocessing.shared.memory_layout.max_input_size,
             max_output_size: preprocessing.shared.memory_layout.max_output_size,
             stack_size: preprocessing.shared.memory_layout.stack_size,
-            memory_size: preprocessing.shared.memory_layout.memory_size,
+            heap_size: preprocessing.shared.memory_layout.heap_size,
             program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
-        let (lazy_trace, trace, final_memory_state, program_io) = {
+        let (lazy_trace, trace, final_memory_state, program_io, _advice_tape_out) = {
             let _pprof_trace = pprof_scope!("trace");
             guest::program::trace(
                 elf_contents,
@@ -226,6 +229,7 @@ impl<
                 untrusted_advice,
                 trusted_advice,
                 &memory_config,
+                advice_tape,
             )
         };
 
@@ -348,11 +352,6 @@ impl<
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
     ) -> Self {
-        // Dory globals are process-wide (OnceCell). In tests we run many end-to-end proofs with
-        // different trace lengths in a single process, so reset before each prover construction.
-        #[cfg(test)]
-        crate::poly::commitment::dory::DoryGlobals::reset();
-
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
             program_io
@@ -441,8 +440,8 @@ impl<
                 untrusted_advice_hint: None,
                 trusted_advice_hint,
             },
-            advice_reduction_gamma_trusted: None,
-            advice_reduction_gamma_untrusted: None,
+            advice_reduction_prover_trusted: None,
+            advice_reduction_prover_untrusted: None,
             unpadded_trace_len,
             padded_trace_len,
             transcript,
@@ -549,6 +548,7 @@ impl<
             bytecode_K: self.one_hot_params.bytecode_k,
             rw_config: self.rw_config.clone(),
             one_hot_config: self.one_hot_params.to_config(),
+            dory_layout: DoryGlobals::get_layout(),
         };
 
         let prove_duration = start.elapsed();
@@ -574,71 +574,112 @@ impl<
             1 << self.one_hot_params.log_k_chunk,
             self.padded_trace_len,
             DoryContext::Main,
+            Some(DoryGlobals::get_layout()),
         );
-        // Generate and commit to all witness polynomials using streaming tier1/tier2 pattern
-        let T = DoryGlobals::get_T();
+
         let polys = all_committed_polynomials(&self.one_hot_params);
-        let row_len = DoryGlobals::get_num_columns();
-        let num_rows = T / DoryGlobals::get_max_num_rows();
+        let T = DoryGlobals::get_T();
 
-        tracing::debug!(
-            "Generating and committing {} witness polynomials with T={}, row_len={}, num_rows={}",
-            polys.len(),
-            T,
-            row_len,
-            num_rows
-        );
+        // For AddressMajor, use non-streaming commit path since streaming assumes CycleMajor layout
+        let (commitments, hint_map) = if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+            tracing::debug!(
+                "Using non-streaming commit path for AddressMajor layout with {} polynomials",
+                polys.len()
+            );
 
-        // Tier 1: Compute row commitments for each polynomial
-        let mut row_commitments: Vec<Vec<PCS::ChunkState>> = vec![vec![]; num_rows];
+            // Materialize the trace for non-streaming commit
+            let trace: Vec<Cycle> = self
+                .lazy_trace
+                .clone()
+                .pad_using(T, |_| Cycle::NoOp)
+                .collect();
 
-        self.lazy_trace
-            .clone()
-            .pad_using(T, |_| Cycle::NoOp)
-            .iter_chunks(row_len)
-            .zip(row_commitments.iter_mut())
-            .par_bridge()
-            .for_each(|(chunk, row_tier1_commitments)| {
-                let res: Vec<_> = polys
-                    .par_iter()
-                    .map(|poly| {
-                        poly.stream_witness_and_commit_rows::<_, PCS>(
-                            &self.preprocessing.generators,
-                            &self.preprocessing.shared,
-                            &chunk,
-                            &self.one_hot_params,
-                        )
-                    })
-                    .collect();
-                *row_tier1_commitments = res;
-            });
+            // Generate witnesses and commit using the regular (non-streaming) path
+            let (commitments, hints): (Vec<_>, Vec<_>) = polys
+                .par_iter()
+                .map(|poly_id| {
+                    let witness: MultilinearPolynomial<F> = poly_id.generate_witness(
+                        &self.preprocessing.shared.bytecode,
+                        &self.preprocessing.shared.memory_layout,
+                        &trace,
+                        Some(&self.one_hot_params),
+                    );
+                    PCS::commit(&witness, &self.preprocessing.generators)
+                })
+                .unzip();
 
-        // Transpose: row_commitments[row][poly] -> tier1_per_poly[poly][row]
-        let tier1_per_poly: Vec<Vec<PCS::ChunkState>> = (0..polys.len())
-            .into_par_iter()
-            .map(|poly_idx| {
-                row_commitments
-                    .iter()
-                    .flat_map(|row| row.get(poly_idx).cloned())
-                    .collect()
-            })
-            .collect();
+            let hint_map = HashMap::from_iter(zip_eq(polys, hints));
+            (commitments, hint_map)
+        } else {
+            // CycleMajor: use streaming
+            let row_len = DoryGlobals::get_num_columns();
+            let num_rows = T / DoryGlobals::get_max_num_rows();
 
-        // Tier 2: Compute final commitments from tier1 commitments
-        let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
-            .into_par_iter()
-            .zip(&polys)
-            .map(|(tier1_commitments, poly)| {
-                let onehot_k = poly.get_onehot_k(&self.one_hot_params);
-                PCS::aggregate_chunks(&self.preprocessing.generators, onehot_k, &tier1_commitments)
-            })
-            .unzip();
+            tracing::debug!(
+                "Generating and committing {} witness polynomials with T={}, row_len={}, num_rows={}",
+                polys.len(),
+                T,
+                row_len,
+                num_rows
+            );
 
-        let hint_map = HashMap::from_iter(zip_eq(polys, hints));
+            // Tier 1: Compute row commitments for each polynomial
+            let mut row_commitments: Vec<Vec<PCS::ChunkState>> = vec![vec![]; num_rows];
+
+            self.lazy_trace
+                .clone()
+                .pad_using(T, |_| Cycle::NoOp)
+                .iter_chunks(row_len)
+                .zip(row_commitments.iter_mut())
+                .par_bridge()
+                .for_each(|(chunk, row_tier1_commitments)| {
+                    let res: Vec<_> = polys
+                        .par_iter()
+                        .map(|poly| {
+                            poly.stream_witness_and_commit_rows::<_, PCS>(
+                                &self.preprocessing.generators,
+                                &self.preprocessing.shared,
+                                &chunk,
+                                &self.one_hot_params,
+                            )
+                        })
+                        .collect();
+                    *row_tier1_commitments = res;
+                });
+
+            // Transpose: row_commitments[row][poly] -> tier1_per_poly[poly][row]
+            let tier1_per_poly: Vec<Vec<PCS::ChunkState>> = (0..polys.len())
+                .into_par_iter()
+                .map(|poly_idx| {
+                    row_commitments
+                        .iter()
+                        .flat_map(|row| row.get(poly_idx).cloned())
+                        .collect()
+                })
+                .collect();
+
+            // Tier 2: Compute final commitments from tier1 commitments
+            let (commitments, hints): (Vec<_>, Vec<_>) = tier1_per_poly
+                .into_par_iter()
+                .zip(&polys)
+                .map(|(tier1_commitments, poly)| {
+                    let onehot_k = poly.get_onehot_k(&self.one_hot_params);
+                    PCS::aggregate_chunks(
+                        &self.preprocessing.generators,
+                        onehot_k,
+                        &tier1_commitments,
+                    )
+                })
+                .unzip();
+
+            let hint_map = HashMap::from_iter(zip_eq(polys, hints));
+            (commitments, hint_map)
+        };
 
         // Append commitments to transcript
         for commitment in &commitments {
-            self.transcript.append_serializable(commitment);
+            self.transcript
+                .append_serializable(b"commitment", commitment);
         }
 
         (commitments, hint_map)
@@ -665,10 +706,12 @@ impl<
         let poly = MultilinearPolynomial::from(untrusted_advice_vec);
         let advice_len = poly.len().next_power_of_two().max(1);
 
-        let _guard = DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice);
+        let _guard =
+            DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice, None);
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
-        self.transcript.append_serializable(&commitment);
+        self.transcript
+            .append_serializable(b"untrusted_advice", &commitment);
 
         self.advice.untrusted_advice_polynomial = Some(poly);
         self.advice.untrusted_advice_hint = Some(hint);
@@ -693,8 +736,10 @@ impl<
 
         let poly = MultilinearPolynomial::from(trusted_advice_vec);
         self.advice.trusted_advice_polynomial = Some(poly);
-        self.transcript
-            .append_serializable(self.advice.trusted_advice_commitment.as_ref().unwrap());
+        self.transcript.append_serializable(
+            b"trusted_advice",
+            self.advice.trusted_advice_commitment.as_ref().unwrap(),
+        );
     }
 
     /// Returns (uni_skip_proof, sumcheck_proof, challenges, initial_claim)
@@ -782,17 +827,6 @@ impl<
         );
         let first_round_proof = UniSkipFirstRoundProofVariant::Zk(zk_proof);
 
-        // Initialization params
-        let spartan_product_virtual_remainder_params = ProductVirtualRemainderParams::new(
-            self.trace.len(),
-            uni_skip_params,
-            &self.opening_accumulator,
-        );
-        let ram_raf_evaluation_params = RafEvaluationSumcheckParams::new(
-            &self.program_io.memory_layout,
-            &self.one_hot_params,
-            &self.opening_accumulator,
-        );
         let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
             &self.opening_accumulator,
             &mut self.transcript,
@@ -800,10 +834,10 @@ impl<
             self.trace.len(),
             &self.rw_config,
         );
-        let ram_output_check_params = OutputSumcheckParams::new(
-            self.one_hot_params.ram_k,
-            &self.program_io,
-            &mut self.transcript,
+        let spartan_product_virtual_remainder_params = ProductVirtualRemainderParams::new(
+            self.trace.len(),
+            uni_skip_params,
+            &self.opening_accumulator,
         );
         let instruction_claim_reduction_params =
             InstructionLookupsClaimReductionSumcheckParams::new(
@@ -811,16 +845,15 @@ impl<
                 &self.opening_accumulator,
                 &mut self.transcript,
             );
-
-        // Initialization
-        let spartan_product_virtual_remainder = ProductVirtualRemainderProver::initialize(
-            spartan_product_virtual_remainder_params,
-            Arc::clone(&self.trace),
-        );
-        let ram_raf_evaluation = RamRafEvaluationSumcheckProver::initialize(
-            ram_raf_evaluation_params,
-            &self.trace,
+        let ram_raf_evaluation_params = RafEvaluationSumcheckParams::new(
             &self.program_io.memory_layout,
+            &self.one_hot_params,
+            &self.opening_accumulator,
+        );
+        let ram_output_check_params = OutputSumcheckParams::new(
+            self.one_hot_params.ram_k,
+            &self.program_io,
+            &mut self.transcript,
         );
         let ram_read_write_checking = RamReadWriteCheckingProver::initialize(
             ram_read_write_checking_params,
@@ -829,43 +862,52 @@ impl<
             &self.program_io.memory_layout,
             &self.initial_ram_state,
         );
-        let ram_output_check = OutputSumcheckProver::initialize(
-            ram_output_check_params,
-            &self.initial_ram_state,
-            &self.final_ram_state,
-            &self.program_io.memory_layout,
+        let spartan_product_virtual_remainder = ProductVirtualRemainderProver::initialize(
+            spartan_product_virtual_remainder_params,
+            Arc::clone(&self.trace),
         );
         let instruction_claim_reduction =
             InstructionLookupsClaimReductionSumcheckProver::initialize(
                 instruction_claim_reduction_params,
                 Arc::clone(&self.trace),
             );
+        let ram_raf_evaluation = RamRafEvaluationSumcheckProver::initialize(
+            ram_raf_evaluation_params,
+            &self.trace,
+            &self.program_io.memory_layout,
+        );
+        let ram_output_check = OutputSumcheckProver::initialize(
+            ram_output_check_params,
+            &self.initial_ram_state,
+            &self.final_ram_state,
+            &self.program_io.memory_layout,
+        );
 
         #[cfg(feature = "allocative")]
         {
+            print_data_structure_heap_usage("RamReadWriteCheckingProver", &ram_read_write_checking);
             print_data_structure_heap_usage(
                 "ProductVirtualRemainderProver",
                 &spartan_product_virtual_remainder,
             );
-            print_data_structure_heap_usage("RamRafEvaluationSumcheckProver", &ram_raf_evaluation);
-            print_data_structure_heap_usage("RamReadWriteCheckingProver", &ram_read_write_checking);
-            print_data_structure_heap_usage("OutputSumcheckProver", &ram_output_check);
             print_data_structure_heap_usage(
                 "InstructionLookupsClaimReductionSumcheckProver",
                 &instruction_claim_reduction,
             );
+            print_data_structure_heap_usage("RamRafEvaluationSumcheckProver", &ram_raf_evaluation);
+            print_data_structure_heap_usage("OutputSumcheckProver", &ram_output_check);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
-            Box::new(spartan_product_virtual_remainder),
-            Box::new(ram_raf_evaluation),
             Box::new(ram_read_write_checking),
-            Box::new(ram_output_check),
+            Box::new(spartan_product_virtual_remainder),
             Box::new(instruction_claim_reduction),
+            Box::new(ram_raf_evaluation),
+            Box::new(ram_output_check),
         ];
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage2_start_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage2_start_flamechart.svg");
         tracing::info!("Stage 2 proving");
 
         let mut rng = rand::thread_rng();
@@ -878,7 +920,7 @@ impl<
         );
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage2_end_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage2_end_flamechart.svg");
         drop_in_background_thread(instances);
 
         (first_round_proof, sumcheck_proof, r_stage2)
@@ -945,7 +987,7 @@ impl<
         ];
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage3_start_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage3_start_flamechart.svg");
         tracing::info!("Stage 3 proving");
 
         let mut rng = rand::thread_rng();
@@ -957,7 +999,7 @@ impl<
             &mut rng,
         );
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage3_end_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage3_end_flamechart.svg");
         drop_in_background_thread(instances);
 
         (sumcheck_proof, r_stage3)
@@ -974,12 +1016,6 @@ impl<
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
-        let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
-            self.trace.len(),
-            &self.opening_accumulator,
-            &mut self.transcript,
-            &self.rw_config,
-        );
         prover_accumulate_advice(
             &self.advice.untrusted_advice_polynomial,
             &self.advice.trusted_advice_polynomial,
@@ -989,6 +1025,13 @@ impl<
             &mut self.transcript,
             self.rw_config
                 .needs_single_advice_opening(self.trace.len().log_2()),
+        );
+
+        let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+            &self.rw_config,
         );
         let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
             &self.one_hot_params,
@@ -1035,7 +1078,7 @@ impl<
         ];
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage4_start_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage4_start_flamechart.svg");
         tracing::info!("Stage 4 proving");
 
         let mut rng = rand::thread_rng();
@@ -1047,7 +1090,7 @@ impl<
             &mut rng,
         );
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage4_end_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage4_end_flamechart.svg");
         drop_in_background_thread(instances);
 
         (sumcheck_proof, r_stage4)
@@ -1063,26 +1106,25 @@ impl<
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
-        let registers_val_evaluation_params =
-            RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
-        let ram_ra_reduction_params = RaReductionParams::new(
-            self.trace.len(),
-            &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
+        // Initialization params (same order as batch)
         let lookups_read_raf_params = InstructionReadRafSumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        let ram_ra_reduction_params = RaReductionParams::new(
+            self.trace.len(),
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        let registers_val_evaluation_params =
+            RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
 
-        let registers_val_evaluation = RegistersValEvaluationSumcheckProver::initialize(
-            registers_val_evaluation_params,
-            &self.trace,
-            &self.preprocessing.shared.bytecode,
-            &self.program_io.memory_layout,
+        let lookups_read_raf = InstructionReadRafSumcheckProver::initialize(
+            lookups_read_raf_params,
+            Arc::clone(&self.trace),
         );
         let ram_ra_reduction = RamRaClaimReductionSumcheckProver::initialize(
             ram_ra_reduction_params,
@@ -1090,29 +1132,31 @@ impl<
             &self.program_io.memory_layout,
             &self.one_hot_params,
         );
-        let lookups_read_raf = InstructionReadRafSumcheckProver::initialize(
-            lookups_read_raf_params,
-            Arc::clone(&self.trace),
+        let registers_val_evaluation = RegistersValEvaluationSumcheckProver::initialize(
+            registers_val_evaluation_params,
+            &self.trace,
+            &self.preprocessing.shared.bytecode,
+            &self.program_io.memory_layout,
         );
 
         #[cfg(feature = "allocative")]
         {
+            print_data_structure_heap_usage("InstructionReadRafSumcheckProver", &lookups_read_raf);
+            print_data_structure_heap_usage("RamRaClaimReductionSumcheckProver", &ram_ra_reduction);
             print_data_structure_heap_usage(
                 "RegistersValEvaluationSumcheckProver",
                 &registers_val_evaluation,
             );
-            print_data_structure_heap_usage("RamRaClaimReductionSumcheckProver", &ram_ra_reduction);
-            print_data_structure_heap_usage("InstructionReadRafSumcheckProver", &lookups_read_raf);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
-            Box::new(registers_val_evaluation),
-            Box::new(ram_ra_reduction),
             Box::new(lookups_read_raf),
+            Box::new(ram_ra_reduction),
+            Box::new(registers_val_evaluation),
         ];
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage5_start_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage5_start_flamechart.svg");
         tracing::info!("Stage 5 proving");
 
         let mut rng = rand::thread_rng();
@@ -1124,7 +1168,7 @@ impl<
             &mut rng,
         );
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage5_end_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage5_end_flamechart.svg");
         drop_in_background_thread(instances);
 
         (sumcheck_proof, r_stage5)
@@ -1176,114 +1220,114 @@ impl<
         );
 
         // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
-        let trusted_advice_phase1_params = AdviceClaimReductionPhase1Params::new(
-            AdviceKind::Trusted,
-            &self.program_io.memory_layout,
-            self.trace.len(),
-            &self.opening_accumulator,
-            &mut self.transcript,
-            self.rw_config
-                .needs_single_advice_opening(self.trace.len().log_2()),
-        );
-        let untrusted_advice_phase1_params = AdviceClaimReductionPhase1Params::new(
-            AdviceKind::Untrusted,
-            &self.program_io.memory_layout,
-            self.trace.len(),
-            &self.opening_accumulator,
-            &mut self.transcript,
-            self.rw_config
-                .needs_single_advice_opening(self.trace.len().log_2()),
-        );
+        if self.advice.trusted_advice_polynomial.is_some() {
+            let trusted_advice_params = AdviceClaimReductionParams::new(
+                AdviceKind::Trusted,
+                &self.program_io.memory_layout,
+                self.trace.len(),
+                &self.opening_accumulator,
+                &mut self.transcript,
+                self.rw_config
+                    .needs_single_advice_opening(self.trace.len().log_2()),
+            );
+            // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
+            // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.
+            self.advice_reduction_prover_trusted = {
+                let poly = self
+                    .advice
+                    .trusted_advice_polynomial
+                    .clone()
+                    .expect("trusted advice params exist but polynomial is missing");
+                Some(AdviceClaimReductionProver::initialize(
+                    trusted_advice_params,
+                    poly,
+                ))
+            };
+        }
 
-        let bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
+        if self.advice.untrusted_advice_polynomial.is_some() {
+            let untrusted_advice_params = AdviceClaimReductionParams::new(
+                AdviceKind::Untrusted,
+                &self.program_io.memory_layout,
+                self.trace.len(),
+                &self.opening_accumulator,
+                &mut self.transcript,
+                self.rw_config
+                    .needs_single_advice_opening(self.trace.len().log_2()),
+            );
+            // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
+            // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.
+            self.advice_reduction_prover_untrusted = {
+                let poly = self
+                    .advice
+                    .untrusted_advice_polynomial
+                    .clone()
+                    .expect("untrusted advice params exist but polynomial is missing");
+                Some(AdviceClaimReductionProver::initialize(
+                    untrusted_advice_params,
+                    poly,
+                ))
+            };
+        }
+
+        let mut bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
             Arc::clone(&self.preprocessing.shared.bytecode),
         );
-        let ram_hamming_booleanity =
+        let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
 
-        let booleanity = BooleanitySumcheckProver::initialize(
+        let mut booleanity = BooleanitySumcheckProver::initialize(
             booleanity_params,
             &self.trace,
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
         );
 
-        let ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
+        let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
             ram_ra_virtual_params,
             &self.trace,
             &self.program_io.memory_layout,
             &self.one_hot_params,
         );
-        let lookups_ra_virtual =
+        let mut lookups_ra_virtual =
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
-        let inc_reduction =
+        let mut inc_reduction =
             IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
-
-        // Initialize Phase 1 provers (Stage 6) if advice is present.
-        // Note: We clone the advice polynomial here because:
-        // 1. Phase1 (Stage 6) destructively binds cycle variables
-        // 2. Phase2 (Stage 7) needs a fresh copy to bind address variables
-        // 3. Stage 8 RLC needs the original polynomial
-        // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.
-        let trusted_advice_phase1 = trusted_advice_phase1_params.map(|params| {
-            self.advice_reduction_gamma_trusted = Some(params.gamma);
-            let poly = self
-                .advice
-                .trusted_advice_polynomial
-                .clone()
-                .expect("trusted advice params exist but polynomial is missing");
-            AdviceClaimReductionPhase1Prover::initialize(params, poly)
-        });
-        let untrusted_advice_phase1 = untrusted_advice_phase1_params.map(|params| {
-            self.advice_reduction_gamma_untrusted = Some(params.gamma);
-            let poly = self
-                .advice
-                .untrusted_advice_polynomial
-                .clone()
-                .expect("untrusted advice params exist but polynomial is missing");
-            AdviceClaimReductionPhase1Prover::initialize(params, poly)
-        });
 
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("BytecodeReadRafSumcheckProver", &bytecode_read_raf);
+            print_data_structure_heap_usage("BooleanitySumcheckProver", &booleanity);
             print_data_structure_heap_usage(
                 "ram HammingBooleanitySumcheckProver",
                 &ram_hamming_booleanity,
             );
-            print_data_structure_heap_usage("BooleanitySumcheckProver", &booleanity);
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
             print_data_structure_heap_usage("IncClaimReductionSumcheckProver", &inc_reduction);
-            if let Some(ref advice) = trusted_advice_phase1 {
-                print_data_structure_heap_usage(
-                    "AdviceClaimReductionPhase1Prover(trusted)",
-                    advice,
-                );
+            if let Some(ref advice) = self.advice_reduction_prover_trusted {
+                print_data_structure_heap_usage("AdviceClaimReductionProver(trusted)", advice);
             }
-            if let Some(ref advice) = untrusted_advice_phase1 {
-                print_data_structure_heap_usage(
-                    "AdviceClaimReductionPhase1Prover(untrusted)",
-                    advice,
-                );
+            if let Some(ref advice) = self.advice_reduction_prover_untrusted {
+                print_data_structure_heap_usage("AdviceClaimReductionProver(untrusted)", advice);
             }
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
-            Box::new(bytecode_read_raf),
-            Box::new(ram_hamming_booleanity),
-            Box::new(booleanity),
-            Box::new(ram_ra_virtual),
-            Box::new(lookups_ra_virtual),
-            Box::new(inc_reduction),
+        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_, _>> = vec![
+            &mut bytecode_read_raf,
+            &mut booleanity,
+            &mut ram_hamming_booleanity,
+            &mut ram_ra_virtual,
+            &mut lookups_ra_virtual,
+            &mut inc_reduction,
         ];
-        if let Some(advice) = trusted_advice_phase1 {
-            instances.push(Box::new(advice));
+        if let Some(advice) = self.advice_reduction_prover_trusted.as_mut() {
+            instances.push(advice);
         }
-        if let Some(advice) = untrusted_advice_phase1 {
-            instances.push(Box::new(advice));
+        if let Some(advice) = self.advice_reduction_prover_untrusted.as_mut() {
+            instances.push(advice);
         }
 
         #[cfg(feature = "allocative")]
@@ -1300,7 +1344,12 @@ impl<
         );
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6_end_flamechart.svg");
-        drop_in_background_thread(instances);
+        drop_in_background_thread(bytecode_read_raf);
+        drop_in_background_thread(booleanity);
+        drop_in_background_thread(ram_hamming_booleanity);
+        drop_in_background_thread(ram_ra_virtual);
+        drop_in_background_thread(lookups_ra_virtual);
+        drop_in_background_thread(inc_reduction);
 
         (sumcheck_proof, r_stage6)
     }
@@ -1658,54 +1707,40 @@ impl<
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("HammingWeightClaimReductionProver", &hw_prover);
 
-        // 3. Run Stage 7 batched sumcheck (address rounds only).
-        // Includes HammingWeightClaimReduction plus Phase 2 advice reduction instances (if needed).
+        // Run Stage 7 batched sumcheck (address rounds only).
+        // Includes HammingWeightClaimReduction plus address phase of advice reduction instances (if needed).
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> =
             vec![Box::new(hw_prover)];
 
-        if let Some(gamma) = self.advice_reduction_gamma_trusted {
-            if let Some(params) = AdviceClaimReductionPhase2Params::new(
-                AdviceKind::Trusted,
-                &self.program_io.memory_layout,
-                self.trace.len(),
-                gamma,
-                &self.opening_accumulator,
-                self.rw_config
-                    .needs_single_advice_opening(self.trace.len().log_2()),
-            ) {
-                let poly = self
-                    .advice
-                    .trusted_advice_polynomial
-                    .clone()
-                    .expect("trusted advice phase2 params exist but polynomial is missing");
-                instances.push(Box::new(AdviceClaimReductionPhase2Prover::initialize(
-                    params, poly,
-                )));
+        if let Some(mut advice_reduction_prover_trusted) =
+            self.advice_reduction_prover_trusted.take()
+        {
+            if advice_reduction_prover_trusted
+                .params
+                .num_address_phase_rounds()
+                > 0
+            {
+                // Transition phase
+                advice_reduction_prover_trusted.params.phase = ReductionPhase::AddressVariables;
+                instances.push(Box::new(advice_reduction_prover_trusted));
             }
         }
-        if let Some(gamma) = self.advice_reduction_gamma_untrusted {
-            if let Some(params) = AdviceClaimReductionPhase2Params::new(
-                AdviceKind::Untrusted,
-                &self.program_io.memory_layout,
-                self.trace.len(),
-                gamma,
-                &self.opening_accumulator,
-                self.rw_config
-                    .needs_single_advice_opening(self.trace.len().log_2()),
-            ) {
-                let poly = self
-                    .advice
-                    .untrusted_advice_polynomial
-                    .clone()
-                    .expect("untrusted advice phase2 params exist but polynomial is missing");
-                instances.push(Box::new(AdviceClaimReductionPhase2Prover::initialize(
-                    params, poly,
-                )));
+        if let Some(mut advice_reduction_prover_untrusted) =
+            self.advice_reduction_prover_untrusted.take()
+        {
+            if advice_reduction_prover_untrusted
+                .params
+                .num_address_phase_rounds()
+                > 0
+            {
+                // Transition phase
+                advice_reduction_prover_untrusted.params.phase = ReductionPhase::AddressVariables;
+                instances.push(Box::new(advice_reduction_prover_untrusted));
             }
         }
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage7_start_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage7_start_flamechart.svg");
         tracing::info!("Stage 7 proving");
 
         let mut rng = rand::thread_rng();
@@ -1717,7 +1752,7 @@ impl<
             &mut rng,
         );
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage7_end_flamechart.svg");
+        write_boxed_instance_flamegraph_svg(&instances, "stage7_end_flamechart.svg");
         drop_in_background_thread(instances);
 
         (sumcheck_proof, r_stage7)
@@ -1736,6 +1771,7 @@ impl<
             self.one_hot_params.k_chunk,
             self.padded_trace_len,
             DoryContext::Main,
+            Some(DoryGlobals::get_layout()),
         );
 
         // Get the unified opening point from HammingWeightClaimReduction
@@ -1823,10 +1859,16 @@ impl<
 
         if let Some((advice_point, advice_claim)) = self
             .opening_accumulator
-            .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReductionPhase2)
+            .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
         {
+            #[cfg(test)]
+            {
+                let advice_poly = self.advice.trusted_advice_polynomial.as_ref().unwrap();
+                let expected_eval = advice_poly.evaluate(&advice_point.r);
+                assert_eq!(expected_eval, advice_claim);
+            }
             let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
+                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::TrustedAdvice,
                 advice_claim * lagrange_factor,
@@ -1835,12 +1877,18 @@ impl<
             include_trusted_advice = true;
         }
 
-        if let Some((advice_point, advice_claim)) = self.opening_accumulator.get_advice_opening(
-            AdviceKind::Untrusted,
-            SumcheckId::AdviceClaimReductionPhase2,
-        ) {
+        if let Some((advice_point, advice_claim)) = self
+            .opening_accumulator
+            .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
+        {
+            #[cfg(test)]
+            {
+                let advice_poly = self.advice.untrusted_advice_polynomial.as_ref().unwrap();
+                let expected_eval = advice_poly.evaluate(&advice_point.r);
+                assert_eq!(expected_eval, advice_claim);
+            }
             let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, advice_point.len());
+                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::UntrustedAdvice,
                 advice_claim * lagrange_factor,
@@ -1851,7 +1899,7 @@ impl<
 
         // 2. Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
-        self.transcript.append_scalars(&claims);
+        self.transcript.append_scalars(b"rlc_claims", &claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
         let constraint_coeffs: Vec<F> = gamma_powers
             .iter()
@@ -1901,77 +1949,6 @@ impl<
             advice_polys,
         );
 
-        #[cfg(test)]
-        {
-            let r_be = opening_point.r.clone();
-            let mut r_rev = r_be.clone();
-            r_rev.reverse();
-
-            let (r_addr, r_cycle) = r_be.split_at(log_k_chunk);
-            let r_swap = [r_cycle, r_addr].concat();
-
-            let mut r_addr_le: Vec<F::Challenge> = r_addr.to_vec();
-            r_addr_le.reverse();
-            let mut r_cycle_le: Vec<F::Challenge> = r_cycle.to_vec();
-            r_cycle_le.reverse();
-            let r_swap_le = [r_cycle_le.as_slice(), r_addr_le.as_slice()].concat();
-            let r_addr_le_cycle = [r_addr_le.as_slice(), r_cycle_le.as_slice()].concat();
-
-            let log_t = self.padded_trace_len.log_2();
-            let (_sigma_main, nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
-
-            let (r_rows, r_cols) = r_be.split_at(nu_main);
-            let mut r_rows_rev: Vec<F::Challenge> = r_rows.to_vec();
-            r_rows_rev.reverse();
-            let mut r_cols_rev: Vec<F::Challenge> = r_cols.to_vec();
-            r_cols_rev.reverse();
-            let r_seg_rev = [r_rows_rev.as_slice(), r_cols_rev.as_slice()].concat();
-            let r_seg_swap_rev = [r_cols_rev.as_slice(), r_rows_rev.as_slice()].concat();
-
-            let candidates = [
-                ("be", &r_be),
-                ("rev", &r_rev),
-                ("swap", &r_swap),
-                ("swap_le", &r_swap_le),
-                ("addr_le_cycle", &r_addr_le_cycle),
-                ("seg_rev", &r_seg_rev),
-                ("seg_swap_rev", &r_seg_swap_rev),
-            ];
-
-            let mut matched = None;
-            for (label, point) in candidates {
-                let eval = joint_poly.evaluate(point);
-                if eval == joint_claim {
-                    matched = Some(label);
-                    break;
-                }
-            }
-
-            if matched.is_none() {
-                let lagrange_factor: F = r_address_stage7.iter().map(|r| F::one() - *r).product();
-                let mut joint_claim_dense_scaled = joint_claim;
-                if !opening_ids.is_empty() {
-                    let ram_inc = opening_ids[0];
-                    let rd_inc = opening_ids[1];
-                    let ram_inc_claim = self.opening_accumulator.get_opening(ram_inc);
-                    let rd_inc_claim = self.opening_accumulator.get_opening(rd_inc);
-                    joint_claim_dense_scaled +=
-                        (lagrange_factor - F::one()) * (ram_inc_claim + rd_inc_claim);
-                }
-                let eval_be = joint_poly.evaluate(&opening_point.r);
-                let eval_rev = joint_poly.evaluate(&r_rev);
-                let eval_swap = joint_poly.evaluate(&r_swap);
-                let eval_swap_le = joint_poly.evaluate(&r_swap_le);
-                let eval_addr_le_cycle = joint_poly.evaluate(&r_addr_le_cycle);
-                let eval_seg_rev = joint_poly.evaluate(&r_seg_rev);
-                let eval_seg_swap_rev = joint_poly.evaluate(&r_seg_swap_rev);
-                panic!(
-                    "Stage8 joint claim mismatch: joint_claim={joint_claim:?} joint_claim_dense_scaled={joint_claim_dense_scaled:?} eval_be={eval_be:?} eval_rev={eval_rev:?} eval_swap={eval_swap:?} eval_swap_le={eval_swap_le:?} eval_addr_le_cycle={eval_addr_le_cycle:?} eval_seg_rev={eval_seg_rev:?} eval_seg_swap_rev={eval_seg_swap_rev:?}"
-                );
-            }
-        }
-
-        // Dory opening proof at the unified point
         let (proof, y_blinding) = PCS::prove(
             &self.preprocessing.generators,
             &joint_poly,
@@ -2002,8 +1979,20 @@ pub struct JoltAdvice<F: JoltField, PCS: CommitmentScheme<Field = F>> {
 }
 
 #[cfg(feature = "allocative")]
-fn write_instance_flamegraph_svg(
+fn write_boxed_instance_flamegraph_svg(
     instances: &[Box<dyn SumcheckInstanceProver<impl JoltField, impl Transcript>>],
+    path: impl AsRef<Path>,
+) {
+    let mut flamegraph = FlameGraphBuilder::default();
+    for instance in instances {
+        instance.update_flamegraph(&mut flamegraph)
+    }
+    write_flamegraph_svg(flamegraph, path);
+}
+
+#[cfg(feature = "allocative")]
+fn write_instance_flamegraph_svg(
+    instances: &[&mut dyn SumcheckInstanceProver<impl JoltField, impl Transcript>],
     path: impl AsRef<Path>,
 ) {
     let mut flamegraph = FlameGraphBuilder::default();
@@ -2071,11 +2060,12 @@ mod tests {
     use serial_test::serial;
 
     use crate::host;
+    use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
     use crate::poly::commitment::pedersen::PedersenGenerators;
     use crate::poly::{
         commitment::{
             commitment_scheme::CommitmentScheme,
-            dory::{DoryCommitmentScheme, DoryContext, DoryGlobals},
+            dory::{DoryCommitmentScheme, DoryContext},
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{OpeningAccumulator, SumcheckId},
@@ -2130,7 +2120,8 @@ mod tests {
         let poly = MultilinearPolynomial::<Fr>::from(trusted_advice_words);
         let advice_len = poly.len().next_power_of_two().max(1);
 
-        let _guard = DoryGlobals::initialize_context(1, advice_len, DoryContext::TrustedAdvice);
+        let _guard =
+            DoryGlobals::initialize_context(1, advice_len, DoryContext::TrustedAdvice, None);
         let (commitment, hint) = {
             let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
             DoryCommitmentScheme::commit(&poly, &preprocessing.generators)
@@ -2141,6 +2132,7 @@ mod tests {
     #[test]
     #[serial]
     fn fib_e2e_dory() {
+        DoryGlobals::reset();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
@@ -2161,6 +2153,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -2185,6 +2178,7 @@ mod tests {
     #[test]
     #[serial]
     fn small_trace_e2e_dory() {
+        DoryGlobals::reset();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&5u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
@@ -2194,19 +2188,20 @@ mod tests {
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            256,
+            8192,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let log_chunk = 8; // Use default log_chunk for tests
+        let log_chunk = 13; // Use default log_chunk for tests
         let prover = RV64IMACProver::gen_from_elf(
             &prover_preprocessing,
             elf_contents,
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -2239,6 +2234,7 @@ mod tests {
     #[test]
     #[serial]
     fn sha3_e2e_dory() {
+        DoryGlobals::reset();
         // Ensure SHA3 inline library is linked and auto-registered
         #[cfg(feature = "host")]
         use jolt_inlines_keccak256 as _;
@@ -2266,6 +2262,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -2301,6 +2298,7 @@ mod tests {
     #[test]
     #[serial]
     fn sha2_e2e_dory() {
+        DoryGlobals::reset();
         // Ensure SHA2 inline library is linked and auto-registered
         #[cfg(feature = "host")]
         use jolt_inlines_sha2 as _;
@@ -2327,6 +2325,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -2361,6 +2360,7 @@ mod tests {
     #[test]
     #[serial]
     fn sha2_e2e_dory_with_unused_advice() {
+        DoryGlobals::reset();
         // SHA2 guest does not consume advice, but providing both trusted and untrusted advice
         // should still work correctly through the full pipeline:
         // - Trusted: commit in preprocessing-only context, reduce in Stage 6, batch in Stage 8
@@ -2393,6 +2393,7 @@ mod tests {
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2421,6 +2422,7 @@ mod tests {
     #[test]
     #[serial]
     fn max_advice_with_small_trace() {
+        DoryGlobals::reset();
         // Tests that max-sized advice (4KB = 512 words) works with a minimal trace.
         // With balanced dims (sigma_a=5, nu_a=4 for 512 words), the minimum padded trace
         // (256 cycles -> total_vars=12) is sufficient to embed advice.
@@ -2437,7 +2439,7 @@ mod tests {
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            256,
+            4096,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         tracing::info!(
@@ -2459,8 +2461,9 @@ mod tests {
         );
 
         // Trace is tiny but advice is max-sized
-        assert!(prover.unpadded_trace_len < 512);
-        assert_eq!(prover.padded_trace_len, 256);
+        // (unpadded ~4185 after ECALL a7 constraint, padded to 8192)
+        assert!(prover.unpadded_trace_len < 8192);
+        assert_eq!(prover.padded_trace_len, 4096);
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2481,6 +2484,7 @@ mod tests {
     #[test]
     #[serial]
     fn advice_e2e_dory() {
+        DoryGlobals::reset();
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
         let mut program = host::Program::new("merkle-tree-guest");
         let (bytecode, init_memory_state, _) = program.decode();
@@ -2512,6 +2516,7 @@ mod tests {
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2540,6 +2545,7 @@ mod tests {
     #[test]
     #[serial]
     fn advice_opening_point_derives_from_unified_point() {
+        DoryGlobals::reset();
         // Tests that advice opening points are correctly derived from the unified main opening
         // point using Dory's balanced dimension policy.
         //
@@ -2574,7 +2580,7 @@ mod tests {
             final_memory_state,
         );
 
-        assert_eq!(prover.padded_trace_len, 256, "test expects small trace");
+        assert_eq!(prover.padded_trace_len, 4096, "test expects small trace");
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2610,7 +2616,7 @@ mod tests {
         ] {
             let get_fn = debug_info
                 .opening_accumulator
-                .get_advice_opening(kind, SumcheckId::AdviceClaimReductionPhase2);
+                .get_advice_opening(kind, SumcheckId::AdviceClaimReduction);
             assert!(
                 get_fn.is_some(),
                 "{name} advice opening missing for AdviceClaimReductionPhase2"
@@ -2638,6 +2644,7 @@ mod tests {
     #[test]
     #[serial]
     fn memory_ops_e2e_dory() {
+        DoryGlobals::reset();
         let mut program = host::Program::new("memory-ops-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&[], &[], &[]);
@@ -2658,6 +2665,7 @@ mod tests {
             &[],
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -2682,6 +2690,7 @@ mod tests {
     #[test]
     #[serial]
     fn btreemap_e2e_dory() {
+        DoryGlobals::reset();
         let mut program = host::Program::new("btreemap-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&50u32).unwrap();
@@ -2703,6 +2712,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -2727,6 +2737,7 @@ mod tests {
     #[test]
     #[serial]
     fn muldiv_e2e_dory() {
+        DoryGlobals::reset();
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
@@ -2745,9 +2756,10 @@ mod tests {
         let prover = RV64IMACProver::gen_from_elf(
             &prover_preprocessing,
             elf_contents,
-            &[50],
+            &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -2784,7 +2796,7 @@ mod tests {
             BlindFoldWitness, RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
         };
         use crate::subprotocols::sumcheck::SumcheckInstanceProof;
-        use crate::transcripts::{AppendToTranscript, KeccakTranscript, Transcript};
+        use crate::transcripts::{KeccakTranscript, Transcript};
         use crate::zkvm::verifier::JoltSharedPreprocessing;
         use ark_serialize::CanonicalSerialize;
 
@@ -2809,7 +2821,10 @@ mod tests {
                     let mut rounds = Vec::with_capacity(num_rounds);
 
                     for compressed_poly in compressed_polys.iter() {
-                        compressed_poly.append_to_transcript(transcript);
+                        transcript.append_scalars(
+                            b"sumcheck_poly",
+                            &compressed_poly.coeffs_except_linear_term,
+                        );
                         let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
 
                         let compressed = &compressed_poly.coeffs_except_linear_term;
@@ -2849,8 +2864,7 @@ mod tests {
                         commitment
                             .serialize_compressed(&mut commitment_bytes)
                             .expect("Serialization should not fail");
-                        transcript.append_message(b"UniPolyCommitment");
-                        transcript.append_bytes(&commitment_bytes);
+                        transcript.append_bytes(b"sumcheck_commitment", &commitment_bytes);
                         let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
 
                         let degree = zk_proof.poly_degrees[round_idx];
@@ -2897,8 +2911,16 @@ mod tests {
         let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover =
-            RV64IMACProver::gen_from_elf(&preprocessing, elf_contents, &[50], &[], &[], None, None);
+        let prover = RV64IMACProver::gen_from_elf(
+            &preprocessing,
+            elf_contents,
+            &[50],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
         let (jolt_proof, _) = prover.prove();
 
         println!("\n=== BlindFold R1CS Satisfaction Test (All 7 Stages) ===\n");
@@ -3177,5 +3199,112 @@ mod tests {
         println!("Witness size: {} field elements", witness.len());
         println!("Spartan sumcheck rounds: {}", proof.spartan_proof.len());
         println!("Protocol verification: SUCCESS");
+    }
+
+    #[test]
+    #[serial]
+    fn fib_e2e_dory_address_major() {
+        DoryGlobals::reset();
+        DoryGlobals::set_layout(DoryLayout::AddressMajor);
+
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&50u32).unwrap();
+        let (bytecode, init_memory_state, _) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let elf_contents = program.get_elf_contents().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            &elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::new(
+            shared_preprocessing,
+            prover_preprocessing.generators.to_verifier_setup(),
+        );
+
+        // DoryGlobals is now initialized inside the verifier's verify_stage8
+        RV64IMACVerifier::new(&verifier_preprocessing, proof, io_device, None, debug_info)
+            .expect("verifier creation failed")
+            .verify()
+            .expect("verification failed");
+    }
+
+    #[test]
+    #[serial]
+    fn advice_e2e_dory_address_major() {
+        DoryGlobals::reset();
+        DoryGlobals::set_layout(DoryLayout::AddressMajor);
+
+        // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
+        let mut program = host::Program::new("merkle-tree-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+
+        // Merkle tree with 4 leaves: input=leaf1, trusted=[leaf2, leaf3], untrusted=leaf4
+        let inputs = postcard::to_stdvec(&[5u8; 32].as_slice()).unwrap();
+        let untrusted_advice = postcard::to_stdvec(&[8u8; 32]).unwrap();
+        let mut trusted_advice = postcard::to_stdvec(&[6u8; 32]).unwrap();
+        trusted_advice.extend(postcard::to_stdvec(&[7u8; 32]).unwrap());
+
+        let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let elf_contents = program.get_elf_contents().expect("elf contents is None");
+
+        let (trusted_commitment, trusted_hint) =
+            commit_trusted_advice_preprocessing_only(&prover_preprocessing, &trusted_advice);
+
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            &elf_contents,
+            &inputs,
+            &untrusted_advice,
+            &trusted_advice,
+            Some(trusted_commitment),
+            Some(trusted_hint),
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+        RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device.clone(),
+            Some(trusted_commitment),
+            debug_info,
+        )
+        .expect("Failed to create verifier")
+        .verify()
+        .expect("Verification failed");
+
+        // Expected merkle root for leaves [5;32], [6;32], [7;32], [8;32]
+        let expected_output = &[
+            0xb4, 0x37, 0x0f, 0x3a, 0xb, 0x3d, 0x38, 0xa8, 0x7a, 0x6c, 0x4c, 0x46, 0x9, 0xe7, 0x83,
+            0xb3, 0xcc, 0xb7, 0x1c, 0x30, 0x1f, 0xf8, 0x54, 0xd, 0xf7, 0xdd, 0xc8, 0x42, 0x32,
+            0xbb, 0x16, 0xd7,
+        ];
+        assert_eq!(io_device.outputs, expected_output);
     }
 }

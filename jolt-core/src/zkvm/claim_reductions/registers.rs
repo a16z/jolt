@@ -9,8 +9,8 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialBinding;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+    SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::blindfold::{
@@ -88,10 +88,18 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersClaimReductionSumcheck
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         // input = RdWriteValue + γ*Rs1Value + γ²*Rs2Value
         // where openings are from SpartanOuter sumcheck
-        let rd_write_value =
-            OpeningId::Virtual(VirtualPolynomial::RdWriteValue, SumcheckId::SpartanOuter);
-        let rs1_value = OpeningId::Virtual(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let rs2_value = OpeningId::Virtual(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
+        let rd_write_value = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RdWriteValue),
+            SumcheckId::SpartanOuter,
+        );
+        let rs1_value = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::Rs1Value),
+            SumcheckId::SpartanOuter,
+        );
+        let rs2_value = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::Rs2Value),
+            SumcheckId::SpartanOuter,
+        );
 
         let terms = vec![
             ProductTerm::single(ValueSource::Opening(rd_write_value)),
@@ -116,16 +124,16 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersClaimReductionSumcheck
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let rd_write_value = OpeningId::Virtual(
-            VirtualPolynomial::RdWriteValue,
+        let rd_write_value = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RdWriteValue),
             SumcheckId::RegistersClaimReduction,
         );
-        let rs1_value = OpeningId::Virtual(
-            VirtualPolynomial::Rs1Value,
+        let rs1_value = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::Rs1Value),
             SumcheckId::RegistersClaimReduction,
         );
-        let rs2_value = OpeningId::Virtual(
-            VirtualPolynomial::Rs2Value,
+        let rs2_value = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::Rs2Value),
             SumcheckId::RegistersClaimReduction,
         );
 

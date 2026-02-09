@@ -22,7 +22,7 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::unipoly::CompressedUniPoly;
-use crate::transcripts::{AppendToTranscript, Transcript};
+use crate::transcripts::Transcript;
 
 use super::folding::{
     compute_cross_term, sample_random_instance_deterministic,
@@ -114,7 +114,7 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
 
         // Step 1: Bind real_instance to transcript FIRST (before deriving randomness)
         // SECURITY: This prevents adaptive attacks on the random instance
-        transcript.append_message(b"BlindFold_real_instance");
+        transcript.raw_append_label(b"BlindFold_real_instance");
         append_instance_to_transcript(real_instance, transcript);
 
         // Step 2: Sample random satisfying pair deterministically from transcript
@@ -137,7 +137,7 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         );
 
         // Step 4: Commit to cross-term (derive blinding from transcript)
-        transcript.append_message(b"BlindFold_cross_term_blinding");
+        transcript.raw_append_label(b"BlindFold_cross_term_blinding");
         let seed_a = transcript.challenge_u128();
         let seed_b = transcript.challenge_u128();
         let mut seed = [0u8; 32];
@@ -148,7 +148,7 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         let T_bar = self.gens.commit(&T, &r_T);
 
         // Step 5: Bind T_bar to transcript
-        transcript.append_message(b"BlindFold_cross_term");
+        transcript.raw_append_label(b"BlindFold_cross_term");
         append_g1_to_transcript::<C>(&T_bar, transcript);
 
         // Step 6: Get folding challenge via Fiat-Shamir
@@ -168,7 +168,7 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         folded_z.extend_from_slice(&folded_witness.W);
 
         // Step 9: Run Spartan sumcheck
-        transcript.append_message(b"BlindFold_spartan");
+        transcript.raw_append_label(b"BlindFold_spartan");
         let num_vars = self.r1cs.num_constraints.next_power_of_two().log_2();
         let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
 
@@ -189,7 +189,7 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
             let poly = spartan_prover.compute_round_polynomial(claim);
 
             let compressed = poly.compress();
-            compressed.append_to_transcript(transcript);
+            transcript.append_scalars(b"sumcheck_poly", &compressed.coeffs_except_linear_term);
             spartan_proof.push(compressed);
 
             let r_j = transcript.challenge_scalar_optimized::<F>();
@@ -206,12 +206,16 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         let mut e_padded = folded_witness.E;
         e_padded.resize(padded_len, F::zero());
 
-        DoryGlobals::initialize_context(1, padded_len, DoryContext::BlindFoldE);
+        DoryGlobals::initialize_context(1, padded_len, DoryContext::BlindFoldE, None);
         let _guard = DoryGlobals::with_context(DoryContext::BlindFoldE);
 
         let e_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(e_padded));
         let (e_commitment, e_hint) = PCS::commit(&e_poly, self.pcs_setup);
-        e_commitment.append_to_transcript(transcript);
+        let mut e_commitment_bytes = Vec::new();
+        e_commitment
+            .serialize_compressed(&mut e_commitment_bytes)
+            .expect("Serialization should not fail");
+        transcript.append_bytes(b"blindfold_e_padded", &e_commitment_bytes);
 
         let (e_opening_proof, _) = PCS::prove(
             self.pcs_setup,
@@ -352,7 +356,7 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         };
 
         // Step 2: Bind real_instance to transcript (must match prover exactly)
-        transcript.append_message(b"BlindFold_real_instance");
+        transcript.raw_append_label(b"BlindFold_real_instance");
         append_instance_to_transcript(&real_instance, transcript);
 
         // Step 3: Derive random instance deterministically from transcript
@@ -366,12 +370,12 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
 
         // Step 4: Derive cross-term blinding (same as prover, for transcript consistency)
         // We don't need the actual blinding, just need to advance transcript state
-        transcript.append_message(b"BlindFold_cross_term_blinding");
+        transcript.raw_append_label(b"BlindFold_cross_term_blinding");
         let _ = transcript.challenge_u128();
         let _ = transcript.challenge_u128();
 
         // Step 5: Bind T_bar to transcript
-        transcript.append_message(b"BlindFold_cross_term");
+        transcript.raw_append_label(b"BlindFold_cross_term");
         append_g1_to_transcript::<C>(&proof.cross_term_commitment, transcript);
 
         // Step 6: Get folding challenge via Fiat-Shamir
@@ -383,7 +387,7 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
             real_instance.fold(&random_instance, &proof.cross_term_commitment, r_field);
 
         // Step 8: Verify Spartan sumcheck
-        transcript.append_message(b"BlindFold_spartan");
+        transcript.raw_append_label(b"BlindFold_spartan");
         let num_vars = self.r1cs.num_constraints.next_power_of_two().log_2();
 
         // Check proof length
@@ -400,7 +404,7 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         let mut challenges: Vec<F::Challenge> = Vec::with_capacity(num_vars);
 
         for (round, compressed_poly) in proof.spartan_proof.iter().enumerate() {
-            compressed_poly.append_to_transcript(transcript);
+            transcript.append_scalars(b"sumcheck_poly", &compressed_poly.coeffs_except_linear_term);
 
             let poly = compressed_poly.decompress(&claim);
             let sum = poly.coeffs[0] + poly.coeffs.iter().sum::<F>(); // p(0) + p(1)
@@ -415,10 +419,15 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
 
         // Verify E polynomial opening
         let padded_len = self.r1cs.num_constraints.next_power_of_two();
-        DoryGlobals::initialize_context(1, padded_len, DoryContext::BlindFoldE);
+        DoryGlobals::initialize_context(1, padded_len, DoryContext::BlindFoldE, None);
         let _guard = DoryGlobals::with_context(DoryContext::BlindFoldE);
 
-        proof.e_commitment.append_to_transcript(transcript);
+        let mut e_commitment_bytes = Vec::new();
+        proof
+            .e_commitment
+            .serialize_compressed(&mut e_commitment_bytes)
+            .expect("Serialization should not fail");
+        transcript.append_bytes(b"blindfold_e_padded", &e_commitment_bytes);
 
         PCS::verify(
             &proof.e_opening_proof,
@@ -441,7 +450,7 @@ fn append_g1_to_transcript<C: JoltCurve>(g: &C::G1, transcript: &mut impl Transc
     let mut bytes = Vec::new();
     g.serialize_compressed(&mut bytes)
         .expect("Serialization should not fail");
-    transcript.append_bytes(&bytes);
+    transcript.append_bytes(b"blindfold_g1", &bytes);
 }
 
 /// Append an instance to the transcript (for Fiat-Shamir).
@@ -457,13 +466,13 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
         .u
         .serialize_compressed(&mut u_bytes)
         .expect("Serialization should not fail");
-    transcript.append_bytes(&u_bytes);
+    transcript.append_bytes(b"blindfold_u", &u_bytes);
 
     for x_i in &instance.x {
         let mut x_bytes = Vec::new();
         x_i.serialize_compressed(&mut x_bytes)
             .expect("Serialization should not fail");
-        transcript.append_bytes(&x_bytes);
+        transcript.append_bytes(b"blindfold_x", &x_bytes);
     }
 
     // Include round commitments in Fiat-Shamir

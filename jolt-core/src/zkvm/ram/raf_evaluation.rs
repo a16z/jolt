@@ -16,13 +16,14 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         unipoly::UniPoly,
     },
     subprotocols::{
         blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+        sumcheck_claim::{Claim, InputOutputClaims, SumcheckFrontend, VerifierEvaluablePolynomial},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -97,7 +98,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> 
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let opening = OpeningId::Virtual(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter);
+        let opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamAddress),
+            SumcheckId::SpartanOuter,
+        );
         InputClaimConstraint::direct(opening)
     }
 
@@ -106,7 +110,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> 
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let ra_opening = OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
+        let ra_opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamRa),
+            SumcheckId::RamRafEvaluation,
+        );
         let terms = vec![ProductTerm::scaled(
             ValueSource::Challenge(0),
             vec![ValueSource::Opening(ra_opening)],
@@ -289,6 +296,19 @@ impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
 impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     for RafEvaluationSumcheckVerifier<F>
 {
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        let result = self.params.input_claim(accumulator);
+
+        #[cfg(test)]
+        {
+            let reference_result =
+                Self::input_output_claims().input_claim(&[F::one()], accumulator);
+            assert_eq!(result, reference_result);
+        }
+
+        result
+    }
+
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -299,6 +319,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
+
         // Compute unmap evaluation at r
         let unmap_eval =
             UnmapRamAddressPolynomial::<F>::new(self.params.log_K, self.params.start_address)
@@ -308,7 +329,26 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
 
         // Return unmap(r) * ra(r)
-        unmap_eval * ra_input_claim
+        let result = unmap_eval * ra_input_claim;
+
+        #[cfg(test)]
+        {
+            use crate::subprotocols::sumcheck_claim::VerifierEvaluationParams;
+
+            let eval_params =
+                VerifierEvaluationParams::new(self.params.log_K, self.params.start_address);
+            let reference_result = Self::input_output_claims()
+                .expected_output_claim_with_batching_parameters(
+                    &eval_params,
+                    &r,
+                    &[F::one()],
+                    accumulator,
+                );
+
+            assert_eq!(result, reference_result);
+        }
+
+        result
     }
 
     fn cache_openings(
@@ -326,5 +366,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             SumcheckId::RamRafEvaluation,
             ra_opening_point,
         );
+    }
+}
+
+impl<F: JoltField> SumcheckFrontend<F> for RafEvaluationSumcheckVerifier<F> {
+    fn input_output_claims() -> InputOutputClaims<F> {
+        let ram_address = VirtualPolynomial::RamAddress.into();
+        let ram_ra = VirtualPolynomial::RamRa.into();
+
+        InputOutputClaims {
+            claims: vec![Claim {
+                input_sumcheck_id: SumcheckId::SpartanOuter,
+                input_claim_expr: ram_address,
+                batching_poly: VerifierEvaluablePolynomial::UnmapRamAddress,
+                expected_output_claim_expr: ram_ra,
+            }],
+            output_sumcheck_id: SumcheckId::RamRafEvaluation,
+        }
     }
 }

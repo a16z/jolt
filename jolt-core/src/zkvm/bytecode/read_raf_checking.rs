@@ -11,8 +11,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -73,7 +73,8 @@ const N_STAGES: usize = 5;
 /// - Int(k) = 1 for all k (evaluation of the IdentityPolynomial over address variables).
 /// - Define per-stage Val_s(k) (address-only) as implemented by `compute_val_*`:
 ///   * Stage1: Val_1(k) = unexpanded_pc(k) + β_1·imm(k) + Σ_t β_1^{2+t}·circuit_flag_t(k).
-///   * Stage2: Val_2(k) = 1_{jump}(k) + β_2·1_{branch}(k) + β_2^2·rd_addr(k) + β_2^3·1_{write_lookup_to_rd}(k).
+///   * Stage2: Val_2(k) = 1_{jump}(k) + β_2·1_{branch}(k) + β_2^2·rd_addr(k) + β_2^3·1_{write_lookup_to_rd}(k)
+///   + β_2^4·1_{VirtualInstruction}(k).
 ///   * Stage3: Val_3(k) = imm(k) + β_3·unexpanded_pc(k) + β_3^2·1_{L_is_rs1}(k) + β_3^3·1_{L_is_pc}(k)
 ///   + β_3^4·1_{R_is_rs2}(k) + β_3^5·1_{R_is_imm}(k) + β_3^6·1_{IsNoop}(k)
 ///   + β_3^7·1_{VirtualInstruction}(k) + β_3^8·1_{IsFirstInSequence}(k).
@@ -748,7 +749,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
         // Generate all stage-specific gamma powers upfront (order must match verifier)
         let stage1_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
-        let stage2_gammas: Vec<F> = transcript.challenge_scalar_powers(4);
+        let stage2_gammas: Vec<F> = transcript.challenge_scalar_powers(5);
         let stage3_gammas: Vec<F> = transcript.challenge_scalar_powers(9);
         let stage4_gammas: Vec<F> = transcript.challenge_scalar_powers(3);
         let stage5_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_LOOKUP_TABLES);
@@ -842,8 +843,6 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             r_cycle_5.r,
         ];
 
-        // Note: We don't have r_address at this point (it comes from sumcheck_challenges),
-        // so we initialize r_address_chunks as empty and will compute it later
         Self {
             gamma_powers,
             stage1_gammas,
@@ -930,6 +929,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                 //       branch_flag(k) = 1 if instruction k is a branch, 0 otherwise;
                 //       is_rd_not_zero_flag(k) = 1 if instruction k has rd != 0;
                 //       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd.
+                //       virtual_instruction(k) = 1 if instruction k is a virtual instruction.
                 // This Val matches the fused product sumcheck.
                 {
                     let mut lc = F::zero();
@@ -944,6 +944,9 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                     }
                     if circuit_flags[CircuitFlags::WriteLookupOutputToRD] {
                         lc += stage2_gammas[3];
+                    }
+                    if circuit_flags[CircuitFlags::VirtualInstruction] {
+                        lc += stage2_gammas[4];
                     }
                     *o1 = lc;
                 }
@@ -1081,12 +1084,17 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                 VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
                 SumcheckId::SpartanProductVirtualization,
             );
+        let (_, virtual_instruction_claim) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanProductVirtualization,
+        );
 
         [
             jump_claim,
             branch_claim,
             rd_wa_claim,
             write_lookup_output_to_rd_flag_claim,
+            virtual_instruction_claim,
         ]
         .into_iter()
         .zip_eq(gamma_powers)
@@ -1256,8 +1264,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         // Order: UnexpandedPC, Imm, then CircuitFlags in order
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::UnexpandedPC,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::UnexpandedPC),
                 SumcheckId::SpartanOuter,
             ))],
         ));
@@ -1265,8 +1273,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::Imm,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::Imm),
                 SumcheckId::SpartanOuter,
             ))],
         ));
@@ -1275,8 +1283,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         for flag in CircuitFlags::iter() {
             terms.push(ProductTerm::scaled(
                 ValueSource::Challenge(challenge_idx),
-                vec![ValueSource::Opening(OpeningId::Virtual(
-                    VirtualPolynomial::OpFlags(flag),
+                vec![ValueSource::Opening(OpeningId::Polynomial(
+                    PolynomialId::Virtual(VirtualPolynomial::OpFlags(flag)),
                     SumcheckId::SpartanOuter,
                 ))],
             ));
@@ -1287,8 +1295,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         // Order: Jump, Branch, IsRdNotZero, WriteLookupOutputToRD
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
                 SumcheckId::SpartanProductVirtualization,
             ))],
         ));
@@ -1296,8 +1304,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
+                    InstructionFlags::Branch,
+                )),
                 SumcheckId::SpartanProductVirtualization,
             ))],
         ));
@@ -1305,8 +1315,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
+                    InstructionFlags::IsRdNotZero,
+                )),
                 SumcheckId::SpartanProductVirtualization,
             ))],
         ));
@@ -1314,8 +1326,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::OpFlags(
+                    CircuitFlags::WriteLookupOutputToRD,
+                )),
                 SumcheckId::SpartanProductVirtualization,
             ))],
         ));
@@ -1325,8 +1339,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         // Order: Imm, UnexpandedPC (split), LeftIsRs1, LeftIsPC, RightIsRs2, RightIsImm, IsNoop, IsVirtual, IsFirstInSequence
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::Imm,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::Imm),
                 SumcheckId::InstructionInputVirtualization,
             ))],
         ));
@@ -1336,15 +1350,15 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         // Include both with half coefficient each
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::UnexpandedPC,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::UnexpandedPC),
                 SumcheckId::SpartanShift,
             ))],
         ));
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::UnexpandedPC,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::UnexpandedPC),
                 SumcheckId::InstructionInputVirtualization,
             ))],
         ));
@@ -1352,8 +1366,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
+                    InstructionFlags::LeftOperandIsRs1Value,
+                )),
                 SumcheckId::InstructionInputVirtualization,
             ))],
         ));
@@ -1361,8 +1377,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
+                    InstructionFlags::LeftOperandIsPC,
+                )),
                 SumcheckId::InstructionInputVirtualization,
             ))],
         ));
@@ -1370,8 +1388,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
+                    InstructionFlags::RightOperandIsRs2Value,
+                )),
                 SumcheckId::InstructionInputVirtualization,
             ))],
         ));
@@ -1379,8 +1399,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
+                    InstructionFlags::RightOperandIsImm,
+                )),
                 SumcheckId::InstructionInputVirtualization,
             ))],
         ));
@@ -1388,8 +1410,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
+                    InstructionFlags::IsNoop,
+                )),
                 SumcheckId::SpartanShift,
             ))],
         ));
@@ -1397,8 +1421,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction)),
                 SumcheckId::SpartanShift,
             ))],
         ));
@@ -1406,8 +1430,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence)),
                 SumcheckId::SpartanShift,
             ))],
         ));
@@ -1417,8 +1441,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         // Order: RdWa, Rs1Ra, Rs2Ra
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::RdWa,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::RdWa),
                 SumcheckId::RegistersReadWriteChecking,
             ))],
         ));
@@ -1426,8 +1450,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::Rs1Ra,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::Rs1Ra),
                 SumcheckId::RegistersReadWriteChecking,
             ))],
         ));
@@ -1435,8 +1459,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::Rs2Ra,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::Rs2Ra),
                 SumcheckId::RegistersReadWriteChecking,
             ))],
         ));
@@ -1446,8 +1470,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         // Order: RdWa@RegistersValEvaluation, InstructionRafFlag, LookupTableFlag(0..NUM_LOOKUP_TABLES)
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::RdWa,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::RdWa),
                 SumcheckId::RegistersValEvaluation,
             ))],
         ));
@@ -1455,8 +1479,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::InstructionRafFlag,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::InstructionRafFlag),
                 SumcheckId::InstructionReadRaf,
             ))],
         ));
@@ -1465,8 +1489,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         for i in 0..NUM_LOOKUP_TABLES {
             terms.push(ProductTerm::scaled(
                 ValueSource::Challenge(challenge_idx),
-                vec![ValueSource::Opening(OpeningId::Virtual(
-                    VirtualPolynomial::LookupTableFlag(i),
+                vec![ValueSource::Opening(OpeningId::Polynomial(
+                    PolynomialId::Virtual(VirtualPolynomial::LookupTableFlag(i)),
                     SumcheckId::InstructionReadRaf,
                 ))],
             ));
@@ -1476,8 +1500,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         // raf_claim: PC @ SpartanOuter
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::PC,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::PC),
                 SumcheckId::SpartanOuter,
             ))],
         ));
@@ -1486,8 +1510,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         // raf_shift_claim: PC @ SpartanShift
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
-            vec![ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::PC,
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::PC),
                 SumcheckId::SpartanShift,
             ))],
         ));
@@ -1545,8 +1569,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         let factors: Vec<ValueSource> = (0..self.d)
             .map(|i| {
-                let opening = OpeningId::Committed(
-                    CommittedPolynomial::BytecodeRa(i),
+                let opening = OpeningId::Polynomial(
+                    PolynomialId::Committed(CommittedPolynomial::BytecodeRa(i)),
                     SumcheckId::BytecodeReadRaf,
                 );
                 ValueSource::Opening(opening)

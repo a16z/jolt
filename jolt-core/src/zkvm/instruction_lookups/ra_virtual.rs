@@ -6,8 +6,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -127,8 +127,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         let terms: Vec<ProductTerm> = (0..self.n_virtual_ra_polys)
             .map(|i| {
-                let opening = OpeningId::Virtual(
-                    VirtualPolynomial::InstructionRa(i),
+                let opening = OpeningId::Polynomial(
+                    PolynomialId::Virtual(VirtualPolynomial::InstructionRa(i)),
                     SumcheckId::InstructionReadRaf,
                 );
                 ProductTerm::scaled(
@@ -152,8 +152,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
             .map(|i| {
                 let factors: Vec<ValueSource> = (0..m)
                     .map(|j| {
-                        let opening = OpeningId::Committed(
-                            CommittedPolynomial::InstructionRa(i * m + j),
+                        let opening = OpeningId::Polynomial(
+                            PolynomialId::Committed(CommittedPolynomial::InstructionRa(i * m + j)),
                             SumcheckId::InstructionRaVirtualization,
                         );
                         ValueSource::Opening(opening)

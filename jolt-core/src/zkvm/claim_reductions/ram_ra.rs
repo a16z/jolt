@@ -1,8 +1,7 @@
 //! RAM RA claim reduction sumcheck.
 //!
 //! Consolidates the four RAM RA claims (from RafEvaluation, ReadWriteChecking, ValEvaluation,
-//! ValFinal) into a single claim for the RA virtualization sumcheck. See `mod.rs` for claim
-//! coincidence constraints.
+//! ValFinal) into a single claim for the RA virtualization sumcheck.
 //!
 //! ## Sumcheck Identity
 //!
@@ -43,8 +42,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         unipoly::UniPoly,
     },
@@ -1019,11 +1018,22 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let raf = OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
-        let val_final =
-            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation);
-        let rw = OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking);
-        let val_eval = OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation);
+        let raf = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamRa),
+            SumcheckId::RamRafEvaluation,
+        );
+        let val_final = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamRa),
+            SumcheckId::RamValFinalEvaluation,
+        );
+        let rw = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamRa),
+            SumcheckId::RamReadWriteChecking,
+        );
+        let val_eval = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamRa),
+            SumcheckId::RamValEvaluation,
+        );
 
         let terms = vec![
             ProductTerm::single(ValueSource::Opening(raf)),
@@ -1045,8 +1055,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let ra_opening =
-            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRaClaimReduction);
+        let ra_opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamRa),
+            SumcheckId::RamRaClaimReduction,
+        );
 
         let terms = vec![ProductTerm::scaled(
             ValueSource::Challenge(0),

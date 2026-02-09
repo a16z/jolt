@@ -15,6 +15,7 @@ pub use jolt_core::zkvm::{
     proof_serialization::JoltProof, verifier::JoltSharedPreprocessing,
     verifier::JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, Serializable,
 };
+pub use jolt_core::AdviceTape;
 
 // Re-exports needed by the provable macro
 pub use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;

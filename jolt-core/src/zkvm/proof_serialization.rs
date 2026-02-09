@@ -9,12 +9,12 @@ use ark_serialize::{
 use num::FromPrimitive;
 use strum::EnumCount;
 
-use crate::curve::JoltCurve;
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{OpeningId, OpeningPoint, Openings, SumcheckId},
+        commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
+        opening_proof::{OpeningId, OpeningPoint, Openings, PolynomialId, SumcheckId},
     },
     subprotocols::{
         blindfold::BlindFoldProof, sumcheck::SumcheckInstanceProof,
@@ -51,6 +51,41 @@ pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F
     pub bytecode_K: usize,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
+    pub dory_layout: DoryLayout,
+}
+
+impl CanonicalSerialize for DoryLayout {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        u8::from(*self).serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        u8::from(*self).serialized_size(compress)
+    }
+}
+
+impl Valid for DoryLayout {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for DoryLayout {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = u8::deserialize_with_mode(reader, compress, validate)?;
+        if value > 1 {
+            return Err(SerializationError::InvalidData);
+        }
+        Ok(DoryLayout::from(value))
+    }
 }
 
 pub struct Claims<F: JoltField>(pub Openings<F>);
@@ -130,12 +165,12 @@ impl CanonicalSerialize for OpeningId {
                 let fused = OPENING_ID_TRUSTED_ADVICE_BASE + (*sumcheck_id as u8);
                 fused.serialize_with_mode(&mut writer, compress)
             }
-            OpeningId::Committed(committed_polynomial, sumcheck_id) => {
+            OpeningId::Polynomial(PolynomialId::Committed(committed_polynomial), sumcheck_id) => {
                 let fused = OPENING_ID_COMMITTED_BASE + (*sumcheck_id as u8);
                 fused.serialize_with_mode(&mut writer, compress)?;
                 committed_polynomial.serialize_with_mode(&mut writer, compress)
             }
-            OpeningId::Virtual(virtual_polynomial, sumcheck_id) => {
+            OpeningId::Polynomial(PolynomialId::Virtual(virtual_polynomial), sumcheck_id) => {
                 let fused = OPENING_ID_VIRTUAL_BASE + (*sumcheck_id as u8);
                 fused.serialize_with_mode(&mut writer, compress)?;
                 virtual_polynomial.serialize_with_mode(&mut writer, compress)
@@ -146,11 +181,11 @@ impl CanonicalSerialize for OpeningId {
     fn serialized_size(&self, compress: Compress) -> usize {
         match self {
             OpeningId::UntrustedAdvice(_) | OpeningId::TrustedAdvice(_) => 1,
-            OpeningId::Committed(committed_polynomial, _) => {
+            OpeningId::Polynomial(PolynomialId::Committed(committed_polynomial), _) => {
                 // 1 byte fused (variant + sumcheck_id) + poly index
                 1 + committed_polynomial.serialized_size(compress)
             }
-            OpeningId::Virtual(virtual_polynomial, _) => {
+            OpeningId::Polynomial(PolynomialId::Virtual(virtual_polynomial), _) => {
                 // 1 byte fused (variant + sumcheck_id) + poly index
                 1 + virtual_polynomial.serialized_size(compress)
             }
@@ -188,8 +223,8 @@ impl CanonicalDeserialize for OpeningId {
                 let sumcheck_id = fused - OPENING_ID_COMMITTED_BASE;
                 let polynomial =
                     CommittedPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(OpeningId::Committed(
-                    polynomial,
+                Ok(OpeningId::Polynomial(
+                    PolynomialId::Committed(polynomial),
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
@@ -197,8 +232,8 @@ impl CanonicalDeserialize for OpeningId {
                 let sumcheck_id = fused - OPENING_ID_VIRTUAL_BASE;
                 let polynomial =
                     VirtualPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(OpeningId::Virtual(
-                    polynomial,
+                Ok(OpeningId::Polynomial(
+                    PolynomialId::Virtual(polynomial),
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }

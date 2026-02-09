@@ -774,68 +774,32 @@ impl<F: JoltField> SharedRaRound3<F> {
         // Scale by eq(r2, bit)
         rayon::join(
             || {
-                rayon::join(
-                    || {
-                        rayon::join(
-                            || {
-                                tables_000
-                                    .par_iter_mut()
-                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r2))
-                            },
-                            || {
-                                tables_001
-                                    .par_iter_mut()
-                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r2))
-                            },
-                        )
-                    },
-                    || {
-                        rayon::join(
-                            || {
-                                tables_010
-                                    .par_iter_mut()
-                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r2))
-                            },
-                            || {
-                                tables_011
-                                    .par_iter_mut()
-                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r2))
-                            },
-                        )
-                    },
-                )
+                [
+                    &mut tables_000,
+                    &mut tables_010,
+                    &mut tables_100,
+                    &mut tables_110,
+                ]
+                .into_par_iter()
+                .for_each(|table| {
+                    table
+                        .par_iter_mut()
+                        .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r2))
+                })
             },
             || {
-                rayon::join(
-                    || {
-                        rayon::join(
-                            || {
-                                tables_100
-                                    .par_iter_mut()
-                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r2))
-                            },
-                            || {
-                                tables_101
-                                    .par_iter_mut()
-                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r2))
-                            },
-                        )
-                    },
-                    || {
-                        rayon::join(
-                            || {
-                                tables_110
-                                    .par_iter_mut()
-                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r2))
-                            },
-                            || {
-                                tables_111
-                                    .par_iter_mut()
-                                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r2))
-                            },
-                        )
-                    },
-                )
+                [
+                    &mut tables_001,
+                    &mut tables_011,
+                    &mut tables_101,
+                    &mut tables_111,
+                ]
+                .into_par_iter()
+                .for_each(|table| {
+                    table
+                        .par_iter_mut()
+                        .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r2))
+                })
             },
         );
 
@@ -863,6 +827,7 @@ impl<F: JoltField> SharedRaRound3<F> {
                 let coeffs: Vec<F> = match order {
                     BindingOrder::LowToHigh => {
                         (0..new_len)
+                            .into_par_iter()
                             .map(|j| {
                                 // Sum over 8 consecutive indices, each using appropriate F table
                                 (0..8)
@@ -880,6 +845,7 @@ impl<F: JoltField> SharedRaRound3<F> {
                     BindingOrder::HighToLow => {
                         let eighth = indices.len() / 8;
                         (0..new_len)
+                            .into_par_iter()
                             .map(|j| {
                                 (0..8)
                                     .map(|seg| {

@@ -1,6 +1,9 @@
 //! secp256k1 operations optimized for Jolt zkVM.
 
-use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField, Zero};
+use ark_ff::AdditiveGroup;
+#[cfg(feature = "host")]
+use ark_ff::Field;
+use ark_ff::{BigInt, PrimeField};
 use ark_secp256k1::{Fq, Fr};
 
 #[cfg(feature = "host")]
@@ -17,10 +20,6 @@ use serde::{Deserialize, Serialize};
 /// Returns `true` iff `x >= p` (Fq modulus), i.e., `x` is non-canonical.
 /// Specialized: since p's upper 3 limbs are all u64::MAX, x >= p iff
 /// all upper 3 limbs are MAX and limb[0] >= Fq::MODULUS.0[0].
-#[cfg(all(
-    not(feature = "host"),
-    any(target_arch = "riscv32", target_arch = "riscv64")
-))]
 #[inline(always)]
 fn is_fq_non_canonical(x: &[u64; 4]) -> bool {
     x[3] == u64::MAX && x[2] == u64::MAX && x[1] == u64::MAX && x[0] >= Fq::MODULUS.0[0]
@@ -28,10 +27,6 @@ fn is_fq_non_canonical(x: &[u64; 4]) -> bool {
 
 /// Returns `true` iff `x >= n` (Fr modulus), i.e., `x` is non-canonical.
 /// Specialized: since n's limb[3] is u64::MAX, we short-circuit if x[3] < MAX.
-#[cfg(all(
-    not(feature = "host"),
-    any(target_arch = "riscv32", target_arch = "riscv64")
-))]
 #[inline(always)]
 fn is_fr_non_canonical(x: &[u64; 4]) -> bool {
     if x[3] != u64::MAX {
@@ -50,15 +45,6 @@ fn is_fr_non_canonical(x: &[u64; 4]) -> bool {
         return false;
     }
     x[0] >= Fr::MODULUS.0[0]
-}
-
-#[cfg(all(
-    not(feature = "host"),
-    any(target_arch = "riscv32", target_arch = "riscv64")
-))]
-#[inline(always)]
-fn is_not_equal(x: &[u64; 4], y: &[u64; 4]) -> bool {
-    x[0] != y[0] || x[1] != y[1] || x[2] != y[2] || x[3] != y[3]
 }
 
 /// panic instruction
@@ -160,177 +146,234 @@ impl<T> UnwrapOrSpoilProof<T> for Result<T, Secp256k1Error> {
 pub enum Secp256k1Error {
     InvalidFqElement, // input array does not correspond to a valid Fq element
     InvalidFrElement, // input array does not correspond to a valid Fr element
+    NotOnCurve,       // point is not on the secp256k1 curve
     QAtInfinity,      // public key is point at infinity
     ROrSZero,         // one of the signature components is zero
     RxMismatch,       // computed R.x does not match r
 }
 
 /// secp256k1 base field element
-/// in montgomery form
-/// as a wrapper around the arkworks implementation
+/// not in montgomery form
+/// as a wrapper around 4 u64 limbs
 /// so that various operations can be replaced with inlines
+/// uses arkworks Fq for addition and subtraction even though
+/// arkworks Fq is in montgomery form. This doesn't affect correctness
+/// since addition and subtraction are the same in montgomery and
+/// non-montgomery form.
+/// uses arkworks Fq for host multiplication and division with appropriate conversions
+/// defers to inlines for multiplication and division in guest builds
 #[derive(Clone, PartialEq, Debug)]
 pub struct Secp256k1Fq {
-    e: ark_secp256k1::Fq,
+    e: [u64; 4],
 }
 
 impl Secp256k1Fq {
-    /// creates a new Secp256k1Fq element from an Fq element
-    #[inline(always)]
-    pub fn new(e: Fq) -> Self {
-        Secp256k1Fq { e }
-    }
     /// creates a new Secp256k1Fq element from a [u64; 4] array
-    /// performs conversion to montgomery form
     /// returns Err(Secp256k1Error) if the array does not correspond to a valid Fq element
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, Secp256k1Error> {
-        // attempt to create a new Fq element from the array
-        let e = Fq::from_bigint(BigInt(*arr));
-        // if valid, return element, else return error
-        match e {
-            Some(val) => Ok(Secp256k1Fq { e: val }),
-            None => Err(Secp256k1Error::InvalidFqElement),
+        if is_fq_non_canonical(arr) {
+            return Err(Secp256k1Error::InvalidFqElement);
         }
+        Ok(Secp256k1Fq { e: *arr })
     }
     /// creates a new Secp256k1Fq element from a [u64; 4] array (unchecked)
-    /// the array is assumed to be in canonical montgomery form
+    /// the array is assumed to contain a value in the range [0, p)
     #[inline(always)]
     pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
-        Secp256k1Fq {
-            e: Fq::new_unchecked(BigInt(*arr)),
-        }
+        Secp256k1Fq { e: *arr }
     }
-    /// get inner Fq type
+    /// get limbs
     #[inline(always)]
-    pub fn fq(&self) -> Fq {
+    pub fn e(&self) -> [u64; 4] {
         self.e
     }
     /// returns the additive identity element (0)
     #[inline(always)]
     pub fn zero() -> Self {
-        Secp256k1Fq { e: Fq::zero() }
+        Secp256k1Fq { e: [0u64; 4] }
     }
     /// returns seven
     #[inline(always)]
     pub fn seven() -> Self {
-        // derived from Fq::from(7)
-        // precomputed to avoid recomputation in point doubling
         Secp256k1Fq {
-            e: Fq::new_unchecked(BigInt([30064777911u64, 0u64, 0u64, 0u64])),
+            e: [7u64, 0u64, 0u64, 0u64],
         }
     }
     /// returns true if the element is zero
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
-        self.e.is_zero()
+        self.e == [0u64; 4]
     }
     /// returns -self
     #[inline(always)]
     pub fn neg(&self) -> Self {
-        Secp256k1Fq { e: -self.e }
+        Secp256k1Fq {
+            e: (-Fq::new_unchecked(BigInt(self.e))).0 .0,
+        }
     }
     /// returns self + other
     #[inline(always)]
     pub fn add(&self, other: &Secp256k1Fq) -> Self {
         Secp256k1Fq {
-            e: self.e + other.e,
+            e: (Fq::new_unchecked(BigInt(self.e)) + Fq::new_unchecked(BigInt(other.e)))
+                .0
+                 .0,
         }
     }
     /// returns self - other
     #[inline(always)]
     pub fn sub(&self, other: &Secp256k1Fq) -> Self {
         Secp256k1Fq {
-            e: self.e - other.e,
+            e: (Fq::new_unchecked(BigInt(self.e)) - Fq::new_unchecked(BigInt(other.e)))
+                .0
+                 .0,
         }
     }
     /// returns 2*self
     #[inline(always)]
     pub fn dbl(&self) -> Self {
-        Secp256k1Fq { e: self.e.double() }
+        Secp256k1Fq {
+            e: (Fq::new_unchecked(BigInt(self.e)).double()).0 .0,
+        }
     }
     /// returns 3*self
     #[inline(always)]
     pub fn tpl(&self) -> Self {
-        Secp256k1Fq {
-            e: self.e.double() + self.e,
-        }
+        self.dbl().add(self)
     }
     /// returns self * other
-    #[inline(always)]
-    pub fn mul(&self, other: &Secp256k1Fq) -> Self {
-        Secp256k1Fq {
-            e: self.e * other.e,
-        }
-    }
-    /// returns self^2
-    #[inline(always)]
-    pub fn square(&self) -> Self {
-        Secp256k1Fq { e: self.e.square() }
-    }
-    /// returns self / other
     /// uses custom inline for performance
-    /// costs nearly the same as multiplication
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    fn div_impl(&self, other: &Secp256k1Fq) -> Self {
-        // get inverse as pure advice
-        let mut c = Secp256k1Fq::zero();
+    pub fn mul(&self, other: &Secp256k1Fq) -> Self {
+        let mut e = [0u64; 4];
         unsafe {
-            use crate::{INLINE_OPCODE, SECP256K1_DIVQ_ADV_FUNCT3, SECP256K1_FUNCT7};
+            use crate::{INLINE_OPCODE, SECP256K1_FUNCT7, SECP256K1_MULQ_FUNCT3};
             core::arch::asm!(
                 ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
                 opcode = const INLINE_OPCODE,
-                funct3 = const SECP256K1_DIVQ_ADV_FUNCT3,
+                funct3 = const SECP256K1_MULQ_FUNCT3,
                 funct7 = const SECP256K1_FUNCT7,
-                rd = in(reg) c.e.0.0.as_mut_ptr(),
-                rs1 = in(reg) self.e.0.0.as_ptr(),
-                rs2 = in(reg) other.e.0.0.as_ptr(),
+                rd = in(reg) e.as_mut_ptr(),
+                rs1 = in(reg) self.e.as_ptr(),
+                rs2 = in(reg) other.e.as_ptr(),
                 options(nostack)
             );
         }
-        // compute tmp = other * c
-        let tmp = other.mul(&c);
-        // if not canonical (>= p), or other * c is not equal to self, panic
-        if is_fq_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
-            // literal assembly to induce a panic (spoils the proof)
-            // merely using assert_eq! here is insufficient as it doesn't
-            // spoil the proof
+        if is_fq_non_canonical(&e) {
             hcf();
         }
-        c
+        Secp256k1Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
+    }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn mul(&self, _other: &Secp256k1Fq) -> Self {
+        panic!("Secp256k1Fq::mul called on non-RISC-V target without host feature");
+    }
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn mul(&self, other: &Secp256k1Fq) -> Self {
+        Secp256k1Fq {
+            e: (Fq::new(BigInt(self.e)) * Fq::new(BigInt(other.e)))
+                .into_bigint()
+                .0,
+        }
+    }
+    /// returns self^2
+    /// uses custom inline for performance
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn square(&self) -> Self {
+        let mut e = [0u64; 4];
+        unsafe {
+            use crate::{INLINE_OPCODE, SECP256K1_FUNCT7, SECP256K1_SQUAREQ_FUNCT3};
+            core::arch::asm!(
+                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, x0",
+                opcode = const INLINE_OPCODE,
+                funct3 = const SECP256K1_SQUAREQ_FUNCT3,
+                funct7 = const SECP256K1_FUNCT7,
+                rd = in(reg) e.as_mut_ptr(),
+                rs1 = in(reg) self.e.as_ptr(),
+                options(nostack)
+            );
+        }
+        if is_fq_non_canonical(&e) {
+            hcf();
+        }
+        Secp256k1Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
+    }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn square(&self) -> Self {
+        panic!("Secp256k1Fq::square called on non-RISC-V target without host feature");
+    }
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn square(&self) -> Self {
+        Secp256k1Fq {
+            e: Fq::new(BigInt(self.e)).square().into_bigint().0,
+        }
     }
     /// returns self / other
     /// uses custom inline for performance
-    /// costs nearly the same as multiplication
-    ///
-    /// # Proof soundness
-    /// In guest builds, division uses a non-deterministic ("advice") inverse `c` and then checks
-    /// that `other * c == self` and that `c` is canonical. If `other == 0`, then `0/0` would pass
-    /// the multiplicative check for any canonical `c`, so we spoil the proof explicitly.
+    /// assumes that other is non-zero
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    fn div_assume_nonzero(&self, other: &Secp256k1Fq) -> Self {
+        let mut e = [0u64; 4];
+        unsafe {
+            use crate::{INLINE_OPCODE, SECP256K1_DIVQ_FUNCT3, SECP256K1_FUNCT7};
+            core::arch::asm!(
+                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
+                opcode = const INLINE_OPCODE,
+                funct3 = const SECP256K1_DIVQ_FUNCT3,
+                funct7 = const SECP256K1_FUNCT7,
+                rd = in(reg) e.as_mut_ptr(),
+                rs1 = in(reg) self.e.as_ptr(),
+                rs2 = in(reg) other.e.as_ptr(),
+                options(nostack)
+            );
+        }
+        if is_fq_non_canonical(&e) {
+            hcf();
+        }
+        Secp256k1Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
+    }
+    /// panics and spoils the proof if other is zero
+    /// returns self / other
+    /// uses custom inline for performance
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fq) -> Self {
-        // 0/0 would pass the correctness check for any c, so reject it explicitly.
+        // spoil proof if other == 0
         if other.is_zero() {
             hcf();
         }
-        self.div_impl(other)
+        self.div_assume_nonzero(other)
     }
-    /// Same as [`Self::div`], but assumes `other != 0`.
     #[cfg(all(
         not(feature = "host"),
-        any(target_arch = "riscv32", target_arch = "riscv64")
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    #[inline(always)]
-    pub fn div_unchecked(&self, other: &Secp256k1Fq) -> Self {
-        self.div_impl(other)
+    pub fn div_assume_nonzero(&self, _other: &Secp256k1Fq) -> Self {
+        panic!("Secp256k1Fq::div_assume_nonzero called on non-RISC-V target without host feature");
     }
     #[cfg(all(
         not(feature = "host"),
@@ -339,173 +382,249 @@ impl Secp256k1Fq {
     pub fn div(&self, _other: &Secp256k1Fq) -> Self {
         panic!("Secp256k1Fq::div called on non-RISC-V target without host feature");
     }
-    #[cfg(all(
-        not(feature = "host"),
-        not(any(target_arch = "riscv32", target_arch = "riscv64"))
-    ))]
-    pub fn div_unchecked(&self, _other: &Secp256k1Fq) -> Self {
-        panic!("Secp256k1Fq::div_unchecked called on non-RISC-V target without host feature");
+    /// assumes other != 0
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn div_assume_nonzero(&self, other: &Secp256k1Fq) -> Self {
+        Secp256k1Fq {
+            e: (Fq::new(BigInt(self.e)) / Fq::new(BigInt(other.e)))
+                .into_bigint()
+                .0,
+        }
     }
+    /// checks other != 0 then calls div_assume_nonzero
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fq) -> Self {
-        Secp256k1Fq {
-            e: self.e / other.e,
+        if other.is_zero() {
+            panic!("division by zero in Secp256k1Fq::div");
         }
-    }
-    /// Same as [`Self::div`], but assumes `other != 0`.
-    #[cfg(feature = "host")]
-    #[inline(always)]
-    pub fn div_unchecked(&self, other: &Secp256k1Fq) -> Self {
-        self.div(other)
+        self.div_assume_nonzero(other)
     }
 }
 
 /// secp256k1 scalar field element
-/// in montgomery form
-/// as a wrapper around the arkworks implementation
+/// not in montgomery form
+/// as a wrapper around 4 u64 limbs
 /// so that various operations can be replaced with inlines
+/// uses arkworks Fr for addition and subtraction even though
+/// arkworks Fr is in montgomery form. This doesn't affect correctness
+/// since addition and subtraction are the same in montgomery and
+/// non-montgomery form.
+/// uses arkworks Fr for host multiplication and division with appropriate conversions
+/// defers to inlines for multiplication and division in guest builds
 #[derive(Clone, PartialEq, Debug)]
 pub struct Secp256k1Fr {
-    e: ark_secp256k1::Fr,
+    e: [u64; 4],
 }
 
 impl Secp256k1Fr {
-    /// creates a new Secp256k1Fr element from an Fr element
-    #[inline(always)]
-    pub fn new(e: Fr) -> Self {
-        Secp256k1Fr { e }
-    }
     /// creates a new Secp256k1Fr element from a [u64; 4] array
-    /// performs conversion to montgomery form
     /// returns Err(Secp256k1Error) if the array does not correspond to a valid Fr element
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, Secp256k1Error> {
-        // attempt to create a new Fr element from the array
-        let e = Fr::from_bigint(BigInt(*arr));
-        // if valid, return element, else return error
-        match e {
-            Some(val) => Ok(Secp256k1Fr { e: val }),
-            None => Err(Secp256k1Error::InvalidFrElement),
+        if is_fr_non_canonical(arr) {
+            return Err(Secp256k1Error::InvalidFrElement);
         }
+        Ok(Secp256k1Fr { e: *arr })
     }
     /// creates a new Secp256k1Fr element from a [u64; 4] array (unchecked)
-    /// the array is assumed to be in canonical montgomery form
+    /// the array is assumed to contain a value in the range [0, p)
     #[inline(always)]
     pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
-        Secp256k1Fr {
-            e: Fr::new_unchecked(BigInt(*arr)),
-        }
+        Secp256k1Fr { e: *arr }
     }
-    /// get inner Fr type
+    /// get limbs
     #[inline(always)]
-    pub fn fr(&self) -> Fr {
+    pub fn e(&self) -> [u64; 4] {
         self.e
+    }
+    /// as a pair of u128s (little-endian)
+    #[inline(always)]
+    pub fn as_u128_pair(&self) -> (u128, u128) {
+        let low = self.e[0] as u128 + ((self.e[1] as u128) << 64);
+        let high = self.e[2] as u128 + ((self.e[3] as u128) << 64);
+        (low, high)
     }
     /// returns the additive identity element (0)
     #[inline(always)]
     pub fn zero() -> Self {
-        Secp256k1Fr { e: Fr::zero() }
+        Secp256k1Fr { e: [0u64; 4] }
     }
     /// returns true if the element is zero
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
-        self.e.is_zero()
+        self.e == [0u64; 4]
     }
     /// returns -self
     #[inline(always)]
     pub fn neg(&self) -> Self {
-        Secp256k1Fr { e: -self.e }
+        Secp256k1Fr {
+            e: (-Fr::new_unchecked(BigInt(self.e))).0 .0,
+        }
     }
     /// returns self + other
     #[inline(always)]
     pub fn add(&self, other: &Secp256k1Fr) -> Self {
         Secp256k1Fr {
-            e: self.e + other.e,
+            e: (Fr::new_unchecked(BigInt(self.e)) + Fr::new_unchecked(BigInt(other.e)))
+                .0
+                 .0,
         }
     }
     /// returns self - other
     #[inline(always)]
     pub fn sub(&self, other: &Secp256k1Fr) -> Self {
         Secp256k1Fr {
-            e: self.e - other.e,
+            e: (Fr::new_unchecked(BigInt(self.e)) - Fr::new_unchecked(BigInt(other.e)))
+                .0
+                 .0,
         }
+    }
+    /// returns 2*self
+    #[inline(always)]
+    pub fn dbl(&self) -> Self {
+        Secp256k1Fr {
+            e: (Fr::new_unchecked(BigInt(self.e)).double()).0 .0,
+        }
+    }
+    /// returns 3*self
+    #[inline(always)]
+    pub fn tpl(&self) -> Self {
+        self.dbl().add(self)
     }
     /// returns self * other
-    #[inline(always)]
-    pub fn mul(&self, other: &Secp256k1Fr) -> Self {
-        Secp256k1Fr {
-            e: self.e * other.e,
-        }
-    }
-    /// returns self^2
-    #[inline(always)]
-    pub fn square(&self) -> Self {
-        Secp256k1Fr { e: self.e.square() }
-    }
-    /// returns self / other
     /// uses custom inline for performance
-    /// costs nearly the same as multiplication
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    fn div_impl(&self, other: &Secp256k1Fr) -> Self {
-        // get inverse as pure advice
-        let mut c = Secp256k1Fr::zero();
+    pub fn mul(&self, other: &Secp256k1Fr) -> Self {
+        let mut e = [0u64; 4];
         unsafe {
-            use crate::{INLINE_OPCODE, SECP256K1_DIVR_ADV_FUNCT3, SECP256K1_FUNCT7};
+            use crate::{INLINE_OPCODE, SECP256K1_FUNCT7, SECP256K1_MULR_FUNCT3};
             core::arch::asm!(
                 ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
                 opcode = const INLINE_OPCODE,
-                funct3 = const SECP256K1_DIVR_ADV_FUNCT3,
+                funct3 = const SECP256K1_MULR_FUNCT3,
                 funct7 = const SECP256K1_FUNCT7,
-                rd = in(reg) c.e.0.0.as_mut_ptr(),
-                rs1 = in(reg) self.e.0.0.as_ptr(),
-                rs2 = in(reg) other.e.0.0.as_ptr(),
+                rd = in(reg) e.as_mut_ptr(),
+                rs1 = in(reg) self.e.as_ptr(),
+                rs2 = in(reg) other.e.as_ptr(),
                 options(nostack)
             );
         }
-        // compute tmp = other * c
-        let tmp = other.mul(&c);
-        // if not canonical (>= n), or other * c is not equal to self, panic
-        if is_fr_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
-            // literal assembly to induce a panic (spoils the proof)
-            // merely using assert_eq! here is insufficient as it doesn't
-            // spoil the proof
+        if is_fr_non_canonical(&e) {
             hcf();
         }
-        c
+        Secp256k1Fr::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
+    }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn mul(&self, _other: &Secp256k1Fr) -> Self {
+        panic!("Secp256k1Fr::mul called on non-RISC-V target without host feature");
+    }
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn mul(&self, other: &Secp256k1Fr) -> Self {
+        Secp256k1Fr {
+            e: (Fr::new(BigInt(self.e)) * Fr::new(BigInt(other.e)))
+                .into_bigint()
+                .0,
+        }
+    }
+    /// returns self^2
+    /// uses custom inline for performance
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    pub fn square(&self) -> Self {
+        let mut e = [0u64; 4];
+        unsafe {
+            use crate::{INLINE_OPCODE, SECP256K1_FUNCT7, SECP256K1_SQUARER_FUNCT3};
+            core::arch::asm!(
+                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, x0",
+                opcode = const INLINE_OPCODE,
+                funct3 = const SECP256K1_SQUARER_FUNCT3,
+                funct7 = const SECP256K1_FUNCT7,
+                rd = in(reg) e.as_mut_ptr(),
+                rs1 = in(reg) self.e.as_ptr(),
+                options(nostack)
+            );
+        }
+        if is_fr_non_canonical(&e) {
+            hcf();
+        }
+        Secp256k1Fr::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
+    }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    pub fn square(&self) -> Self {
+        panic!("Secp256k1Fr::square called on non-RISC-V target without host feature");
+    }
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn square(&self) -> Self {
+        Secp256k1Fr {
+            e: Fr::new(BigInt(self.e)).square().into_bigint().0,
+        }
     }
     /// returns self / other
     /// uses custom inline for performance
-    /// costs nearly the same as multiplication
-    ///
-    /// # Proof soundness
-    /// In guest builds, division uses a non-deterministic ("advice") inverse `c` and then checks
-    /// that `other * c == self` and that `c` is canonical. If `other == 0`, then `0/0` would pass
-    /// the multiplicative check for any canonical `c`, so we spoil the proof explicitly.
+    /// assumes that other is non-zero
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    #[inline(always)]
+    fn div_assume_nonzero(&self, other: &Secp256k1Fr) -> Self {
+        let mut e = [0u64; 4];
+        unsafe {
+            use crate::{INLINE_OPCODE, SECP256K1_DIVR_FUNCT3, SECP256K1_FUNCT7};
+            core::arch::asm!(
+                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
+                opcode = const INLINE_OPCODE,
+                funct3 = const SECP256K1_DIVR_FUNCT3,
+                funct7 = const SECP256K1_FUNCT7,
+                rd = in(reg) e.as_mut_ptr(),
+                rs1 = in(reg) self.e.as_ptr(),
+                rs2 = in(reg) other.e.as_ptr(),
+                options(nostack)
+            );
+        }
+        if is_fr_non_canonical(&e) {
+            hcf();
+        }
+        Secp256k1Fr::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
+    }
+    /// panics and spoils the proof if other is zero
+    /// returns self / other
+    /// uses custom inline for performance
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fr) -> Self {
-        // 0/0 would pass the correctness check for any c, so reject it explicitly.
+        // spoil proof if other == 0
         if other.is_zero() {
             hcf();
         }
-        self.div_impl(other)
+        self.div_assume_nonzero(other)
     }
-    /// Same as [`Self::div`], but assumes `other != 0`.
     #[cfg(all(
         not(feature = "host"),
-        any(target_arch = "riscv32", target_arch = "riscv64")
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    #[inline(always)]
-    pub fn div_unchecked(&self, other: &Secp256k1Fr) -> Self {
-        self.div_impl(other)
+    pub fn div_assume_nonzero(&self, _other: &Secp256k1Fr) -> Self {
+        panic!("Secp256k1Fr::div_assume_nonzero called on non-RISC-V target without host feature");
     }
     #[cfg(all(
         not(feature = "host"),
@@ -514,30 +633,29 @@ impl Secp256k1Fr {
     pub fn div(&self, _other: &Secp256k1Fr) -> Self {
         panic!("Secp256k1Fr::div called on non-RISC-V target without host feature");
     }
-    #[cfg(all(
-        not(feature = "host"),
-        not(any(target_arch = "riscv32", target_arch = "riscv64"))
-    ))]
-    pub fn div_unchecked(&self, _other: &Secp256k1Fr) -> Self {
-        panic!("Secp256k1Fr::div_unchecked called on non-RISC-V target without host feature");
+    /// assumes other != 0
+    #[cfg(feature = "host")]
+    #[inline(always)]
+    pub fn div_assume_nonzero(&self, other: &Secp256k1Fr) -> Self {
+        Secp256k1Fr {
+            e: (Fr::new(BigInt(self.e)) / Fr::new(BigInt(other.e)))
+                .into_bigint()
+                .0,
+        }
     }
+    /// checks other != 0 then calls div_assume_nonzero
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fr) -> Self {
-        Secp256k1Fr {
-            e: self.e / other.e,
+        if other.is_zero() {
+            panic!("division by zero in Secp256k1Fr::div");
         }
-    }
-    /// Same as [`Self::div`], but assumes `other != 0`.
-    #[cfg(feature = "host")]
-    #[inline(always)]
-    pub fn div_unchecked(&self, other: &Secp256k1Fr) -> Self {
-        self.div(other)
+        self.div_assume_nonzero(other)
     }
 }
 
 /// secp256k1 point in affine form
-/// (as a pair of base field elements in montgomery form)
+/// (as a pair of base field elements in standard form)
 /// infinity is represented as (0, 0) because this point is not on the curve
 #[derive(Clone, PartialEq, Debug)]
 pub struct Secp256k1Point {
@@ -555,7 +673,7 @@ impl Secp256k1Point {
         if p.is_on_curve() {
             Ok(p)
         } else {
-            Err(Secp256k1Error::QAtInfinity)
+            Err(Secp256k1Error::NotOnCurve)
         }
     }
     /// creates a new Secp256k1Point from two Secp256k1Fq elements
@@ -568,8 +686,8 @@ impl Secp256k1Point {
     #[inline(always)]
     pub fn to_u64_arr(&self) -> [u64; 8] {
         let mut arr = [0u64; 8];
-        arr[0..4].copy_from_slice(&self.x.e.0 .0);
-        arr[4..8].copy_from_slice(&self.y.e.0 .0);
+        arr[0..4].copy_from_slice(&self.x.e());
+        arr[4..8].copy_from_slice(&self.y.e());
         arr
     }
     /// creates a Secp256k1Point from a [u64; 8] array in normal form
@@ -582,7 +700,7 @@ impl Secp256k1Point {
         Secp256k1Point::new(x, y)
     }
     /// creates a Secp256k1Point from a [u64; 8] array
-    /// which is assumed to correspond to x and y coordinates in montgomery form
+    /// which is assumed to correspond to x and y coordinates in standard form
     /// performs no checks to ensure that the point is on the curve
     /// or that the coordinates are well formed
     #[inline(always)]
@@ -605,22 +723,60 @@ impl Secp256k1Point {
     #[inline(always)]
     pub fn generator() -> Self {
         Secp256k1Point {
-            x: Secp256k1Fq::new(ark_secp256k1::G_GENERATOR_X),
-            y: Secp256k1Fq::new(ark_secp256k1::G_GENERATOR_Y),
+            x: Secp256k1Fq::from_u64_arr_unchecked(&[
+                0x59F2815B16F81798,
+                0x029BFCDB2DCE28D9,
+                0x55A06295CE870B07,
+                0x79BE667EF9DCBBAC,
+            ]),
+            y: Secp256k1Fq::from_u64_arr_unchecked(&[
+                0x9C47D08FFB10D4B8,
+                0xFD17B448A6855419,
+                0x5DA4FBFC0E1108A8,
+                0x483ADA7726A3C465,
+            ]),
         }
+    }
+    /// 2^128 * generator
+    #[inline(always)]
+    pub fn generator_times_2_pow_128() -> Self {
+        Secp256k1Point::from_u64_arr_unchecked(&[
+            1980251557031362778,
+            16756863388851544885,
+            10536665754535663150,
+            10333713660726959923,
+            17455036783537422210,
+            13540684701581249533,
+            16005107816708579677,
+            7361871559633811846,
+        ])
+    }
+    /// (2^128 + 1) * generator
+    #[inline(always)]
+    pub fn generator_times_2_pow_128_plus_1() -> Self {
+        Secp256k1Point::from_u64_arr_unchecked(&[
+            7189408038385401609,
+            3397911576708611646,
+            15755510341721275955,
+            10029532112266168108,
+            2794201169108470329,
+            645887947755712873,
+            4931174713096550634,
+            2084093948640608460,
+        ])
     }
     /// generator with endomorphism applied
     #[inline(always)]
     pub fn generator_w_endomorphism() -> Self {
         Secp256k1Point::from_u64_arr_unchecked(&[
-            16173582788404280516,
-            5747022314874861025,
-            3849308819804808767,
-            12496950317914431610,
-            12780836216951778274,
-            10231155108014310989,
-            8121878653926228278,
-            14933801261141951190,
+            12086430238909173707,
+            9739108988881332621,
+            12322133038695719717,
+            13595490868124457095,
+            11261198710074299576,
+            18237243440184513561,
+            6747795201694173352,
+            5204712524664259685,
         ])
     }
     /// returns the point at infinity (0, 0)
@@ -634,7 +790,7 @@ impl Secp256k1Point {
     /// returns true if the point is the point at infinity (0, 0)
     #[inline(always)]
     pub fn is_infinity(&self) -> bool {
-        self.x.e.is_zero() && self.y.e.is_zero()
+        self.x.is_zero() && self.y.is_zero()
     }
     /// checks if the point is on the secp256k1 curve
     #[inline(always)]
@@ -660,7 +816,7 @@ impl Secp256k1Point {
         if self.y.is_zero() {
             Secp256k1Point::infinity()
         } else {
-            let s = self.x.square().tpl().div_unchecked(&self.y.dbl());
+            let s = self.x.square().tpl().div_assume_nonzero(&self.y.dbl());
             let x2 = s.square().sub(&self.x.dbl());
             let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
             Secp256k1Point { x: x2, y: y2 }
@@ -682,38 +838,33 @@ impl Secp256k1Point {
             Secp256k1Point::infinity()
         // if the x coordinates are not equal and not infinity, perform standard point addition
         } else {
-            let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
-            let x2 = s.square().sub(&self.x).sub(&other.x);
+            let s = (self.y.sub(&other.y)).div_assume_nonzero(&self.x.sub(&other.x));
+            let x2 = s.square().sub(&self.x.add(&other.x));
             let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
             Secp256k1Point { x: x2, y: y2 }
         }
     }
-    // specialty routine for computing res = 2*self + other
-    // tries to avoid doubling as much as possible
-    // and avoids computing unnecessary intermediate values
+    /// computes 2*self + other using an optimized formula that saves one field operation
     #[inline(always)]
     pub fn double_and_add(&self, other: &Secp256k1Point) -> Self {
-        // if self is infinity, then return other
         if self.is_infinity() {
             other.clone()
-        // if other is infinity, then return 2*self
         } else if other.is_infinity() {
             self.add(self)
-        // if self is equal to other, naive double and add
         } else if self.x == other.x && self.y == other.y {
             self.add(self).add(other)
-        // if self and other are inverses, return self
         } else if self.x == other.x && self.y != other.y {
+            // self + other = infinity, so 2*self + other = self
             self.clone()
-        // general case, compute (self + other) + self
-        // saving an operation in the middle
-        // note that (self + other) cannot equal infinity or self here
-        // so no special cases needed
         } else {
-            let s = (self.y.sub(&other.y)).div_unchecked(&self.x.sub(&other.x));
-            let x2 = s.square().sub(&self.x).sub(&other.x);
-            let t = self.y.dbl().div(&self.x.sub(&x2)).sub(&s);
-            let x3 = t.square().sub(&self.x).sub(&x2);
+            let ns = (self.y.sub(&other.y)).div_assume_nonzero(&other.x.sub(&self.x));
+            let nx2 = other.x.sub(&ns.square());
+            let t = self
+                .y
+                .dbl()
+                .div_assume_nonzero(&self.x.dbl().add(&nx2))
+                .add(&ns);
+            let x3 = t.square().add(&nx2);
             let y3 = t.mul(&(self.x.sub(&x3))).sub(&self.y);
             Secp256k1Point { x: x3, y: y3 }
         }
@@ -727,10 +878,10 @@ impl Secp256k1Point {
         } else {
             // beta = 0x7AE96A2B657C07106E64479EAC3434E99CF0497512F58995C1396C28719501EE
             let beta = Secp256k1Fq::from_u64_arr_unchecked(&[
-                6387289667796044110u64,
-                287633767014301871u64,
-                17936018142961481989u64,
-                8811915745022393683u64,
+                0xc1396c28719501ee,
+                0x9cf0497512f58995,
+                0x6e64479eac3434e9,
+                0x7ae96a2b657c0710,
             ]);
             Secp256k1Point {
                 x: self.x.mul(&beta),
@@ -758,36 +909,28 @@ impl Secp256k1Point {
                 funct3 = const SECP256K1_GLVR_ADV_FUNCT3,
                 funct7 = const SECP256K1_FUNCT7,
                 rd = in(reg) out.as_mut_ptr(),
-                rs1 = in(reg) k.e.0.0.as_ptr(),
+                rs1 = in(reg) k.e.as_ptr(),
                 options(nostack)
             );
         }
         // check that decomposition is correct
-        // this is check that k1 + k2 * lambda == k (mod r)
-        let lambda = Fr::new_unchecked(BigInt {
-            0: [
-                17329265591798885534,
-                3212165691671483468,
-                8334304762764295569,
-                5992109773982062137,
-            ],
-        });
-        let mut k1 = Fr::from_bigint(BigInt {
-            0: [out[1], out[2], 0u64, 0u64],
-        })
-        .unwrap();
+        // check that k1 + k2 * lambda == k (mod r)
+        let lambda = Secp256k1Fr::from_u64_arr_unchecked(&[
+            0xdf02967c1b23bd72,
+            0x122e22ea20816678,
+            0xa5261c028812645a,
+            0x5363ad4cc05c30e0,
+        ]);
+        let mut k1 = Secp256k1Fr::from_u64_arr_unchecked(&[out[1], out[2], 0u64, 0u64]);
         if out[0] == 1u64 {
-            k1 = -k1;
+            k1 = k1.neg();
         }
-        let mut k2 = Fr::from_bigint(BigInt {
-            0: [out[4], out[5], 0u64, 0u64],
-        })
-        .unwrap();
+        let mut k2 = Secp256k1Fr::from_u64_arr_unchecked(&[out[4], out[5], 0u64, 0u64]);
         if out[3] == 1u64 {
-            k2 = -k2;
+            k2 = k2.neg();
         }
-        let recomposed_k = k1 + k2 * lambda;
-        if recomposed_k != k.e {
+        let recomposed_k = k1.add(&k2.mul(&lambda));
+        if recomposed_k != *k {
             hcf(); // panic and spoil proof if decomposition is incorrect
         }
         // return as (sign, abs_value) pairs
@@ -806,7 +949,7 @@ impl Secp256k1Point {
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn decompose_scalar(k: &Secp256k1Fr) -> [(bool, u128); 2] {
-        let k: NBigInt = k.e.into_bigint().into();
+        let k: NBigInt = Fr::new(BigInt(k.e)).into_bigint().into();
         let r = NBigInt::from_bytes_le(
             Sign::Plus,
             &[
@@ -865,30 +1008,40 @@ impl Secp256k1Point {
 
 // ECDSA signature verification function + helpers
 
-// performs a 4x128-bit scalar multiplication
 #[inline(always)]
-fn secp256k1_4x128_scalar_mul(scalars: [u128; 4], points: [Secp256k1Point; 4]) -> Secp256k1Point {
+fn scalars_to_index(scalars: &[u128; 4], bit_index: usize) -> usize {
+    let mut idx = 0;
+    for (j, scalar) in scalars.iter().enumerate() {
+        if (scalar >> bit_index) & 1 == 1 {
+            idx |= 1 << j;
+        }
+    }
+    idx
+}
+
+// performs a 4x128-bit scalar multiplication
+// first two points assumed to be generator and 2^128 * generator
+#[inline(always)]
+fn secp256k1_4x128_inner_scalar_mul(
+    scalars: [u128; 4],
+    points: [Secp256k1Point; 2],
+) -> Secp256k1Point {
     let mut lookup = Vec::<Secp256k1Point>::with_capacity(16);
     lookup.push(Secp256k1Point::infinity());
+    lookup.push(Secp256k1Point::generator());
+    lookup.push(Secp256k1Point::generator_times_2_pow_128());
+    lookup.push(Secp256k1Point::generator_times_2_pow_128_plus_1());
     lookup.push(points[0].clone());
-    lookup.push(points[1].clone());
-    lookup.push(lookup[1].add(&lookup[2]));
-    lookup.push(points[2].clone());
     lookup.push(lookup[1].add(&lookup[4]));
     lookup.push(lookup[2].add(&lookup[4]));
     lookup.push(lookup[1].add(&lookup[6]));
-    lookup.push(points[3].clone());
+    lookup.push(points[1].clone());
     for i in 1..8 {
         lookup.push(lookup[i].add(&lookup[8]));
     }
-    let mut res = Secp256k1Point::infinity();
-    for i in (0..128).rev() {
-        let mut idx = 0;
-        for (j, scalar) in scalars.iter().enumerate() {
-            if (scalar >> i) & 1 == 1 {
-                idx |= 1 << j;
-            }
-        }
+    let mut res = lookup[scalars_to_index(&scalars, 127)].clone();
+    for i in (0..127).rev() {
+        let idx = scalars_to_index(&scalars, i);
         if idx != 0 {
             res = res.double_and_add(&lookup[idx]);
         } else {
@@ -930,44 +1083,29 @@ pub fn ecdsa_verify(
         return Result::Err(Secp256k1Error::ROrSZero);
     }
     // step 2: compute u1 = z / s (mod r) and u2 = r / s (mod r)
-    let u1 = z.div_unchecked(&s);
-    let u2 = r.div_unchecked(&s);
+    let u1 = z.div_assume_nonzero(&s);
+    let u2 = r.div_assume_nonzero(&s);
     // step 3: compute R = u1 * G + u2 * q
     // 3.1: perform the glv scalar decomposition
-    let decomp_u = Secp256k1Point::decompose_scalar(&u1);
+    let decomp_u = u1.as_u128_pair();
     let decomp_v = Secp256k1Point::decompose_scalar(&u2);
     // 3.2: get decomposed scalars as a 4x128-bit array
-    let scalars = [decomp_u[0].1, decomp_u[1].1, decomp_v[0].1, decomp_v[1].1];
-    // 3.3: get 4 points: G, lambda*G, Q, and lambda*Q, appropriately negated
+    let scalars = [decomp_u.0, decomp_u.1, decomp_v[0].1, decomp_v[1].1];
+    // 3.3: prepare Q, and lambda*Q, appropriately negated
     let points = [
-        conditional_negate(Secp256k1Point::generator(), decomp_u[0].0),
-        conditional_negate(Secp256k1Point::generator_w_endomorphism(), decomp_u[1].0),
         conditional_negate(q.clone(), decomp_v[0].0),
         conditional_negate(q.endomorphism(), decomp_v[1].0),
     ];
     // 3.4: perform the 4x128-bit scalar multiplication
-    let r_claim = secp256k1_4x128_scalar_mul(scalars, points);
+    let r_claim = secp256k1_4x128_inner_scalar_mul(scalars, points);
     // step 4: check that r == R.x mod n.
-    //
     // We implement the `mod n` as a single conditional subtraction on the bigint:
     // for secp256k1, `0 <= x_R < p` and `p < 2n`, so `x_R mod n` is either `x_R` or `x_R - n`.
-    let mut r1_mod_n = r_claim.x.e.into_bigint();
-    #[cfg(all(
-        not(feature = "host"),
-        any(target_arch = "riscv32", target_arch = "riscv64")
-    ))]
-    if is_fr_non_canonical(&r1_mod_n.0) {
-        r1_mod_n -= Fr::MODULUS;
+    let mut rx = r_claim.x;
+    if is_fr_non_canonical(&rx.e()) {
+        rx = rx.sub(&Secp256k1Fq::from_u64_arr_unchecked(&Fr::MODULUS.0));
     }
-    #[cfg(any(
-        feature = "host",
-        not(any(target_arch = "riscv32", target_arch = "riscv64"))
-    ))]
-    if r1_mod_n >= Fr::MODULUS {
-        r1_mod_n -= Fr::MODULUS;
-    }
-    let r_bigint = r.e.into_bigint();
-    if r1_mod_n != r_bigint {
+    if rx.e() != r.e() {
         return Result::Err(Secp256k1Error::RxMismatch);
     }
     // if all checks passed, return Ok(())

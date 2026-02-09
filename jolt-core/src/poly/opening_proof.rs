@@ -17,8 +17,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use super::{
-    commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
-    multilinear_polynomial::MultilinearPolynomial,
+    commitment::commitment_scheme::CommitmentScheme, multilinear_polynomial::MultilinearPolynomial,
 };
 use crate::{
     field::JoltField,
@@ -155,16 +154,21 @@ pub enum SumcheckId {
     RegistersValEvaluation,
     BytecodeReadRaf,
     Booleanity,
-    AdviceClaimReductionPhase1,
-    AdviceClaimReductionPhase2,
+    AdviceClaimReductionCyclePhase,
+    AdviceClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
+pub enum PolynomialId {
+    Committed(CommittedPolynomial),
+    Virtual(VirtualPolynomial),
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum OpeningId {
-    Committed(CommittedPolynomial, SumcheckId),
-    Virtual(VirtualPolynomial, SumcheckId),
+    Polynomial(PolynomialId, SumcheckId),
     /// Untrusted advice opened at r_address derived from the given sumcheck.
     /// - `RamReadWriteChecking`: opened at r_address from RamVal (used by ValEvaluation)
     /// - `RamOutputCheck`: opened at r_address from RamValFinal (used by ValFinal)
@@ -369,15 +373,17 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Virtual(polynomial, sumcheck))
+            .get(&OpeningId::Polynomial(
+                PolynomialId::Virtual(polynomial),
+                sumcheck,
+            ))
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         #[cfg(test)]
         {
             let mut virtual_openings = self.appended_virtual_openings.borrow_mut();
-            if let Some(index) = virtual_openings
-                .iter()
-                .position(|id| id == &OpeningId::Virtual(polynomial, sumcheck))
-            {
+            if let Some(index) = virtual_openings.iter().position(|id| {
+                id == &OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck)
+            }) {
                 virtual_openings.remove(index);
             }
         }
@@ -391,7 +397,10 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Committed(polynomial, sumcheck))
+            .get(&OpeningId::Polynomial(
+                PolynomialId::Committed(polynomial),
+                sumcheck,
+            ))
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         (point.clone(), *claim)
     }
@@ -434,19 +443,6 @@ where
         self.openings.get(&key).unwrap().1
     }
 
-    pub fn get_advice_opening(
-        &self,
-        kind: AdviceKind,
-        sumcheck_id: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let opening_id = match kind {
-            AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
-            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
-        };
-        let (point, claim) = self.openings.get(&opening_id)?;
-        Some((point.clone(), *claim))
-    }
-
     /// Adds an opening of a dense polynomial to the accumulator.
     /// The given `polynomial` is opened at `opening_point`, yielding the claimed
     /// evaluation `claim`.
@@ -459,10 +455,10 @@ where
         opening_point: Vec<F::Challenge>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
+        transcript.append_scalar(b"opening_claim", &claim);
 
         // Add opening to map
-        let key = OpeningId::Committed(polynomial, sumcheck);
+        let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
         self.openings.insert(
             key,
             (
@@ -483,14 +479,14 @@ where
         claims: Vec<F>,
     ) {
         claims.iter().for_each(|claim| {
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
         });
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
 
         // Add openings to map
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
             let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(r_concat.clone());
-            let key = OpeningId::Committed(*label, sumcheck);
+            let key = OpeningId::Polynomial(PolynomialId::Committed(*label), sumcheck);
             self.openings
                 .insert(key, (opening_point_struct.clone(), *claim));
         }
@@ -504,11 +500,11 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
+        transcript.append_scalar(b"opening_claim", &claim);
         assert!(
             self.openings
                 .insert(
-                    OpeningId::Virtual(polynomial, sumcheck),
+                    OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck),
                     (opening_point, claim),
                 )
                 .is_none(),
@@ -517,7 +513,10 @@ where
         #[cfg(test)]
         self.appended_virtual_openings
             .borrow_mut()
-            .push(OpeningId::Virtual(polynomial, sumcheck));
+            .push(OpeningId::Polynomial(
+                PolynomialId::Virtual(polynomial),
+                sumcheck,
+            ));
     }
 
     pub fn append_untrusted_advice<T: Transcript>(
@@ -527,7 +526,7 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
+        transcript.append_scalar(b"opening_claim", &claim);
         self.openings.insert(
             OpeningId::UntrustedAdvice(sumcheck_id),
             (opening_point, claim),
@@ -541,7 +540,7 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
+        transcript.append_scalar(b"opening_claim", &claim);
         self.openings.insert(
             OpeningId::TrustedAdvice(sumcheck_id),
             (opening_point, claim),
@@ -586,7 +585,10 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Virtual(polynomial, sumcheck))
+            .get(&OpeningId::Polynomial(
+                PolynomialId::Virtual(polynomial),
+                sumcheck,
+            ))
             .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
@@ -598,7 +600,10 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Committed(polynomial, sumcheck))
+            .get(&OpeningId::Polynomial(
+                PolynomialId::Committed(polynomial),
+                sumcheck,
+            ))
             .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
@@ -637,19 +642,6 @@ where
         self.prover_opening_accumulator = Some(prover_openings);
     }
 
-    pub fn get_advice_opening(
-        &self,
-        kind: AdviceKind,
-        sumcheck_id: SumcheckId,
-    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let opening_id = match kind {
-            AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
-            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
-        };
-        let (point, claim) = self.openings.get(&opening_id)?;
-        Some((point.clone(), *claim))
-    }
-
     /// Adds an opening of a dense polynomial the accumulator.
     /// The given `polynomial` is opened at `opening_point`.
     pub fn append_dense<T: Transcript>(
@@ -659,9 +651,9 @@ where
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
     ) {
-        let key = OpeningId::Committed(polynomial, sumcheck);
+        let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
         let claim = self.openings.get(&key).unwrap().1;
-        transcript.append_scalar(&claim);
+        transcript.append_scalar(b"opening_claim", &claim);
 
         // Update the opening point in self.openings (it was initialized with default empty point)
         self.openings.insert(
@@ -686,9 +678,9 @@ where
         opening_point: Vec<F::Challenge>,
     ) {
         for label in polynomials.into_iter() {
-            let key = OpeningId::Committed(label, sumcheck);
+            let key = OpeningId::Polynomial(PolynomialId::Committed(label), sumcheck);
             let claim = self.openings.get(&key).unwrap().1;
-            transcript.append_scalar(&claim);
+            transcript.append_scalar(b"opening_claim", &claim);
 
             // Update the opening point in self.openings (it was initialized with default empty point)
             self.openings.insert(
@@ -709,9 +701,9 @@ where
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let key = OpeningId::Virtual(polynomial, sumcheck);
+        let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
         if let Some((_, claim)) = self.openings.get(&key) {
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim; // Copy the claim value
             self.openings.insert(key, (opening_point.clone(), claim));
         } else {
@@ -727,7 +719,7 @@ where
     ) {
         let key = OpeningId::UntrustedAdvice(sumcheck_id);
         if let Some((_, claim)) = self.openings.get(&key) {
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
         } else {
@@ -743,7 +735,7 @@ where
     ) {
         let key = OpeningId::TrustedAdvice(sumcheck_id);
         if let Some((_, claim)) = self.openings.get(&key) {
-            transcript.append_scalar(claim);
+            transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
         } else {
@@ -760,40 +752,33 @@ where
 /// selector that is 1 on that block and 0 elsewhere:
 ///
 /// ```text
-/// Lagrange factor = ∏_{i=nu_a..nu_main} (1 - r_rows[i]) × ∏_{i=sigma_a..sigma_main} (1 - r_cols[i])
+/// Lagrange factor = ∏_{r ∈ opening_point, r ∉ advice_opening_point} (1 - r)
 /// ```
 ///
 /// # Arguments
-/// - `opening_point_be`: The unified opening point in big-endian order
-/// - `advice_vars`: Number of variables in the advice polynomial
+/// - `opening_point`: The unified opening point for the Dory opening proof
+/// - `advice_opening_point`: The opening point for the advice polynomial
 ///
 /// # Returns
 /// The Lagrange factor as a field element
 pub fn compute_advice_lagrange_factor<F: JoltField>(
-    opening_point_be: &[F::Challenge],
-    advice_vars: usize,
+    opening_point: &[F::Challenge],
+    advice_opening_point: &[F::Challenge],
 ) -> F {
-    // Convert to little-endian (Dory order)
-    let mut r_le: Vec<F::Challenge> = opening_point_be.to_vec();
-    r_le.reverse();
-
-    // Derive main matrix dimensions from the unified point length
-    let total_vars = r_le.len();
-    let (sigma_main, _nu_main) =
-        crate::poly::commitment::dory::DoryGlobals::balanced_sigma_nu(total_vars);
-    let (r_cols, r_rows) = r_le.split_at(sigma_main);
-
-    // Advice dimensions (balanced policy)
-    let (sigma_a, nu_a) =
-        crate::poly::commitment::dory::DoryGlobals::balanced_sigma_nu(advice_vars);
-
-    // Row factor: eq(r_rows[nu_a..], [0, 0, ...]) = ∏(1 - r_rows[i]) for i >= nu_a
-    // This selects the "zero" vertex in the row dimension beyond the advice region
-    let row_factor = EqPolynomial::<F>::zero_selector(&r_rows[nu_a..]);
-
-    // Column factor: eq(r_cols[sigma_a..], [0, 0, ...]) = ∏(1 - r_cols[i]) for i >= sigma_a
-    // This selects the "zero" vertex in the column dimension beyond the advice region
-    let col_factor = EqPolynomial::<F>::zero_selector(&r_cols[sigma_a..]);
-
-    row_factor * col_factor
+    #[cfg(test)]
+    {
+        for r in advice_opening_point.iter() {
+            assert!(opening_point.contains(r));
+        }
+    }
+    opening_point
+        .iter()
+        .map(|r| {
+            if advice_opening_point.contains(r) {
+                F::one()
+            } else {
+                F::one() - r
+            }
+        })
+        .product()
 }

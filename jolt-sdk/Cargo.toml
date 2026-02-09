@@ -16,6 +16,8 @@ edition = "2021"
 
 [features]
 default = ["jolt-platform/random"]
+debug = ["zeroos?/debug"]
+
 host = [
     "jolt-core/default",
     "jolt-platform/std",
@@ -26,12 +28,21 @@ host = [
     "postcard/use-std",
     "serde/std",
 ]
+
+guest-nostd = [
+    "zeroos-nostd",
+]
+
+# ZeroOS features
 guest-std = [
     "postcard/use-std",
     "jolt-platform/std",
     "jolt-sdk-macros/guest-std",
     "serde/std",
+    "zeroos-std",
+    "debug",
 ]
+
 guest-verifier = [
     "guest-std",
     "dep:tracer",
@@ -39,12 +50,47 @@ guest-verifier = [
     "dep:ark-bn254",
     "jolt-core/minimal",
 ]
+
 malloc-shim = ["jolt-platform/malloc-shim"]
 
+# Jolt-SDK native features (optional capabilities)
+#
+# `zeroos-*` features are the canonical internal switches for ZeroOS-backed functionality in
+# `jolt-sdk` (and are referenced by `jolt-sdk` boot/wiring code via `cfg(feature = "zeroos-…")`).
+#
+# The short names below are user-facing aliases for convenience. They intentionally delegate to
+# `zeroos-*` so enabling a capability also enables the corresponding `jolt-sdk` wiring, not just
+# the dependency’s `zeroos?/…` features.
+thread = ["zeroos-thread"]
+random = ["zeroos-random"]
+stdout = ["zeroos-vfs-device-console"]
+
+zeroos-runtime-nostd = ["zeroos?/runtime-nostd"]
+zeroos-runtime-musl = ["zeroos?/runtime-musl"]
+zeroos-thread = ["zeroos?/scheduler-cooperative"]
+zeroos-vfs = ["zeroos?/vfs"]
+zeroos-random = ["zeroos?/random", "zeroos?/rng-lcg"]
+zeroos-vfs-device-console = ["zeroos-vfs", "zeroos?/vfs-device-console"]
+
+zeroos-nostd = [
+    "dep:zeroos",
+    "zeroos-runtime-nostd",
+]
+
+zeroos-std = [
+    "dep:zeroos",
+    "zeroos-runtime-musl",
+]
+
 [dependencies]
+
+# Jolt's jolt-platform for host/prover functionality
 jolt-platform.workspace = true
 postcard.workspace = true
+bytemuck.workspace = true
+bytemuck_derive.workspace = true
 serde = { version = "1.0", default-features = false, features = ["derive"] }
+embedded-io = { version = "0.6", default-features = false }
 ark-ec = { workspace = true, default-features = false, optional = true }
 ark-bn254 = { workspace = true, default-features = false, optional = true }
 
@@ -54,6 +100,15 @@ common = { workspace = true, optional = true }
 jolt-core = { workspace = true, default-features = false, optional = true }
 tracer = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
+zeroos = { workspace = true, optional = true }
+cfg-if = { workspace = true }
 
 [dev-dependencies]
 hex-literal.workspace = true
+
+[target.'cfg(all(target_arch = "riscv64"))'.dependencies]
+riscv = { workspace = true }
+zeroos = { workspace = true, default-features = false, features = ["debug", "arch-riscv", "alloc-linked-list"]}
+
+[target.'cfg(all(target_arch = "riscv64", target_os = "linux"))'.dependencies]
+zeroos = { workspace = true, default-features = false, features = ["os-linux"]}

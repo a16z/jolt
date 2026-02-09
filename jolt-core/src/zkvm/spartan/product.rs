@@ -12,8 +12,8 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+    SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
@@ -143,7 +143,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> 
             .iter()
             .enumerate()
             .map(|(i, cons)| {
-                let opening = OpeningId::Virtual(cons.output, SumcheckId::SpartanOuter);
+                let opening = OpeningId::Polynomial(
+                    PolynomialId::Virtual(cons.output),
+                    SumcheckId::SpartanOuter,
+                );
                 ProductTerm::scaled(
                     ValueSource::Challenge(i),
                     vec![ValueSource::Opening(opening)],
@@ -164,8 +167,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> 
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         // Uni-skip output = evaluation at challenge r0, stored as UnivariateSkip opening
-        let opening = OpeningId::Virtual(
-            VirtualPolynomial::UnivariateSkip,
+        let opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::UnivariateSkip),
             SumcheckId::SpartanProductVirtualization,
         );
         Some(OutputClaimConstraint::direct(opening))
@@ -435,8 +438,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let opening = OpeningId::Virtual(
-            VirtualPolynomial::UnivariateSkip,
+        let opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::UnivariateSkip),
             SumcheckId::SpartanProductVirtualization,
         );
         InputClaimConstraint::direct(opening)
@@ -448,43 +451,49 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         let left_openings = [
-            OpeningId::Virtual(
-                VirtualPolynomial::LeftInstructionInput,
+            OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::LeftInstructionInput),
                 SumcheckId::SpartanProductVirtualization,
             ),
-            OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
+            OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
+                    InstructionFlags::IsRdNotZero,
+                )),
                 SumcheckId::SpartanProductVirtualization,
             ),
-            OpeningId::Virtual(
-                VirtualPolynomial::LookupOutput,
+            OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::LookupOutput),
                 SumcheckId::SpartanProductVirtualization,
             ),
-            OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+            OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
                 SumcheckId::SpartanProductVirtualization,
             ),
         ];
 
         let right_openings = [
-            OpeningId::Virtual(
-                VirtualPolynomial::RightInstructionInput,
+            OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::RightInstructionInput),
                 SumcheckId::SpartanProductVirtualization,
             ),
-            OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+            OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::OpFlags(
+                    CircuitFlags::WriteLookupOutputToRD,
+                )),
                 SumcheckId::SpartanProductVirtualization,
             ),
-            OpeningId::Virtual(
-                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+            OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
                 SumcheckId::SpartanProductVirtualization,
             ),
-            OpeningId::Virtual(
-                VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
+            OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
+                    InstructionFlags::Branch,
+                )),
                 SumcheckId::SpartanProductVirtualization,
             ),
-            OpeningId::Virtual(
-                VirtualPolynomial::NextIsNoop,
+            OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::NextIsNoop),
                 SumcheckId::SpartanProductVirtualization,
             ),
         ];

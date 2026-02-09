@@ -38,6 +38,28 @@ For instance, division involves a sequence described in detail in section 6.3 of
 In the context of division, the advice instructions store the quotient and remainder in **virtual registers**, which are additional registers used exclusively within virtual sequences as scratch space.
 The rest of the division sequence verifies the correctness of the computed quotient and remainder, finally storing the quotient in the destination register specified by the original instruction.
 
+#### Atomic operations (LR/SC)
+
+The RISC-V "A" extension's Load-Reserved/Store-Conditional (LR/SC) instructions are implemented using virtual sequences with dedicated **reservation registers**. These are a pair of width-specific virtual registers that track the address reserved by the most recent LR instruction:
+
+- **`reservation_w`** (virtual register 32): Set by `LR.W`, checked by `SC.W`
+- **`reservation_d`** (virtual register 33): Set by `LR.D`, checked by `SC.D`
+
+When `LR.W` executes, it writes the reservation address into `reservation_w` (vr32) and **clears** `reservation_d` (vr33). Conversely, `LR.D` writes into `reservation_d` (vr33) and clears `reservation_w` (vr32). This cross-clear mechanism prevents mixed-width LR/SC pairing: an `SC.W` after `LR.D` will always fail because the word-width reservation register was cleared by the `LR.D`.
+
+##### SC failure path
+
+`SC.W` and `SC.D` must handle both success and failure within the zkVM's constraint system. This is accomplished using `VirtualAdvice`:
+
+1. The prover supplies a success/failure bit via `VirtualAdvice`, constrained to $\{0, 1\}$ using `VirtualAssertLTE`.
+2. A derived `v_success` flag ($1 - \text{v\_result}$) gates the reservation check: $\text{v\_success} \cdot (\text{reservation} - \text{rs1}) = 0$. On success ($\text{v\_success} = 1$), this forces the reservation to match the target address. On failure ($\text{v\_success} = 0$), the constraint is trivially satisfied.
+3. The store is conditional: $\text{store\_val} = \text{mem} + (\text{rs2} - \text{mem}) \cdot \text{v\_success}$. On success this writes `rs2`; on failure it writes back the original memory value (a no-op).
+4. The destination register is set to 0 on success, 1 on failure.
+
+**Soundness**: A malicious prover cannot claim success without a valid reservation, because the constraint $\text{v\_success} \cdot (\text{reservation} - \text{rs1}) = 0$ would be violated. However, the prover *can* claim spurious failure even with a valid reservation, which is permitted by the RISC-V specification (SC is allowed to fail spuriously).
+
+Per the RISC-V specification, SC always invalidates all reservations regardless of whether the store succeeded or failed. Both `reservation_w` and `reservation_d` are cleared to zero at the end of any SC instruction.
+
 #### Performance optimization (inlines)
 
 Virtual sequences can also be employed to optimize prover performance on specific operations, e.g. hash functions. For details, refer to [Inlines](../optimizations/inlines.md).

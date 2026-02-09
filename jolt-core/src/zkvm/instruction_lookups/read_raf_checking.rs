@@ -22,8 +22,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
         split_eq_poly::GruenSplitEqPolynomial,
@@ -184,20 +184,20 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParam
         // LookupOutput from both InstructionClaimReduction and SpartanProductVirtualization
         // must be equal. Include both to ensure both output constraint chains are consumed.
         // input = 0.5*rv + 0.5*rv_branch + γ*left + γ²*right
-        let rv = OpeningId::Virtual(
-            VirtualPolynomial::LookupOutput,
+        let rv = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::LookupOutput),
             SumcheckId::InstructionClaimReduction,
         );
-        let rv_branch = OpeningId::Virtual(
-            VirtualPolynomial::LookupOutput,
+        let rv_branch = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::LookupOutput),
             SumcheckId::SpartanProductVirtualization,
         );
-        let left = OpeningId::Virtual(
-            VirtualPolynomial::LeftLookupOperand,
+        let left = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::LeftLookupOperand),
             SumcheckId::InstructionClaimReduction,
         );
-        let right = OpeningId::Virtual(
-            VirtualPolynomial::RightLookupOperand,
+        let right = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RightLookupOperand),
             SumcheckId::InstructionClaimReduction,
         );
 
@@ -224,8 +224,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParam
 
         let ra_openings: Vec<ValueSource> = (0..n_virtual_ra_polys)
             .map(|i| {
-                ValueSource::Opening(OpeningId::Virtual(
-                    VirtualPolynomial::InstructionRa(i),
+                ValueSource::Opening(OpeningId::Polynomial(
+                    PolynomialId::Virtual(VirtualPolynomial::InstructionRa(i)),
                     SumcheckId::InstructionReadRaf,
                 ))
             })
@@ -234,8 +234,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParam
         let mut terms = Vec::with_capacity(num_tables + 2);
 
         for j in 0..num_tables {
-            let flag_opening = ValueSource::Opening(OpeningId::Virtual(
-                VirtualPolynomial::LookupTableFlag(j),
+            let flag_opening = ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::LookupTableFlag(j)),
                 SumcheckId::InstructionReadRaf,
             ));
 
@@ -250,8 +250,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParam
             ra_openings.clone(),
         ));
 
-        let raf_flag_opening = ValueSource::Opening(OpeningId::Virtual(
-            VirtualPolynomial::InstructionRafFlag,
+        let raf_flag_opening = ValueSource::Opening(OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::InstructionRafFlag),
             SumcheckId::InstructionReadRaf,
         ));
         let mut raf_factors = ra_openings;

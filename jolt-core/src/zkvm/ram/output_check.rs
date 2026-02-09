@@ -4,10 +4,9 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
+            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
-        program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
@@ -102,8 +101,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OutputSumcheckParams<F> {
         // Challenge layout:
         //   Challenge(0) = eq_eval * io_mask_eval
         //   Challenge(1) = -eq_eval * io_mask_eval * val_io_eval (constant term)
-        let val_final_opening =
-            OpeningId::Virtual(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck);
+        let val_final_opening = OpeningId::Polynomial(
+            PolynomialId::Virtual(VirtualPolynomial::RamValFinal),
+            SumcheckId::RamOutputCheck,
+        );
 
         let terms = vec![
             // eq*io_mask * val_final
@@ -137,11 +138,10 @@ impl<F: JoltField> OutputSumcheckParams<F> {
             .unwrap() as u128,
             remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as u128,
         );
-        let val_io = ProgramIOPolynomial::new(program_io);
 
         let eq_eval: F = EqPolynomial::<F>::mle(r_address, &r_address_prime);
         let io_mask_eval = io_mask.evaluate_mle(&r_address_prime);
-        let val_io_eval: F = val_io.evaluate(&r_address_prime);
+        let val_io_eval: F = super::eval_io_mle::<F>(program_io, &r_address_prime);
 
         let eq_io_mask = eq_eval * io_mask_eval;
         let neg_eq_io_mask_val_io = -eq_io_mask * val_io_eval;
@@ -347,11 +347,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
             .unwrap() as u128,
             remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as u128,
         );
-        let val_io = ProgramIOPolynomial::new(program_io);
-
         let eq_eval: F = EqPolynomial::<F>::mle(r_address, &r_address_prime);
         let io_mask_eval = io_mask.evaluate_mle(&r_address_prime);
-        let val_io_eval: F = val_io.evaluate(&r_address_prime);
+        let val_io_eval: F = super::eval_io_mle::<F>(program_io, &r_address_prime);
 
         // Recall that the sumcheck expression is:
         //   0 = \sum_k eq(r_address, k) * io_range(k) * (Val_final(k) - Val_io(k))

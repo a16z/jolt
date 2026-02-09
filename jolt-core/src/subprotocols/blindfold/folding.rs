@@ -297,7 +297,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
 
 /// Derive a deterministic RNG seed from transcript state.
 fn derive_rng_seed<T: Transcript>(transcript: &mut T) -> [u8; 32] {
-    transcript.append_message(b"BlindFold_random_seed");
+    transcript.raw_append_label(b"BlindFold_random_seed");
     let a = transcript.challenge_u128();
     let b = transcript.challenge_u128();
     let mut seed = [0u8; 32];
