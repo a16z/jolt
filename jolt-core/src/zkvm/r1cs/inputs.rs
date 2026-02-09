@@ -663,6 +663,7 @@ mod tests {
                         CircuitFlags::IsLastInSequence,
                         CircuitFlags::IsLastInSequence
                     )
+                    | (CircuitFlags::IsRdZero, CircuitFlags::IsRdZero)
             )
         }
     }
