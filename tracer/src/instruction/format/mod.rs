@@ -53,7 +53,15 @@ pub trait InstructionRegisterState:
     }
 }
 
-pub fn normalize_register_value(value: i64, xlen: &Xlen) -> u64 {
+pub fn normalize_register_value(cpu: &Cpu, reg: usize) -> u64 {
+    let value = match reg {
+        0 => {
+            debug_assert_eq!(cpu.x[reg], 0);
+            0
+        }
+        _ => cpu.x[reg],
+    };
+    let xlen = cpu.xlen;
     match xlen {
         Xlen::Bit32 => value as u32 as u64,
         Xlen::Bit64 => value as u64,

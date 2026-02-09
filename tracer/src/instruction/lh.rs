@@ -31,9 +31,10 @@ declare_riscv_instr!(
 
 impl LH {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LH as RISCVInstruction>::RAMAccess) {
-        let value = match cpu.mmu.load_halfword(
-            cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64,
-        ) {
+        let value = match cpu
+            .mmu
+            .load_halfword(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)
+        {
             Ok((halfword, memory_read)) => {
                 *ram_access = memory_read;
                 halfword as i16 as i64

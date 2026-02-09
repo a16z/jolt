@@ -107,18 +107,14 @@ where
         }
 
         let rs1 = instr.operands.rs1.unwrap_or(0) as usize;
-        if rs1 != 0 {
-            if let Some(rs1_val) = register_state.rs1_value() {
-                original_cpu.x[rs1] = rs1_val as i64;
-                virtual_cpu.x[rs1] = rs1_val as i64;
-            }
+        if let Some(rs1_val) = register_state.rs1_value() {
+            original_cpu.write_register(rs1, rs1_val as i64);
+            virtual_cpu.write_register(rs1, rs1_val as i64);
         }
         let rs2 = instr.operands.rs2.unwrap_or(0) as usize;
-        if rs2 != 0 {
-            if let Some(rs2_val) = register_state.rs2_value() {
-                original_cpu.x[rs2] = rs2_val as i64;
-                virtual_cpu.x[rs2] = rs2_val as i64;
-            }
+        if let Some(rs2_val) = register_state.rs2_value() {
+            original_cpu.write_register(rs2, rs2_val as i64);
+            virtual_cpu.write_register(rs2, rs2_val as i64);
         }
 
         let mut ram_access = Default::default();
