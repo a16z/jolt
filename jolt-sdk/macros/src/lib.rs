@@ -122,7 +122,7 @@ impl MacroBuilder {
         let max_untrusted_advice_size =
             proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
-        let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
+        let heap_size = proc_macro2::Literal::u64_unsuffixed(attributes.heap_size);
 
         let memory_config_fn_name = Ident::new(&format!("memory_config_{fn_name}"), fn_name.span());
         let imports = self.make_imports();
@@ -137,7 +137,7 @@ impl MacroBuilder {
                     max_trusted_advice_size: #max_trusted_advice_size,
                     max_untrusted_advice_size: #max_untrusted_advice_size,
                     stack_size: #stack_size,
-                    memory_size: #memory_size,
+                    heap_size: #heap_size,
                     program_size: None,
                 }
             }
@@ -264,7 +264,7 @@ impl MacroBuilder {
                         max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
                         max_trusted_advice_size: memory_layout.max_trusted_advice_size,
                         stack_size: memory_layout.stack_size,
-                        memory_size: memory_layout.memory_size,
+                        heap_size: memory_layout.heap_size,
                         program_size: Some(memory_layout.program_size),
                     };
                     let mut io_device = JoltDevice::new(&memory_config);
@@ -397,17 +397,11 @@ impl MacroBuilder {
     }
 
     fn make_compile_func(&self) -> TokenStream2 {
-        let attributes = parse_attributes(&self.attr);
         let imports = self.make_imports();
         let guest_name = self.get_guest_name();
         let set_mem_size = self.make_set_linker_parameters();
         let set_std = self.make_set_std();
 
-        let channel = if attributes.nightly {
-            quote! { "nightly" }
-        } else {
-            quote! { "stable" }
-        };
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
         let compile_fn_name = Ident::new(&format!("compile_{fn_name}"), fn_name.span());
@@ -420,7 +414,12 @@ impl MacroBuilder {
                 program.set_func(#fn_name_str);
                 #set_std
                 #set_mem_size
-                program.build_with_channel(target_dir, #channel);
+
+                // Build the compute_advice version first
+                program.build_with_features(target_dir, &["compute_advice"]);
+
+                // Build the normal version (without compute_advice)
+                program.build_with_features(target_dir, &[]);
 
                 program
             }
@@ -437,7 +436,7 @@ impl MacroBuilder {
         let max_trusted_advice_size =
             proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
-        let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
+        let heap_size = proc_macro2::Literal::u64_unsuffixed(attributes.heap_size);
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
@@ -457,7 +456,7 @@ impl MacroBuilder {
                     max_untrusted_advice_size: #max_untrusted_advice_size,
                     max_trusted_advice_size: #max_trusted_advice_size,
                     stack_size: #stack_size,
-                    memory_size: #memory_size,
+                    heap_size: #heap_size,
                     program_size: Some(program_size),
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
@@ -685,6 +684,43 @@ impl MacroBuilder {
                 let mut trusted_advice_bytes = vec![];
                 #(#set_program_trusted_advice_args;)*
 
+                // Two-pass strategy: First run compute_advice version to populate advice tape
+                let advice_tape = if let Some(compute_advice_elf_contents) = program.get_elf_compute_advice_contents() {
+                    use jolt::guest::program::{trace as guest_trace, decode as guest_decode};
+
+                    // Decode compute_advice ELF to get its program size
+                    let (_, _, compute_advice_program_size) = guest_decode(&compute_advice_elf_contents);
+
+                    let memory_config = MemoryConfig {
+                        max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
+                        max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
+                        max_input_size: preprocessing.shared.memory_layout.max_input_size,
+                        max_output_size: preprocessing.shared.memory_layout.max_output_size,
+                        stack_size: preprocessing.shared.memory_layout.stack_size,
+                        heap_size: preprocessing.shared.memory_layout.heap_size,
+                        program_size: Some(compute_advice_program_size),
+                    };
+
+                    // First pass: run compute_advice version to populate advice tape
+                    let (_lazy_trace, _, _, _, advice_tape) = guest_trace(
+                        &compute_advice_elf_contents,
+                        None,
+                        &input_bytes,
+                        &untrusted_advice_bytes,
+                        &trusted_advice_bytes,
+                        &memory_config,
+                        None, // Start with empty advice tape
+                    );
+
+                    // Reset read position for second pass
+                    let mut tape_for_second_pass = advice_tape;
+                    tape_for_second_pass.reset_read_position();
+                    Some(tape_for_second_pass)
+                } else {
+                    None
+                };
+
+                // Second pass: run normal version with populated advice tape to generate proof
                 let elf_contents_opt = program.get_elf_contents();
                 let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
                 let prover = RV64IMACProver::gen_from_elf(&preprocessing,
@@ -693,6 +729,7 @@ impl MacroBuilder {
                     &untrusted_advice_bytes,
                     &trusted_advice_bytes,
                     #commitment_arg,
+                    advice_tape,
                 );
                 let io_device = prover.program_io.clone();
                 let (jolt_proof, _) = prover.prove();
@@ -712,7 +749,7 @@ impl MacroBuilder {
             max_untrusted_advice_size: attributes.max_untrusted_advice_size,
             max_trusted_advice_size: attributes.max_trusted_advice_size,
             stack_size: attributes.stack_size,
-            memory_size: attributes.memory_size,
+            heap_size: attributes.heap_size,
             // Not needed for the main function, but we need the io region information from MemoryLayout.
             program_size: Some(0),
         });
@@ -800,25 +837,20 @@ impl MacroBuilder {
         let panic_fn = self.make_panic(memory_layout.panic);
         let declare_alloc = self.make_allocator();
 
-        quote! {
-            #[cfg(feature = "guest")]
-            use core::arch::global_asm;
+        // Boot code (_start) is provided by jolt-sdk's boot modules:
+        // - std mode: guest_std_boot.rs (_start -> kernel_main -> __libc_start_main -> main)
+        // - no-std mode: guest_no_std_boot.rs (_start -> boot_main -> __platform_bootstrap -> main)
+        // Both use ZeroOS jolt-platform for heap initialization.
+        let custom_start = quote! {};
 
-            #[cfg(feature = "guest")]
-            global_asm!("\
-                .global _start\n\
-                .extern _STACK_PTR\n\
-                .section .text.boot\n\
-                _start:	la sp, _STACK_PTR\n\
-                    call main\n\
-                    j .\n\
-            ");
+        quote! {
+            #custom_start
 
             #declare_alloc
 
             #[cfg(feature = "guest")]
             #[no_mangle]
-            pub extern "C" fn main() {
+            pub extern "C" fn main() -> ! {
                 let mut offset = 0;
                 #get_input_slice
                 #get_untrusted_advice_slice
@@ -832,53 +864,36 @@ impl MacroBuilder {
                 unsafe {
                     core::ptr::write_volatile(#termination_bit as *mut u8, 1);
                 }
+                // Never return - loop forever for clean termination
+                // The emulator detects termination via PC stall (prev_pc == pc)
+                loop {
+                    unsafe { core::arch::asm!("j .", options(noreturn)); }
+                }
             }
 
             #panic_fn
         }
     }
 
+    /// Generate `jolt_panic()` function that writes to the panic address.
+    /// This is called by the runtime's `#[panic_handler]` to signal panics to jolt-core.
     fn make_panic(&self, panic_address: u64) -> TokenStream2 {
-        if self.std {
-            quote! {
-                #[cfg(feature = "guest")]
-                #[no_mangle]
-                pub extern "C" fn jolt_panic() {
-                    unsafe {
-                        core::ptr::write_volatile(#panic_address as *mut u8, 1);
-                    }
-
-                    loop {}
-                }
-            }
-        } else {
-            quote! {
-                #[cfg(feature = "guest")]
-                use core::panic::PanicInfo;
-
-                #[cfg(feature = "guest")]
-                #[panic_handler]
-                fn panic(_info: &PanicInfo) -> ! {
-                    unsafe {
-                        core::ptr::write_volatile(#panic_address as *mut u8, 1);
-                    }
-
-                    loop {}
+        quote! {
+            #[cfg(feature = "guest")]
+            #[no_mangle]
+            pub extern "C" fn jolt_panic() {
+                unsafe {
+                    core::ptr::write_volatile(#panic_address as *mut u8, 1);
                 }
             }
         }
     }
 
     fn make_allocator(&self) -> TokenStream2 {
-        if self.std {
-            quote! {}
-        } else {
-            quote! {
-                #[cfg(feature = "guest")]
-                #[global_allocator]
-                static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator;
-            }
-        }
+        // The allocator is provided by jolt-sdk's boot modules:
+        // - std mode: guest_std_boot.rs uses linked_list_allocator
+        // - no-std mode: ZeroOS jolt-platform provides the global allocator
+        quote! {}
     }
 
     fn make_imports(&self) -> TokenStream2 {
@@ -894,6 +909,7 @@ impl MacroBuilder {
                 MemoryConfig,
                 MemoryLayout,
                 JoltDevice,
+                AdviceTape,
             };
             use jolt::{
                 JoltVerifierPreprocessing,
@@ -937,9 +953,9 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let mut code: Vec<TokenStream2> = Vec::new();
 
-        let value = attributes.memory_size;
+        let value = attributes.heap_size;
         code.push(quote! {
-            program.set_memory_size(#value);
+            program.set_heap_size(#value);
         });
 
         let value = attributes.stack_size;
@@ -1112,4 +1128,116 @@ impl MacroBuilder {
             }
         }
     }
+}
+
+/// Proc macro for advice functions.
+///
+/// Generates two versions of the function:
+/// - With `compute_advice` feature: executes the original body and writes result to advice tape
+/// - Without `compute_advice` feature: reads result from advice tape
+///
+/// The return type must be wrapped in `UntrustedAdvice<T>`.
+#[proc_macro_attribute]
+pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let func = parse_macro_input!(item as ItemFn);
+
+    // Extract function components
+    let fn_name = &func.sig.ident;
+    let fn_vis = &func.vis;
+    let fn_inputs = &func.sig.inputs;
+    let fn_output = &func.sig.output;
+    let fn_body = &func.block;
+    let fn_attrs = &func.attrs;
+
+    // Validate that no inputs are mutable
+    for arg in fn_inputs {
+        if let syn::FnArg::Typed(pat_type) = arg {
+            // Case 1: mut x: T
+            if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                if pat_ident.mutability.is_some() {
+                    panic!(
+                        "#[jolt::advice] mutable argument '{}' in function '{}'. Mutable arguments are not allowed in advice functions",
+                        pat_ident.ident, fn_name
+                    );
+                }
+            }
+            // Case 2: x: &mut T
+            if let syn::Type::Reference(type_ref) = &*pat_type.ty {
+                if type_ref.mutability.is_some() {
+                    panic!(
+                        "#[jolt::advice] mutable argument '{}' in function '{}'. Mutable arguments are not allowed in advice functions",
+                        if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                            pat_ident.ident.to_string()
+                        } else {
+                            "<unknown>".to_string()
+                        },
+                        fn_name
+                    );
+                }
+            }
+        }
+    }
+
+    // Validate return type is UntrustedAdvice<T>
+    let inner_type = match fn_output {
+        ReturnType::Type(_, ty) => {
+            // Check if type is UntrustedAdvice<T>
+            if let Type::Path(type_path) = &**ty {
+                if let Some(segment) = type_path.path.segments.last() {
+                    if segment.ident == "UntrustedAdvice" {
+                        // Extract T from UntrustedAdvice<T>
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                            if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                                inner.clone()
+                            } else {
+                                panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+                            }
+                        } else {
+                            panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+                        }
+                    } else {
+                        panic!(
+                            "#[jolt::advice] return type must be UntrustedAdvice<T>, found {}",
+                            segment.ident
+                        );
+                    }
+                } else {
+                    panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+                }
+            } else {
+                panic!("#[jolt::advice] return type must be UntrustedAdvice<T>");
+            }
+        }
+        ReturnType::Default => {
+            panic!("#[jolt::advice] function must return UntrustedAdvice<T>");
+        }
+    };
+
+    // Generate the dual-mode function
+    let expanded = quote! {
+        // Version with compute_advice: execute body and write to advice tape
+        #[cfg(feature = "compute_advice")]
+        #(#fn_attrs)*
+        #fn_vis fn #fn_name(#fn_inputs) #fn_output {
+            // execute body
+            let result: #inner_type = #fn_body;
+            // Serialize and write to advice tape
+            <#inner_type as jolt::AdviceTapeIO>::write_to_advice_tape(&result);
+            // return result
+            jolt::UntrustedAdvice::new(result)
+        }
+
+        // Version without compute_advice: read from advice tape
+        #[cfg(not(feature = "compute_advice"))]
+        #[allow(unused_variables)]
+        #(#fn_attrs)*
+        #fn_vis fn #fn_name(#fn_inputs) #fn_output {
+            // get result from advice tape
+            let result: #inner_type = <#inner_type as jolt::AdviceTapeIO>::new_from_advice_tape();
+            // wrap in UntrustedAdvice and return
+            jolt::UntrustedAdvice::new(result)
+        }
+    };
+
+    TokenStream::from(expanded)
 }

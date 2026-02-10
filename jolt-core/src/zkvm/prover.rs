@@ -166,6 +166,7 @@ pub struct JoltCpuProver<
 impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscript: Transcript>
     JoltCpuProver<'a, F, PCS, ProofTranscript>
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn gen_from_elf(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         elf_contents: &[u8],
@@ -174,6 +175,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         trusted_advice: &[u8],
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
+        advice_tape: Option<tracer::AdviceTape>,
     ) -> Self {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
@@ -181,11 +183,11 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             max_input_size: preprocessing.shared.memory_layout.max_input_size,
             max_output_size: preprocessing.shared.memory_layout.max_output_size,
             stack_size: preprocessing.shared.memory_layout.stack_size,
-            memory_size: preprocessing.shared.memory_layout.memory_size,
+            heap_size: preprocessing.shared.memory_layout.heap_size,
             program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
-        let (lazy_trace, trace, final_memory_state, program_io) = {
+        let (lazy_trace, trace, final_memory_state, program_io, _advice_tape_out) = {
             let _pprof_trace = pprof_scope!("trace");
             guest::program::trace(
                 elf_contents,
@@ -194,6 +196,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 untrusted_advice,
                 trusted_advice,
                 &memory_config,
+                advice_tape,
             )
         };
 
@@ -1648,6 +1651,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -1680,19 +1684,20 @@ mod tests {
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            256,
+            8192,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let log_chunk = 8; // Use default log_chunk for tests
+        let log_chunk = 13; // Use default log_chunk for tests
         let prover = RV64IMACProver::gen_from_elf(
             &prover_preprocessing,
             elf_contents,
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -1755,6 +1760,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -1815,6 +1821,7 @@ mod tests {
             &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -1882,6 +1889,7 @@ mod tests {
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -1927,7 +1935,7 @@ mod tests {
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
-            256,
+            4096,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         tracing::info!(
@@ -1949,8 +1957,9 @@ mod tests {
         );
 
         // Trace is tiny but advice is max-sized
-        assert!(prover.unpadded_trace_len < 512);
-        assert_eq!(prover.padded_trace_len, 256);
+        // (unpadded ~4185 after ECALL a7 constraint, padded to 8192)
+        assert!(prover.unpadded_trace_len < 8192);
+        assert_eq!(prover.padded_trace_len, 4096);
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2003,6 +2012,7 @@ mod tests {
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2066,7 +2076,7 @@ mod tests {
             final_memory_state,
         );
 
-        assert_eq!(prover.padded_trace_len, 256, "test expects small trace");
+        assert_eq!(prover.padded_trace_len, 4096, "test expects small trace");
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2153,6 +2163,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2199,6 +2210,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2240,9 +2252,10 @@ mod tests {
         let prover = RV64IMACProver::gen_from_elf(
             &prover_preprocessing,
             elf_contents,
-            &[50],
+            &inputs,
             &[],
             &[],
+            None,
             None,
             None,
         );
@@ -2378,6 +2391,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let io_device = prover.program_io.clone();
         let (proof, debug_info) = prover.prove();
@@ -2431,6 +2445,7 @@ mod tests {
             &trusted_advice,
             Some(trusted_commitment),
             Some(trusted_hint),
+            None,
         );
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();

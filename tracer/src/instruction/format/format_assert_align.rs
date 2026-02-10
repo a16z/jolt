@@ -6,20 +6,27 @@ use super::{
     normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
 };
 
-/// `VirtualAssertHalfwordAlignment` is the only instruction that
-/// uses `rs1` and `imm` but does not write to a destination register.
+/// Format for assert instructions that use `rs1` and `imm` but do not write to a destination register.
+///
+/// Used by:
+/// - `VirtualAssert` - asserts that rs1 is non-zero
+/// - `VirtualAssertHalfwordAlignment` - asserts halfword alignment
+/// - `VirtualAssertWordAlignment` - asserts word alignment
+///
+/// Note: Some assert instructions (like `VirtualAssertEQ`, `VirtualAssertLTE`) use two source
+/// registers and therefore use `FormatB` instead.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct AssertAlignFormat {
+pub struct FormatAssert {
     pub rs1: u8,
     pub imm: i64,
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
-pub struct AssertAlignRegisterState {
+pub struct RegisterStateFormatAssert {
     pub rs1: u64,
 }
 
-impl InstructionRegisterState for AssertAlignRegisterState {
+impl InstructionRegisterState for RegisterStateFormatAssert {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
@@ -37,8 +44,8 @@ impl InstructionRegisterState for AssertAlignRegisterState {
     }
 }
 
-impl InstructionFormat for AssertAlignFormat {
-    type RegisterState = AssertAlignRegisterState;
+impl InstructionFormat for FormatAssert {
+    type RegisterState = RegisterStateFormatAssert;
 
     fn parse(_: u32) -> Self {
         unimplemented!("virtual instruction")
@@ -63,7 +70,7 @@ impl InstructionFormat for AssertAlignFormat {
     }
 }
 
-impl From<NormalizedOperands> for AssertAlignFormat {
+impl From<NormalizedOperands> for FormatAssert {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
             rs1: operands.rs1.unwrap(),
@@ -72,8 +79,8 @@ impl From<NormalizedOperands> for AssertAlignFormat {
     }
 }
 
-impl From<AssertAlignFormat> for NormalizedOperands {
-    fn from(format: AssertAlignFormat) -> Self {
+impl From<FormatAssert> for NormalizedOperands {
+    fn from(format: FormatAssert) -> Self {
         Self {
             rs1: Some(format.rs1),
             rs2: None,
