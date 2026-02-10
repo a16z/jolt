@@ -118,7 +118,7 @@ impl<const XLEN: usize> ZkLeanLookupTableFlags<XLEN> {
         indent_level += 1;
         writeln!(f, "{}({vars_ident} : SumcheckVars f)", indent(indent_level))?;
         writeln!(f, "{}(interleaving : Interleaving)", indent(indent_level))?;
-        writeln!(f, "{}(right left : ZKExpr f)", indent(indent_level))?;
+        writeln!(f, "{}(left right : ZKExpr f)", indent(indent_level))?;
         writeln!(f, "{}: ZKBuilder f (ZKExpr f) :=", indent(indent_level))?;
         writeln!(
             f,
