@@ -13,7 +13,7 @@ use crate::{
     poly::commitment::commitment_scheme::{
         CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment,
     },
-    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
@@ -66,14 +66,14 @@ impl DoryOpeningProofHint {
     }
 }
 
-fn bind_opening_inputs<ProofTranscript: Transcript>(
+pub fn bind_opening_inputs<F: JoltField, ProofTranscript: Transcript>(
     transcript: &mut ProofTranscript,
-    opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
-    opening: &ark_bn254::Fr,
+    opening_point: &[F::Challenge],
+    opening: &F,
 ) {
     let mut point_scalars = Vec::with_capacity(opening_point.len());
     for point in opening_point {
-        let scalar: ark_bn254::Fr = (*point).into();
+        let scalar: F = (*point).into();
         point_scalars.push(scalar);
     }
     transcript.append_scalars(b"dory_opening_point", &point_scalars);
@@ -160,9 +160,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
         let mut rng = rand::thread_rng();
 
-        let opening = PolynomialEvaluation::evaluate(poly, opening_point);
-        bind_opening_inputs(transcript, opening_point, &opening);
-
         let row_commitments = hint
             .map(DoryOpeningProofHint::into_rows)
             .unwrap_or_else(|| {
@@ -176,11 +173,9 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let nu = num_rows.log_2();
 
         let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
-
-        // Dory uses the opposite endian-ness as Jolt
         let ark_point: Vec<ArkFr> = reordered_point
             .iter()
-            .rev() // Reverse the order for Dory
+            .rev()
             .map(|p| {
                 let f_val: ark_bn254::Fr = (*p).into();
                 jolt_to_ark(&f_val)

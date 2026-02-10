@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitment};
-use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
+use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals};
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::subprotocols::blindfold::{
@@ -1525,7 +1525,7 @@ impl<
             .map(|(gamma, claim)| *gamma * claim)
             .sum();
 
-        // Verify opening
+        bind_opening_inputs::<F, _>(&mut self.transcript, &opening_point.r, &joint_claim);
         PCS::verify(
             &self.proof.joint_opening_proof,
             &self.preprocessing.generators,

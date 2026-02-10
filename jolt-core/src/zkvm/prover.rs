@@ -30,7 +30,7 @@ use crate::{
     poly::{
         commitment::{
             commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment},
-            dory::{DoryGlobals, DoryLayout},
+            dory::{bind_opening_inputs, DoryGlobals, DoryLayout},
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
@@ -1499,10 +1499,6 @@ impl<
                         zk_data.batching_coefficients.len(),
                     );
 
-                    // Scale batching coefficients by 2^exponent to account for different-round sumchecks
-                    // The initial_claim is computed as sum(alpha_i * 2^scale_i * raw_claim_i)
-                    // But the constraint evaluates to sum(alpha_i * raw_claim_i)
-                    // So we need scaled_alpha_i = alpha_i * 2^scale_i
                     let mut challenge_values: Vec<F> = zk_data
                         .batching_coefficients
                         .iter()
@@ -1949,6 +1945,7 @@ impl<
             advice_polys,
         );
 
+        bind_opening_inputs::<F, _>(&mut self.transcript, &opening_point.r, &joint_claim);
         let (proof, y_blinding) = PCS::prove(
             &self.preprocessing.generators,
             &joint_poly,

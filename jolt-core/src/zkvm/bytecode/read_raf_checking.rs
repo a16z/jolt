@@ -1250,7 +1250,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         //
         // Challenge layout:
         // - Stage 1 (SpartanOuter): 2 + NUM_CIRCUIT_FLAGS terms
-        // - Stage 2 (SpartanProductVirtualization): 4 terms
+        // - Stage 2 (SpartanProductVirtualization): 5 terms
         // - Stage 3 (InstructionInputVirtualization + SpartanShift): 10 terms (9 + 1 for split unexpanded_pc)
         // - Stage 4 (RegistersReadWriteChecking): 3 terms
         // - Stage 5 (RegistersValEvaluation + InstructionReadRaf): 2 + NUM_LOOKUP_TABLES terms
@@ -1292,7 +1292,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         }
 
         // Stage 2: SpartanProductVirtualization openings
-        // Order: Jump, Branch, IsRdNotZero, WriteLookupOutputToRD
+        // Order: Jump, Branch, IsRdNotZero, WriteLookupOutputToRD, VirtualInstruction
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
             vec![ValueSource::Opening(OpeningId::Polynomial(
@@ -1330,6 +1330,15 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
                 PolynomialId::Virtual(VirtualPolynomial::OpFlags(
                     CircuitFlags::WriteLookupOutputToRD,
                 )),
+                SumcheckId::SpartanProductVirtualization,
+            ))],
+        ));
+        challenge_idx += 1;
+
+        terms.push(ProductTerm::scaled(
+            ValueSource::Challenge(challenge_idx),
+            vec![ValueSource::Opening(OpeningId::Polynomial(
+                PolynomialId::Virtual(VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction)),
                 SumcheckId::SpartanProductVirtualization,
             ))],
         ));

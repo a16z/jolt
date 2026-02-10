@@ -393,7 +393,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
                         debug_assert_eq!(
                             iw.challenge_values.len(),
                             num_challenges,
-                            "Input challenge values count mismatch"
+                            "Input challenge values count mismatch at stage {stage_idx}"
                         );
                         for val in &iw.challenge_values {
                             z[input_constraint_challenge_idx] = *val;
