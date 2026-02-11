@@ -2,10 +2,8 @@ import zkLean
 
 def mux [ZKField f]
   (cases : Array (ZKExpr f × ZKExpr f))
-  : ZKBuilder f (ZKExpr f) :=
-  Array.foldl (fun acc (flag, term) => do
-    let a : ZKExpr f <- acc
-    pure (a + flag * term)) (pure 0) cases
+  : ZKExpr f :=
+  Array.foldl (fun acc (flag, term) => acc + flag * term) 0 cases
 
 def mux_mles [ZKField f]
   (interleaving : Interleaving)
@@ -17,4 +15,4 @@ def mux_mles [ZKField f]
     let term <- ZKBuilder.lookup_mle mle left right
     let a <- acc
     pure (a ++ #[(flag, term)])) (pure #[] : ZKBuilder f (Array (ZKExpr f × ZKExpr f)))
-  mux cases
+  pure (mux cases)

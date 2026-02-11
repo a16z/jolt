@@ -154,7 +154,7 @@ impl<const XLEN: usize> ZkLeanLookupTableFlags<XLEN> {
         )?;
         writeln!(f, "{}let concatenated_eval <- mux_lookup_flags {vars_ident} Interleaving.Concatenated left right", indent(indent_level))?;
         writeln!(f, "{}let interleaved_eval <- mux_lookup_flags {vars_ident} Interleaving.Interleaved left right", indent(indent_level))?;
-        writeln!(f, "{}let res <- mux #[", indent(indent_level))?;
+        writeln!(f, "{}let res := mux #[", indent(indent_level))?;
         indent_level += 1;
         writeln!(
             f,
