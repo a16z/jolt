@@ -171,14 +171,14 @@ jobs:
         working-directory: ./zklean-extractor
         run: cargo test
 
-  #compile-extracted-lean:
-  #  name: Compile extracted Lean
-  #  runs-on: ubuntu-latest
-  #  steps:
-  #    - uses: actions/checkout@v5
-  #    - name: Extract Jolt ZkLean package
-  #      working-directory: ./zklean-extractor
-  #      run: cargo run --release -- -o -p jolt-zklean
+  compile-extracted-lean:
+    name: Compile extracted Lean
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Extract Jolt ZkLean package
+        working-directory: ./zklean-extractor
+        run: cargo run --release -- -o -p jolt-zklean
 
   #    - name: Run lake build on the extracted model
   #      uses: leanprover/lean-action@v1
