@@ -90,7 +90,7 @@ impl RISCVTrace for REMU {
         asm.emit_r::<SUB>(*v0, self.operands.rs1, *v0);
         // Verify: divisor == 0 || remainder < divisor (unsigned)
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*v0, self.operands.rs2, 0);
-        // Move quotient to destination register
+        // Move remainder to destination register
         asm.emit_i::<ADDI>(self.operands.rd, *v0, 0);
         asm.finalize()
     }
