@@ -199,8 +199,8 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         .unwrap_or(false);
     let preserve_symbols = backtrace_via_env
         || match args.base.backtrace {
-            BacktraceMode::Enable => true,
-            BacktraceMode::Disable => false,
+            BacktraceMode::Off => false,
+            BacktraceMode::Dwarf | BacktraceMode::FramePointers => true,
             BacktraceMode::Auto => {
                 let profile = zeroos_build::project::detect_profile(&args.base.cargo_args);
                 matches!(profile.as_str(), "debug" | "dev")
@@ -233,6 +233,9 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
 
     if !preserve_symbols {
         jolt_rustflags.push("-Cstrip=symbols");
+    } else {
+        // Enable frame pointers for backtraces - required for frame-pointer based unwinding
+        jolt_rustflags.push("-Cforce-frame-pointers=yes");
     }
 
     zeroos_build::cmds::build_binary_with_rustflags(

@@ -23,6 +23,7 @@ impl Program {
         Self {
             guest: guest.to_string(),
             func: None,
+            profile: None,
             heap_size: DEFAULT_HEAP_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
@@ -30,6 +31,7 @@ impl Program {
             max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             std: false,
+            backtrace: Some("off".to_string()), // Default to off for minimal size
             elf: None,
             elf_compute_advice: None,
         }
@@ -41,6 +43,22 @@ impl Program {
 
     pub fn set_func(&mut self, func: &str) {
         self.func = Some(func.to_string())
+    }
+
+    /// Set the cargo profile used to compile the guest.
+    ///
+    /// If unset, guest builds default to `--release`.
+    /// If set, guest builds use `--profile <name>`.
+    pub fn set_profile(&mut self, profile: &str) {
+        self.profile = Some(profile.to_string());
+    }
+
+    /// Set backtrace mode for the guest build.
+    ///
+    /// This adds --backtrace <mode> to the cargo-jolt CLI.
+    /// Valid modes: "off", "dwarf", "frame-pointers".
+    pub fn set_backtrace(&mut self, mode: &str) {
+        self.backtrace = Some(mode.to_string());
     }
 
     pub fn set_memory_config(&mut self, memory_config: MemoryConfig) {
@@ -84,17 +102,35 @@ impl Program {
     pub fn build_with_features(&mut self, target_dir: &str, extra_features: &[&str]) {
         if self.elf.is_none() {
             // Use jolt CLI to build the guest program
-            // JOLT_PATH can be set to override (for development/testing)
-            let jolt_path = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
+            // Fallback order: JOLT_PATH → 'jolt' → 'cargo jolt'
+            let (jolt_cmd, mut args) = if let Ok(path) = std::env::var("JOLT_PATH") {
+                // Use explicit JOLT_PATH
+                (path, vec!["build".to_string()])
+            } else if Command::new("jolt").arg("--version").output().is_ok() {
+                // Use installed jolt
+                ("jolt".to_string(), vec!["build".to_string()])
+            } else {
+                // Use cargo alias (with local patches)
+                (
+                    "cargo".to_string(),
+                    vec!["jolt".to_string(), "build".to_string()],
+                )
+            };
 
-            // Build base arguments for jolt build
-            // jolt is invoked as: jolt build -p <package> [--mode std] -- --release --target-dir <dir> --features guest
-            let mut args = vec!["build".to_string(), "-p".to_string(), self.guest.clone()];
+            // Add package argument
+            args.push("-p".to_string());
+            args.push(self.guest.clone());
 
             // Add --mode std flag if std mode is enabled
             if self.std {
                 args.push("--mode".to_string());
                 args.push("std".to_string());
+            }
+
+            // Add --backtrace <mode> flag if backtrace is configured
+            if let Some(mode) = &self.backtrace {
+                args.push("--backtrace".to_string());
+                args.push(mode.to_string());
             }
 
             // Pass memory layout parameters to cargo-jolt
@@ -123,8 +159,15 @@ impl Program {
             // Add separator for cargo passthrough args
             args.push("--".to_string());
 
-            // --release goes after -- as a cargo argument
-            args.push("--release".to_string());
+            // Cargo profile selection. Default to `--release` for backwards compatibility.
+            // If a profile is set, pass `--profile <name>` instead.
+            if let Some(profile) = &self.profile {
+                args.push("--profile".to_string());
+                args.push(profile.clone());
+            } else {
+                // --release goes after -- as a cargo argument
+                args.push("--release".to_string());
+            }
 
             // Pass --target-dir to cargo (not cargo-jolt)
             args.push("--target-dir".to_string());
@@ -133,19 +176,18 @@ impl Program {
             // Always pass --features guest to enable the guest feature on the example package
             // (this is separate from the jolt-sdk features specified in the example's Cargo.toml)
             args.push("--features".to_string());
-            let mut features = vec!["guest"];
-            features.extend_from_slice(extra_features);
-            let features_str = features.join(",");
-            args.push(features_str);
+            let mut features = vec!["guest".to_string()];
+            features.extend(extra_features.iter().map(|s| s.to_string()));
+            args.push(features.join(","));
 
             let cmd_line = compose_command_line(
-                &jolt_path,
+                &jolt_cmd,
                 &[],
                 &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
             );
             info!("\n{cmd_line}");
 
-            let mut cmd = Command::new(&jolt_path);
+            let mut cmd = Command::new(&jolt_cmd);
             cmd.args(&args);
 
             // Pass JOLT_FUNC_NAME if a specific function is set (for guest packages with multiple provable functions)
@@ -177,10 +219,12 @@ impl Program {
                 "riscv64imac-unknown-none-elf"
             };
 
-            // ELF is built to guest_target_dir with standard cargo layout
+            // ELF is built to guest_target_dir with standard cargo layout.
+            // Note: output directory includes the selected cargo profile (default: "release").
+            let out_profile = self.profile.as_deref().unwrap_or("release");
             let elf_path = PathBuf::from(&guest_target_dir)
                 .join(target_triple)
-                .join("release")
+                .join(out_profile)
                 .join(&self.guest);
 
             // Verify the ELF exists

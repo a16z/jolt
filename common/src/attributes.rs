@@ -13,6 +13,8 @@ pub struct Attributes {
     pub wasm: bool,
     pub nightly: bool,
     pub guest_only: bool,
+    /// Optional cargo profile name to use for guest builds (e.g. "guest", "release").
+    pub profile: Option<String>,
     pub heap_size: u64,
     pub stack_size: u64,
     pub max_input_size: u64,
@@ -20,6 +22,7 @@ pub struct Attributes {
     pub max_trusted_advice_size: u64,
     pub max_untrusted_advice_size: u64,
     pub max_trace_length: u64,
+    pub backtrace: Option<String>,
 }
 
 #[cfg(feature = "std")]
@@ -28,29 +31,49 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
     let mut wasm = false;
     let mut guest_only = false;
     let mut nightly = false;
+    let mut profile: Option<String> = None;
+    let mut backtrace: Option<String> = None;
 
     for attr in attr {
         match attr {
             NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
-                let value: u64 = match lit {
-                    Lit::Int(lit) => lit.base10_parse().unwrap(),
-                    _ => panic!("expected integer literal"),
-                };
                 let ident = &path.get_ident().expect("Expected identifier");
                 match ident.to_string().as_str() {
-                    "heap_size" => attributes.insert("heap_size", value),
-                    "stack_size" => attributes.insert("stack_size", value),
-                    "max_input_size" => attributes.insert("max_input_size", value),
-                    "max_output_size" => attributes.insert("max_output_size", value),
-                    "max_trusted_advice_size" => {
-                        attributes.insert("max_trusted_advice_size", value)
+                    "backtrace" => {
+                        let value = match lit {
+                            Lit::Str(lit) => lit.value(),
+                            _ => panic!("backtrace attribute expects a string literal"),
+                        };
+                        backtrace = Some(value);
                     }
-                    "max_untrusted_advice_size" => {
-                        attributes.insert("max_untrusted_advice_size", value)
+                    "profile" => {
+                        let value = match lit {
+                            Lit::Str(lit) => lit.value(),
+                            _ => panic!("profile attribute expects a string literal"),
+                        };
+                        profile = Some(value);
                     }
-                    "max_trace_length" => attributes.insert("max_trace_length", value),
-                    _ => panic!("invalid attribute"),
-                };
+                    _ => {
+                        let value: u64 = match lit {
+                            Lit::Int(lit) => lit.base10_parse().unwrap(),
+                            _ => panic!("expected integer literal"),
+                        };
+                        match ident.to_string().as_str() {
+                            "heap_size" => attributes.insert("heap_size", value),
+                            "stack_size" => attributes.insert("stack_size", value),
+                            "max_input_size" => attributes.insert("max_input_size", value),
+                            "max_output_size" => attributes.insert("max_output_size", value),
+                            "max_trusted_advice_size" => {
+                                attributes.insert("max_trusted_advice_size", value)
+                            }
+                            "max_untrusted_advice_size" => {
+                                attributes.insert("max_untrusted_advice_size", value)
+                            }
+                            "max_trace_length" => attributes.insert("max_trace_length", value),
+                            _ => panic!("invalid attribute"),
+                        };
+                    }
+                }
             }
             NestedMeta::Meta(Meta::Path(path)) if path.is_ident("wasm") => {
                 wasm = true;
@@ -60,6 +83,10 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
             }
             NestedMeta::Meta(Meta::Path(path)) if path.is_ident("nightly") => {
                 nightly = true;
+            }
+            NestedMeta::Meta(Meta::Path(path)) if path.is_ident("backtrace") => {
+                // backtrace without value - just enables --backtrace, no extra features
+                backtrace = Some(String::new());
             }
             _ => panic!("expected integer literal"),
         }
@@ -87,6 +114,7 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
         wasm,
         nightly,
         guest_only,
+        profile,
         heap_size,
         stack_size,
         max_input_size,
@@ -94,5 +122,6 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
         max_trusted_advice_size,
         max_untrusted_advice_size,
         max_trace_length,
+        backtrace,
     }
 }

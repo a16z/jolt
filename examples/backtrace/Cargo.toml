@@ -1,0 +1,17 @@
+[package]
+name = "backtrace-demo"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["nostd"]
+nostd = ["guest_nostd"]
+std = ["guest_std"]
+
+[dependencies]
+jolt-sdk = { workspace = true, features = ["host"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+guest_nostd = { package = "backtrace-guest-nostd", path = "./guest-nostd", optional = true }
+guest_std = { package = "backtrace-guest-std", path = "./guest-std", optional = true }
+
