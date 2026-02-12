@@ -118,7 +118,7 @@ impl SB {
         let v2 = allocator.allocate();
         let v3 = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
 
         asm.emit_i::<ADDI>(*v0, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v1, *v0, -8i64 as u64);
