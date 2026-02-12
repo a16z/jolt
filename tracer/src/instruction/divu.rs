@@ -97,7 +97,7 @@ impl RISCVTrace for DIVU {
         asm.emit_r::<MUL>(*v1, *v0, self.operands.rs2);
         // Verify: quotient × divisor <= dividend
         asm.emit_b::<VirtualAssertLTE>(*v1, self.operands.rs1, 0);
-        // Computer remainder = dividend - quotient × divisor
+        // Compute remainder = dividend - quotient × divisor
         asm.emit_r::<SUB>(*v1, self.operands.rs1, *v1);
         // Verify: divisor == 0 || remainder < divisor (unsigned)
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*v1, self.operands.rs2, 0);
