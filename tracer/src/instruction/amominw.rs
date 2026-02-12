@@ -103,20 +103,15 @@ impl RISCVTrace for AMOMINW {
 
                 let v_rs2 = allocator.allocate();
                 let v0 = allocator.allocate();
-                let v1 = allocator.allocate();
-                let v2 = allocator.allocate();
                 // Sign-extend rs2 into v_rs2
                 asm.emit_i::<VirtualSignExtendWord>(*v_rs2, self.operands.rs2, 0);
                 // Sign-extend v_rd into v0
                 asm.emit_i::<VirtualSignExtendWord>(*v0, *v_rd, 0);
                 // Put min in v_rs2
-                asm.emit_r::<SLT>(*v1, *v_rs2, *v_rd);
-                asm.emit_r::<SUB>(*v2, *v_rs2, *v0);
-                asm.emit_r::<MUL>(*v2, *v2, *v1);
-                asm.emit_r::<ADD>(*v_rs2, *v2, *v0);
-                // drop v1 and v2 to save registers before post processing, use v0 as v_mask in amo_post64
-                drop(v1);
-                drop(v2);
+                asm.emit_r::<SLT>(*v0, *v_rs2, *v0);
+                asm.emit_r::<SUB>(*v_rs2, self.operands.rs2, *v_rd);
+                asm.emit_r::<MUL>(*v_rs2, *v_rs2, *v0);
+                asm.emit_r::<ADD>(*v_rs2, *v_rs2, *v_rd);
                 // post processing, use v0 as v_mask in amo_post64
                 amo_post64(
                     &mut asm,
