@@ -1,7 +1,12 @@
 use core::array;
 
 use tracer::{
-    instruction::{andn::ANDN, format::format_inline::FormatInline, lw::LW, sw::SW, Instruction},
+    emulator::cpu::Xlen,
+    instruction::{
+        andn::ANDN, format::format_inline::FormatInline, ld::LD, lw::LW, or::OR, sd::SD,
+        slli::SLLI, srli::SRLI, sw::SW, virtual_zero_extend_word::VirtualZeroExtendWord,
+        Instruction,
+    },
     utils::{
         inline_helpers::{
             InstrAssembler,
@@ -76,26 +81,60 @@ impl Sha256SequenceBuilder {
         if !self.initial {
             // Load initial hash values from memory when using custom IV
             // Load all A-H into initial_state registers (used both for initial values and final addition)
-            (0..8).for_each(|i| {
-                self.asm
-                    .emit_ld::<LW>(*self.iv[i], self.operands.rs1, (i * 4) as i64)
-            });
+            if self.asm.xlen == Xlen::Bit32 {
+                (0..8).for_each(|i| {
+                    self.asm
+                        .emit_ld::<LW>(*self.iv[i], self.operands.rs1, (i * 4) as i64)
+                });
+            } else {
+                (0..4).for_each(|i| {
+                    self.load_paired_u32_dirty(
+                        self.operands.rs1,
+                        (i as i64) * 8,
+                        *self.iv[i * 2],
+                        *self.iv[i * 2 + 1],
+                    );
+                });
+            }
         }
         // Load input words into message registers
-        (0..16).for_each(|i| {
-            self.asm
-                .emit_ld::<LW>(*self.message[i], self.operands.rs2, (i * 4) as i64)
-        });
+        if self.asm.xlen == Xlen::Bit32 {
+            (0..16).for_each(|i| {
+                self.asm
+                    .emit_ld::<LW>(*self.message[i], self.operands.rs2, (i * 4) as i64)
+            });
+        } else {
+            (0..8).for_each(|i| {
+                self.load_paired_u32_dirty(
+                    self.operands.rs2,
+                    (i as i64) * 8,
+                    *self.message[i * 2],
+                    *self.message[i * 2 + 1],
+                );
+            });
+        }
         // Run 64 rounds
         (0..64).for_each(|_| self.round());
         self.final_add_iv();
         // Store output values to rs1 location
         // Store output A..H in-order using the current VR mapping after all rotations
-        let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-        for (i, ch) in outs.iter().enumerate() {
-            let src = self.vr(*ch);
-            self.asm
-                .emit_s::<SW>(self.operands.rs1, src, (i as i64) * 4);
+        if self.asm.xlen == Xlen::Bit32 {
+            let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+            for (i, ch) in outs.iter().enumerate() {
+                let src = self.vr(*ch);
+                self.asm
+                    .emit_s::<SW>(self.operands.rs1, src, (i as i64) * 4);
+            }
+        } else {
+            let outs = [('A', 'B'), ('C', 'D'), ('E', 'F'), ('G', 'H')];
+            for (i, (ch1, ch2)) in outs.iter().enumerate() {
+                self.store_paired_u32(
+                    self.operands.rs1,
+                    (i as i64) * 8,
+                    self.vr(*ch1),
+                    self.vr(*ch2),
+                );
+            }
         }
         // Total allocated: 8 (state) + 16 (message) + 8 (initial_state) + 4 (temps per round) = 36
         // The temps are allocated/deallocated per round, but we need to reserve space for them
@@ -103,6 +142,22 @@ impl Sha256SequenceBuilder {
         drop(self.message);
         drop(self.iv);
         self.asm.finalize_inline()
+    }
+
+    /// WARNING: leaves junk in upper 32 bits of vr_lo. Safe because SHA-256 ops
+    /// preserve lower 32-bit correctness independent of upper bits.
+    /// Cleanup happens in `store_paired_u32`.
+    fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
+        self.asm.emit_ld::<LD>(vr_lo, base, offset);
+        self.asm.emit_i::<SRLI>(vr_hi, vr_lo, 32);
+    }
+
+    /// WARNING: clobbers both input registers.
+    fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
+        self.asm.emit_i::<VirtualZeroExtendWord>(vr_lo, vr_lo, 0);
+        self.asm.emit_i::<SLLI>(vr_hi, vr_hi, 32);
+        self.asm.emit_r::<OR>(vr_lo, vr_hi, vr_lo);
+        self.asm.emit_s::<SD>(base, vr_lo, offset);
     }
 
     /// Adds IV to the final hash value to produce output

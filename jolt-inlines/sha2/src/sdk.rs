@@ -5,6 +5,7 @@
 use core::mem::MaybeUninit;
 
 /// SHA-256 hasher state.
+#[repr(C, align(8))]
 pub struct Sha256 {
     /// Current hash state (8 x 32-bit words)
     ///
@@ -324,7 +325,7 @@ impl Default for Sha256 {
 /// # Safety
 /// - `input` must be a valid pointer to at least 64 bytes of readable memory
 /// - `state` must be a valid pointer to at least 32 bytes of readable and writable memory
-/// - Both pointers must be properly aligned for u32 access (4-byte alignment)
+/// - Both pointers must be 8-byte aligned (required for doubleword loads on 64-bit targets)
 /// - The memory regions must not overlap
 #[cfg(not(feature = "host"))]
 pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
@@ -348,7 +349,7 @@ pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// # Safety
 /// - `input` must be a valid pointer to at least 64 bytes of readable memory
 /// - `state` must be a valid pointer to at least 32 bytes of readable and writable memory
-/// - Both pointers must be properly aligned for u32 access (4-byte alignment)
+/// - Both pointers must be 8-byte aligned (required for doubleword loads on 64-bit targets)
 /// - The memory regions must not overlap
 #[cfg(feature = "host")]
 pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
@@ -371,7 +372,7 @@ pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// # Safety
 /// - `input` must be a valid pointer to at least 64 bytes of readable memory
 /// - `state` must be a valid pointer to at least 32 bytes of writable memory
-/// - Both pointers must be properly aligned for u32 access (4-byte alignment)
+/// - Both pointers must be 8-byte aligned (required for doubleword loads on 64-bit targets)
 /// - The memory regions must not overlap
 #[cfg(not(feature = "host"))]
 pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
@@ -398,7 +399,7 @@ pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u
 /// # Safety
 /// - `input` must be a valid pointer to at least 64 bytes of readable memory
 /// - `state` must be a valid pointer to at least 32 bytes of writable memory
-/// - Both pointers must be properly aligned for u32 access (4-byte alignment)
+/// - Both pointers must be 8-byte aligned (required for doubleword loads on 64-bit targets)
 /// - The memory regions must not overlap
 #[cfg(feature = "host")]
 pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {

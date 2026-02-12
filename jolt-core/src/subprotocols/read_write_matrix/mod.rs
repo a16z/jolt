@@ -17,10 +17,12 @@
 
 mod address_major;
 mod cycle_major;
+mod one_hot_coeffs;
 mod ram;
 mod registers;
 
 pub use address_major::{AddressMajorMatrixEntry, ReadWriteMatrixAddressMajor};
 pub use cycle_major::{CycleMajorMatrixEntry, ReadWriteMatrixCycleMajor};
+pub use one_hot_coeffs::{LookupTableIndex, OneHotCoeffLookupTable};
 pub use ram::{RamAddressMajorEntry, RamCycleMajorEntry};
 pub use registers::{RegistersAddressMajorEntry, RegistersCycleMajorEntry};

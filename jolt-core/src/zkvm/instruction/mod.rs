@@ -83,6 +83,9 @@ pub enum CircuitFlags {
     IsCompressed,
     /// Is instruction the first in a virtual sequence
     IsFirstInSequence,
+    /// Is instruction at the end of a virtual sequence (virtual_sequence_remaining == Some(0)).
+    /// Used to skip NextPCEqPCPlusOneIfInline for ECALL sequences that may jump to trap handlers.
+    IsLastInSequence,
 }
 
 /// Boolean flags that are not part of Jolt's R1CS constraints
@@ -273,10 +276,11 @@ macro_rules! define_rv32im_trait_impls {
 define_rv32im_trait_impls! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
-        ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
+        EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
         SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
-        VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment,
-        VirtualAssertWordAlignment, VirtualAssertLTE,
+        VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
+        VirtualAssertEQ, VirtualAssertHalfwordAlignment,
+        VirtualAssertWordAlignment, VirtualAssertLTE, VirtualHostIO,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
         VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMovsign, VirtualMULI, VirtualPow2,
@@ -300,6 +304,7 @@ pub mod bgeu;
 pub mod blt;
 pub mod bltu;
 pub mod bne;
+pub mod ebreak;
 pub mod ecall;
 pub mod fence;
 pub mod jal;
@@ -317,6 +322,8 @@ pub mod sltiu;
 pub mod sltu;
 pub mod sub;
 pub mod virtual_advice;
+pub mod virtual_advice_len;
+pub mod virtual_advice_load;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
@@ -326,6 +333,7 @@ pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
+pub mod virtual_host_io;
 pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_pow2;

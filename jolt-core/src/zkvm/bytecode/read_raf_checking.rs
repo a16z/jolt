@@ -72,7 +72,8 @@ const N_STAGES: usize = 5;
 /// - Int(k) = 1 for all k (evaluation of the IdentityPolynomial over address variables).
 /// - Define per-stage Val_s(k) (address-only) as implemented by `compute_val_*`:
 ///   * Stage1: Val_1(k) = unexpanded_pc(k) + β_1·imm(k) + Σ_t β_1^{2+t}·circuit_flag_t(k).
-///   * Stage2: Val_2(k) = 1_{jump}(k) + β_2·1_{branch}(k) + β_2^2·rd_addr(k) + β_2^3·1_{write_lookup_to_rd}(k).
+///   * Stage2: Val_2(k) = 1_{jump}(k) + β_2·1_{branch}(k) + β_2^2·rd_addr(k) + β_2^3·1_{write_lookup_to_rd}(k)
+///   + β_2^4·1_{VirtualInstruction}(k).
 ///   * Stage3: Val_3(k) = imm(k) + β_3·unexpanded_pc(k) + β_3^2·1_{L_is_rs1}(k) + β_3^3·1_{L_is_pc}(k)
 ///   + β_3^4·1_{R_is_rs2}(k) + β_3^5·1_{R_is_imm}(k) + β_3^6·1_{IsNoop}(k)
 ///   + β_3^7·1_{VirtualInstruction}(k) + β_3^8·1_{IsFirstInSequence}(k).
@@ -736,7 +737,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
         // Generate all stage-specific gamma powers upfront (order must match verifier)
         let stage1_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
-        let stage2_gammas: Vec<F> = transcript.challenge_scalar_powers(4);
+        let stage2_gammas: Vec<F> = transcript.challenge_scalar_powers(5);
         let stage3_gammas: Vec<F> = transcript.challenge_scalar_powers(9);
         let stage4_gammas: Vec<F> = transcript.challenge_scalar_powers(3);
         let stage5_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_LOOKUP_TABLES);
@@ -830,8 +831,6 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             r_cycle_5.r,
         ];
 
-        // Note: We don't have r_address at this point (it comes from sumcheck_challenges),
-        // so we initialize r_address_chunks as empty and will compute it later
         Self {
             gamma_powers,
             input_claim,
@@ -911,6 +910,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                 //       branch_flag(k) = 1 if instruction k is a branch, 0 otherwise;
                 //       is_rd_not_zero_flag(k) = 1 if instruction k has rd != 0;
                 //       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd.
+                //       virtual_instruction(k) = 1 if instruction k is a virtual instruction.
                 // This Val matches the fused product sumcheck.
                 {
                     let mut lc = F::zero();
@@ -925,6 +925,9 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                     }
                     if circuit_flags[CircuitFlags::WriteLookupOutputToRD] {
                         lc += stage2_gammas[3];
+                    }
+                    if circuit_flags[CircuitFlags::VirtualInstruction] {
+                        lc += stage2_gammas[4];
                     }
                     *o1 = lc;
                 }
@@ -1062,12 +1065,17 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                 VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
                 SumcheckId::SpartanProductVirtualization,
             );
+        let (_, virtual_instruction_claim) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanProductVirtualization,
+        );
 
         [
             jump_claim,
             branch_claim,
             rd_wa_claim,
             write_lookup_output_to_rd_flag_claim,
+            virtual_instruction_claim,
         ]
         .into_iter()
         .zip_eq(gamma_powers)

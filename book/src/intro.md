@@ -33,6 +33,7 @@ Initial launch:
 Updates:
 - Nov 12, 2024 [blog](https://a16zcrypto.com/posts/article/jolt-an-update/) [video](https://a16zcrypto.com/posts/videos/an-update-on-jolts-development-roadmap/)
 - Aug 18, 2025 (Twist and Shout upgrade) [blog](https://a16zcrypto.com/posts/article/jolt-6x-speedup/)
+- Oct 15, 2025 (RV64 support) [blog](https://a16zcrypto.com/posts/article/64-bit-proving-jolt/)
 
 ### Background
 - [Proofs, Arguments, and Zero-Knowledge](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.pdf)
@@ -41,4 +42,4 @@ Updates:
 Jolt was initially forked from Srinath Setty's work on [`microsoft/Spartan`](https://github.com/microsoft/spartan), specifically the [`arkworks-rs/Spartan`](https://github.com/arkworks-rs/spartan) fork in order to use the excellent `arkworks-rs` field and curve implementations.
 Jolt uses its own [fork](https://github.com/a16z/arkworks-algebra) of `arkworks-algebra` with certain optimizations, including some described [here](./how/optimizations/small-value.md).
 Jolt's R1CS is also proven using a version of Spartan (forked from the [microsoft/Spartan2](https://github.com/microsoft/Spartan2) codebase) optimized for Jolt's uniform R1CS constraints.
-Jolt uses Dory as its PCS, implemented in [`spaceandtimefdn/sxt-dory`](https://github.com/spaceandtimefdn/sxt-dory).
+Jolt uses [Dory](https://github.com/a16z/dory/) as its PCS, inspired by the Space and Time Labs implementation [`spaceandtimefdn/sxt-dory`](https://github.com/spaceandtimefdn/sxt-dory).

@@ -94,6 +94,19 @@ For detailed instruction formats and encoding, refer to __chapter 7__ of [specif
 
 - `AMOMIN/AMOMAX`: Atomic min/max operations
 
+##### Jolt's LR/SC Implementation
+
+Jolt implements LR/SC using [virtual sequences](../architecture/emulation.md#atomic-operations-lrsc) with a pair of width-specific **reservation registers**:
+
+- `reservation_w` (virtual register 32) -- used by `LR.W`/`SC.W` for word (32-bit) reservations
+- `reservation_d` (virtual register 33) -- used by `LR.D`/`SC.D` for doubleword (64-bit) reservations
+
+The two reservation registers enforce width-matched pairing: `LR.W` sets `reservation_w` and clears `reservation_d`; `LR.D` does the reverse. This cross-clear means `SC.W` after `LR.D` (or `SC.D` after `LR.W`) will always fail, since the SC checks only its own width's reservation register.
+
+The SC failure path uses prover-supplied `VirtualAdvice` constrained to $\{0, 1\}$. On success, a constraint forces the reservation address to match `rs1`, and `rs2` is stored to memory. On failure, the store is a no-op (the original memory value is written back). The destination register `rd` receives 0 on success, 1 on failure. Both reservation registers are always cleared at the end of any SC instruction, per the RISC-V specification.
+
+For a detailed description of the constraint design and soundness argument, see [RISC-V emulation](../architecture/emulation.md#atomic-operations-lrsc). For the virtual register layout, see [Registers](../architecture/registers.md#virtual-register-layout).
+
 For detailed instruction formats and encoding, refer to __chapter 8__ of [specification](https://riscv.org/wp-content/uploads/2019/12/riscv-spec-20191213.pdf)
 
 #### __"C" Standard Extension for Compressed Instructions__

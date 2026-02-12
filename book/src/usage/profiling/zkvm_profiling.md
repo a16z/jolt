@@ -60,7 +60,7 @@ You may need to increase the sampling frequency to get a more detailed profile f
 
 Jolt uses [allocative](https://github.com/facebookexperimental/allocative) for memory profiling.
 Allocative allows you to (recursively) measure the total heap space occupied by any data structure implementing the `Allocative` trait, and optionally generate a flamegraph.
-In Jolt, most sumcheck data structures implement the `Allocative` trait, and we generate a flamegraph at the start and end of stages 2-5 of the Jolt [DAG](../../how/architecture/architecture.md#jolt-as-a-dag) (see [`jolt_dag.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/zkvm/dag/jolt_dag.rs)).
+In Jolt, most sumcheck data structures implement the `Allocative` trait, and we generate a flamegraph at the start and end of stages 2-7 of the Jolt [DAG](../../how/architecture/architecture.md#jolt-as-a-dag) (see [`jolt_dag.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/zkvm/dag/jolt_dag.rs)).
 
 To generate allocative output, run:
 

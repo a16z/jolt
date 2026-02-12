@@ -85,8 +85,8 @@ pub struct ReadWriteMatrixAddressMajor<F: JoltField, E: AddressMajorMatrixEntry<
     pub(crate) val_init: MultilinearPolynomial<F>,
 }
 
-impl<F: JoltField, E1: CycleMajorMatrixEntry<F>, E2: AddressMajorMatrixEntry<F> + From<E1>>
-    From<ReadWriteMatrixCycleMajor<F, E1>> for ReadWriteMatrixAddressMajor<F, E2>
+impl<F: JoltField, E1: CycleMajorMatrixEntry<F>> From<ReadWriteMatrixCycleMajor<F, E1>>
+    for ReadWriteMatrixAddressMajor<F, E1::AddressMajor>
 {
     fn from(mut cycle_major: ReadWriteMatrixCycleMajor<F, E1>) -> Self {
         let mut entries = std::mem::take(&mut cycle_major.entries);
@@ -96,7 +96,15 @@ impl<F: JoltField, E1: CycleMajorMatrixEntry<F>, E2: AddressMajorMatrixEntry<F> 
             Ordering::Greater => Ordering::Greater,
             Ordering::Equal => a.row().cmp(&b.row()),
         });
-        let entries = entries.into_par_iter().map(|entry| entry.into()).collect();
+        let entries = entries
+            .into_par_iter()
+            .map(|entry| {
+                entry.to_address_major(
+                    cycle_major.ra_lookup_table.as_ref(),
+                    cycle_major.wa_lookup_table.as_ref(),
+                )
+            })
+            .collect();
         ReadWriteMatrixAddressMajor { entries, val_init }
     }
 }

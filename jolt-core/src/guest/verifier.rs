@@ -43,7 +43,7 @@ pub fn verify<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Trans
         max_input_size: memory_layout.max_input_size,
         max_output_size: memory_layout.max_output_size,
         stack_size: memory_layout.stack_size,
-        memory_size: memory_layout.memory_size,
+        heap_size: memory_layout.heap_size,
         program_size: Some(memory_layout.program_size),
     };
     let mut io_device = JoltDevice::new(&memory_config);

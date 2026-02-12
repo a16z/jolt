@@ -102,7 +102,10 @@ impl RISCVTrace for AMOSWAPW {
                 let v_rd = allocator.allocate();
                 let mut asm =
                     InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-                asm.emit_halign::<super::virtual_assert_word_alignment::VirtualAssertWordAlignment>(self.operands.rs1, 0);
+                asm.emit_align::<super::virtual_assert_word_alignment::VirtualAssertWordAlignment>(
+                    self.operands.rs1,
+                    0,
+                );
                 asm.emit_i::<VirtualLW>(*v_rd, self.operands.rs1, 0);
                 asm.emit_s::<VirtualSW>(self.operands.rs1, self.operands.rs2, 0);
                 asm.emit_i::<ADDI>(self.operands.rd, *v_rd, 0);
@@ -115,7 +118,7 @@ impl RISCVTrace for AMOSWAPW {
                 let v_rd = allocator.allocate();
                 let mut asm =
                     InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-                asm.emit_halign::<VirtualAssertWordAlignment>(self.operands.rs1, 0);
+                asm.emit_align::<VirtualAssertWordAlignment>(self.operands.rs1, 0);
                 // Use v_shift temporarily to hold aligned address
                 asm.emit_i::<ANDI>(*v_shift, self.operands.rs1, -8i64 as u64);
                 asm.emit_ld::<LD>(*v_dword, *v_shift, 0);

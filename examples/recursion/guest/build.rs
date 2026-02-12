@@ -20,7 +20,7 @@ fn main() {
         #[jolt::provable(
             max_input_size = 4096,
             max_output_size = 4096,
-            memory_size = 33554432,
+            heap_size = 33554432,
             stack_size = 4096,
             max_trace_length = 16777216
         )]

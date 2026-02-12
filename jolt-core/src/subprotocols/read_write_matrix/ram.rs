@@ -10,6 +10,7 @@ use crate::field::OptimizedMul;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::read_write_matrix::address_major::AddressMajorMatrixEntry;
 use crate::subprotocols::read_write_matrix::cycle_major::CycleMajorMatrixEntry;
+use crate::subprotocols::read_write_matrix::OneHotCoeffLookupTable;
 use crate::subprotocols::read_write_matrix::ReadWriteMatrixAddressMajor;
 use crate::subprotocols::read_write_matrix::ReadWriteMatrixCycleMajor;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -107,12 +108,16 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RamCycleMajorEntry<F>> {
 
         ReadWriteMatrixCycleMajor {
             entries,
+            ra_lookup_table: None,
+            wa_lookup_table: None,
             val_init: val_init.into(),
         }
     }
 }
 
 impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
+    type AddressMajor = RamAddressMajorEntry<F>;
+
     fn row(&self) -> usize {
         self.row
     }
@@ -121,7 +126,13 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
         self.col
     }
 
-    fn bind_entries(even: Option<&Self>, odd: Option<&Self>, r: F::Challenge) -> Self {
+    fn bind_entries(
+        even: Option<&Self>,
+        odd: Option<&Self>,
+        r: F::Challenge,
+        _ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+        _wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+    ) -> Self {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.row.is_even());
@@ -177,6 +188,8 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
         odd: Option<&Self>,
         inc_evals: [F; 2],
         gamma: F,
+        _ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+        _wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
     ) -> [F::Unreduced<8>; 2] {
         match (even, odd) {
             (Some(even), Some(odd)) => {
@@ -209,6 +222,21 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
                 ]
             }
             (None, None) => panic!("Both entries are None"),
+        }
+    }
+
+    fn to_address_major(
+        self,
+        _: Option<&OneHotCoeffLookupTable<F>>,
+        _: Option<&OneHotCoeffLookupTable<F>>,
+    ) -> Self::AddressMajor {
+        RamAddressMajorEntry {
+            row: self.row,
+            col: self.col,
+            prev_val: F::from_u64(self.prev_val),
+            next_val: F::from_u64(self.next_val),
+            val_coeff: self.val_coeff,
+            ra_coeff: self.ra_coeff,
         }
     }
 }
@@ -310,19 +338,6 @@ pub struct RamAddressMajorEntry<F: JoltField> {
     /// The ra coefficient for this matrix entry. Note that for RAM,
     /// ra and wa are the same polynomial.
     pub ra_coeff: F,
-}
-
-impl<F: JoltField> From<RamCycleMajorEntry<F>> for RamAddressMajorEntry<F> {
-    fn from(entry: RamCycleMajorEntry<F>) -> Self {
-        RamAddressMajorEntry {
-            row: entry.row,
-            col: entry.col,
-            prev_val: F::from_u64(entry.prev_val),
-            next_val: F::from_u64(entry.next_val),
-            val_coeff: entry.val_coeff,
-            ra_coeff: entry.ra_coeff,
-        }
-    }
 }
 
 impl<F: JoltField> AddressMajorMatrixEntry<F> for RamAddressMajorEntry<F> {

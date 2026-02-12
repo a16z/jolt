@@ -117,7 +117,7 @@ impl GuestProgram {
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 134217728,
+                        heap_size: 134217728,
                         stack_size: 33554432,
                         program_size: None,
                     }
@@ -127,7 +127,7 @@ impl GuestProgram {
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 33554432,
+                        heap_size: 33554432,
                         stack_size: 33554432,
                         program_size: None,
                     }
@@ -140,7 +140,7 @@ impl GuestProgram {
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 134217728,
+                        heap_size: 134217728,
                         stack_size: 33554432,
                         program_size: None,
                     }
@@ -150,7 +150,7 @@ impl GuestProgram {
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        memory_size: 33554432,
+                        heap_size: 33554432,
                         stack_size: 33554432,
                         program_size: None,
                     }
@@ -191,7 +191,7 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
             max_output_size = {},
             max_untrusted_advice_size = {},
             max_trusted_advice_size = {},
-            memory_size = {},
+            heap_size = {},
             stack_size = {},
             max_trace_length = {}
         )]
@@ -202,7 +202,7 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
         memory_config.max_output_size,
         memory_config.max_untrusted_advice_size,
         memory_config.max_trusted_advice_size,
-        memory_config.memory_size,
+        memory_config.heap_size,
         memory_config.stack_size,
         max_trace_length
     );
@@ -217,7 +217,7 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
         provable_macro_path.display(),
         memory_config.max_input_size,
         memory_config.max_output_size,
-        memory_config.memory_size,
+        memory_config.heap_size,
         memory_config.stack_size,
         max_trace_length
     );
@@ -273,7 +273,7 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
 
     // This should match the example being run, it can cause layout issues if the guest's macro and our assumption here differ
     let memory_config = MemoryConfig {
-        memory_size: 32768u64,
+        heap_size: 32768u64,
         ..Default::default()
     };
 

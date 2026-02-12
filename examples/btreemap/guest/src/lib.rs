@@ -2,8 +2,6 @@
 
 extern crate alloc;
 
-use core::option::Option::None;
-
 /// Fast hash function implementation using wyhash64 algorithm.
 ///
 /// This function provides a high-quality, fast hash suitable for hashmap operations.
@@ -17,7 +15,7 @@ fn wyhash64(mut x: u64) -> u64 {
     x
 }
 
-#[jolt::provable(stack_size = 10000, memory_size = 10000000)]
+#[jolt::provable(stack_size = 10000, heap_size = 10000000)]
 pub fn btreemap(n: u32) -> u128 {
     use alloc::collections::BTreeMap;
 

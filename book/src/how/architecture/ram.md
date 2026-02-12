@@ -8,7 +8,7 @@ In Twist, the parameter $K$ determines the size of the memory. For RAM, unlike r
 Consequently, the parameter $d$, dictating how the memory address space is partitioned into chunks, must also be dynamically tuned.
 This ensures that no committed polynomial exceeds a maximum size defined by $T \times K^{1/d}$.
 
-Jolt is currently configured so that $K^{1/d} = 2^8$.
+Jolt is currently configured so that $K^{1/d} = 2^4$ if $T < 2^{25}$ and $K^{1/d} = 2^8$ otherwise. Using smaller $K^{1/d}$ gives better prover performance for shorter trace lengths.
 
 ## Address remapping
 
