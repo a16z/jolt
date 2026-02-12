@@ -70,8 +70,8 @@ impl RISCVTrace for AMOMIND {
     /// 1. Load the current value from memory into v0
     /// 2. v1 = (rs2 < v0 ? 1 : 0)
     /// 3. v0 + (rs2 - v0) * v1
-    ///    - If v0 < rs2, then v1 = 1, and the result is v0 + (rs2 - v0) * 1 = rs2
-    ///    - If v0 >= rs2, then v1 = 0, and the result is v0 + (rs2 - v0) * 0 = v0
+    ///    - If rs2 < v0, then v1 = 1, and the result is v0 + (rs2 - v0) * 1 = rs2
+    ///    - If rs2 >= v0, then v1 = 0, and the result is v0 + (rs2 - v0) * 0 = v0
     /// 4. Store the minimum back to memory
     /// 5. Return the original value in rd
     ///
