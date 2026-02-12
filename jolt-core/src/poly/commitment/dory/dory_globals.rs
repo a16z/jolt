@@ -156,7 +156,12 @@ static BLINDFOLD_E_T: RwLock<Option<usize>> = RwLock::new(None);
 static BLINDFOLD_E_MAX_NUM_ROWS: RwLock<Option<usize>> = RwLock::new(None);
 static BLINDFOLD_E_NUM_COLUMNS: RwLock<Option<usize>> = RwLock::new(None);
 
-// Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice, 3=BlindFoldE
+// BlindFold W (non-coefficient witness) polynomial globals
+static BLINDFOLD_W_T: RwLock<Option<usize>> = RwLock::new(None);
+static BLINDFOLD_W_MAX_NUM_ROWS: RwLock<Option<usize>> = RwLock::new(None);
+static BLINDFOLD_W_NUM_COLUMNS: RwLock<Option<usize>> = RwLock::new(None);
+
+// Context tracking: 0=Main, 1=TrustedAdvice, 2=UntrustedAdvice, 3=BlindFoldE, 4=BlindFoldW
 static CURRENT_CONTEXT: AtomicU8 = AtomicU8::new(0);
 
 // Layout tracking: 0=CycleMajor, 1=AddressMajor
@@ -169,6 +174,7 @@ pub enum DoryContext {
     TrustedAdvice = 1,
     UntrustedAdvice = 2,
     BlindFoldE = 3,
+    BlindFoldW = 4,
 }
 
 impl From<u8> for DoryContext {
@@ -178,6 +184,7 @@ impl From<u8> for DoryContext {
             1 => DoryContext::TrustedAdvice,
             2 => DoryContext::UntrustedAdvice,
             3 => DoryContext::BlindFoldE,
+            4 => DoryContext::BlindFoldW,
             _ => panic!("Invalid DoryContext value: {value}"),
         }
     }
@@ -313,6 +320,9 @@ impl DoryGlobals {
             DoryContext::BlindFoldE => {
                 *BLINDFOLD_E_MAX_NUM_ROWS.write().unwrap() = Some(max_num_rows);
             }
+            DoryContext::BlindFoldW => {
+                *BLINDFOLD_W_MAX_NUM_ROWS.write().unwrap() = Some(max_num_rows);
+            }
         }
     }
 
@@ -335,6 +345,10 @@ impl DoryGlobals {
                 .read()
                 .unwrap()
                 .expect("blindfold_e max_num_rows not initialized"),
+            DoryContext::BlindFoldW => BLINDFOLD_W_MAX_NUM_ROWS
+                .read()
+                .unwrap()
+                .expect("blindfold_w max_num_rows not initialized"),
         }
     }
 
@@ -351,6 +365,9 @@ impl DoryGlobals {
             }
             DoryContext::BlindFoldE => {
                 *BLINDFOLD_E_NUM_COLUMNS.write().unwrap() = Some(num_columns);
+            }
+            DoryContext::BlindFoldW => {
+                *BLINDFOLD_W_NUM_COLUMNS.write().unwrap() = Some(num_columns);
             }
         }
     }
@@ -374,6 +391,10 @@ impl DoryGlobals {
                 .read()
                 .unwrap()
                 .expect("blindfold_e num_columns not initialized"),
+            DoryContext::BlindFoldW => BLINDFOLD_W_NUM_COLUMNS
+                .read()
+                .unwrap()
+                .expect("blindfold_w num_columns not initialized"),
         }
     }
 
@@ -390,6 +411,9 @@ impl DoryGlobals {
             }
             DoryContext::BlindFoldE => {
                 *BLINDFOLD_E_T.write().unwrap() = Some(t);
+            }
+            DoryContext::BlindFoldW => {
+                *BLINDFOLD_W_T.write().unwrap() = Some(t);
             }
         }
     }
@@ -410,6 +434,10 @@ impl DoryGlobals {
                 .read()
                 .unwrap()
                 .expect("blindfold_e t not initialized"),
+            DoryContext::BlindFoldW => BLINDFOLD_W_T
+                .read()
+                .unwrap()
+                .expect("blindfold_w t not initialized"),
         }
     }
 
@@ -490,6 +518,10 @@ impl DoryGlobals {
         *BLINDFOLD_E_T.write().unwrap() = None;
         *BLINDFOLD_E_MAX_NUM_ROWS.write().unwrap() = None;
         *BLINDFOLD_E_NUM_COLUMNS.write().unwrap() = None;
+
+        *BLINDFOLD_W_T.write().unwrap() = None;
+        *BLINDFOLD_W_MAX_NUM_ROWS.write().unwrap() = None;
+        *BLINDFOLD_W_NUM_COLUMNS.write().unwrap() = None;
 
         CURRENT_CONTEXT.store(0, Ordering::SeqCst);
     }

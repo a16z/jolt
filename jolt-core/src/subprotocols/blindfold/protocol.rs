@@ -4,16 +4,18 @@
 //! 1. Encoding verifier checks into a small R1CS
 //! 2. Using Nova folding to hide the witness
 //! 3. Using Spartan sumcheck to prove R1CS satisfaction without revealing the witness
+//! 4. Inner sumcheck + Pedersen/Dory decomposition to verify the final Spartan claim
 //!
 //! Protocol flow:
 //! 1. Prover has real instance-witness pair (u=1, E=0)
 //! 2. Prover samples random satisfying pair
 //! 3. Prover commits to cross-term T
 //! 4. Verifier sends challenge r (via Fiat-Shamir)
-//! 5. Both parties fold instances
-//! 6. Prover folds witnesses (private)
-//! 7. Prover runs Spartan sumcheck on folded R1CS
-//! 8. Verifier verifies sumcheck, defers opening proofs to joint verification
+//! 5. Both parties fold instances; prover folds witnesses
+//! 6. Prover commits E and W_dory via Dory
+//! 7. Outer Spartan sumcheck → rx, outer_claim
+//! 8. Inner sumcheck reduces matrix claims to point evaluation of W
+//! 9. Pedersen + Dory openings verify W(ry_w) decomposition
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
@@ -41,15 +43,11 @@ pub struct FinalOutputInfo {
     pub num_variables: usize,
 }
 
-/// BlindFold proof containing only the data needed for verification.
+/// BlindFold proof containing the data needed for verification.
 ///
-/// Minimal proof structure - instances are NOT included because:
-/// - real_instance: verifier reconstructs from round_commitments (main proof),
-///   eval_commitments (opening proof), and public_inputs (transcript)
+/// Instances are NOT included because:
+/// - real_instance: verifier reconstructs from round_commitments, eval_commitments, public_inputs
 /// - random_instance: verifier derives deterministically from transcript
-///
-/// The witness is never revealed. A Spartan sumcheck proves that the
-/// folded R1CS is satisfied. Opening proofs are deferred to joint verification.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BlindFoldProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>> {
     pub witness_commitment: C::G1,
@@ -59,6 +57,15 @@ pub struct BlindFoldProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Fiel
     pub e_commitment: PCS::Commitment,
     pub e_claim: F,
     pub e_opening_proof: PCS::Proof,
+    pub az_r: F,
+    pub bz_r: F,
+    pub cz_r: F,
+    pub inner_sumcheck_proof: Vec<CompressedUniPoly<F>>,
+    pub round_coefficients_folded: Vec<Vec<F>>,
+    pub round_blindings_folded: Vec<F>,
+    pub w_dory_commitment: PCS::Commitment,
+    pub w_dory_claim: F,
+    pub w_dory_opening_proof: PCS::Proof,
 }
 
 /// BlindFold prover.
@@ -86,17 +93,6 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         }
     }
 
-    /// Generate a BlindFold proof.
-    ///
-    /// The prover must provide:
-    /// - `real_instance`: The real R1CS instance (with commitments)
-    /// - `real_witness`: The real witness satisfying the R1CS
-    /// - `real_z`: The full Z vector for the real instance
-    /// - `transcript`: For Fiat-Shamir challenge generation
-    ///
-    /// Randomness is derived from transcript, making the protocol deterministic
-    /// given the same transcript state. This allows the verifier to reconstruct
-    /// the random instance without it being in the proof.
     pub fn prove<T: Transcript>(
         &self,
         real_instance: &RelaxedR1CSInstance<F, C>,
@@ -104,21 +100,21 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         real_z: &[F],
         transcript: &mut T,
     ) -> BlindFoldProof<F, C, PCS> {
-        use super::spartan::BlindFoldSpartanProver;
+        use super::spartan::{
+            coefficient_positions, BlindFoldInnerSumcheckProver, BlindFoldSpartanProver,
+        };
         use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
         use crate::poly::dense_mlpoly::DensePolynomial;
-        use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+        use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
         use crate::utils::math::Math;
         use rand_chacha::ChaCha20Rng;
         use rand_core::SeedableRng;
 
-        // Step 1: Bind real_instance to transcript FIRST (before deriving randomness)
-        // SECURITY: This prevents adaptive attacks on the random instance
+        // Step 1: Bind real_instance to transcript
         transcript.raw_append_label(b"BlindFold_real_instance");
         append_instance_to_transcript(real_instance, transcript);
 
         // Step 2: Sample random satisfying pair deterministically from transcript
-        // The verifier will derive the same random instance using the same procedure
         let (random_instance, random_witness, random_z) =
             sample_random_satisfying_pair_deterministic(
                 self.gens,
@@ -136,7 +132,7 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
             random_instance.u,
         );
 
-        // Step 4: Commit to cross-term (derive blinding from transcript)
+        // Step 4: Commit to cross-term
         transcript.raw_append_label(b"BlindFold_cross_term_blinding");
         let seed_a = transcript.challenge_u128();
         let seed_b = transcript.challenge_u128();
@@ -161,33 +157,84 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         // Step 8: Fold witnesses (private)
         let folded_witness = real_witness.fold(&random_witness, &T, r_T, r_field);
 
+        // Destructure folded witness
+        let folded_E = folded_witness.E;
+        let folded_W = folded_witness.W;
+        let round_coefficients_folded = folded_witness.round_coefficients;
+        let round_blindings_folded = folded_witness.round_blindings;
+
         // Build folded Z vector: [u, x..., W...]
         let mut folded_z = Vec::with_capacity(self.r1cs.num_vars);
         folded_z.push(folded_instance.u);
         folded_z.extend_from_slice(&folded_instance.x);
-        folded_z.extend_from_slice(&folded_witness.W);
+        folded_z.extend_from_slice(&folded_W);
 
-        // Step 9: Run Spartan sumcheck
+        // --- Commit E and W_dory before outer sumcheck (bound to transcript) ---
+
+        let padded_e_len = self.r1cs.num_constraints.next_power_of_two();
+        let mut e_padded = folded_E.clone();
+        e_padded.resize(padded_e_len, F::zero());
+
+        DoryGlobals::initialize_context(1, padded_e_len, DoryContext::BlindFoldE, None);
+        let e_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(e_padded));
+        let (e_commitment, e_hint) = {
+            let _guard = DoryGlobals::with_context(DoryContext::BlindFoldE);
+            PCS::commit(&e_poly, self.pcs_setup)
+        };
+
+        let witness_len = folded_W.len();
+        let w_padded_len = witness_len.next_power_of_two();
+        let coeff_positions = coefficient_positions(self.r1cs);
+
+        let mut w_padded = folded_W;
+        w_padded.resize(w_padded_len, F::zero());
+
+        // W_dory: zero at coefficient positions, actual witness elsewhere
+        let mut w_dory_vals = w_padded.clone();
+        for &(start, num_coeffs) in &coeff_positions {
+            for k in 0..num_coeffs {
+                if start + k < w_padded_len {
+                    w_dory_vals[start + k] = F::zero();
+                }
+            }
+        }
+
+        DoryGlobals::initialize_context(1, w_padded_len, DoryContext::BlindFoldW, None);
+        let w_dory_poly =
+            MultilinearPolynomial::LargeScalars(DensePolynomial::new(w_dory_vals.clone()));
+        let (w_dory_commitment, w_dory_hint) = {
+            let _guard = DoryGlobals::with_context(DoryContext::BlindFoldW);
+            PCS::commit(&w_dory_poly, self.pcs_setup)
+        };
+
+        // Append commitments to transcript before tau generation
+        let mut e_commitment_bytes = Vec::new();
+        e_commitment
+            .serialize_compressed(&mut e_commitment_bytes)
+            .expect("Serialization should not fail");
+        transcript.append_bytes(b"blindfold_e_commitment", &e_commitment_bytes);
+
+        let mut w_dory_commitment_bytes = Vec::new();
+        w_dory_commitment
+            .serialize_compressed(&mut w_dory_commitment_bytes)
+            .expect("Serialization should not fail");
+        transcript.append_bytes(b"blindfold_w_dory_com", &w_dory_commitment_bytes);
+
+        // --- Outer Spartan sumcheck ---
+
         transcript.raw_append_label(b"BlindFold_spartan");
         let num_vars = self.r1cs.num_constraints.next_power_of_two().log_2();
         let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
 
-        let mut spartan_prover = BlindFoldSpartanProver::new(
-            self.r1cs,
-            folded_instance.u,
-            folded_z,
-            folded_witness.E.clone(),
-            tau,
-        );
+        let mut spartan_prover =
+            BlindFoldSpartanProver::new(self.r1cs, folded_instance.u, folded_z, folded_E, tau);
 
-        // Run sumcheck rounds
         let mut spartan_proof = Vec::with_capacity(num_vars);
         let mut spartan_challenges: Vec<F::Challenge> = Vec::with_capacity(num_vars);
-        let mut claim = F::zero(); // Spartan starts at 0
+        let mut claim = F::zero();
 
         for _ in 0..num_vars {
             let poly = spartan_prover.compute_round_polynomial(claim);
-
             let compressed = poly.compress();
             transcript.append_scalars(b"sumcheck_poly", &compressed.coeffs_except_linear_term);
             spartan_proof.push(compressed);
@@ -200,30 +247,80 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
 
         let final_claims = spartan_prover.final_claims();
         let e_claim = final_claims.e_r;
+        let az_r = final_claims.az_r;
+        let bz_r = final_claims.bz_r;
+        let cz_r = final_claims.cz_r;
 
-        // Commit E polynomial using Dory
-        let padded_len = self.r1cs.num_constraints.next_power_of_two();
-        let mut e_padded = folded_witness.E;
-        e_padded.resize(padded_len, F::zero());
+        // --- Inner sumcheck ---
 
-        DoryGlobals::initialize_context(1, padded_len, DoryContext::BlindFoldE, None);
-        let _guard = DoryGlobals::with_context(DoryContext::BlindFoldE);
+        transcript.append_scalars(b"blindfold_az_bz_cz", &[az_r, bz_r, cz_r]);
 
-        let e_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(e_padded));
-        let (e_commitment, e_hint) = PCS::commit(&e_poly, self.pcs_setup);
-        let mut e_commitment_bytes = Vec::new();
-        e_commitment
-            .serialize_compressed(&mut e_commitment_bytes)
-            .expect("Serialization should not fail");
-        transcript.append_bytes(b"blindfold_e_padded", &e_commitment_bytes);
+        let ra: F = transcript.challenge_scalar_optimized::<F>().into();
+        let rb: F = transcript.challenge_scalar_optimized::<F>().into();
+        let rc: F = transcript.challenge_scalar_optimized::<F>().into();
 
-        let (e_opening_proof, _) = PCS::prove(
-            self.pcs_setup,
-            &e_poly,
-            &spartan_challenges,
-            Some(e_hint),
-            transcript,
-        );
+        let mut inner_prover =
+            BlindFoldInnerSumcheckProver::new(self.r1cs, &spartan_challenges, w_padded, ra, rb, rc);
+
+        let inner_num_vars = inner_prover.num_vars();
+        let mut inner_proof = Vec::with_capacity(inner_num_vars);
+        let mut inner_challenges: Vec<F::Challenge> = Vec::with_capacity(inner_num_vars);
+
+        let (w_az, w_bz, w_cz) = spartan_prover.witness_contributions(&spartan_challenges);
+        let mut inner_claim = ra * w_az + rb * w_bz + rc * w_cz;
+
+        for _ in 0..inner_num_vars {
+            let poly = inner_prover.compute_round_polynomial();
+            debug_assert_eq!(
+                poly.coeffs[0] + poly.coeffs.iter().sum::<F>(),
+                inner_claim,
+                "Inner sumcheck round polynomial p(0)+p(1) != claim"
+            );
+
+            let compressed = poly.compress();
+            transcript.append_scalars(
+                b"inner_sumcheck_poly",
+                &compressed.coeffs_except_linear_term,
+            );
+            inner_proof.push(compressed);
+
+            let r_j = transcript.challenge_scalar_optimized::<F>();
+            inner_claim = poly.evaluate(&r_j);
+            inner_prover.bind_challenge(r_j);
+            inner_challenges.push(r_j);
+        }
+
+        // --- Opening proofs ---
+
+        // E opening at outer sumcheck point
+        let (e_opening_proof, _) = {
+            let _guard = DoryGlobals::with_context(DoryContext::BlindFoldE);
+            PCS::prove(
+                self.pcs_setup,
+                &e_poly,
+                &spartan_challenges,
+                Some(e_hint),
+                transcript,
+            )
+        };
+
+        // W_dory: evaluate at inner sumcheck point, then prove
+        let mut w_dory_eval = DensePolynomial::new(w_dory_vals);
+        for &c in &inner_challenges {
+            w_dory_eval.bind_parallel(c, BindingOrder::HighToLow);
+        }
+        let w_dory_claim: F = w_dory_eval[0];
+
+        let (w_dory_opening_proof, _) = {
+            let _guard = DoryGlobals::with_context(DoryContext::BlindFoldW);
+            PCS::prove(
+                self.pcs_setup,
+                &w_dory_poly,
+                &inner_challenges,
+                Some(w_dory_hint),
+                transcript,
+            )
+        };
 
         // Collect final_output info for verifier
         let final_output_info: Vec<FinalOutputInfo> = self
@@ -261,6 +358,15 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
             e_commitment,
             e_claim,
             e_opening_proof,
+            az_r,
+            bz_r,
+            cz_r,
+            inner_sumcheck_proof: inner_proof,
+            round_coefficients_folded,
+            round_blindings_folded,
+            w_dory_commitment,
+            w_dory_claim,
+            w_dory_opening_proof,
         }
     }
 }
@@ -279,7 +385,6 @@ fn estimate_aux_var_count(constraint: &super::OutputClaimConstraint) -> usize {
 
 /// BlindFold verifier.
 pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>> {
-    #[allow(dead_code)]
     gens: &'a PedersenGenerators<C>,
     r1cs: &'a VerifierR1CS<F>,
     #[allow(dead_code)]
@@ -287,21 +392,23 @@ pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve, PCS: CommitmentSche
     pcs_setup: &'a PCS::VerifierSetup,
 }
 
-/// Error type for BlindFold verification.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BlindFoldVerifyError {
     SpartanSumcheckFailed(usize),
     WrongSpartanProofLength { expected: usize, got: usize },
     EOpeningFailed,
+    OuterClaimMismatch,
+    WrongInnerSumcheckLength { expected: usize, got: usize },
+    InnerSumcheckFailed(usize),
+    PedersenCommitmentMismatch(usize),
+    WDoryOpeningFailed,
+    FinalClaimMismatch,
 }
 
 /// Data needed by verifier to reconstruct the real instance.
 pub struct BlindFoldVerifierInput<F: JoltField, C: JoltCurve> {
-    /// Public inputs (challenges, initial claims derived from main proof)
     pub public_inputs: Vec<F>,
-    /// Round commitments from the main sumcheck proofs
     pub round_commitments: Vec<C::G1>,
-    /// Evaluation commitments from the joint opening proof
     pub eval_commitments: Vec<C::G1>,
 }
 
@@ -322,30 +429,19 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         }
     }
 
-    /// Verify a BlindFold proof.
-    ///
-    /// The verifier:
-    /// 1. Reconstructs the real instance from inputs
-    /// 2. Derives the random instance deterministically from transcript
-    /// 3. Computes the folded instance
-    /// 4. Verifies the Spartan sumcheck
-    /// 5. Defers opening proofs to joint verification
-    ///
-    /// The `input` contains data from the main proof that the verifier already has:
-    /// - public_inputs: derived from transcript challenges and initial claims
-    /// - round_commitments: from the main sumcheck proofs
-    /// - eval_commitments: from the joint opening proof
     pub fn verify<T: Transcript>(
         &self,
         proof: &BlindFoldProof<F, C, PCS>,
         input: &BlindFoldVerifierInput<F, C>,
         transcript: &mut T,
     ) -> Result<(), BlindFoldVerifyError> {
+        use super::spartan::{
+            coefficient_positions, compute_L_w_at_ry, compute_W_ped_at_ry, BlindFoldSpartanVerifier,
+        };
         use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
         use crate::utils::math::Math;
 
-        // Step 1: Reconstruct the real instance from inputs
-        // Real instance is non-relaxed: u = 1, E_bar = 0
+        // Step 1: Reconstruct the real instance (non-relaxed: u=1, E_bar=0)
         let real_instance = RelaxedR1CSInstance {
             E_bar: C::G1::zero(),
             u: F::one(),
@@ -360,7 +456,6 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         append_instance_to_transcript(&real_instance, transcript);
 
         // Step 3: Derive random instance deterministically from transcript
-        // This must match the prover's derivation exactly
         let random_instance = sample_random_instance_deterministic(
             self.gens,
             self.r1cs,
@@ -368,8 +463,7 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
             transcript,
         );
 
-        // Step 4: Derive cross-term blinding (same as prover, for transcript consistency)
-        // We don't need the actual blinding, just need to advance transcript state
+        // Step 4: Advance transcript for cross-term blinding
         transcript.raw_append_label(b"BlindFold_cross_term_blinding");
         let _ = transcript.challenge_u128();
         let _ = transcript.challenge_u128();
@@ -378,7 +472,7 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         transcript.raw_append_label(b"BlindFold_cross_term");
         append_g1_to_transcript::<C>(&proof.cross_term_commitment, transcript);
 
-        // Step 6: Get folding challenge via Fiat-Shamir
+        // Step 6: Get folding challenge
         let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let r_field: F = r.into();
 
@@ -386,11 +480,27 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
         let folded_instance =
             real_instance.fold(&random_instance, &proof.cross_term_commitment, r_field);
 
-        // Step 8: Verify Spartan sumcheck
+        // --- Absorb commitments (must match prover order) ---
+
+        let mut e_commitment_bytes = Vec::new();
+        proof
+            .e_commitment
+            .serialize_compressed(&mut e_commitment_bytes)
+            .expect("Serialization should not fail");
+        transcript.append_bytes(b"blindfold_e_commitment", &e_commitment_bytes);
+
+        let mut w_dory_commitment_bytes = Vec::new();
+        proof
+            .w_dory_commitment
+            .serialize_compressed(&mut w_dory_commitment_bytes)
+            .expect("Serialization should not fail");
+        transcript.append_bytes(b"blindfold_w_dory_com", &w_dory_commitment_bytes);
+
+        // --- Outer Spartan sumcheck ---
+
         transcript.raw_append_label(b"BlindFold_spartan");
         let num_vars = self.r1cs.num_constraints.next_power_of_two().log_2();
 
-        // Check proof length
         if proof.spartan_proof.len() != num_vars {
             return Err(BlindFoldVerifyError::WrongSpartanProofLength {
                 expected: num_vars,
@@ -398,16 +508,15 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
             });
         }
 
-        // Generate tau and verify sumcheck rounds
-        let _tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
-        let mut claim = F::zero(); // Spartan starts at 0
+        let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
+        let mut claim = F::zero();
         let mut challenges: Vec<F::Challenge> = Vec::with_capacity(num_vars);
 
         for (round, compressed_poly) in proof.spartan_proof.iter().enumerate() {
             transcript.append_scalars(b"sumcheck_poly", &compressed_poly.coeffs_except_linear_term);
 
             let poly = compressed_poly.decompress(&claim);
-            let sum = poly.coeffs[0] + poly.coeffs.iter().sum::<F>(); // p(0) + p(1)
+            let sum = poly.coeffs[0] + poly.coeffs.iter().sum::<F>();
             if sum != claim {
                 return Err(BlindFoldVerifyError::SpartanSumcheckFailed(round));
             }
@@ -417,35 +526,144 @@ impl<'a, F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
             claim = poly.evaluate(&r_j);
         }
 
-        // Verify E polynomial opening
-        let padded_len = self.r1cs.num_constraints.next_power_of_two();
-        DoryGlobals::initialize_context(1, padded_len, DoryContext::BlindFoldE, None);
-        let _guard = DoryGlobals::with_context(DoryContext::BlindFoldE);
+        // --- Outer claim check ---
 
-        let mut e_commitment_bytes = Vec::new();
-        proof
-            .e_commitment
-            .serialize_compressed(&mut e_commitment_bytes)
-            .expect("Serialization should not fail");
-        transcript.append_bytes(b"blindfold_e_padded", &e_commitment_bytes);
+        let az_r = proof.az_r;
+        let bz_r = proof.bz_r;
+        let cz_r = proof.cz_r;
 
-        PCS::verify(
-            &proof.e_opening_proof,
-            self.pcs_setup,
-            transcript,
-            &challenges,
-            &proof.e_claim,
-            &proof.e_commitment,
-        )
-        .map_err(|_| BlindFoldVerifyError::EOpeningFailed)?;
+        transcript.append_scalars(b"blindfold_az_bz_cz", &[az_r, bz_r, cz_r]);
 
-        let _ = folded_instance; // Will be used for opening verification
+        let spartan_verifier = BlindFoldSpartanVerifier::new(
+            self.r1cs,
+            tau,
+            folded_instance.u,
+            folded_instance.x.clone(),
+        );
+
+        let eq_tau_r = spartan_verifier.eq_tau_at_r(&challenges);
+        let expected_outer = eq_tau_r * (az_r * bz_r - folded_instance.u * cz_r - proof.e_claim);
+        if claim != expected_outer {
+            return Err(BlindFoldVerifyError::OuterClaimMismatch);
+        }
+
+        // --- Inner sumcheck ---
+
+        let ra: F = transcript.challenge_scalar_optimized::<F>().into();
+        let rb: F = transcript.challenge_scalar_optimized::<F>().into();
+        let rc: F = transcript.challenge_scalar_optimized::<F>().into();
+
+        let (pub_az, pub_bz, pub_cz) = spartan_verifier.public_contributions(&challenges);
+        let mut inner_claim = ra * (az_r - pub_az) + rb * (bz_r - pub_bz) + rc * (cz_r - pub_cz);
+
+        let witness_len = self
+            .r1cs
+            .num_vars
+            .saturating_sub(1 + self.r1cs.num_public_inputs);
+        let w_padded_len = witness_len.next_power_of_two();
+        let inner_num_vars = w_padded_len.log_2();
+
+        if proof.inner_sumcheck_proof.len() != inner_num_vars {
+            return Err(BlindFoldVerifyError::WrongInnerSumcheckLength {
+                expected: inner_num_vars,
+                got: proof.inner_sumcheck_proof.len(),
+            });
+        }
+
+        let mut inner_challenges: Vec<F::Challenge> = Vec::with_capacity(inner_num_vars);
+
+        for (round, compressed_poly) in proof.inner_sumcheck_proof.iter().enumerate() {
+            transcript.append_scalars(
+                b"inner_sumcheck_poly",
+                &compressed_poly.coeffs_except_linear_term,
+            );
+
+            let poly = compressed_poly.decompress(&inner_claim);
+            let sum = poly.coeffs[0] + poly.coeffs.iter().sum::<F>();
+            if sum != inner_claim {
+                return Err(BlindFoldVerifyError::InnerSumcheckFailed(round));
+            }
+
+            let r_j = transcript.challenge_scalar_optimized::<F>();
+            inner_challenges.push(r_j);
+            inner_claim = poly.evaluate(&r_j);
+        }
+
+        // inner_claim is now the final evaluation claim
+
+        // --- E opening proof ---
+
+        let padded_e_len = self.r1cs.num_constraints.next_power_of_two();
+        DoryGlobals::initialize_context(1, padded_e_len, DoryContext::BlindFoldE, None);
+        {
+            let _guard = DoryGlobals::with_context(DoryContext::BlindFoldE);
+            PCS::verify(
+                &proof.e_opening_proof,
+                self.pcs_setup,
+                transcript,
+                &challenges,
+                &proof.e_claim,
+                &proof.e_commitment,
+            )
+            .map_err(|_| BlindFoldVerifyError::EOpeningFailed)?;
+        }
+
+        // --- W_dory opening proof ---
+
+        DoryGlobals::initialize_context(1, w_padded_len, DoryContext::BlindFoldW, None);
+        {
+            let _guard = DoryGlobals::with_context(DoryContext::BlindFoldW);
+            PCS::verify(
+                &proof.w_dory_opening_proof,
+                self.pcs_setup,
+                transcript,
+                &inner_challenges,
+                &proof.w_dory_claim,
+                &proof.w_dory_commitment,
+            )
+            .map_err(|_| BlindFoldVerifyError::WDoryOpeningFailed)?;
+        }
+
+        // --- Pedersen verification ---
+
+        let coeff_positions = coefficient_positions(self.r1cs);
+        let num_rounds: usize = self.r1cs.stage_configs.iter().map(|s| s.num_rounds).sum();
+
+        if proof.round_coefficients_folded.len() != num_rounds
+            || proof.round_blindings_folded.len() != num_rounds
+        {
+            return Err(BlindFoldVerifyError::PedersenCommitmentMismatch(0));
+        }
+
+        for i in 0..num_rounds {
+            let expected = self.gens.commit(
+                &proof.round_coefficients_folded[i],
+                &proof.round_blindings_folded[i],
+            );
+            if expected != folded_instance.round_commitments[i] {
+                return Err(BlindFoldVerifyError::PedersenCommitmentMismatch(i));
+            }
+        }
+
+        // --- Final claim verification ---
+
+        let w_ped_at_ry = compute_W_ped_at_ry(
+            &proof.round_coefficients_folded,
+            &coeff_positions,
+            &inner_challenges,
+        );
+
+        let l_w_at_ry = compute_L_w_at_ry(self.r1cs, &challenges, &inner_challenges, ra, rb, rc);
+
+        let expected_inner_final = l_w_at_ry * (w_ped_at_ry + proof.w_dory_claim);
+        if inner_claim != expected_inner_final {
+            return Err(BlindFoldVerifyError::FinalClaimMismatch);
+        }
 
         Ok(())
     }
 }
 
-/// Append a group element to the transcript.
 fn append_g1_to_transcript<C: JoltCurve>(g: &C::G1, transcript: &mut impl Transcript) {
     let mut bytes = Vec::new();
     g.serialize_compressed(&mut bytes)
@@ -453,7 +671,6 @@ fn append_g1_to_transcript<C: JoltCurve>(g: &C::G1, transcript: &mut impl Transc
     transcript.append_bytes(b"blindfold_g1", &bytes);
 }
 
-/// Append an instance to the transcript (for Fiat-Shamir).
 fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
     instance: &RelaxedR1CSInstance<F, C>,
     transcript: &mut impl Transcript,
@@ -475,12 +692,10 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
         transcript.append_bytes(b"blindfold_x", &x_bytes);
     }
 
-    // Include round commitments in Fiat-Shamir
     for commitment in &instance.round_commitments {
         append_g1_to_transcript::<C>(commitment, transcript);
     }
 
-    // Include evaluation commitments in Fiat-Shamir
     for commitment in &instance.eval_commitments {
         append_g1_to_transcript::<C>(commitment, transcript);
     }
@@ -521,43 +736,32 @@ mod tests {
         (commitments, coeffs, blindings)
     }
 
-    #[test]
-    fn test_blindfold_protocol_completeness() {
-        let mut rng = thread_rng();
+    fn make_test_instance(
+        configs: &[StageConfig],
+        blindfold_witness: &BlindFoldWitness<Fr>,
+        z: &[Fr],
+    ) -> (
+        RelaxedR1CSInstance<Fr, Bn254Curve>,
+        RelaxedR1CSWitness<Fr>,
+        VerifierR1CS<Fr>,
+        PedersenGenerators<Bn254Curve>,
+    ) {
         type F = Fr;
+        let mut rng = thread_rng();
 
-        // Create R1CS
-        let configs = [StageConfig::new(1, 3)];
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let builder = VerifierR1CSBuilder::<F>::new(configs);
         let r1cs = builder.build();
-
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 100);
 
-        // Create a valid witness
-        let round = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
-        let blindfold_witness =
-            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
-        let z = blindfold_witness.assign(&r1cs);
+        assert!(r1cs.is_satisfied(z));
 
-        // Verify standard R1CS is satisfied
-        assert!(r1cs.is_satisfied(&z));
-
-        // Extract components for relaxed R1CS
         let witness_start = 1 + r1cs.num_public_inputs;
         let witness: Vec<F> = z[witness_start..].to_vec();
         let public_inputs: Vec<F> = z[1..witness_start].to_vec();
 
         let (round_commitments, round_coefficients, round_blindings) =
             round_commitment_data(&gens, &blindfold_witness.stages, &mut rng);
-        // Create non-relaxed instance and witness
+
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
             &gens,
             &witness,
@@ -570,42 +774,41 @@ mod tests {
             &mut rng,
         );
 
+        (real_instance, real_witness, r1cs, gens)
+    }
+
+    fn prove_and_verify(
+        r1cs: &VerifierR1CS<Fr>,
+        gens: &PedersenGenerators<Bn254Curve>,
+        real_instance: &RelaxedR1CSInstance<Fr, Bn254Curve>,
+        real_witness: &RelaxedR1CSWitness<Fr>,
+        z: &[Fr],
+        label: &'static [u8],
+    ) -> Result<(), BlindFoldVerifyError> {
         let pcs_prover_setup = ();
         let pcs_verifier_setup = ();
-        let prover = BlindFoldProver::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_prover_setup);
+        let prover = BlindFoldProver::<_, _, TestPCS>::new(gens, r1cs, None, &pcs_prover_setup);
         let verifier =
-            BlindFoldVerifier::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_verifier_setup);
+            BlindFoldVerifier::<_, _, TestPCS>::new(gens, r1cs, None, &pcs_verifier_setup);
 
-        // Generate proof
-        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+        let mut prover_transcript = KeccakTranscript::new(label);
+        let proof = prover.prove(real_instance, real_witness, z, &mut prover_transcript);
 
-        // Create verifier input from real_instance data
         let verifier_input = BlindFoldVerifierInput {
             public_inputs: real_instance.x.clone(),
             round_commitments: real_instance.round_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 
-        // Verify proof
-        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
-
-        assert!(result.is_ok(), "Verification should succeed: {result:?}");
+        let mut verifier_transcript = KeccakTranscript::new(label);
+        verifier.verify(&proof, &verifier_input, &mut verifier_transcript)
     }
 
     #[test]
-    fn test_blindfold_protocol_soundness_wrong_proof_length() {
-        let mut rng = thread_rng();
+    fn test_blindfold_protocol_completeness() {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
-
-        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 100);
-
-        // Create valid instance
         let round = RoundWitness::new(
             vec![
                 F::from_u64(40),
@@ -617,25 +820,48 @@ mod tests {
         );
         let blindfold_witness =
             BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+
+        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let r1cs = builder.build();
         let z = blindfold_witness.assign(&r1cs);
 
-        let witness_start = 1 + r1cs.num_public_inputs;
-        let witness: Vec<F> = z[witness_start..].to_vec();
-        let public_inputs: Vec<F> = z[1..witness_start].to_vec();
+        let (real_instance, real_witness, r1cs, gens) =
+            make_test_instance(&configs, &blindfold_witness, &z);
 
-        let (round_commitments, round_coefficients, round_blindings) =
-            round_commitment_data(&gens, &blindfold_witness.stages, &mut rng);
-        let (real_instance, real_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
+        let result = prove_and_verify(
+            &r1cs,
             &gens,
-            &witness,
-            public_inputs,
-            r1cs.num_constraints,
-            round_commitments,
-            round_coefficients,
-            round_blindings,
-            Vec::new(),
-            &mut rng,
+            &real_instance,
+            &real_witness,
+            &z,
+            b"BlindFold_test",
         );
+        assert!(result.is_ok(), "Verification should succeed: {result:?}");
+    }
+
+    #[test]
+    fn test_blindfold_protocol_soundness_wrong_proof_length() {
+        type F = Fr;
+
+        let configs = [StageConfig::new(1, 3)];
+        let round = RoundWitness::new(
+            vec![
+                F::from_u64(40),
+                F::from_u64(5),
+                F::from_u64(10),
+                F::from_u64(5),
+            ],
+            F::from_u64(3),
+        );
+        let blindfold_witness =
+            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+
+        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let r1cs = builder.build();
+        let z = blindfold_witness.assign(&r1cs);
+
+        let (real_instance, real_witness, r1cs, gens) =
+            make_test_instance(&configs, &blindfold_witness, &z);
 
         let pcs_prover_setup = ();
         let pcs_verifier_setup = ();
@@ -646,19 +872,16 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
 
-        // Remove a round from the proof (wrong length)
         if !proof.spartan_proof.is_empty() {
             proof.spartan_proof.pop();
         }
 
-        // Create verifier input
         let verifier_input = BlindFoldVerifierInput {
             public_inputs: real_instance.x.clone(),
             round_commitments: real_instance.round_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 
-        // Verification should fail due to wrong proof length
         let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
         let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
 
@@ -673,18 +896,10 @@ mod tests {
 
     #[test]
     fn test_blindfold_protocol_multi_round() {
-        let mut rng = thread_rng();
         type F = Fr;
 
-        // Create R1CS with multiple rounds
         let configs = [StageConfig::new(3, 3)];
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
 
-        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 100);
-
-        // Create valid multi-round witness
-        // Round 1
         let round1 = RoundWitness::new(
             vec![
                 F::from_u64(20),
@@ -696,50 +911,69 @@ mod tests {
         );
         let next1 = round1.evaluate(F::from_u64(2));
 
-        // Round 2: claimed_sum must equal next1
         let c0_2 = F::from_u64(30);
         let c2_2 = F::from_u64(10);
         let c3_2 = F::from_u64(5);
-        // 2*c0 + c1 + c2 + c3 = next1
-        // c1 = next1 - 2*30 - 10 - 5 = next1 - 75
         let c1_2 = next1 - F::from_u64(75);
         let round2 = RoundWitness::new(vec![c0_2, c1_2, c2_2, c3_2], F::from_u64(4));
         let next2 = round2.evaluate(F::from_u64(4));
 
-        // Round 3
         let c0_3 = F::from_u64(50);
         let c2_3 = F::from_u64(8);
         let c3_3 = F::from_u64(2);
         let c1_3 = next2 - F::from_u64(110);
         let round3 = RoundWitness::new(vec![c0_3, c1_3, c2_3, c3_3], F::from_u64(6));
 
-        let initial_claim = F::from_u64(55); // 2*20 + 5 + 7 + 3 = 55
-
+        let initial_claim = F::from_u64(55);
         let blindfold_witness = BlindFoldWitness::new(
             initial_claim,
             vec![StageWitness::new(vec![round1, round2, round3])],
         );
+
+        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let r1cs = builder.build();
         let z = blindfold_witness.assign(&r1cs);
 
-        assert!(r1cs.is_satisfied(&z));
+        let (real_instance, real_witness, r1cs, gens) =
+            make_test_instance(&configs, &blindfold_witness, &z);
 
-        let witness_start = 1 + r1cs.num_public_inputs;
-        let witness: Vec<F> = z[witness_start..].to_vec();
-        let public_inputs: Vec<F> = z[1..witness_start].to_vec();
-
-        let (round_commitments, round_coefficients, round_blindings) =
-            round_commitment_data(&gens, &blindfold_witness.stages, &mut rng);
-        let (real_instance, real_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
+        let result = prove_and_verify(
+            &r1cs,
             &gens,
-            &witness,
-            public_inputs,
-            r1cs.num_constraints,
-            round_commitments,
-            round_coefficients,
-            round_blindings,
-            Vec::new(),
-            &mut rng,
+            &real_instance,
+            &real_witness,
+            &z,
+            b"BlindFold_multi",
         );
+        assert!(
+            result.is_ok(),
+            "Multi-round verification should succeed: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_blindfold_soundness_tampered_az_r() {
+        type F = Fr;
+
+        let configs = [StageConfig::new(1, 3)];
+        let round = RoundWitness::new(
+            vec![
+                F::from_u64(40),
+                F::from_u64(5),
+                F::from_u64(10),
+                F::from_u64(5),
+            ],
+            F::from_u64(3),
+        );
+        let blindfold_witness =
+            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+
+        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let r1cs = builder.build();
+        let z = blindfold_witness.assign(&r1cs);
+
+        let (real_instance, real_witness, r1cs, gens) =
+            make_test_instance(&configs, &blindfold_witness, &z);
 
         let pcs_prover_setup = ();
         let pcs_verifier_setup = ();
@@ -747,22 +981,127 @@ mod tests {
         let verifier =
             BlindFoldVerifier::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_verifier_setup);
 
-        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_multi");
-        let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
+        let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
 
-        // Create verifier input
+        proof.az_r += F::from_u64(1);
+
         let verifier_input = BlindFoldVerifierInput {
             public_inputs: real_instance.x.clone(),
             round_commitments: real_instance.round_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 
-        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_multi");
+        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
         let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
-
         assert!(
-            result.is_ok(),
-            "Multi-round verification should succeed: {result:?}"
+            result.is_err(),
+            "Tampered az_r should cause verification failure"
+        );
+    }
+
+    #[test]
+    fn test_blindfold_soundness_tampered_round_coefficients() {
+        type F = Fr;
+
+        let configs = [StageConfig::new(1, 3)];
+        let round = RoundWitness::new(
+            vec![
+                F::from_u64(40),
+                F::from_u64(5),
+                F::from_u64(10),
+                F::from_u64(5),
+            ],
+            F::from_u64(3),
+        );
+        let blindfold_witness =
+            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+
+        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let r1cs = builder.build();
+        let z = blindfold_witness.assign(&r1cs);
+
+        let (real_instance, real_witness, r1cs, gens) =
+            make_test_instance(&configs, &blindfold_witness, &z);
+
+        let pcs_prover_setup = ();
+        let pcs_verifier_setup = ();
+        let prover = BlindFoldProver::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_prover_setup);
+        let verifier =
+            BlindFoldVerifier::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_verifier_setup);
+
+        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
+        let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+
+        if !proof.round_coefficients_folded.is_empty()
+            && !proof.round_coefficients_folded[0].is_empty()
+        {
+            proof.round_coefficients_folded[0][0] += F::from_u64(1);
+        }
+
+        let verifier_input = BlindFoldVerifierInput {
+            public_inputs: real_instance.x.clone(),
+            round_commitments: real_instance.round_commitments.clone(),
+            eval_commitments: real_instance.eval_commitments.clone(),
+        };
+
+        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
+        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
+        assert!(
+            matches!(
+                result,
+                Err(BlindFoldVerifyError::PedersenCommitmentMismatch(_))
+            ),
+            "Tampered round coefficients should fail Pedersen check: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_blindfold_soundness_tampered_w_dory_claim() {
+        type F = Fr;
+
+        let configs = [StageConfig::new(1, 3)];
+        let round = RoundWitness::new(
+            vec![
+                F::from_u64(40),
+                F::from_u64(5),
+                F::from_u64(10),
+                F::from_u64(5),
+            ],
+            F::from_u64(3),
+        );
+        let blindfold_witness =
+            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+
+        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let r1cs = builder.build();
+        let z = blindfold_witness.assign(&r1cs);
+
+        let (real_instance, real_witness, r1cs, gens) =
+            make_test_instance(&configs, &blindfold_witness, &z);
+
+        let pcs_prover_setup = ();
+        let pcs_verifier_setup = ();
+        let prover = BlindFoldProver::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_prover_setup);
+        let verifier =
+            BlindFoldVerifier::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_verifier_setup);
+
+        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
+        let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+
+        proof.w_dory_claim += F::from_u64(1);
+
+        let verifier_input = BlindFoldVerifierInput {
+            public_inputs: real_instance.x.clone(),
+            round_commitments: real_instance.round_commitments.clone(),
+            eval_commitments: real_instance.eval_commitments.clone(),
+        };
+
+        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
+        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
+        assert!(
+            result.is_err(),
+            "Tampered W_dory claim should cause verification failure: {result:?}"
         );
     }
 }

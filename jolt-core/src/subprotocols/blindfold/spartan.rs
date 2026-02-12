@@ -540,6 +540,262 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     }
 }
 
+/// Inner sumcheck prover for reducing matrix evaluation claims to a point evaluation of W.
+///
+/// Proves: Σ_j L_w(j) · W(j) = claim_inner
+/// where L_w(j) = ra·A'[ws+j] + rb·B'[ws+j] + rc·C'[ws+j]
+/// and A'[col] = Σ_row A[row,col]·eq(rx,row).
+///
+/// Degree 2 per variable (product of two multilinears).
+pub struct BlindFoldInnerSumcheckProver<F: JoltField> {
+    l_w: DensePolynomial<F>,
+    w: DensePolynomial<F>,
+    num_vars: usize,
+}
+
+impl<F: JoltField> BlindFoldInnerSumcheckProver<F> {
+    /// Build the inner sumcheck prover.
+    ///
+    /// `rx` — outer sumcheck challenge point (as Challenge type)
+    /// `w_padded` — padded witness vector (power-of-2 length)
+    /// `ra, rb, rc` — random linear combination scalars
+    pub fn new(
+        r1cs: &VerifierR1CS<F>,
+        rx: &[F::Challenge],
+        w_padded: Vec<F>,
+        ra: F,
+        rb: F,
+        rc: F,
+    ) -> Self {
+        let w_padded_len = w_padded.len();
+        let num_vars = w_padded_len.log_2();
+        let l_w = build_L_w(r1cs, rx, ra, rb, rc, w_padded_len);
+        Self {
+            l_w: DensePolynomial::new(l_w),
+            w: DensePolynomial::new(w_padded),
+            num_vars,
+        }
+    }
+
+    pub fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    /// Compute the degree-2 round polynomial: g(X) = Σ_suffix L_w(prefix||X||suffix)·W(prefix||X||suffix)
+    pub fn compute_round_polynomial(&self) -> UniPoly<F> {
+        let n = self.l_w.len();
+        let half = n / 2;
+
+        let mut evals = vec![F::zero(); 3];
+
+        for i in 0..half {
+            let lw_lo = self.l_w[i];
+            let lw_hi = self.l_w[i + half];
+            let w_lo = self.w[i];
+            let w_hi = self.w[i + half];
+
+            let lw_delta = lw_hi - lw_lo;
+            let w_delta = w_hi - w_lo;
+
+            evals[0] += lw_lo * w_lo;
+            evals[1] += lw_hi * w_hi;
+
+            let lw_2 = lw_lo + lw_delta + lw_delta;
+            let w_2 = w_lo + w_delta + w_delta;
+            evals[2] += lw_2 * w_2;
+        }
+
+        UniPoly::from_evals(&evals)
+    }
+
+    pub fn bind_challenge(&mut self, r_j: F::Challenge) {
+        self.l_w.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.w.bind_parallel(r_j, BindingOrder::HighToLow);
+    }
+}
+
+/// Build the L_w polynomial: L_w[j] = ra·A'[ws+j] + rb·B'[ws+j] + rc·C'[ws+j]
+/// where A'[col] = Σ_row A[row,col]·eq(rx, row).
+fn build_L_w<F: JoltField>(
+    r1cs: &VerifierR1CS<F>,
+    rx: &[F::Challenge],
+    ra: F,
+    rb: F,
+    rc: F,
+    w_padded_len: usize,
+) -> Vec<F> {
+    let r: Vec<F> = rx.iter().map(|c| (*c).into()).collect();
+    let padded_size = r1cs.num_constraints.next_power_of_two();
+    let eq_rx: Vec<F> = EqPolynomial::evals(&r);
+
+    let witness_start = 1 + r1cs.num_public_inputs;
+    let mut l_w = vec![F::zero(); w_padded_len];
+
+    for &(row, col, ref val) in &r1cs.a.entries {
+        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
+            l_w[col - witness_start] += ra * *val * eq_rx[row];
+        }
+    }
+
+    for &(row, col, ref val) in &r1cs.b.entries {
+        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
+            l_w[col - witness_start] += rb * *val * eq_rx[row];
+        }
+    }
+
+    for &(row, col, ref val) in &r1cs.c.entries {
+        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
+            l_w[col - witness_start] += rc * *val * eq_rx[row];
+        }
+    }
+
+    l_w
+}
+
+/// Evaluate L_w at point ry_w using sparse matrix entries directly.
+///
+/// L_w(ry_w) = Σ_(row,col,val) in {A,B,C} for witness cols:
+///   coeff · val · eq(rx, row) · eq(ry_w, col - ws)
+pub fn compute_L_w_at_ry<F: JoltField>(
+    r1cs: &VerifierR1CS<F>,
+    rx: &[F::Challenge],
+    ry_w: &[F::Challenge],
+    ra: F,
+    rb: F,
+    rc: F,
+) -> F {
+    let r: Vec<F> = rx.iter().map(|c| (*c).into()).collect();
+    let ry: Vec<F> = ry_w.iter().map(|c| (*c).into()).collect();
+    let padded_size = r1cs.num_constraints.next_power_of_two();
+    let witness_start = 1 + r1cs.num_public_inputs;
+    let w_padded_len = 1usize << ry_w.len();
+
+    let eq_rx: Vec<F> = EqPolynomial::evals(&r);
+    let eq_ry: Vec<F> = EqPolynomial::evals(&ry);
+
+    let mut result = F::zero();
+
+    for &(row, col, ref val) in &r1cs.a.entries {
+        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
+            result += ra * *val * eq_rx[row] * eq_ry[col - witness_start];
+        }
+    }
+
+    for &(row, col, ref val) in &r1cs.b.entries {
+        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
+            result += rb * *val * eq_rx[row] * eq_ry[col - witness_start];
+        }
+    }
+
+    for &(row, col, ref val) in &r1cs.c.entries {
+        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
+            result += rc * *val * eq_rx[row] * eq_ry[col - witness_start];
+        }
+    }
+
+    result
+}
+
+/// Evaluate W_ped(ry_w) = Σ_i Σ_k coeffs_folded[i][k] · eq(ry_w, offset[i]+k).
+///
+/// `coefficient_positions` maps round index → (start_offset_in_W, num_coefficients).
+pub fn compute_W_ped_at_ry<F: JoltField>(
+    coefficients_folded: &[Vec<F>],
+    coefficient_positions: &[(usize, usize)],
+    ry_w: &[F::Challenge],
+) -> F {
+    let ry: Vec<F> = ry_w.iter().map(|c| (*c).into()).collect();
+    let eq_ry: Vec<F> = EqPolynomial::evals(&ry);
+
+    let mut result = F::zero();
+    for (round_idx, &(start, num_coeffs)) in coefficient_positions.iter().enumerate() {
+        let coeffs = &coefficients_folded[round_idx];
+        for k in 0..num_coeffs {
+            result += coeffs[k] * eq_ry[start + k];
+        }
+    }
+    result
+}
+
+fn estimate_constraint_aux_vars(constraint: &OutputClaimConstraint) -> usize {
+    let mut count = 0;
+    for term in &constraint.terms {
+        if term.factors.len() <= 1 {
+            count += 1;
+        } else {
+            count += term.factors.len();
+        }
+    }
+    count
+}
+
+/// Map coefficient positions in the witness vector W.
+///
+/// Returns `Vec<(start_offset_in_W, num_coefficients)>` for each round,
+/// walking the same allocation order as the R1CS builder and folding code.
+pub fn coefficient_positions<F: JoltField>(r1cs: &VerifierR1CS<F>) -> Vec<(usize, usize)> {
+    use crate::poly::opening_proof::OpeningId;
+    use std::collections::HashSet;
+
+    let mut positions = Vec::new();
+    let mut w_idx = 0;
+    let mut allocated_openings: HashSet<OpeningId> = HashSet::new();
+
+    for config in &r1cs.stage_configs {
+        if let Some(ref ii_config) = config.initial_input {
+            if let Some(ref constraint) = ii_config.constraint {
+                let num_new = constraint
+                    .required_openings
+                    .iter()
+                    .filter(|id| allocated_openings.insert(**id))
+                    .count();
+                let num_aux = estimate_constraint_aux_vars(constraint);
+                w_idx += num_new + num_aux;
+            }
+        }
+
+        for _ in 0..config.num_rounds {
+            let num_coeffs = config.poly_degree + 1;
+            let num_intermediates = config.poly_degree.saturating_sub(1);
+
+            positions.push((w_idx, num_coeffs));
+            w_idx += num_coeffs + num_intermediates + 1;
+        }
+
+        if let Some(ref fo_config) = config.final_output {
+            if let Some(ref constraint) = fo_config.constraint {
+                let num_new = constraint
+                    .required_openings
+                    .iter()
+                    .filter(|id| allocated_openings.insert(**id))
+                    .count();
+                let num_aux = estimate_constraint_aux_vars(constraint);
+                w_idx += num_new + num_aux;
+            } else if let Some(exact) = fo_config.exact_num_witness_vars {
+                w_idx += exact;
+            } else {
+                let num_evals = fo_config.num_evaluations;
+                w_idx += num_evals;
+                if num_evals > 1 {
+                    w_idx += num_evals - 1;
+                }
+            }
+        }
+    }
+
+    for constraint in &r1cs.extra_constraints {
+        let num_new = constraint
+            .required_openings
+            .iter()
+            .filter(|id| allocated_openings.insert(**id))
+            .count();
+        let num_aux = estimate_constraint_aux_vars(constraint);
+        w_idx += num_new + 1 + num_aux + 1;
+    }
+
+    positions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
