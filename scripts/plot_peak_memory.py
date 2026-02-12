@@ -15,13 +15,12 @@ except ImportError:
     sys.exit(1)
 
 TICK_LABELS = {
-    20: "2^20",
+    18: "2^18",
     24: "2^24",
+    25: "2^25",
     26: "2^26",
     27: "2^27",
     28: "2^28",
-    29: "2^29",
-    30: "2^30",
 }
 
 COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
@@ -54,12 +53,12 @@ def load_data(csv_path):
 def create_plot(data, output_path):
     fig = go.Figure()
 
-    all_scales = set()
+    all_exponents = set()
     for i, (name, points) in enumerate(sorted(data.items())):
         points_sorted = sorted(points)
-        scales = [s for s, _ in points_sorted]
+        scales = [2**s for s, _ in points_sorted]
         memory_gb = [b / (1024**3) for _, b in points_sorted]
-        all_scales.update(scales)
+        all_exponents.update(s for s, _ in points_sorted)
 
         nice_name = NICE_NAMES.get(name, name)
         fig.add_trace(
@@ -73,8 +72,10 @@ def create_plot(data, output_path):
             )
         )
 
-    ticks = sorted(all_scales)
-    labels = [TICK_LABELS.get(n, f"2^{n}") for n in ticks]
+    minor_exponents = [19, 20, 21, 22, 23]
+    all_tick_exponents = sorted(set(TICK_LABELS.keys()) | set(minor_exponents))
+    ticks = [2**e for e in all_tick_exponents]
+    labels = [TICK_LABELS.get(e, "") for e in all_tick_exponents]
 
     fig.update_layout(
         title=dict(text="Jolt Prover Peak Memory Usage", x=0.5),
@@ -85,8 +86,9 @@ def create_plot(data, output_path):
             ticktext=labels,
             tickangle=45,
             gridcolor="lightgray",
-            showline=True,
-            linecolor="black",
+            zeroline=True,
+            zerolinecolor="black",
+            zerolinewidth=1,
         ),
         yaxis=dict(
             title="Peak Memory (GB)",
