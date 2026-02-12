@@ -19,7 +19,7 @@ use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 declare_riscv_instr!(
     name   = AMOMINUW,
     mask   = 0xf800707f,
-    match  = 0xe000202f,
+    match  = 0xc000202f,
     format = FormatAMO,
     ram    = ()
 );
