@@ -109,7 +109,7 @@ impl RISCVTrace for AMOMINW {
                 asm.emit_i::<VirtualSignExtendWord>(*v_rs2, self.operands.rs2, 0);
                 // Sign-extend v_rd into v0
                 asm.emit_i::<VirtualSignExtendWord>(*v0, *v_rd, 0);
-                // Put min(v_rs2, rs2) in v_rs2
+                // Put min in v_rs2
                 asm.emit_r::<SLT>(*v1, *v_rs2, *v_rd);
                 asm.emit_r::<SUB>(*v2, *v_rs2, *v0);
                 asm.emit_r::<MUL>(*v2, *v2, *v1);

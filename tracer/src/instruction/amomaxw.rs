@@ -109,7 +109,7 @@ impl RISCVTrace for AMOMAXW {
                 asm.emit_i::<VirtualSignExtendWord>(*v_rs2, self.operands.rs2, 0);
                 // Sign-extend v_rd into v0
                 asm.emit_i::<VirtualSignExtendWord>(*v0, *v_rd, 0);
-                // Put max(v_rs2, rs2) in v_rs2
+                // Put max in v_rs2
                 asm.emit_r::<SLT>(*v1, *v_rd, *v_rs2);
                 asm.emit_r::<SUB>(*v2, *v_rs2, *v0);
                 asm.emit_r::<MUL>(*v2, *v2, *v1);
