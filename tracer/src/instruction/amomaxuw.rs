@@ -106,19 +106,17 @@ impl RISCVTrace for AMOMAXUW {
                 let v_rs2 = allocator.allocate();
                 let v0 = allocator.allocate();
                 let v1 = allocator.allocate();
-                let v2 = allocator.allocate();
                 // Zero-extend rs2 into v_rs2
                 asm.emit_i::<VirtualZeroExtendWord>(*v_rs2, self.operands.rs2, 0);
                 // Zero-extend v_rd into v0
                 asm.emit_i::<VirtualZeroExtendWord>(*v0, *v_rd, 0);
                 // Put max(v_rs2, rs2) in v_rs2
                 asm.emit_r::<SLTU>(*v1, *v_rd, *v_rs2);
-                asm.emit_r::<SUB>(*v2, *v_rs2, *v0);
-                asm.emit_r::<MUL>(*v2, *v2, *v1);
-                asm.emit_r::<ADD>(*v_rs2, *v2, *v0);
-                // drop v1 and v2 to save registers before post processing, use v0 as v_mask in amo_post64
+                asm.emit_r::<SUB>(*v_rs2, self.operands.rs2, *v0);
+                asm.emit_r::<MUL>(*v_rs2, *v_rs2, *v1);
+                asm.emit_r::<ADD>(*v_rs2, *v_rs2, *v0);
+                // drop v1 to save registers before post processing, use v0 as v_mask in amo_post64
                 drop(v1);
-                drop(v2);
                 // post processing, use v0 as v_mask in amo_post64
                 amo_post64(
                     &mut asm,
