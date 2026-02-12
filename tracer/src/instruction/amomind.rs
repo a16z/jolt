@@ -1,3 +1,5 @@
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use crate::{instruction::addi::ADDI, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
 use super::add::ADD;
@@ -5,11 +7,8 @@ use super::ld::LD;
 use super::mul::MUL;
 use super::sd::SD;
 use super::slt::SLT;
-use super::xori::XORI;
+use super::sub::SUB;
 use super::Instruction;
-use crate::instruction::addi::ADDI;
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -20,7 +19,7 @@ use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 declare_riscv_instr!(
     name   = AMOMIND,
     mask   = 0xf800707f,
-    match  = 0x8000302f,
+    match  = 0xa000302f,
     format = FormatAMO,
     ram    = ()
 );
@@ -63,38 +62,40 @@ impl RISCVTrace for AMOMIND {
 
     /// Generates inline sequence for atomic minimum operation (signed 64-bit).
     ///
-    /// AMOMIN.D atomically loads a 64-bit value from memory, computes the minimum
+    /// AMOMIND.D atomically loads a 64-bit value from memory, computes the minimum
     /// of that value and rs2 (treating both as signed), stores the minimum back
     /// to memory, and returns the original value in rd.
     ///
-    /// Uses branchless minimum computation:
-    /// 1. Load current value from memory
-    /// 2. Compare rs2 < current to get selector bit (1 if rs2 is smaller)
-    /// 3. Invert to get selector for current (1 if current is smaller/equal)
-    /// 4. Multiply and add to select minimum without branches
-    /// 5. Store result and return original value
+    /// The implementation uses a branchless minimum computation:
+    /// 1. Load the current value from memory into v0
+    /// 2. v1 = (rs2 < v0 ? 1 : 0)
+    /// 3. v0 + (rs2 - v0) * v1
+    ///    - If v0 < rs2, then v1 = 1, and the result is v0 + (rs2 - v0) * 1 = rs2
+    ///    - If v0 >= rs2, then v1 = 0, and the result is v0 + (rs2 - v0) * 0 = v0
+    /// 4. Store the minimum back to memory
+    /// 5. Return the original value in rd
     ///
-    /// Note the comparison order: SLT(rs2, current) not SLT(current, rs2),
-    /// ensuring correct minimum selection semantics.
+    /// This branchless approach avoids conditional execution, making it compatible
+    /// with zkVM's constraint system while correctly handling signed comparison.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let v_rs2 = allocator.allocate();
-        let v_rd = allocator.allocate();
-        let v_sel_rs2 = allocator.allocate();
-        let v_sel_rd = allocator.allocate();
+        let v0 = allocator.allocate();
+        let v1 = allocator.allocate();
+        let v2 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-        asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
-        asm.emit_r::<SLT>(*v_sel_rs2, self.operands.rs2, *v_rd);
-        asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
-        asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);
-        asm.emit_r::<MUL>(*v_sel_rd, *v_sel_rd, *v_rd);
-        asm.emit_r::<ADD>(*v_rs2, *v_sel_rd, *v_rs2);
-        asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);
-        asm.emit_i::<ADDI>(self.operands.rd, *v_rd, 0);
+
+        asm.emit_ld::<LD>(*v0, self.operands.rs1, 0);
+        asm.emit_r::<SLT>(*v1, self.operands.rs2, *v0);
+        asm.emit_r::<SUB>(*v2, self.operands.rs2, *v0);
+        asm.emit_r::<MUL>(*v2, *v2, *v1);
+        asm.emit_r::<ADD>(*v1, *v0, *v2);
+        asm.emit_s::<SD>(self.operands.rs1, *v1, 0);
+        asm.emit_i::<ADDI>(self.operands.rd, *v0, 0);
+
         asm.finalize()
     }
 }

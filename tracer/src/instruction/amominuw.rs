@@ -4,8 +4,8 @@ use super::add::ADD;
 use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
 use super::mul::MUL;
 use super::sltu::SLTU;
+use super::sub::SUB;
 use super::virtual_zero_extend_word::VirtualZeroExtendWord;
-use super::xori::XORI;
 use super::Instruction;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
@@ -19,7 +19,7 @@ use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 declare_riscv_instr!(
     name   = AMOMINUW,
     mask   = 0xf800707f,
-    match  = 0xc000202f,
+    match  = 0xe000202f,
     format = FormatAMO,
     ram    = ()
 );
@@ -67,10 +67,15 @@ impl RISCVTrace for AMOMINUW {
     /// stores the minimum back to memory, and returns the original value
     /// sign-extended in rd.
     ///
-    /// Uses branchless minimum selection with unsigned comparison:
-    /// - SLTU for unsigned comparison instead of SLT
-    /// - Zero-extension on RV64 for correct unsigned semantics
-    /// - Otherwise identical multiplication-based selection
+    /// The implementation uses a branchless minimum selection:
+    /// 1. Load and prepare operands with proper zero-extension for comparison
+    /// 2. Use the approach from AMOMINU.D to select the minimum without branching
+    /// 3. Store result and return original value sign-extended
+    ///
+    /// On RV64, additional complexity arises from:
+    /// - Need to zero-extend both operands for correct unsigned comparison
+    /// - Use amo_pre64/post64 helpers for word alignment within doublewords
+    /// - Proper sign extension of the original value for rd
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -82,14 +87,13 @@ impl RISCVTrace for AMOMINUW {
             Xlen::Bit32 => {
                 let v_rd = allocator.allocate();
                 let v_rs2 = allocator.allocate();
-                let v_sel_rs2 = allocator.allocate();
-                let v_sel_rd = allocator.allocate();
+                let v0 = allocator.allocate();
+                let v1 = allocator.allocate();
                 amo_pre32(&mut asm, self.operands.rs1, *v_rd);
-                asm.emit_r::<SLTU>(*v_sel_rs2, self.operands.rs2, *v_rd);
-                asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
-                asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);
-                asm.emit_r::<MUL>(*v_sel_rd, *v_sel_rd, *v_rd);
-                asm.emit_r::<ADD>(*v_rs2, *v_sel_rd, *v_rs2);
+                asm.emit_r::<SLTU>(*v0, self.operands.rs2, *v_rd);
+                asm.emit_r::<SUB>(*v1, self.operands.rs2, *v_rd);
+                asm.emit_r::<MUL>(*v1, *v1, *v0);
+                asm.emit_r::<ADD>(*v_rs2, *v1, *v_rd);
                 amo_post32(&mut asm, *v_rs2, self.operands.rs1, self.operands.rd, *v_rd);
             }
             Xlen::Bit64 => {
@@ -98,31 +102,28 @@ impl RISCVTrace for AMOMINUW {
                 let v_shift = allocator.allocate();
 
                 amo_pre64(&mut asm, self.operands.rs1, *v_rd, *v_dword, *v_shift);
+
                 let v_rs2 = allocator.allocate();
-                let v_sel_rs2 = allocator.allocate();
-                let v_sel_rd = allocator.allocate();
-                let v_mask = allocator.allocate();
+                let v0 = allocator.allocate();
+                let v1 = allocator.allocate();
+                let v2 = allocator.allocate();
                 // Zero-extend rs2 into v_rs2
                 asm.emit_i::<VirtualZeroExtendWord>(*v_rs2, self.operands.rs2, 0);
-                // Zero-extend v_rd in place into v_sel_rd (temporarily)
-                asm.emit_i::<VirtualZeroExtendWord>(*v_sel_rd, *v_rd, 0);
-                // Compare: v_rs2 < v_sel_rd (zero-extended v_rd)
-                asm.emit_r::<SLTU>(*v_sel_rs2, *v_rs2, *v_sel_rd);
-                // Invert selector to get selector for v_rd
-                asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
-                // Select minimum using multiplication
-                asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);
-                asm.emit_r::<MUL>(*v_sel_rd, *v_sel_rd, *v_rd);
-                asm.emit_r::<ADD>(*v_rs2, *v_sel_rd, *v_rs2);
-                drop(v_sel_rd);
-                drop(v_sel_rs2);
+                // Zero-extend v_rd into v0
+                asm.emit_i::<VirtualZeroExtendWord>(*v0, *v_rd, 0);
+                // Put min(v_rs2, rs2) in v_rs2
+                asm.emit_r::<SLTU>(*v1, *v_rs2, *v_rd);
+                asm.emit_r::<SUB>(*v2, *v_rs2, *v0);
+                asm.emit_r::<MUL>(*v2, *v2, *v1);
+                asm.emit_r::<ADD>(*v_rs2, *v2, *v0);
+                // post processing, use v0 as v_mask in amo_post64
                 amo_post64(
                     &mut asm,
                     self.operands.rs1,
                     *v_rs2,
                     *v_dword,
                     *v_shift,
-                    *v_mask,
+                    *v0,
                     self.operands.rd,
                     *v_rd,
                 );
