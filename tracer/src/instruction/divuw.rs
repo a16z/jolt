@@ -49,7 +49,7 @@ impl RISCVTrace for DIVUW {
 
         let quotient = match cpu.xlen {
             Xlen::Bit32 => {
-                panic!("REMUW is invalid in 32b mode");
+                panic!("DIVUW is invalid in 32b mode");
             }
             Xlen::Bit64 => {
                 if y == 0 {
