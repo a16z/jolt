@@ -85,7 +85,7 @@ impl RISCVTrace for REMU {
         asm.emit_r::<MUL>(*v0, *v0, self.operands.rs2);
         // Verify: quotient × divisor <= dividend
         asm.emit_b::<VirtualAssertLTE>(*v0, self.operands.rs1, 0);
-        // Computer remainder = dividend - quotient × divisor
+        // Compute remainder = dividend - quotient × divisor
         // Note: if divisor == 0, then remainder will equal dividend, which satisfies the spec
         asm.emit_r::<SUB>(*v0, self.operands.rs1, *v0);
         // Verify: divisor == 0 || remainder < divisor (unsigned)

@@ -105,7 +105,7 @@ impl RISCVTrace for DIVUW {
         asm.emit_r::<MUL>(self.operands.rd, *quo, *rs2);
         // Verify: quotient × divisor <= dividend
         asm.emit_b::<VirtualAssertLTE>(self.operands.rd, *rs1, 0);
-        // Computer remainder = dividend - quotient × divisor
+        // Compute remainder = dividend - quotient × divisor
         // Note: if divisor == 0, then remainder will equal dividend, which satisfies the spec
         asm.emit_r::<SUB>(self.operands.rd, *rs1, self.operands.rd);
         // Verify: divisor == 0 || remainder < divisor (unsigned)
