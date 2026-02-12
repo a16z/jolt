@@ -10,13 +10,38 @@ use std::time::Instant;
 // Empirically measured cycles per operation for RV64IMAC
 const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
-const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
 const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
+
+// BTreeMap cost model: total_cycles ≈ N * (BASE + COEFF * N^EXP)
+// BTreeMap ops are O(log N) with growing allocation overhead, so per-op cost
+// follows a power law in N. Fitted from empirical measurements at 5 data points
+// (N=246..38482), max error 2%.
+const BTREEMAP_BASE: f64 = 1000.0;
+const BTREEMAP_COEFF: f64 = 0.8291;
+const BTREEMAP_EXP: f64 = 0.6561;
 
 /// Calculate number of operations to target a specific cycle count
 fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
     std::cmp::max(1, (target_cycles as f64 / cycles_per_op) as u32)
+}
+
+/// Solve for N in: target = N * (BASE + COEFF * N^EXP)
+/// i.e. target = BASE*N + COEFF * N^(1+EXP)
+fn scale_to_btreemap_ops(target_cycles: usize) -> u32 {
+    let target = target_cycles as f64;
+    let mut lo = 1.0_f64;
+    let mut hi = target / BTREEMAP_BASE;
+    for _ in 0..100 {
+        let mid = (lo + hi) / 2.0;
+        let cost = BTREEMAP_BASE * mid + BTREEMAP_COEFF * mid.powf(1.0 + BTREEMAP_EXP);
+        if cost < target {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    std::cmp::max(1, lo as u32)
 }
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum, strum_macros::Display)]
@@ -129,7 +154,7 @@ pub fn master_benchmark(
                 .concat()
             }),
             BenchType::BTreeMap => ("btreemap", |target| {
-                postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP)).unwrap()
+                postcard::to_stdvec(&scale_to_btreemap_ops(target)).unwrap()
             }),
             BenchType::Sha2 => panic!("Use sha2-chain instead"),
             BenchType::Sha3 => panic!("Use sha3-chain instead"),
@@ -261,7 +286,9 @@ fn prove_example_with_trace(
 
     assert!(
         trace.len().next_power_of_two() <= max_trace_length,
-        "Trace is longer than expected"
+        "Trace is longer than expected: {} > {}",
+        trace.len().next_power_of_two(),
+        max_trace_length
     );
 
     let shared_preprocessing = JoltSharedPreprocessing::new(
