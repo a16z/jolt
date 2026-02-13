@@ -268,9 +268,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
                     let lhs = rs1.extract(cpu.word_bits - 1, 0);
                     let rhs = rs2.extract(cpu.word_bits - 1, 0);
                     let product = lhs.zero_ext(cpu.word_bits) * rhs.zero_ext(cpu.word_bits);
-                    cpu.sign_extend(
-                        &product.extract(cpu.word_bits * 2 - 1, cpu.word_bits),
-                    )
+                    cpu.sign_extend(&product.extract(cpu.word_bits * 2 - 1, cpu.word_bits))
                 }
                 Xlen::Bit64 => {
                     let product = rs1.zero_ext(cpu.bv_bits) * rs2.zero_ext(cpu.bv_bits);
@@ -318,9 +316,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let ones = cpu.bv_ones();
             let word_ones = BV::from_u64(u64::MAX, cpu.word_bits);
             cpu.asserts.push(divisor.eq(0).implies(match cpu.xlen {
-                Xlen::Bit32 => quotient
-                    .extract(cpu.word_bits - 1, 0)
-                    .eq(&word_ones),
+                Xlen::Bit32 => quotient.extract(cpu.word_bits - 1, 0).eq(&word_ones),
                 Xlen::Bit64 => quotient.eq(&ones),
             }));
         }
@@ -458,8 +454,8 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
                     ones.bvshl(&shift)
                 }
                 Xlen::Bit64 => {
-                    let shift = cpu.x[operands.rs1 as usize].clone()
-                        & cpu.bv_u64((cpu.bv_bits - 1) as u64);
+                    let shift =
+                        cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((cpu.bv_bits - 1) as u64);
                     let inv_shift: BV = cpu.bv_u64(cpu.bv_bits as u64) - &shift;
                     let ones = (BV::from_u64(1, cpu.bv_bits * 2)
                         .bvshl(inv_shift.zero_ext(cpu.bv_bits)))
@@ -512,9 +508,8 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
                 }
             };
 
-            cpu.x[operands.rd as usize] = cpu.sign_extend(
-                &cpu.unsigned_data(&rs1).bvlshr(scaled_shift),
-            );
+            cpu.x[operands.rd as usize] =
+                cpu.sign_extend(&cpu.unsigned_data(&rs1).bvlshr(scaled_shift));
         }
         Instruction::VirtualSRAI(VirtualSRAI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
@@ -773,8 +768,7 @@ test_sequence!(DIV, FormatR, |instr: &DIV, cpu| {
             let min = SymbolicCpu::signed_min(cpu.bv_bits);
             divisor.eq(0).ite(
                 &ones,
-                &(dividend.eq(&min) & divisor.eq(&ones))
-                    .ite(dividend, &(dividend.bvsdiv(divisor))),
+                &(dividend.eq(&min) & divisor.eq(&ones)).ite(dividend, &(dividend.bvsdiv(divisor))),
             )
         }
     };
@@ -790,9 +784,7 @@ test_sequence!(DIVU, FormatR, |instr: &DIVU, cpu| {
             let dividend = rs1;
             let divisor = rs2;
             let ones = cpu.bv_ones();
-            divisor
-                .eq(0)
-                .ite(&ones, &(dividend.bvudiv(divisor)))
+            divisor.eq(0).ite(&ones, &(dividend.bvudiv(divisor)))
         }
     };
 });
@@ -898,8 +890,7 @@ test_sequence!(REM, FormatR, |instr: &REM, cpu| {
             let zero = cpu.bv_zero();
             divisor.eq(0).ite(
                 dividend,
-                &(dividend.eq(&min) & divisor.eq(&ones))
-                    .ite(&zero, &(dividend.bvsrem(divisor))),
+                &(dividend.eq(&min) & divisor.eq(&ones)).ite(&zero, &(dividend.bvsrem(divisor))),
             )
         }
     };
@@ -973,10 +964,7 @@ test_sequence!(SLLI, FormatI, |instr: &SLLI, cpu| {
         Xlen::Bit32 => cpu.word_bits - 1,
         Xlen::Bit64 => cpu.bv_bits - 1,
     };
-    let shift = BV::from_u64(
-        instr.operands.imm & mask as u64,
-        cpu.bv_bits,
-    );
+    let shift = BV::from_u64(instr.operands.imm & mask as u64, cpu.bv_bits);
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvshl(&shift));
 });
 test_sequence!(SLLIW, FormatI, |instr: &SLLIW, cpu| {
@@ -985,15 +973,13 @@ test_sequence!(SLLIW, FormatI, |instr: &SLLIW, cpu| {
         instr.operands.imm & (cpu.word_bits - 1) as u64,
         cpu.word_bits,
     );
-    cpu.x[instr.operands.rd as usize] =
-        cpu.sign_ext_word(&cpu.word_extract(rs1).bvshl(&shift));
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(rs1).bvshl(&shift));
 });
 test_sequence!(SLLW, FormatR, |instr: &SLLW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
     let shift = cpu.word_extract(rs2) & cpu.word_u64((cpu.word_bits - 1) as u64);
-    cpu.x[instr.operands.rd as usize] =
-        cpu.sign_ext_word(&cpu.word_extract(rs1).bvshl(&shift));
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(rs1).bvshl(&shift));
 });
 test_sequence!(SRA, FormatR, |instr: &SRA, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
@@ -1011,10 +997,7 @@ test_sequence!(SRAI, FormatI, |instr: &SRAI, cpu| {
         Xlen::Bit32 => cpu.word_bits - 1,
         Xlen::Bit64 => cpu.bv_bits - 1,
     };
-    let shift = BV::from_u64(
-        instr.operands.imm & mask as u64,
-        cpu.bv_bits,
-    );
+    let shift = BV::from_u64(instr.operands.imm & mask as u64, cpu.bv_bits);
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&rs1.bvashr(&shift));
 });
 test_sequence!(SRAIW, FormatI, |instr: &SRAIW, cpu| {
@@ -1023,15 +1006,13 @@ test_sequence!(SRAIW, FormatI, |instr: &SRAIW, cpu| {
         instr.operands.imm & (cpu.word_bits - 1) as u64,
         cpu.word_bits,
     );
-    cpu.x[instr.operands.rd as usize] =
-        cpu.sign_ext_word(&cpu.word_extract(rs1).bvashr(&shift));
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(rs1).bvashr(&shift));
 });
 test_sequence!(SRAW, FormatR, |instr: &SRAW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
     let shift = cpu.word_extract(rs2) & cpu.word_u64((cpu.word_bits - 1) as u64);
-    cpu.x[instr.operands.rd as usize] =
-        cpu.sign_ext_word(&cpu.word_extract(rs1).bvashr(&shift));
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(rs1).bvashr(&shift));
 });
 test_sequence!(SRL, FormatR, |instr: &SRL, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
@@ -1049,10 +1030,7 @@ test_sequence!(SRLI, FormatI, |instr: &SRLI, cpu| {
         Xlen::Bit32 => cpu.word_bits - 1,
         Xlen::Bit64 => cpu.bv_bits - 1,
     };
-    let shift = BV::from_u64(
-        instr.operands.imm & mask as u64,
-        cpu.bv_bits,
-    );
+    let shift = BV::from_u64(instr.operands.imm & mask as u64, cpu.bv_bits);
     cpu.x[instr.operands.rd as usize] = cpu.sign_extend(&cpu.unsigned_data(rs1).bvlshr(&shift));
 });
 test_sequence!(SRLIW, FormatI, |instr: &SRLIW, cpu| {
@@ -1061,15 +1039,13 @@ test_sequence!(SRLIW, FormatI, |instr: &SRLIW, cpu| {
         instr.operands.imm & (cpu.word_bits - 1) as u64,
         cpu.word_bits,
     );
-    cpu.x[instr.operands.rd as usize] =
-        cpu.sign_ext_word(&cpu.word_extract(rs1).bvlshr(&shift));
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(rs1).bvlshr(&shift));
 });
 test_sequence!(SRLW, FormatR, |instr: &SRLW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
     let shift = cpu.word_extract(rs2) & cpu.word_u64((cpu.word_bits - 1) as u64);
-    cpu.x[instr.operands.rd as usize] =
-        cpu.sign_ext_word(&cpu.word_extract(rs1).bvlshr(&shift));
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(rs1).bvlshr(&shift));
 });
 test_sequence!(SUBW, FormatR, |instr: &SUBW, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
