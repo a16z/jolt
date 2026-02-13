@@ -7,7 +7,10 @@
 //! by hoisting repeated subexpressions into named variables.
 
 use std::collections::{BTreeSet, HashMap};
-use zklean_extractor::mle_ast::{get_node, Atom, Edge, MleAst, Node};
+use zklean_extractor::mle_ast::{
+    get_node, Atom, Edge, Node, Scalar,
+    scalar_add_mod, scalar_sub_mod, scalar_neg_mod, scalar_mul_mod,
+};
 
 /// Format a scalar value ([u64; 4]) for Gnark code generation.
 /// Large values (that overflow Go's int64) are formatted as bigInt("...") calls.
@@ -33,7 +36,9 @@ fn format_scalar_for_gnark(limbs: [u64; 4]) -> String {
 }
 
 /// State for memoized code generation with reference counting
-pub struct MemoizedCodeGen {
+pub struct MemoizedCodeGen<'a> {
+    /// Reference to the node arena (from AstBundle.nodes)
+    nodes: &'a [Node],
     /// Reference counts for each NodeId (computed in first pass)
     ref_counts: HashMap<usize, usize>,
     /// Maps NodeId to CSE variable name (e.g., "cse_0" or "cse_3_0" for constraint 3)
@@ -50,9 +55,10 @@ pub struct MemoizedCodeGen {
     constraint_idx: Option<usize>,
 }
 
-impl MemoizedCodeGen {
-    pub fn new() -> Self {
+impl<'a> MemoizedCodeGen<'a> {
+    pub fn new(nodes: &'a [Node]) -> Self {
         Self {
+            nodes,
             ref_counts: HashMap::new(),
             generated: HashMap::new(),
             bindings: Vec::new(),
@@ -64,8 +70,9 @@ impl MemoizedCodeGen {
     }
 
     /// Create a new MemoizedCodeGen with custom variable names
-    pub fn with_var_names(var_names: HashMap<u16, String>) -> Self {
+    pub fn with_var_names(nodes: &'a [Node], var_names: HashMap<u16, String>) -> Self {
         Self {
+            nodes,
             ref_counts: HashMap::new(),
             generated: HashMap::new(),
             bindings: Vec::new(),
@@ -78,8 +85,9 @@ impl MemoizedCodeGen {
 
     /// Create a new MemoizedCodeGen with custom variable names and a constraint index.
     /// CSE variable names will be prefixed with the constraint index (e.g., "cse_3_0" for constraint 3).
-    pub fn with_var_names_and_constraint_idx(var_names: HashMap<u16, String>, constraint_idx: usize) -> Self {
+    pub fn with_var_names_and_constraint_idx(nodes: &'a [Node], var_names: HashMap<u16, String>, constraint_idx: usize) -> Self {
         Self {
+            nodes,
             ref_counts: HashMap::new(),
             generated: HashMap::new(),
             bindings: Vec::new(),
@@ -123,7 +131,7 @@ impl MemoizedCodeGen {
 
             // Only traverse children on first visit
             if self.ref_counts[&node_id] == 1 {
-                let node = get_node(node_id);
+                let node = self.nodes[node_id];
                 match node {
                     Node::Atom(_) => {}
                     Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e) | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::MulTwoPow192(e) => {
@@ -203,7 +211,7 @@ impl MemoizedCodeGen {
             stack.push((node_id, true));
 
             // Push children (they'll be processed first due to stack LIFO)
-            let node = get_node(node_id);
+            let node = self.nodes[node_id];
             match node {
                 Node::Atom(_) => {}
                 Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e)
@@ -253,7 +261,7 @@ impl MemoizedCodeGen {
                 continue;
             }
 
-            let node = get_node(node_id);
+            let node = self.nodes[node_id];
 
             // For atoms, just generate directly without hoisting
             if matches!(node, Node::Atom(_)) {
@@ -338,7 +346,7 @@ impl MemoizedCodeGen {
             expr.clone()
         } else {
             // Root was an atom
-            let node = get_node(root_node_id);
+            let node = self.nodes[root_node_id];
             if let Node::Atom(atom) = node {
                 self.atom_to_gnark(atom)
             } else {
@@ -357,7 +365,7 @@ impl MemoizedCodeGen {
                     expr.clone()
                 } else {
                     // Must be an atom node
-                    let node = get_node(node_id);
+                    let node = self.nodes[node_id];
                     if let Node::Atom(atom) = node {
                         self.atom_to_gnark(atom)
                     } else {
@@ -366,6 +374,71 @@ impl MemoizedCodeGen {
                 }
             }
         }
+    }
+}
+
+/// Check if a node is constant (contains no variables), reading from a node slice.
+fn is_node_constant_in(nodes: &[Node], node_id: usize) -> bool {
+    match nodes[node_id] {
+        Node::Atom(Atom::Scalar(_)) => true,
+        Node::Atom(Atom::Var(_)) => false,
+        Node::Atom(Atom::NamedVar(_)) => false,
+        Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e)
+        | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::MulTwoPow192(e) => {
+            is_edge_constant_in(nodes, e)
+        }
+        Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
+            is_edge_constant_in(nodes, e1) && is_edge_constant_in(nodes, e2)
+        }
+        Node::Poseidon(e1, e2, e3) => {
+            is_edge_constant_in(nodes, e1) && is_edge_constant_in(nodes, e2) && is_edge_constant_in(nodes, e3)
+        }
+    }
+}
+
+fn is_edge_constant_in(nodes: &[Node], edge: Edge) -> bool {
+    match edge {
+        Edge::Atom(Atom::Scalar(_)) => true,
+        Edge::Atom(Atom::Var(_)) => false,
+        Edge::Atom(Atom::NamedVar(_)) => false,
+        Edge::NodeRef(id) => is_node_constant_in(nodes, id),
+    }
+}
+
+/// Evaluate a constant node to its scalar value, reading from a node slice.
+fn evaluate_constant_node_in(nodes: &[Node], node_id: usize) -> Scalar {
+    match nodes[node_id] {
+        Node::Atom(Atom::Scalar(s)) => s,
+        Node::Atom(Atom::Var(_)) | Node::Atom(Atom::NamedVar(_)) => {
+            panic!("Cannot evaluate non-constant node")
+        }
+        Node::Neg(e) => scalar_neg_mod(evaluate_constant_edge_in(nodes, e)),
+        Node::Add(e1, e2) => {
+            scalar_add_mod(evaluate_constant_edge_in(nodes, e1), evaluate_constant_edge_in(nodes, e2))
+        }
+        Node::Sub(e1, e2) => {
+            scalar_sub_mod(evaluate_constant_edge_in(nodes, e1), evaluate_constant_edge_in(nodes, e2))
+        }
+        Node::Mul(e1, e2) => {
+            scalar_mul_mod(evaluate_constant_edge_in(nodes, e1), evaluate_constant_edge_in(nodes, e2))
+        }
+        Node::Inv(_) | Node::Div(_, _) => {
+            panic!("Modular inverse not implemented for constant evaluation")
+        }
+        Node::Poseidon(_, _, _) | Node::Keccak256(_) | Node::ByteReverse(_)
+        | Node::Truncate128Reverse(_) | Node::Truncate128(_) | Node::MulTwoPow192(_) => {
+            panic!("Hash/transform operations cannot be evaluated as constants")
+        }
+    }
+}
+
+fn evaluate_constant_edge_in(nodes: &[Node], edge: Edge) -> Scalar {
+    match edge {
+        Edge::Atom(Atom::Scalar(s)) => s,
+        Edge::Atom(Atom::Var(_)) | Edge::Atom(Atom::NamedVar(_)) => {
+            panic!("Cannot evaluate non-constant edge")
+        }
+        Edge::NodeRef(id) => evaluate_constant_node_in(nodes, id),
     }
 }
 
@@ -457,6 +530,7 @@ pub fn generate_circuit_from_bundle_with_stats(
         // This ensures CSE variables from different constraints don't collide
         // e.g., constraint 0 uses cse_0_0, cse_0_1, constraint 1 uses cse_1_0, cse_1_1, etc.
         let mut codegen = MemoizedCodeGen::with_var_names_and_constraint_idx(
+            &bundle.nodes,
             var_names.clone(),
             constraint_idx,
         );
@@ -480,11 +554,10 @@ pub fn generate_circuit_from_bundle_with_stats(
         // Collect vars used in this constraint
         all_vars.extend(codegen.vars().iter());
 
-        // Check if constant
-        let ast = MleAst::from_node_id(c.root);
-        let is_const = ast.is_constant();
+        // Check if constant (reads from bundle.nodes, not global arena)
+        let is_const = is_node_constant_in(&bundle.nodes, c.root);
         let const_val = if is_const {
-            ast.try_evaluate_constant()
+            Some(evaluate_constant_node_in(&bundle.nodes, c.root))
         } else {
             None
         };
