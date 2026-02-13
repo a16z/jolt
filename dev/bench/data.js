@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1770426495232,
+  "lastUpdate": 1770941069897,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -52018,6 +52018,222 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 788176,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4633847+protoben@users.noreply.github.com",
+            "name": "Ben Hamlin",
+            "username": "protoben"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eb423418e65ed5c4201946e3f3c6f5a55c4c00a3",
+          "message": "Update axiomatized parts of ZKLean extraction (#1239)\n\n* Update jolt_step and jolt_next_step for T&S\n\n* Add a means of determining whether instruction has lookup tables etc.\n\nPreviously, we determined whether an instruction was supported in\n`jolt-core` (i.e., whether it has lookup tables, circuit flags, etc.) by\nchecking whether its `inline_sequence` method returned an empty vector.\nThis was a hack made necessary because the methods `lookup_tables`,\n`circuit_flags`, etc. panic on unsupported instructions. This technique no\nlonger works, because the length of the vector returned by\n`inline_sequence` no longer appears to correspond to whether the\ninstruction is supported. For that reason, we add a `SupportedInstruction`\ntrait to determine whether an instruction is supported directly.\n\n* Update MemOps.lean in zklean package template for T&S\n\n* Extract lookup-table muxing\n\nIn T&S, the lookup-table muxing is handled in the instruction_read_raf\nsumcheck. However, we don't currently extract that one, so for now, we\naxiomatize it as a call to `ZKBuilder.muxLookups`. This commit constructs\nthis call using a hard-coded association between lookup tables and their\ncorresponding `LookupTableFlags(i)` values. Note, this is the same way it\nhappens in instruction_read_raf.\n\n* Extract additional sumcheck variables needed for instruction muxing\n\n* Update muxing to take interleaving into account\n\n* Add utility functions for muxing to zklean package template\n\n* Bump zklean version in extractor\n\n* Update lookup-table-flag extraction to use utility functions for muxing\n\n* Simplify handling of sumcheck variables in extractor\n\nThis commit adds a ZkLeanVarRef type to encapsulate a sumcheck variable in\nthe extractor, which makes the construction and pretty-printing of these\nvariables much less verbose.\n\n* Fix typo in extracted muxes\n\n* Bump zklean version to use new generic lookup_mle\n\n* Run cargo fmt\n\n* Bump zklean version\n\n* Re-enable building extracted Lean in CI\n\n* Update lake manifest\n\n* Update to newest versions of Lean4 and zkLean\n\n* Re-disable building extracted Lean in CI\n\nBumping the Lean version everywhere doesn't fix the stack overflow in the\nMLE parsing in CI, as it turns out, so we keep this disabled for now.\n\n* Fix swapped argument order in extracted mux_lookup function\n\n* Fix zkLean git revision post rebase\n\n* Remove unnecessary ZKBuilder monad in Lean mux function\n\n* Use mapM instead of foldl to make Lean mux_mles function more concise\n\n* Re-enable running extractor in CI",
+          "timestamp": "2026-02-12T18:08:34-05:00",
+          "tree_id": "c0a9471099865f472734ed3480ae926183b2589d",
+          "url": "https://github.com/a16z/jolt/commit/eb423418e65ed5c4201946e3f3c6f5a55c4c00a3"
+        },
+        "date": 1770941069087,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7603,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 787012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.5835,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 461796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.1181,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 463772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.0975,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 474156,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.1664,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 459960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9436,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 791520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 1.096,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 471940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 1.0531,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 470840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.0881,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 469012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 32.9296,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1178504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.9384,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 617096,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 86.2505,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2157300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.7334,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 468820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.7871,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 459760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.8319,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 791612,
             "unit": "KB",
             "extra": ""
           }
