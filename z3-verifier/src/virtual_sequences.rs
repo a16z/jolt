@@ -134,7 +134,7 @@ struct SymbolicCpu {
 
 impl SymbolicCpu {
     fn new(var_prefix: &str, xlen: Xlen, bv_bits: u32) -> Self {
-        assert!(bv_bits.is_power_of_two() && (2..=64).contains(&bv_bits));
+        assert!(bv_bits.is_power_of_two() && (8..=64).contains(&bv_bits));
         assert!(bv_bits % 2 == 0);
         let word_bits = bv_bits / 2;
         let regs: [BV; REGISTER_COUNT as usize] = (0..REGISTER_COUNT)
