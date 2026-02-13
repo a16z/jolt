@@ -4,7 +4,8 @@
 //! The circuit is O(log n) in size - only encoding the verifier's algebraic checks.
 
 use super::{
-    Constraint, LinearCombination, OutputClaimConstraint, StageConfig, ValueSource, Variable,
+    compute_hyrax_params, Constraint, HyraxParams, LinearCombination, OutputClaimConstraint,
+    StageConfig, ValueSource, Variable,
 };
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
@@ -60,16 +61,13 @@ impl<F: JoltField> SparseR1CSMatrix<F> {
 ///
 /// The witness vector Z is laid out as:
 /// ```text
-/// Z = [1, challenges..., initial_claim, witness...]
-///      │  └────────────────────────────┘  └───────┘
-///      │         public inputs            private witness
-///      └─ constant 1 (index 0)
+/// Z = [u, public_inputs..., witness_grid...]
 /// ```
 ///
-/// Per sumcheck round, the witness contains:
-/// - c0, c1, c2, c3: polynomial coefficients
-/// - t1, t2: Horner intermediates
-/// - next_claim: output (becomes next round's claimed_sum)
+/// The witness grid has R' × C layout:
+/// - Rows 0..total_rounds: coefficient rows (one per sumcheck round, zero-padded to C)
+/// - Rows R_coeff..R_coeff+noncoeff_rows: non-coefficient values (intermediates, next_claims, etc.)
+/// - Remaining rows: zero padding
 #[derive(Clone, Debug)]
 pub struct VerifierR1CS<F: JoltField> {
     /// Sparse matrix A
@@ -92,6 +90,8 @@ pub struct VerifierR1CS<F: JoltField> {
     pub extra_output_vars: Vec<Variable>,
     /// Blinding variables for extra constraints (one per constraint)
     pub extra_blinding_vars: Vec<Variable>,
+    /// Hyrax grid layout parameters
+    pub hyrax: HyraxParams,
 }
 
 impl<F: JoltField> VerifierR1CS<F> {
@@ -467,22 +467,36 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
 
     /// Build the complete verifier R1CS
     pub fn build(mut self) -> VerifierR1CS<F> {
+        // Pre-compute grid parameters for Hyrax layout
+        let total_rounds: usize = self.stage_configs.iter().map(|s| s.num_rounds).sum();
+        let max_coeffs = self
+            .stage_configs
+            .iter()
+            .map(|c| c.poly_degree + 1)
+            .max()
+            .unwrap_or(1);
+        let hyrax_C = max_coeffs.next_power_of_two();
+        let hyrax_R_coeff = if total_rounds == 0 {
+            1
+        } else {
+            total_rounds.next_power_of_two()
+        };
+        let witness_start = self.next_var;
+
+        // Non-coefficient variables start after the coefficient grid
+        self.next_var = witness_start + hyrax_R_coeff * hyrax_C;
+
         let mut challenge_idx = 0;
         let mut chain_idx = 0;
         let mut batching_coeff_idx = 0;
         let mut current_claim = self.initial_claim_vars[chain_idx];
+        let mut round_idx = 0usize; // global round counter for grid positioning
 
-        // Global map of OpeningId -> Variable for wiring across stages.
-        // When the same opening appears in multiple constraints (input or output),
-        // they reference the SAME witness variable. This enables verification of
-        // the sumcheck chain.
         let mut global_opening_vars: HashMap<OpeningId, Variable> = HashMap::new();
 
-        // Clone data to avoid borrow conflict
         let stage_configs = self.stage_configs.clone();
         let batching_coeff_vars = self.batching_coeff_vars.clone();
 
-        // Allocate variables and build constraints for each stage/round
         for (stage_idx, config) in stage_configs.iter().enumerate() {
             // Check if this stage starts a new chain
             if stage_idx > 0 && config.starts_new_chain {
@@ -540,18 +554,15 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             let mut stage_rounds = Vec::with_capacity(config.num_rounds);
 
             for _round in 0..config.num_rounds {
-                // Allocate witness variables for this round
                 let num_coeffs = config.poly_degree + 1;
                 let num_intermediates = config.poly_degree - 1;
 
+                // Coefficients at grid position: witness_start + round_idx * C + k
                 let coeffs: Vec<Variable> = (0..num_coeffs)
-                    .map(|_| {
-                        let var = Variable::new(self.next_var);
-                        self.next_var += 1;
-                        var
-                    })
+                    .map(|k| Variable::new(witness_start + round_idx * hyrax_C + k))
                     .collect();
 
+                // Intermediates and next_claim in non-coeff section (sequential)
                 let intermediates: Vec<Variable> = (0..num_intermediates)
                     .map(|_| {
                         let var = Variable::new(self.next_var);
@@ -571,13 +582,12 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                     claimed_sum: current_claim,
                 };
 
-                // Add constraints for this round
                 let power_sums = config.uniskip_power_sums.as_deref();
                 self.add_round_constraints(&vars, power_sums);
 
-                // Chain: this round's output becomes next round's input
                 current_claim = next_claim;
                 challenge_idx += 1;
+                round_idx += 1;
 
                 stage_rounds.push(vars);
             }
@@ -724,9 +734,6 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         }
 
         let num_constraints = self.constraints.len();
-        let num_vars = self.next_var;
-        // Public inputs: challenges + initial_claims + batching_coeffs
-        // + output_constraint_challenges + input_constraint_challenges + extra_constraint_challenges
         let num_public_inputs = self.challenge_vars.len()
             + self.initial_claim_vars.len()
             + self.batching_coeff_vars.len()
@@ -734,7 +741,12 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             + self.input_constraint_challenge_vars.len()
             + self.extra_constraint_challenge_vars.len();
 
-        // Build sparse matrices
+        // Compute final grid parameters
+        let noncoeff_count = self.next_var - (witness_start + hyrax_R_coeff * hyrax_C);
+        let hyrax = compute_hyrax_params(&self.stage_configs, noncoeff_count);
+        let num_vars = witness_start + hyrax.R_prime * hyrax.C;
+
+        // Build sparse matrices with grid-aware num_vars
         let mut a = SparseR1CSMatrix::new(num_constraints, num_vars);
         let mut b = SparseR1CSMatrix::new(num_constraints, num_vars);
         let mut c = SparseR1CSMatrix::new(num_constraints, num_vars);
@@ -762,13 +774,14 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             extra_constraints: self.extra_constraints,
             extra_output_vars: self.extra_output_vars,
             extra_blinding_vars: self.extra_blinding_vars,
+            hyrax,
         }
     }
 
     /// Add final output constraint: final_claim = Σⱼ αⱼ · yⱼ
     ///
     /// This constraint binds the sumcheck's final output to the expected polynomial
-    /// evaluations. The evaluations yⱼ are witness variables proven correct via ZK-Dory.
+    /// evaluations. The evaluations yⱼ are witness variables.
     fn add_final_output_constraint(
         &mut self,
         final_claim: Variable,
@@ -1119,9 +1132,18 @@ mod tests {
         // Public inputs: 120 challenges + 1 initial claim = 121
         assert_eq!(r1cs.num_public_inputs, 121);
 
-        // Variables: 1 (constant) + 121 (public) + 120 * 7 (witness per round)
-        // Per round: 4 coeffs + 2 intermediates + 1 next_claim = 7
-        assert_eq!(r1cs.num_vars, 1 + 121 + 120 * 7);
+        // Grid layout: C=4 (degree 3 → 4 coeffs), R_coeff=128 (next_pow2(120))
+        // Per round: 2 intermediates + 1 next_claim = 3 non-coeff vars
+        // noncoeff_count = 120 * 3 = 360
+        // noncoeff_rows = ceil(360/4) = 90
+        // R' = next_pow2(128 + 90) = 256
+        // witness = R' * C = 256 * 4 = 1024
+        // num_vars = 1 + 121 + 1024 = 1146
+        let witness_start = 1 + r1cs.num_public_inputs;
+        assert_eq!(r1cs.hyrax.C, 4);
+        assert_eq!(r1cs.hyrax.R_coeff, 128);
+        assert_eq!(r1cs.hyrax.R_prime, 256);
+        assert_eq!(r1cs.num_vars, witness_start + 256 * 4);
     }
 
     #[test]

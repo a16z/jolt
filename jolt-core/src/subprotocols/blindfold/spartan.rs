@@ -696,104 +696,69 @@ pub fn compute_L_w_at_ry<F: JoltField>(
     result
 }
 
-/// Evaluate W_ped(ry_w) = Σ_i Σ_k coeffs_folded[i][k] · eq(ry_w, offset[i]+k).
+/// Map coefficient positions in the witness vector W (grid layout).
 ///
-/// `coefficient_positions` maps round index → (start_offset_in_W, num_coefficients).
-pub fn compute_W_ped_at_ry<F: JoltField>(
-    coefficients_folded: &[Vec<F>],
-    coefficient_positions: &[(usize, usize)],
-    ry_w: &[F::Challenge],
-) -> F {
-    let ry: Vec<F> = ry_w.iter().map(|c| (*c).into()).collect();
-    let eq_ry: Vec<F> = EqPolynomial::evals(&ry);
-
-    let mut result = F::zero();
-    for (round_idx, &(start, num_coeffs)) in coefficient_positions.iter().enumerate() {
-        let coeffs = &coefficients_folded[round_idx];
-        for k in 0..num_coeffs {
-            result += coeffs[k] * eq_ry[start + k];
-        }
-    }
-    result
-}
-
-fn estimate_constraint_aux_vars(constraint: &OutputClaimConstraint) -> usize {
-    let mut count = 0;
-    for term in &constraint.terms {
-        if term.factors.len() <= 1 {
-            count += 1;
-        } else {
-            count += term.factors.len();
-        }
-    }
-    count
-}
-
-/// Map coefficient positions in the witness vector W.
-///
-/// Returns `Vec<(start_offset_in_W, num_coefficients)>` for each round,
-/// walking the same allocation order as the R1CS builder and folding code.
+/// With the Hyrax grid layout, round i's coefficients start at `i * C`
+/// in the witness. Returns `Vec<(start_offset_in_W, num_coefficients)>` for each round.
 pub fn coefficient_positions<F: JoltField>(r1cs: &VerifierR1CS<F>) -> Vec<(usize, usize)> {
-    use crate::poly::opening_proof::OpeningId;
-    use std::collections::HashSet;
-
+    let hyrax_C = r1cs.hyrax.C;
     let mut positions = Vec::new();
-    let mut w_idx = 0;
-    let mut allocated_openings: HashSet<OpeningId> = HashSet::new();
+    let mut round_idx = 0;
 
     for config in &r1cs.stage_configs {
-        if let Some(ref ii_config) = config.initial_input {
-            if let Some(ref constraint) = ii_config.constraint {
-                let num_new = constraint
-                    .required_openings
-                    .iter()
-                    .filter(|id| allocated_openings.insert(**id))
-                    .count();
-                let num_aux = estimate_constraint_aux_vars(constraint);
-                w_idx += num_new + num_aux;
-            }
-        }
-
         for _ in 0..config.num_rounds {
             let num_coeffs = config.poly_degree + 1;
-            let num_intermediates = config.poly_degree.saturating_sub(1);
-
-            positions.push((w_idx, num_coeffs));
-            w_idx += num_coeffs + num_intermediates + 1;
+            positions.push((round_idx * hyrax_C, num_coeffs));
+            round_idx += 1;
         }
-
-        if let Some(ref fo_config) = config.final_output {
-            if let Some(ref constraint) = fo_config.constraint {
-                let num_new = constraint
-                    .required_openings
-                    .iter()
-                    .filter(|id| allocated_openings.insert(**id))
-                    .count();
-                let num_aux = estimate_constraint_aux_vars(constraint);
-                w_idx += num_new + num_aux;
-            } else if let Some(exact) = fo_config.exact_num_witness_vars {
-                w_idx += exact;
-            } else {
-                let num_evals = fo_config.num_evaluations;
-                w_idx += num_evals;
-                if num_evals > 1 {
-                    w_idx += num_evals - 1;
-                }
-            }
-        }
-    }
-
-    for constraint in &r1cs.extra_constraints {
-        let num_new = constraint
-            .required_openings
-            .iter()
-            .filter(|id| allocated_openings.insert(**id))
-            .count();
-        let num_aux = estimate_constraint_aux_vars(constraint);
-        w_idx += num_new + 1 + num_aux + 1;
     }
 
     positions
+}
+
+/// Compute Hyrax combined row: combined[k] = Σ_i eq(ry_row, i) · flat[i*C + k]
+///
+/// `flat` is the grid-layout vector (R' × C), `ry_row` has log2(R') variables.
+pub fn hyrax_combined_row<F: JoltField>(flat: &[F], hyrax_C: usize, ry_row: &[F]) -> Vec<F> {
+    let R = 1usize << ry_row.len();
+    let eq_row: Vec<F> = EqPolynomial::evals(ry_row);
+
+    let mut combined = vec![F::zero(); hyrax_C];
+    for i in 0..R {
+        let w: F = eq_row[i];
+        if w.is_zero() {
+            continue;
+        }
+        let base = i * hyrax_C;
+        for k in 0..hyrax_C {
+            if base + k < flat.len() {
+                combined[k] += w * flat[base + k];
+            }
+        }
+    }
+    combined
+}
+
+/// Evaluate W(ry_w) from a Hyrax combined row.
+///
+/// W(ry_w) = Σ_k combined_row[k] · eq(ry_col, k)
+pub fn hyrax_evaluate<F: JoltField>(combined_row: &[F], ry_col: &[F]) -> F {
+    let eq_col: Vec<F> = EqPolynomial::evals(ry_col);
+    combined_row
+        .iter()
+        .zip(eq_col.iter())
+        .map(|(c, e)| *c * *e)
+        .sum()
+}
+
+/// Compute combined blinding: combined_blinding = Σ_i eq(ry_row, i) · row_blindings[i]
+pub fn hyrax_combined_blinding<F: JoltField>(row_blindings: &[F], ry_row: &[F]) -> F {
+    let eq_row: Vec<F> = EqPolynomial::evals(ry_row);
+    row_blindings
+        .iter()
+        .zip(eq_row.iter())
+        .map(|(b, e)| *b * *e)
+        .sum()
 }
 
 #[cfg(test)]

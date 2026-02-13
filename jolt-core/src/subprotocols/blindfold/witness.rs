@@ -157,8 +157,7 @@ pub struct FinalOutputWitness<F> {
     /// Batching coefficients αⱼ (public inputs, derived from transcript)
     /// Used for simple linear constraints.
     pub batching_coefficients: Vec<F>,
-    /// Expected polynomial evaluations yⱼ (witness, proven via ZK-Dory)
-    /// Used for simple linear constraints.
+    /// Expected polynomial evaluations yⱼ (witness variables).
     pub evaluations: Vec<F>,
     /// Challenge values for general constraints.
     /// Layout: [batching_coeffs..., instance0_challenges..., instance1_challenges..., ...]
@@ -346,14 +345,18 @@ impl<F: JoltField> BlindFoldWitness<F> {
             z[initial_claims_start + i] = *claim;
         }
 
+        let hyrax_C = r1cs.hyrax.C;
+        let hyrax_R_coeff = r1cs.hyrax.R_coeff;
+
         let mut challenge_idx = challenge_start;
         let mut batching_coeff_idx = batching_coeffs_start;
         let mut constraint_challenge_idx = constraint_challenges_start;
         let mut input_constraint_challenge_idx = input_constraint_challenges_start;
         let mut extra_constraint_challenge_idx = extra_constraint_challenges_start;
-        let mut witness_idx = witness_start;
+        // Non-coeff witness variables start after the coefficient grid
+        let mut witness_idx = witness_start + hyrax_R_coeff * hyrax_C;
+        let mut round_idx = 0usize; // global round counter for grid positioning
 
-        // Track which openings have been assigned (mirrors R1CS's global_opening_vars)
         let mut assigned_openings: HashSet<OpeningId> = HashSet::new();
 
         for (stage_idx, stage_witness) in self.stages.iter().enumerate() {
@@ -455,13 +458,12 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 let (intermediates, next_claim) =
                     round_witness.compute_horner_intermediates(challenge);
 
-                // Assign coefficients
-                for (i, coeff) in round_witness.coeffs.iter().enumerate() {
-                    z[witness_idx + i] = *coeff;
+                // Assign coefficients at grid position: witness_start + round_idx * C + k
+                for (k, coeff) in round_witness.coeffs.iter().enumerate() {
+                    z[witness_start + round_idx * hyrax_C + k] = *coeff;
                 }
-                witness_idx += num_coeffs;
 
-                // Assign intermediates
+                // Assign intermediates in non-coeff section (sequential)
                 for (i, intermediate) in intermediates.iter().enumerate() {
                     z[witness_idx + i] = *intermediate;
                 }
@@ -470,6 +472,8 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 // Assign next_claim
                 z[witness_idx] = next_claim;
                 witness_idx += 1;
+
+                round_idx += 1;
             }
 
             // Assign final output witness if present

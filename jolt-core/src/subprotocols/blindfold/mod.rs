@@ -34,28 +34,98 @@ pub use protocol::{
 pub use r1cs::{SparseR1CSMatrix, VerifierR1CS, VerifierR1CSBuilder};
 pub use relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 pub use spartan::{
-    coefficient_positions, compute_L_w_at_ry, compute_W_ped_at_ry, BlindFoldInnerSumcheckProver,
-    BlindFoldSpartanParams, BlindFoldSpartanProver, BlindFoldSpartanVerifier, SpartanFinalClaims,
+    coefficient_positions, compute_L_w_at_ry, hyrax_combined_row, hyrax_evaluate,
+    BlindFoldInnerSumcheckProver, BlindFoldSpartanParams, BlindFoldSpartanProver,
+    BlindFoldSpartanVerifier, SpartanFinalClaims,
 };
 pub use witness::{
     BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, RoundWitness, StageWitness,
 };
 
 use crate::field::JoltField;
+use crate::utils::math::Math;
 
-/// Compute the required Pedersen generator count for a given BlindFold R1CS.
-/// This must cover commitments to the witness vector W, the error vector E,
-/// and the largest round polynomial coefficient vector.
-pub fn pedersen_generator_count_for_r1cs<F: JoltField>(r1cs: &VerifierR1CS<F>) -> usize {
-    let witness_len = r1cs.num_vars.saturating_sub(1 + r1cs.num_public_inputs);
-    let error_len = r1cs.num_constraints;
-    let max_round_coeffs = r1cs
-        .stage_configs
+/// Grid layout parameters for Hyrax-style openings.
+///
+/// W is laid out as an R' × C grid:
+/// - Rows 0..total_rounds: coefficient rows (one per sumcheck round)
+/// - Rows R_coeff..R_coeff+noncoeff_rows: non-coefficient values (packed)
+/// - Remaining rows: zero padding to R'
+#[derive(Clone, Debug)]
+pub struct HyraxParams {
+    /// Column count (power of 2, ≥ max coefficient count across all rounds)
+    pub C: usize,
+    /// Coefficient rows: next_power_of_2(total_rounds)
+    pub R_coeff: usize,
+    /// Total W rows: next_power_of_2(R_coeff + noncoeff_rows)
+    pub R_prime: usize,
+    /// Number of non-coefficient witness variables
+    pub noncoeff_count: usize,
+    /// Total sumcheck rounds
+    pub total_rounds: usize,
+}
+
+impl HyraxParams {
+    /// E grid: R_E rows × C_E columns where R_E * C_E = padded_e_len.
+    /// C_E = min(C, padded_e_len) to handle small constraint counts.
+    pub fn e_grid(&self, num_constraints: usize) -> (usize, usize) {
+        Self::e_grid_static(self.C, num_constraints)
+    }
+
+    /// Static version for use before HyraxParams is constructed.
+    pub fn e_grid_static(hyrax_C: usize, num_constraints: usize) -> (usize, usize) {
+        let padded_e_len = num_constraints.next_power_of_two();
+        let C_E = hyrax_C.min(padded_e_len);
+        let R_E = padded_e_len / C_E;
+        (R_E, C_E)
+    }
+
+    pub fn log_R_prime(&self) -> usize {
+        self.R_prime.log_2()
+    }
+
+    pub fn log_C(&self) -> usize {
+        self.C.log_2()
+    }
+
+    pub fn noncoeff_rows(&self) -> usize {
+        self.noncoeff_count.div_ceil(self.C)
+    }
+}
+
+/// Compute Hyrax grid parameters from stage configs.
+///
+/// Requires `noncoeff_count`: the number of non-coefficient witness variables,
+/// which must be computed by walking the same allocation logic as the R1CS builder.
+pub fn compute_hyrax_params(stage_configs: &[StageConfig], noncoeff_count: usize) -> HyraxParams {
+    let total_rounds: usize = stage_configs.iter().map(|s| s.num_rounds).sum();
+    let max_coeffs = stage_configs
         .iter()
         .map(|c| c.poly_degree + 1)
         .max()
-        .unwrap_or(0);
-    witness_len.max(error_len).max(max_round_coeffs)
+        .unwrap_or(1);
+    let C = max_coeffs.next_power_of_two();
+    let R_coeff = if total_rounds == 0 {
+        1
+    } else {
+        total_rounds.next_power_of_two()
+    };
+    let noncoeff_rows = noncoeff_count.div_ceil(C);
+    let R_prime = (R_coeff + noncoeff_rows).next_power_of_two();
+
+    HyraxParams {
+        C,
+        R_coeff,
+        R_prime,
+        noncoeff_count,
+        total_rounds,
+    }
+}
+
+/// Pedersen generator count for BlindFold R1CS.
+/// Needs C generators (one per grid column) for row commitments.
+pub fn pedersen_generator_count_for_r1cs<F: JoltField>(r1cs: &VerifierR1CS<F>) -> usize {
+    r1cs.hyrax.C
 }
 
 /// Configuration for final output binding at end of a chain.

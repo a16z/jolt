@@ -10,97 +10,83 @@
 //! - E ∈ F^m is an error vector (E=0 for non-relaxed)
 //!
 //! This allows folding two satisfying instances into one.
+//!
+//! Instance and witness use row-based commitments for Hyrax-style opening:
+//! - W is arranged as an R' × C grid; coefficient rows reuse sumcheck round commitments
+//! - E is arranged as an R_E × C_E grid; row commitments enable Hyrax opening at rx
 
 use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
-use crate::poly::commitment::pedersen::PedersenGenerators;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand_core::CryptoRngCore;
 
 use super::r1cs::VerifierR1CS;
 
 /// Relaxed R1CS Instance (public data)
 ///
-/// Contains commitments to the witness and error vector, plus public inputs.
-/// The verifier can compute folded instances without knowing the witness.
+/// Row commitments replace monolithic W_bar and E_bar:
+/// - `round_commitments`: coefficient row commitments (reuse existing sumcheck round commitments)
+/// - `noncoeff_row_commitments`: non-coefficient row commitments (prover sends in proof)
+/// - `e_row_commitments`: E row commitments (derived from cross-term and random instance)
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RelaxedR1CSInstance<F: JoltField, C: JoltCurve> {
-    /// Commitment to error vector E: Ē = Com(E, r_E)
-    pub E_bar: C::G1,
-    /// Scalar (u=1 for non-relaxed instances)
     pub u: F,
-    /// Commitment to witness vector W: W̄ = Com(W, r_W)
-    pub W_bar: C::G1,
-    /// Public inputs (challenges, initial claim, etc.)
     pub x: Vec<F>,
-    /// Per-round commitments from ZK sumcheck
+    /// Per-round commitments from ZK sumcheck (= coefficient row commitments)
     pub round_commitments: Vec<C::G1>,
-    /// Evaluation commitments (e.g., y_com) for extra constraints
+    /// Non-coefficient W row commitments
+    pub noncoeff_row_commitments: Vec<C::G1>,
+    /// E row commitments
+    pub e_row_commitments: Vec<C::G1>,
+    /// Evaluation commitments for extra constraints
     pub eval_commitments: Vec<C::G1>,
 }
 
 /// Relaxed R1CS Witness (private data)
 ///
-/// Contains the actual values and blinding factors for commitments.
+/// W is in grid layout (R' × C). Row blindings cover all W rows.
+/// E is flat but has per-row blindings for Hyrax opening.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RelaxedR1CSWitness<F: JoltField> {
     /// Error vector (zeros for non-relaxed)
     pub E: Vec<F>,
-    /// Blinding factor for E commitment
-    pub r_E: F,
-    /// Witness values (private portion of Z)
+    /// Witness values in grid layout (R' × C)
     pub W: Vec<F>,
-    /// Blinding factor for W commitment
-    pub r_W: F,
-    /// Per-round polynomial coefficients (openings for round_commitments)
-    pub round_coefficients: Vec<Vec<F>>,
-    /// Per-round blinding factors
-    pub round_blindings: Vec<F>,
+    /// One blinding per W row (R' elements: coefficient row blindings, then non-coeff, then padding zeros)
+    pub w_row_blindings: Vec<F>,
+    /// One blinding per E row (R_E elements)
+    pub e_row_blindings: Vec<F>,
 }
 
 impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
     /// Create a non-relaxed instance (u=1, E=0) from standard R1CS witness.
-    ///
-    /// This is the starting point before any folding.
     #[allow(clippy::too_many_arguments)]
-    pub fn new_non_relaxed<R: CryptoRngCore>(
-        gens: &PedersenGenerators<C>,
+    pub fn new_non_relaxed(
         witness: &[F],
         public_inputs: Vec<F>,
         num_constraints: usize,
+        hyrax_C: usize,
         round_commitments: Vec<C::G1>,
-        round_coefficients: Vec<Vec<F>>,
-        round_blindings: Vec<F>,
+        noncoeff_row_commitments: Vec<C::G1>,
         eval_commitments: Vec<C::G1>,
-        rng: &mut R,
+        w_row_blindings: Vec<F>,
     ) -> (Self, RelaxedR1CSWitness<F>) {
-        // For non-relaxed: E = 0, u = 1
-        let E = vec![F::zero(); num_constraints];
-        let r_E = F::zero(); // No blinding needed for zero vector
-        let r_W = F::random(rng);
-
-        // Commit to witness
-        let W_bar = gens.commit(witness, &r_W);
-
-        // Commit to E (zero commitment with zero blinding = identity)
-        let E_bar = C::G1::zero();
+        let (R_E, _C_E) = super::HyraxParams::e_grid_static(hyrax_C, num_constraints);
 
         let instance = Self {
-            E_bar,
             u: F::one(),
-            W_bar,
             x: public_inputs,
             round_commitments,
+            noncoeff_row_commitments,
+            // Real instance: E=0 → all E row commitments are identity
+            e_row_commitments: vec![C::G1::zero(); R_E],
             eval_commitments,
         };
 
         let witness_struct = RelaxedR1CSWitness {
-            E,
-            r_E,
+            E: vec![F::zero(); num_constraints],
             W: witness.to_vec(),
-            r_W,
-            round_coefficients,
-            round_blindings,
+            w_row_blindings,
+            e_row_blindings: vec![F::zero(); R_E],
         };
 
         (instance, witness_struct)
@@ -108,37 +94,23 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
 
     /// Fold two instances into one.
     ///
-    /// Given instances u1, u2 and cross-term commitment T̄, computes:
-    /// - Ē' = Ē₁ + r·T̄ + r²·Ē₂
-    /// - u' = u₁ + r·u₂
-    /// - W̄' = W̄₁ + r·W̄₂
-    /// - x' = x₁ + r·x₂
-    /// - round_commitments' = round_commitments₁ + r·round_commitments₂
-    pub fn fold(&self, other: &Self, T_bar: &C::G1, r: F) -> Self {
+    /// E row commitments fold with cross-term T row commitments:
+    ///   e_row_i' = e_row_i_1 + r·t_row_i + r²·e_row_i_2
+    pub fn fold(&self, other: &Self, t_row_commitments: &[C::G1], r: F) -> Self {
         let r_squared = r * r;
 
-        assert_eq!(self.x.len(), other.x.len(), "Public input length mismatch");
+        assert_eq!(self.x.len(), other.x.len());
+        assert_eq!(self.round_commitments.len(), other.round_commitments.len());
         assert_eq!(
-            self.round_commitments.len(),
-            other.round_commitments.len(),
-            "Round commitment length mismatch"
+            self.noncoeff_row_commitments.len(),
+            other.noncoeff_row_commitments.len()
         );
-        assert_eq!(
-            self.eval_commitments.len(),
-            other.eval_commitments.len(),
-            "Eval commitment length mismatch"
-        );
+        assert_eq!(self.eval_commitments.len(), other.eval_commitments.len());
+        assert_eq!(self.e_row_commitments.len(), other.e_row_commitments.len());
+        assert_eq!(self.e_row_commitments.len(), t_row_commitments.len());
 
-        // Ē' = Ē₁ + r·T̄ + r²·Ē₂
-        let E_bar = self.E_bar + T_bar.scalar_mul(&r) + other.E_bar.scalar_mul(&r_squared);
-
-        // u' = u₁ + r·u₂
         let u = self.u + r * other.u;
 
-        // W̄' = W̄₁ + r·W̄₂
-        let W_bar = self.W_bar + other.W_bar.scalar_mul(&r);
-
-        // x' = x₁ + r·x₂
         let x: Vec<F> = self
             .x
             .iter()
@@ -146,12 +118,27 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
             .map(|(a, b)| *a + r * *b)
             .collect();
 
-        // round_commitments' = round_commitments₁ + r·round_commitments₂
         let round_commitments: Vec<C::G1> = self
             .round_commitments
             .iter()
             .zip(&other.round_commitments)
             .map(|(c1, c2)| *c1 + c2.scalar_mul(&r))
+            .collect();
+
+        let noncoeff_row_commitments: Vec<C::G1> = self
+            .noncoeff_row_commitments
+            .iter()
+            .zip(&other.noncoeff_row_commitments)
+            .map(|(c1, c2)| *c1 + c2.scalar_mul(&r))
+            .collect();
+
+        // E_row' = E_row_1 + r·T_row + r²·E_row_2
+        let e_row_commitments: Vec<C::G1> = self
+            .e_row_commitments
+            .iter()
+            .zip(t_row_commitments)
+            .zip(&other.e_row_commitments)
+            .map(|((e1, t), e2)| *e1 + t.scalar_mul(&r) + e2.scalar_mul(&r_squared))
             .collect();
 
         let eval_commitments: Vec<C::G1> = self
@@ -162,48 +149,47 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
             .collect();
 
         Self {
-            E_bar,
             u,
-            W_bar,
             x,
             round_commitments,
+            noncoeff_row_commitments,
+            e_row_commitments,
             eval_commitments,
         }
+    }
+
+    /// All W row commitments in order: coefficient rows (padded to R_coeff), then non-coeff rows,
+    /// then padding to R'.
+    pub fn all_w_row_commitments(
+        &self,
+        total_rounds: usize,
+        R_coeff: usize,
+        R_prime: usize,
+    ) -> Vec<C::G1> {
+        let mut rows = Vec::with_capacity(R_prime);
+        // Coefficient rows: real rounds, then padding to R_coeff
+        rows.extend_from_slice(&self.round_commitments);
+        for _ in total_rounds..R_coeff {
+            rows.push(C::G1::zero());
+        }
+        // Non-coefficient rows
+        rows.extend_from_slice(&self.noncoeff_row_commitments);
+        // Padding to R'
+        while rows.len() < R_prime {
+            rows.push(C::G1::zero());
+        }
+        rows
     }
 }
 
 impl<F: JoltField> RelaxedR1CSWitness<F> {
-    /// Create a non-relaxed witness (E=0) from the private witness values.
-    pub fn new_non_relaxed<R: CryptoRngCore>(
-        witness: Vec<F>,
-        num_constraints: usize,
-        round_coefficients: Vec<Vec<F>>,
-        round_blindings: Vec<F>,
-        rng: &mut R,
-    ) -> Self {
-        Self {
-            E: vec![F::zero(); num_constraints],
-            r_E: F::zero(),
-            W: witness,
-            r_W: F::random(rng),
-            round_coefficients,
-            round_blindings,
-        }
-    }
-
     /// Fold two witnesses into one.
     ///
-    /// Given witnesses w1, w2 and cross-term T, computes:
-    /// - E' = E₁ + r·T + r²·E₂
-    /// - r_E' = r_E₁ + r·r_T + r²·r_E₂
-    /// - W' = W₁ + r·W₂
-    /// - r_W' = r_W₁ + r·r_W₂
-    /// - round_coefficients' = round_coefficients₁ + r·round_coefficients₂
-    /// - round_blindings' = round_blindings₁ + r·round_blindings₂
-    pub fn fold(&self, other: &Self, T: &[F], r_T: F, r: F) -> Self {
+    /// E folds with cross-term: E' = E₁ + r·T + r²·E₂
+    /// W folds linearly: W' = W₁ + r·W₂
+    pub fn fold(&self, other: &Self, T: &[F], t_row_blindings: &[F], r: F) -> Self {
         let r_squared = r * r;
 
-        // E' = E₁ + r·T + r²·E₂
         let E: Vec<F> = self
             .E
             .iter()
@@ -212,10 +198,6 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
             .map(|((e1, t), e2)| *e1 + r * *t + r_squared * *e2)
             .collect();
 
-        // r_E' = r_E₁ + r·r_T + r²·r_E₂
-        let r_E = self.r_E + r * r_T + r_squared * other.r_E;
-
-        // W' = W₁ + r·W₂
         let W: Vec<F> = self
             .W
             .iter()
@@ -223,48 +205,35 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
             .map(|(w1, w2)| *w1 + r * *w2)
             .collect();
 
-        // r_W' = r_W₁ + r·r_W₂
-        let r_W = self.r_W + r * other.r_W;
-
-        // round_coefficients' = round_coefficients₁ + r·round_coefficients₂
-        let round_coefficients: Vec<Vec<F>> = self
-            .round_coefficients
+        let w_row_blindings: Vec<F> = self
+            .w_row_blindings
             .iter()
-            .zip(&other.round_coefficients)
-            .map(|(c1, c2)| c1.iter().zip(c2).map(|(a, b)| *a + r * *b).collect())
+            .zip(&other.w_row_blindings)
+            .map(|(b1, b2)| *b1 + r * *b2)
             .collect();
 
-        // round_blindings' = round_blindings₁ + r·round_blindings₂
-        let round_blindings: Vec<F> = self
-            .round_blindings
+        // e_row_blindings' = e_row_blindings_1 + r·t_row_blindings + r²·e_row_blindings_2
+        let e_row_blindings: Vec<F> = self
+            .e_row_blindings
             .iter()
-            .zip(&other.round_blindings)
-            .map(|(r1, r2)| *r1 + r * *r2)
+            .zip(t_row_blindings)
+            .zip(&other.e_row_blindings)
+            .map(|((b1, tb), b2)| *b1 + r * *tb + r_squared * *b2)
             .collect();
 
         Self {
             E,
-            r_E,
             W,
-            r_W,
-            round_coefficients,
-            round_blindings,
+            w_row_blindings,
+            e_row_blindings,
         }
     }
 
     /// Check if the witness satisfies the relaxed R1CS.
-    ///
-    /// Verifies: (A·Z) ∘ (B·Z) = u·(C·Z) + E
     pub fn check_satisfaction(&self, r1cs: &VerifierR1CS<F>, u: F, x: &[F]) -> Result<(), usize> {
-        // Build Z vector: [u, public_inputs..., witness...]
-        // The u at Z[0] allows proper folding since it becomes u' = u1 + r*u2
         let mut z = Vec::with_capacity(r1cs.num_vars);
-        z.push(u); // u scalar at index 0 (1 for non-relaxed, folded otherwise)
-
-        // Public inputs (challenges + initial claim in our case)
+        z.push(u);
         z.extend_from_slice(x);
-
-        // Private witness
         z.extend_from_slice(&self.W);
 
         assert_eq!(
@@ -275,159 +244,15 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
             r1cs.num_vars
         );
 
-        // Compute Az, Bz, Cz
         let az = r1cs.a.mul_vector(&z);
         let bz = r1cs.b.mul_vector(&z);
         let cz = r1cs.c.mul_vector(&z);
 
-        // Check: (Az)_i * (Bz)_i = u * (Cz)_i + E_i for all i
         for i in 0..r1cs.num_constraints {
             let lhs = az[i] * bz[i];
             let rhs = u * cz[i] + self.E[i];
             if lhs != rhs {
                 return Err(i);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Verify that round_coefficients match the coefficients embedded in W.
-    ///
-    /// This is critical for soundness: ensures the coefficients used in R1CS
-    /// constraints are the same as those verified via commitment opening.
-    ///
-    /// If round_coefficients is empty (unit tests without round commitment data),
-    /// this check is skipped.
-    pub fn verify_round_coefficients_consistency(
-        &self,
-        r1cs: &VerifierR1CS<F>,
-        final_output_info: &[super::protocol::FinalOutputInfo],
-    ) -> Result<(), usize> {
-        use crate::poly::opening_proof::OpeningId;
-        use std::collections::HashSet;
-
-        // Skip check if no round coefficients (unit tests without round commitment data)
-        if self.round_coefficients.is_empty() {
-            return Ok(());
-        }
-
-        // Note: final_output_info is no longer used as we recompute from config
-        // to properly account for shared openings
-        let _ = final_output_info;
-
-        // Track allocated openings to match R1CS's global_opening_vars behavior
-        let mut allocated_openings: HashSet<OpeningId> = HashSet::new();
-
-        let mut w_idx = 0;
-        let mut round_idx = 0;
-
-        for config in r1cs.stage_configs.iter() {
-            // Skip past initial_input variables (if present) - BEFORE rounds
-            if let Some(ref ii_config) = config.initial_input {
-                if let Some(ref constraint) = ii_config.constraint {
-                    // Count only NEW openings (matching R1CS allocation)
-                    let num_new_openings = constraint
-                        .required_openings
-                        .iter()
-                        .filter(|id| {
-                            if allocated_openings.contains(id) {
-                                false
-                            } else {
-                                allocated_openings.insert(**id);
-                                true
-                            }
-                        })
-                        .count();
-
-                    fn estimate_aux_var_count(constraint: &super::OutputClaimConstraint) -> usize {
-                        let mut count = 0;
-                        for term in &constraint.terms {
-                            if term.factors.len() <= 1 {
-                                count += 1;
-                            } else {
-                                count += term.factors.len();
-                            }
-                        }
-                        count
-                    }
-
-                    let num_aux = estimate_aux_var_count(constraint);
-                    w_idx += num_new_openings + num_aux;
-                }
-            }
-
-            for _round_in_stage in 0..config.num_rounds {
-                let num_coeffs = config.poly_degree + 1;
-                let num_intermediates = config.poly_degree.saturating_sub(1);
-
-                // Extract coefficients from W at current position
-                let coeffs_in_w = &self.W[w_idx..w_idx + num_coeffs];
-
-                // Compare with round_coefficients
-                if round_idx >= self.round_coefficients.len() {
-                    return Err(round_idx);
-                }
-                let expected_coeffs = &self.round_coefficients[round_idx];
-
-                if coeffs_in_w.len() != expected_coeffs.len() {
-                    return Err(round_idx);
-                }
-
-                for (w_coeff, expected) in coeffs_in_w.iter().zip(expected_coeffs.iter()) {
-                    if w_coeff != expected {
-                        return Err(round_idx);
-                    }
-                }
-
-                // Move to next round's position in W
-                // Layout: coefficients + intermediates + next_claim
-                w_idx += num_coeffs + num_intermediates + 1;
-                round_idx += 1;
-            }
-
-            // Skip past final_output variables (if present)
-            // Recompute from config to properly account for shared openings
-            if let Some(ref fo_config) = config.final_output {
-                if let Some(ref constraint) = fo_config.constraint {
-                    // Count only NEW openings (matching R1CS allocation)
-                    let num_new_openings = constraint
-                        .required_openings
-                        .iter()
-                        .filter(|id| {
-                            if allocated_openings.contains(id) {
-                                false
-                            } else {
-                                allocated_openings.insert(**id);
-                                true
-                            }
-                        })
-                        .count();
-
-                    fn estimate_aux_var_count_for_constraint(
-                        constraint: &super::OutputClaimConstraint,
-                    ) -> usize {
-                        let mut count = 0;
-                        for term in &constraint.terms {
-                            if term.factors.len() <= 1 {
-                                count += 1;
-                            } else {
-                                count += term.factors.len();
-                            }
-                        }
-                        count
-                    }
-
-                    let num_aux = estimate_aux_var_count_for_constraint(constraint);
-                    w_idx += num_new_openings + num_aux;
-                } else {
-                    // Simple constraint: evaluation_vars + accumulator_vars
-                    let num_evals = fo_config.num_evaluations;
-                    w_idx += num_evals; // evaluation_vars
-                    if num_evals > 1 {
-                        w_idx += num_evals - 1; // accumulator_vars
-                    }
-                }
             }
         }
 
@@ -439,6 +264,7 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
 mod tests {
     use super::*;
     use crate::curve::Bn254Curve;
+    use crate::poly::commitment::pedersen::PedersenGenerators;
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
     use crate::subprotocols::blindfold::StageConfig;
@@ -447,77 +273,77 @@ mod tests {
 
     use rand::thread_rng;
 
-    fn verify_commitment_opening<F: JoltField, C: JoltCurve>(
-        gens: &PedersenGenerators<C>,
-        commitment: &C::G1,
-        values: &[F],
-        blinding: &F,
-    ) -> bool {
-        gens.commit(values, blinding) == *commitment
-    }
-
     #[test]
     fn test_non_relaxed_instance_creation() {
-        let mut rng = thread_rng();
         type F = Fr;
 
-        // Create a simple R1CS
         let configs = [StageConfig::new(1, 3)];
         let builder = VerifierR1CSBuilder::<F>::new(&configs);
         let r1cs = builder.build();
 
-        // Create valid witness
-        let c0 = F::from_u64(40);
-        let c1 = F::from_u64(5);
-        let c2 = F::from_u64(10);
-        let c3 = F::from_u64(5);
-        let initial_claim = F::from_u64(100); // 2*40 + 5 + 10 + 5 = 100
-        let challenge = F::from_u64(3);
-
-        let round = RoundWitness::new(vec![c0, c1, c2, c3], challenge);
+        let round = RoundWitness::new(
+            vec![
+                F::from_u64(40),
+                F::from_u64(5),
+                F::from_u64(10),
+                F::from_u64(5),
+            ],
+            F::from_u64(3),
+        );
+        let initial_claim = F::from_u64(100);
         let blindfold_witness =
             BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
         let z = blindfold_witness.assign(&r1cs);
-
-        // Verify standard R1CS is satisfied
         assert!(r1cs.is_satisfied(&z));
 
-        // Extract witness portion (after constant 1 and public inputs)
         let witness_start = 1 + r1cs.num_public_inputs;
         let witness: Vec<F> = z[witness_start..].to_vec();
         let public_inputs: Vec<F> = z[1..witness_start].to_vec();
 
-        // Create generators (need enough for the witness size)
-        let gens = PedersenGenerators::<Bn254Curve>::deterministic(witness.len() + 10);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.hyrax.C + 1);
 
-        // Create non-relaxed instance (with empty round commitment data for unit test)
+        // Commit coefficient row
+        let hyrax_C = r1cs.hyrax.C;
+        let coeffs_row = &witness[0..hyrax_C];
+        let blinding = F::rand(&mut thread_rng());
+        let round_commitment = gens.commit(coeffs_row, &blinding);
+
+        // Non-coeff rows: compute commitments
+        let R_coeff = r1cs.hyrax.R_coeff;
+        let R_prime = r1cs.hyrax.R_prime;
+        let noncoeff_start = R_coeff * hyrax_C;
+        let noncoeff_count = r1cs.hyrax.noncoeff_count;
+        let noncoeff_rows_count = noncoeff_count.div_ceil(hyrax_C);
+
+        let mut noncoeff_row_commitments = Vec::new();
+        let mut w_row_blindings = vec![F::zero(); R_prime];
+        w_row_blindings[0] = blinding;
+
+        let mut rng = thread_rng();
+        for row in 0..noncoeff_rows_count {
+            let start = noncoeff_start + row * hyrax_C;
+            let end = (start + hyrax_C).min(witness.len());
+            let row_data = &witness[start..end];
+            let row_blinding = F::rand(&mut rng);
+            noncoeff_row_commitments.push(gens.commit(row_data, &row_blinding));
+            w_row_blindings[R_coeff + row] = row_blinding;
+        }
+
         let (instance, relaxed_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
-            &gens,
             &witness,
             public_inputs.clone(),
             r1cs.num_constraints,
+            hyrax_C,
+            vec![round_commitment],
+            noncoeff_row_commitments,
             Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            &mut rng,
+            w_row_blindings,
         );
 
-        // Verify instance properties
         assert_eq!(instance.u, F::one());
         assert_eq!(instance.x, public_inputs);
-
-        // Verify witness properties
         assert_eq!(relaxed_witness.W, witness);
         assert!(relaxed_witness.E.iter().all(|e| e.is_zero()));
-
-        // Verify commitment opening
-        assert!(verify_commitment_opening(
-            &gens,
-            &instance.W_bar,
-            &relaxed_witness.W,
-            &relaxed_witness.r_W
-        ));
     }
 
     #[test]
@@ -525,39 +351,35 @@ mod tests {
         let mut rng = thread_rng();
         type F = Fr;
 
-        // Create R1CS
         let configs = [StageConfig::new(1, 3)];
         let builder = VerifierR1CSBuilder::<F>::new(&configs);
         let r1cs = builder.build();
 
-        // Create valid witness
-        let c0 = F::from_u64(40);
-        let c1 = F::from_u64(5);
-        let c2 = F::from_u64(10);
-        let c3 = F::from_u64(5);
+        let round = RoundWitness::new(
+            vec![
+                F::from_u64(40),
+                F::from_u64(5),
+                F::from_u64(10),
+                F::from_u64(5),
+            ],
+            F::from_u64(3),
+        );
         let initial_claim = F::from_u64(100);
-        let challenge = F::from_u64(3);
-
-        let round = RoundWitness::new(vec![c0, c1, c2, c3], challenge);
         let blindfold_witness =
             BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
         let z = blindfold_witness.assign(&r1cs);
 
-        // Extract components
         let witness_start = 1 + r1cs.num_public_inputs;
         let witness: Vec<F> = z[witness_start..].to_vec();
         let public_inputs: Vec<F> = z[1..witness_start].to_vec();
 
-        // Create relaxed witness
-        let relaxed_witness = RelaxedR1CSWitness::new_non_relaxed(
-            witness,
-            r1cs.num_constraints,
-            Vec::new(),
-            Vec::new(),
-            &mut rng,
-        );
+        let relaxed_witness = RelaxedR1CSWitness {
+            E: vec![F::zero(); r1cs.num_constraints],
+            W: witness,
+            w_row_blindings: vec![F::random(&mut rng); r1cs.hyrax.R_prime],
+            e_row_blindings: Vec::new(),
+        };
 
-        // Check relaxed satisfaction (should pass since u=1, E=0)
         let result = relaxed_witness.check_satisfaction(&r1cs, F::one(), &public_inputs);
         assert!(result.is_ok(), "Relaxed R1CS should be satisfied");
     }
@@ -568,9 +390,8 @@ mod tests {
         type F = Fr;
 
         let n = 10;
-        let m = 5; // num constraints
+        let m = 5;
 
-        // Create two random witnesses
         let w1: Vec<F> = (0..n).map(|_| F::rand(&mut rng)).collect();
         let w2: Vec<F> = (0..n).map(|_| F::rand(&mut rng)).collect();
 
@@ -578,51 +399,49 @@ mod tests {
         let e2: Vec<F> = (0..m).map(|_| F::rand(&mut rng)).collect();
         let t: Vec<F> = (0..m).map(|_| F::rand(&mut rng)).collect();
 
-        let r_e1 = F::rand(&mut rng);
-        let r_e2 = F::rand(&mut rng);
-        let r_t = F::rand(&mut rng);
-        let r_w1 = F::rand(&mut rng);
-        let r_w2 = F::rand(&mut rng);
+        let w_blinds1: Vec<F> = (0..4).map(|_| F::rand(&mut rng)).collect();
+        let w_blinds2: Vec<F> = (0..4).map(|_| F::rand(&mut rng)).collect();
+
+        let e_blinds1: Vec<F> = (0..2).map(|_| F::rand(&mut rng)).collect();
+        let e_blinds2: Vec<F> = (0..2).map(|_| F::rand(&mut rng)).collect();
+        let t_blinds: Vec<F> = (0..2).map(|_| F::rand(&mut rng)).collect();
 
         let wit1 = RelaxedR1CSWitness {
             E: e1.clone(),
-            r_E: r_e1,
             W: w1.clone(),
-            r_W: r_w1,
-            round_coefficients: Vec::new(),
-            round_blindings: Vec::new(),
+            w_row_blindings: w_blinds1.clone(),
+            e_row_blindings: e_blinds1.clone(),
         };
 
         let wit2 = RelaxedR1CSWitness {
             E: e2.clone(),
-            r_E: r_e2,
             W: w2.clone(),
-            r_W: r_w2,
-            round_coefficients: Vec::new(),
-            round_blindings: Vec::new(),
+            w_row_blindings: w_blinds2.clone(),
+            e_row_blindings: e_blinds2.clone(),
         };
 
         let r = F::rand(&mut rng);
-        let folded = wit1.fold(&wit2, &t, r_t, r);
+        let folded = wit1.fold(&wit2, &t, &t_blinds, r);
 
-        // Verify folding formula: E' = E1 + r*T + r^2*E2
         let r_sq = r * r;
         for i in 0..m {
-            let expected = e1[i] + r * t[i] + r_sq * e2[i];
-            assert_eq!(folded.E[i], expected);
+            assert_eq!(folded.E[i], e1[i] + r * t[i] + r_sq * e2[i]);
         }
 
-        // Verify: W' = W1 + r*W2
         for i in 0..n {
-            let expected = w1[i] + r * w2[i];
-            assert_eq!(folded.W[i], expected);
+            assert_eq!(folded.W[i], w1[i] + r * w2[i]);
         }
 
-        // Verify blinding: r_E' = r_E1 + r*r_T + r^2*r_E2
-        assert_eq!(folded.r_E, r_e1 + r * r_t + r_sq * r_e2);
+        for i in 0..4 {
+            assert_eq!(folded.w_row_blindings[i], w_blinds1[i] + r * w_blinds2[i]);
+        }
 
-        // Verify blinding: r_W' = r_W1 + r*r_W2
-        assert_eq!(folded.r_W, r_w1 + r * r_w2);
+        for i in 0..2 {
+            assert_eq!(
+                folded.e_row_blindings[i],
+                e_blinds1[i] + r * t_blinds[i] + r_sq * e_blinds2[i]
+            );
+        }
     }
 
     #[test]
@@ -632,88 +451,52 @@ mod tests {
 
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(20);
 
-        // Create two instances
         let x1: Vec<F> = (0..5).map(|_| F::rand(&mut rng)).collect();
         let x2: Vec<F> = (0..5).map(|_| F::rand(&mut rng)).collect();
 
         let u1 = F::rand(&mut rng);
         let u2 = F::rand(&mut rng);
 
-        // Random commitments (for testing formula, not real commitments)
-        let E_bar1 = gens.message_generators[0].scalar_mul(&F::rand(&mut rng));
-        let E_bar2 = gens.message_generators[1].scalar_mul(&F::rand(&mut rng));
-        let W_bar1 = gens.message_generators[2].scalar_mul(&F::rand(&mut rng));
-        let W_bar2 = gens.message_generators[3].scalar_mul(&F::rand(&mut rng));
-        let T_bar = gens.message_generators[4].scalar_mul(&F::rand(&mut rng));
+        let rc1 = vec![gens.message_generators[0].scalar_mul(&F::rand(&mut rng))];
+        let rc2 = vec![gens.message_generators[1].scalar_mul(&F::rand(&mut rng))];
+        let nc1 = vec![gens.message_generators[2].scalar_mul(&F::rand(&mut rng))];
+        let nc2 = vec![gens.message_generators[3].scalar_mul(&F::rand(&mut rng))];
+        let e1 = vec![gens.message_generators[4].scalar_mul(&F::rand(&mut rng))];
+        let e2 = vec![gens.message_generators[5].scalar_mul(&F::rand(&mut rng))];
+        let t_rows = vec![gens.message_generators[6].scalar_mul(&F::rand(&mut rng))];
 
         let inst1 = RelaxedR1CSInstance::<F, Bn254Curve> {
-            E_bar: E_bar1,
             u: u1,
-            W_bar: W_bar1,
             x: x1.clone(),
-            round_commitments: Vec::new(),
+            round_commitments: rc1.clone(),
+            noncoeff_row_commitments: nc1.clone(),
+            e_row_commitments: e1.clone(),
             eval_commitments: Vec::new(),
         };
 
         let inst2 = RelaxedR1CSInstance::<F, Bn254Curve> {
-            E_bar: E_bar2,
             u: u2,
-            W_bar: W_bar2,
             x: x2.clone(),
-            round_commitments: Vec::new(),
+            round_commitments: rc2.clone(),
+            noncoeff_row_commitments: nc2.clone(),
+            e_row_commitments: e2.clone(),
             eval_commitments: Vec::new(),
         };
 
         let r = F::rand(&mut rng);
-        let folded = inst1.fold(&inst2, &T_bar, r);
+        let folded = inst1.fold(&inst2, &t_rows, r);
 
-        // Verify: u' = u1 + r*u2
         assert_eq!(folded.u, u1 + r * u2);
-
-        // Verify: x' = x1 + r*x2
         for i in 0..5 {
             assert_eq!(folded.x[i], x1[i] + r * x2[i]);
         }
 
-        // Verify: E_bar' = E_bar1 + r*T_bar + r^2*E_bar2
+        // E row folds: e' = e1 + r*t + r²*e2
         let r_sq = r * r;
-        let expected_E_bar = E_bar1 + T_bar.scalar_mul(&r) + E_bar2.scalar_mul(&r_sq);
-        assert_eq!(folded.E_bar, expected_E_bar);
+        let expected_e_row = e1[0] + t_rows[0].scalar_mul(&r) + e2[0].scalar_mul(&r_sq);
+        assert_eq!(folded.e_row_commitments[0], expected_e_row);
 
-        // Verify: W_bar' = W_bar1 + r*W_bar2
-        let expected_W_bar = W_bar1 + W_bar2.scalar_mul(&r);
-        assert_eq!(folded.W_bar, expected_W_bar);
-    }
-
-    #[test]
-    fn test_commitment_homomorphism_for_folding() {
-        let mut rng = thread_rng();
-        type F = Fr;
-
-        let gens = PedersenGenerators::<Bn254Curve>::deterministic(20);
-
-        // Create two witness vectors
-        let w1: Vec<F> = (0..5).map(|_| F::rand(&mut rng)).collect();
-        let w2: Vec<F> = (0..5).map(|_| F::rand(&mut rng)).collect();
-        let r_w1 = F::rand(&mut rng);
-        let r_w2 = F::rand(&mut rng);
-
-        // Commit individually
-        let c1 = gens.commit(&w1, &r_w1);
-        let c2 = gens.commit(&w2, &r_w2);
-
-        // Fold using homomorphism
-        let r = F::rand(&mut rng);
-        let c_folded = c1 + c2.scalar_mul(&r);
-
-        // Fold the values directly
-        let w_folded: Vec<F> = w1.iter().zip(&w2).map(|(a, b)| *a + r * *b).collect();
-        let r_w_folded = r_w1 + r * r_w2;
-
-        // Commit to folded values
-        let c_expected = gens.commit(&w_folded, &r_w_folded);
-
-        // Homomorphism should hold
-        assert_eq!(c_folded, c_expected);
+        // Round commitments fold linearly
+        assert_eq!(folded.round_commitments[0], rc1[0] + rc2[0].scalar_mul(&r));
     }
 }

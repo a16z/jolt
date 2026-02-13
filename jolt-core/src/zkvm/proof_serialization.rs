@@ -41,7 +41,7 @@ pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub blindfold_proof: BlindFoldProof<F, C, PCS>,
+    pub blindfold_proof: BlindFoldProof<F, C>,
     /// Initial claims for BlindFold verification (9 chains: uni-skip + regular for stages 0-1, regular for stages 2-6)
     pub blindfold_initial_claims: [F; 9],
     pub joint_opening_proof: PCS::Proof,

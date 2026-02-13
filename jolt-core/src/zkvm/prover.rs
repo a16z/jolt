@@ -1368,7 +1368,7 @@ impl<
         &mut self,
         stage8_data: &Stage8ZkData<F>,
         joint_opening_proof: &PCS::Proof,
-    ) -> (BlindFoldProof<F, C, PCS>, [F; 9]) {
+    ) -> (BlindFoldProof<F, C>, [F; 9]) {
         tracing::info!("BlindFold proving");
 
         let mut rng = rand::thread_rng();
@@ -1615,9 +1615,8 @@ impl<
         let witness: Vec<F> = z[witness_start..].to_vec();
         let public_inputs: Vec<F> = z[1..witness_start].to_vec();
 
-        // Collect round commitments, coefficients, and blindings from all stages
+        // Collect round commitments and blindings from all stages
         let mut round_commitments: Vec<C::G1> = Vec::new();
-        let mut round_coefficients: Vec<Vec<F>> = Vec::new();
         let mut round_blindings: Vec<F> = Vec::new();
 
         for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
@@ -1627,21 +1626,17 @@ impl<
                 let commitment =
                     C::G1::deserialize_compressed(&uniskip.commitment_bytes[..]).unwrap();
                 round_commitments.push(commitment);
-                round_coefficients.push(uniskip.poly_coeffs.clone());
                 round_blindings.push(uniskip.blinding_factor);
             }
 
             // Add regular sumcheck rounds
-            for (commitment_bytes, coeffs, blinding) in zk_data
+            for (commitment_bytes, blinding) in zk_data
                 .round_commitments
                 .iter()
-                .zip(&zk_data.poly_coeffs)
                 .zip(&zk_data.blinding_factors)
-                .map(|((c, p), b)| (c, p, b))
             {
                 let commitment = C::G1::deserialize_compressed(&commitment_bytes[..]).unwrap();
                 round_commitments.push(commitment);
-                round_coefficients.push(coeffs.clone());
                 round_blindings.push(*blinding);
             }
         }
@@ -1651,26 +1646,52 @@ impl<
         let pedersen_generators = PedersenGenerators::<C>::deterministic(pedersen_generator_count);
         let eval_commitments =
             vec![PCS::eval_commitment(joint_opening_proof).expect("missing eval commitment")];
+
+        let hyrax = &r1cs.hyrax;
+        let hyrax_C = hyrax.C;
+        let R_coeff = hyrax.R_coeff;
+        let R_prime = hyrax.R_prime;
+        let noncoeff_rows = hyrax.noncoeff_rows();
+
+        // Commit non-coefficient rows of the witness grid
+        let noncoeff_rows_start = R_coeff * hyrax_C;
+        let mut noncoeff_row_commitments = Vec::with_capacity(noncoeff_rows);
+        let mut noncoeff_row_blindings = Vec::with_capacity(noncoeff_rows);
+        for row_idx in 0..noncoeff_rows {
+            let row_start = noncoeff_rows_start + row_idx * hyrax_C;
+            let mut row_data = vec![F::zero(); hyrax_C];
+            for k in 0..hyrax_C {
+                if row_start + k < witness.len() {
+                    row_data[k] = witness[row_start + k];
+                }
+            }
+            let blinding = F::random(&mut rng);
+            noncoeff_row_commitments.push(pedersen_generators.commit(&row_data, &blinding));
+            noncoeff_row_blindings.push(blinding);
+        }
+
+        // Build w_row_blindings: round blindings padded to R_coeff, then noncoeff, then padding to R'
+        let mut w_row_blindings = Vec::with_capacity(R_prime);
+        w_row_blindings.extend_from_slice(&round_blindings);
+        w_row_blindings.resize(R_coeff, F::zero());
+        w_row_blindings.extend_from_slice(&noncoeff_row_blindings);
+        w_row_blindings.resize(R_prime, F::zero());
+
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, C>::new_non_relaxed(
-            &pedersen_generators,
             &witness,
             public_inputs,
             r1cs.num_constraints,
+            hyrax_C,
             round_commitments,
-            round_coefficients,
-            round_blindings,
+            noncoeff_row_commitments,
             eval_commitments,
-            &mut rng,
+            w_row_blindings,
         );
 
         // Run BlindFold protocol
         let eval_commitment_gens = PCS::eval_commitment_gens(&self.preprocessing.generators);
-        let prover = BlindFoldProver::<_, _, PCS>::new(
-            &pedersen_generators,
-            &r1cs,
-            eval_commitment_gens,
-            &self.preprocessing.generators,
-        );
+        let prover =
+            BlindFoldProver::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
         let proof = prover.prove(&real_instance, &real_witness, &z, &mut blindfold_transcript);
@@ -3110,7 +3131,7 @@ mod tests {
         let builder = VerifierR1CSBuilder::<Fr>::new(&configs);
         let r1cs = builder.build();
 
-        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.num_vars + 100);
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.hyrax.C + 1);
 
         // Create valid multi-round witness
         // Round 1: 2*c0 + c1 + c2 + c3 = 55
@@ -3145,29 +3166,44 @@ mod tests {
         let witness: Vec<Fr> = z[witness_start..].to_vec();
         let public_inputs: Vec<Fr> = z[1..witness_start].to_vec();
 
-        let (round_commitments, round_coefficients, round_blindings) =
+        let hyrax = &r1cs.hyrax;
+        let hyrax_C = hyrax.C;
+        let R_coeff = hyrax.R_coeff;
+        let R_prime = hyrax.R_prime;
+
+        let (round_commitments, _round_coefficients, round_blindings) =
             round_commitment_data(&gens, &blindfold_witness.stages, &mut rng);
-        // Create non-relaxed instance and witness
+
+        let noncoeff_rows = hyrax.noncoeff_rows();
+        let mut noncoeff_row_commitments = Vec::new();
+        let mut w_row_blindings = vec![Fr::from(0u64); R_prime];
+        for (i, blinding) in round_blindings.iter().enumerate() {
+            w_row_blindings[i] = *blinding;
+        }
+        let noncoeff_start = R_coeff * hyrax_C;
+        for row in 0..noncoeff_rows {
+            let start = noncoeff_start + row * hyrax_C;
+            let end = (start + hyrax_C).min(witness.len());
+            let mut row_data = vec![Fr::from(0u64); hyrax_C];
+            row_data[..end - start].copy_from_slice(&witness[start..end]);
+            let blinding = Fr::random(&mut rng);
+            noncoeff_row_commitments.push(gens.commit(&row_data, &blinding));
+            w_row_blindings[R_coeff + row] = blinding;
+        }
+
         let (real_instance, real_witness) = RelaxedR1CSInstance::<Fr, Bn254Curve>::new_non_relaxed(
-            &gens,
             &witness,
             public_inputs,
             r1cs.num_constraints,
+            hyrax_C,
             round_commitments,
-            round_coefficients,
-            round_blindings,
+            noncoeff_row_commitments,
             Vec::new(),
-            &mut rng,
+            w_row_blindings,
         );
 
-        use crate::poly::commitment::mock::MockCommitScheme;
-        type TestPCS = MockCommitScheme<Fr>;
-
-        let pcs_prover_setup = ();
-        let pcs_verifier_setup = ();
-        let prover = BlindFoldProver::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_prover_setup);
-        let verifier =
-            BlindFoldVerifier::<_, _, TestPCS>::new(&gens, &r1cs, None, &pcs_verifier_setup);
+        let prover = BlindFoldProver::new(&gens, &r1cs, None);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_E2E");
         let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
