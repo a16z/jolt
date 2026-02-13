@@ -16,10 +16,7 @@ use crate::poly::unipoly::CompressedUniPoly;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 
-use super::folding::{
-    commit_cross_term_rows, compute_cross_term, sample_random_instance_deterministic,
-    sample_random_satisfying_pair_deterministic,
-};
+use super::folding::{commit_cross_term_rows, compute_cross_term, sample_random_satisfying_pair};
 use super::r1cs::VerifierR1CS;
 use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 use super::spartan::{hyrax_combined_blinding, hyrax_combined_row, hyrax_evaluate};
@@ -33,11 +30,19 @@ pub struct FinalOutputInfo {
 
 /// BlindFold proof with Hyrax-style openings for W and E.
 ///
-/// Instances are NOT included because:
-/// - real_instance: verifier reconstructs from round_commitments, eval_commitments, public_inputs
-/// - random_instance: verifier derives deterministically from transcript
+/// The real instance is NOT included — verifier reconstructs from round_commitments,
+/// eval_commitments, public_inputs. The random instance IS included — verifier reads
+/// it from the proof and absorbs into transcript, never learning the random witness.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
+    /// Random instance (prover-generated, verifier absorbs from proof)
+    pub random_u: F,
+    pub random_x: Vec<F>,
+    pub random_round_commitments: Vec<C::G1>,
+    pub random_noncoeff_row_commitments: Vec<C::G1>,
+    pub random_e_row_commitments: Vec<C::G1>,
+    pub random_eval_commitments: Vec<C::G1>,
+
     /// Non-coefficient W row commitments from the real instance
     pub noncoeff_row_commitments: Vec<C::G1>,
     /// Cross-term T row commitments (E grid layout)
@@ -83,19 +88,21 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         transcript: &mut T,
     ) -> BlindFoldProof<F, C> {
         use super::spartan::{BlindFoldInnerSumcheckProver, BlindFoldSpartanProver};
-        use rand_chacha::ChaCha20Rng;
-        use rand_core::SeedableRng;
+
+        let mut rng = rand::thread_rng();
 
         transcript.raw_append_label(b"BlindFold_real_instance");
         append_instance_to_transcript(real_instance, transcript);
 
-        let (random_instance, random_witness, random_z) =
-            sample_random_satisfying_pair_deterministic(
-                self.gens,
-                self.r1cs,
-                self.eval_commitment_gens,
-                transcript,
-            );
+        let (random_instance, random_witness, random_z) = sample_random_satisfying_pair(
+            self.gens,
+            self.r1cs,
+            self.eval_commitment_gens,
+            &mut rng,
+        );
+
+        transcript.raw_append_label(b"BlindFold_random_instance");
+        append_instance_to_transcript(&random_instance, transcript);
 
         let T = compute_cross_term(
             self.r1cs,
@@ -107,17 +114,8 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
 
         let (R_E, C_E) = self.r1cs.hyrax.e_grid(self.r1cs.num_constraints);
 
-        let mut cross_term_rng = {
-            transcript.raw_append_label(b"BlindFold_cross_term_blinding");
-            let seed_a = transcript.challenge_u128();
-            let seed_b = transcript.challenge_u128();
-            let mut seed = [0u8; 32];
-            seed[..16].copy_from_slice(&seed_a.to_le_bytes());
-            seed[16..].copy_from_slice(&seed_b.to_le_bytes());
-            ChaCha20Rng::from_seed(seed)
-        };
         let (t_row_commitments, t_row_blindings) =
-            commit_cross_term_rows(self.gens, &T, R_E, C_E, &mut cross_term_rng);
+            commit_cross_term_rows(self.gens, &T, R_E, C_E, &mut rng);
 
         transcript.raw_append_label(b"BlindFold_cross_term");
         for com in &t_row_commitments {
@@ -242,6 +240,12 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         let final_output_info = collect_final_output_info(&self.r1cs.stage_configs);
 
         BlindFoldProof {
+            random_u: random_instance.u,
+            random_x: random_instance.x,
+            random_round_commitments: random_instance.round_commitments,
+            random_noncoeff_row_commitments: random_instance.noncoeff_row_commitments,
+            random_e_row_commitments: random_instance.e_row_commitments,
+            random_eval_commitments: random_instance.eval_commitments,
             noncoeff_row_commitments: real_instance.noncoeff_row_commitments.clone(),
             cross_term_row_commitments: t_row_commitments,
             spartan_proof,
@@ -319,20 +323,11 @@ pub struct BlindFoldVerifierInput<F: JoltField, C: JoltCurve> {
 pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve> {
     gens: &'a PedersenGenerators<C>,
     r1cs: &'a VerifierR1CS<F>,
-    eval_commitment_gens: Option<(C::G1, C::G1)>,
 }
 
 impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
-    pub fn new(
-        gens: &'a PedersenGenerators<C>,
-        r1cs: &'a VerifierR1CS<F>,
-        eval_commitment_gens: Option<(C::G1, C::G1)>,
-    ) -> Self {
-        Self {
-            gens,
-            r1cs,
-            eval_commitment_gens,
-        }
+    pub fn new(gens: &'a PedersenGenerators<C>, r1cs: &'a VerifierR1CS<F>) -> Self {
+        Self { gens, r1cs }
     }
 
     pub fn verify<T: Transcript>(
@@ -359,17 +354,17 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         transcript.raw_append_label(b"BlindFold_real_instance");
         append_instance_to_transcript(&real_instance, transcript);
 
-        let random_instance = sample_random_instance_deterministic(
-            self.gens,
-            self.r1cs,
-            self.eval_commitment_gens,
-            transcript,
-        );
+        let random_instance: RelaxedR1CSInstance<F, C> = RelaxedR1CSInstance {
+            u: proof.random_u,
+            x: proof.random_x.clone(),
+            round_commitments: proof.random_round_commitments.clone(),
+            noncoeff_row_commitments: proof.random_noncoeff_row_commitments.clone(),
+            e_row_commitments: proof.random_e_row_commitments.clone(),
+            eval_commitments: proof.random_eval_commitments.clone(),
+        };
 
-        // Advance transcript past cross-term blinding seed
-        transcript.raw_append_label(b"BlindFold_cross_term_blinding");
-        let _ = transcript.challenge_u128();
-        let _ = transcript.challenge_u128();
+        transcript.raw_append_label(b"BlindFold_random_instance");
+        append_instance_to_transcript(&random_instance, transcript);
 
         transcript.raw_append_label(b"BlindFold_cross_term");
         for com in &proof.cross_term_row_commitments {
@@ -649,7 +644,7 @@ mod tests {
         label: &'static [u8],
     ) -> Result<(), BlindFoldVerifyError> {
         let prover = BlindFoldProver::new(gens, r1cs, None);
-        let verifier = BlindFoldVerifier::new(gens, r1cs, None);
+        let verifier = BlindFoldVerifier::new(gens, r1cs);
 
         let mut prover_transcript = KeccakTranscript::new(label);
         let proof = prover.prove(real_instance, real_witness, z, &mut prover_transcript);
@@ -724,7 +719,7 @@ mod tests {
             make_test_instance(&configs, &blindfold_witness, &z);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
@@ -833,7 +828,7 @@ mod tests {
             make_test_instance(&configs, &blindfold_witness, &z);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
@@ -879,7 +874,7 @@ mod tests {
             make_test_instance(&configs, &blindfold_witness, &z);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
@@ -927,7 +922,7 @@ mod tests {
             make_test_instance(&configs, &blindfold_witness, &z);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);

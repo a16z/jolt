@@ -20,10 +20,7 @@ mod relaxed_r1cs;
 mod spartan;
 mod witness;
 
-pub use folding::{
-    compute_cross_term, sample_random_instance_deterministic, sample_random_satisfying_pair,
-    sample_random_satisfying_pair_deterministic,
-};
+pub use folding::{compute_cross_term, sample_random_satisfying_pair};
 pub use output_constraint::{
     InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
 };

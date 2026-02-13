@@ -1247,12 +1247,9 @@ impl<
         };
 
         // Create BlindFold verifier and verify the proof
-        let eval_commitment_gens =
-            PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
         let pedersen_generators = PedersenGenerators::<C>::deterministic(pedersen_generator_count);
-        let verifier =
-            BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
+        let verifier = BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs);
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
         verifier

@@ -6,9 +6,7 @@
 use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
 use crate::poly::commitment::pedersen::PedersenGenerators;
-use crate::transcripts::Transcript;
-use rand_chacha::ChaCha20Rng;
-use rand_core::{CryptoRngCore, SeedableRng};
+use rand_core::CryptoRngCore;
 
 use super::r1cs::VerifierR1CS;
 use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
@@ -301,41 +299,6 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     };
 
     (instance, witness, z)
-}
-
-/// Derive a deterministic RNG seed from transcript state.
-fn derive_rng_seed<T: Transcript>(transcript: &mut T) -> [u8; 32] {
-    transcript.raw_append_label(b"BlindFold_random_seed");
-    let a = transcript.challenge_u128();
-    let b = transcript.challenge_u128();
-    let mut seed = [0u8; 32];
-    seed[..16].copy_from_slice(&a.to_le_bytes());
-    seed[16..].copy_from_slice(&b.to_le_bytes());
-    seed
-}
-
-/// Sample random satisfying pair deterministically from transcript.
-pub fn sample_random_satisfying_pair_deterministic<F: JoltField, C: JoltCurve, T: Transcript>(
-    gens: &PedersenGenerators<C>,
-    r1cs: &VerifierR1CS<F>,
-    eval_commitment_gens: Option<(C::G1, C::G1)>,
-    transcript: &mut T,
-) -> (RelaxedR1CSInstance<F, C>, RelaxedR1CSWitness<F>, Vec<F>) {
-    let seed = derive_rng_seed(transcript);
-    let mut rng = ChaCha20Rng::from_seed(seed);
-    sample_random_satisfying_pair(gens, r1cs, eval_commitment_gens, &mut rng)
-}
-
-/// Sample only the random instance (no witness) deterministically from transcript.
-pub fn sample_random_instance_deterministic<F: JoltField, C: JoltCurve, T: Transcript>(
-    gens: &PedersenGenerators<C>,
-    r1cs: &VerifierR1CS<F>,
-    eval_commitment_gens: Option<(C::G1, C::G1)>,
-    transcript: &mut T,
-) -> RelaxedR1CSInstance<F, C> {
-    let (instance, _, _) =
-        sample_random_satisfying_pair_deterministic(gens, r1cs, eval_commitment_gens, transcript);
-    instance
 }
 
 /// Compute T row commitments for Hyrax-style E opening.

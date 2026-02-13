@@ -3203,7 +3203,7 @@ mod tests {
         );
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_E2E");
         let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
