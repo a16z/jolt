@@ -139,7 +139,7 @@ use crate::util::LetBinderIndex;
 
 /// A 256-bit scalar value represented as 4 u64 limbs in little-endian order.
 /// Value = limb0 + limb1*2^64 + limb2*2^128 + limb3*2^192
-type Scalar = [u64; 4];
+pub type Scalar = [u64; 4];
 
 /// Convert a Scalar to a decimal string.
 fn scalar_to_decimal_string(limbs: &Scalar) -> String {
@@ -487,14 +487,14 @@ const BN254_MODULUS: [u64; 4] = [
 ];
 
 /// Subtract two 256-bit numbers with modular reduction
-fn scalar_sub_mod(a: Scalar, b: Scalar) -> Scalar {
+pub fn scalar_sub_mod(a: Scalar, b: Scalar) -> Scalar {
     // a - b mod p = a + (p - b) mod p
     let neg_b = scalar_neg_mod(b);
     scalar_add_mod(a, neg_b)
 }
 
 /// Add two 256-bit numbers with modular reduction
-fn scalar_add_mod(a: Scalar, b: Scalar) -> Scalar {
+pub fn scalar_add_mod(a: Scalar, b: Scalar) -> Scalar {
     let mut result = [0u64; 4];
     let mut carry = 0u128;
 
@@ -513,7 +513,7 @@ fn scalar_add_mod(a: Scalar, b: Scalar) -> Scalar {
 }
 
 /// Negate a scalar: -a mod p = p - a
-fn scalar_neg_mod(a: Scalar) -> Scalar {
+pub fn scalar_neg_mod(a: Scalar) -> Scalar {
     if a == SCALAR_ZERO {
         return SCALAR_ZERO;
     }
@@ -521,7 +521,7 @@ fn scalar_neg_mod(a: Scalar) -> Scalar {
 }
 
 /// Multiply two 256-bit numbers with modular reduction (simplified)
-fn scalar_mul_mod(a: Scalar, b: Scalar) -> Scalar {
+pub fn scalar_mul_mod(a: Scalar, b: Scalar) -> Scalar {
     // For full correctness, we'd need Montgomery multiplication
     // For now, use a simple approach via BigUint
     use num_bigint::BigUint;
