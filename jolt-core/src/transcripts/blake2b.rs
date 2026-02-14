@@ -123,6 +123,7 @@ impl Transcript for Blake2bTranscript {
     }
 
     fn raw_append_bytes(&mut self, bytes: &[u8]) {
+        // Add the message and label
         let hasher = self.hasher().chain_update(bytes);
         self.update_state(hasher.finalize().into());
     }

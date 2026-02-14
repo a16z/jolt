@@ -95,94 +95,87 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
     fn hash_to_g1(domain: &[u8]) -> Self::G1;
 }
 
-// ============================================================================
-// BN254 Implementation
-// ============================================================================
-
 use ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::{pairing::Pairing, AdditiveGroup, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, Zero};
 use dory::backends::arkworks::ArkG1;
 use std::ops::MulAssign;
 
-/// Wrapper around BN254 G1 projective points
+macro_rules! impl_group_ops {
+    ($Name:ident, $Inner:ty) => {
+        impl Add for $Name {
+            type Output = Self;
+            fn add(self, rhs: Self) -> Self {
+                $Name(self.0 + rhs.0)
+            }
+        }
+        impl<'a> Add<&'a $Name> for $Name {
+            type Output = Self;
+            fn add(self, rhs: &'a $Name) -> Self {
+                $Name(self.0 + rhs.0)
+            }
+        }
+        impl Sub for $Name {
+            type Output = Self;
+            fn sub(self, rhs: Self) -> Self {
+                $Name(self.0 - rhs.0)
+            }
+        }
+        impl<'a> Sub<&'a $Name> for $Name {
+            type Output = Self;
+            fn sub(self, rhs: &'a $Name) -> Self {
+                $Name(self.0 - rhs.0)
+            }
+        }
+        impl Neg for $Name {
+            type Output = Self;
+            fn neg(self) -> Self {
+                $Name(-self.0)
+            }
+        }
+        impl AddAssign for $Name {
+            fn add_assign(&mut self, rhs: Self) {
+                self.0 += rhs.0;
+            }
+        }
+        impl SubAssign for $Name {
+            fn sub_assign(&mut self, rhs: Self) {
+                self.0 -= rhs.0;
+            }
+        }
+        impl<F: JoltField> Mul<F> for $Name {
+            type Output = Self;
+            fn mul(mut self, rhs: F) -> Self {
+                self.0.mul_assign(jolt_field_to_fr(&rhs));
+                self
+            }
+        }
+    };
+}
+
+macro_rules! impl_group_element {
+    ($Name:ident, $Proj:ty) => {
+        impl JoltGroupElement for $Name {
+            fn zero() -> Self {
+                $Name(<$Proj>::zero())
+            }
+            fn is_zero(&self) -> bool {
+                self.0.is_zero()
+            }
+            fn double(&self) -> Self {
+                $Name(AdditiveGroup::double(&self.0))
+            }
+            fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self {
+                $Name(self.0 * jolt_field_to_fr(scalar))
+            }
+        }
+    };
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Bn254G1(pub G1Projective);
-
-impl Add for Bn254G1 {
-    type Output = Self;
-    fn add(self, rhs: Self) -> Self::Output {
-        Bn254G1(self.0 + rhs.0)
-    }
-}
-
-impl<'a> Add<&'a Bn254G1> for Bn254G1 {
-    type Output = Self;
-    fn add(self, rhs: &'a Bn254G1) -> Self::Output {
-        Bn254G1(self.0 + rhs.0)
-    }
-}
-
-impl Sub for Bn254G1 {
-    type Output = Self;
-    fn sub(self, rhs: Self) -> Self::Output {
-        Bn254G1(self.0 - rhs.0)
-    }
-}
-
-impl<'a> Sub<&'a Bn254G1> for Bn254G1 {
-    type Output = Self;
-    fn sub(self, rhs: &'a Bn254G1) -> Self::Output {
-        Bn254G1(self.0 - rhs.0)
-    }
-}
-
-impl Neg for Bn254G1 {
-    type Output = Self;
-    fn neg(self) -> Self::Output {
-        Bn254G1(-self.0)
-    }
-}
-
-impl AddAssign for Bn254G1 {
-    fn add_assign(&mut self, rhs: Self) {
-        self.0 += rhs.0;
-    }
-}
-
-impl SubAssign for Bn254G1 {
-    fn sub_assign(&mut self, rhs: Self) {
-        self.0 -= rhs.0;
-    }
-}
-
-impl<F: JoltField> Mul<F> for Bn254G1 {
-    type Output = Self;
-    fn mul(mut self, rhs: F) -> Self::Output {
-        let scalar = jolt_field_to_fr(&rhs);
-        self.0.mul_assign(scalar);
-        self
-    }
-}
-
-impl JoltGroupElement for Bn254G1 {
-    fn zero() -> Self {
-        Bn254G1(G1Projective::zero())
-    }
-
-    fn is_zero(&self) -> bool {
-        self.0.is_zero()
-    }
-
-    fn double(&self) -> Self {
-        Bn254G1(AdditiveGroup::double(&self.0))
-    }
-
-    fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self {
-        let fr_scalar = jolt_field_to_fr(scalar);
-        Bn254G1(self.0 * fr_scalar)
-    }
-}
+impl_group_ops!(Bn254G1, G1Projective);
+impl_group_element!(Bn254G1, G1Projective);
 
 impl From<ArkG1> for Bn254G1 {
     fn from(value: ArkG1) -> Self {
@@ -190,103 +183,26 @@ impl From<ArkG1> for Bn254G1 {
     }
 }
 
-/// Wrapper around BN254 G2 projective points
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Bn254G2(pub G2Projective);
+impl_group_ops!(Bn254G2, G2Projective);
+impl_group_element!(Bn254G2, G2Projective);
 
-impl Add for Bn254G2 {
-    type Output = Self;
-    fn add(self, rhs: Self) -> Self::Output {
-        Bn254G2(self.0 + rhs.0)
-    }
-}
-
-impl<'a> Add<&'a Bn254G2> for Bn254G2 {
-    type Output = Self;
-    fn add(self, rhs: &'a Bn254G2) -> Self::Output {
-        Bn254G2(self.0 + rhs.0)
-    }
-}
-
-impl Sub for Bn254G2 {
-    type Output = Self;
-    fn sub(self, rhs: Self) -> Self::Output {
-        Bn254G2(self.0 - rhs.0)
-    }
-}
-
-impl<'a> Sub<&'a Bn254G2> for Bn254G2 {
-    type Output = Self;
-    fn sub(self, rhs: &'a Bn254G2) -> Self::Output {
-        Bn254G2(self.0 - rhs.0)
-    }
-}
-
-impl Neg for Bn254G2 {
-    type Output = Self;
-    fn neg(self) -> Self::Output {
-        Bn254G2(-self.0)
-    }
-}
-
-impl AddAssign for Bn254G2 {
-    fn add_assign(&mut self, rhs: Self) {
-        self.0 += rhs.0;
-    }
-}
-
-impl SubAssign for Bn254G2 {
-    fn sub_assign(&mut self, rhs: Self) {
-        self.0 -= rhs.0;
-    }
-}
-
-impl<F: JoltField> Mul<F> for Bn254G2 {
-    type Output = Self;
-    fn mul(mut self, rhs: F) -> Self::Output {
-        let scalar = jolt_field_to_fr(&rhs);
-        self.0.mul_assign(scalar);
-        self
-    }
-}
-
-impl JoltGroupElement for Bn254G2 {
-    fn zero() -> Self {
-        Bn254G2(G2Projective::zero())
-    }
-
-    fn is_zero(&self) -> bool {
-        self.0.is_zero()
-    }
-
-    fn double(&self) -> Self {
-        Bn254G2(AdditiveGroup::double(&self.0))
-    }
-
-    fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self {
-        let fr_scalar = jolt_field_to_fr(scalar);
-        Bn254G2(self.0 * fr_scalar)
-    }
-}
-
-/// Wrapper around BN254 target group (Fq12)
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Bn254GT(pub Fq12);
 
 impl Add for Bn254GT {
     type Output = Self;
-    fn add(self, rhs: Self) -> Self::Output {
+    fn add(self, rhs: Self) -> Self {
         Bn254GT(self.0 + rhs.0)
     }
 }
-
 impl<'a> Add<&'a Bn254GT> for Bn254GT {
     type Output = Self;
-    fn add(self, rhs: &'a Bn254GT) -> Self::Output {
+    fn add(self, rhs: &'a Bn254GT) -> Self {
         Bn254GT(self.0 + rhs.0)
     }
 }
-
 impl AddAssign for Bn254GT {
     fn add_assign(&mut self, rhs: Self) {
         self.0 += rhs.0;

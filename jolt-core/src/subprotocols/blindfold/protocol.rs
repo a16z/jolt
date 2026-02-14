@@ -165,8 +165,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         e_padded.resize(padded_e_len, F::zero());
         let e_for_hyrax = e_padded.clone();
 
-        // --- Outer Spartan sumcheck ---
-
         transcript.raw_append_label(b"BlindFold_spartan");
         let num_vars = padded_e_len.log_2();
         let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
@@ -194,8 +192,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         let az_r = final_claims.az_r;
         let bz_r = final_claims.bz_r;
         let cz_r = final_claims.cz_r;
-
-        // --- Inner sumcheck ---
 
         transcript.append_scalars(b"blindfold_az_bz_cz", &[az_r, bz_r, cz_r]);
 
@@ -240,8 +236,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             inner_prover.bind_challenge(r_j);
             inner_challenges.push(r_j);
         }
-
-        // --- Hyrax openings ---
 
         let hyrax = &self.r1cs.hyrax;
 
@@ -393,7 +387,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let folded_instance =
             real_instance.fold(&random_instance, &proof.cross_term_row_commitments, r_field)?;
 
-        // --- Verify eval_commitment Pedersen binding ---
         if let Some((g1_0, h1)) = self.eval_commitment_gens {
             if proof.folded_eval_outputs.len() != folded_instance.eval_commitments.len()
                 || proof.folded_eval_blindings.len() != folded_instance.eval_commitments.len()
@@ -408,8 +401,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
                 }
             }
         }
-
-        // --- Outer Spartan sumcheck ---
 
         transcript.raw_append_label(b"BlindFold_spartan");
         let num_vars = self.r1cs.num_constraints.next_power_of_two().log_2();
@@ -456,8 +447,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let rb: F = transcript.challenge_scalar_optimized::<F>().into();
         let rc: F = transcript.challenge_scalar_optimized::<F>().into();
 
-        // --- Inner sumcheck ---
-
         let spartan_verifier = BlindFoldSpartanVerifier::new(self.r1cs, tau, folded_instance.u);
 
         let (pub_az, pub_bz, pub_cz) = spartan_verifier.public_contributions(&challenges);
@@ -499,8 +488,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
             inner_claim = poly.evaluate(&r_j);
         }
 
-        // --- E Hyrax opening ---
-
         let log_R_E = R_E.log_2();
         let rx: Vec<F> = challenges.iter().map(|c| (*c).into()).collect();
         let (rx_row, rx_col) = rx.split_at(log_R_E);
@@ -518,15 +505,11 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         }
         let e_r = hyrax_evaluate(&proof.e_combined_row, rx_col);
 
-        // --- Outer claim check ---
-
         let eq_tau_r = spartan_verifier.eq_tau_at_r(&challenges);
         let expected_outer = eq_tau_r * (az_r * bz_r - folded_instance.u * cz_r - e_r);
         if claim != expected_outer {
             return Err(BlindFoldVerifyError::OuterClaimMismatch);
         }
-
-        // --- W Hyrax opening ---
 
         let log_R_prime = hyrax.log_R_prime();
         let ry_w: Vec<F> = inner_challenges.iter().map(|c| (*c).into()).collect();
@@ -546,8 +529,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
             return Err(BlindFoldVerifyError::WOpeningFailed);
         }
         let w_ry = hyrax_evaluate(&proof.w_combined_row, ry_col);
-
-        // --- Final claim check: inner_claim == L_w(ry) · W(ry) ---
 
         let l_w_at_ry = compute_L_w_at_ry(self.r1cs, &challenges, &inner_challenges, ra, rb, rc);
         let expected_inner_final = l_w_at_ry * w_ry;

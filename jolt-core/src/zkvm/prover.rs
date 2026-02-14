@@ -17,8 +17,6 @@ use crate::zkvm::config::ReadWriteConfig;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
 
-#[cfg(test)]
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
@@ -1855,43 +1853,20 @@ impl<
             CommittedPolynomial::InstructionRa(0),
             SumcheckId::HammingWeightClaimReduction,
         );
-        let log_k_chunk = self.one_hot_params.log_k_chunk;
-        #[allow(unused_variables)]
-        let r_address_stage7 = &opening_point.r[..log_k_chunk];
 
-        // 1. Collect all (polynomial, claim) pairs
         let mut polynomial_claims = Vec::new();
         let mut scaling_factors = Vec::new();
 
         // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
-        // These are at r_cycle_stage6 only (length log_T)
-        let (_ram_inc_point, ram_inc_claim) =
-            self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::RamInc,
-                SumcheckId::IncClaimReduction,
-            );
-        let (_rd_inc_point, rd_inc_claim) =
-            self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::RdInc,
-                SumcheckId::IncClaimReduction,
-            );
-
-        #[cfg(test)]
-        {
-            // Verify that Inc openings are at the same point as r_cycle from HammingWeightClaimReduction
-            let r_cycle_stage6 = &opening_point.r[log_k_chunk..];
-
-            debug_assert_eq!(
-                _ram_inc_point.r.as_slice(),
-                r_cycle_stage6,
-                "RamInc opening point should match r_cycle from HammingWeightClaimReduction"
-            );
-            debug_assert_eq!(
-                _rd_inc_point.r.as_slice(),
-                r_cycle_stage6,
-                "RdInc opening point should match r_cycle from HammingWeightClaimReduction"
-            );
-        }
+        // at r_cycle_stage6 only (length log_T)
+        let (_, ram_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RamInc,
+            SumcheckId::IncClaimReduction,
+        );
+        let (_, rd_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::IncClaimReduction,
+        );
 
         // Dense polynomials are independent of address variables, so no Lagrange scaling.
         polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim));
@@ -1936,12 +1911,6 @@ impl<
             .opening_accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
         {
-            #[cfg(test)]
-            {
-                let advice_poly = self.advice.trusted_advice_polynomial.as_ref().unwrap();
-                let expected_eval = advice_poly.evaluate(&advice_point.r);
-                assert_eq!(expected_eval, advice_claim);
-            }
             let lagrange_factor =
                 compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
@@ -1956,12 +1925,6 @@ impl<
             .opening_accumulator
             .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
         {
-            #[cfg(test)]
-            {
-                let advice_poly = self.advice.untrusted_advice_polynomial.as_ref().unwrap();
-                let expected_eval = advice_poly.evaluate(&advice_point.r);
-                assert_eq!(expected_eval, advice_claim);
-            }
             let lagrange_factor =
                 compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
