@@ -92,8 +92,8 @@ impl<F: JoltField> BakedPublicInputs<F> {
                 }
             }
 
-            if let Some(ref fo_config) = config.final_output {
-                if fo_config.constraint.is_some() {
+            if let Some(ref fout) = config.final_output {
+                if fout.constraint.is_some() {
                     if let Some(ref fw) = stage.final_output {
                         output_constraint_challenges.extend_from_slice(&fw.challenge_values);
                     }

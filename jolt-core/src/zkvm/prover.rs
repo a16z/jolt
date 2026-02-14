@@ -1543,8 +1543,8 @@ impl<
 
                         let final_output =
                             FinalOutputWitness::new_general(challenge_values, opening_values);
-                        let config_with_fo = config.with_constraint(batched_constraint);
-                        (config_with_fo, Some(final_output))
+                        let config_with_fout = config.with_constraint(batched_constraint);
+                        (config_with_fout, Some(final_output))
                     } else {
                         (config, None)
                     }
@@ -1557,9 +1557,13 @@ impl<
                     RoundWitness::with_claimed_sum(coeffs.clone(), challenge, claimed_sum);
 
                 let stage_witness = match (initial_input_witness, final_output_witness) {
-                    (Some(ii), Some(fo)) => StageWitness::with_both(vec![round_witness], ii, fo),
+                    (Some(ii), Some(fout)) => {
+                        StageWitness::with_both(vec![round_witness], ii, fout)
+                    }
                     (Some(ii), None) => StageWitness::with_initial_input(vec![round_witness], ii),
-                    (None, Some(fo)) => StageWitness::with_final_output(vec![round_witness], fo),
+                    (None, Some(fout)) => {
+                        StageWitness::with_final_output(vec![round_witness], fout)
+                    }
                     (None, None) => StageWitness::new(vec![round_witness]),
                 };
                 stage_witnesses.push(stage_witness);

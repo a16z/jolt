@@ -364,14 +364,14 @@ impl<F: JoltField> BlindFoldWitness<F> {
             }
 
             // Final output witness
-            if let Some(ref fo_config) = config.final_output {
-                if let Some(exact_vars) = fo_config.exact_num_witness_vars {
+            if let Some(ref fout) = config.final_output {
+                if let Some(exact_vars) = fout.exact_num_witness_vars {
                     witness_idx += exact_vars;
-                } else if let Some(constraint) = &fo_config.constraint {
+                } else if let Some(constraint) = &fout.constraint {
                     let num_aux_vars = constraint.estimate_aux_var_count();
-                    let fo_witness = stage_witness.final_output.as_ref();
+                    let fout_witness = stage_witness.final_output.as_ref();
 
-                    if let Some(fw) = fo_witness {
+                    if let Some(fw) = fout_witness {
                         for (opening_id, val) in
                             constraint.required_openings.iter().zip(&fw.opening_values)
                         {
@@ -412,7 +412,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
                         .final_output
                         .as_ref()
                         .expect("Stage has final_output config but witness has no final_output");
-                    assert_eq!(fw.evaluations.len(), fo_config.num_evaluations);
+                    assert_eq!(fw.evaluations.len(), fout.num_evaluations);
 
                     for eval in &fw.evaluations {
                         z[witness_idx] = *eval;

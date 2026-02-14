@@ -288,13 +288,13 @@ fn collect_final_output_info(stage_configs: &[super::StageConfig]) -> Vec<FinalO
         .iter()
         .enumerate()
         .filter_map(|(idx, config)| {
-            config.final_output.as_ref().map(|fo| {
-                let num_variables = if let Some(ref constraint) = fo.constraint {
+            config.final_output.as_ref().map(|fout| {
+                let num_variables = if let Some(ref constraint) = fout.constraint {
                     let num_openings = constraint.required_openings.len();
                     let num_aux = constraint.estimate_aux_var_count();
                     num_openings + num_aux
                 } else {
-                    let n = fo.num_evaluations;
+                    let n = fout.num_evaluations;
                     if n > 1 {
                         n + n - 1
                     } else {

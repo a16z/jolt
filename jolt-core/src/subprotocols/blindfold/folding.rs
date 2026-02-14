@@ -129,8 +129,8 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         }
 
         // Final output variables
-        if let Some(ref fo_config) = config.final_output {
-            if let Some(ref constraint) = fo_config.constraint {
+        if let Some(ref fout) = config.final_output {
+            if let Some(ref constraint) = fout.constraint {
                 let num_new_openings = constraint
                     .required_openings
                     .iter()
@@ -150,7 +150,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                 }
             } else {
                 // Simple linear: only evaluation vars (batching coeffs baked, no accumulators)
-                let num_evals = fo_config.num_evaluations;
+                let num_evals = fout.num_evaluations;
                 for _ in 0..num_evals {
                     W[noncoeff_idx] = F::random(rng);
                     noncoeff_idx += 1;

@@ -379,12 +379,12 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             }
 
             // Add final output constraint if configured
-            let final_output_vars = if let Some(ref fo_config) = config.final_output {
+            let final_output_vars = if let Some(ref fout) = config.final_output {
                 let last_round = stage_rounds
                     .last()
                     .expect("Stage must have at least one round");
 
-                if let Some(exact_vars) = fo_config.exact_num_witness_vars {
+                if let Some(exact_vars) = fout.exact_num_witness_vars {
                     for _ in 0..exact_vars {
                         self.next_var += 1;
                     }
@@ -394,7 +394,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                         opening_vars: HashMap::new(),
                         aux_vars: Vec::new(),
                     })
-                } else if let Some(ref constraint) = fo_config.constraint {
+                } else if let Some(ref constraint) = fout.constraint {
                     for opening_id in &constraint.required_openings {
                         if !global_opening_vars.contains_key(opening_id) {
                             let var = Variable::new(self.next_var);
@@ -424,7 +424,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                 } else {
                     // Simple linear constraint: final_claim = Σⱼ αⱼ · yⱼ
                     // Batching coefficients are baked — single constraint for all evaluations
-                    let num_evals = fo_config.num_evaluations;
+                    let num_evals = fout.num_evaluations;
                     let baked_coeffs: Vec<F> = baked.batching_coefficients
                         [batching_coeff_idx..batching_coeff_idx + num_evals]
                         .to_vec();
@@ -950,8 +950,8 @@ mod tests {
         let alpha = F::from_u64(1);
         let y = final_claim;
 
-        let fo_witness = FinalOutputWitness::new(vec![alpha], vec![y]);
-        let stage = StageWitness::with_final_output(vec![round], fo_witness);
+        let fout_witness = FinalOutputWitness::new(vec![alpha], vec![y]);
+        let stage = StageWitness::with_final_output(vec![round], fout_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
         let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
@@ -993,8 +993,8 @@ mod tests {
         let partial_sum = alpha0 * y0 + alpha1 * y1;
         let y2 = (final_claim - partial_sum) * alpha2.inverse().unwrap();
 
-        let fo_witness = FinalOutputWitness::new(vec![alpha0, alpha1, alpha2], vec![y0, y1, y2]);
-        let stage = StageWitness::with_final_output(vec![round], fo_witness);
+        let fout_witness = FinalOutputWitness::new(vec![alpha0, alpha1, alpha2], vec![y0, y1, y2]);
+        let stage = StageWitness::with_final_output(vec![round], fout_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
         let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
@@ -1031,8 +1031,8 @@ mod tests {
         let alpha = F::from_u64(1);
         let y = final_claim + F::from_u64(1); // Wrong value!
 
-        let fo_witness = FinalOutputWitness::new(vec![alpha], vec![y]);
-        let stage = StageWitness::with_final_output(vec![round], fo_witness);
+        let fout_witness = FinalOutputWitness::new(vec![alpha], vec![y]);
+        let stage = StageWitness::with_final_output(vec![round], fout_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
         let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
