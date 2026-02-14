@@ -216,6 +216,20 @@ impl OutputClaimConstraint {
         Self::new(product_terms, required_openings)
     }
 
+    /// Number of auxiliary variables the R1CS builder allocates for this constraint's
+    /// sum-of-products expansion. Must match `add_sum_of_products_constraint_baked`.
+    pub fn estimate_aux_var_count(&self) -> usize {
+        let mut count = 0;
+        for term in &self.terms {
+            if term.factors.len() <= 1 {
+                count += 1;
+            } else {
+                count += term.factors.len();
+            }
+        }
+        count
+    }
+
     /// Direct evaluation: output = eval (single opening, coefficient 1)
     pub fn direct(opening: OpeningId) -> Self {
         Self::new(

@@ -10,19 +10,6 @@ use rand_core::CryptoRngCore;
 
 use super::r1cs::VerifierR1CS;
 use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
-use super::OutputClaimConstraint;
-
-fn estimate_aux_var_count(constraint: &OutputClaimConstraint) -> usize {
-    let mut count = 0;
-    for term in &constraint.terms {
-        if term.factors.len() <= 1 {
-            count += 1;
-        } else {
-            count += term.factors.len();
-        }
-    }
-    count
-}
 
 /// Compute the cross-term T for folding two R1CS instances.
 ///
@@ -113,7 +100,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                         }
                     })
                     .count();
-                let num_aux = estimate_aux_var_count(constraint);
+                let num_aux = constraint.estimate_aux_var_count();
                 for _ in 0..(num_new_openings + num_aux) {
                     W[noncoeff_idx] = F::random(rng);
                     noncoeff_idx += 1;
@@ -156,7 +143,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                         }
                     })
                     .count();
-                let num_aux = estimate_aux_var_count(constraint);
+                let num_aux = constraint.estimate_aux_var_count();
                 for _ in 0..(num_new_openings + num_aux) {
                     W[noncoeff_idx] = F::random(rng);
                     noncoeff_idx += 1;
@@ -186,7 +173,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                 }
             })
             .count();
-        let num_aux = estimate_aux_var_count(constraint);
+        let num_aux = constraint.estimate_aux_var_count();
 
         for _ in 0..num_new_openings {
             W[noncoeff_idx] = F::random(rng);

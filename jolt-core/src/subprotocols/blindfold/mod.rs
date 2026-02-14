@@ -64,6 +64,61 @@ pub struct BakedPublicInputs<F> {
     pub extra_constraint_challenges: Vec<F>,
 }
 
+#[cfg(test)]
+impl<F: JoltField> BakedPublicInputs<F> {
+    /// Build baked public inputs from a witness and its stage configs.
+    /// Extracts challenges, initial claims, batching coefficients, and constraint challenges.
+    pub(crate) fn from_witness(
+        witness: &witness::BlindFoldWitness<F>,
+        stage_configs: &[StageConfig],
+    ) -> Self {
+        let mut challenges = Vec::new();
+        for stage in &witness.stages {
+            for round in &stage.rounds {
+                challenges.push(round.challenge);
+            }
+        }
+
+        let mut batching_coefficients = Vec::new();
+        let mut output_constraint_challenges = Vec::new();
+        let mut input_constraint_challenges = Vec::new();
+
+        for (stage_idx, stage) in witness.stages.iter().enumerate() {
+            let config = &stage_configs[stage_idx];
+
+            if let Some(ref _ii_config) = config.initial_input {
+                if let Some(ref iw) = stage.initial_input {
+                    input_constraint_challenges.extend_from_slice(&iw.challenge_values);
+                }
+            }
+
+            if let Some(ref fo_config) = config.final_output {
+                if fo_config.constraint.is_some() {
+                    if let Some(ref fw) = stage.final_output {
+                        output_constraint_challenges.extend_from_slice(&fw.challenge_values);
+                    }
+                } else if let Some(ref fw) = stage.final_output {
+                    batching_coefficients.extend_from_slice(&fw.batching_coefficients);
+                }
+            }
+        }
+
+        let mut extra_constraint_challenges = Vec::new();
+        for ew in &witness.extra_constraints {
+            extra_constraint_challenges.extend_from_slice(&ew.challenge_values);
+        }
+
+        BakedPublicInputs {
+            challenges,
+            initial_claims: witness.initial_claims.clone(),
+            batching_coefficients,
+            output_constraint_challenges,
+            input_constraint_challenges,
+            extra_constraint_challenges,
+        }
+    }
+}
+
 /// Grid layout parameters for Hyrax-style openings.
 ///
 /// W is laid out as an R' × C grid:

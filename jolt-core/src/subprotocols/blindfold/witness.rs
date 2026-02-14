@@ -165,8 +165,6 @@ pub struct FinalOutputWitness<F> {
     /// Opening values for general constraints.
     /// Maps OpeningId to its evaluation value.
     pub opening_values: Vec<F>,
-    /// Whether this uses the general constraint format.
-    pub is_general_constraint: bool,
 }
 
 /// Witness data for extra constraints appended after all stages.
@@ -194,7 +192,6 @@ impl<F: JoltField> FinalOutputWitness<F> {
             evaluations,
             challenge_values: Vec::new(),
             opening_values: Vec::new(),
-            is_general_constraint: false,
         }
     }
 
@@ -205,7 +202,6 @@ impl<F: JoltField> FinalOutputWitness<F> {
             evaluations: Vec::new(),
             challenge_values,
             opening_values,
-            is_general_constraint: true,
         }
     }
 
@@ -308,7 +304,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
             // Initial input witness (opening vars + aux vars only, no challenge public inputs)
             if let Some(ref ii_config) = config.initial_input {
                 if let Some(constraint) = &ii_config.constraint {
-                    let num_aux_vars = Self::estimate_aux_var_count(constraint);
+                    let num_aux_vars = constraint.estimate_aux_var_count();
 
                     if let Some(iw) = stage_witness.initial_input.as_ref() {
                         for (opening_id, val) in
@@ -372,7 +368,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 if let Some(exact_vars) = fo_config.exact_num_witness_vars {
                     witness_idx += exact_vars;
                 } else if let Some(constraint) = &fo_config.constraint {
-                    let num_aux_vars = Self::estimate_aux_var_count(constraint);
+                    let num_aux_vars = constraint.estimate_aux_var_count();
                     let fo_witness = stage_witness.final_output.as_ref();
 
                     if let Some(fw) = fo_witness {
@@ -429,7 +425,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         // Extra constraints: opening vars + output + aux vars + blinding (no challenge public inputs)
         for (extra_idx, constraint) in r1cs.extra_constraints.iter().enumerate() {
             let extra_witness = self.extra_constraints.get(extra_idx);
-            let num_aux_vars = Self::estimate_aux_var_count(constraint);
+            let num_aux_vars = constraint.estimate_aux_var_count();
 
             if let Some(witness) = extra_witness {
                 for (opening_id, val) in constraint
@@ -534,29 +530,6 @@ impl<F: JoltField> BlindFoldWitness<F> {
         Self::new(initial_claim, stages)
     }
 
-    /// Estimate the number of auxiliary variables needed for a general constraint.
-    ///
-    /// The R1CS builder allocates aux vars for intermediate products in sum-of-products.
-    /// This needs to match the allocation in `add_sum_of_products_constraint`.
-    fn estimate_aux_var_count(constraint: &OutputClaimConstraint) -> usize {
-        let mut count = 0;
-        for term in &constraint.terms {
-            if term.factors.is_empty() {
-                // Single coefficient: 1 aux var
-                count += 1;
-            } else if term.factors.len() == 1 {
-                // Single factor: 1 aux var
-                count += 1;
-            } else {
-                // Multiple factors: (n-1) aux vars for chain multiplication + 1 for final
-                count += term.factors.len();
-            }
-        }
-        // Plus 1 for the final sum constraint (if more than 1 term)
-        // Actually the final sum uses a linear combination, not aux vars
-        count
-    }
-
     /// Compute auxiliary variables for a general constraint.
     ///
     /// This must match the order of aux var allocation in `add_sum_of_products_constraint`.
@@ -641,54 +614,6 @@ mod tests {
     use crate::subprotocols::blindfold::BakedPublicInputs;
     use ark_bn254::Fr;
 
-    fn make_baked_from_witness<F: JoltField>(
-        witness: &BlindFoldWitness<F>,
-        stage_configs: &[StageConfig],
-    ) -> BakedPublicInputs<F> {
-        let mut challenges = Vec::new();
-        for stage in &witness.stages {
-            for round in &stage.rounds {
-                challenges.push(round.challenge);
-            }
-        }
-
-        let mut batching_coefficients = Vec::new();
-        let mut output_constraint_challenges = Vec::new();
-        let mut input_constraint_challenges = Vec::new();
-
-        for (stage_idx, stage) in witness.stages.iter().enumerate() {
-            let config = &stage_configs[stage_idx];
-            if let Some(ref _ii_config) = config.initial_input {
-                if let Some(ref iw) = stage.initial_input {
-                    input_constraint_challenges.extend_from_slice(&iw.challenge_values);
-                }
-            }
-            if let Some(ref fo_config) = config.final_output {
-                if fo_config.constraint.is_some() {
-                    if let Some(ref fw) = stage.final_output {
-                        output_constraint_challenges.extend_from_slice(&fw.challenge_values);
-                    }
-                } else if let Some(ref fw) = stage.final_output {
-                    batching_coefficients.extend_from_slice(&fw.batching_coefficients);
-                }
-            }
-        }
-
-        let mut extra_constraint_challenges = Vec::new();
-        for ew in &witness.extra_constraints {
-            extra_constraint_challenges.extend_from_slice(&ew.challenge_values);
-        }
-
-        BakedPublicInputs {
-            challenges,
-            initial_claims: witness.initial_claims.clone(),
-            batching_coefficients,
-            output_constraint_challenges,
-            input_constraint_challenges,
-            extra_constraint_challenges,
-        }
-    }
-
     #[test]
     fn test_witness_assignment() {
         type F = Fr;
@@ -719,7 +644,7 @@ mod tests {
             vec![StageWitness::new(vec![round1, round2])],
         );
 
-        let baked = make_baked_from_witness(&witness, &configs);
+        let baked = BakedPublicInputs::from_witness(&witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
@@ -748,7 +673,7 @@ mod tests {
         assert_eq!(witness.stages[0].rounds[0].coeffs[2], F::from_u64(10));
         assert_eq!(witness.stages[0].rounds[0].coeffs[3], F::from_u64(5));
 
-        let baked = make_baked_from_witness(&witness, &configs);
+        let baked = BakedPublicInputs::from_witness(&witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
         let z = witness.assign(&r1cs);

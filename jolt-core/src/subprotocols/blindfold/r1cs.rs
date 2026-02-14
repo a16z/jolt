@@ -73,8 +73,6 @@ pub struct VerifierR1CS<F: JoltField> {
     pub c: SparseR1CSMatrix<F>,
     /// Total number of variables in Z (including constant 1)
     pub num_vars: usize,
-    /// Number of public input variables (always 0 — baked into matrices)
-    pub num_public_inputs: usize,
     /// Number of constraints
     pub num_constraints: usize,
     /// Stage configurations used to build this R1CS
@@ -496,7 +494,6 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         }
 
         let num_constraints = self.constraints.len();
-        let num_public_inputs = 0;
 
         let noncoeff_count = self.next_var - (witness_start + hyrax_R_coeff * hyrax_C);
         let hyrax = compute_hyrax_params(&self.stage_configs, noncoeff_count);
@@ -523,7 +520,6 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             b,
             c,
             num_vars,
-            num_public_inputs,
             num_constraints,
             stage_configs: self.stage_configs,
             extra_constraints: self.extra_constraints,
@@ -758,56 +754,6 @@ mod tests {
     use crate::subprotocols::blindfold::BakedPublicInputs;
     use ark_bn254::Fr;
 
-    fn make_baked_from_witness<F: JoltField>(
-        witness: &BlindFoldWitness<F>,
-        stage_configs: &[StageConfig],
-    ) -> BakedPublicInputs<F> {
-        let mut challenges = Vec::new();
-        for stage in &witness.stages {
-            for round in &stage.rounds {
-                challenges.push(round.challenge);
-            }
-        }
-
-        let mut batching_coefficients = Vec::new();
-        let mut output_constraint_challenges = Vec::new();
-        let mut input_constraint_challenges = Vec::new();
-
-        for (stage_idx, stage) in witness.stages.iter().enumerate() {
-            let config = &stage_configs[stage_idx];
-
-            if let Some(ref _ii_config) = config.initial_input {
-                if let Some(ref iw) = stage.initial_input {
-                    input_constraint_challenges.extend_from_slice(&iw.challenge_values);
-                }
-            }
-
-            if let Some(ref fo_config) = config.final_output {
-                if fo_config.constraint.is_some() {
-                    if let Some(ref fw) = stage.final_output {
-                        output_constraint_challenges.extend_from_slice(&fw.challenge_values);
-                    }
-                } else if let Some(ref fw) = stage.final_output {
-                    batching_coefficients.extend_from_slice(&fw.batching_coefficients);
-                }
-            }
-        }
-
-        let mut extra_constraint_challenges = Vec::new();
-        for ew in &witness.extra_constraints {
-            extra_constraint_challenges.extend_from_slice(&ew.challenge_values);
-        }
-
-        BakedPublicInputs {
-            challenges,
-            initial_claims: witness.initial_claims.clone(),
-            batching_coefficients,
-            output_constraint_challenges,
-            input_constraint_challenges,
-            extra_constraint_challenges,
-        }
-    }
-
     #[test]
     fn test_single_round_constraint_satisfaction() {
         type F = Fr;
@@ -823,7 +769,7 @@ mod tests {
         let configs = [super::super::StageConfig::new(1, 3)];
         let witness = BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
 
-        let baked = make_baked_from_witness(&witness, &configs);
+        let baked = BakedPublicInputs::from_witness(&witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
@@ -860,7 +806,7 @@ mod tests {
         let witness =
             BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round1, round2])]);
 
-        let baked = make_baked_from_witness(&witness, &configs);
+        let baked = BakedPublicInputs::from_witness(&witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
@@ -894,8 +840,6 @@ mod tests {
 
         // 2 constraints per round, 120 rounds = 240
         assert_eq!(r1cs.num_constraints, 240);
-        assert_eq!(r1cs.num_public_inputs, 0);
-
         assert_eq!(r1cs.hyrax.C, 4);
         assert_eq!(r1cs.hyrax.R_coeff, 128);
     }
@@ -915,7 +859,7 @@ mod tests {
         let configs = [super::super::StageConfig::new(1, 3)];
         let witness = BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
 
-        let baked = make_baked_from_witness(&witness, &configs);
+        let baked = BakedPublicInputs::from_witness(&witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
@@ -943,7 +887,7 @@ mod tests {
         let round = RoundWitness::new(vec![c0, c1, c2, c3], r);
         let witness = BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
 
-        let baked = make_baked_from_witness(&witness, &configs);
+        let baked = BakedPublicInputs::from_witness(&witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
@@ -1010,7 +954,7 @@ mod tests {
         let stage = StageWitness::with_final_output(vec![round], fo_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
-        let baked = make_baked_from_witness(&witness, &[config.clone()]);
+        let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
         let builder = VerifierR1CSBuilder::<F>::new(&[config], &baked);
         let r1cs = builder.build();
 
@@ -1053,7 +997,7 @@ mod tests {
         let stage = StageWitness::with_final_output(vec![round], fo_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
-        let baked = make_baked_from_witness(&witness, &[config.clone()]);
+        let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
         let builder = VerifierR1CSBuilder::<F>::new(&[config], &baked);
         let r1cs = builder.build();
 
@@ -1091,7 +1035,7 @@ mod tests {
         let stage = StageWitness::with_final_output(vec![round], fo_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
-        let baked = make_baked_from_witness(&witness, &[config.clone()]);
+        let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
         let builder = VerifierR1CSBuilder::<F>::new(&[config], &baked);
         let r1cs = builder.build();
 

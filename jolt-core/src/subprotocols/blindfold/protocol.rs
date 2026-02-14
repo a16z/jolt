@@ -266,7 +266,7 @@ fn collect_final_output_info(stage_configs: &[super::StageConfig]) -> Vec<FinalO
             config.final_output.as_ref().map(|fo| {
                 let num_variables = if let Some(ref constraint) = fo.constraint {
                     let num_openings = constraint.required_openings.len();
-                    let num_aux = estimate_aux_var_count(constraint);
+                    let num_aux = constraint.estimate_aux_var_count();
                     num_openings + num_aux
                 } else {
                     let n = fo.num_evaluations;
@@ -283,18 +283,6 @@ fn collect_final_output_info(stage_configs: &[super::StageConfig]) -> Vec<FinalO
             })
         })
         .collect()
-}
-
-fn estimate_aux_var_count(constraint: &super::OutputClaimConstraint) -> usize {
-    let mut count = 0;
-    for term in &constraint.terms {
-        if term.factors.len() <= 1 {
-            count += 1;
-        } else {
-            count += term.factors.len();
-        }
-    }
-    count
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -551,23 +539,6 @@ mod tests {
     use ark_std::Zero;
     use rand::thread_rng;
 
-    fn make_baked_from_witness(
-        witness: &BlindFoldWitness<Fr>,
-        _stage_configs: &[StageConfig],
-    ) -> BakedPublicInputs<Fr> {
-        let mut challenges = Vec::new();
-        for stage in &witness.stages {
-            for round in &stage.rounds {
-                challenges.push(round.challenge);
-            }
-        }
-        BakedPublicInputs {
-            challenges,
-            initial_claims: witness.initial_claims.clone(),
-            ..Default::default()
-        }
-    }
-
     type TestInstance = (
         RelaxedR1CSInstance<Fr, Bn254Curve>,
         RelaxedR1CSWitness<Fr>,
@@ -583,7 +554,7 @@ mod tests {
         type F = Fr;
         let mut rng = thread_rng();
 
-        let baked = make_baked_from_witness(blindfold_witness, configs);
+        let baked = BakedPublicInputs::from_witness(blindfold_witness, configs);
         let builder = VerifierR1CSBuilder::<F>::new(configs, &baked);
         let r1cs = builder.build();
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.hyrax.C + 1);

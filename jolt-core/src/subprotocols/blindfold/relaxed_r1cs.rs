@@ -255,20 +255,6 @@ mod tests {
 
     use rand::thread_rng;
 
-    fn make_baked<F: JoltField>(witness: &BlindFoldWitness<F>) -> BakedPublicInputs<F> {
-        let mut challenges = Vec::new();
-        for stage in &witness.stages {
-            for round in &stage.rounds {
-                challenges.push(round.challenge);
-            }
-        }
-        BakedPublicInputs {
-            challenges,
-            initial_claims: witness.initial_claims.clone(),
-            ..Default::default()
-        }
-    }
-
     #[test]
     fn test_non_relaxed_instance_creation() {
         type F = Fr;
@@ -287,7 +273,7 @@ mod tests {
         let blindfold_witness =
             BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
 
-        let baked = make_baked(&blindfold_witness);
+        let baked = BakedPublicInputs::from_witness(&blindfold_witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
@@ -357,7 +343,7 @@ mod tests {
         let blindfold_witness =
             BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
 
-        let baked = make_baked(&blindfold_witness);
+        let baked = BakedPublicInputs::from_witness(&blindfold_witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
