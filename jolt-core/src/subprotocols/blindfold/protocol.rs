@@ -19,7 +19,10 @@ use crate::utils::math::Math;
 use super::folding::{commit_cross_term_rows, compute_cross_term, sample_random_satisfying_pair};
 use super::r1cs::VerifierR1CS;
 use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
-use super::spartan::{hyrax_combined_blinding, hyrax_combined_row, hyrax_evaluate};
+use super::spartan::{
+    hyrax_combined_blinding, hyrax_combined_row, hyrax_evaluate, INNER_SUMCHECK_DEGREE_BOUND,
+    SPARTAN_DEGREE_BOUND,
+};
 
 /// Information about final_output variables at specific stages.
 #[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -123,7 +126,9 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let r_field: F = r.into();
 
-        let folded_instance = real_instance.fold(&random_instance, &t_row_commitments, r_field);
+        let folded_instance = real_instance
+            .fold(&random_instance, &t_row_commitments, r_field)
+            .expect("prover-controlled fold inputs");
         let folded_witness = real_witness.fold(&random_witness, &T, &t_row_blindings, r_field);
 
         let RelaxedR1CSWitness {
@@ -289,6 +294,8 @@ fn collect_final_output_info(stage_configs: &[super::StageConfig]) -> Vec<FinalO
 pub enum BlindFoldVerifyError {
     SpartanSumcheckFailed(usize),
     WrongSpartanProofLength { expected: usize, got: usize },
+    DegreeBoundExceeded { expected: usize, got: usize },
+    MalformedProof,
     EOpeningFailed,
     OuterClaimMismatch,
     WrongInnerSumcheckLength { expected: usize, got: usize },
@@ -354,7 +361,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let r_field: F = r.into();
 
         let folded_instance =
-            real_instance.fold(&random_instance, &proof.cross_term_row_commitments, r_field);
+            real_instance.fold(&random_instance, &proof.cross_term_row_commitments, r_field)?;
 
         // --- Outer Spartan sumcheck ---
 
@@ -373,6 +380,13 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let mut challenges: Vec<F::Challenge> = Vec::with_capacity(num_vars);
 
         for (round, compressed_poly) in proof.spartan_proof.iter().enumerate() {
+            if compressed_poly.coeffs_except_linear_term.len() != SPARTAN_DEGREE_BOUND {
+                return Err(BlindFoldVerifyError::DegreeBoundExceeded {
+                    expected: SPARTAN_DEGREE_BOUND,
+                    got: compressed_poly.coeffs_except_linear_term.len(),
+                });
+            }
+
             transcript.append_scalars(b"sumcheck_poly", &compressed_poly.coeffs_except_linear_term);
 
             let poly = compressed_poly.decompress(&claim);
@@ -416,6 +430,13 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let mut inner_challenges: Vec<F::Challenge> = Vec::with_capacity(inner_num_vars);
 
         for (round, compressed_poly) in proof.inner_sumcheck_proof.iter().enumerate() {
+            if compressed_poly.coeffs_except_linear_term.len() != INNER_SUMCHECK_DEGREE_BOUND {
+                return Err(BlindFoldVerifyError::DegreeBoundExceeded {
+                    expected: INNER_SUMCHECK_DEGREE_BOUND,
+                    got: compressed_poly.coeffs_except_linear_term.len(),
+                });
+            }
+
             transcript.append_scalars(
                 b"inner_sumcheck_poly",
                 &compressed_poly.coeffs_except_linear_term,

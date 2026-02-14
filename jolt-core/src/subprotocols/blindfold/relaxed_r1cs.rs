@@ -19,6 +19,7 @@ use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
+use super::protocol::BlindFoldVerifyError;
 use super::r1cs::VerifierR1CS;
 
 /// Relaxed R1CS Instance (public data)
@@ -92,18 +93,22 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
     ///
     /// E row commitments fold with cross-term T row commitments:
     ///   e_row_i' = e_row_i_1 + r·t_row_i + r²·e_row_i_2
-    pub fn fold(&self, other: &Self, t_row_commitments: &[C::G1], r: F) -> Self {
+    pub fn fold(
+        &self,
+        other: &Self,
+        t_row_commitments: &[C::G1],
+        r: F,
+    ) -> Result<Self, BlindFoldVerifyError> {
+        if self.round_commitments.len() != other.round_commitments.len()
+            || self.noncoeff_row_commitments.len() != other.noncoeff_row_commitments.len()
+            || self.eval_commitments.len() != other.eval_commitments.len()
+            || self.e_row_commitments.len() != other.e_row_commitments.len()
+            || self.e_row_commitments.len() != t_row_commitments.len()
+        {
+            return Err(BlindFoldVerifyError::MalformedProof);
+        }
+
         let r_squared = r * r;
-
-        assert_eq!(self.round_commitments.len(), other.round_commitments.len());
-        assert_eq!(
-            self.noncoeff_row_commitments.len(),
-            other.noncoeff_row_commitments.len()
-        );
-        assert_eq!(self.eval_commitments.len(), other.eval_commitments.len());
-        assert_eq!(self.e_row_commitments.len(), other.e_row_commitments.len());
-        assert_eq!(self.e_row_commitments.len(), t_row_commitments.len());
-
         let u = self.u + r * other.u;
 
         let round_commitments: Vec<C::G1> = self
@@ -135,13 +140,13 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
             .map(|(c1, c2)| *c1 + c2.scalar_mul(&r))
             .collect();
 
-        Self {
+        Ok(Self {
             u,
             round_commitments,
             noncoeff_row_commitments,
             e_row_commitments,
             eval_commitments,
-        }
+        })
     }
 
     /// All W row commitments in order: coefficient rows (padded to R_coeff), then non-coeff rows,
@@ -456,7 +461,7 @@ mod tests {
         };
 
         let r = F::rand(&mut rng);
-        let folded = inst1.fold(&inst2, &t_rows, r);
+        let folded = inst1.fold(&inst2, &t_rows, r).unwrap();
 
         assert_eq!(folded.u, u1 + r * u2);
 

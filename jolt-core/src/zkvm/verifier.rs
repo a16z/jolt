@@ -1503,8 +1503,7 @@ impl<
             }
         }
 
-        // Compute joint commitment: Σ γ_i · C_i
-        let joint_commitment = self.compute_joint_commitment(&mut commitments_map, &state);
+        let joint_commitment = self.compute_joint_commitment(&mut commitments_map, &state)?;
 
         // Compute joint claim: Σ γ_i · claim_i
         let joint_claim: F = gamma_powers
@@ -1535,8 +1534,7 @@ impl<
         &self,
         commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
         state: &DoryOpeningState<F>,
-    ) -> PCS::Commitment {
-        // Accumulate gamma coefficients per polynomial
+    ) -> Result<PCS::Commitment, ProofVerifyError> {
         let mut rlc_map = HashMap::new();
         for (gamma, (poly, _claim)) in state
             .gamma_powers
@@ -1548,10 +1546,17 @@ impl<
 
         let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
             .into_iter()
-            .map(|(k, v)| (v, commitment_map.remove(&k).unwrap()))
+            .map(|(k, v)| {
+                commitment_map
+                    .remove(&k)
+                    .map(|c| (v, c))
+                    .ok_or(ProofVerifyError::InternalError)
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
             .unzip();
 
-        PCS::combine_commitments(&commitments, &coeffs)
+        Ok(PCS::combine_commitments(&commitments, &coeffs))
     }
 }
 
