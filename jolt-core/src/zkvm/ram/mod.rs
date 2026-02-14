@@ -47,7 +47,7 @@
 
 use crate::zkvm::config::OneHotParams;
 use crate::{
-    field::{self, BarrettReduce, FMAdd, JoltField},
+    field::{BarrettReduce, FMAdd, JoltField},
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
@@ -400,41 +400,38 @@ pub fn verifier_accumulate_advice<F: JoltField>(
 ///
 /// The scaled evaluation: `eval * scaling_factor`, where the scaling factor is the selector polynomial
 /// evaluated at the challenge point. Returns zero if no advice opening is provided.
-fn calculate_advice_memory_evaluation<F: JoltField>(
-    advice_opening: Option<(OpeningPoint<BIG_ENDIAN, F>, F)>,
+/// Compute the selector scaling factor for embedding an advice block into the full memory MLE.
+///
+/// The advice polynomial covers a contiguous power-of-two block starting at `advice_start`.
+/// Its evaluation at the suffix of `r_address` must be scaled by the selector polynomial
+/// (evaluated at the prefix of `r_address`) to get the contribution to the full memory MLE.
+pub fn compute_advice_selector<F: JoltField>(
     advice_num_vars: usize,
     advice_start: u64,
     memory_layout: &MemoryLayout,
-    r_address: &[<F as field::JoltField>::Challenge],
+    r_address: &[F::Challenge],
     total_memory_vars: usize,
 ) -> F {
-    if let Some((_, eval)) = advice_opening {
-        let num_missing_vars = total_memory_vars - advice_num_vars;
+    let num_missing_vars = total_memory_vars - advice_num_vars;
 
-        let index = remap_address(advice_start, memory_layout).unwrap();
-        let mut scaling_factor = F::one();
+    let index = remap_address(advice_start, memory_layout).unwrap();
+    let mut scaling_factor = F::one();
 
-        // Convert index to binary representation with total_memory_vars bits.
-        // For example, if index=5 and total_memory_vars=4, we get [0,1,0,1].
-        let index_binary: Vec<bool> = (0..total_memory_vars)
-            .rev()
-            .map(|i| (index >> i) & 1 == 1)
-            .collect();
+    let index_binary: Vec<bool> = (0..total_memory_vars)
+        .rev()
+        .map(|i| (index >> i) & 1 == 1)
+        .collect();
 
-        let selector_bits = &index_binary[0..num_missing_vars];
+    let selector_bits = &index_binary[0..num_missing_vars];
 
-        // Each bit determines whether to use r[i] (bit=1) or (1-r[i]) (bit=0).
-        for (i, &bit) in selector_bits.iter().enumerate() {
-            scaling_factor *= if bit {
-                r_address[i].into()
-            } else {
-                F::one() - r_address[i]
-            };
-        }
-        eval * scaling_factor
-    } else {
-        F::zero()
+    for (i, &bit) in selector_bits.iter().enumerate() {
+        scaling_factor *= if bit {
+            r_address[i].into()
+        } else {
+            F::one() - r_address[i]
+        };
     }
+    scaling_factor
 }
 
 /// Evaluate a shifted slice of `u64` coefficients as a multilinear polynomial at `r`.

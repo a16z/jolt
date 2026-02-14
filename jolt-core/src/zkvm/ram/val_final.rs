@@ -41,21 +41,50 @@ pub struct ValFinalSumcheckParams<F: JoltField> {
     pub T: usize,
     pub r_address: Vec<F::Challenge>,
     pub val_init_eval: F,
+    /// Public-only portion of val_init_eval (bytecode + inputs), used by BlindFold constraint.
+    pub val_init_eval_public: F,
+    /// Advice contributions decomposed for BlindFold: each is (-selector, opening_id).
+    pub advice_contributions: Vec<(F, OpeningId)>,
 }
 
 impl<F: JoltField> ValFinalSumcheckParams<F> {
     pub fn new_from_prover(
         trace_len: usize,
         opening_accumulator: &ProverOpeningAccumulator<F>,
+        ram_preprocessing: &super::RAMPreprocessing,
+        program_io: &JoltDevice,
+        ram_K: usize,
+        rw_config: &ReadWriteConfig,
     ) -> Self {
         let (r_address, val_init_eval) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamValInit,
             SumcheckId::RamOutputCheck,
         );
 
+        let val_init_eval_public =
+            super::eval_initial_ram_mle::<F>(ram_preprocessing, program_io, &r_address.r);
+
+        let n_memory_vars = ram_K.log_2();
+        let log_T = trace_len.log_2();
+        let advice_sumcheck_id = if rw_config.needs_single_advice_opening(log_T) {
+            SumcheckId::RamValEvaluation
+        } else {
+            SumcheckId::RamValFinalEvaluation
+        };
+
+        let advice_contributions = Self::compute_advice_contributions(
+            opening_accumulator,
+            &program_io.memory_layout,
+            &r_address.r,
+            n_memory_vars,
+            advice_sumcheck_id,
+        );
+
         Self {
             T: trace_len,
             val_init_eval,
+            val_init_eval_public,
+            advice_contributions,
             r_address: r_address.r.clone(),
         }
     }
@@ -78,8 +107,6 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
 
         let n_memory_vars = ram_K.log_2();
 
-        // When needs_single_advice_opening is true, advice is only opened at RamValEvaluation
-        // (the two points are identical). Otherwise, we use RamValFinalEvaluation.
         let log_T = trace_len.log_2();
         let advice_sumcheck_id = if rw_config.needs_single_advice_opening(log_T) {
             SumcheckId::RamValEvaluation
@@ -87,42 +114,74 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
             SumcheckId::RamValFinalEvaluation
         };
 
-        let untrusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_advice_opening(AdviceKind::Untrusted, advice_sumcheck_id),
-            (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
-                .next_power_of_two()
-                .log_2(),
-            program_io.memory_layout.untrusted_advice_start,
-            &program_io.memory_layout,
-            &r_address,
-            n_memory_vars,
-        );
-
-        let trusted_advice_contribution = super::calculate_advice_memory_evaluation(
-            opening_accumulator.get_advice_opening(AdviceKind::Trusted, advice_sumcheck_id),
-            (program_io.memory_layout.max_trusted_advice_size as usize / 8)
-                .next_power_of_two()
-                .log_2(),
-            program_io.memory_layout.trusted_advice_start,
-            &program_io.memory_layout,
-            &r_address,
-            n_memory_vars,
-        );
-
-        // Compute the public part of val_init evaluation (bytecode + inputs) without
-        // materializing the full length-K initial RAM state.
-        let val_init_public_eval =
+        let val_init_eval_public =
             super::eval_initial_ram_mle::<F>(ram_preprocessing, program_io, &r_address);
 
-        // Combine all contributions: untrusted + trusted + public
-        let val_init_eval =
-            untrusted_advice_contribution + trusted_advice_contribution + val_init_public_eval;
+        let advice_contributions = Self::compute_advice_contributions(
+            opening_accumulator,
+            &program_io.memory_layout,
+            &r_address,
+            n_memory_vars,
+            advice_sumcheck_id,
+        );
+
+        // Verifier can't compute full val_init_eval in ZK mode (advice evals are private),
+        // but val_init_eval is only used by input_claim() which is irrelevant in ZK mode.
+        let val_init_eval = val_init_eval_public;
 
         ValFinalSumcheckParams {
             T: trace_len,
             val_init_eval,
+            val_init_eval_public,
+            advice_contributions,
             r_address,
         }
+    }
+
+    fn compute_advice_contributions(
+        accumulator: &dyn OpeningAccumulator<F>,
+        memory_layout: &MemoryLayout,
+        r_address: &[F::Challenge],
+        n_memory_vars: usize,
+        sumcheck_id: SumcheckId,
+    ) -> Vec<(F, OpeningId)> {
+        let mut contributions = Vec::new();
+
+        if accumulator
+            .get_advice_opening(AdviceKind::Untrusted, sumcheck_id)
+            .is_some()
+        {
+            let advice_num_vars = (memory_layout.max_untrusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2();
+            let selector = super::compute_advice_selector::<F>(
+                advice_num_vars,
+                memory_layout.untrusted_advice_start,
+                memory_layout,
+                r_address,
+                n_memory_vars,
+            );
+            contributions.push((-selector, OpeningId::UntrustedAdvice(sumcheck_id)));
+        }
+
+        if accumulator
+            .get_advice_opening(AdviceKind::Trusted, sumcheck_id)
+            .is_some()
+        {
+            let advice_num_vars = (memory_layout.max_trusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2();
+            let selector = super::compute_advice_selector::<F>(
+                advice_num_vars,
+                memory_layout.trusted_advice_start,
+                memory_layout,
+                r_address,
+                n_memory_vars,
+            );
+            contributions.push((-selector, OpeningId::TrustedAdvice(sumcheck_id)));
+        }
+
+        contributions
     }
 }
 
@@ -155,15 +214,26 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ValFinalSumcheckParams<F> {
             PolynomialId::Virtual(VirtualPolynomial::RamValFinal),
             SumcheckId::RamOutputCheck,
         );
-        let terms = vec![
+        // input_claim = val_final_opening - eval_public - Σ(selector_i * advice_opening_i)
+        let mut terms = vec![
             ProductTerm::single(ValueSource::Opening(opening)),
-            ProductTerm::single(ValueSource::Challenge(0)),
+            ProductTerm::single(ValueSource::Challenge(0)), // -eval_public
         ];
+        for (i, (_, advice_opening_id)) in self.advice_contributions.iter().enumerate() {
+            terms.push(ProductTerm::product(vec![
+                ValueSource::Challenge(i + 1),
+                ValueSource::Opening(*advice_opening_id),
+            ]));
+        }
         InputClaimConstraint::sum_of_products(terms)
     }
 
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
-        vec![-self.val_init_eval]
+        let mut values = vec![-self.val_init_eval_public];
+        for (neg_selector, _) in &self.advice_contributions {
+            values.push(*neg_selector);
+        }
+        values
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {

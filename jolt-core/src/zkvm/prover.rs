@@ -1033,9 +1033,17 @@ impl<
             &self.opening_accumulator,
             &self.initial_ram_state,
             self.trace.len(),
+            &self.preprocessing.shared.ram,
+            &self.program_io,
         );
-        let ram_val_final_params =
-            ValFinalSumcheckParams::new_from_prover(self.trace.len(), &self.opening_accumulator);
+        let ram_val_final_params = ValFinalSumcheckParams::new_from_prover(
+            self.trace.len(),
+            &self.opening_accumulator,
+            &self.preprocessing.shared.ram,
+            &self.program_io,
+            self.one_hot_params.ram_k,
+            &self.rw_config,
+        );
 
         let registers_read_write_checking = RegistersReadWriteCheckingProver::initialize(
             registers_read_write_checking_params,
@@ -1658,6 +1666,16 @@ impl<
 
         // Assign witness to get Z vector
         let z = blindfold_witness.assign(&r1cs);
+
+        #[cfg(test)]
+        {
+            if let Err(row) = r1cs.check_satisfaction(&z) {
+                panic!(
+                    "BlindFold R1CS not satisfied at constraint row {row} (total constraints: {}, total vars: {})",
+                    r1cs.num_constraints, r1cs.num_vars
+                );
+            }
+        }
 
         let witness: Vec<F> = z[1..].to_vec();
 

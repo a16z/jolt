@@ -273,54 +273,125 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let val_eval_opening = match self.kind {
-            AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::RamValEvaluation),
-            AdviceKind::Untrusted => OpeningId::UntrustedAdvice(SumcheckId::RamValEvaluation),
-        };
+        match self.phase {
+            ReductionPhase::CycleVariables => {
+                let val_eval_opening = match self.kind {
+                    AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::RamValEvaluation),
+                    AdviceKind::Untrusted => {
+                        OpeningId::UntrustedAdvice(SumcheckId::RamValEvaluation)
+                    }
+                };
 
-        if self.single_opening {
-            InputClaimConstraint::direct(val_eval_opening)
-        } else {
-            let val_final_opening = match self.kind {
-                AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::RamValFinalEvaluation),
-                AdviceKind::Untrusted => {
-                    OpeningId::UntrustedAdvice(SumcheckId::RamValFinalEvaluation)
+                if self.single_opening {
+                    InputClaimConstraint::direct(val_eval_opening)
+                } else {
+                    let val_final_opening = match self.kind {
+                        AdviceKind::Trusted => {
+                            OpeningId::TrustedAdvice(SumcheckId::RamValFinalEvaluation)
+                        }
+                        AdviceKind::Untrusted => {
+                            OpeningId::UntrustedAdvice(SumcheckId::RamValFinalEvaluation)
+                        }
+                    };
+                    let terms = vec![
+                        ProductTerm::single(ValueSource::Opening(val_eval_opening)),
+                        ProductTerm::scaled(
+                            ValueSource::Challenge(0),
+                            vec![ValueSource::Opening(val_final_opening)],
+                        ),
+                    ];
+                    InputClaimConstraint::sum_of_products(terms)
                 }
-            };
-            let terms = vec![
-                ProductTerm::single(ValueSource::Opening(val_eval_opening)),
-                ProductTerm::scaled(
-                    ValueSource::Challenge(0),
-                    vec![ValueSource::Opening(val_final_opening)],
-                ),
-            ];
-            InputClaimConstraint::sum_of_products(terms)
+            }
+            ReductionPhase::AddressVariables => {
+                let cycle_phase_opening = match self.kind {
+                    AdviceKind::Trusted => {
+                        OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                    }
+                    AdviceKind::Untrusted => {
+                        OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                    }
+                };
+                InputClaimConstraint::direct(cycle_phase_opening)
+            }
         }
     }
 
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
-        if self.single_opening {
-            Vec::new()
-        } else {
-            vec![self.gamma]
+        match self.phase {
+            ReductionPhase::CycleVariables => {
+                if self.single_opening {
+                    Vec::new()
+                } else {
+                    vec![self.gamma]
+                }
+            }
+            ReductionPhase::AddressVariables => Vec::new(),
         }
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let advice_opening = match self.kind {
-            AdviceKind::Trusted => {
-                OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+        match self.phase {
+            ReductionPhase::CycleVariables => {
+                let advice_opening = match self.kind {
+                    AdviceKind::Trusted => {
+                        OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                    }
+                    AdviceKind::Untrusted => {
+                        OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                    }
+                };
+                Some(OutputClaimConstraint::direct(advice_opening))
             }
-            AdviceKind::Untrusted => {
-                OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+            ReductionPhase::AddressVariables => {
+                let advice_opening = match self.kind {
+                    AdviceKind::Trusted => {
+                        OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReduction)
+                    }
+                    AdviceKind::Untrusted => {
+                        OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReduction)
+                    }
+                };
+                // output = (eq_combined * scale) * advice_claim
+                // Challenge(0) holds eq_combined * scale (computed in output_constraint_challenge_values)
+                Some(OutputClaimConstraint::linear(vec![(
+                    ValueSource::Challenge(0),
+                    ValueSource::Opening(advice_opening),
+                )]))
             }
-        };
-
-        Some(OutputClaimConstraint::direct(advice_opening))
+        }
     }
 
-    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        vec![]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        match self.phase {
+            ReductionPhase::CycleVariables => vec![],
+            ReductionPhase::AddressVariables => {
+                let opening_point = self.normalize_opening_point(sumcheck_challenges);
+                let eq_eval = EqPolynomial::mle(&opening_point.r, &self.r_val_eval.r);
+                let eq_combined = if self.single_opening {
+                    eq_eval
+                } else {
+                    let r_final = self
+                        .r_val_final
+                        .as_ref()
+                        .expect("r_val_final must exist when !single_opening");
+                    let eq_final = EqPolynomial::mle(&opening_point.r, &r_final.r);
+                    eq_eval + self.gamma * eq_final
+                };
+
+                let gap_len = if self.cycle_phase_row_rounds.is_empty()
+                    || self.cycle_phase_col_rounds.is_empty()
+                {
+                    0
+                } else {
+                    self.cycle_phase_row_rounds.start - self.cycle_phase_col_rounds.end
+                };
+                let two_inv = F::from_u64(2).inverse().unwrap();
+                let scale = (0..gap_len).fold(F::one(), |acc, _| acc * two_inv);
+
+                vec![eq_combined * scale]
+            }
+        }
     }
 }
 
