@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitment};
-use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals};
+use crate::poly::commitment::dory::{bind_opening_inputs_zk, DoryContext, DoryGlobals};
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::subprotocols::blindfold::{
@@ -71,7 +71,7 @@ use crate::{
     field::JoltField,
     poly::opening_proof::{
         compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningId,
-        OpeningPoint, SumcheckId, VerifierOpeningAccumulator,
+        SumcheckId, VerifierOpeningAccumulator,
     },
     pprof_scope,
     subprotocols::{
@@ -253,13 +253,10 @@ impl<
                 .map_or(0, |pos| pos + 1),
         );
 
+        #[cfg(test)]
         let mut opening_accumulator = VerifierOpeningAccumulator::new(proof.trace_length.log_2());
-        // Populate claims in the verifier accumulator
-        for (key, (_, claim)) in &proof.opening_claims.0 {
-            opening_accumulator
-                .openings
-                .insert(*key, (OpeningPoint::default(), *claim));
-        }
+        #[cfg(not(test))]
+        let opening_accumulator = VerifierOpeningAccumulator::new(proof.trace_length.log_2());
 
         #[cfg(test)]
         let mut transcript = ProofTranscript::new(b"Jolt");
@@ -441,12 +438,16 @@ impl<
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
             vec![&spartan_outer_remaining];
 
-        // Compute batching coefficients before verify
         let batching_coefficients: Vec<F> = {
             let mut transcript_clone = self.transcript.clone();
-            for instance in &instances {
-                let input_claim = instance.input_claim(&self.opening_accumulator);
-                transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+            if !matches!(
+                self.proof.stage1_sumcheck_proof,
+                SumcheckInstanceProof::Zk(_)
+            ) {
+                for instance in &instances {
+                    let input_claim = instance.input_claim(&self.opening_accumulator);
+                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+                }
             }
             transcript_clone.challenge_vector(instances.len())
         };
@@ -559,15 +560,16 @@ impl<
             &ram_output_check,
         ];
 
-        // Compute batching coefficients before verify (for explicit BlindFold verification)
         let batching_coefficients: Vec<F> = {
             let mut transcript_clone = self.transcript.clone();
-            let input_claims: Vec<F> = instances
-                .iter()
-                .map(|instance| instance.input_claim(&self.opening_accumulator))
-                .collect();
-            for claim in &input_claims {
-                transcript_clone.append_scalar(b"sumcheck_claim", claim);
+            if !matches!(
+                self.proof.stage2_sumcheck_proof,
+                SumcheckInstanceProof::Zk(_)
+            ) {
+                for instance in &instances {
+                    let input_claim = instance.input_claim(&self.opening_accumulator);
+                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+                }
             }
             transcript_clone.challenge_vector(instances.len())
         };
@@ -647,12 +649,16 @@ impl<
             &spartan_registers_claim_reduction,
         ];
 
-        // Compute batching coefficients before verify (for explicit BlindFold verification).
         let batching_coefficients: Vec<F> = {
             let mut transcript_clone = self.transcript.clone();
-            for instance in &instances {
-                let input_claim = instance.input_claim(&self.opening_accumulator);
-                transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+            if !matches!(
+                self.proof.stage3_sumcheck_proof,
+                SumcheckInstanceProof::Zk(_)
+            ) {
+                for instance in &instances {
+                    let input_claim = instance.input_claim(&self.opening_accumulator);
+                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+                }
             }
             transcript_clone.challenge_vector(instances.len())
         };
@@ -743,13 +749,16 @@ impl<
             &ram_val_final,
         ];
 
-        // Compute batching coefficients before verify (for explicit BlindFold verification).
-        // Clone transcript, append input claims (same as verify does), derive coefficients.
         let batching_coefficients: Vec<F> = {
             let mut transcript_clone = self.transcript.clone();
-            for instance in &instances {
-                let input_claim = instance.input_claim(&self.opening_accumulator);
-                transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+            if !matches!(
+                self.proof.stage4_sumcheck_proof,
+                SumcheckInstanceProof::Zk(_)
+            ) {
+                for instance in &instances {
+                    let input_claim = instance.input_claim(&self.opening_accumulator);
+                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+                }
             }
             transcript_clone.challenge_vector(instances.len())
         };
@@ -823,12 +832,16 @@ impl<
             &registers_val_evaluation,
         ];
 
-        // Compute batching coefficients before verify (for explicit BlindFold verification)
         let batching_coefficients: Vec<F> = {
             let mut transcript_clone = self.transcript.clone();
-            for instance in &instances {
-                let input_claim = instance.input_claim(&self.opening_accumulator);
-                transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+            if !matches!(
+                self.proof.stage5_sumcheck_proof,
+                SumcheckInstanceProof::Zk(_)
+            ) {
+                for instance in &instances {
+                    let input_claim = instance.input_claim(&self.opening_accumulator);
+                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+                }
             }
             transcript_clone.challenge_vector(instances.len())
         };
@@ -956,12 +969,16 @@ impl<
             instances.push(advice);
         }
 
-        // Compute batching coefficients before verify (for explicit BlindFold verification)
         let batching_coefficients: Vec<F> = {
             let mut transcript_clone = self.transcript.clone();
-            for instance in &instances {
-                let input_claim = instance.input_claim(&self.opening_accumulator);
-                transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+            if !matches!(
+                self.proof.stage6_sumcheck_proof,
+                SumcheckInstanceProof::Zk(_)
+            ) {
+                for instance in &instances {
+                    let input_claim = instance.input_claim(&self.opening_accumulator);
+                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+                }
             }
             transcript_clone.challenge_vector(instances.len())
         };
@@ -1244,7 +1261,10 @@ impl<
         // Create BlindFold verifier and verify the proof
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
         let pedersen_generators = PedersenGenerators::<C>::deterministic(pedersen_generator_count);
-        let verifier = BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs);
+        let eval_commitment_gens =
+            PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
+        let verifier =
+            BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
         verifier
@@ -1296,12 +1316,16 @@ impl<
             }
         }
 
-        // Compute batching coefficients before verify (for explicit BlindFold verification)
         let batching_coefficients: Vec<F> = {
             let mut transcript_clone = self.transcript.clone();
-            for instance in &instances {
-                let input_claim = instance.input_claim(&self.opening_accumulator);
-                transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+            if !matches!(
+                self.proof.stage7_sumcheck_proof,
+                SumcheckInstanceProof::Zk(_)
+            ) {
+                for instance in &instances {
+                    let input_claim = instance.input_claim(&self.opening_accumulator);
+                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
+                }
             }
             transcript_clone.challenge_vector(instances.len())
         };
@@ -1452,9 +1476,10 @@ impl<
         }
 
         // 2. Sample gamma and compute powers for RLC
-        let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
-        self.transcript.append_scalars(b"rlc_claims", &claims);
-        let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+        // Claims NOT absorbed — binding comes from polynomial commitments already in transcript.
+        let gamma_powers: Vec<F> = self
+            .transcript
+            .challenge_scalar_powers(polynomial_claims.len());
         let constraint_coeffs: Vec<F> = gamma_powers
             .iter()
             .zip(&scaling_factors)
@@ -1505,23 +1530,19 @@ impl<
 
         let joint_commitment = self.compute_joint_commitment(&mut commitments_map, &state)?;
 
-        // Compute joint claim: Σ γ_i · claim_i
-        let joint_claim: F = gamma_powers
-            .iter()
-            .zip(claims.iter())
-            .map(|(gamma, claim)| *gamma * claim)
-            .sum();
-
-        bind_opening_inputs::<F, _>(&mut self.transcript, &opening_point.r, &joint_claim);
         PCS::verify(
             &self.proof.joint_opening_proof,
             &self.preprocessing.generators,
             &mut self.transcript,
             &opening_point.r,
-            &joint_claim,
+            &F::zero(),
             &joint_commitment,
         )
         .context("Stage 8")?;
+
+        let y_com: C::G1 = PCS::eval_commitment(&self.proof.joint_opening_proof)
+            .expect("ZK proof must have y_com");
+        bind_opening_inputs_zk::<F, C, _>(&mut self.transcript, &opening_point.r, &y_com);
 
         Ok(Stage8VerifyData {
             opening_ids,

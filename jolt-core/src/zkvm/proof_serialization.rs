@@ -1,7 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    io::{Read, Write},
-};
+use std::io::{Read, Write};
 
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
@@ -14,7 +11,7 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
-        opening_proof::{OpeningId, OpeningPoint, Openings, PolynomialId, SumcheckId},
+        opening_proof::{OpeningId, PolynomialId, SumcheckId},
     },
     subprotocols::{
         blindfold::BlindFoldProof, sumcheck::SumcheckInstanceProof,
@@ -30,7 +27,6 @@ use crate::{
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
-    pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
     pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
     pub stage1_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
@@ -85,56 +81,6 @@ impl CanonicalDeserialize for DoryLayout {
             return Err(SerializationError::InvalidData);
         }
         Ok(DoryLayout::from(value))
-    }
-}
-
-pub struct Claims<F: JoltField>(pub Openings<F>);
-
-impl<F: JoltField> CanonicalSerialize for Claims<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.0.len().serialize_with_mode(&mut writer, compress)?;
-        for (key, (_opening_point, claim)) in self.0.iter() {
-            key.serialize_with_mode(&mut writer, compress)?;
-            claim.serialize_with_mode(&mut writer, compress)?;
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        let mut size = self.0.len().serialized_size(compress);
-        for (key, (_opening_point, claim)) in self.0.iter() {
-            size += key.serialized_size(compress);
-            size += claim.serialized_size(compress);
-        }
-        size
-    }
-}
-
-impl<F: JoltField> Valid for Claims<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl<F: JoltField> CanonicalDeserialize for Claims<F> {
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let size = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        let mut claims = BTreeMap::new();
-        for _ in 0..size {
-            let key = OpeningId::deserialize_with_mode(&mut reader, compress, validate)?;
-            let claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
-            claims.insert(key, (OpeningPoint::default(), claim));
-        }
-
-        Ok(Claims(claims))
     }
 }
 

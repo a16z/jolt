@@ -30,7 +30,7 @@ use crate::{
     poly::{
         commitment::{
             commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment},
-            dory::{bind_opening_inputs, DoryGlobals, DoryLayout},
+            dory::{bind_opening_inputs_zk, DoryGlobals, DoryLayout},
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
@@ -109,7 +109,7 @@ use crate::{
             ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
             read_raf_checking::InstructionReadRafSumcheckProver,
         },
-        proof_serialization::{Claims, JoltProof},
+        proof_serialization::JoltProof,
         r1cs::{
             constraints::{
                 OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
@@ -528,7 +528,6 @@ impl<
         let debug_info = None;
 
         let proof = JoltProof {
-            opening_claims: Claims(self.opening_accumulator.openings.clone()),
             commitments,
             untrusted_advice_commitment,
             stage1_uni_skip_first_round_proof,
@@ -1970,8 +1969,8 @@ impl<
         }
 
         // 2. Sample gamma and compute powers for RLC
+        // Claims NOT absorbed — binding comes from polynomial commitments already in transcript.
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
-        self.transcript.append_scalars(b"rlc_claims", &claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
         let constraint_coeffs: Vec<F> = gamma_powers
             .iter()
@@ -2021,7 +2020,6 @@ impl<
             advice_polys,
         );
 
-        bind_opening_inputs::<F, _>(&mut self.transcript, &opening_point.r, &joint_claim);
         let (proof, y_blinding) = PCS::prove(
             &self.preprocessing.generators,
             &joint_poly,
@@ -2029,6 +2027,9 @@ impl<
             Some(hint),
             &mut self.transcript,
         );
+
+        let y_com: C::G1 = PCS::eval_commitment(&proof).expect("ZK proof must have y_com");
+        bind_opening_inputs_zk::<F, C, _>(&mut self.transcript, &opening_point.r, &y_com);
 
         let stage8_data = Stage8ZkData {
             opening_ids,
@@ -3261,7 +3262,7 @@ mod tests {
         );
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_E2E");
         let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);

@@ -265,6 +265,8 @@ where
     /// ZK uni-skip data for BlindFold (Stages 1-2 first rounds).
     #[allocative(skip)]
     uniskip_stage_data: Vec<UniSkipStageData<F>>,
+    /// In ZK mode, skip absorbing cleartext claims into the transcript.
+    pub zk_mode: bool,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -279,6 +281,8 @@ where
     #[cfg(test)]
     prover_opening_accumulator: Option<ProverOpeningAccumulator<F>>,
     pub log_T: usize,
+    /// In ZK mode, skip absorbing cleartext claims into the transcript.
+    pub zk_mode: bool,
 }
 
 pub trait OpeningAccumulator<F: JoltField> {
@@ -431,6 +435,7 @@ where
             log_T,
             zk_stage_data: Vec::new(),
             uniskip_stage_data: Vec::new(),
+            zk_mode: true,
         }
     }
 
@@ -455,9 +460,10 @@ where
         opening_point: Vec<F::Challenge>,
         claim: F,
     ) {
-        transcript.append_scalar(b"opening_claim", &claim);
+        if !self.zk_mode {
+            transcript.append_scalar(b"opening_claim", &claim);
+        }
 
-        // Add opening to map
         let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
         self.openings.insert(
             key,
@@ -478,9 +484,11 @@ where
         r_cycle: Vec<F::Challenge>,
         claims: Vec<F>,
     ) {
-        claims.iter().for_each(|claim| {
-            transcript.append_scalar(b"opening_claim", claim);
-        });
+        if !self.zk_mode {
+            claims.iter().for_each(|claim| {
+                transcript.append_scalar(b"opening_claim", claim);
+            });
+        }
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
 
         // Add openings to map
@@ -500,7 +508,9 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(b"opening_claim", &claim);
+        if !self.zk_mode {
+            transcript.append_scalar(b"opening_claim", &claim);
+        }
         assert!(
             self.openings
                 .insert(
@@ -526,7 +536,9 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(b"opening_claim", &claim);
+        if !self.zk_mode {
+            transcript.append_scalar(b"opening_claim", &claim);
+        }
         self.openings.insert(
             OpeningId::UntrustedAdvice(sumcheck_id),
             (opening_point, claim),
@@ -540,7 +552,9 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(b"opening_claim", &claim);
+        if !self.zk_mode {
+            transcript.append_scalar(b"opening_claim", &claim);
+        }
         self.openings.insert(
             OpeningId::TrustedAdvice(sumcheck_id),
             (opening_point, claim),
@@ -632,6 +646,7 @@ where
             #[cfg(test)]
             prover_opening_accumulator: None,
             log_T,
+            zk_mode: true,
         }
     }
 
@@ -642,8 +657,6 @@ where
         self.prover_opening_accumulator = Some(prover_openings);
     }
 
-    /// Adds an opening of a dense polynomial the accumulator.
-    /// The given `polynomial` is opened at `opening_point`.
     pub fn append_dense<T: Transcript>(
         &mut self,
         transcript: &mut T,
@@ -652,10 +665,14 @@ where
         opening_point: Vec<F::Challenge>,
     ) {
         let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
-        let claim = self.openings.get(&key).unwrap().1;
-        transcript.append_scalar(b"opening_claim", &claim);
-
-        // Update the opening point in self.openings (it was initialized with default empty point)
+        let claim = self
+            .openings
+            .get(&key)
+            .map(|(_, c)| *c)
+            .unwrap_or(F::zero());
+        if !self.zk_mode {
+            transcript.append_scalar(b"opening_claim", &claim);
+        }
         self.openings.insert(
             key,
             (
@@ -665,11 +682,6 @@ where
         );
     }
 
-    /// Adds openings to the accumulator. The polynomials underlying the given
-    /// `commitments` are opened at `opening_point`, yielding the claimed evaluations
-    /// `claims`.
-    /// Multiple sparse polynomials opened at a single point are NOT batched into
-    /// a single polynomial opened at the same point.
     pub fn append_sparse<T: Transcript>(
         &mut self,
         transcript: &mut T,
@@ -679,10 +691,14 @@ where
     ) {
         for label in polynomials.into_iter() {
             let key = OpeningId::Polynomial(PolynomialId::Committed(label), sumcheck);
-            let claim = self.openings.get(&key).unwrap().1;
-            transcript.append_scalar(b"opening_claim", &claim);
-
-            // Update the opening point in self.openings (it was initialized with default empty point)
+            let claim = self
+                .openings
+                .get(&key)
+                .map(|(_, c)| *c)
+                .unwrap_or(F::zero());
+            if !self.zk_mode {
+                transcript.append_scalar(b"opening_claim", &claim);
+            }
             self.openings.insert(
                 key,
                 (
@@ -693,7 +709,6 @@ where
         }
     }
 
-    /// Populates the opening point for an existing claim in the evaluation_openings map.
     pub fn append_virtual<T: Transcript>(
         &mut self,
         transcript: &mut T,
@@ -702,13 +717,15 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
-        if let Some((_, claim)) = self.openings.get(&key) {
-            transcript.append_scalar(b"opening_claim", claim);
-            let claim = *claim; // Copy the claim value
-            self.openings.insert(key, (opening_point.clone(), claim));
-        } else {
-            panic!("Tried to populate opening point for non-existent key: {key:?}");
+        let claim = self
+            .openings
+            .get(&key)
+            .map(|(_, c)| *c)
+            .unwrap_or(F::zero());
+        if !self.zk_mode {
+            transcript.append_scalar(b"opening_claim", &claim);
         }
+        self.openings.insert(key, (opening_point.clone(), claim));
     }
 
     pub fn append_untrusted_advice<T: Transcript>(
@@ -718,13 +735,15 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let key = OpeningId::UntrustedAdvice(sumcheck_id);
-        if let Some((_, claim)) = self.openings.get(&key) {
-            transcript.append_scalar(b"opening_claim", claim);
-            let claim = *claim;
-            self.openings.insert(key, (opening_point.clone(), claim));
-        } else {
-            panic!("Tried to populate opening point for non-existent key: {key:?}");
+        let claim = self
+            .openings
+            .get(&key)
+            .map(|(_, c)| *c)
+            .unwrap_or(F::zero());
+        if !self.zk_mode {
+            transcript.append_scalar(b"opening_claim", &claim);
         }
+        self.openings.insert(key, (opening_point.clone(), claim));
     }
 
     pub fn append_trusted_advice<T: Transcript>(
@@ -734,13 +753,15 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let key = OpeningId::TrustedAdvice(sumcheck_id);
-        if let Some((_, claim)) = self.openings.get(&key) {
-            transcript.append_scalar(b"opening_claim", claim);
-            let claim = *claim;
-            self.openings.insert(key, (opening_point.clone(), claim));
-        } else {
-            panic!("Tried to populate opening point for non-existent key: {key:?}");
+        let claim = self
+            .openings
+            .get(&key)
+            .map(|(_, c)| *c)
+            .unwrap_or(F::zero());
+        if !self.zk_mode {
+            transcript.append_scalar(b"opening_claim", &claim);
         }
+        self.openings.insert(key, (opening_point.clone(), claim));
     }
 }
 

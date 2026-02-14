@@ -216,15 +216,8 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
-        // Append input claims to transcript BEFORE deriving batching coefficients
-        let input_claims: Vec<F> = sumcheck_instances
-            .iter()
-            .map(|sumcheck| sumcheck.input_claim(opening_accumulator))
-            .collect();
-        for claim in &input_claims {
-            transcript.append_scalar(b"sumcheck_claim", claim);
-        }
-
+        // In ZK mode, don't absorb cleartext claims — polynomial commitments provide binding.
+        // Batching coefficients are still unpredictable (from transcript state after commitments).
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         let mut individual_claims: Vec<F> = sumcheck_instances
@@ -424,11 +417,15 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
-        // Append input claims to transcript
-        sumcheck_instances.iter().for_each(|sumcheck| {
-            let input_claim = sumcheck.input_claim(opening_accumulator);
-            transcript.append_scalar(b"sumcheck_claim", &input_claim);
-        });
+        let is_zk = matches!(proof, SumcheckInstanceProof::Zk(_));
+
+        // In ZK mode, skip absorbing cleartext claims — polynomial commitments provide binding.
+        if !is_zk {
+            sumcheck_instances.iter().for_each(|sumcheck| {
+                let input_claim = sumcheck.input_claim(opening_accumulator);
+                transcript.append_scalar(b"sumcheck_claim", &input_claim);
+            });
+        }
 
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 

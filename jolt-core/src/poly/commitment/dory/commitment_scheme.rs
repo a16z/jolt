@@ -20,6 +20,7 @@ use crate::{
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
+use ark_serialize::CanonicalSerialize;
 use dory::primitives::{
     arithmetic::{Group, PairingCurve},
     poly::Polynomial,
@@ -77,6 +78,26 @@ pub fn bind_opening_inputs<F: JoltField, ProofTranscript: Transcript>(
     transcript.append_scalars(b"dory_opening_point", &point_scalars);
 
     transcript.append_scalar(b"dory_opening_eval", opening);
+}
+
+/// ZK variant: absorbs y_com (evaluation commitment) instead of cleartext evaluation.
+pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>(
+    transcript: &mut ProofTranscript,
+    opening_point: &[F::Challenge],
+    y_com: &C::G1,
+) {
+    let mut point_scalars = Vec::with_capacity(opening_point.len());
+    for point in opening_point {
+        let scalar: F = (*point).into();
+        point_scalars.push(scalar);
+    }
+    transcript.append_scalars(b"dory_opening_point", &point_scalars);
+
+    let mut bytes = Vec::new();
+    y_com
+        .serialize_compressed(&mut bytes)
+        .expect("serialization");
+    transcript.append_bytes(b"dory_eval_commitment", &bytes);
 }
 
 impl CommitmentScheme for DoryCommitmentScheme {

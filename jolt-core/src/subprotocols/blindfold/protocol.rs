@@ -60,6 +60,11 @@ pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
     /// Hyrax E opening: combined row (C_E elements)
     pub e_combined_row: Vec<F>,
     pub e_combined_blinding: F,
+    /// Folded eval output values (one per extra constraint / eval_commitment).
+    /// Safe to reveal: folded = real + r*random, where random is a one-time pad.
+    pub folded_eval_outputs: Vec<F>,
+    /// Folded eval blinding values (one per extra constraint / eval_commitment).
+    pub folded_eval_blindings: Vec<F>,
 }
 
 pub struct BlindFoldProver<'a, F: JoltField, C: JoltCurve> {
@@ -137,6 +142,19 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             w_row_blindings,
             e_row_blindings,
         } = folded_witness;
+
+        let folded_eval_outputs: Vec<F> = self
+            .r1cs
+            .extra_output_vars
+            .iter()
+            .map(|var| folded_W[var.index() - 1])
+            .collect();
+        let folded_eval_blindings: Vec<F> = self
+            .r1cs
+            .extra_blinding_vars
+            .iter()
+            .map(|var| folded_W[var.index() - 1])
+            .collect();
 
         let mut folded_z = Vec::with_capacity(self.r1cs.num_vars);
         folded_z.push(folded_instance.u);
@@ -259,6 +277,8 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             w_combined_blinding,
             e_combined_row,
             e_combined_blinding,
+            folded_eval_outputs,
+            folded_eval_blindings,
         }
     }
 }
@@ -302,6 +322,7 @@ pub enum BlindFoldVerifyError {
     InnerSumcheckFailed(usize),
     WOpeningFailed,
     FinalClaimMismatch,
+    EvalCommitmentMismatch,
 }
 
 pub struct BlindFoldVerifierInput<C: JoltCurve> {
@@ -312,11 +333,20 @@ pub struct BlindFoldVerifierInput<C: JoltCurve> {
 pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve> {
     gens: &'a PedersenGenerators<C>,
     r1cs: &'a VerifierR1CS<F>,
+    eval_commitment_gens: Option<(C::G1, C::G1)>,
 }
 
 impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
-    pub fn new(gens: &'a PedersenGenerators<C>, r1cs: &'a VerifierR1CS<F>) -> Self {
-        Self { gens, r1cs }
+    pub fn new(
+        gens: &'a PedersenGenerators<C>,
+        r1cs: &'a VerifierR1CS<F>,
+        eval_commitment_gens: Option<(C::G1, C::G1)>,
+    ) -> Self {
+        Self {
+            gens,
+            r1cs,
+            eval_commitment_gens,
+        }
     }
 
     pub fn verify<T: Transcript>(
@@ -362,6 +392,22 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
 
         let folded_instance =
             real_instance.fold(&random_instance, &proof.cross_term_row_commitments, r_field)?;
+
+        // --- Verify eval_commitment Pedersen binding ---
+        if let Some((g1_0, h1)) = self.eval_commitment_gens {
+            if proof.folded_eval_outputs.len() != folded_instance.eval_commitments.len()
+                || proof.folded_eval_blindings.len() != folded_instance.eval_commitments.len()
+            {
+                return Err(BlindFoldVerifyError::MalformedProof);
+            }
+            for (i, eval_com) in folded_instance.eval_commitments.iter().enumerate() {
+                let expected = g1_0.scalar_mul(&proof.folded_eval_outputs[i])
+                    + h1.scalar_mul(&proof.folded_eval_blindings[i]);
+                if *eval_com != expected {
+                    return Err(BlindFoldVerifyError::EvalCommitmentMismatch);
+                }
+            }
+        }
 
         // --- Outer Spartan sumcheck ---
 
@@ -633,7 +679,7 @@ mod tests {
         label: &'static [u8],
     ) -> Result<(), BlindFoldVerifyError> {
         let prover = BlindFoldProver::new(gens, r1cs, None);
-        let verifier = BlindFoldVerifier::new(gens, r1cs);
+        let verifier = BlindFoldVerifier::new(gens, r1cs, None);
 
         let mut prover_transcript = KeccakTranscript::new(label);
         let proof = prover.prove(real_instance, real_witness, z, &mut prover_transcript);
@@ -699,7 +745,7 @@ mod tests {
             make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
@@ -799,7 +845,7 @@ mod tests {
             make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
@@ -840,7 +886,7 @@ mod tests {
             make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
@@ -883,7 +929,7 @@ mod tests {
             make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
