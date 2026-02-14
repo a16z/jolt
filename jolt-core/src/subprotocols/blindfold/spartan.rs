@@ -29,28 +29,17 @@ use super::r1cs::VerifierR1CS;
 /// eq(τ,x) * Az(x) * Bz(x) is degree 3 in each variable.
 const SPARTAN_DEGREE_BOUND: usize = 3;
 
-/// Parameters for the BlindFold Spartan sumcheck
 #[derive(Clone)]
 pub struct BlindFoldSpartanParams<F: JoltField> {
-    /// Random row selector τ (length = num_constraint_vars)
     pub tau: Vec<F::Challenge>,
-    /// Folded scalar u (1 for non-relaxed, u' for folded)
     pub u: F,
-    /// Number of constraint variables (ceil(log2(num_constraints)))
     pub num_vars: usize,
-    /// Folded public inputs x
-    pub x: Vec<F>,
 }
 
 impl<F: JoltField> BlindFoldSpartanParams<F> {
-    pub fn new(tau: Vec<F::Challenge>, u: F, x: Vec<F>, num_constraints: usize) -> Self {
+    pub fn new(tau: Vec<F::Challenge>, u: F, num_constraints: usize) -> Self {
         let num_vars = num_constraints.next_power_of_two().log_2();
-        Self {
-            tau,
-            u,
-            num_vars,
-            x,
-        }
+        Self { tau, u, num_vars }
     }
 }
 
@@ -117,14 +106,8 @@ impl<F: JoltField> allocative::Allocative for BlindFoldSpartanProver<'_, F> {
 }
 
 impl<'a, F: JoltField> BlindFoldSpartanProver<'a, F> {
-    /// Create a new Spartan prover for the folded R1CS instance
-    ///
-    /// # Arguments
-    /// * `r1cs` - The verifier R1CS
-    /// * `u` - Folded scalar
-    /// * `z` - Full folded Z vector [u, x..., W...]
-    /// * `e` - Folded error vector E
-    /// * `tau` - Random row selector from transcript
+    /// Create a new Spartan prover for the folded R1CS instance.
+    /// `z` layout: [u, W...] (public inputs baked into R1CS coefficients).
     pub fn new(
         r1cs: &'a VerifierR1CS<F>,
         u: F,
@@ -155,9 +138,7 @@ impl<'a, F: JoltField> BlindFoldSpartanProver<'a, F> {
         let tau_f: Vec<F> = tau.iter().map(|c| (*c).into()).collect();
         let eq_tau = EqPolynomial::evals(&tau_f);
 
-        let x = z[1..1 + r1cs.num_public_inputs].to_vec();
-
-        let params = BlindFoldSpartanParams::new(tau, u, x, num_constraints);
+        let params = BlindFoldSpartanParams::new(tau, u, num_constraints);
 
         Self {
             params,
@@ -347,7 +328,7 @@ impl<F: JoltField> BlindFoldSpartanProver<'_, F> {
         let eq_r: Vec<F> = EqPolynomial::evals(&r);
 
         // Compute A'[j], B'[j], C'[j] for witness columns only
-        let witness_start = 1 + self.r1cs.num_public_inputs;
+        let witness_start = 1;
         let witness_len = self.z.len() - witness_start;
 
         let mut a_prime = vec![F::zero(); witness_len];
@@ -397,83 +378,42 @@ pub struct BlindFoldSpartanVerifier<'a, F: JoltField> {
 }
 
 impl<'a, F: JoltField> BlindFoldSpartanVerifier<'a, F> {
-    pub fn new(r1cs: &'a VerifierR1CS<F>, tau: Vec<F::Challenge>, u: F, x: Vec<F>) -> Self {
-        let params = BlindFoldSpartanParams::new(tau, u, x, r1cs.num_constraints);
+    pub fn new(r1cs: &'a VerifierR1CS<F>, tau: Vec<F::Challenge>, u: F) -> Self {
+        let params = BlindFoldSpartanParams::new(tau, u, r1cs.num_constraints);
         Self { params, r1cs }
     }
 
-    /// Compute the public contribution to Az(r), Bz(r), Cz(r)
+    /// Compute the public contribution to Az(r), Bz(r), Cz(r).
     ///
-    /// Returns (pub_az, pub_bz, pub_cz) where:
-    /// - pub_az = u·A'[0] + Σ_{j ∈ public} A'[j] · x[j-1]
-    /// - pub_bz = u·B'[0] + Σ_{j ∈ public} B'[j] · x[j-1]
-    /// - pub_cz = u·C'[0] + Σ_{j ∈ public} C'[j] · x[j-1]
-    ///
-    /// Where A'[j] = Σ_i A[i,j] · eq(r, i)
+    /// With baked public inputs, only column 0 (the u scalar) is public.
+    /// Returns (u·A'[0], u·B'[0], u·C'[0]) where A'[0] = Σ_i A[i,0]·eq(r, i).
     pub fn public_contributions(&self, sumcheck_challenges: &[F::Challenge]) -> (F, F, F) {
         let r: Vec<F> = sumcheck_challenges.iter().map(|c| (*c).into()).collect();
         let padded_size = self.r1cs.num_constraints.next_power_of_two();
-
-        // Compute eq(r, ·) for all constraint rows
         let eq_r: Vec<F> = EqPolynomial::evals(&r);
 
-        // Public columns: 0 (u scalar) and 1..1+num_public_inputs (x)
-        let public_len = 1 + self.r1cs.num_public_inputs;
+        let mut a_prime_0 = F::zero();
+        let mut b_prime_0 = F::zero();
+        let mut c_prime_0 = F::zero();
 
-        let mut a_prime_pub = vec![F::zero(); public_len];
-        let mut b_prime_pub = vec![F::zero(); public_len];
-        let mut c_prime_pub = vec![F::zero(); public_len];
-
-        // Process sparse matrix A
         for &(row, col, ref val) in &self.r1cs.a.entries {
-            if col < public_len && row < padded_size {
-                let eq_val = eq_r[row];
-                a_prime_pub[col] += eq_val * *val;
+            if col == 0 && row < padded_size {
+                a_prime_0 += eq_r[row] * *val;
             }
         }
-
-        // Process sparse matrix B
         for &(row, col, ref val) in &self.r1cs.b.entries {
-            if col < public_len && row < padded_size {
-                let eq_val = eq_r[row];
-                b_prime_pub[col] += eq_val * *val;
+            if col == 0 && row < padded_size {
+                b_prime_0 += eq_r[row] * *val;
             }
         }
-
-        // Process sparse matrix C
         for &(row, col, ref val) in &self.r1cs.c.entries {
-            if col < public_len && row < padded_size {
-                let eq_val = eq_r[row];
-                c_prime_pub[col] += eq_val * *val;
+            if col == 0 && row < padded_size {
+                c_prime_0 += eq_r[row] * *val;
             }
         }
 
-        // Compute public contributions: u·A'[0] + Σ_{j>0} A'[j]·x[j-1]
         let u = self.params.u;
-        let x = &self.params.x;
-
-        let pub_az = a_prime_pub[0] * u
-            + a_prime_pub[1..]
-                .iter()
-                .zip(x.iter())
-                .map(|(a, x)| *a * *x)
-                .sum::<F>();
-
-        let pub_bz = b_prime_pub[0] * u
-            + b_prime_pub[1..]
-                .iter()
-                .zip(x.iter())
-                .map(|(b, x)| *b * *x)
-                .sum::<F>();
-
-        let pub_cz = c_prime_pub[0] * u
-            + c_prime_pub[1..]
-                .iter()
-                .zip(x.iter())
-                .map(|(c, x)| *c * *x)
-                .sum::<F>();
-
-        (pub_az, pub_bz, pub_cz)
+        (a_prime_0 * u, b_prime_0 * u, c_prime_0 * u)
     }
 
     /// Compute eq(τ, r)
@@ -628,7 +568,7 @@ fn build_L_w<F: JoltField>(
     let padded_size = r1cs.num_constraints.next_power_of_two();
     let eq_rx: Vec<F> = EqPolynomial::evals(&r);
 
-    let witness_start = 1 + r1cs.num_public_inputs;
+    let witness_start = 1;
     let mut l_w = vec![F::zero(); w_padded_len];
 
     for &(row, col, ref val) in &r1cs.a.entries {
@@ -667,7 +607,7 @@ pub fn compute_L_w_at_ry<F: JoltField>(
     let r: Vec<F> = rx.iter().map(|c| (*c).into()).collect();
     let ry: Vec<F> = ry_w.iter().map(|c| (*c).into()).collect();
     let padded_size = r1cs.num_constraints.next_power_of_two();
-    let witness_start = 1 + r1cs.num_public_inputs;
+    let witness_start = 1;
     let w_padded_len = 1usize << ry_w.len();
 
     let eq_rx: Vec<F> = EqPolynomial::evals(&r);
@@ -766,7 +706,7 @@ mod tests {
     use super::*;
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
-    use crate::subprotocols::blindfold::StageConfig;
+    use crate::subprotocols::blindfold::{BakedPublicInputs, StageConfig};
     use crate::transcripts::KeccakTranscript;
     use ark_bn254::Fr;
     use ark_std::{One, Zero};
@@ -805,12 +745,8 @@ mod tests {
     fn test_spartan_sumcheck_correctness() {
         type F = Fr;
 
-        // Create R1CS
         let configs = [StageConfig::new(2, 3)];
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
 
-        // Create valid witness
         let round1 = RoundWitness::new(
             vec![
                 F::from_u64(20),
@@ -831,96 +767,62 @@ mod tests {
         let initial_claim = F::from_u64(55);
         let blindfold_witness =
             BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round1, round2])]);
-        let z = blindfold_witness.assign(&r1cs);
 
-        // Verify R1CS is satisfied
+        let baked = BakedPublicInputs {
+            challenges: vec![F::from_u64(2), F::from_u64(3)],
+            initial_claims: vec![initial_claim],
+            ..Default::default()
+        };
+        let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
+        let r1cs = builder.build();
+
+        let z = blindfold_witness.assign(&r1cs);
         assert!(r1cs.is_satisfied(&z));
 
-        // For non-relaxed R1CS, E = 0
         let e = vec![F::zero(); r1cs.num_constraints];
 
-        // Create transcript and derive τ
         let mut transcript = KeccakTranscript::new(b"test_spartan");
         let tau: Vec<_> = transcript
             .challenge_vector_optimized::<F>(r1cs.num_constraints.next_power_of_two().log_2());
 
-        // Create Spartan prover
         let mut prover = BlindFoldSpartanProver::new(&r1cs, F::one(), z.clone(), e, tau.clone());
 
-        // Run sumcheck manually
         let num_rounds = prover.num_vars();
-        let mut claim = F::zero(); // Spartan starts at 0
+        let mut claim = F::zero();
         let mut challenges = Vec::new();
 
         for round in 0..num_rounds {
             let poly = prover.compute_round_polynomial(claim);
-
-            // Verify sum check property: p(0) + p(1) = claim
             let sum = poly.evaluate(&F::zero()) + poly.evaluate(&F::one());
             assert_eq!(sum, claim, "Round {round}: p(0) + p(1) != claim");
 
-            // Sample challenge
             let r_j = transcript.challenge_scalar_optimized::<F>();
             challenges.push(r_j);
-
-            // Update claim and bind polynomials
             claim = poly.evaluate(&r_j);
             prover.bind_challenge(r_j);
         }
 
-        // Get final claims
         let final_claims = prover.final_claims();
-
-        // Verify final claim matches expected value
         let expected_final = final_claims.eq_tau_r
             * (final_claims.az_r * final_claims.bz_r
                 - F::one() * final_claims.cz_r
                 - final_claims.e_r);
         assert_eq!(claim, expected_final, "Final claim mismatch");
 
-        // Verify using verifier
-        let verifier = BlindFoldSpartanVerifier::new(
-            &r1cs,
-            tau.clone(),
-            F::one(),
-            z[1..1 + r1cs.num_public_inputs].to_vec(),
-        );
+        let verifier = BlindFoldSpartanVerifier::new(&r1cs, tau.clone(), F::one());
 
-        // Check eq(tau, r) computation
         let verifier_eq_tau_r = verifier.eq_tau_at_r(&challenges);
         assert_eq!(
             final_claims.eq_tau_r, verifier_eq_tau_r,
-            "eq(tau, r) mismatch: prover has bound eq, verifier recomputes"
+            "eq(tau, r) mismatch"
         );
 
-        // Check Az/Bz/Cz decomposition
         let (w_az, w_bz, w_cz) = prover.witness_contributions(&challenges);
         let (pub_az, pub_bz, pub_cz) = verifier.public_contributions(&challenges);
 
-        assert_eq!(
-            final_claims.az_r,
-            pub_az + w_az,
-            "Az(r) mismatch: prover={:?}, pub+w={:?}+{:?}",
-            final_claims.az_r,
-            pub_az,
-            w_az
-        );
-        assert_eq!(
-            final_claims.bz_r,
-            pub_bz + w_bz,
-            "Bz(r) mismatch: prover={:?}, pub+w={:?}+{:?}",
-            final_claims.bz_r,
-            pub_bz,
-            w_bz
-        );
-        assert_eq!(
-            final_claims.cz_r,
-            pub_cz + w_cz,
-            "Cz(r) mismatch: prover={:?}, pub+w={:?}+{:?}",
-            final_claims.cz_r,
-            pub_cz,
-            w_cz
-        );
+        assert_eq!(final_claims.az_r, pub_az + w_az, "Az(r) mismatch");
+        assert_eq!(final_claims.bz_r, pub_bz + w_bz, "Bz(r) mismatch");
+        assert_eq!(final_claims.cz_r, pub_cz + w_cz, "Cz(r) mismatch");
 
         let verifier_expected =
             verifier.expected_claim(&challenges, w_az, w_bz, w_cz, final_claims.e_r);
@@ -931,12 +833,7 @@ mod tests {
     fn test_spartan_with_relaxed_r1cs() {
         type F = Fr;
 
-        // Create R1CS
         let configs = [StageConfig::new(1, 3)];
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
-
-        // Create valid witness
         let round = RoundWitness::new(
             vec![
                 F::from_u64(40),
@@ -947,6 +844,15 @@ mod tests {
             F::from_u64(3),
         );
         let initial_claim = F::from_u64(100);
+
+        let baked = BakedPublicInputs {
+            challenges: vec![F::from_u64(3)],
+            initial_claims: vec![initial_claim],
+            ..Default::default()
+        };
+        let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
+        let r1cs = builder.build();
+
         let blindfold_witness =
             BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
         let z = blindfold_witness.assign(&r1cs);

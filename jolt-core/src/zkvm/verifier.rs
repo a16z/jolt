@@ -10,9 +10,9 @@ use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobal
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::subprotocols::blindfold::{
-    pedersen_generator_count_for_r1cs, BlindFoldVerifier, BlindFoldVerifierInput,
-    FinalOutputConfig, InputClaimConstraint, OutputClaimConstraint, StageConfig, ValueSource,
-    VerifierR1CSBuilder,
+    pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldVerifier,
+    BlindFoldVerifierInput, FinalOutputConfig, InputClaimConstraint, OutputClaimConstraint,
+    StageConfig, ValueSource, VerifierR1CSBuilder,
 };
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
@@ -1166,53 +1166,50 @@ impl<
         let extra_constraint = OutputClaimConstraint::linear(extra_constraint_terms);
         let extra_constraints = vec![extra_constraint];
 
-        // Build the verifier R1CS with the same structure as the prover
-        let builder = VerifierR1CSBuilder::new_with_extra(&stage_configs, &extra_constraints);
-        let r1cs = builder.build();
-
-        // Build public_inputs for BlindFold verifier from expected values.
-        // Layout: [challenges..., initial_claims..., constraint_challenges...]
-        let mut public_inputs: Vec<F> = Vec::new();
-
-        // 1. Add challenges (uni-skip + regular sumcheck challenges)
+        // Build baked public inputs from expected values
+        let mut baked_challenges: Vec<F> = Vec::new();
         for (stage_idx, stage_challenges) in sumcheck_challenges.iter().enumerate() {
-            // For stages 0 and 1, add uni-skip challenge first
             if stage_idx < 2 {
-                public_inputs.push(uniskip_challenges[stage_idx].into());
+                baked_challenges.push(uniskip_challenges[stage_idx].into());
             }
-            // Add regular sumcheck challenges
             for challenge in stage_challenges.iter() {
-                public_inputs.push((*challenge).into());
+                baked_challenges.push((*challenge).into());
             }
         }
 
-        // 2. Add initial claims (9 chains)
-        public_inputs.extend_from_slice(&self.proof.blindfold_initial_claims);
-
-        // 3. Add output constraint challenge values
-        for expected_values in output_constraint_challenge_values.iter() {
-            public_inputs.extend_from_slice(expected_values);
-        }
-
-        // 4. Add input constraint challenge values
-        // Order: [stage0_uniskip, stage0_regular, stage1_uniskip, stage1_regular, stage2, ..., stage6]
         let all_input_challenge_values: [&[F]; 9] = [
-            &input_constraint_challenge_values[0], // Stage 0 uni-skip
-            stage1_batched_input_values,           // Stage 0 regular
-            &input_constraint_challenge_values[1], // Stage 1 uni-skip
-            stage2_batched_input_values,           // Stage 1 regular
-            &input_constraint_challenge_values[2], // Stage 2
-            &input_constraint_challenge_values[3], // Stage 3
-            &input_constraint_challenge_values[4], // Stage 4
-            &input_constraint_challenge_values[5], // Stage 5
-            &input_constraint_challenge_values[6], // Stage 6
+            &input_constraint_challenge_values[0],
+            stage1_batched_input_values,
+            &input_constraint_challenge_values[1],
+            stage2_batched_input_values,
+            &input_constraint_challenge_values[2],
+            &input_constraint_challenge_values[3],
+            &input_constraint_challenge_values[4],
+            &input_constraint_challenge_values[5],
+            &input_constraint_challenge_values[6],
         ];
+        let mut baked_input_challenges: Vec<F> = Vec::new();
         for expected_values in all_input_challenge_values.iter() {
-            public_inputs.extend_from_slice(expected_values);
+            baked_input_challenges.extend_from_slice(expected_values);
         }
 
-        // 5. Add extra constraint challenge values (PCS binding)
-        public_inputs.extend_from_slice(&stage8_data.constraint_coeffs);
+        let mut baked_output_challenges: Vec<F> = Vec::new();
+        for expected_values in output_constraint_challenge_values.iter() {
+            baked_output_challenges.extend_from_slice(expected_values);
+        }
+
+        let baked = BakedPublicInputs {
+            challenges: baked_challenges,
+            initial_claims: self.proof.blindfold_initial_claims.to_vec(),
+            batching_coefficients: Vec::new(),
+            output_constraint_challenges: baked_output_challenges,
+            input_constraint_challenges: baked_input_challenges,
+            extra_constraint_challenges: stage8_data.constraint_coeffs.clone(),
+        };
+
+        let builder =
+            VerifierR1CSBuilder::new_with_extra(&stage_configs, &extra_constraints, &baked);
+        let r1cs = builder.build();
 
         // 6. Build round_commitments from main sumcheck proofs
         let mut round_commitments: Vec<C::G1> = Vec::new();
@@ -1239,9 +1236,7 @@ impl<
             .ok_or_else(|| anyhow::anyhow!("Missing evaluation commitment in PCS proof"))?;
         let eval_commitments = vec![eval_commitment];
 
-        // Create BlindFold verifier input
         let verifier_input = BlindFoldVerifierInput {
-            public_inputs,
             round_commitments,
             eval_commitments,
         };

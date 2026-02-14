@@ -35,9 +35,7 @@ pub struct FinalOutputInfo {
 /// it from the proof and absorbs into transcript, never learning the random witness.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
-    /// Random instance (prover-generated, verifier absorbs from proof)
     pub random_u: F,
-    pub random_x: Vec<F>,
     pub random_round_commitments: Vec<C::G1>,
     pub random_noncoeff_row_commitments: Vec<C::G1>,
     pub random_e_row_commitments: Vec<C::G1>,
@@ -137,7 +135,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
 
         let mut folded_z = Vec::with_capacity(self.r1cs.num_vars);
         folded_z.push(folded_instance.u);
-        folded_z.extend_from_slice(&folded_instance.x);
         folded_z.extend_from_slice(&folded_W);
 
         let padded_e_len = self.r1cs.num_constraints.next_power_of_two();
@@ -241,7 +238,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
 
         BlindFoldProof {
             random_u: random_instance.u,
-            random_x: random_instance.x,
             random_round_commitments: random_instance.round_commitments,
             random_noncoeff_row_commitments: random_instance.noncoeff_row_commitments,
             random_e_row_commitments: random_instance.e_row_commitments,
@@ -313,9 +309,7 @@ pub enum BlindFoldVerifyError {
     FinalClaimMismatch,
 }
 
-/// Data needed by verifier to reconstruct the real instance.
-pub struct BlindFoldVerifierInput<F: JoltField, C: JoltCurve> {
-    pub public_inputs: Vec<F>,
+pub struct BlindFoldVerifierInput<C: JoltCurve> {
     pub round_commitments: Vec<C::G1>,
     pub eval_commitments: Vec<C::G1>,
 }
@@ -333,7 +327,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
     pub fn verify<T: Transcript>(
         &self,
         proof: &BlindFoldProof<F, C>,
-        input: &BlindFoldVerifierInput<F, C>,
+        input: &BlindFoldVerifierInput<C>,
         transcript: &mut T,
     ) -> Result<(), BlindFoldVerifyError> {
         use super::spartan::{compute_L_w_at_ry, BlindFoldSpartanVerifier};
@@ -341,10 +335,8 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let hyrax = &self.r1cs.hyrax;
         let (R_E, _C_E) = hyrax.e_grid(self.r1cs.num_constraints);
 
-        // Reconstruct real instance (non-relaxed: u=1, E=0)
         let real_instance = RelaxedR1CSInstance {
             u: F::one(),
-            x: input.public_inputs.clone(),
             round_commitments: input.round_commitments.clone(),
             noncoeff_row_commitments: proof.noncoeff_row_commitments.clone(),
             e_row_commitments: vec![C::G1::zero(); R_E],
@@ -356,7 +348,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
 
         let random_instance: RelaxedR1CSInstance<F, C> = RelaxedR1CSInstance {
             u: proof.random_u,
-            x: proof.random_x.clone(),
             round_commitments: proof.random_round_commitments.clone(),
             noncoeff_row_commitments: proof.random_noncoeff_row_commitments.clone(),
             e_row_commitments: proof.random_e_row_commitments.clone(),
@@ -419,12 +410,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
 
         // --- Inner sumcheck ---
 
-        let spartan_verifier = BlindFoldSpartanVerifier::new(
-            self.r1cs,
-            tau,
-            folded_instance.u,
-            folded_instance.x.clone(),
-        );
+        let spartan_verifier = BlindFoldSpartanVerifier::new(self.r1cs, tau, folded_instance.u);
 
         let (pub_az, pub_bz, pub_cz) = spartan_verifier.public_contributions(&challenges);
         let mut inner_claim = ra * (az_r - pub_az) + rb * (bz_r - pub_bz) + rc * (cz_r - pub_cz);
@@ -536,13 +522,6 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
         .expect("Serialization should not fail");
     transcript.append_bytes(b"blindfold_u", &u_bytes);
 
-    for x_i in &instance.x {
-        let mut x_bytes = Vec::new();
-        x_i.serialize_compressed(&mut x_bytes)
-            .expect("Serialization should not fail");
-        transcript.append_bytes(b"blindfold_x", &x_bytes);
-    }
-
     for commitment in &instance.round_commitments {
         append_g1_to_transcript::<C>(commitment, transcript);
     }
@@ -566,34 +545,53 @@ mod tests {
     use crate::curve::Bn254Curve;
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
-    use crate::subprotocols::blindfold::StageConfig;
+    use crate::subprotocols::blindfold::{BakedPublicInputs, StageConfig};
     use crate::transcripts::KeccakTranscript;
     use ark_bn254::Fr;
     use ark_std::Zero;
     use rand::thread_rng;
 
-    fn make_test_instance(
-        configs: &[StageConfig],
-        _blindfold_witness: &BlindFoldWitness<Fr>,
-        z: &[Fr],
-    ) -> (
+    fn make_baked_from_witness(
+        witness: &BlindFoldWitness<Fr>,
+        _stage_configs: &[StageConfig],
+    ) -> BakedPublicInputs<Fr> {
+        let mut challenges = Vec::new();
+        for stage in &witness.stages {
+            for round in &stage.rounds {
+                challenges.push(round.challenge);
+            }
+        }
+        BakedPublicInputs {
+            challenges,
+            initial_claims: witness.initial_claims.clone(),
+            ..Default::default()
+        }
+    }
+
+    type TestInstance = (
         RelaxedR1CSInstance<Fr, Bn254Curve>,
         RelaxedR1CSWitness<Fr>,
         VerifierR1CS<Fr>,
         PedersenGenerators<Bn254Curve>,
-    ) {
+        Vec<Fr>,
+    );
+
+    fn make_test_instance(
+        configs: &[StageConfig],
+        blindfold_witness: &BlindFoldWitness<Fr>,
+    ) -> TestInstance {
         type F = Fr;
         let mut rng = thread_rng();
 
-        let builder = VerifierR1CSBuilder::<F>::new(configs);
+        let baked = make_baked_from_witness(blindfold_witness, configs);
+        let builder = VerifierR1CSBuilder::<F>::new(configs, &baked);
         let r1cs = builder.build();
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.hyrax.C + 1);
 
-        assert!(r1cs.is_satisfied(z));
+        let z = blindfold_witness.assign(&r1cs);
+        assert!(r1cs.is_satisfied(&z));
 
-        let witness_start = 1 + r1cs.num_public_inputs;
-        let witness: Vec<F> = z[witness_start..].to_vec();
-        let public_inputs: Vec<F> = z[1..witness_start].to_vec();
+        let witness: Vec<F> = z[1..].to_vec();
 
         let hyrax = &r1cs.hyrax;
         let hyrax_C = hyrax.C;
@@ -623,7 +621,6 @@ mod tests {
 
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
             &witness,
-            public_inputs,
             r1cs.num_constraints,
             hyrax_C,
             round_commitments,
@@ -632,7 +629,7 @@ mod tests {
             w_row_blindings,
         );
 
-        (real_instance, real_witness, r1cs, gens)
+        (real_instance, real_witness, r1cs, gens, z)
     }
 
     fn prove_and_verify(
@@ -650,7 +647,6 @@ mod tests {
         let proof = prover.prove(real_instance, real_witness, z, &mut prover_transcript);
 
         let verifier_input = BlindFoldVerifierInput {
-            public_inputs: real_instance.x.clone(),
             round_commitments: real_instance.round_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
@@ -676,12 +672,8 @@ mod tests {
         let blindfold_witness =
             BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
 
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
-        let z = blindfold_witness.assign(&r1cs);
-
-        let (real_instance, real_witness, r1cs, gens) =
-            make_test_instance(&configs, &blindfold_witness, &z);
+        let (real_instance, real_witness, r1cs, gens, z) =
+            make_test_instance(&configs, &blindfold_witness);
 
         let result = prove_and_verify(
             &r1cs,
@@ -711,12 +703,8 @@ mod tests {
         let blindfold_witness =
             BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
 
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
-        let z = blindfold_witness.assign(&r1cs);
-
-        let (real_instance, real_witness, r1cs, gens) =
-            make_test_instance(&configs, &blindfold_witness, &z);
+        let (real_instance, real_witness, r1cs, gens, z) =
+            make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
         let verifier = BlindFoldVerifier::new(&gens, &r1cs);
@@ -729,7 +717,6 @@ mod tests {
         }
 
         let verifier_input = BlindFoldVerifierInput {
-            public_inputs: real_instance.x.clone(),
             round_commitments: real_instance.round_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
@@ -782,12 +769,8 @@ mod tests {
             vec![StageWitness::new(vec![round1, round2, round3])],
         );
 
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
-        let z = blindfold_witness.assign(&r1cs);
-
-        let (real_instance, real_witness, r1cs, gens) =
-            make_test_instance(&configs, &blindfold_witness, &z);
+        let (real_instance, real_witness, r1cs, gens, z) =
+            make_test_instance(&configs, &blindfold_witness);
 
         let result = prove_and_verify(
             &r1cs,
@@ -820,12 +803,8 @@ mod tests {
         let blindfold_witness =
             BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
 
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
-        let z = blindfold_witness.assign(&r1cs);
-
-        let (real_instance, real_witness, r1cs, gens) =
-            make_test_instance(&configs, &blindfold_witness, &z);
+        let (real_instance, real_witness, r1cs, gens, z) =
+            make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
         let verifier = BlindFoldVerifier::new(&gens, &r1cs);
@@ -836,7 +815,6 @@ mod tests {
         proof.az_r += F::from_u64(1);
 
         let verifier_input = BlindFoldVerifierInput {
-            public_inputs: real_instance.x.clone(),
             round_commitments: real_instance.round_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
@@ -866,12 +844,8 @@ mod tests {
         let blindfold_witness =
             BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
 
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
-        let z = blindfold_witness.assign(&r1cs);
-
-        let (real_instance, real_witness, r1cs, gens) =
-            make_test_instance(&configs, &blindfold_witness, &z);
+        let (real_instance, real_witness, r1cs, gens, z) =
+            make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
         let verifier = BlindFoldVerifier::new(&gens, &r1cs);
@@ -884,7 +858,6 @@ mod tests {
         }
 
         let verifier_input = BlindFoldVerifierInput {
-            public_inputs: real_instance.x.clone(),
             round_commitments: real_instance.round_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
@@ -914,12 +887,8 @@ mod tests {
         let blindfold_witness =
             BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
 
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
-        let z = blindfold_witness.assign(&r1cs);
-
-        let (real_instance, real_witness, r1cs, gens) =
-            make_test_instance(&configs, &blindfold_witness, &z);
+        let (real_instance, real_witness, r1cs, gens, z) =
+            make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
         let verifier = BlindFoldVerifier::new(&gens, &r1cs);
@@ -932,7 +901,6 @@ mod tests {
         }
 
         let verifier_input = BlindFoldVerifierInput {
-            public_inputs: real_instance.x.clone(),
             round_commitments: real_instance.round_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };

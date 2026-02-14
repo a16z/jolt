@@ -123,27 +123,19 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
 
         for _ in 0..config.num_rounds {
             let num_coeffs = config.poly_degree + 1;
-            let num_intermediates = config.poly_degree.saturating_sub(1);
 
-            // Coefficients at grid position: round_idx * C + k
             for k in 0..num_coeffs {
                 W[round_idx * hyrax_C + k] = F::random(rng);
             }
-            // Remaining columns in this row are already zero (padding)
 
-            // Commit the coefficient row
             let blinding = F::random(rng);
             let row_start = round_idx * hyrax_C;
             let commitment = gens.commit(&W[row_start..row_start + hyrax_C], &blinding);
             w_row_blindings[round_idx] = blinding;
             round_commitments.push(commitment);
 
-            // Intermediates and next_claim go to non-coeff section
-            for _ in 0..num_intermediates {
-                W[noncoeff_idx] = F::random(rng);
-                noncoeff_idx += 1;
-            }
-            W[noncoeff_idx] = F::random(rng); // next_claim
+            // Only next_claim in non-coeff section (no Horner intermediates with baked challenges)
+            W[noncoeff_idx] = F::random(rng);
             noncoeff_idx += 1;
 
             round_idx += 1;
@@ -170,16 +162,11 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                     noncoeff_idx += 1;
                 }
             } else {
+                // Simple linear: only evaluation vars (batching coeffs baked, no accumulators)
                 let num_evals = fo_config.num_evaluations;
                 for _ in 0..num_evals {
                     W[noncoeff_idx] = F::random(rng);
                     noncoeff_idx += 1;
-                }
-                if num_evals > 1 {
-                    for _ in 0..(num_evals - 1) {
-                        W[noncoeff_idx] = F::random(rng);
-                        noncoeff_idx += 1;
-                    }
                 }
             }
         }
@@ -235,11 +222,6 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         w_row_blindings[R_coeff + row] = row_blinding;
     }
 
-    // Random public inputs
-    let x: Vec<F> = (0..r1cs.num_public_inputs)
-        .map(|_| F::random(rng))
-        .collect();
-
     let u = loop {
         let candidate = F::random(rng);
         if !candidate.is_zero() {
@@ -247,19 +229,17 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         }
     };
 
-    // Build Z vector: [u, public_inputs..., witness...]
+    // Z = [u, W...] (public inputs baked into R1CS coefficients)
     let mut z = Vec::with_capacity(r1cs.num_vars);
     z.push(u);
-    z.extend_from_slice(&x);
     z.extend_from_slice(&W);
 
     assert_eq!(
         z.len(),
         r1cs.num_vars,
-        "z.len()={} != r1cs.num_vars={}. x.len()={}, W.len()={}",
+        "z.len()={} != r1cs.num_vars={}. W.len()={}",
         z.len(),
         r1cs.num_vars,
-        x.len(),
         W.len()
     );
 
@@ -284,7 +264,6 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
 
     let instance = RelaxedR1CSInstance {
         u,
-        x: x.clone(),
         round_commitments,
         noncoeff_row_commitments,
         e_row_commitments,
@@ -328,7 +307,7 @@ mod tests {
     use crate::curve::Bn254Curve;
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
-    use crate::subprotocols::blindfold::StageConfig;
+    use crate::subprotocols::blindfold::{BakedPublicInputs, StageConfig};
     use ark_bn254::Fr;
     use ark_std::{One, UniformRand, Zero};
     use rand::thread_rng;
@@ -338,7 +317,12 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let baked = BakedPublicInputs {
+            challenges: vec![F::from_u64(3)],
+            initial_claims: vec![F::from_u64(100)],
+            ..Default::default()
+        };
+        let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
         let round1 = RoundWitness::new(
@@ -368,7 +352,6 @@ mod tests {
         let z2 = blindfold_witness2.assign(&r1cs);
 
         assert!(r1cs.is_satisfied(&z1));
-        assert!(r1cs.is_satisfied(&z2));
 
         let T = compute_cross_term(&r1cs, &z1, F::one(), &z2, F::one());
         assert_eq!(T.len(), r1cs.num_constraints);
@@ -390,7 +373,12 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let baked = BakedPublicInputs {
+            challenges: vec![F::from_u64(3)],
+            initial_claims: vec![F::from_u64(100)],
+            ..Default::default()
+        };
+        let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.hyrax.C + 1);
@@ -401,7 +389,6 @@ mod tests {
         assert_eq!(witness.E.len(), r1cs.num_constraints);
         assert_eq!(witness.W.len(), r1cs.hyrax.R_prime * r1cs.hyrax.C);
 
-        // Check relaxed R1CS satisfaction: (AZ) ∘ (BZ) = u*(CZ) + E
         let az = r1cs.a.mul_vector(&z);
         let bz = r1cs.b.mul_vector(&z);
         let cz = r1cs.c.mul_vector(&z);
@@ -412,7 +399,6 @@ mod tests {
             assert_eq!(lhs, rhs, "Constraint {i} not satisfied");
         }
 
-        // Verify coefficient row commitments
         let hyrax_C = r1cs.hyrax.C;
         for (round, com) in instance.round_commitments.iter().enumerate() {
             let row_start = round * hyrax_C;
@@ -420,7 +406,6 @@ mod tests {
             assert!(gens.verify(com, row_data, &witness.w_row_blindings[round]));
         }
 
-        // Verify non-coeff row commitments
         let R_coeff = r1cs.hyrax.R_coeff;
         for (row, com) in instance.noncoeff_row_commitments.iter().enumerate() {
             let start = R_coeff * hyrax_C + row * hyrax_C;
@@ -439,12 +424,16 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let baked = BakedPublicInputs {
+            challenges: vec![F::from_u64(3)],
+            initial_claims: vec![F::from_u64(100)],
+            ..Default::default()
+        };
+        let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.hyrax.C + 1);
 
-        // Pair 1: non-relaxed (u=1, E=0)
         let round1 = RoundWitness::new(
             vec![
                 F::from_u64(40),
@@ -458,8 +447,7 @@ mod tests {
             BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round1])]);
         let z1 = blindfold_witness1.assign(&r1cs);
 
-        let witness_start = 1 + r1cs.num_public_inputs;
-        let w1_vec: Vec<F> = z1[witness_start..].to_vec();
+        let w1_vec: Vec<F> = z1[1..].to_vec();
         let R_prime = r1cs.hyrax.R_prime;
         let w1 = RelaxedR1CSWitness {
             E: vec![F::zero(); r1cs.num_constraints],
@@ -469,17 +457,14 @@ mod tests {
         };
         let u1 = F::one();
 
-        // Pair 2: random satisfying pair
         let (_inst2, w2, z2) = sample_random_satisfying_pair(&gens, &r1cs, None, &mut rng);
         let u2 = _inst2.u;
 
-        // Compute cross-term
         let T = compute_cross_term(&r1cs, &z1, u1, &z2, u2);
 
         let r = F::rand(&mut rng);
         let r_sq = r * r;
 
-        // Compute folded values
         let z_folded: Vec<F> = z1.iter().zip(&z2).map(|(a, b)| *a + r * *b).collect();
         let u_folded = u1 + r * u2;
         let E_folded: Vec<F> =

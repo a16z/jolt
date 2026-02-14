@@ -275,87 +275,25 @@ impl<F: JoltField> BlindFoldWitness<F> {
         self.assign_with_u(r1cs, F::one())
     }
 
-    /// Assign with a specific u value (for relaxed R1CS)
+    /// Assign with a specific u value (for relaxed R1CS).
+    ///
+    /// Z layout (public inputs baked into matrix coefficients):
+    /// ```text
+    /// Z = [u, W_grid...]
+    /// ```
+    /// W_grid is R' × C: coefficient rows, then non-coefficient values.
     pub fn assign_with_u(&self, r1cs: &VerifierR1CS<F>, u: F) -> Vec<F> {
         let mut z = vec![F::zero(); r1cs.num_vars];
-        z[0] = u; // u scalar (1 for non-relaxed)
-
-        // Compute total rounds and number of chains
-        let total_rounds: usize = r1cs.stage_configs.iter().map(|s| s.num_rounds).sum();
-        let num_chains = 1 + r1cs
-            .stage_configs
-            .iter()
-            .skip(1)
-            .filter(|s| s.starts_new_chain)
-            .count();
-
-        // Count total batching coefficients (only for simple constraints, not general ones)
-        let total_batching_coeffs: usize = r1cs
-            .stage_configs
-            .iter()
-            .filter_map(|s| s.final_output.as_ref())
-            .filter(|fo| fo.constraint.is_none())
-            .map(|fo| fo.num_evaluations)
-            .sum();
-
-        // Count total output constraint challenge values (for general constraints)
-        let total_constraint_challenges: usize = r1cs
-            .stage_configs
-            .iter()
-            .filter_map(|s| s.final_output.as_ref())
-            .filter_map(|fo| fo.constraint.as_ref())
-            .map(|c| c.num_challenges)
-            .sum();
-
-        // Count total input constraint challenge values
-        let total_input_constraint_challenges: usize = r1cs
-            .stage_configs
-            .iter()
-            .filter_map(|s| s.initial_input.as_ref())
-            .filter_map(|ii| ii.constraint.as_ref())
-            .map(|c| c.num_challenges)
-            .sum();
-
-        // Count total extra constraint challenge values
-        let total_extra_constraint_challenges: usize = r1cs
-            .extra_constraints
-            .iter()
-            .map(|c| c.num_challenges)
-            .sum();
-
-        // Public input layout:
-        // - Indices 1..=total_rounds are sumcheck challenges
-        // - Indices total_rounds+1..=total_rounds+num_chains are initial_claims
-        // - Indices after that are batching_coefficients (simple constraints)
-        // - Indices after that are output constraint_challenge_values
-        // - Indices after that are input constraint_challenge_values
-        // - Indices after that are extra constraint_challenge_values
-        let challenge_start = 1;
-        let initial_claims_start = total_rounds + 1;
-        let batching_coeffs_start = initial_claims_start + num_chains;
-        let constraint_challenges_start = batching_coeffs_start + total_batching_coeffs;
-        let input_constraint_challenges_start =
-            constraint_challenges_start + total_constraint_challenges;
-        let extra_constraint_challenges_start =
-            input_constraint_challenges_start + total_input_constraint_challenges;
-        let witness_start = extra_constraint_challenges_start + total_extra_constraint_challenges;
-
-        // Assign initial claims
-        for (i, claim) in self.initial_claims.iter().enumerate() {
-            z[initial_claims_start + i] = *claim;
-        }
+        z[0] = u;
 
         let hyrax_C = r1cs.hyrax.C;
         let hyrax_R_coeff = r1cs.hyrax.R_coeff;
 
-        let mut challenge_idx = challenge_start;
-        let mut batching_coeff_idx = batching_coeffs_start;
-        let mut constraint_challenge_idx = constraint_challenges_start;
-        let mut input_constraint_challenge_idx = input_constraint_challenges_start;
-        let mut extra_constraint_challenge_idx = extra_constraint_challenges_start;
+        // Witness starts at index 1 (right after u, no public inputs)
+        let witness_start = 1;
         // Non-coeff witness variables start after the coefficient grid
         let mut witness_idx = witness_start + hyrax_R_coeff * hyrax_C;
-        let mut round_idx = 0usize; // global round counter for grid positioning
+        let mut round_idx = 0usize;
 
         let mut assigned_openings: HashSet<OpeningId> = HashSet::new();
 
@@ -367,21 +305,12 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 "Stage {stage_idx} has wrong number of rounds"
             );
 
-            // Assign initial input witness if present (before processing rounds)
+            // Initial input witness (opening vars + aux vars only, no challenge public inputs)
             if let Some(ref ii_config) = config.initial_input {
                 if let Some(constraint) = &ii_config.constraint {
-                    let ii_witness = stage_witness.initial_input.as_ref();
-
-                    let num_challenges = constraint.num_challenges;
                     let num_aux_vars = Self::estimate_aux_var_count(constraint);
 
-                    if let Some(iw) = ii_witness {
-                        // Assign opening values only for NEW openings (matching R1CS allocation)
-                        debug_assert_eq!(
-                            iw.opening_values.len(),
-                            constraint.required_openings.len(),
-                            "Input opening values count mismatch"
-                        );
+                    if let Some(iw) = stage_witness.initial_input.as_ref() {
                         for (opening_id, val) in
                             constraint.required_openings.iter().zip(&iw.opening_values)
                         {
@@ -392,35 +321,16 @@ impl<F: JoltField> BlindFoldWitness<F> {
                             }
                         }
 
-                        // Assign challenge values (public inputs)
-                        debug_assert_eq!(
-                            iw.challenge_values.len(),
-                            num_challenges,
-                            "Input challenge values count mismatch at stage {stage_idx}"
-                        );
-                        for val in &iw.challenge_values {
-                            z[input_constraint_challenge_idx] = *val;
-                            input_constraint_challenge_idx += 1;
-                        }
-
-                        // Compute and assign aux vars for intermediate products
                         let aux_values = Self::compute_aux_vars(
                             constraint,
                             &iw.opening_values,
                             &iw.challenge_values,
-                        );
-                        debug_assert_eq!(
-                            aux_values.len(),
-                            num_aux_vars,
-                            "Input aux var count mismatch"
                         );
                         for val in aux_values {
                             z[witness_idx] = val;
                             witness_idx += 1;
                         }
                     } else {
-                        // No witness provided - skip past allocated variables
-                        // Count only NEW openings (matching R1CS allocation)
                         let num_new_openings = constraint
                             .required_openings
                             .iter()
@@ -434,66 +344,38 @@ impl<F: JoltField> BlindFoldWitness<F> {
                             })
                             .count();
                         witness_idx += num_new_openings + num_aux_vars;
-                        input_constraint_challenge_idx += num_challenges;
                     }
                 }
             }
 
+            // Round witnesses: coefficients to grid, next_claim to non-coeff section
             for round_witness in &stage_witness.rounds {
-                let num_coeffs = config.poly_degree + 1;
-                let num_intermediates = config.poly_degree.saturating_sub(1);
-
                 assert_eq!(
                     round_witness.coeffs.len(),
-                    num_coeffs,
+                    config.poly_degree + 1,
                     "Wrong number of coefficients"
                 );
 
-                // Assign challenge (public input)
-                let challenge = round_witness.challenge;
-                z[challenge_idx] = challenge;
-                challenge_idx += 1;
-
-                // Compute Horner intermediates and next_claim
-                let (intermediates, next_claim) =
-                    round_witness.compute_horner_intermediates(challenge);
-
-                // Assign coefficients at grid position: witness_start + round_idx * C + k
                 for (k, coeff) in round_witness.coeffs.iter().enumerate() {
                     z[witness_start + round_idx * hyrax_C + k] = *coeff;
                 }
 
-                // Assign intermediates in non-coeff section (sequential)
-                for (i, intermediate) in intermediates.iter().enumerate() {
-                    z[witness_idx + i] = *intermediate;
-                }
-                witness_idx += num_intermediates;
-
-                // Assign next_claim
+                let next_claim = round_witness.evaluate(round_witness.challenge);
                 z[witness_idx] = next_claim;
                 witness_idx += 1;
 
                 round_idx += 1;
             }
 
-            // Assign final output witness if present
+            // Final output witness
             if let Some(ref fo_config) = config.final_output {
-                let fo_witness = stage_witness.final_output.as_ref();
-
-                if let Some(constraint) = &fo_config.constraint {
-                    // General constraint path
-                    // R1CS allocates: opening_vars (witness) + aux_vars (witness)
-                    // Challenge vars are public inputs (assigned separately)
-                    let num_challenges = constraint.num_challenges;
+                if let Some(exact_vars) = fo_config.exact_num_witness_vars {
+                    witness_idx += exact_vars;
+                } else if let Some(constraint) = &fo_config.constraint {
                     let num_aux_vars = Self::estimate_aux_var_count(constraint);
+                    let fo_witness = stage_witness.final_output.as_ref();
 
                     if let Some(fw) = fo_witness {
-                        // Assign opening values only for NEW openings (matching R1CS allocation)
-                        debug_assert_eq!(
-                            fw.opening_values.len(),
-                            constraint.required_openings.len(),
-                            "Opening values count mismatch"
-                        );
                         for (opening_id, val) in
                             constraint.required_openings.iter().zip(&fw.opening_values)
                         {
@@ -504,37 +386,16 @@ impl<F: JoltField> BlindFoldWitness<F> {
                             }
                         }
 
-                        // Assign challenge values (public inputs)
-                        debug_assert_eq!(
-                            fw.challenge_values.len(),
-                            num_challenges,
-                            "Challenge values count mismatch"
-                        );
-                        for val in &fw.challenge_values {
-                            z[constraint_challenge_idx] = *val;
-                            constraint_challenge_idx += 1;
-                        }
-
-                        // Compute and assign aux vars for intermediate products
                         let aux_values = Self::compute_aux_vars(
                             constraint,
                             &fw.opening_values,
                             &fw.challenge_values,
-                        );
-                        debug_assert_eq!(
-                            aux_values.len(),
-                            num_aux_vars,
-                            "Aux var count mismatch: computed {} but expected {}",
-                            aux_values.len(),
-                            num_aux_vars
                         );
                         for val in aux_values {
                             z[witness_idx] = val;
                             witness_idx += 1;
                         }
                     } else {
-                        // No witness provided - skip past allocated variables
-                        // Count only NEW openings (matching R1CS allocation)
                         let num_new_openings = constraint
                             .required_openings
                             .iter()
@@ -548,65 +409,29 @@ impl<F: JoltField> BlindFoldWitness<F> {
                             })
                             .count();
                         witness_idx += num_new_openings + num_aux_vars;
-                        constraint_challenge_idx += num_challenges;
                     }
                 } else {
-                    // Simple linear constraint path
-                    let fw = fo_witness
+                    // Simple linear: evaluation values only (no batching coeffs, no accumulators)
+                    let fw = stage_witness
+                        .final_output
+                        .as_ref()
                         .expect("Stage has final_output config but witness has no final_output");
+                    assert_eq!(fw.evaluations.len(), fo_config.num_evaluations);
 
-                    assert_eq!(
-                        fw.batching_coefficients.len(),
-                        fo_config.num_evaluations,
-                        "Wrong number of batching coefficients"
-                    );
-                    assert_eq!(
-                        fw.evaluations.len(),
-                        fo_config.num_evaluations,
-                        "Wrong number of evaluations"
-                    );
-
-                    // Assign batching coefficients (public inputs)
-                    for coeff in &fw.batching_coefficients {
-                        z[batching_coeff_idx] = *coeff;
-                        batching_coeff_idx += 1;
-                    }
-
-                    // Assign evaluations (witness variables)
                     for eval in &fw.evaluations {
                         z[witness_idx] = *eval;
                         witness_idx += 1;
-                    }
-
-                    // Assign accumulator variables for multi-evaluation constraints
-                    let n = fo_config.num_evaluations;
-                    if n > 1 {
-                        // Compute accumulator values: acc_j = Σ_{i=0}^j αᵢ · yᵢ
-                        let mut acc = F::zero();
-                        for j in 0..n - 1 {
-                            acc += fw.batching_coefficients[j] * fw.evaluations[j];
-                            z[witness_idx] = acc;
-                            witness_idx += 1;
-                        }
                     }
                 }
             }
         }
 
-        // Assign extra constraints appended after all stages
+        // Extra constraints: opening vars + output + aux vars + blinding (no challenge public inputs)
         for (extra_idx, constraint) in r1cs.extra_constraints.iter().enumerate() {
             let extra_witness = self.extra_constraints.get(extra_idx);
-            let num_challenges = constraint.num_challenges;
             let num_aux_vars = Self::estimate_aux_var_count(constraint);
 
             if let Some(witness) = extra_witness {
-                debug_assert_eq!(
-                    witness.opening_values.len(),
-                    constraint.required_openings.len(),
-                    "Extra opening values count mismatch"
-                );
-
-                // Assign opening values only for NEW openings (matching R1CS allocation)
                 for (opening_id, val) in constraint
                     .required_openings
                     .iter()
@@ -619,38 +444,19 @@ impl<F: JoltField> BlindFoldWitness<F> {
                     }
                 }
 
-                // Assign output value
                 z[witness_idx] = witness.output_value;
                 witness_idx += 1;
 
-                // Assign challenge values (public inputs)
-                debug_assert_eq!(
-                    witness.challenge_values.len(),
-                    num_challenges,
-                    "Extra challenge values count mismatch"
-                );
-                for val in &witness.challenge_values {
-                    z[extra_constraint_challenge_idx] = *val;
-                    extra_constraint_challenge_idx += 1;
-                }
-
-                // Compute and assign aux vars for intermediate products
                 let aux_values = Self::compute_aux_vars(
                     constraint,
                     &witness.opening_values,
                     &witness.challenge_values,
-                );
-                debug_assert_eq!(
-                    aux_values.len(),
-                    num_aux_vars,
-                    "Extra aux var count mismatch"
                 );
                 for val in aux_values {
                     z[witness_idx] = val;
                     witness_idx += 1;
                 }
 
-                // Assign blinding
                 z[witness_idx] = witness.blinding;
                 witness_idx += 1;
             } else {
@@ -667,7 +473,6 @@ impl<F: JoltField> BlindFoldWitness<F> {
                     })
                     .count();
                 witness_idx += num_new_openings + 1 + num_aux_vars + 1;
-                extra_constraint_challenge_idx += num_challenges;
             }
         }
 
@@ -833,42 +638,90 @@ impl<F: JoltField> CompressedUniPoly<F> {
 mod tests {
     use super::*;
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
+    use crate::subprotocols::blindfold::BakedPublicInputs;
     use ark_bn254::Fr;
+
+    fn make_baked_from_witness<F: JoltField>(
+        witness: &BlindFoldWitness<F>,
+        stage_configs: &[StageConfig],
+    ) -> BakedPublicInputs<F> {
+        let mut challenges = Vec::new();
+        for stage in &witness.stages {
+            for round in &stage.rounds {
+                challenges.push(round.challenge);
+            }
+        }
+
+        let mut batching_coefficients = Vec::new();
+        let mut output_constraint_challenges = Vec::new();
+        let mut input_constraint_challenges = Vec::new();
+
+        for (stage_idx, stage) in witness.stages.iter().enumerate() {
+            let config = &stage_configs[stage_idx];
+            if let Some(ref _ii_config) = config.initial_input {
+                if let Some(ref iw) = stage.initial_input {
+                    input_constraint_challenges.extend_from_slice(&iw.challenge_values);
+                }
+            }
+            if let Some(ref fo_config) = config.final_output {
+                if fo_config.constraint.is_some() {
+                    if let Some(ref fw) = stage.final_output {
+                        output_constraint_challenges.extend_from_slice(&fw.challenge_values);
+                    }
+                } else if let Some(ref fw) = stage.final_output {
+                    batching_coefficients.extend_from_slice(&fw.batching_coefficients);
+                }
+            }
+        }
+
+        let mut extra_constraint_challenges = Vec::new();
+        for ew in &witness.extra_constraints {
+            extra_constraint_challenges.extend_from_slice(&ew.challenge_values);
+        }
+
+        BakedPublicInputs {
+            challenges,
+            initial_claims: witness.initial_claims.clone(),
+            batching_coefficients,
+            output_constraint_challenges,
+            input_constraint_challenges,
+            extra_constraint_challenges,
+        }
+    }
 
     #[test]
     fn test_witness_assignment() {
         type F = Fr;
 
         let configs = [StageConfig::new(2, 3)];
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
 
-        // Create valid round witnesses
-        // Round 1: coeffs such that 2*c0 + c1 + c2 + c3 = 100
-        let c0_1 = F::from_u64(40);
-        let c1_1 = F::from_u64(5);
-        let c2_1 = F::from_u64(10);
-        let c3_1 = F::from_u64(5);
-        // 2*40 + 5 + 10 + 5 = 100
-        let r1 = F::from_u64(3);
-        let round1 = RoundWitness::new(vec![c0_1, c1_1, c2_1, c3_1], r1);
-        let _next1 = round1.evaluate(r1);
-
-        // Round 2: coeffs such that 2*c0 + c1 + c2 + c3 = next1
-        // next1 = 40 + 3*5 + 9*10 + 27*5 = 40 + 15 + 90 + 135 = 280
-        // We need 2*c0 + c1 + c2 + c3 = 280
-        // Let c0 = 135, c1 = 5, c2 = 3, c3 = 2 => 270 + 5 + 3 + 2 = 280
-        let c0_2 = F::from_u64(135);
-        let c1_2 = F::from_u64(5);
-        let c2_2 = F::from_u64(3);
-        let c3_2 = F::from_u64(2);
-        let r2 = F::from_u64(5);
-        let round2 = RoundWitness::new(vec![c0_2, c1_2, c2_2, c3_2], r2);
+        let round1 = RoundWitness::new(
+            vec![
+                F::from_u64(40),
+                F::from_u64(5),
+                F::from_u64(10),
+                F::from_u64(5),
+            ],
+            F::from_u64(3),
+        );
+        let round2 = RoundWitness::new(
+            vec![
+                F::from_u64(135),
+                F::from_u64(5),
+                F::from_u64(3),
+                F::from_u64(2),
+            ],
+            F::from_u64(5),
+        );
 
         let witness = BlindFoldWitness::new(
             F::from_u64(100),
             vec![StageWitness::new(vec![round1, round2])],
         );
+
+        let baked = make_baked_from_witness(&witness, &configs);
+        let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
+        let r1cs = builder.build();
 
         let z = witness.assign(&r1cs);
         assert!(r1cs.is_satisfied(&z), "R1CS should be satisfied");
@@ -879,11 +732,6 @@ mod tests {
         type F = Fr;
 
         let initial_claim = F::from_u64(100);
-
-        // Compressed format: [c0, c2, c3] without c1 (linear term omitted)
-        // For g(x) = c0 + c1*x + c2*x^2 + c3*x^3
-        // claimed_sum = g(0) + g(1) = 2*c0 + c1 + c2 + c3 = 100
-        // If [c0, c2, c3] = [40, 10, 5], then c1 = 100 - 2*40 - 10 - 5 = 5
         let compressed_coeffs = vec![vec![vec![F::from_u64(40), F::from_u64(10), F::from_u64(5)]]];
         let challenges = vec![vec![F::from_u64(3)]];
         let configs = [StageConfig::new(1, 3)];
@@ -900,8 +748,8 @@ mod tests {
         assert_eq!(witness.stages[0].rounds[0].coeffs[2], F::from_u64(10));
         assert_eq!(witness.stages[0].rounds[0].coeffs[3], F::from_u64(5));
 
-        // Build R1CS and verify
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
+        let baked = make_baked_from_witness(&witness, &configs);
+        let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
         let z = witness.assign(&r1cs);
         assert!(r1cs.is_satisfied(&z));

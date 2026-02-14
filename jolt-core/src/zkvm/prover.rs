@@ -42,8 +42,8 @@ use crate::{
     pprof_scope,
     subprotocols::{
         blindfold::{
-            pedersen_generator_count_for_r1cs, BlindFoldProof, BlindFoldProver, BlindFoldWitness,
-            ExtraConstraintWitness, FinalOutputWitness, InputClaimConstraint,
+            pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldProof, BlindFoldProver,
+            BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, InputClaimConstraint,
             OutputClaimConstraint, RelaxedR1CSInstance, RoundWitness, StageConfig, StageWitness,
             ValueSource, VerifierR1CSBuilder,
         },
@@ -1578,8 +1578,67 @@ impl<
         let extra_constraint = OutputClaimConstraint::linear(extra_constraint_terms);
         let extra_constraints = vec![extra_constraint];
 
-        // Build verifier R1CS from configurations
-        let builder = VerifierR1CSBuilder::<F>::new_with_extra(&stage_configs, &extra_constraints);
+        // Collect baked public inputs from stage data
+        let mut baked_challenges: Vec<F> = Vec::new();
+        let mut baked_output_challenges: Vec<F> = Vec::new();
+        let mut baked_input_challenges: Vec<F> = Vec::new();
+
+        for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
+            if stage_idx < 2 {
+                let uniskip = &uniskip_stages[stage_idx];
+                // Uni-skip input constraint challenges
+                baked_input_challenges
+                    .extend(uniskip.input_constraint_challenge_values.iter().cloned());
+                // Uni-skip round challenge
+                baked_challenges.push(uniskip.challenge.into());
+            }
+
+            let num_rounds = zk_data.poly_coeffs.len();
+            for round_idx in 0..num_rounds {
+                // First regular round input constraint
+                if round_idx == 0 {
+                    let mut cv: Vec<F> = zk_data
+                        .batching_coefficients
+                        .iter()
+                        .zip(&zk_data.input_claim_scaling_exponents)
+                        .map(|(alpha, &scale)| alpha.mul_pow_2(scale))
+                        .collect();
+                    for cv_inner in &zk_data.input_constraint_challenge_values {
+                        cv.extend(cv_inner.iter().cloned());
+                    }
+                    baked_input_challenges.extend(cv);
+                }
+
+                baked_challenges.push(zk_data.challenges[round_idx].into());
+
+                // Last round output constraint
+                if round_idx == num_rounds - 1 {
+                    let batched = OutputClaimConstraint::batch(
+                        &zk_data.output_constraints,
+                        zk_data.batching_coefficients.len(),
+                    );
+                    if batched.is_some() {
+                        let mut cv: Vec<F> = zk_data.batching_coefficients.clone();
+                        for cv_inner in &zk_data.constraint_challenge_values {
+                            cv.extend(cv_inner.iter().cloned());
+                        }
+                        baked_output_challenges.extend(cv);
+                    }
+                }
+            }
+        }
+
+        let baked = BakedPublicInputs {
+            challenges: baked_challenges,
+            initial_claims: initial_claims.clone(),
+            batching_coefficients: Vec::new(),
+            output_constraint_challenges: baked_output_challenges,
+            input_constraint_challenges: baked_input_challenges,
+            extra_constraint_challenges: stage8_data.constraint_coeffs.clone(),
+        };
+
+        let builder =
+            VerifierR1CSBuilder::<F>::new_with_extra(&stage_configs, &extra_constraints, &baked);
         let r1cs = builder.build();
 
         // Convert initial claims to array - 7 chains (one per Jolt stage)
@@ -1610,10 +1669,7 @@ impl<
         // Assign witness to get Z vector
         let z = blindfold_witness.assign(&r1cs);
 
-        // Extract components for relaxed R1CS
-        let witness_start = 1 + r1cs.num_public_inputs;
-        let witness: Vec<F> = z[witness_start..].to_vec();
-        let public_inputs: Vec<F> = z[1..witness_start].to_vec();
+        let witness: Vec<F> = z[1..].to_vec();
 
         // Collect round commitments and blindings from all stages
         let mut round_commitments: Vec<C::G1> = Vec::new();
@@ -1679,7 +1735,6 @@ impl<
 
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, C>::new_non_relaxed(
             &witness,
-            public_inputs,
             r1cs.num_constraints,
             hyrax_C,
             round_commitments,
@@ -2811,7 +2866,8 @@ mod tests {
     fn blindfold_r1cs_satisfaction() {
         use crate::curve::Bn254Curve;
         use crate::subprotocols::blindfold::{
-            BlindFoldWitness, RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
+            BakedPublicInputs, BlindFoldWitness, RoundWitness, StageConfig, StageWitness,
+            VerifierR1CSBuilder,
         };
         use crate::subprotocols::sumcheck::SumcheckInstanceProof;
         use crate::transcripts::{KeccakTranscript, Transcript};
@@ -2984,11 +3040,14 @@ mod tests {
             for (round_witness, degree) in rounds {
                 // Build R1CS for a single round
                 let config = StageConfig::new(1, degree);
-                let builder = VerifierR1CSBuilder::<Fr>::new(&[config.clone()]);
-                let r1cs = builder.build();
-
-                // Build witness with the round's claimed_sum as initial_claim
                 let initial_claim = round_witness.claimed_sum;
+                let baked = BakedPublicInputs {
+                    challenges: vec![round_witness.challenge],
+                    initial_claims: vec![initial_claim],
+                    ..Default::default()
+                };
+                let builder = VerifierR1CSBuilder::<Fr>::new(&[config.clone()], &baked);
+                let r1cs = builder.build();
                 let stage_witness = StageWitness::new(vec![round_witness]);
                 let witness = BlindFoldWitness::new(initial_claim, vec![stage_witness]);
 
@@ -3119,8 +3178,9 @@ mod tests {
     fn blindfold_protocol_e2e() {
         use crate::curve::Bn254Curve;
         use crate::subprotocols::blindfold::{
-            BlindFoldProver, BlindFoldVerifier, BlindFoldVerifierInput, BlindFoldWitness,
-            RelaxedR1CSInstance, RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
+            BakedPublicInputs, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifierInput,
+            BlindFoldWitness, RelaxedR1CSInstance, RoundWitness, StageConfig, StageWitness,
+            VerifierR1CSBuilder,
         };
         use crate::transcripts::{KeccakTranscript, Transcript};
         use rand::thread_rng;
@@ -3128,13 +3188,7 @@ mod tests {
         let mut rng = thread_rng();
 
         let configs = [StageConfig::new(2, 3)];
-        let builder = VerifierR1CSBuilder::<Fr>::new(&configs);
-        let r1cs = builder.build();
 
-        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.hyrax.C + 1);
-
-        // Create valid multi-round witness
-        // Round 1: 2*c0 + c1 + c2 + c3 = 55
         let round1 = RoundWitness::new(
             vec![
                 Fr::from(20u64),
@@ -3146,7 +3200,6 @@ mod tests {
         );
         let next1 = round1.evaluate(Fr::from(2u64));
 
-        // Round 2: 2*c0 + c1 + c2 + c3 = next1
         let c0_2 = Fr::from(30u64);
         let c2_2 = Fr::from(10u64);
         let c3_2 = Fr::from(5u64);
@@ -3156,15 +3209,21 @@ mod tests {
         let initial_claim = Fr::from(55u64);
         let blindfold_witness =
             BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round1, round2])]);
-        let z = blindfold_witness.assign(&r1cs);
 
-        // Verify standard R1CS is satisfied
+        let baked = BakedPublicInputs {
+            challenges: vec![Fr::from(2u64), Fr::from(4u64)],
+            initial_claims: vec![initial_claim],
+            ..Default::default()
+        };
+        let builder = VerifierR1CSBuilder::<Fr>::new(&configs, &baked);
+        let r1cs = builder.build();
+
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.hyrax.C + 1);
+
+        let z = blindfold_witness.assign(&r1cs);
         assert!(r1cs.is_satisfied(&z));
 
-        // Extract components for relaxed R1CS
-        let witness_start = 1 + r1cs.num_public_inputs;
-        let witness: Vec<Fr> = z[witness_start..].to_vec();
-        let public_inputs: Vec<Fr> = z[1..witness_start].to_vec();
+        let witness: Vec<Fr> = z[1..].to_vec();
 
         let hyrax = &r1cs.hyrax;
         let hyrax_C = hyrax.C;
@@ -3193,7 +3252,6 @@ mod tests {
 
         let (real_instance, real_witness) = RelaxedR1CSInstance::<Fr, Bn254Curve>::new_non_relaxed(
             &witness,
-            public_inputs,
             r1cs.num_constraints,
             hyrax_C,
             round_commitments,
@@ -3208,14 +3266,11 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_E2E");
         let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
 
-        // Create verifier input from real_instance data
         let verifier_input = BlindFoldVerifierInput {
-            public_inputs: real_instance.x.clone(),
             round_commitments: real_instance.round_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 
-        // Verify the proof
         let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_E2E");
         let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
 

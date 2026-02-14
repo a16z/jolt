@@ -23,6 +23,7 @@ use super::r1cs::VerifierR1CS;
 
 /// Relaxed R1CS Instance (public data)
 ///
+/// Public inputs are baked into R1CS matrix coefficients, so there is no `x` field.
 /// Row commitments replace monolithic W_bar and E_bar:
 /// - `round_commitments`: coefficient row commitments (reuse existing sumcheck round commitments)
 /// - `noncoeff_row_commitments`: non-coefficient row commitments (prover sends in proof)
@@ -30,7 +31,6 @@ use super::r1cs::VerifierR1CS;
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RelaxedR1CSInstance<F: JoltField, C: JoltCurve> {
     pub u: F,
-    pub x: Vec<F>,
     /// Per-round commitments from ZK sumcheck (= coefficient row commitments)
     pub round_commitments: Vec<C::G1>,
     /// Non-coefficient W row commitments
@@ -59,10 +59,8 @@ pub struct RelaxedR1CSWitness<F: JoltField> {
 
 impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
     /// Create a non-relaxed instance (u=1, E=0) from standard R1CS witness.
-    #[allow(clippy::too_many_arguments)]
     pub fn new_non_relaxed(
         witness: &[F],
-        public_inputs: Vec<F>,
         num_constraints: usize,
         hyrax_C: usize,
         round_commitments: Vec<C::G1>,
@@ -74,10 +72,8 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
 
         let instance = Self {
             u: F::one(),
-            x: public_inputs,
             round_commitments,
             noncoeff_row_commitments,
-            // Real instance: E=0 → all E row commitments are identity
             e_row_commitments: vec![C::G1::zero(); R_E],
             eval_commitments,
         };
@@ -99,7 +95,6 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
     pub fn fold(&self, other: &Self, t_row_commitments: &[C::G1], r: F) -> Self {
         let r_squared = r * r;
 
-        assert_eq!(self.x.len(), other.x.len());
         assert_eq!(self.round_commitments.len(), other.round_commitments.len());
         assert_eq!(
             self.noncoeff_row_commitments.len(),
@@ -110,13 +105,6 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
         assert_eq!(self.e_row_commitments.len(), t_row_commitments.len());
 
         let u = self.u + r * other.u;
-
-        let x: Vec<F> = self
-            .x
-            .iter()
-            .zip(&other.x)
-            .map(|(a, b)| *a + r * *b)
-            .collect();
 
         let round_commitments: Vec<C::G1> = self
             .round_commitments
@@ -132,7 +120,6 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
             .map(|(c1, c2)| *c1 + c2.scalar_mul(&r))
             .collect();
 
-        // E_row' = E_row_1 + r·T_row + r²·E_row_2
         let e_row_commitments: Vec<C::G1> = self
             .e_row_commitments
             .iter()
@@ -150,7 +137,6 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
 
         Self {
             u,
-            x,
             round_commitments,
             noncoeff_row_commitments,
             e_row_commitments,
@@ -167,14 +153,11 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
         R_prime: usize,
     ) -> Vec<C::G1> {
         let mut rows = Vec::with_capacity(R_prime);
-        // Coefficient rows: real rounds, then padding to R_coeff
         rows.extend_from_slice(&self.round_commitments);
         for _ in total_rounds..R_coeff {
             rows.push(C::G1::zero());
         }
-        // Non-coefficient rows
         rows.extend_from_slice(&self.noncoeff_row_commitments);
-        // Padding to R'
         while rows.len() < R_prime {
             rows.push(C::G1::zero());
         }
@@ -212,7 +195,6 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
             .map(|(b1, b2)| *b1 + r * *b2)
             .collect();
 
-        // e_row_blindings' = e_row_blindings_1 + r·t_row_blindings + r²·e_row_blindings_2
         let e_row_blindings: Vec<F> = self
             .e_row_blindings
             .iter()
@@ -229,11 +211,11 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
         }
     }
 
-    /// Check if the witness satisfies the relaxed R1CS.
-    pub fn check_satisfaction(&self, r1cs: &VerifierR1CS<F>, u: F, x: &[F]) -> Result<(), usize> {
+    /// Check if the witness satisfies the relaxed R1CS: (AZ)∘(BZ) = u·(CZ) + E
+    /// Z = [u, W...]
+    pub fn check_satisfaction(&self, r1cs: &VerifierR1CS<F>, u: F) -> Result<(), usize> {
         let mut z = Vec::with_capacity(r1cs.num_vars);
         z.push(u);
-        z.extend_from_slice(x);
         z.extend_from_slice(&self.W);
 
         assert_eq!(
@@ -267,20 +249,31 @@ mod tests {
     use crate::poly::commitment::pedersen::PedersenGenerators;
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
-    use crate::subprotocols::blindfold::StageConfig;
+    use crate::subprotocols::blindfold::{BakedPublicInputs, StageConfig};
     use ark_bn254::Fr;
     use ark_std::{One, UniformRand, Zero};
 
     use rand::thread_rng;
+
+    fn make_baked<F: JoltField>(witness: &BlindFoldWitness<F>) -> BakedPublicInputs<F> {
+        let mut challenges = Vec::new();
+        for stage in &witness.stages {
+            for round in &stage.rounds {
+                challenges.push(round.challenge);
+            }
+        }
+        BakedPublicInputs {
+            challenges,
+            initial_claims: witness.initial_claims.clone(),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn test_non_relaxed_instance_creation() {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
-
         let round = RoundWitness::new(
             vec![
                 F::from_u64(40),
@@ -293,27 +286,28 @@ mod tests {
         let initial_claim = F::from_u64(100);
         let blindfold_witness =
             BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
+
+        let baked = make_baked(&blindfold_witness);
+        let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
+        let r1cs = builder.build();
+
         let z = blindfold_witness.assign(&r1cs);
         assert!(r1cs.is_satisfied(&z));
 
-        let witness_start = 1 + r1cs.num_public_inputs;
-        let witness: Vec<F> = z[witness_start..].to_vec();
-        let public_inputs: Vec<F> = z[1..witness_start].to_vec();
+        // witness_start = 1 (no public inputs)
+        let witness: Vec<F> = z[1..].to_vec();
 
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.hyrax.C + 1);
 
-        // Commit coefficient row
         let hyrax_C = r1cs.hyrax.C;
         let coeffs_row = &witness[0..hyrax_C];
         let blinding = F::rand(&mut thread_rng());
         let round_commitment = gens.commit(coeffs_row, &blinding);
 
-        // Non-coeff rows: compute commitments
         let R_coeff = r1cs.hyrax.R_coeff;
         let R_prime = r1cs.hyrax.R_prime;
         let noncoeff_start = R_coeff * hyrax_C;
-        let noncoeff_count = r1cs.hyrax.noncoeff_count;
-        let noncoeff_rows_count = noncoeff_count.div_ceil(hyrax_C);
+        let noncoeff_rows_count = r1cs.hyrax.noncoeff_count.div_ceil(hyrax_C);
 
         let mut noncoeff_row_commitments = Vec::new();
         let mut w_row_blindings = vec![F::zero(); R_prime];
@@ -331,7 +325,6 @@ mod tests {
 
         let (instance, relaxed_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
             &witness,
-            public_inputs.clone(),
             r1cs.num_constraints,
             hyrax_C,
             vec![round_commitment],
@@ -341,7 +334,6 @@ mod tests {
         );
 
         assert_eq!(instance.u, F::one());
-        assert_eq!(instance.x, public_inputs);
         assert_eq!(relaxed_witness.W, witness);
         assert!(relaxed_witness.E.iter().all(|e| e.is_zero()));
     }
@@ -352,9 +344,6 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let builder = VerifierR1CSBuilder::<F>::new(&configs);
-        let r1cs = builder.build();
-
         let round = RoundWitness::new(
             vec![
                 F::from_u64(40),
@@ -367,11 +356,13 @@ mod tests {
         let initial_claim = F::from_u64(100);
         let blindfold_witness =
             BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
-        let z = blindfold_witness.assign(&r1cs);
 
-        let witness_start = 1 + r1cs.num_public_inputs;
-        let witness: Vec<F> = z[witness_start..].to_vec();
-        let public_inputs: Vec<F> = z[1..witness_start].to_vec();
+        let baked = make_baked(&blindfold_witness);
+        let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
+        let r1cs = builder.build();
+
+        let z = blindfold_witness.assign(&r1cs);
+        let witness: Vec<F> = z[1..].to_vec();
 
         let relaxed_witness = RelaxedR1CSWitness {
             E: vec![F::zero(); r1cs.num_constraints],
@@ -380,7 +371,7 @@ mod tests {
             e_row_blindings: Vec::new(),
         };
 
-        let result = relaxed_witness.check_satisfaction(&r1cs, F::one(), &public_inputs);
+        let result = relaxed_witness.check_satisfaction(&r1cs, F::one());
         assert!(result.is_ok(), "Relaxed R1CS should be satisfied");
     }
 
@@ -451,9 +442,6 @@ mod tests {
 
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(20);
 
-        let x1: Vec<F> = (0..5).map(|_| F::rand(&mut rng)).collect();
-        let x2: Vec<F> = (0..5).map(|_| F::rand(&mut rng)).collect();
-
         let u1 = F::rand(&mut rng);
         let u2 = F::rand(&mut rng);
 
@@ -467,7 +455,6 @@ mod tests {
 
         let inst1 = RelaxedR1CSInstance::<F, Bn254Curve> {
             u: u1,
-            x: x1.clone(),
             round_commitments: rc1.clone(),
             noncoeff_row_commitments: nc1.clone(),
             e_row_commitments: e1.clone(),
@@ -476,7 +463,6 @@ mod tests {
 
         let inst2 = RelaxedR1CSInstance::<F, Bn254Curve> {
             u: u2,
-            x: x2.clone(),
             round_commitments: rc2.clone(),
             noncoeff_row_commitments: nc2.clone(),
             e_row_commitments: e2.clone(),
@@ -487,16 +473,11 @@ mod tests {
         let folded = inst1.fold(&inst2, &t_rows, r);
 
         assert_eq!(folded.u, u1 + r * u2);
-        for i in 0..5 {
-            assert_eq!(folded.x[i], x1[i] + r * x2[i]);
-        }
 
-        // E row folds: e' = e1 + r*t + r²*e2
         let r_sq = r * r;
         let expected_e_row = e1[0] + t_rows[0].scalar_mul(&r) + e2[0].scalar_mul(&r_sq);
         assert_eq!(folded.e_row_commitments[0], expected_e_row);
 
-        // Round commitments fold linearly
         assert_eq!(folded.round_commitments[0], rc1[0] + rc2[0].scalar_mul(&r));
     }
 }

@@ -42,6 +42,28 @@ pub use witness::{
 use crate::field::JoltField;
 use crate::utils::math::Math;
 
+/// Values baked into R1CS matrix coefficients instead of being public inputs in Z.
+///
+/// Both prover and verifier construct the same `BakedPublicInputs` from Fiat-Shamir
+/// transcript values, then pass them to the R1CS builder. The resulting matrices A, B, C
+/// are parameterized by these values. Nova folding still works because both the real
+/// and random instances share the same matrices.
+#[derive(Clone, Debug, Default)]
+pub struct BakedPublicInputs<F> {
+    /// Sumcheck challenges — one per round, flat across all stages.
+    pub challenges: Vec<F>,
+    /// Initial claims — one per independent chain.
+    pub initial_claims: Vec<F>,
+    /// Batching coefficients for simple final output constraints, flat.
+    pub batching_coefficients: Vec<F>,
+    /// Challenge values for general output constraints, flat across stages.
+    pub output_constraint_challenges: Vec<F>,
+    /// Challenge values for input constraints, flat across stages.
+    pub input_constraint_challenges: Vec<F>,
+    /// Challenge values for extra constraints (e.g. PCS binding), flat.
+    pub extra_constraint_challenges: Vec<F>,
+}
+
 /// Grid layout parameters for Hyrax-style openings.
 ///
 /// W is laid out as an R' × C grid:
