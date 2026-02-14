@@ -292,6 +292,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         let mut round_idx = 0usize;
 
         let mut assigned_openings: HashSet<OpeningId> = HashSet::new();
+        let mut chain_idx = 0usize;
 
         for (stage_idx, stage_witness) in self.stages.iter().enumerate() {
             let config = &r1cs.stage_configs[stage_idx];
@@ -300,6 +301,16 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 config.num_rounds,
                 "Stage {stage_idx} has wrong number of rounds"
             );
+
+            if stage_idx > 0 && config.starts_new_chain {
+                chain_idx += 1;
+            }
+
+            let is_chain_start = stage_idx == 0 || config.starts_new_chain;
+            if is_chain_start && config.has_initial_claim_var() {
+                z[witness_idx] = self.initial_claims[chain_idx];
+                witness_idx += 1;
+            }
 
             // Initial input witness (opening vars + aux vars only, no challenge public inputs)
             if let Some(ref ii_config) = config.initial_input {

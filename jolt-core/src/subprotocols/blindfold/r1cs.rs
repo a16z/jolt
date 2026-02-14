@@ -296,9 +296,6 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         let mut output_challenge_idx = 0usize;
         let mut input_challenge_idx = 0usize;
 
-        // First round of first chain uses baked initial claim
-        let mut current_claim: LinearCombination<F> =
-            LinearCombination::constant(self.baked.initial_claims[chain_idx]);
         let mut round_idx = 0usize;
 
         let mut global_opening_vars: HashMap<OpeningId, Variable> = HashMap::new();
@@ -306,11 +303,28 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         let stage_configs = self.stage_configs.clone();
         let baked = self.baked.clone();
 
+        let initial_claim_lc = |next_var: &mut usize,
+                                config: &StageConfig,
+                                chain_idx: usize,
+                                baked: &BakedPublicInputs<F>|
+         -> LinearCombination<F> {
+            if config.has_initial_claim_var() {
+                let var = Variable::new(*next_var);
+                *next_var += 1;
+                LinearCombination::variable(var)
+            } else {
+                LinearCombination::constant(baked.initial_claims[chain_idx])
+            }
+        };
+
+        let mut current_claim =
+            initial_claim_lc(&mut self.next_var, &stage_configs[0], chain_idx, &baked);
+
         for (stage_idx, config) in stage_configs.iter().enumerate() {
             // Check if this stage starts a new chain
             if stage_idx > 0 && config.starts_new_chain {
                 chain_idx += 1;
-                current_claim = LinearCombination::constant(baked.initial_claims[chain_idx]);
+                current_claim = initial_claim_lc(&mut self.next_var, config, chain_idx, &baked);
             }
 
             // Handle initial input constraint

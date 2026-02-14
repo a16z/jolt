@@ -353,6 +353,15 @@ impl StageConfig {
     pub fn is_uniskip(&self) -> bool {
         self.uniskip_power_sums.is_some()
     }
+
+    /// Whether this chain-starting stage has an initial_input constraint,
+    /// meaning its initial claim should be a witness variable (not a baked constant).
+    pub fn has_initial_claim_var(&self) -> bool {
+        self.initial_input
+            .as_ref()
+            .and_then(|ii| ii.constraint.as_ref())
+            .is_some()
+    }
 }
 
 /// Variable index in the witness vector Z

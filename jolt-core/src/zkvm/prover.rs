@@ -503,8 +503,7 @@ impl<
         ];
 
         let (joint_opening_proof, stage8_data) = self.prove_stage8(opening_proof_hints);
-        let (blindfold_proof, blindfold_initial_claims) =
-            self.prove_blindfold(&stage8_data, &joint_opening_proof);
+        let blindfold_proof = self.prove_blindfold(&stage8_data, &joint_opening_proof);
 
         #[cfg(test)]
         assert!(
@@ -538,7 +537,6 @@ impl<
             stage6_sumcheck_proof,
             stage7_sumcheck_proof,
             blindfold_proof,
-            blindfold_initial_claims,
             joint_opening_proof,
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
@@ -1357,15 +1355,12 @@ impl<
     /// from the opening accumulator where it was stored during prove_zk calls.
     /// The coefficients and blinding factors are hidden from the verifier (who only
     /// sees commitments), while BlindFold proves the R1CS constraints are satisfied.
-    /// Returns (blindfold_proof, initial_claims).
-    /// The initial_claims are for the 7 logical Jolt stages, where stages 1-2 use
-    /// uni-skip initial claims and stages 3-7 use regular sumcheck initial claims.
     #[tracing::instrument(skip_all)]
     fn prove_blindfold(
         &mut self,
         stage8_data: &Stage8ZkData<F>,
         joint_opening_proof: &PCS::Proof,
-    ) -> (BlindFoldProof<F, C>, [F; 9]) {
+    ) -> BlindFoldProof<F, C> {
         tracing::info!("BlindFold proving");
 
         let mut rng = rand::thread_rng();
@@ -1631,7 +1626,7 @@ impl<
 
         let baked = BakedPublicInputs {
             challenges: baked_challenges,
-            initial_claims: initial_claims.clone(),
+            initial_claims: Vec::new(),
             batching_coefficients: Vec::new(),
             output_constraint_challenges: baked_output_challenges,
             input_constraint_challenges: baked_input_challenges,
@@ -1641,11 +1636,6 @@ impl<
         let builder =
             VerifierR1CSBuilder::<F>::new_with_extra(&stage_configs, &extra_constraints, &baked);
         let r1cs = builder.build();
-
-        // Convert initial claims to array - 7 chains (one per Jolt stage)
-        let initial_claims_array: [F; 9] = initial_claims
-            .try_into()
-            .expect("Expected exactly 7 initial claims");
 
         let extra_opening_values: Vec<F> = stage8_data
             .opening_ids
@@ -1660,9 +1650,8 @@ impl<
             opening_values: extra_opening_values,
         };
 
-        // Use all 7 initial claims for the BlindFoldWitness (one per Jolt stage)
         let blindfold_witness = BlindFoldWitness::with_extra_constraints(
-            initial_claims_array.to_vec(),
+            initial_claims,
             stage_witnesses,
             vec![extra_witness],
         );
@@ -1750,9 +1739,7 @@ impl<
             BlindFoldProver::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
 
-        let proof = prover.prove(&real_instance, &real_witness, &z, &mut blindfold_transcript);
-
-        (proof, initial_claims_array)
+        prover.prove(&real_instance, &real_witness, &z, &mut blindfold_transcript)
     }
 
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).

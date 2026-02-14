@@ -84,7 +84,13 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     let mut noncoeff_idx = R_coeff * hyrax_C;
     let mut round_idx = 0usize;
 
-    for config in &r1cs.stage_configs {
+    for (stage_idx, config) in r1cs.stage_configs.iter().enumerate() {
+        let is_chain_start = stage_idx == 0 || config.starts_new_chain;
+        if is_chain_start && config.has_initial_claim_var() {
+            W[noncoeff_idx] = F::random(rng);
+            noncoeff_idx += 1;
+        }
+
         // Initial input variables (before rounds)
         if let Some(ref ii_config) = config.initial_input {
             if let Some(ref constraint) = ii_config.constraint {

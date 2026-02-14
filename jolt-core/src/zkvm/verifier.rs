@@ -1217,7 +1217,7 @@ impl<
 
         let baked = BakedPublicInputs {
             challenges: baked_challenges,
-            initial_claims: self.proof.blindfold_initial_claims.to_vec(),
+            initial_claims: Vec::new(),
             batching_coefficients: Vec::new(),
             output_constraint_challenges: baked_output_challenges,
             input_constraint_challenges: baked_input_challenges,
