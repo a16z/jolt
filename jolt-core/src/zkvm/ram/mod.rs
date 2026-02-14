@@ -52,13 +52,13 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
     },
     transcripts::Transcript,
     utils::{accumulation::Acc6U, math::Math},
-    zkvm::witness::VirtualPolynomial,
+    zkvm::{claim_reductions::AdviceKind, witness::VirtualPolynomial},
 };
 use std::vec;
 
@@ -389,17 +389,6 @@ pub fn verifier_accumulate_advice<F: JoltField>(
 ///
 /// # Parameters
 ///
-/// * `advice_opening` - Optional tuple of opening point and evaluation at that point
-/// * `advice_num_vars` - Number of variables in the advice polynomial (b in the explanation)
-/// * `advice_start` - Starting index of the advice block in memory
-/// * `memory_layout` - Memory layout for address remapping
-/// * `r_address` - Challenge points from verifier (used for selector polynomial evaluation)
-/// * `total_memory_vars` - Total number of variables for the entire memory space (l in the explanation)
-///
-/// # Returns
-///
-/// The scaled evaluation: `eval * scaling_factor`, where the scaling factor is the selector polynomial
-/// evaluated at the challenge point. Returns zero if no advice opening is provided.
 /// Compute the selector scaling factor for embedding an advice block into the full memory MLE.
 ///
 /// The advice polynomial covers a contiguous power-of-two block starting at `advice_start`.
@@ -432,6 +421,59 @@ pub fn compute_advice_selector<F: JoltField>(
         };
     }
     scaling_factor
+}
+
+/// Build the decomposition of advice contributions for BlindFold R1CS constraints.
+///
+/// For each advice type (untrusted/trusted) present in the accumulator, computes the
+/// negated selector scaling factor paired with the corresponding `OpeningId`.
+/// These are used by `input_claim_constraint` / `input_constraint_challenge_values`
+/// so that `init_eval` is expressed as `eval_public + Σ(selector_i * advice_opening_i)`
+/// rather than baked as a single constant (which the verifier can't compute in ZK mode).
+pub fn compute_advice_init_contributions<F: JoltField>(
+    accumulator: &dyn OpeningAccumulator<F>,
+    memory_layout: &MemoryLayout,
+    r_address: &[F::Challenge],
+    n_memory_vars: usize,
+    sumcheck_id: SumcheckId,
+) -> Vec<(F, OpeningId)> {
+    let mut contributions = Vec::new();
+
+    if accumulator
+        .get_advice_opening(AdviceKind::Untrusted, sumcheck_id)
+        .is_some()
+    {
+        let advice_num_vars = (memory_layout.max_untrusted_advice_size as usize / 8)
+            .next_power_of_two()
+            .log_2();
+        let selector = compute_advice_selector::<F>(
+            advice_num_vars,
+            memory_layout.untrusted_advice_start,
+            memory_layout,
+            r_address,
+            n_memory_vars,
+        );
+        contributions.push((-selector, OpeningId::UntrustedAdvice(sumcheck_id)));
+    }
+
+    if accumulator
+        .get_advice_opening(AdviceKind::Trusted, sumcheck_id)
+        .is_some()
+    {
+        let advice_num_vars = (memory_layout.max_trusted_advice_size as usize / 8)
+            .next_power_of_two()
+            .log_2();
+        let selector = compute_advice_selector::<F>(
+            advice_num_vars,
+            memory_layout.trusted_advice_start,
+            memory_layout,
+            r_address,
+            n_memory_vars,
+        );
+        contributions.push((-selector, OpeningId::TrustedAdvice(sumcheck_id)));
+    }
+
+    contributions
 }
 
 /// Evaluate a shifted slice of `u64` coefficients as a multilinear polynomial at `r`.

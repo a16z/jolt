@@ -20,7 +20,6 @@ use crate::{
     utils::math::Math,
     zkvm::{
         bytecode::BytecodePreprocessing,
-        claim_reductions::AdviceKind,
         config::ReadWriteConfig,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -72,7 +71,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
             SumcheckId::RamValFinalEvaluation
         };
 
-        let advice_contributions = Self::compute_advice_contributions(
+        let advice_contributions = super::compute_advice_init_contributions(
             opening_accumulator,
             &program_io.memory_layout,
             &r_address.r,
@@ -117,7 +116,7 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
         let val_init_eval_public =
             super::eval_initial_ram_mle::<F>(ram_preprocessing, program_io, &r_address);
 
-        let advice_contributions = Self::compute_advice_contributions(
+        let advice_contributions = super::compute_advice_init_contributions(
             opening_accumulator,
             &program_io.memory_layout,
             &r_address,
@@ -136,52 +135,6 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
             advice_contributions,
             r_address,
         }
-    }
-
-    fn compute_advice_contributions(
-        accumulator: &dyn OpeningAccumulator<F>,
-        memory_layout: &MemoryLayout,
-        r_address: &[F::Challenge],
-        n_memory_vars: usize,
-        sumcheck_id: SumcheckId,
-    ) -> Vec<(F, OpeningId)> {
-        let mut contributions = Vec::new();
-
-        if accumulator
-            .get_advice_opening(AdviceKind::Untrusted, sumcheck_id)
-            .is_some()
-        {
-            let advice_num_vars = (memory_layout.max_untrusted_advice_size as usize / 8)
-                .next_power_of_two()
-                .log_2();
-            let selector = super::compute_advice_selector::<F>(
-                advice_num_vars,
-                memory_layout.untrusted_advice_start,
-                memory_layout,
-                r_address,
-                n_memory_vars,
-            );
-            contributions.push((-selector, OpeningId::UntrustedAdvice(sumcheck_id)));
-        }
-
-        if accumulator
-            .get_advice_opening(AdviceKind::Trusted, sumcheck_id)
-            .is_some()
-        {
-            let advice_num_vars = (memory_layout.max_trusted_advice_size as usize / 8)
-                .next_power_of_two()
-                .log_2();
-            let selector = super::compute_advice_selector::<F>(
-                advice_num_vars,
-                memory_layout.trusted_advice_start,
-                memory_layout,
-                r_address,
-                n_memory_vars,
-            );
-            contributions.push((-selector, OpeningId::TrustedAdvice(sumcheck_id)));
-        }
-
-        contributions
     }
 }
 
