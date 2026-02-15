@@ -23,6 +23,7 @@
         - [Batched opening proof](./how/architecture/opening-proof.md)
     - [Twist and Shout](./how/twist-shout.md)
     - [Dory](./how/dory.md)
+    - [BlindFold (Zero Knowledge)](./how/blindfold.md)
     - [Optimizations](./how/optimizations/optimizations.md)
         - [Batched sumcheck](./how/optimizations/batched-sumcheck.md)
         - [Batched openings](./how/optimizations/batched-openings.md)
