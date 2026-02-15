@@ -137,9 +137,13 @@ impl<F: JoltField> ValEvaluationSumcheckParams<F> {
             SumcheckId::RamValEvaluation,
         );
 
-        // Verifier can't compute full init_eval in ZK mode (advice evals are private),
-        // but init_eval is only used by input_claim() which is irrelevant in ZK mode.
-        let init_eval = init_eval_public;
+        // Reconstruct full init_eval from public portion + advice contributions.
+        // In ZK mode advice evals are zero (not pre-populated), so this is a no-op.
+        let init_eval = super::reconstruct_full_eval(
+            init_eval_public,
+            &advice_contributions,
+            opening_accumulator,
+        );
 
         ValEvaluationSumcheckParams {
             init_eval,

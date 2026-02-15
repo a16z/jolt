@@ -450,6 +450,29 @@ pub fn compute_advice_init_contributions<F: JoltField>(
     contributions
 }
 
+/// Reconstruct full init eval from public portion + advice contributions.
+///
+/// `init_eval = public_eval + Σ(selector_i * advice_eval_i)`
+///
+/// advice_contributions stores `(-selector_i, opening_id_i)`, so:
+/// `init_eval = public_eval - Σ(neg_selector_i * advice_eval_i)`
+pub fn reconstruct_full_eval<F: JoltField>(
+    public_eval: F,
+    advice_contributions: &[(F, OpeningId)],
+    accumulator: &VerifierOpeningAccumulator<F>,
+) -> F {
+    let mut eval = public_eval;
+    for (neg_selector, opening_id) in advice_contributions {
+        let advice_eval = accumulator
+            .openings
+            .get(opening_id)
+            .map(|(_, c)| *c)
+            .unwrap_or(F::zero());
+        eval -= *neg_selector * advice_eval;
+    }
+    eval
+}
+
 /// Evaluate a shifted slice of `u64` coefficients as a multilinear polynomial at `r`.
 ///
 /// Conceptually computes:

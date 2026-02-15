@@ -124,9 +124,13 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
             advice_sumcheck_id,
         );
 
-        // Verifier can't compute full val_init_eval in ZK mode (advice evals are private),
-        // but val_init_eval is only used by input_claim() which is irrelevant in ZK mode.
-        let val_init_eval = val_init_eval_public;
+        // Reconstruct full val_init_eval from public portion + advice contributions.
+        // In ZK mode advice evals are zero (not pre-populated), so this is a no-op.
+        let val_init_eval = super::reconstruct_full_eval(
+            val_init_eval_public,
+            &advice_contributions,
+            opening_accumulator,
+        );
 
         ValFinalSumcheckParams {
             T: trace_len,
