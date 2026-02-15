@@ -66,6 +66,8 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     eval_commitment_gens: Option<(C::G1, C::G1)>,
     rng: &mut R,
 ) -> (RelaxedR1CSInstance<F, C>, RelaxedR1CSWitness<F>, Vec<F>) {
+    use super::layout::{compute_witness_layout, LayoutStep};
+
     let hyrax = &r1cs.hyrax;
     let hyrax_C = hyrax.C;
     let R_coeff = hyrax.R_coeff;
@@ -77,131 +79,88 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     let mut round_commitments: Vec<C::G1> = Vec::new();
     let mut eval_commitments: Vec<C::G1> = Vec::new();
 
-    let mut allocated_openings: std::collections::HashSet<crate::poly::opening_proof::OpeningId> =
-        std::collections::HashSet::new();
-
-    // Track non-coeff write position (mirrors R1CS builder)
     let mut noncoeff_idx = R_coeff * hyrax_C;
-    let mut round_idx = 0usize;
 
-    for (stage_idx, config) in r1cs.stage_configs.iter().enumerate() {
-        let is_chain_start = stage_idx == 0 || config.starts_new_chain;
-        if is_chain_start && config.has_initial_claim_var() {
-            W[noncoeff_idx] = F::random(rng);
-            noncoeff_idx += 1;
-        }
+    let layout = compute_witness_layout(&r1cs.stage_configs, &r1cs.extra_constraints);
 
-        // Initial input variables (before rounds)
-        if let Some(ref ii_config) = config.initial_input {
-            if let Some(ref constraint) = ii_config.constraint {
-                let num_new_openings = constraint
-                    .required_openings
-                    .iter()
-                    .filter(|id| {
-                        if allocated_openings.contains(id) {
-                            false
-                        } else {
-                            allocated_openings.insert(**id);
-                            true
-                        }
-                    })
-                    .count();
-                let num_aux = constraint.estimate_aux_var_count();
-                for _ in 0..(num_new_openings + num_aux) {
+    for step in &layout {
+        match step {
+            LayoutStep::ConstantInitialClaim { .. } => {}
+            LayoutStep::InitialClaimVar { .. } => {
+                W[noncoeff_idx] = F::random(rng);
+                noncoeff_idx += 1;
+            }
+            LayoutStep::ConstraintVars {
+                new_opening_count,
+                aux_var_count,
+                ..
+            } => {
+                for _ in 0..(*new_opening_count + *aux_var_count) {
                     W[noncoeff_idx] = F::random(rng);
                     noncoeff_idx += 1;
                 }
             }
-        }
-
-        for _ in 0..config.num_rounds {
-            let num_coeffs = config.poly_degree + 1;
-
-            for k in 0..num_coeffs {
-                W[round_idx * hyrax_C + k] = F::random(rng);
-            }
-
-            let blinding = F::random(rng);
-            let row_start = round_idx * hyrax_C;
-            let commitment = gens.commit(&W[row_start..row_start + hyrax_C], &blinding);
-            w_row_blindings[round_idx] = blinding;
-            round_commitments.push(commitment);
-
-            // Only next_claim in non-coeff section (no Horner intermediates with baked challenges)
-            W[noncoeff_idx] = F::random(rng);
-            noncoeff_idx += 1;
-
-            round_idx += 1;
-        }
-
-        // Final output variables
-        if let Some(ref fout) = config.final_output {
-            if let Some(ref constraint) = fout.constraint {
-                let num_new_openings = constraint
-                    .required_openings
-                    .iter()
-                    .filter(|id| {
-                        if allocated_openings.contains(id) {
-                            false
-                        } else {
-                            allocated_openings.insert(**id);
-                            true
-                        }
-                    })
-                    .count();
-                let num_aux = constraint.estimate_aux_var_count();
-                for _ in 0..(num_new_openings + num_aux) {
-                    W[noncoeff_idx] = F::random(rng);
-                    noncoeff_idx += 1;
+            LayoutStep::CoeffRow {
+                round_idx,
+                num_coeffs,
+                ..
+            } => {
+                for k in 0..*num_coeffs {
+                    W[round_idx * hyrax_C + k] = F::random(rng);
                 }
-            } else {
-                // Simple linear: only evaluation vars (batching coeffs baked, no accumulators)
-                let num_evals = fout.num_evaluations;
-                for _ in 0..num_evals {
+
+                let blinding = F::random(rng);
+                let row_start = round_idx * hyrax_C;
+                let commitment = gens.commit(&W[row_start..row_start + hyrax_C], &blinding);
+                w_row_blindings[*round_idx] = blinding;
+                round_commitments.push(commitment);
+            }
+            LayoutStep::NextClaim { .. } => {
+                W[noncoeff_idx] = F::random(rng);
+                noncoeff_idx += 1;
+            }
+            LayoutStep::LinearFinalOutput {
+                num_evaluations, ..
+            } => {
+                for _ in 0..*num_evaluations {
                     W[noncoeff_idx] = F::random(rng);
                     noncoeff_idx += 1;
                 }
             }
-        }
-    }
-
-    // Extra constraints
-    for constraint in &r1cs.extra_constraints {
-        let num_new_openings = constraint
-            .required_openings
-            .iter()
-            .filter(|id| {
-                if allocated_openings.contains(id) {
-                    false
-                } else {
-                    allocated_openings.insert(**id);
-                    true
+            LayoutStep::PlaceholderVars { num_vars } => {
+                for _ in 0..*num_vars {
+                    W[noncoeff_idx] = F::random(rng);
+                    noncoeff_idx += 1;
                 }
-            })
-            .count();
-        let num_aux = constraint.estimate_aux_var_count();
+            }
+            LayoutStep::ExtraConstraintVars {
+                new_opening_count,
+                aux_var_count,
+                ..
+            } => {
+                for _ in 0..*new_opening_count {
+                    W[noncoeff_idx] = F::random(rng);
+                    noncoeff_idx += 1;
+                }
 
-        for _ in 0..num_new_openings {
-            W[noncoeff_idx] = F::random(rng);
-            noncoeff_idx += 1;
+                let output_value = F::random(rng);
+                W[noncoeff_idx] = output_value;
+                noncoeff_idx += 1;
+
+                for _ in 0..*aux_var_count {
+                    W[noncoeff_idx] = F::random(rng);
+                    noncoeff_idx += 1;
+                }
+
+                let blinding = F::random(rng);
+                W[noncoeff_idx] = blinding;
+                noncoeff_idx += 1;
+
+                let (g1_0, h1) = eval_commitment_gens.expect("Missing eval commitment generators");
+                let commitment = g1_0.scalar_mul(&output_value) + h1.scalar_mul(&blinding);
+                eval_commitments.push(commitment);
+            }
         }
-
-        let output_value = F::random(rng);
-        W[noncoeff_idx] = output_value;
-        noncoeff_idx += 1;
-
-        for _ in 0..num_aux {
-            W[noncoeff_idx] = F::random(rng);
-            noncoeff_idx += 1;
-        }
-
-        let blinding = F::random(rng);
-        W[noncoeff_idx] = blinding;
-        noncoeff_idx += 1;
-
-        let (g1_0, h1) = eval_commitment_gens.expect("Missing eval commitment generators");
-        let commitment = g1_0.scalar_mul(&output_value) + h1.scalar_mul(&blinding);
-        eval_commitments.push(commitment);
     }
 
     // Commit non-coeff rows

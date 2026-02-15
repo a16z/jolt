@@ -122,11 +122,12 @@ impl OutputClaimConstraint {
     }
 
     fn collect_unique_openings(terms: &[ProductTerm]) -> Vec<OpeningId> {
+        let mut seen = std::collections::HashSet::new();
         let mut openings = Vec::new();
         for term in terms {
             for vs in std::iter::once(&term.coeff).chain(term.factors.iter()) {
                 if let ValueSource::Opening(id) = vs {
-                    if !openings.contains(id) {
+                    if seen.insert(*id) {
                         openings.push(*id);
                     }
                 }
@@ -136,46 +137,15 @@ impl OutputClaimConstraint {
     }
 
     /// Evaluate the constraint given opening and challenge values.
-    /// opening_values are indexed by position in required_openings.
-    /// challenge_values are indexed by Challenge index.
     pub fn evaluate<F: crate::field::JoltField>(
         &self,
         opening_values: &[F],
         challenge_values: &[F],
     ) -> F {
-        use std::collections::HashMap;
-
-        // Build a map from OpeningId to value index
-        let opening_map: HashMap<OpeningId, usize> = self
-            .required_openings
-            .iter()
-            .enumerate()
-            .map(|(i, id)| (*id, i))
-            .collect();
-
-        // Helper to resolve a ValueSource to a field element
-        let resolve = |vs: &ValueSource| -> F {
-            match vs {
-                ValueSource::Opening(id) => {
-                    let idx = *opening_map.get(id).expect("Opening not found");
-                    opening_values[idx]
-                }
-                ValueSource::Challenge(idx) => challenge_values[*idx],
-                ValueSource::Constant(val) => F::from_i128(*val),
-            }
-        };
-
-        // Sum all terms
-        let mut result = F::zero();
-        for term in &self.terms {
-            let coeff = resolve(&term.coeff);
-            let mut term_value = coeff;
-            for factor in &term.factors {
-                term_value *= resolve(factor);
-            }
-            result += term_value;
-        }
-        result
+        let mut visitor = EvaluateVisitor::new(self, opening_values, challenge_values);
+        let mut acc = F::zero();
+        self.visit(&mut visitor, &mut acc);
+        acc
     }
 
     /// Simple product: output = a * b * c * ...
@@ -216,21 +186,36 @@ impl OutputClaimConstraint {
         Self::new(product_terms, required_openings)
     }
 
-    /// Number of auxiliary variables the R1CS builder allocates for this constraint's
-    /// sum-of-products expansion. Must match `add_sum_of_products_constraint_baked`.
     pub fn estimate_aux_var_count(&self) -> usize {
-        let mut count = 0;
-        for term in &self.terms {
-            if term.factors.len() <= 1 {
-                count += 1;
-            } else {
-                count += term.factors.len();
-            }
-        }
+        let mut visitor = CountVisitor;
+        let mut count = 0usize;
+        self.visit(&mut visitor, &mut count);
         count
     }
 
-    /// Direct evaluation: output = eval (single opening, coefficient 1)
+    pub fn visit<V: SumOfProductsVisitor>(&self, visitor: &mut V, acc: &mut V::Acc) {
+        for term in &self.terms {
+            let coeff = visitor.resolve(&term.coeff);
+            match term.factors.len() {
+                0 => visitor.on_no_factors(acc, coeff),
+                1 => {
+                    let factor = visitor.resolve(&term.factors[0]);
+                    visitor.on_single_factor(acc, coeff, factor);
+                }
+                _ => {
+                    let f0 = visitor.resolve(&term.factors[0]);
+                    let f1 = visitor.resolve(&term.factors[1]);
+                    visitor.on_chain_start(acc, f0, f1);
+                    for factor in &term.factors[2..] {
+                        let f = visitor.resolve(factor);
+                        visitor.on_chain_step(acc, f);
+                    }
+                    visitor.on_chain_finalize(acc, coeff);
+                }
+            }
+        }
+    }
+
     pub fn direct(opening: OpeningId) -> Self {
         Self::new(
             vec![ProductTerm::single(ValueSource::Opening(opening))],
@@ -252,87 +237,17 @@ impl OutputClaimConstraint {
         constraints: &[Option<OutputClaimConstraint>],
         _num_batching_coefficients: usize,
     ) -> Option<Self> {
-        // Check all constraints are present
         if constraints.iter().any(|c| c.is_none()) {
             return None;
         }
 
-        let constraints: Vec<&OutputClaimConstraint> =
+        let refs: Vec<&OutputClaimConstraint> =
             constraints.iter().map(|c| c.as_ref().unwrap()).collect();
-
-        let num_instances = constraints.len();
-
-        // Combine all terms, scaling each constraint's terms by its batching coefficient
-        let mut combined_terms = Vec::new();
-        let mut combined_openings = Vec::new();
-
-        // Track challenge offset for each constraint
-        let mut challenge_offset = num_instances;
-
-        for (j, constraint) in constraints.iter().enumerate() {
-            // Batching coefficient αⱼ is Challenge(j)
-            let alpha_j = ValueSource::Challenge(j);
-
-            for term in &constraint.terms {
-                // Offset the challenge indices in this term
-                let offset_coeff = Self::offset_challenge(&term.coeff, challenge_offset);
-                let offset_factors: Vec<_> = term
-                    .factors
-                    .iter()
-                    .map(|f| Self::offset_challenge(f, challenge_offset))
-                    .collect();
-
-                // New term: αⱼ * (offset_coeff * offset_factors)
-                let mut new_factors = vec![alpha_j.clone()];
-                new_factors.extend(offset_factors);
-
-                combined_terms.push(ProductTerm::new(offset_coeff, new_factors));
-            }
-
-            // Collect all required openings
-            for opening in &constraint.required_openings {
-                if !combined_openings.contains(opening) {
-                    combined_openings.push(*opening);
-                }
-            }
-
-            // Move offset past this constraint's challenges
-            challenge_offset += constraint.num_challenges;
-        }
-
-        Some(Self::new(combined_terms, combined_openings))
+        Some(Self::batch_inner(&refs))
     }
 
-    fn offset_challenge(value: &ValueSource, offset: usize) -> ValueSource {
-        match value {
-            ValueSource::Challenge(idx) => ValueSource::Challenge(idx + offset),
-            other => other.clone(),
-        }
-    }
-}
-
-/// Input claim constraints use the same structure as output constraints.
-/// This alias clarifies intent when the constraint describes how an input claim
-/// relates to polynomial openings from a previous sumcheck.
-pub type InputClaimConstraint = OutputClaimConstraint;
-
-impl InputClaimConstraint {
-    /// Batches multiple required input constraints into a combined constraint.
-    /// Unlike `batch`, this takes non-optional constraints since input claims are now required.
-    ///
-    /// Given constraints C_j and coefficients α_j, produces a combined constraint:
-    /// `output = Σⱼ αⱼ * C_j`
-    ///
-    /// Challenge index layout:
-    /// - Challenge(0..num_instances) = batching coefficients α₀, α₁, ...
-    /// - Challenge(num_instances..) = individual constraint challenges, offset per constraint
-    pub fn batch_required(
-        constraints: &[InputClaimConstraint],
-        num_batching_coefficients: usize,
-    ) -> Self {
+    fn batch_inner(constraints: &[&OutputClaimConstraint]) -> Self {
         let num_instances = constraints.len();
-        assert_eq!(num_batching_coefficients, num_instances);
-
         let mut combined_terms = Vec::new();
         let mut combined_openings = Vec::new();
         let mut challenge_offset = num_instances;
@@ -364,6 +279,198 @@ impl InputClaimConstraint {
         }
 
         Self::new(combined_terms, combined_openings)
+    }
+
+    fn offset_challenge(value: &ValueSource, offset: usize) -> ValueSource {
+        match value {
+            ValueSource::Challenge(idx) => ValueSource::Challenge(idx + offset),
+            other => other.clone(),
+        }
+    }
+}
+
+pub trait SumOfProductsVisitor {
+    type Resolved;
+    type Acc;
+
+    fn resolve(&self, vs: &ValueSource) -> Self::Resolved;
+    fn on_no_factors(&mut self, acc: &mut Self::Acc, coeff: Self::Resolved);
+    fn on_single_factor(
+        &mut self,
+        acc: &mut Self::Acc,
+        coeff: Self::Resolved,
+        factor: Self::Resolved,
+    );
+    fn on_chain_start(&mut self, acc: &mut Self::Acc, f0: Self::Resolved, f1: Self::Resolved);
+    fn on_chain_step(&mut self, acc: &mut Self::Acc, factor: Self::Resolved);
+    fn on_chain_finalize(&mut self, acc: &mut Self::Acc, coeff: Self::Resolved);
+}
+
+struct CountVisitor;
+
+impl SumOfProductsVisitor for CountVisitor {
+    type Resolved = ();
+    type Acc = usize;
+
+    fn resolve(&self, _vs: &ValueSource) {}
+    fn on_no_factors(&mut self, acc: &mut usize, _coeff: ()) {
+        *acc += 1;
+    }
+    fn on_single_factor(&mut self, acc: &mut usize, _coeff: (), _factor: ()) {
+        *acc += 1;
+    }
+    fn on_chain_start(&mut self, acc: &mut usize, _f0: (), _f1: ()) {
+        *acc += 1;
+    }
+    fn on_chain_step(&mut self, acc: &mut usize, _factor: ()) {
+        *acc += 1;
+    }
+    fn on_chain_finalize(&mut self, acc: &mut usize, _coeff: ()) {
+        *acc += 1;
+    }
+}
+
+pub(crate) struct EvaluateVisitor<'a, F> {
+    opening_map: std::collections::HashMap<OpeningId, usize>,
+    opening_values: &'a [F],
+    challenge_values: &'a [F],
+    current_product: F,
+}
+
+impl<'a, F: crate::field::JoltField> EvaluateVisitor<'a, F> {
+    pub fn new(
+        constraint: &OutputClaimConstraint,
+        opening_values: &'a [F],
+        challenge_values: &'a [F],
+    ) -> Self {
+        let opening_map = constraint
+            .required_openings
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (*id, i))
+            .collect();
+        Self {
+            opening_map,
+            opening_values,
+            challenge_values,
+            current_product: F::zero(),
+        }
+    }
+}
+
+impl<F: crate::field::JoltField> SumOfProductsVisitor for EvaluateVisitor<'_, F> {
+    type Resolved = F;
+    type Acc = F;
+
+    fn resolve(&self, vs: &ValueSource) -> F {
+        match vs {
+            ValueSource::Opening(id) => {
+                let idx = *self.opening_map.get(id).expect("Opening not found");
+                self.opening_values[idx]
+            }
+            ValueSource::Challenge(idx) => self.challenge_values[*idx],
+            ValueSource::Constant(val) => F::from_i128(*val),
+        }
+    }
+
+    fn on_no_factors(&mut self, acc: &mut F, coeff: F) {
+        *acc += coeff;
+    }
+
+    fn on_single_factor(&mut self, acc: &mut F, coeff: F, factor: F) {
+        *acc += coeff * factor;
+    }
+
+    fn on_chain_start(&mut self, _acc: &mut F, f0: F, f1: F) {
+        self.current_product = f0 * f1;
+    }
+
+    fn on_chain_step(&mut self, _acc: &mut F, factor: F) {
+        self.current_product *= factor;
+    }
+
+    fn on_chain_finalize(&mut self, acc: &mut F, coeff: F) {
+        *acc += coeff * self.current_product;
+    }
+}
+
+pub(crate) struct WitnessAuxVisitor<'a, F> {
+    opening_map: std::collections::HashMap<OpeningId, usize>,
+    opening_values: &'a [F],
+    challenge_values: &'a [F],
+    current_product: F,
+}
+
+impl<'a, F: crate::field::JoltField> WitnessAuxVisitor<'a, F> {
+    pub fn new(
+        constraint: &OutputClaimConstraint,
+        opening_values: &'a [F],
+        challenge_values: &'a [F],
+    ) -> Self {
+        let opening_map = constraint
+            .required_openings
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (*id, i))
+            .collect();
+        Self {
+            opening_map,
+            opening_values,
+            challenge_values,
+            current_product: F::zero(),
+        }
+    }
+}
+
+impl<F: crate::field::JoltField> SumOfProductsVisitor for WitnessAuxVisitor<'_, F> {
+    type Resolved = F;
+    type Acc = Vec<F>;
+
+    fn resolve(&self, vs: &ValueSource) -> F {
+        match vs {
+            ValueSource::Opening(id) => {
+                let idx = *self.opening_map.get(id).expect("Opening not found");
+                self.opening_values[idx]
+            }
+            ValueSource::Challenge(idx) => self.challenge_values[*idx],
+            ValueSource::Constant(val) => F::from_i128(*val),
+        }
+    }
+
+    fn on_no_factors(&mut self, acc: &mut Vec<F>, coeff: F) {
+        acc.push(coeff);
+    }
+
+    fn on_single_factor(&mut self, acc: &mut Vec<F>, coeff: F, factor: F) {
+        acc.push(coeff * factor);
+    }
+
+    fn on_chain_start(&mut self, acc: &mut Vec<F>, f0: F, f1: F) {
+        self.current_product = f0 * f1;
+        acc.push(self.current_product);
+    }
+
+    fn on_chain_step(&mut self, acc: &mut Vec<F>, factor: F) {
+        self.current_product *= factor;
+        acc.push(self.current_product);
+    }
+
+    fn on_chain_finalize(&mut self, acc: &mut Vec<F>, coeff: F) {
+        acc.push(coeff * self.current_product);
+    }
+}
+
+/// Input claim constraints use the same structure as output constraints.
+pub type InputClaimConstraint = OutputClaimConstraint;
+
+impl InputClaimConstraint {
+    pub fn batch_required(
+        constraints: &[InputClaimConstraint],
+        num_batching_coefficients: usize,
+    ) -> Self {
+        assert_eq!(num_batching_coefficients, constraints.len());
+        let refs: Vec<&InputClaimConstraint> = constraints.iter().collect();
+        Self::batch_inner(&refs)
     }
 }
 

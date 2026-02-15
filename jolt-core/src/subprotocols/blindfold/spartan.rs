@@ -8,6 +8,7 @@
 //! - Witness contributions to Az, Bz, Cz at the derived point
 //! - E at the sumcheck challenge point
 
+use super::HyraxParams;
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -326,50 +327,17 @@ impl<F: JoltField> BlindFoldSpartanProver<'_, F> {
     /// And A'[j] = Σ_i A[i,j] · eq(r, i)
     pub fn witness_contributions(&self, sumcheck_challenges: &[F::Challenge]) -> (F, F, F) {
         let r: Vec<F> = sumcheck_challenges.iter().map(|c| (*c).into()).collect();
-        let padded_size = self.r1cs.num_constraints.next_power_of_two();
-
-        // Compute eq(r, ·) for all constraint rows
+        let padded = self.r1cs.num_constraints.next_power_of_two();
         let eq_r: Vec<F> = EqPolynomial::evals(&r);
+        let witness_len = self.z.len() - 1;
 
-        // Compute A'[j], B'[j], C'[j] for witness columns only
-        let witness_start = 1;
-        let witness_len = self.z.len() - witness_start;
+        let a_prime = self.r1cs.a.project_columns(&eq_r, 1, witness_len, padded);
+        let b_prime = self.r1cs.b.project_columns(&eq_r, 1, witness_len, padded);
+        let c_prime = self.r1cs.c.project_columns(&eq_r, 1, witness_len, padded);
 
-        let mut a_prime = vec![F::zero(); witness_len];
-        let mut b_prime = vec![F::zero(); witness_len];
-        let mut c_prime = vec![F::zero(); witness_len];
-
-        // Process sparse matrix A
-        for &(row, col, ref val) in &self.r1cs.a.entries {
-            if col >= witness_start && row < padded_size {
-                let eq_val = eq_r[row];
-                a_prime[col - witness_start] += eq_val * *val;
-            }
-        }
-
-        // Process sparse matrix B
-        for &(row, col, ref val) in &self.r1cs.b.entries {
-            if col >= witness_start && row < padded_size {
-                let eq_val = eq_r[row];
-                b_prime[col - witness_start] += eq_val * *val;
-            }
-        }
-
-        // Process sparse matrix C
-        for &(row, col, ref val) in &self.r1cs.c.entries {
-            if col >= witness_start && row < padded_size {
-                let eq_val = eq_r[row];
-                c_prime[col - witness_start] += eq_val * *val;
-            }
-        }
-
-        // Compute inner products with witness
-        let w = &self.z[witness_start..];
-        let w_az: F = a_prime.iter().zip(w.iter()).map(|(a, w)| *a * *w).sum();
-        let w_bz: F = b_prime.iter().zip(w.iter()).map(|(b, w)| *b * *w).sum();
-        let w_cz: F = c_prime.iter().zip(w.iter()).map(|(c, w)| *c * *w).sum();
-
-        (w_az, w_bz, w_cz)
+        let w = &self.z[1..];
+        let dot = |prime: &[F]| -> F { prime.iter().zip(w).map(|(p, w)| *p * *w).sum() };
+        (dot(&a_prime), dot(&b_prime), dot(&c_prime))
     }
 }
 
@@ -393,31 +361,14 @@ impl<'a, F: JoltField> BlindFoldSpartanVerifier<'a, F> {
     /// Returns (u·A'[0], u·B'[0], u·C'[0]) where A'[0] = Σ_i A[i,0]·eq(r, i).
     pub fn public_contributions(&self, sumcheck_challenges: &[F::Challenge]) -> (F, F, F) {
         let r: Vec<F> = sumcheck_challenges.iter().map(|c| (*c).into()).collect();
-        let padded_size = self.r1cs.num_constraints.next_power_of_two();
+        let padded = self.r1cs.num_constraints.next_power_of_two();
         let eq_r: Vec<F> = EqPolynomial::evals(&r);
 
-        let mut a_prime_0 = F::zero();
-        let mut b_prime_0 = F::zero();
-        let mut c_prime_0 = F::zero();
-
-        for &(row, col, ref val) in &self.r1cs.a.entries {
-            if col == 0 && row < padded_size {
-                a_prime_0 += eq_r[row] * *val;
-            }
-        }
-        for &(row, col, ref val) in &self.r1cs.b.entries {
-            if col == 0 && row < padded_size {
-                b_prime_0 += eq_r[row] * *val;
-            }
-        }
-        for &(row, col, ref val) in &self.r1cs.c.entries {
-            if col == 0 && row < padded_size {
-                c_prime_0 += eq_r[row] * *val;
-            }
-        }
-
         let u = self.params.u;
-        (a_prime_0 * u, b_prime_0 * u, c_prime_0 * u)
+        let a0 = self.r1cs.a.project_columns(&eq_r, 0, 1, padded)[0];
+        let b0 = self.r1cs.b.project_columns(&eq_r, 0, 1, padded)[0];
+        let c0 = self.r1cs.c.project_columns(&eq_r, 0, 1, padded)[0];
+        (a0 * u, b0 * u, c0 * u)
     }
 
     /// Compute eq(τ, r)
@@ -469,7 +420,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) -> F {
         // The BlindFold verifier handles the final claim verification
         // after receiving witness and error contributions
-        unimplemented!(
+        unreachable!(
             "BlindFold Spartan verifier uses expected_claim() with explicit witness contributions"
         )
     }
@@ -558,8 +509,6 @@ impl<F: JoltField> BlindFoldInnerSumcheckProver<F> {
     }
 }
 
-/// Build the L_w polynomial: L_w[j] = ra·A'[ws+j] + rb·B'[ws+j] + rc·C'[ws+j]
-/// where A'[col] = Σ_row A[row,col]·eq(rx, row).
 fn build_L_w<F: JoltField>(
     r1cs: &VerifierR1CS<F>,
     rx: &[F::Challenge],
@@ -569,37 +518,20 @@ fn build_L_w<F: JoltField>(
     w_padded_len: usize,
 ) -> Vec<F> {
     let r: Vec<F> = rx.iter().map(|c| (*c).into()).collect();
-    let padded_size = r1cs.num_constraints.next_power_of_two();
+    let padded = r1cs.num_constraints.next_power_of_two();
     let eq_rx: Vec<F> = EqPolynomial::evals(&r);
 
-    let witness_start = 1;
+    let a_proj = r1cs.a.project_columns(&eq_rx, 1, w_padded_len, padded);
+    let b_proj = r1cs.b.project_columns(&eq_rx, 1, w_padded_len, padded);
+    let c_proj = r1cs.c.project_columns(&eq_rx, 1, w_padded_len, padded);
+
     let mut l_w = vec![F::zero(); w_padded_len];
-
-    for &(row, col, ref val) in &r1cs.a.entries {
-        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
-            l_w[col - witness_start] += ra * *val * eq_rx[row];
-        }
+    for j in 0..w_padded_len {
+        l_w[j] = ra * a_proj[j] + rb * b_proj[j] + rc * c_proj[j];
     }
-
-    for &(row, col, ref val) in &r1cs.b.entries {
-        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
-            l_w[col - witness_start] += rb * *val * eq_rx[row];
-        }
-    }
-
-    for &(row, col, ref val) in &r1cs.c.entries {
-        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
-            l_w[col - witness_start] += rc * *val * eq_rx[row];
-        }
-    }
-
     l_w
 }
 
-/// Evaluate L_w at point ry_w using sparse matrix entries directly.
-///
-/// L_w(ry_w) = Σ_(row,col,val) in {A,B,C} for witness cols:
-///   coeff · val · eq(rx, row) · eq(ry_w, col - ws)
 pub fn compute_L_w_at_ry<F: JoltField>(
     r1cs: &VerifierR1CS<F>,
     rx: &[F::Challenge],
@@ -610,34 +542,17 @@ pub fn compute_L_w_at_ry<F: JoltField>(
 ) -> F {
     let r: Vec<F> = rx.iter().map(|c| (*c).into()).collect();
     let ry: Vec<F> = ry_w.iter().map(|c| (*c).into()).collect();
-    let padded_size = r1cs.num_constraints.next_power_of_two();
-    let witness_start = 1;
-    let w_padded_len = 1usize << ry_w.len();
+    let padded = r1cs.num_constraints.next_power_of_two();
+    let w_len = 1usize << ry_w.len();
 
     let eq_rx: Vec<F> = EqPolynomial::evals(&r);
     let eq_ry: Vec<F> = EqPolynomial::evals(&ry);
 
-    let mut result = F::zero();
+    let a_val = r1cs.a.bilinear_eval(&eq_rx, &eq_ry, 1, w_len, padded);
+    let b_val = r1cs.b.bilinear_eval(&eq_rx, &eq_ry, 1, w_len, padded);
+    let c_val = r1cs.c.bilinear_eval(&eq_rx, &eq_ry, 1, w_len, padded);
 
-    for &(row, col, ref val) in &r1cs.a.entries {
-        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
-            result += ra * *val * eq_rx[row] * eq_ry[col - witness_start];
-        }
-    }
-
-    for &(row, col, ref val) in &r1cs.b.entries {
-        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
-            result += rb * *val * eq_rx[row] * eq_ry[col - witness_start];
-        }
-    }
-
-    for &(row, col, ref val) in &r1cs.c.entries {
-        if col >= witness_start && col < witness_start + w_padded_len && row < padded_size {
-            result += rc * *val * eq_rx[row] * eq_ry[col - witness_start];
-        }
-    }
-
-    result
+    ra * a_val + rb * b_val + rc * c_val
 }
 
 /// Map coefficient positions in the witness vector W (grid layout).
@@ -660,49 +575,16 @@ pub fn coefficient_positions<F: JoltField>(r1cs: &VerifierR1CS<F>) -> Vec<(usize
     positions
 }
 
-/// Compute Hyrax combined row: combined[k] = Σ_i eq(ry_row, i) · flat[i*C + k]
-///
-/// `flat` is the grid-layout vector (R' × C), `ry_row` has log2(R') variables.
 pub fn hyrax_combined_row<F: JoltField>(flat: &[F], hyrax_C: usize, ry_row: &[F]) -> Vec<F> {
-    let R = 1usize << ry_row.len();
-    let eq_row: Vec<F> = EqPolynomial::evals(ry_row);
-
-    let mut combined = vec![F::zero(); hyrax_C];
-    for i in 0..R {
-        let w: F = eq_row[i];
-        if w.is_zero() {
-            continue;
-        }
-        let base = i * hyrax_C;
-        for k in 0..hyrax_C {
-            if base + k < flat.len() {
-                combined[k] += w * flat[base + k];
-            }
-        }
-    }
-    combined
+    HyraxParams::combined_row_static(flat, hyrax_C, ry_row)
 }
 
-/// Evaluate W(ry_w) from a Hyrax combined row.
-///
-/// W(ry_w) = Σ_k combined_row[k] · eq(ry_col, k)
 pub fn hyrax_evaluate<F: JoltField>(combined_row: &[F], ry_col: &[F]) -> F {
-    let eq_col: Vec<F> = EqPolynomial::evals(ry_col);
-    combined_row
-        .iter()
-        .zip(eq_col.iter())
-        .map(|(c, e)| *c * *e)
-        .sum()
+    HyraxParams::evaluate(combined_row, ry_col)
 }
 
-/// Compute combined blinding: combined_blinding = Σ_i eq(ry_row, i) · row_blindings[i]
 pub fn hyrax_combined_blinding<F: JoltField>(row_blindings: &[F], ry_row: &[F]) -> F {
-    let eq_row: Vec<F> = EqPolynomial::evals(ry_row);
-    row_blindings
-        .iter()
-        .zip(eq_row.iter())
-        .map(|(b, e)| *b * *e)
-        .sum()
+    HyraxParams::combined_blinding(row_blindings, ry_row)
 }
 
 #[cfg(test)]

@@ -6,10 +6,9 @@
 use std::collections::HashSet;
 
 use super::r1cs::VerifierR1CS;
-use super::{OutputClaimConstraint, StageConfig, ValueSource};
+use super::{OutputClaimConstraint, StageConfig};
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
-use crate::poly::unipoly::CompressedUniPoly;
 
 /// Witness data for a single sumcheck round
 #[derive(Clone, Debug)]
@@ -48,47 +47,6 @@ impl<F: JoltField> RoundWitness<F> {
             result = result * x + *coeff;
         }
         result
-    }
-
-    /// Compute Horner intermediates for variable degree polynomial
-    ///
-    /// For g(X) = c0 + c1*X + c2*X^2 + ... + cd*X^d evaluated at r:
-    /// Using Horner's method: g(r) = c0 + r*(c1 + r*(c2 + ... + r*cd))
-    ///
-    /// For degree d >= 2, we compute d-1 intermediates:
-    /// - t[d-2] = c_{d-1} + r * c_d
-    /// - t[i-1] = c_i + r * t[i]  for i from d-2 down to 1
-    /// - g(r) = c0 + r * t[0]
-    pub fn compute_horner_intermediates(&self, r: F) -> (Vec<F>, F) {
-        let degree = self.coeffs.len() - 1;
-
-        if degree == 0 {
-            // Constant polynomial: g(r) = c0
-            return (vec![], self.coeffs[0]);
-        }
-
-        if degree == 1 {
-            // Linear: g(r) = c0 + c1*r (no intermediates)
-            let next_claim = self.coeffs[0] + r * self.coeffs[1];
-            return (vec![], next_claim);
-        }
-
-        // Degree >= 2: use Horner's method
-        // Build intermediates from highest degree down
-        let mut intermediates = vec![F::zero(); degree - 1];
-
-        // First intermediate: t[d-2] = c_{d-1} + r * c_d
-        intermediates[degree - 2] = self.coeffs[degree - 1] + r * self.coeffs[degree];
-
-        // Middle intermediates: t[i-1] = c_i + r * t[i] for i from d-2 down to 1
-        for i in (1..degree - 1).rev() {
-            intermediates[i - 1] = self.coeffs[i] + r * intermediates[i];
-        }
-
-        // Final evaluation: g(r) = c0 + r * t[0]
-        let next_claim = self.coeffs[0] + r * intermediates[0];
-
-        (intermediates, next_claim)
     }
 }
 
@@ -147,24 +105,19 @@ impl<F: JoltField> StageWitness<F> {
     }
 }
 
-/// Witness data for final output binding constraint.
-///
-/// Supports two modes:
-/// 1. Simple linear: uses batching_coefficients and evaluations
-/// 2. General constraint: uses challenge_values and opening_values
-#[derive(Clone, Debug, Default)]
-pub struct FinalOutputWitness<F> {
-    /// Batching coefficients αⱼ (public inputs, derived from transcript)
-    /// Used for simple linear constraints.
-    pub batching_coefficients: Vec<F>,
-    /// Expected polynomial evaluations yⱼ (witness variables).
-    pub evaluations: Vec<F>,
-    /// Challenge values for general constraints.
-    /// Layout: [batching_coeffs..., instance0_challenges..., instance1_challenges..., ...]
-    pub challenge_values: Vec<F>,
-    /// Opening values for general constraints.
-    /// Maps OpeningId to its evaluation value.
-    pub opening_values: Vec<F>,
+/// Witness data for final output or initial input binding constraint.
+#[derive(Clone, Debug)]
+pub enum FinalOutputWitness<F> {
+    /// Simple linear: final_claim = Σⱼ αⱼ · yⱼ
+    Linear {
+        batching_coefficients: Vec<F>,
+        evaluations: Vec<F>,
+    },
+    /// General sum-of-products constraint
+    General {
+        challenge_values: Vec<F>,
+        opening_values: Vec<F>,
+    },
 }
 
 /// Witness data for extra constraints appended after all stages.
@@ -181,37 +134,19 @@ pub struct ExtraConstraintWitness<F> {
 }
 
 impl<F: JoltField> FinalOutputWitness<F> {
-    pub fn new(batching_coefficients: Vec<F>, evaluations: Vec<F>) -> Self {
-        debug_assert_eq!(
-            batching_coefficients.len(),
-            evaluations.len(),
-            "Batching coefficients and evaluations must have same length"
-        );
-        Self {
+    pub fn linear(batching_coefficients: Vec<F>, evaluations: Vec<F>) -> Self {
+        debug_assert_eq!(batching_coefficients.len(), evaluations.len());
+        Self::Linear {
             batching_coefficients,
             evaluations,
-            challenge_values: Vec::new(),
-            opening_values: Vec::new(),
         }
     }
 
-    /// Create a general constraint witness with challenge and opening values.
-    pub fn new_general(challenge_values: Vec<F>, opening_values: Vec<F>) -> Self {
-        Self {
-            batching_coefficients: Vec::new(),
-            evaluations: Vec::new(),
+    pub fn general(challenge_values: Vec<F>, opening_values: Vec<F>) -> Self {
+        Self::General {
             challenge_values,
             opening_values,
         }
-    }
-
-    /// Compute the expected final claim: Σⱼ αⱼ · yⱼ
-    pub fn compute_expected_final_claim(&self) -> F {
-        self.batching_coefficients
-            .iter()
-            .zip(&self.evaluations)
-            .map(|(alpha, y)| *alpha * *y)
-            .sum()
     }
 }
 
@@ -279,207 +214,159 @@ impl<F: JoltField> BlindFoldWitness<F> {
     /// ```
     /// W_grid is R' × C: coefficient rows, then non-coefficient values.
     pub fn assign_with_u(&self, r1cs: &VerifierR1CS<F>, u: F) -> Vec<F> {
+        use super::layout::{compute_witness_layout, ConstraintKind, LayoutStep};
+
         let mut z = vec![F::zero(); r1cs.num_vars];
         z[0] = u;
 
         let hyrax_C = r1cs.hyrax.C;
         let hyrax_R_coeff = r1cs.hyrax.R_coeff;
-
-        // Witness starts at index 1 (right after u, no public inputs)
         let witness_start = 1;
-        // Non-coeff witness variables start after the coefficient grid
-        let mut witness_idx = witness_start + hyrax_R_coeff * hyrax_C;
-        let mut round_idx = 0usize;
+        let mut noncoeff_idx = witness_start + hyrax_R_coeff * hyrax_C;
 
+        let layout = compute_witness_layout(&r1cs.stage_configs, &r1cs.extra_constraints);
         let mut assigned_openings: HashSet<OpeningId> = HashSet::new();
-        let mut chain_idx = 0usize;
 
-        for (stage_idx, stage_witness) in self.stages.iter().enumerate() {
-            let config = &r1cs.stage_configs[stage_idx];
-            assert_eq!(
-                stage_witness.rounds.len(),
-                config.num_rounds,
-                "Stage {stage_idx} has wrong number of rounds"
-            );
+        for step in &layout {
+            match step {
+                LayoutStep::ConstantInitialClaim { .. } => {}
+                LayoutStep::InitialClaimVar { chain_idx } => {
+                    z[noncoeff_idx] = self.initial_claims[*chain_idx];
+                    noncoeff_idx += 1;
+                }
+                LayoutStep::ConstraintVars {
+                    constraint,
+                    new_opening_count,
+                    aux_var_count,
+                    kind,
+                    stage_idx,
+                } => {
+                    let witness_data = match kind {
+                        ConstraintKind::InitialInput => self.stages[*stage_idx]
+                            .initial_input
+                            .as_ref()
+                            .and_then(|w| match w {
+                                FinalOutputWitness::General {
+                                    opening_values,
+                                    challenge_values,
+                                } => Some((opening_values.as_slice(), challenge_values.as_slice())),
+                                _ => None,
+                            }),
+                        ConstraintKind::FinalOutput => self.stages[*stage_idx]
+                            .final_output
+                            .as_ref()
+                            .and_then(|w| match w {
+                                FinalOutputWitness::General {
+                                    opening_values,
+                                    challenge_values,
+                                } => Some((opening_values.as_slice(), challenge_values.as_slice())),
+                                _ => None,
+                            }),
+                    };
 
-            if stage_idx > 0 && config.starts_new_chain {
-                chain_idx += 1;
-            }
-
-            let is_chain_start = stage_idx == 0 || config.starts_new_chain;
-            if is_chain_start && config.has_initial_claim_var() {
-                z[witness_idx] = self.initial_claims[chain_idx];
-                witness_idx += 1;
-            }
-
-            // Initial input witness (opening vars + aux vars only, no challenge public inputs)
-            if let Some(ref ii_config) = config.initial_input {
-                if let Some(constraint) = &ii_config.constraint {
-                    let num_aux_vars = constraint.estimate_aux_var_count();
-
-                    if let Some(iw) = stage_witness.initial_input.as_ref() {
+                    if let Some((opening_values, challenge_values)) = witness_data {
                         for (opening_id, val) in
-                            constraint.required_openings.iter().zip(&iw.opening_values)
+                            constraint.required_openings.iter().zip(opening_values)
                         {
-                            if !assigned_openings.contains(opening_id) {
-                                z[witness_idx] = *val;
-                                witness_idx += 1;
-                                assigned_openings.insert(*opening_id);
+                            if assigned_openings.insert(*opening_id) {
+                                z[noncoeff_idx] = *val;
+                                noncoeff_idx += 1;
                             }
                         }
 
-                        let aux_values = Self::compute_aux_vars(
-                            constraint,
-                            &iw.opening_values,
-                            &iw.challenge_values,
-                        );
+                        let aux_values =
+                            Self::compute_aux_vars(constraint, opening_values, challenge_values);
+                        debug_assert_eq!(aux_values.len(), *aux_var_count);
                         for val in aux_values {
-                            z[witness_idx] = val;
-                            witness_idx += 1;
+                            z[noncoeff_idx] = val;
+                            noncoeff_idx += 1;
                         }
                     } else {
-                        let num_new_openings = constraint
-                            .required_openings
-                            .iter()
-                            .filter(|id| {
-                                if assigned_openings.contains(id) {
-                                    false
-                                } else {
-                                    assigned_openings.insert(**id);
-                                    true
-                                }
-                            })
-                            .count();
-                        witness_idx += num_new_openings + num_aux_vars;
+                        noncoeff_idx += new_opening_count + aux_var_count;
                     }
                 }
-            }
+                LayoutStep::CoeffRow {
+                    round_idx,
+                    num_coeffs,
+                    stage_idx,
+                    round_in_stage,
+                } => {
+                    let round_witness = &self.stages[*stage_idx].rounds[*round_in_stage];
+                    assert_eq!(round_witness.coeffs.len(), *num_coeffs);
 
-            // Round witnesses: coefficients to grid, next_claim to non-coeff section
-            for round_witness in &stage_witness.rounds {
-                assert_eq!(
-                    round_witness.coeffs.len(),
-                    config.poly_degree + 1,
-                    "Wrong number of coefficients"
-                );
-
-                for (k, coeff) in round_witness.coeffs.iter().enumerate() {
-                    z[witness_start + round_idx * hyrax_C + k] = *coeff;
-                }
-
-                let next_claim = round_witness.evaluate(round_witness.challenge);
-                z[witness_idx] = next_claim;
-                witness_idx += 1;
-
-                round_idx += 1;
-            }
-
-            // Final output witness
-            if let Some(ref fout) = config.final_output {
-                if let Some(exact_vars) = fout.exact_num_witness_vars {
-                    witness_idx += exact_vars;
-                } else if let Some(constraint) = &fout.constraint {
-                    let num_aux_vars = constraint.estimate_aux_var_count();
-                    let fout_witness = stage_witness.final_output.as_ref();
-
-                    if let Some(fw) = fout_witness {
-                        for (opening_id, val) in
-                            constraint.required_openings.iter().zip(&fw.opening_values)
-                        {
-                            if !assigned_openings.contains(opening_id) {
-                                z[witness_idx] = *val;
-                                witness_idx += 1;
-                                assigned_openings.insert(*opening_id);
-                            }
-                        }
-
-                        let aux_values = Self::compute_aux_vars(
-                            constraint,
-                            &fw.opening_values,
-                            &fw.challenge_values,
-                        );
-                        for val in aux_values {
-                            z[witness_idx] = val;
-                            witness_idx += 1;
-                        }
-                    } else {
-                        let num_new_openings = constraint
-                            .required_openings
-                            .iter()
-                            .filter(|id| {
-                                if assigned_openings.contains(id) {
-                                    false
-                                } else {
-                                    assigned_openings.insert(**id);
-                                    true
-                                }
-                            })
-                            .count();
-                        witness_idx += num_new_openings + num_aux_vars;
+                    for (k, coeff) in round_witness.coeffs.iter().enumerate() {
+                        z[witness_start + round_idx * hyrax_C + k] = *coeff;
                     }
-                } else {
-                    // Simple linear: evaluation values only (no batching coeffs, no accumulators)
-                    let fw = stage_witness
+                }
+                LayoutStep::NextClaim {
+                    stage_idx,
+                    round_in_stage,
+                } => {
+                    let round_witness = &self.stages[*stage_idx].rounds[*round_in_stage];
+                    let next_claim = round_witness.evaluate(round_witness.challenge);
+                    z[noncoeff_idx] = next_claim;
+                    noncoeff_idx += 1;
+                }
+                LayoutStep::LinearFinalOutput {
+                    num_evaluations,
+                    stage_idx,
+                } => {
+                    let fw = self.stages[*stage_idx]
                         .final_output
                         .as_ref()
-                        .expect("Stage has final_output config but witness has no final_output");
-                    assert_eq!(fw.evaluations.len(), fout.num_evaluations);
+                        .expect("Missing final_output witness for LinearFinalOutput step");
+                    let evaluations = match fw {
+                        FinalOutputWitness::Linear { evaluations, .. } => evaluations,
+                        _ => panic!("Expected Linear variant for simple final output"),
+                    };
+                    assert_eq!(evaluations.len(), *num_evaluations);
 
-                    for eval in &fw.evaluations {
-                        z[witness_idx] = *eval;
-                        witness_idx += 1;
+                    for eval in evaluations {
+                        z[noncoeff_idx] = *eval;
+                        noncoeff_idx += 1;
                     }
                 }
-            }
-        }
-
-        // Extra constraints: opening vars + output + aux vars + blinding (no challenge public inputs)
-        for (extra_idx, constraint) in r1cs.extra_constraints.iter().enumerate() {
-            let extra_witness = self.extra_constraints.get(extra_idx);
-            let num_aux_vars = constraint.estimate_aux_var_count();
-
-            if let Some(witness) = extra_witness {
-                for (opening_id, val) in constraint
-                    .required_openings
-                    .iter()
-                    .zip(&witness.opening_values)
-                {
-                    if !assigned_openings.contains(opening_id) {
-                        z[witness_idx] = *val;
-                        witness_idx += 1;
-                        assigned_openings.insert(*opening_id);
-                    }
+                LayoutStep::PlaceholderVars { num_vars } => {
+                    noncoeff_idx += num_vars;
                 }
-
-                z[witness_idx] = witness.output_value;
-                witness_idx += 1;
-
-                let aux_values = Self::compute_aux_vars(
+                LayoutStep::ExtraConstraintVars {
                     constraint,
-                    &witness.opening_values,
-                    &witness.challenge_values,
-                );
-                for val in aux_values {
-                    z[witness_idx] = val;
-                    witness_idx += 1;
-                }
-
-                z[witness_idx] = witness.blinding;
-                witness_idx += 1;
-            } else {
-                let num_new_openings = constraint
-                    .required_openings
-                    .iter()
-                    .filter(|id| {
-                        if assigned_openings.contains(id) {
-                            false
-                        } else {
-                            assigned_openings.insert(**id);
-                            true
+                    new_opening_count,
+                    aux_var_count,
+                    extra_idx,
+                } => {
+                    if let Some(witness) = self.extra_constraints.get(*extra_idx) {
+                        for (opening_id, val) in constraint
+                            .required_openings
+                            .iter()
+                            .zip(&witness.opening_values)
+                        {
+                            if assigned_openings.insert(*opening_id) {
+                                z[noncoeff_idx] = *val;
+                                noncoeff_idx += 1;
+                            }
                         }
-                    })
-                    .count();
-                witness_idx += num_new_openings + 1 + num_aux_vars + 1;
+
+                        z[noncoeff_idx] = witness.output_value;
+                        noncoeff_idx += 1;
+
+                        let aux_values = Self::compute_aux_vars(
+                            constraint,
+                            &witness.opening_values,
+                            &witness.challenge_values,
+                        );
+                        debug_assert_eq!(aux_values.len(), *aux_var_count);
+                        for val in aux_values {
+                            z[noncoeff_idx] = val;
+                            noncoeff_idx += 1;
+                        }
+
+                        z[noncoeff_idx] = witness.blinding;
+                        noncoeff_idx += 1;
+                    } else {
+                        noncoeff_idx += new_opening_count + 1 + aux_var_count + 1;
+                    }
+                }
             }
         }
 
@@ -553,68 +440,14 @@ impl<F: JoltField> BlindFoldWitness<F> {
         opening_values: &[F],
         challenge_values: &[F],
     ) -> Vec<F> {
-        // Build a map from OpeningId to value index
-        let opening_map: std::collections::HashMap<OpeningId, usize> = constraint
-            .required_openings
-            .iter()
-            .enumerate()
-            .map(|(i, id)| (*id, i))
-            .collect();
-
-        // Helper to resolve a ValueSource to a field element
-        let resolve = |vs: &ValueSource| -> F {
-            match vs {
-                ValueSource::Opening(id) => {
-                    let idx = *opening_map
-                        .get(id)
-                        .unwrap_or_else(|| panic!("Opening {id:?} not found in required_openings"));
-                    opening_values[idx]
-                }
-                ValueSource::Challenge(idx) => challenge_values[*idx],
-                ValueSource::Constant(val) => F::from_i128(*val),
-            }
-        };
-
+        let mut visitor = super::output_constraint::WitnessAuxVisitor::new(
+            constraint,
+            opening_values,
+            challenge_values,
+        );
         let mut aux_vars = Vec::new();
-
-        for term in &constraint.terms {
-            let coeff = resolve(&term.coeff);
-
-            if term.factors.is_empty() {
-                // No factors: aux = coeff * 1 = coeff
-                aux_vars.push(coeff);
-            } else if term.factors.len() == 1 {
-                // Single factor: aux = coeff * factor
-                let factor = resolve(&term.factors[0]);
-                aux_vars.push(coeff * factor);
-            } else {
-                // Multiple factors: chain multiplication
-                // aux0 = f0 * f1
-                let f0 = resolve(&term.factors[0]);
-                let f1 = resolve(&term.factors[1]);
-                let mut current_product = f0 * f1;
-                aux_vars.push(current_product);
-
-                // aux_i = aux_{i-1} * f_{i+1}
-                for factor in &term.factors[2..] {
-                    let f = resolve(factor);
-                    current_product *= f;
-                    aux_vars.push(current_product);
-                }
-
-                // final_aux = coeff * product
-                aux_vars.push(coeff * current_product);
-            }
-        }
-
+        constraint.visit(&mut visitor, &mut aux_vars);
         aux_vars
-    }
-}
-
-impl<F: JoltField> CompressedUniPoly<F> {
-    /// Get the compressed coefficients (c0, c2, c3, ...) excluding c1
-    pub fn get_compressed_coeffs(&self) -> &[F] {
-        &self.coeffs_except_linear_term
     }
 }
 

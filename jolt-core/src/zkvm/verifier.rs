@@ -11,7 +11,7 @@ use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::subprotocols::blindfold::{
     pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldVerifier,
-    BlindFoldVerifierInput, FinalOutputConfig, InputClaimConstraint, OutputClaimConstraint,
+    BlindFoldVerifierInput, ClaimBindingConfig, InputClaimConstraint, OutputClaimConstraint,
     StageConfig, ValueSource, VerifierR1CSBuilder,
 };
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
@@ -1141,7 +1141,7 @@ impl<
             if let Some(batched) = constraint {
                 let last_round_idx = last_round_indices[stage_idx];
                 stage_configs[last_round_idx].final_output =
-                    Some(FinalOutputConfig::with_constraint(batched.clone()));
+                    Some(ClaimBindingConfig::with_constraint(batched.clone()));
             }
         }
 
@@ -1154,7 +1154,7 @@ impl<
         for (i, constraint) in uniskip_constraints.iter().enumerate() {
             let idx = uniskip_indices[i];
             stage_configs[idx].initial_input =
-                Some(FinalOutputConfig::with_constraint(constraint.clone()));
+                Some(ClaimBindingConfig::with_constraint(constraint.clone()));
         }
 
         // Add initial_input configurations for regular first rounds (all 7 stages)
@@ -1171,7 +1171,7 @@ impl<
         for (i, constraint) in regular_constraints.iter().enumerate() {
             let idx = regular_first_round_indices[i];
             stage_configs[idx].initial_input =
-                Some(FinalOutputConfig::with_constraint(constraint.clone()));
+                Some(ClaimBindingConfig::with_constraint(constraint.clone()));
         }
 
         let extra_constraint_terms: Vec<(ValueSource, ValueSource)> = stage8_data

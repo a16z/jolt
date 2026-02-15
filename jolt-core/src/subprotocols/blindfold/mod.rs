@@ -13,6 +13,7 @@
 //! - [`BlindFoldWitness`]: Witness assignment for the verifier circuit
 
 mod folding;
+pub(crate) mod layout;
 mod output_constraint;
 mod protocol;
 mod r1cs;
@@ -40,6 +41,7 @@ pub use witness::{
 };
 
 use crate::field::JoltField;
+use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::math::Math;
 
 /// Values baked into R1CS matrix coefficients instead of being public inputs in Z.
@@ -86,19 +88,29 @@ impl<F: JoltField> BakedPublicInputs<F> {
         for (stage_idx, stage) in witness.stages.iter().enumerate() {
             let config = &stage_configs[stage_idx];
 
-            if let Some(ref _ii_config) = config.initial_input {
-                if let Some(ref iw) = stage.initial_input {
-                    input_constraint_challenges.extend_from_slice(&iw.challenge_values);
+            if config.initial_input.is_some() {
+                if let Some(witness::FinalOutputWitness::General {
+                    challenge_values, ..
+                }) = &stage.initial_input
+                {
+                    input_constraint_challenges.extend_from_slice(challenge_values);
                 }
             }
 
             if let Some(ref fout) = config.final_output {
                 if fout.constraint.is_some() {
-                    if let Some(ref fw) = stage.final_output {
-                        output_constraint_challenges.extend_from_slice(&fw.challenge_values);
+                    if let Some(witness::FinalOutputWitness::General {
+                        challenge_values, ..
+                    }) = &stage.final_output
+                    {
+                        output_constraint_challenges.extend_from_slice(challenge_values);
                     }
-                } else if let Some(ref fw) = stage.final_output {
-                    batching_coefficients.extend_from_slice(&fw.batching_coefficients);
+                } else if let Some(witness::FinalOutputWitness::Linear {
+                    batching_coefficients: coeffs,
+                    ..
+                }) = &stage.final_output
+                {
+                    batching_coefficients.extend_from_slice(coeffs);
                 }
             }
         }
@@ -165,6 +177,51 @@ impl HyraxParams {
     pub fn noncoeff_rows(&self) -> usize {
         self.noncoeff_count.div_ceil(self.C)
     }
+
+    /// combined[k] = Σ_i eq(ry_row, i) · flat[i*C + k]
+    pub fn combined_row<F: JoltField>(&self, flat: &[F], ry_row: &[F]) -> Vec<F> {
+        Self::combined_row_static(flat, self.C, ry_row)
+    }
+
+    pub fn combined_row_static<F: JoltField>(flat: &[F], hyrax_C: usize, ry_row: &[F]) -> Vec<F> {
+        let R = 1usize << ry_row.len();
+        let eq_row: Vec<F> = EqPolynomial::evals(ry_row);
+
+        let mut combined = vec![F::zero(); hyrax_C];
+        for i in 0..R {
+            let w: F = eq_row[i];
+            if w.is_zero() {
+                continue;
+            }
+            let base = i * hyrax_C;
+            for k in 0..hyrax_C {
+                if base + k < flat.len() {
+                    combined[k] += w * flat[base + k];
+                }
+            }
+        }
+        combined
+    }
+
+    /// W(ry_w) = Σ_k combined_row[k] · eq(ry_col, k)
+    pub fn evaluate<F: JoltField>(combined_row: &[F], ry_col: &[F]) -> F {
+        let eq_col: Vec<F> = EqPolynomial::evals(ry_col);
+        combined_row
+            .iter()
+            .zip(eq_col.iter())
+            .map(|(c, e)| *c * *e)
+            .sum()
+    }
+
+    /// combined_blinding = Σ_i eq(ry_row, i) · row_blindings[i]
+    pub fn combined_blinding<F: JoltField>(row_blindings: &[F], ry_row: &[F]) -> F {
+        let eq_row: Vec<F> = EqPolynomial::evals(ry_row);
+        row_blindings
+            .iter()
+            .zip(eq_row.iter())
+            .map(|(b, e)| *b * *e)
+            .sum()
+    }
 }
 
 /// Compute Hyrax grid parameters from stage configs.
@@ -208,7 +265,7 @@ pub fn pedersen_generator_count_for_r1cs<F: JoltField>(r1cs: &VerifierR1CS<F>) -
 /// 1. Simple linear: final_claim = Σⱼ αⱼ · yⱼ (legacy, num_evaluations only)
 /// 2. General sum-of-products: output = Σᵢ coeffᵢ * ∏ⱼ factorᵢⱼ (uses constraint)
 #[derive(Clone, Debug, Default)]
-pub struct FinalOutputConfig {
+pub struct ClaimBindingConfig {
     /// Number of batched polynomial evaluations in this final constraint.
     /// Used for simple linear constraints. Each evaluation yⱼ is a witness variable.
     pub num_evaluations: usize,
@@ -223,7 +280,7 @@ pub struct FinalOutputConfig {
     pub exact_num_witness_vars: Option<usize>,
 }
 
-impl FinalOutputConfig {
+impl ClaimBindingConfig {
     pub fn new(num_evaluations: usize) -> Self {
         Self {
             num_evaluations,
@@ -271,11 +328,11 @@ pub struct StageConfig {
     pub uniskip_power_sums: Option<Vec<i128>>,
     /// Final output binding configuration.
     /// If set, adds constraint at end of this stage's chain: final_claim = Σⱼ αⱼ · yⱼ
-    pub final_output: Option<FinalOutputConfig>,
+    pub final_output: Option<ClaimBindingConfig>,
     /// Initial input binding configuration.
     /// If set, adds constraint at start of this stage: initial_claim = f(openings, challenges)
     /// Verifies that the input claim is correctly derived from previous sumcheck openings.
-    pub initial_input: Option<FinalOutputConfig>,
+    pub initial_input: Option<ClaimBindingConfig>,
 }
 
 impl StageConfig {
@@ -330,14 +387,14 @@ impl StageConfig {
     /// Set final output binding for this stage.
     /// Adds constraint: final_claim = Σⱼ αⱼ · yⱼ at end of this stage's chain.
     pub fn with_final_output(mut self, num_evaluations: usize) -> Self {
-        self.final_output = Some(FinalOutputConfig::new(num_evaluations));
+        self.final_output = Some(ClaimBindingConfig::new(num_evaluations));
         self
     }
 
     /// Set final output binding with a general sum-of-products constraint.
     /// The constraint describes: output = Σᵢ coeffᵢ * ∏ⱼ factorᵢⱼ
     pub fn with_constraint(mut self, constraint: OutputClaimConstraint) -> Self {
-        self.final_output = Some(FinalOutputConfig::with_constraint(constraint));
+        self.final_output = Some(ClaimBindingConfig::with_constraint(constraint));
         self
     }
 
@@ -345,7 +402,7 @@ impl StageConfig {
     /// The constraint describes: input_claim = Σᵢ coeffᵢ * ∏ⱼ factorᵢⱼ
     /// Verifies input claim is correctly derived from previous sumcheck openings.
     pub fn with_input_constraint(mut self, constraint: InputClaimConstraint) -> Self {
-        self.initial_input = Some(FinalOutputConfig::with_constraint(constraint));
+        self.initial_input = Some(ClaimBindingConfig::with_constraint(constraint));
         self
     }
 

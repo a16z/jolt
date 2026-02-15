@@ -1433,7 +1433,7 @@ impl<
                     .map(|id| self.opening_accumulator.get_opening(*id))
                     .collect();
                 let initial_input =
-                    FinalOutputWitness::new_general(input_challenge_values, input_opening_values);
+                    FinalOutputWitness::general(input_challenge_values, input_opening_values);
 
                 // Uni-skip config with its input constraint
                 let config = if stage_idx == 0 {
@@ -1516,7 +1516,7 @@ impl<
                         .collect();
 
                     let initial_input =
-                        FinalOutputWitness::new_general(challenge_values, opening_values);
+                        FinalOutputWitness::general(challenge_values, opening_values);
                     let config_with_input = config.with_input_constraint(batched_constraint);
                     (config_with_input, Some(initial_input))
                 } else {
@@ -1543,7 +1543,7 @@ impl<
                             .collect();
 
                         let final_output =
-                            FinalOutputWitness::new_general(challenge_values, opening_values);
+                            FinalOutputWitness::general(challenge_values, opening_values);
                         let config_with_fout = config.with_constraint(batched_constraint);
                         (config_with_fout, Some(final_output))
                     } else {
