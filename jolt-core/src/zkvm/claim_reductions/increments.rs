@@ -318,7 +318,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let IncClaimReductionPhase::Phase2(state) = &self.phase else {
@@ -332,14 +331,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let rd_inc_claim = state.rd_inc.final_sumcheck_claim();
 
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RamInc,
             SumcheckId::IncClaimReduction,
             opening_point.r.clone(),
             ram_inc_claim,
         );
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RdInc,
             SumcheckId::IncClaimReduction,
             opening_point.r,
@@ -770,20 +767,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RamInc,
             SumcheckId::IncClaimReduction,
             opening_point.r.clone(),
         );
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RdInc,
             SumcheckId::IncClaimReduction,
             opening_point.r,

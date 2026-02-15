@@ -47,11 +47,10 @@ pub trait LinearSumcheckStage<F: JoltField>: Sized + MaybeAllocative + Send + Sy
 
     fn ingest_challenge(&mut self, shared: &mut Self::Shared, r: F::Challenge, round: usize);
 
-    fn cache_openings<T: Transcript>(
+    fn cache_openings(
         &self,
         shared: &Self::Shared,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     );
 }
@@ -193,13 +192,11 @@ where
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         self.linear.as_ref().expect("no linear").cache_openings(
             &self.shared,
             accumulator,
-            transcript,
             sumcheck_challenges,
         );
     }

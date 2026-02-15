@@ -314,7 +314,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProductVirtua
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -322,7 +321,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProductVirtua
         let claim = self.uni_poly.as_ref().unwrap().evaluate(&opening_point[0]);
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanProductVirtualization,
             opening_point,
@@ -368,13 +366,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         debug_assert_eq!(opening_point.len(), 1);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanProductVirtualization,
             opening_point,
@@ -798,14 +794,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
         let claims = ProductVirtualEval::compute_claimed_factors::<F>(&self.trace, &r_cycle);
         for (poly, claim) in zip(PRODUCT_UNIQUE_FACTOR_VIRTUALS, claims) {
             accumulator.append_virtual(
-                transcript,
                 poly,
                 SumcheckId::SpartanProductVirtualization,
                 r_cycle.clone(),
@@ -932,13 +926,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         for vp in PRODUCT_UNIQUE_FACTOR_VIRTUALS.iter() {
             accumulator.append_virtual(
-                transcript,
                 *vp,
                 SumcheckId::SpartanProductVirtualization,
                 opening_point.clone(),

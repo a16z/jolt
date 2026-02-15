@@ -180,11 +180,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamHammingWeight,
             SumcheckId::RamHammingBooleanity,
             self.params.normalize_opening_point(sumcheck_challenges),
@@ -273,11 +271,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamHammingWeight,
             SumcheckId::RamHammingBooleanity,
             self.params.normalize_opening_point(sumcheck_challenges),

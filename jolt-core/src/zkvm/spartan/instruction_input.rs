@@ -561,61 +561,52 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
             self.left_is_rs1_poly.final_sumcheck_claim(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs1Value,
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
             self.rs1_value_poly.final_sumcheck_claim(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
             self.left_is_pc_poly.final_sumcheck_claim(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
             self.unexpanded_pc_poly.final_sumcheck_claim(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
             self.right_is_rs2_poly.final_sumcheck_claim(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs2Value,
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
             self.rs2_value_poly.final_sumcheck_claim(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
             self.right_is_imm_poly.final_sumcheck_claim(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Imm,
             SumcheckId::InstructionInputVirtualization,
             r,
@@ -753,54 +744,45 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs1Value,
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs2Value,
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Imm,
             SumcheckId::InstructionInputVirtualization,
             r,

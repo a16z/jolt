@@ -287,7 +287,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
@@ -310,7 +309,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
                 }
             }
             accumulator.append_sparse(
-                transcript,
                 vec![CommittedPolynomial::InstructionRa(i)],
                 SumcheckId::InstructionRaVirtualization,
                 r_address,
@@ -397,7 +395,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
@@ -412,7 +409,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
             let opening_point = [r_address.as_slice(), r_cycle.r.as_slice()].concat();
 
             accumulator.append_sparse(
-                transcript,
                 vec![CommittedPolynomial::InstructionRa(i)],
                 SumcheckId::InstructionRaVirtualization,
                 opening_point,

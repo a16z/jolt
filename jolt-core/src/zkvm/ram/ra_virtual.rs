@@ -258,7 +258,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaVirtualS
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle_final = self.params.normalize_opening_point(sumcheck_challenges);
@@ -267,7 +266,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaVirtualS
         for i in 0..self.params.d {
             let claim = self.ra_i_polys[i].final_sumcheck_claim();
             accumulator.append_sparse(
-                transcript,
                 vec![CommittedPolynomial::RamRa(i)],
                 SumcheckId::RamRaVirtualization,
                 self.params.r_address_chunks[i].clone(),
@@ -334,7 +332,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle_final = self.params.normalize_opening_point(sumcheck_challenges);
@@ -343,7 +340,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         for i in 0..self.params.d {
             let opening_point = [&*self.params.r_address_chunks[i], &*r_cycle_final.r].concat();
             accumulator.append_sparse(
-                transcript,
                 vec![CommittedPolynomial::RamRa(i)],
                 SumcheckId::RamRaVirtualization,
                 opening_point,

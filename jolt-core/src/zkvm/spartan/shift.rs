@@ -325,7 +325,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let ShiftSumcheckPhase::Phase2(state) = &self.phase else {
@@ -340,35 +339,30 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
 
         let opening_point = normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
             unexpanded_pc_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::PC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
             pc_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
             SumcheckId::SpartanShift,
             opening_point.clone(),
             is_virtual_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
             SumcheckId::SpartanShift,
             opening_point.clone(),
             is_first_in_sequence_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
             opening_point,
@@ -479,36 +473,30 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::PC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
             opening_point,

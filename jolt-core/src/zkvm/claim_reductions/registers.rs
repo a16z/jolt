@@ -234,7 +234,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let RegistersClaimReductionPhase::Phase2(state) = &self.phase else {
@@ -249,21 +248,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let rs2_read_value_claim = state.rs2_read_value_poly.final_sumcheck_claim();
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RdWriteValue,
             SumcheckId::RegistersClaimReduction,
             opening_point.clone(),
             rd_write_value_claim,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs1Value,
             SumcheckId::RegistersClaimReduction,
             opening_point.clone(),
             rs1_read_value_claim,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs2Value,
             SumcheckId::RegistersClaimReduction,
             opening_point,
@@ -552,26 +548,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RdWriteValue,
             SumcheckId::RegistersClaimReduction,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs1Value,
             SumcheckId::RegistersClaimReduction,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs2Value,
             SumcheckId::RegistersClaimReduction,
             opening_point,

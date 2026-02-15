@@ -56,7 +56,6 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     );
 

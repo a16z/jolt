@@ -580,7 +580,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -598,13 +597,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
 
             match self.params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
                     opening_point.clone(),
                     c_mid,
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
                     opening_point.clone(),
                     c_mid,
@@ -617,13 +614,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
             let advice_claim = self.advice_poly.final_sumcheck_claim();
             match self.params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReduction,
                     opening_point,
                     advice_claim,
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReduction,
                     opening_point,
                     advice_claim,
@@ -737,7 +732,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let mut params = self.params.borrow_mut();
@@ -745,12 +739,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             let opening_point = params.normalize_opening_point(sumcheck_challenges);
             match params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
                     opening_point.clone(),
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
                     opening_point.clone(),
                 ),
@@ -764,16 +756,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         {
             let opening_point = params.normalize_opening_point(sumcheck_challenges);
             match params.kind {
-                AdviceKind::Trusted => accumulator.append_trusted_advice(
-                    transcript,
-                    SumcheckId::AdviceClaimReduction,
-                    opening_point,
-                ),
-                AdviceKind::Untrusted => accumulator.append_untrusted_advice(
-                    transcript,
-                    SumcheckId::AdviceClaimReduction,
-                    opening_point,
-                ),
+                AdviceKind::Trusted => accumulator
+                    .append_trusted_advice(SumcheckId::AdviceClaimReduction, opening_point),
+                AdviceKind::Untrusted => accumulator
+                    .append_untrusted_advice(SumcheckId::AdviceClaimReduction, opening_point),
             }
         }
     }

@@ -21,7 +21,6 @@ use super::{
 };
 use crate::{
     field::JoltField,
-    transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -453,9 +452,8 @@ where
     /// The given `polynomial` is opened at `opening_point`, yielding the claimed
     /// evaluation `claim`.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_dense")]
-    pub fn append_dense<T: Transcript>(
+    pub fn append_dense(
         &mut self,
-        _transcript: &mut T,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
@@ -472,9 +470,8 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_sparse")]
-    pub fn append_sparse<T: Transcript>(
+    pub fn append_sparse(
         &mut self,
-        _transcript: &mut T,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
         r_address: Vec<F::Challenge>,
@@ -492,9 +489,8 @@ where
         }
     }
 
-    pub fn append_virtual<T: Transcript>(
+    pub fn append_virtual(
         &mut self,
-        _transcript: &mut T,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
@@ -518,9 +514,8 @@ where
             ));
     }
 
-    pub fn append_untrusted_advice<T: Transcript>(
+    pub fn append_untrusted_advice(
         &mut self,
-        _transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
@@ -531,9 +526,8 @@ where
         );
     }
 
-    pub fn append_trusted_advice<T: Transcript>(
+    pub fn append_trusted_advice(
         &mut self,
-        _transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
@@ -640,9 +634,8 @@ where
         self.prover_opening_accumulator = Some(prover_openings);
     }
 
-    pub fn append_dense<T: Transcript>(
+    pub fn append_dense(
         &mut self,
-        _transcript: &mut T,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
@@ -662,9 +655,8 @@ where
         );
     }
 
-    pub fn append_sparse<T: Transcript>(
+    pub fn append_sparse(
         &mut self,
-        _transcript: &mut T,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
@@ -686,9 +678,8 @@ where
         }
     }
 
-    pub fn append_virtual<T: Transcript>(
+    pub fn append_virtual(
         &mut self,
-        _transcript: &mut T,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
@@ -702,9 +693,8 @@ where
         self.openings.insert(key, (opening_point.clone(), claim));
     }
 
-    pub fn append_untrusted_advice<T: Transcript>(
+    pub fn append_untrusted_advice(
         &mut self,
-        _transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
@@ -717,9 +707,8 @@ where
         self.openings.insert(key, (opening_point.clone(), claim));
     }
 
-    pub fn append_trusted_advice<T: Transcript>(
+    pub fn append_trusted_advice(
         &mut self,
-        _transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {

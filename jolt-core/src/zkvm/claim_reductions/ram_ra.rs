@@ -155,7 +155,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let RamRaClaimReductionPhase::PhaseCycle2(state) = &self.phase else {
@@ -178,7 +177,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let ra_claim_reduced = state.H_prime.final_sumcheck_claim();
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamRaClaimReduction,
             opening_point,
@@ -1164,7 +1162,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         // Cache the reduced RA opening point for RA virtualization
@@ -1180,7 +1177,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         );
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamRaClaimReduction,
             opening_point,

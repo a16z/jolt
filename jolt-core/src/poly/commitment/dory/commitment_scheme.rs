@@ -20,14 +20,10 @@ use crate::{
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
-#[cfg(feature = "zk")]
-use ark_serialize::CanonicalSerialize;
 use dory::primitives::{
     arithmetic::{Group, PairingCurve},
     poly::Polynomial,
 };
-#[cfg(feature = "zk")]
-use dory::ZK;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use rayon::prelude::*;
@@ -96,8 +92,7 @@ pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve, ProofTranscript: Trans
     transcript.append_scalars(b"dory_opening_point", &point_scalars);
 
     let mut bytes = Vec::new();
-    y_com
-        .serialize_compressed(&mut bytes)
+    ark_serialize::CanonicalSerialize::serialize_compressed(y_com, &mut bytes)
         .expect("serialization");
     transcript.append_bytes(b"dory_eval_commitment", &bytes);
 }
@@ -207,7 +202,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         #[cfg(feature = "zk")]
         let (proof, y_blinding) =
-            dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _, ZK, _>(
+            dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _, dory::ZK, _>(
                 poly,
                 &ark_point,
                 row_commitments,

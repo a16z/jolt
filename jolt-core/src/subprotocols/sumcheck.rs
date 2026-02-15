@@ -174,7 +174,7 @@ impl BatchedSumcheck {
 
             // Cache polynomial opening claims, to be proven using either an
             // opening proof or sumcheck (in the case of virtual polynomials).
-            sumcheck.cache_openings(opening_accumulator, transcript, r_slice);
+            sumcheck.cache_openings(opening_accumulator, r_slice);
         }
 
         (
@@ -331,7 +331,7 @@ impl BatchedSumcheck {
             let num_rounds = sumcheck.num_rounds();
             let offset = sumcheck.round_offset(max_num_rounds);
             let r_slice = &r_sumcheck[offset..offset + num_rounds];
-            sumcheck.cache_openings(opening_accumulator, transcript, r_slice);
+            sumcheck.cache_openings(opening_accumulator, r_slice);
         }
 
         // Collect output constraints and challenge values from each sumcheck instance
@@ -455,7 +455,7 @@ impl BatchedSumcheck {
 
                 // Cache polynomial opening claims, to be proven using either an
                 // opening proof or sumcheck (in the case of virtual polynomials).
-                sumcheck.cache_openings(opening_accumulator, transcript, r_slice);
+                sumcheck.cache_openings(opening_accumulator, r_slice);
                 let claim = sumcheck.expected_output_claim(opening_accumulator, r_slice);
 
                 claim * coeff
@@ -516,7 +516,7 @@ impl BatchedSumcheck {
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
                 let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
-                sumcheck.cache_openings(opening_accumulator, transcript, r_slice);
+                sumcheck.cache_openings(opening_accumulator, r_slice);
                 let claim = sumcheck.expected_output_claim(opening_accumulator, r_slice);
                 claim * coeff
             })

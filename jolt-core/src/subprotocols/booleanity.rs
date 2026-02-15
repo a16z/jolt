@@ -505,7 +505,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -518,7 +517,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         // All polynomials share the same opening point (r_address, r_cycle)
         // Use a single SumcheckId for all
         accumulator.append_sparse(
-            transcript,
             self.params.polynomial_types.clone(),
             SumcheckId::Booleanity,
             opening_point.r[..self.params.log_k_chunk].to_vec(),
@@ -583,12 +581,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityS
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_sparse(
-            transcript,
             self.params.polynomial_types.clone(),
             SumcheckId::Booleanity,
             opening_point.r,

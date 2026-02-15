@@ -254,7 +254,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let InstructionLookupsClaimReductionPhase::Phase2(state) = &self.phase else {
@@ -269,21 +268,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let right_lookup_operand_claim = state.right_lookup_operand_poly.final_sumcheck_claim();
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
             opening_point.clone(),
             lookup_output_claim,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::InstructionClaimReduction,
             opening_point.clone(),
             left_lookup_operand_claim,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
             opening_point,
@@ -581,26 +577,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::InstructionClaimReduction,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
             opening_point,

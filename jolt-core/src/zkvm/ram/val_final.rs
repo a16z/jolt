@@ -324,7 +324,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValFinalSumch
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle_prime = self.params.normalize_opening_point(sumcheck_challenges);
@@ -337,14 +336,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValFinalSumch
         let wa_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle_prime.r].concat());
 
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RamInc,
             SumcheckId::RamValFinalEvaluation,
             r_cycle_prime.r,
             self.inc.final_sumcheck_claim(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamValFinalEvaluation,
             wa_opening_point,
@@ -411,7 +408,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ValFinalSum
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let r_cycle_prime = self.params.normalize_opening_point(sumcheck_challenges);
@@ -424,13 +420,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ValFinalSum
         let wa_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle_prime.r].concat());
 
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RamInc,
             SumcheckId::RamValFinalEvaluation,
             r_cycle_prime.r,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamValFinalEvaluation,
             wa_opening_point,
