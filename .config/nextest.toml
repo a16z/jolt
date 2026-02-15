@@ -1,0 +1,9 @@
+[test-groups]
+# Dory tests mutate global state and use #[serial] from serial_test, but that
+# only serializes within a single process. Nextest runs each test in its own
+# process, so we use a test group to enforce serial execution instead.
+dory = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'test(dory)'
+test-group = 'dory'

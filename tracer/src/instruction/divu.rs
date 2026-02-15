@@ -1,5 +1,5 @@
 use crate::instruction::{
-    addi::ADDI, virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
+    addi::ADDI, sub::SUB, virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
 };
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
@@ -11,9 +11,8 @@ use crate::{
 };
 
 use super::{
-    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ, virtual_assert_lte::VirtualAssertLTE,
-    virtual_assert_valid_div0::VirtualAssertValidDiv0,
+    format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
+    virtual_assert_lte::VirtualAssertLTE, virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder, Cycle,
     Instruction, RISCVInstruction, RISCVTrace,
 };
@@ -56,16 +55,10 @@ impl RISCVTrace for DIVU {
                 Xlen::Bit64 => x / y,
             }
         };
-        let remainder = if y == 0 { x } else { x - quotient * y };
 
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient;
-        } else {
-            panic!("Expected Advice instruction");
-        }
-        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
-            instr.advice = remainder;
         } else {
             panic!("Expected Advice instruction");
         }
@@ -78,9 +71,9 @@ impl RISCVTrace for DIVU {
 
     /// DIVU performs unsigned division using untrusted oracle advice.
     ///
-    /// The zkVM cannot directly compute division, so we receive the quotient and remainder
+    /// The zkVM cannot directly compute division, so we receive the quotient
     /// as advice from an untrusted oracle, then verify the correctness using constraints:
-    /// 1. dividend = quotient × divisor + remainder
+    /// 1. remainder = dividend - quotient × divisor
     /// 2. remainder < divisor (unsigned comparison)
     /// 3. quotient × divisor does not overflow
     ///
@@ -91,42 +84,25 @@ impl RISCVTrace for DIVU {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let a0 = self.operands.rs1; // dividend
-        let a1 = self.operands.rs2; // divisor
-        let a2 = allocator.allocate(); // quotient (from oracle)
-        let a3 = allocator.allocate(); // remainder (from oracle)
-        let t0 = allocator.allocate(); // temporary for multiplication
-        let t1 = allocator.allocate(); // temporary for addition
+        let v0 = allocator.allocate(); // quotient (from oracle)
+        let v1 = allocator.allocate(); // temporary
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-
-        // Get untrusted advice from oracle
-        asm.emit_j::<VirtualAdvice>(*a2, 0); // quotient
-        asm.emit_j::<VirtualAdvice>(*a3, 0); // remainder
-
-        // Handle special case: division by zero
-        asm.emit_b::<VirtualAssertValidDiv0>(a1, *a2, 0);
-
+        // Get quotient as untrusted advice from oracle
+        asm.emit_j::<VirtualAdvice>(*v0, 0);
+        // Verify divisor == 0 implies quotient == uXX::MAX
+        asm.emit_b::<VirtualAssertValidDiv0>(self.operands.rs2, *v0, 0);
         // Verify no overflow: quotient × divisor must not overflow
-        asm.emit_b::<VirtualAssertMulUNoOverflow>(*a2, a1, 0);
-
+        asm.emit_b::<VirtualAssertMulUNoOverflow>(*v0, self.operands.rs2, 0);
         // Compute quotient × divisor
-        asm.emit_r::<MUL>(*t0, *a2, a1);
-
-        // Verify: dividend = quotient × divisor + remainder
-        asm.emit_r::<ADD>(*t1, *t0, *a3);
-
-        // Verify:  quotient × divisor + remainder does not overflow
-        // addUnoOverflow(rd, rs1, rs2) = LTE(rd, rs1) & LTE(rd, rs2)
-        asm.emit_b::<VirtualAssertLTE>(*t0, *t1, 0);
-        asm.emit_b::<VirtualAssertLTE>(*a3, *t1, 0);
-
-        asm.emit_b::<VirtualAssertEQ>(*t1, a0, 0);
-
-        // Verify: remainder < divisor (unsigned)
-        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, a1, 0);
-
+        asm.emit_r::<MUL>(*v1, *v0, self.operands.rs2);
+        // Verify: quotient × divisor <= dividend
+        asm.emit_b::<VirtualAssertLTE>(*v1, self.operands.rs1, 0);
+        // Compute remainder = dividend - quotient × divisor
+        asm.emit_r::<SUB>(*v1, self.operands.rs1, *v1);
+        // Verify: divisor == 0 || remainder < divisor (unsigned)
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*v1, self.operands.rs2, 0);
         // Move quotient to destination register
-        asm.emit_i::<ADDI>(self.operands.rd, *a2, 0);
+        asm.emit_i::<ADDI>(self.operands.rd, *v0, 0);
         asm.finalize()
     }
 }

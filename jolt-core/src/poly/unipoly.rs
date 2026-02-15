@@ -4,7 +4,6 @@ use std::iter::zip;
 use std::ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
 use crate::poly::lagrange_poly::LagrangeHelper;
-use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use allocative::Allocative;
 use ark_serialize::*;
@@ -462,26 +461,6 @@ impl<F: JoltField> CompressedUniPoly<F> {
 
     pub fn degree(&self) -> usize {
         self.coeffs_except_linear_term.len()
-    }
-}
-
-impl<F: JoltField> AppendToTranscript for UniPoly<F> {
-    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
-        transcript.append_message(b"UncompressedUniPoly_begin");
-        for i in 0..self.coeffs.len() {
-            transcript.append_scalar(&self.coeffs[i]);
-        }
-        transcript.append_message(b"UncompressedUniPoly_end");
-    }
-}
-
-impl<F: JoltField> AppendToTranscript for CompressedUniPoly<F> {
-    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
-        transcript.append_message(b"UniPoly_begin");
-        for i in 0..self.coeffs_except_linear_term.len() {
-            transcript.append_scalar(&self.coeffs_except_linear_term[i]);
-        }
-        transcript.append_message(b"UniPoly_end");
     }
 }
 

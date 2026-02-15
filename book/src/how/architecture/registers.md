@@ -5,6 +5,29 @@ Jolt proves the correctness of register updates using the [Twist](../twist-shout
 In this Twist instance, $K = 64$ because we have 32 RISC-V registers and 32 [virtual](./emulation.md#virtual-instructions-and-sequences) registers.
 This is small enough that we can use $d = 1$.
 
+### Virtual register layout
+
+The 32 virtual registers (registers 32--63) are partitioned into three regions:
+
+| Register(s) | Name | Purpose |
+|-------------|------|---------|
+| 32 | `reservation_w` | Reservation address for `LR.W`/`SC.W` |
+| 33 | `reservation_d` | Reservation address for `LR.D`/`SC.D` |
+| 34 | `mtvec` | Machine trap-vector base address (CSR 0x305) |
+| 35 | `mscratch` | Machine scratch register (CSR 0x340) |
+| 36 | `mepc` | Machine exception program counter (CSR 0x341) |
+| 37 | `mcause` | Machine trap cause (CSR 0x342) |
+| 38 | `mtval` | Machine trap value (CSR 0x343) |
+| 39 | `mstatus` | Machine status (CSR 0x300) |
+| 40--46 | *(instruction)* | Temporary registers for virtual sequences, allocated by `allocate()` |
+| 47--63 | *(inline)* | Temporary registers for [inline](../optimizations/inlines.md) sequences, allocated by `allocate_for_inline()` |
+
+**Reserved registers** (32--39) are persistent: they retain their values across instructions and are never handed out by the allocator. The two reservation registers are used by the [LR/SC](./emulation.md#atomic-operations-lrsc) virtual sequences to track atomic reservations. The six CSR registers store M-mode control/status state for trap handling.
+
+**Instruction registers** (40--46) are a pool of 7 temporary registers used by `allocate()` within virtual sequences (e.g., for division, SC). They are released back to the pool when the virtual sequence completes.
+
+**Inline registers** (47--63) are used by `allocate_for_inline()` for [inline](../optimizations/inlines.md) sequences. All inline registers must be zeroed at the end of the inline sequence to ensure clean state.
+
 ## Deviations from the Twist algorithm as described in the paper
 
 Our implementation of the Twist prover algorithm differs from the description given in the Twist and Shout [paper](https://eprint.iacr.org/2025/105) in a couple of ways. One such deviation is [wv virtualization](../twist-shout.md#wv-virtualization). Other, register-specific deviations are described below.

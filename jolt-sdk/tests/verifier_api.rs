@@ -13,8 +13,9 @@ mod tests {
         let start = std::time::Instant::now();
         println!("Verifying proof...");
         let verifier = RV64IMACVerifier::new(&preprocessing, proof, device, None, None).unwrap();
-        verifier.verify().unwrap();
+        let result = verifier.verify();
         let duration = start.elapsed();
         println!("Verification took: {} ms", duration.as_millis());
+        assert!(result.is_ok(), "Verifier failed: {:?}", result.err());
     }
 }

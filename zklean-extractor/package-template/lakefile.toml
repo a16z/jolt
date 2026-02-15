@@ -11,8 +11,8 @@ name = "Tests"
 [[require]]
 name = "zkLean"
 git = "https://github.com/GaloisInc/zk-lean.git"
-rev = "8c461198e19cd419f3854c59d6e266bb19adb2af"
-subDir = "src"
+rev = "4ea5a19a9e935174917595fef433b72f268b39cd"
+subDir = "zkLean"
 
 # TODO: This is present only so we can copy the BN254 scalar field
 # from ArkLib. We need to do this because ArkLib doesn't currently
@@ -23,4 +23,4 @@ name = "ArkLib"
 [[require]]
 name = "mathlib"
 scope = "leanprover-community"
-rev = "v4.23.0"
+rev = "v4.28.0-rc1"
