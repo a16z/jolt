@@ -164,7 +164,7 @@ BlindFold makes all sumcheck proofs zero-knowledge without SNARK composition. In
 - `spartan.rs`: Spartan outer + inner sumcheck over the folded R1CS
 - `relaxed_r1cs.rs`: Relaxed R1CS instance/witness with Hyrax grid layout
 - `witness.rs`: `BlindFoldWitness` — witness assignment from sumcheck stage data
-- `output_constraint.rs`: `OutputClaimConstraint`, `InputClaimConstraint` — sum-of-products constraint descriptors
+- `output_constraint.rs`: Re-exports from `subprotocols/constraint_types.rs`
 
 **Protocol flow:**
 1. During stages 1–7, `prove_zk` commits each sumcheck round's coefficients via Pedersen and caches them in `ProverOpeningAccumulator`

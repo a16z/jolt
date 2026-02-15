@@ -175,31 +175,20 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let rd_wv = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RdWriteValue),
-            SumcheckId::RegistersClaimReduction,
-        );
-        let rs1_rv = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::Rs1Value),
-            SumcheckId::RegistersClaimReduction,
-        );
-        let rs2_rv = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::Rs2Value),
-            SumcheckId::RegistersClaimReduction,
-        );
-
-        let terms = vec![
-            ProductTerm::single(ValueSource::Opening(rd_wv)),
-            ProductTerm::scaled(
-                ValueSource::Challenge(0),
-                vec![ValueSource::Opening(rs1_rv)],
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::virt(
+                VirtualPolynomial::RdWriteValue,
+                SumcheckId::RegistersClaimReduction,
             ),
-            ProductTerm::scaled(
-                ValueSource::Challenge(1),
-                vec![ValueSource::Opening(rs2_rv)],
+            OpeningId::virt(
+                VirtualPolynomial::Rs1Value,
+                SumcheckId::RegistersClaimReduction,
             ),
-        ];
-        InputClaimConstraint::sum_of_products(terms)
+            OpeningId::virt(
+                VirtualPolynomial::Rs2Value,
+                SumcheckId::RegistersClaimReduction,
+            ),
+        ])
     }
 
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
@@ -220,24 +209,24 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
         // - Challenge(1) = γ
         // - Challenge(2) = γ²
 
-        let val = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RegistersVal),
+        let val = OpeningId::virt(
+            VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
         );
-        let rs1_ra = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::Rs1Ra),
+        let rs1_ra = OpeningId::virt(
+            VirtualPolynomial::Rs1Ra,
             SumcheckId::RegistersReadWriteChecking,
         );
-        let rs2_ra = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::Rs2Ra),
+        let rs2_ra = OpeningId::virt(
+            VirtualPolynomial::Rs2Ra,
             SumcheckId::RegistersReadWriteChecking,
         );
-        let rd_wa = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RdWa),
+        let rd_wa = OpeningId::virt(
+            VirtualPolynomial::RdWa,
             SumcheckId::RegistersReadWriteChecking,
         );
-        let inc = OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RdInc),
+        let inc = OpeningId::committed(
+            CommittedPolynomial::RdInc,
             SumcheckId::RegistersReadWriteChecking,
         );
 

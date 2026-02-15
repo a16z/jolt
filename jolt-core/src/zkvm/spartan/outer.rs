@@ -13,11 +13,11 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::poly::multiquadratic_poly::MultiquadraticPolynomial;
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
-use crate::poly::opening_proof::{OpeningId, PolynomialId};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::constraint_types::{
@@ -130,10 +130,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterUniSkipParams<F> {
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         // Uni-skip output = evaluation at challenge r0, stored as UnivariateSkip opening
-        let opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::UnivariateSkip),
-            SumcheckId::SpartanOuter,
-        );
+        let opening = OpeningId::virt(VirtualPolynomial::UnivariateSkip, SumcheckId::SpartanOuter);
         Some(OutputClaimConstraint::direct(opening))
     }
 
@@ -404,10 +401,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F>
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::UnivariateSkip),
-            SumcheckId::SpartanOuter,
-        );
+        let opening = OpeningId::virt(VirtualPolynomial::UnivariateSkip, SumcheckId::SpartanOuter);
         InputClaimConstraint::direct(opening)
     }
 
@@ -461,13 +455,13 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F>
 
         // Quadratic terms: tau * az[i] * bz[j] * z_i * z_j
         for &a_idx in &a_indices {
-            let a_opening = OpeningId::Polynomial(
-                PolynomialId::Virtual(VirtualPolynomial::from(&ALL_R1CS_INPUTS[a_idx])),
+            let a_opening = OpeningId::virt(
+                VirtualPolynomial::from(&ALL_R1CS_INPUTS[a_idx]),
                 SumcheckId::SpartanOuter,
             );
             for &b_idx in &b_indices {
-                let b_opening = OpeningId::Polynomial(
-                    PolynomialId::Virtual(VirtualPolynomial::from(&ALL_R1CS_INPUTS[b_idx])),
+                let b_opening = OpeningId::virt(
+                    VirtualPolynomial::from(&ALL_R1CS_INPUTS[b_idx]),
                     SumcheckId::SpartanOuter,
                 );
                 terms.push(ProductTerm::scaled(
@@ -494,8 +488,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F>
 
         if a_has_const || b_has_const {
             for &idx in &all_indices {
-                let opening = OpeningId::Polynomial(
-                    PolynomialId::Virtual(VirtualPolynomial::from(&ALL_R1CS_INPUTS[idx])),
+                let opening = OpeningId::virt(
+                    VirtualPolynomial::from(&ALL_R1CS_INPUTS[idx]),
                     SumcheckId::SpartanOuter,
                 );
                 terms.push(ProductTerm::scaled(

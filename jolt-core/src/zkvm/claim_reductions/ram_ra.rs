@@ -42,13 +42,13 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
-            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         unipoly::UniPoly,
     },
     subprotocols::{
-        constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+        constraint_types::{InputClaimConstraint, OutputClaimConstraint},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -1016,36 +1016,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let raf = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamRa),
-            SumcheckId::RamRafEvaluation,
-        );
-        let val_final = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamRa),
-            SumcheckId::RamValFinalEvaluation,
-        );
-        let rw = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamRa),
-            SumcheckId::RamReadWriteChecking,
-        );
-        let val_eval = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamRa),
-            SumcheckId::RamValEvaluation,
-        );
-
-        let terms = vec![
-            ProductTerm::single(ValueSource::Opening(raf)),
-            ProductTerm::scaled(
-                ValueSource::Challenge(0),
-                vec![ValueSource::Opening(val_final)],
-            ),
-            ProductTerm::scaled(ValueSource::Challenge(1), vec![ValueSource::Opening(rw)]),
-            ProductTerm::scaled(
-                ValueSource::Challenge(2),
-                vec![ValueSource::Opening(val_eval)],
-            ),
-        ];
-        InputClaimConstraint::sum_of_products(terms)
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation),
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation),
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking),
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation),
+        ])
     }
 
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
@@ -1053,17 +1029,9 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let ra_opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamRa),
-            SumcheckId::RamRaClaimReduction,
-        );
-
-        let terms = vec![ProductTerm::scaled(
-            ValueSource::Challenge(0),
-            vec![ValueSource::Opening(ra_opening)],
-        )];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
+        Some(OutputClaimConstraint::all_weighted_openings(&[
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamRaClaimReduction),
+        ]))
     }
 
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {

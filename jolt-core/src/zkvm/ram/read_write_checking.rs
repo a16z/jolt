@@ -154,23 +154,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let rv_opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamReadValue),
-            SumcheckId::SpartanOuter,
-        );
-        let wv_opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamWriteValue),
-            SumcheckId::SpartanOuter,
-        );
-
-        let terms = vec![
-            ProductTerm::single(ValueSource::Opening(rv_opening)),
-            ProductTerm::scaled(
-                ValueSource::Challenge(0),
-                vec![ValueSource::Opening(wv_opening)],
-            ),
-        ];
-        InputClaimConstraint::sum_of_products(terms)
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::virt(VirtualPolynomial::RamReadValue, SumcheckId::SpartanOuter),
+            OpeningId::virt(VirtualPolynomial::RamWriteValue, SumcheckId::SpartanOuter),
+        ])
     }
 
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
@@ -184,16 +171,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
         // Challenge layout:
         //   Challenge(0) = eq_eval * (1 + γ)
         //   Challenge(1) = eq_eval * γ
-        let ra_opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamRa),
-            SumcheckId::RamReadWriteChecking,
-        );
-        let val_opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamVal),
-            SumcheckId::RamReadWriteChecking,
-        );
-        let inc_opening = OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RamInc),
+        let ra_opening =
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking);
+        let val_opening =
+            OpeningId::virt(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
+        let inc_opening = OpeningId::committed(
+            CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
         );
 

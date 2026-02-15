@@ -10,13 +10,11 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialBinding;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
-    SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::constraint_types::{
-    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
-};
+use crate::subprotocols::constraint_types::{InputClaimConstraint, OutputClaimConstraint};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -92,34 +90,17 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        // input = LookupOutput + γ*LeftLookupOperand + γ²*RightLookupOperand
-        // where openings are from SpartanOuter sumcheck
-        let lookup_output = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::LookupOutput),
-            SumcheckId::SpartanOuter,
-        );
-        let left_operand = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::LeftLookupOperand),
-            SumcheckId::SpartanOuter,
-        );
-        let right_operand = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RightLookupOperand),
-            SumcheckId::SpartanOuter,
-        );
-
-        let terms = vec![
-            ProductTerm::single(ValueSource::Opening(lookup_output)),
-            ProductTerm::scaled(
-                ValueSource::Challenge(0),
-                vec![ValueSource::Opening(left_operand)],
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::virt(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter),
+            OpeningId::virt(
+                VirtualPolynomial::LeftLookupOperand,
+                SumcheckId::SpartanOuter,
             ),
-            ProductTerm::scaled(
-                ValueSource::Challenge(1),
-                vec![ValueSource::Opening(right_operand)],
+            OpeningId::virt(
+                VirtualPolynomial::RightLookupOperand,
+                SumcheckId::SpartanOuter,
             ),
-        ];
-
-        InputClaimConstraint::sum_of_products(terms)
+        ])
     }
 
     fn input_constraint_challenge_values(
@@ -130,45 +111,20 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        // expected_output_claim = Eq(r, r_spartan) * (lookup_output + γ*left + γ²*right)
-        //                       = Eq*lookup_output + Eq*γ*left + Eq*γ²*right
-        //
-        // Challenge layout:
-        //   Challenge(0) = Eq
-        //   Challenge(1) = Eq * γ
-        //   Challenge(2) = Eq * γ²
-        let lookup_output_opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::LookupOutput),
-            SumcheckId::InstructionClaimReduction,
-        );
-        let left_operand_opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::LeftLookupOperand),
-            SumcheckId::InstructionClaimReduction,
-        );
-        let right_operand_opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RightLookupOperand),
-            SumcheckId::InstructionClaimReduction,
-        );
-
-        let terms = vec![
-            // Eq * lookup_output
-            ProductTerm::scaled(
-                ValueSource::Challenge(0),
-                vec![ValueSource::Opening(lookup_output_opening)],
+        Some(OutputClaimConstraint::all_weighted_openings(&[
+            OpeningId::virt(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::InstructionClaimReduction,
             ),
-            // Eq*γ * left
-            ProductTerm::scaled(
-                ValueSource::Challenge(1),
-                vec![ValueSource::Opening(left_operand_opening)],
+            OpeningId::virt(
+                VirtualPolynomial::LeftLookupOperand,
+                SumcheckId::InstructionClaimReduction,
             ),
-            // Eq*γ² * right
-            ProductTerm::scaled(
-                ValueSource::Challenge(2),
-                vec![ValueSource::Opening(right_operand_opening)],
+            OpeningId::virt(
+                VirtualPolynomial::RightLookupOperand,
+                SumcheckId::InstructionClaimReduction,
             ),
-        ];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
+        ]))
     }
 
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {

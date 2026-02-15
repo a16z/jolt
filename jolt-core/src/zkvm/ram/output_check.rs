@@ -4,8 +4,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
-            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         range_mask_polynomial::RangeMaskPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -101,10 +101,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OutputSumcheckParams<F> {
         // Challenge layout:
         //   Challenge(0) = eq_eval * io_mask_eval
         //   Challenge(1) = -eq_eval * io_mask_eval * val_io_eval (constant term)
-        let val_final_opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamValFinal),
-            SumcheckId::RamOutputCheck,
-        );
+        let val_final_opening =
+            OpeningId::virt(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck);
 
         let terms = vec![
             // eq*io_mask * val_final

@@ -86,8 +86,8 @@ use crate::poly::{
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     opening_proof::{
-        OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
-        SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+        OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+        VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
     },
     shared_ra_polys::compute_all_G,
     unipoly::UniPoly,
@@ -300,8 +300,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
             // For RAM, hw_claim is RamHammingWeight opening; for others, it's F::one()
             match poly_type {
                 CommittedPolynomial::RamRa(_) => {
-                    let hw_opening = OpeningId::Polynomial(
-                        PolynomialId::Virtual(VirtualPolynomial::RamHammingWeight),
+                    let hw_opening = OpeningId::virt(
+                        VirtualPolynomial::RamHammingWeight,
                         SumcheckId::RamHammingBooleanity,
                     );
                     terms.push(ProductTerm::scaled(
@@ -317,8 +317,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
             challenge_idx += 1;
 
             // Bool claim term: γ^{3i+1} * bool_opening_i
-            let bool_opening =
-                OpeningId::Polynomial(PolynomialId::Committed(poly_type), SumcheckId::Booleanity);
+            let bool_opening = OpeningId::committed(poly_type, SumcheckId::Booleanity);
             terms.push(ProductTerm::scaled(
                 ValueSource::Challenge(challenge_idx),
                 vec![ValueSource::Opening(bool_opening)],
@@ -326,8 +325,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
             challenge_idx += 1;
 
             // Virt claim term: γ^{3i+2} * virt_opening_i
-            let virt_opening =
-                OpeningId::Polynomial(PolynomialId::Committed(poly_type), virt_sumcheck_id);
+            let virt_opening = OpeningId::committed(poly_type, virt_sumcheck_id);
             terms.push(ProductTerm::scaled(
                 ValueSource::Challenge(challenge_idx),
                 vec![ValueSource::Opening(virt_opening)],
@@ -359,8 +357,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
 
         let terms: Vec<ProductTerm> = (0..N)
             .map(|i| {
-                let opening = OpeningId::Polynomial(
-                    PolynomialId::Committed(self.polynomial_types[i]),
+                let opening = OpeningId::committed(
+                    self.polynomial_types[i],
                     SumcheckId::HammingWeightClaimReduction,
                 );
                 ProductTerm::scaled(

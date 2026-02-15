@@ -1,6 +1,5 @@
 use std::fs::File;
 
-use crate::poly::opening_proof::PolynomialId;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
@@ -48,30 +47,30 @@ pub(crate) fn stage8_opening_ids(
 ) -> Vec<OpeningId> {
     let mut opening_ids = Vec::new();
 
-    opening_ids.push(OpeningId::Polynomial(
-        PolynomialId::Committed(CommittedPolynomial::RamInc),
+    opening_ids.push(OpeningId::committed(
+        CommittedPolynomial::RamInc,
         SumcheckId::IncClaimReduction,
     ));
-    opening_ids.push(OpeningId::Polynomial(
-        PolynomialId::Committed(CommittedPolynomial::RdInc),
+    opening_ids.push(OpeningId::committed(
+        CommittedPolynomial::RdInc,
         SumcheckId::IncClaimReduction,
     ));
 
     for i in 0..one_hot_params.instruction_d {
-        opening_ids.push(OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::InstructionRa(i)),
+        opening_ids.push(OpeningId::committed(
+            CommittedPolynomial::InstructionRa(i),
             SumcheckId::HammingWeightClaimReduction,
         ));
     }
     for i in 0..one_hot_params.bytecode_d {
-        opening_ids.push(OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::BytecodeRa(i)),
+        opening_ids.push(OpeningId::committed(
+            CommittedPolynomial::BytecodeRa(i),
             SumcheckId::HammingWeightClaimReduction,
         ));
     }
     for i in 0..one_hot_params.ram_d {
-        opening_ids.push(OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RamRa(i)),
+        opening_ids.push(OpeningId::committed(
+            CommittedPolynomial::RamRa(i),
             SumcheckId::HammingWeightClaimReduction,
         ));
     }

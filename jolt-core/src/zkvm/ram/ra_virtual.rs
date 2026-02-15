@@ -50,8 +50,8 @@ use std::sync::Arc;
 use tracer::instruction::Cycle;
 
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
-    SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::ra_poly::RaPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
@@ -148,10 +148,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamRaVirtualParams<F> {
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamRa),
-            SumcheckId::RamRaClaimReduction,
-        );
+        let opening = OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamRaClaimReduction);
         InputClaimConstraint::direct(opening)
     }
 
@@ -162,8 +159,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamRaVirtualParams<F> {
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         let factors: Vec<ValueSource> = (0..self.d)
             .map(|i| {
-                let opening = OpeningId::Polynomial(
-                    PolynomialId::Committed(CommittedPolynomial::RamRa(i)),
+                let opening = OpeningId::committed(
+                    CommittedPolynomial::RamRa(i),
                     SumcheckId::RamRaVirtualization,
                 );
                 ValueSource::Opening(opening)

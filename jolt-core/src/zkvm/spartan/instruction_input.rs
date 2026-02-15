@@ -105,39 +105,24 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let left_stage_1 = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::LeftInstructionInput),
-            SumcheckId::SpartanOuter,
-        );
-        let right_stage_1 = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RightInstructionInput),
-            SumcheckId::SpartanOuter,
-        );
-        let left_stage_2 = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::LeftInstructionInput),
-            SumcheckId::SpartanProductVirtualization,
-        );
-        let right_stage_2 = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RightInstructionInput),
-            SumcheckId::SpartanProductVirtualization,
-        );
-
-        let terms = vec![
-            ProductTerm::single(ValueSource::Opening(right_stage_1)),
-            ProductTerm::scaled(
-                ValueSource::Challenge(0),
-                vec![ValueSource::Opening(left_stage_1)],
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::virt(
+                VirtualPolynomial::RightInstructionInput,
+                SumcheckId::SpartanOuter,
             ),
-            ProductTerm::scaled(
-                ValueSource::Challenge(1),
-                vec![ValueSource::Opening(right_stage_2)],
+            OpeningId::virt(
+                VirtualPolynomial::LeftInstructionInput,
+                SumcheckId::SpartanOuter,
             ),
-            ProductTerm::scaled(
-                ValueSource::Challenge(2),
-                vec![ValueSource::Opening(left_stage_2)],
+            OpeningId::virt(
+                VirtualPolynomial::RightInstructionInput,
+                SumcheckId::SpartanProductVirtualization,
             ),
-        ];
-        InputClaimConstraint::sum_of_products(terms)
+            OpeningId::virt(
+                VirtualPolynomial::LeftInstructionInput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ])
     }
 
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
@@ -159,44 +144,36 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
         // - Challenge(2) = γ² * E2
         // - Challenge(3) = γ³ * E2
 
-        let left_is_rs1 = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
-                InstructionFlags::LeftOperandIsRs1Value,
-            )),
+        let left_is_rs1 = OpeningId::virt(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
             SumcheckId::InstructionInputVirtualization,
         );
-        let rs1_value = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::Rs1Value),
+        let rs1_value = OpeningId::virt(
+            VirtualPolynomial::Rs1Value,
             SumcheckId::InstructionInputVirtualization,
         );
-        let left_is_pc = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
-                InstructionFlags::LeftOperandIsPC,
-            )),
+        let left_is_pc = OpeningId::virt(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
             SumcheckId::InstructionInputVirtualization,
         );
-        let unexpanded_pc = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::UnexpandedPC),
+        let unexpanded_pc = OpeningId::virt(
+            VirtualPolynomial::UnexpandedPC,
             SumcheckId::InstructionInputVirtualization,
         );
-        let right_is_rs2 = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
-                InstructionFlags::RightOperandIsRs2Value,
-            )),
+        let right_is_rs2 = OpeningId::virt(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
             SumcheckId::InstructionInputVirtualization,
         );
-        let rs2_value = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::Rs2Value),
+        let rs2_value = OpeningId::virt(
+            VirtualPolynomial::Rs2Value,
             SumcheckId::InstructionInputVirtualization,
         );
-        let right_is_imm = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
-                InstructionFlags::RightOperandIsImm,
-            )),
+        let right_is_imm = OpeningId::virt(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
             SumcheckId::InstructionInputVirtualization,
         );
-        let imm = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::Imm),
+        let imm = OpeningId::virt(
+            VirtualPolynomial::Imm,
             SumcheckId::InstructionInputVirtualization,
         );
 

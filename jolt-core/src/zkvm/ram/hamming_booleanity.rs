@@ -80,8 +80,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingBooleanitySumcheckParams
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let h_opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamHammingWeight),
+        let h_opening = OpeningId::virt(
+            VirtualPolynomial::RamHammingWeight,
             SumcheckId::RamHammingBooleanity,
         );
 

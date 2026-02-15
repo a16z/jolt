@@ -129,24 +129,19 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let next_unexpanded_pc = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::NextUnexpandedPC),
+        let next_unexpanded_pc = OpeningId::virt(
+            VirtualPolynomial::NextUnexpandedPC,
             SumcheckId::SpartanOuter,
         );
-        let next_pc = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::NextPC),
+        let next_pc = OpeningId::virt(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
+        let next_is_virtual =
+            OpeningId::virt(VirtualPolynomial::NextIsVirtual, SumcheckId::SpartanOuter);
+        let next_is_first_in_sequence = OpeningId::virt(
+            VirtualPolynomial::NextIsFirstInSequence,
             SumcheckId::SpartanOuter,
         );
-        let next_is_virtual = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::NextIsVirtual),
-            SumcheckId::SpartanOuter,
-        );
-        let next_is_first_in_sequence = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::NextIsFirstInSequence),
-            SumcheckId::SpartanOuter,
-        );
-        let next_is_noop = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::NextIsNoop),
+        let next_is_noop = OpeningId::virt(
+            VirtualPolynomial::NextIsNoop,
             SumcheckId::SpartanProductVirtualization,
         );
 
@@ -184,26 +179,19 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let unexpanded_pc = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::UnexpandedPC),
+        let unexpanded_pc =
+            OpeningId::virt(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanShift);
+        let pc = OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        let is_virtual = OpeningId::virt(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
             SumcheckId::SpartanShift,
         );
-        let pc = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::PC),
+        let is_first_in_sequence = OpeningId::virt(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
             SumcheckId::SpartanShift,
         );
-        let is_virtual = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction)),
-            SumcheckId::SpartanShift,
-        );
-        let is_first_in_sequence = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence)),
-            SumcheckId::SpartanShift,
-        );
-        let is_noop = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::InstructionFlags(
-                InstructionFlags::IsNoop,
-            )),
+        let is_noop = OpeningId::virt(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
         );
 

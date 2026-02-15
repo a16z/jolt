@@ -228,8 +228,8 @@ impl CanonicalDeserialize for OpeningId {
                 let sumcheck_id = fused - OPENING_ID_COMMITTED_BASE;
                 let polynomial =
                     CommittedPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(OpeningId::Polynomial(
-                    PolynomialId::Committed(polynomial),
+                Ok(OpeningId::committed(
+                    polynomial,
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
@@ -237,8 +237,8 @@ impl CanonicalDeserialize for OpeningId {
                 let sumcheck_id = fused - OPENING_ID_VIRTUAL_BASE;
                 let polynomial =
                     VirtualPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(OpeningId::Polynomial(
-                    PolynomialId::Virtual(polynomial),
+                Ok(OpeningId::virt(
+                    polynomial,
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }

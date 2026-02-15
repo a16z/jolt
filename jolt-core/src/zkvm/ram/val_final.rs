@@ -6,8 +6,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
-            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         unipoly::UniPoly,
     },
@@ -167,10 +167,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ValFinalSumcheckParams<F> {
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamValFinal),
-            SumcheckId::RamOutputCheck,
-        );
+        let opening = OpeningId::virt(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck);
         // input_claim = val_final_opening - eval_public - Σ(selector_i * advice_opening_i)
         let mut terms = vec![
             ProductTerm::single(ValueSource::Opening(opening)),
@@ -194,14 +191,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ValFinalSumcheckParams<F> {
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let inc_opening = OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RamInc),
+        let inc_opening = OpeningId::committed(
+            CommittedPolynomial::RamInc,
             SumcheckId::RamValFinalEvaluation,
         );
-        let wa_opening = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::RamRa),
-            SumcheckId::RamValFinalEvaluation,
-        );
+        let wa_opening =
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation);
 
         Some(OutputClaimConstraint::product(vec![
             ValueSource::Opening(inc_opening),

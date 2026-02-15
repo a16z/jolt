@@ -58,13 +58,11 @@ use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
-    SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::constraint_types::{
-    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
-};
+use crate::subprotocols::constraint_types::{InputClaimConstraint, OutputClaimConstraint};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -181,30 +179,21 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams
     }
 
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        let v_1 = OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RamInc),
-            SumcheckId::RamReadWriteChecking,
-        );
-        let v_2 = OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RamInc),
-            SumcheckId::RamValEvaluation,
-        );
-        let w_1 = OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RdInc),
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let w_2 = OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RdInc),
-            SumcheckId::RegistersValEvaluation,
-        );
-
-        let terms = vec![
-            ProductTerm::single(ValueSource::Opening(v_1)),
-            ProductTerm::scaled(ValueSource::Challenge(0), vec![ValueSource::Opening(v_2)]),
-            ProductTerm::scaled(ValueSource::Challenge(1), vec![ValueSource::Opening(w_1)]),
-            ProductTerm::scaled(ValueSource::Challenge(2), vec![ValueSource::Opening(w_2)]),
-        ];
-        InputClaimConstraint::sum_of_products(terms)
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::committed(
+                CommittedPolynomial::RamInc,
+                SumcheckId::RamReadWriteChecking,
+            ),
+            OpeningId::committed(CommittedPolynomial::RamInc, SumcheckId::RamValEvaluation),
+            OpeningId::committed(
+                CommittedPolynomial::RdInc,
+                SumcheckId::RegistersReadWriteChecking,
+            ),
+            OpeningId::committed(
+                CommittedPolynomial::RdInc,
+                SumcheckId::RegistersValEvaluation,
+            ),
+        ])
     }
 
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
@@ -213,27 +202,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams
     }
 
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let ram_inc_opening = OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RamInc),
-            SumcheckId::IncClaimReduction,
-        );
-        let rd_inc_opening = OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RdInc),
-            SumcheckId::IncClaimReduction,
-        );
-
-        let terms = vec![
-            ProductTerm::scaled(
-                ValueSource::Challenge(0),
-                vec![ValueSource::Opening(ram_inc_opening)],
-            ),
-            ProductTerm::scaled(
-                ValueSource::Challenge(1),
-                vec![ValueSource::Opening(rd_inc_opening)],
-            ),
-        ];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
+        Some(OutputClaimConstraint::all_weighted_openings(&[
+            OpeningId::committed(CommittedPolynomial::RamInc, SumcheckId::IncClaimReduction),
+            OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::IncClaimReduction),
+        ]))
     }
 
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {

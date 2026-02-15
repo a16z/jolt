@@ -189,6 +189,33 @@ impl OutputClaimConstraint {
         )
     }
 
+    /// Builds: opening_0 + Challenge(0)*opening_1 + Challenge(1)*opening_2 + ...
+    pub fn weighted_openings(openings: &[OpeningId]) -> Self {
+        let mut terms = vec![ProductTerm::single(ValueSource::Opening(openings[0]))];
+        for (i, opening) in openings[1..].iter().enumerate() {
+            terms.push(ProductTerm::scaled(
+                ValueSource::Challenge(i),
+                vec![ValueSource::Opening(*opening)],
+            ));
+        }
+        Self::sum_of_products(terms)
+    }
+
+    /// Builds: Challenge(0)*opening_0 + Challenge(1)*opening_1 + ...
+    pub fn all_weighted_openings(openings: &[OpeningId]) -> Self {
+        let terms = openings
+            .iter()
+            .enumerate()
+            .map(|(i, opening)| {
+                ProductTerm::scaled(
+                    ValueSource::Challenge(i),
+                    vec![ValueSource::Opening(*opening)],
+                )
+            })
+            .collect();
+        Self::sum_of_products(terms)
+    }
+
     pub fn batch(
         constraints: &[Option<OutputClaimConstraint>],
         _num_batching_coefficients: usize,
@@ -366,12 +393,12 @@ impl InputClaimConstraint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::poly::opening_proof::{PolynomialId, SumcheckId};
+    use crate::poly::opening_proof::SumcheckId;
     use crate::zkvm::witness::CommittedPolynomial;
 
     fn test_opening(idx: usize) -> OpeningId {
-        OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RamRa(idx)),
+        OpeningId::committed(
+            CommittedPolynomial::RamRa(idx),
             SumcheckId::RamReadWriteChecking,
         )
     }
