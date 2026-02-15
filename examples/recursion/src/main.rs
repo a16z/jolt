@@ -1,7 +1,7 @@
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use clap::{Parser, Subcommand};
-use jolt_sdk::{Bn254Curve, JoltDevice, MemoryConfig, RV64IMACProof, Serializable};
+use jolt_sdk::{JoltDevice, MemoryConfig, RV64IMACProof, Serializable};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -332,17 +332,16 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
         assert!(!device_io.panic, "Guest program panicked during tracing");
 
         info!("  Proving...");
-        let (proof, io_device, _debug): (RV64IMACProof, _, _) =
-            jolt_sdk::guest::prover::prove::<_, Bn254Curve, _, _>(
-                &guest_prog,
-                &input_bytes,
-                &[],
-                &[],
-                None,
-                None,
-                &mut output_bytes,
-                &guest_prover_preprocessing,
-            );
+        let (proof, io_device, _debug): (RV64IMACProof, _, _) = jolt_sdk::guest::prover::prove(
+            &guest_prog,
+            &input_bytes,
+            &[],
+            &[],
+            None,
+            None,
+            &mut output_bytes,
+            &guest_prover_preprocessing,
+        );
         let prove_time = now.elapsed().as_secs_f64();
         total_prove_time += prove_time;
         info!(
@@ -507,17 +506,16 @@ fn run_recursion_proof(
     ];
     match run_config {
         RunConfig::Prove => {
-            let (proof, _io_device, _debug): (RV64IMACProof, _, _) =
-                jolt_sdk::guest::prover::prove::<_, Bn254Curve, _, _>(
-                    &recursion,
-                    &input_bytes,
-                    &[],
-                    &[],
-                    None,
-                    None,
-                    &mut output_bytes,
-                    &recursion_prover_preprocessing,
-                );
+            let (proof, _io_device, _debug): (RV64IMACProof, _, _) = jolt_sdk::guest::prover::prove(
+                &recursion,
+                &input_bytes,
+                &[],
+                &[],
+                None,
+                None,
+                &mut output_bytes,
+                &recursion_prover_preprocessing,
+            );
             let is_valid = jolt_sdk::guest::verifier::verify(
                 &input_bytes,
                 None,
