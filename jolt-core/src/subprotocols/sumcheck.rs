@@ -566,7 +566,12 @@ impl<F: JoltField, ProofTranscript: Transcript> StandardSumcheckProof<F, ProofTr
         let mut e = claim;
         let mut r: Vec<F::Challenge> = Vec::new();
 
-        assert_eq!(self.compressed_polys.len(), num_rounds);
+        if self.compressed_polys.len() != num_rounds {
+            return Err(ProofVerifyError::InvalidInputLength(
+                num_rounds,
+                self.compressed_polys.len(),
+            ));
+        }
         for i in 0..self.compressed_polys.len() {
             if self.compressed_polys[i].degree() > degree_bound {
                 return Err(ProofVerifyError::InvalidInputLength(

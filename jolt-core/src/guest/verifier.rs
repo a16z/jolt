@@ -6,7 +6,6 @@ use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEv
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
-use crate::utils::errors::ProofVerifyError;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::verifier::JoltVerifier;
@@ -40,7 +39,7 @@ pub fn verify<
     outputs_bytes: &[u8],
     proof: JoltProof<F, C, PCS, FS>,
     preprocessing: &JoltVerifierPreprocessing<F, PCS>,
-) -> Result<(), ProofVerifyError> {
+) -> Result<(), anyhow::Error> {
     use common::jolt_device::JoltDevice;
     let memory_layout = &preprocessing.shared.memory_layout;
     let memory_config = MemoryConfig {
@@ -64,6 +63,5 @@ pub fn verify<
         trusted_advice_commitment,
         None,
     )?;
-    verifier.verify().unwrap();
-    Ok(())
+    verifier.verify()
 }
