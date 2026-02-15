@@ -183,6 +183,18 @@ pub enum OpeningId {
 pub type Opening<F> = (OpeningPoint<BIG_ENDIAN, F>, F);
 pub type Openings<F> = BTreeMap<OpeningId, Opening<F>>;
 
+fn underlying_polynomial_id(opening_id: OpeningId) -> PolynomialId {
+    match opening_id {
+        OpeningId::Polynomial(poly_id, _sumcheck_id) => poly_id,
+        OpeningId::TrustedAdvice(_sumcheck_id) => {
+            PolynomialId::Committed(CommittedPolynomial::TrustedAdvice)
+        }
+        OpeningId::UntrustedAdvice(_sumcheck_id) => {
+            PolynomialId::Committed(CommittedPolynomial::UntrustedAdvice)
+        }
+    }
+}
+
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
 #[derive(Clone, Allocative)]
@@ -191,6 +203,8 @@ where
     F: JoltField,
 {
     pub openings: Openings<F>,
+    /// Maps an `OpeningId` that was deduplicated to its canonical representative.
+    pub aliases: BTreeMap<OpeningId, OpeningId>,
     #[cfg(test)]
     pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
     pub log_T: usize,
@@ -203,6 +217,8 @@ where
     F: JoltField,
 {
     pub openings: Openings<F>,
+    /// Maps an `OpeningId` that was omitted via deduplication to its canonical representative.
+    pub aliases: BTreeMap<OpeningId, OpeningId>,
     /// In testing, the Jolt verifier may be provided the prover's openings so that we
     /// can detect any places where the openings don't match up.
     #[cfg(test)]
@@ -300,19 +316,16 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        let requested = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
+        let key = self.resolve_alias(requested);
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Polynomial(
-                PolynomialId::Virtual(polynomial),
-                sumcheck,
-            ))
+            .get(&key)
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         #[cfg(test)]
         {
             let mut virtual_openings = self.appended_virtual_openings.borrow_mut();
-            if let Some(index) = virtual_openings.iter().position(|id| {
-                id == &OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck)
-            }) {
+            if let Some(index) = virtual_openings.iter().position(|id| id == &key) {
                 virtual_openings.remove(index);
             }
         }
@@ -324,12 +337,11 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        let requested = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
+        let key = self.resolve_alias(requested);
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Polynomial(
-                PolynomialId::Committed(polynomial),
-                sumcheck,
-            ))
+            .get(&key)
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         (point.clone(), *claim)
     }
@@ -343,7 +355,8 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
             AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
             AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
         };
-        let (point, claim) = self.openings.get(&opening_id)?;
+        let key = self.resolve_alias(opening_id);
+        let (point, claim) = self.openings.get(&key)?;
         Some((point.clone(), *claim))
     }
 }
@@ -355,6 +368,7 @@ where
     pub fn new(log_T: usize) -> Self {
         Self {
             openings: BTreeMap::new(),
+            aliases: BTreeMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
             log_T,
@@ -367,7 +381,31 @@ where
 
     /// Get the value of an opening by key
     pub fn get_opening(&self, key: OpeningId) -> F {
+        let key = self.resolve_alias(key);
         self.openings.get(&key).unwrap().1
+    }
+
+    fn resolve_alias(&self, mut key: OpeningId) -> OpeningId {
+        while let Some(next) = self.aliases.get(&key) {
+            key = *next;
+        }
+        key
+    }
+
+    fn find_existing_opening_at_point(
+        &self,
+        poly_id: PolynomialId,
+        point: &OpeningPoint<BIG_ENDIAN, F>,
+    ) -> Option<(OpeningId, F)> {
+        self.openings
+            .iter()
+            .find_map(|(existing_id, (existing_point, existing_claim))| {
+                if underlying_polynomial_id(*existing_id) == poly_id && existing_point == point {
+                    Some((*existing_id, *existing_claim))
+                } else {
+                    None
+                }
+            })
     }
 
     /// Adds an opening of a dense polynomial to the accumulator.
@@ -382,17 +420,22 @@ where
         opening_point: Vec<F::Challenge>,
         claim: F,
     ) {
-        transcript.append_scalar(b"opening_claim", &claim);
-
-        // Add opening to map
         let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
-        self.openings.insert(
-            key,
-            (
-                OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()),
-                claim,
-            ),
-        );
+        let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
+
+        if let Some((existing_id, existing_claim)) =
+            self.find_existing_opening_at_point(PolynomialId::Committed(polynomial), &point)
+        {
+            assert_eq!(
+                claim, existing_claim,
+                "Duplicate opening claim mismatch for {polynomial:?} at same point: {key:?} vs {existing_id:?}"
+            );
+            self.aliases.insert(key, existing_id);
+            return;
+        }
+
+        transcript.append_scalar(b"opening_claim", &claim);
+        self.openings.insert(key, (point, claim));
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_sparse")]
@@ -405,17 +448,26 @@ where
         r_cycle: Vec<F::Challenge>,
         claims: Vec<F>,
     ) {
-        claims.iter().for_each(|claim| {
-            transcript.append_scalar(b"opening_claim", claim);
-        });
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
 
         // Add openings to map
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
-            let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(r_concat.clone());
+            let point = OpeningPoint::<BIG_ENDIAN, F>::new(r_concat.clone());
             let key = OpeningId::Polynomial(PolynomialId::Committed(*label), sumcheck);
-            self.openings
-                .insert(key, (opening_point_struct.clone(), *claim));
+
+            if let Some((existing_id, existing_claim)) =
+                self.find_existing_opening_at_point(PolynomialId::Committed(*label), &point)
+            {
+                assert_eq!(
+                    *claim, existing_claim,
+                    "Duplicate opening claim mismatch for {label:?} at same point: {key:?} vs {existing_id:?}"
+                );
+                self.aliases.insert(key, existing_id);
+                continue;
+            }
+
+            transcript.append_scalar(b"opening_claim", claim);
+            self.openings.insert(key, (point, *claim));
         }
     }
 
@@ -427,23 +479,26 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
+        let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
+
+        if let Some((existing_id, existing_claim)) =
+            self.find_existing_opening_at_point(PolynomialId::Virtual(polynomial), &opening_point)
+        {
+            assert_eq!(
+                claim, existing_claim,
+                "Duplicate opening claim mismatch for {polynomial:?} at same point: {key:?} vs {existing_id:?}"
+            );
+            self.aliases.insert(key, existing_id);
+            return;
+        }
+
         transcript.append_scalar(b"opening_claim", &claim);
         assert!(
-            self.openings
-                .insert(
-                    OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck),
-                    (opening_point, claim),
-                )
-                .is_none(),
+            self.openings.insert(key, (opening_point, claim),).is_none(),
             "Key ({polynomial:?}, {sumcheck:?}) is already in opening map"
         );
         #[cfg(test)]
-        self.appended_virtual_openings
-            .borrow_mut()
-            .push(OpeningId::Polynomial(
-                PolynomialId::Virtual(polynomial),
-                sumcheck,
-            ));
+        self.appended_virtual_openings.borrow_mut().push(key);
     }
 
     pub fn append_untrusted_advice<T: Transcript>(
@@ -453,11 +508,21 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
+        let key = OpeningId::UntrustedAdvice(sumcheck_id);
+        if let Some((existing_id, existing_claim)) = self.find_existing_opening_at_point(
+            PolynomialId::Committed(CommittedPolynomial::UntrustedAdvice),
+            &opening_point,
+        ) {
+            assert_eq!(
+                claim, existing_claim,
+                "Duplicate untrusted advice opening claim mismatch: {key:?} vs {existing_id:?}"
+            );
+            self.aliases.insert(key, existing_id);
+            return;
+        }
+
         transcript.append_scalar(b"opening_claim", &claim);
-        self.openings.insert(
-            OpeningId::UntrustedAdvice(sumcheck_id),
-            (opening_point, claim),
-        );
+        self.openings.insert(key, (opening_point, claim));
     }
 
     pub fn append_trusted_advice<T: Transcript>(
@@ -467,11 +532,21 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
+        let key = OpeningId::TrustedAdvice(sumcheck_id);
+        if let Some((existing_id, existing_claim)) = self.find_existing_opening_at_point(
+            PolynomialId::Committed(CommittedPolynomial::TrustedAdvice),
+            &opening_point,
+        ) {
+            assert_eq!(
+                claim, existing_claim,
+                "Duplicate trusted advice opening claim mismatch: {key:?} vs {existing_id:?}"
+            );
+            self.aliases.insert(key, existing_id);
+            return;
+        }
+
         transcript.append_scalar(b"opening_claim", &claim);
-        self.openings.insert(
-            OpeningId::TrustedAdvice(sumcheck_id),
-            (opening_point, claim),
-        );
+        self.openings.insert(key, (opening_point, claim));
     }
 }
 
@@ -490,12 +565,11 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        let requested = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
+        let key = self.resolve_alias(requested);
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Polynomial(
-                PolynomialId::Virtual(polynomial),
-                sumcheck,
-            ))
+            .get(&key)
             .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
@@ -505,12 +579,11 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        let requested = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
+        let key = self.resolve_alias(requested);
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Polynomial(
-                PolynomialId::Committed(polynomial),
-                sumcheck,
-            ))
+            .get(&key)
             .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
@@ -524,7 +597,8 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
             AdviceKind::Trusted => OpeningId::TrustedAdvice(sumcheck_id),
             AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
         };
-        let (point, claim) = self.openings.get(&opening_id)?;
+        let key = self.resolve_alias(opening_id);
+        let (point, claim) = self.openings.get(&key)?;
         Some((point.clone(), *claim))
     }
 }
@@ -536,10 +610,37 @@ where
     pub fn new(log_T: usize) -> Self {
         Self {
             openings: BTreeMap::new(),
+            aliases: BTreeMap::new(),
             #[cfg(test)]
             prover_opening_accumulator: None,
             log_T,
         }
+    }
+
+    fn resolve_alias(&self, mut key: OpeningId) -> OpeningId {
+        while let Some(next) = self.aliases.get(&key) {
+            key = *next;
+        }
+        key
+    }
+
+    fn find_existing_opening_at_point(
+        &self,
+        poly_id: PolynomialId,
+        point: &OpeningPoint<BIG_ENDIAN, F>,
+    ) -> Option<(OpeningId, F)> {
+        self.openings
+            .iter()
+            .find_map(|(existing_id, (existing_point, existing_claim))| {
+                if existing_point.r.is_empty() {
+                    return None;
+                }
+                if underlying_polynomial_id(*existing_id) == poly_id && existing_point == point {
+                    Some((*existing_id, *existing_claim))
+                } else {
+                    None
+                }
+            })
     }
 
     /// Compare this accumulator to the corresponding `ProverOpeningAccumulator` and panic
@@ -559,17 +660,33 @@ where
         opening_point: Vec<F::Challenge>,
     ) {
         let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
-        let claim = self.openings.get(&key).unwrap().1;
-        transcript.append_scalar(b"opening_claim", &claim);
+        let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
+        if let Some((_, claim)) = self.openings.get(&key) {
+            if let Some((existing_id, existing_claim)) =
+                self.find_existing_opening_at_point(PolynomialId::Committed(polynomial), &point)
+            {
+                if existing_id != key {
+                    assert_eq!(
+                        *claim, existing_claim,
+                        "Inconsistent duplicate opening claims for {polynomial:?} at same point: {key:?} vs {existing_id:?}"
+                    );
+                }
+            }
+            transcript.append_scalar(b"opening_claim", claim);
+            let claim = *claim;
+            self.openings.insert(key, (point, claim));
+            return;
+        }
 
-        // Update the opening point in self.openings (it was initialized with default empty point)
-        self.openings.insert(
-            key,
-            (
-                OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()),
-                claim,
-            ),
-        );
+        // Dedup: key was omitted from the proof, so alias to an existing identical opening.
+        if let Some((existing_id, _existing_claim)) =
+            self.find_existing_opening_at_point(PolynomialId::Committed(polynomial), &point)
+        {
+            self.aliases.insert(key, existing_id);
+            return;
+        }
+
+        panic!("Missing opening claim for key {key:?} (no canonical opening found to dedup)");
     }
 
     /// Adds openings to the accumulator. The polynomials underlying the given
@@ -584,19 +701,34 @@ where
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
     ) {
+        let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point);
         for label in polynomials.into_iter() {
             let key = OpeningId::Polynomial(PolynomialId::Committed(label), sumcheck);
-            let claim = self.openings.get(&key).unwrap().1;
-            transcript.append_scalar(b"opening_claim", &claim);
+            if let Some((_, claim)) = self.openings.get(&key) {
+                if let Some((existing_id, existing_claim)) =
+                    self.find_existing_opening_at_point(PolynomialId::Committed(label), &point)
+                {
+                    if existing_id != key {
+                        assert_eq!(
+                            *claim, existing_claim,
+                            "Inconsistent duplicate opening claims for {label:?} at same point: {key:?} vs {existing_id:?}"
+                        );
+                    }
+                }
+                transcript.append_scalar(b"opening_claim", claim);
+                let claim = *claim;
+                self.openings.insert(key, (point.clone(), claim));
+                continue;
+            }
 
-            // Update the opening point in self.openings (it was initialized with default empty point)
-            self.openings.insert(
-                key,
-                (
-                    OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()),
-                    claim,
-                ),
-            );
+            if let Some((existing_id, _existing_claim)) =
+                self.find_existing_opening_at_point(PolynomialId::Committed(label), &point)
+            {
+                self.aliases.insert(key, existing_id);
+                continue;
+            }
+
+            panic!("Missing opening claim for key {key:?} (no canonical opening found to dedup)");
         }
     }
 
@@ -610,12 +742,30 @@ where
     ) {
         let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
         if let Some((_, claim)) = self.openings.get(&key) {
+            if let Some((existing_id, existing_claim)) = self
+                .find_existing_opening_at_point(PolynomialId::Virtual(polynomial), &opening_point)
+            {
+                if existing_id != key {
+                    assert_eq!(
+                        *claim, existing_claim,
+                        "Inconsistent duplicate opening claims for {polynomial:?} at same point: {key:?} vs {existing_id:?}"
+                    );
+                }
+            }
             transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim; // Copy the claim value
             self.openings.insert(key, (opening_point.clone(), claim));
-        } else {
-            panic!("Tried to populate opening point for non-existent key: {key:?}");
+            return;
         }
+
+        if let Some((existing_id, _existing_claim)) =
+            self.find_existing_opening_at_point(PolynomialId::Virtual(polynomial), &opening_point)
+        {
+            self.aliases.insert(key, existing_id);
+            return;
+        }
+
+        panic!("Missing opening claim for key {key:?} (no canonical opening found to dedup)");
     }
 
     pub fn append_untrusted_advice<T: Transcript>(
@@ -626,12 +776,32 @@ where
     ) {
         let key = OpeningId::UntrustedAdvice(sumcheck_id);
         if let Some((_, claim)) = self.openings.get(&key) {
+            if let Some((existing_id, existing_claim)) = self.find_existing_opening_at_point(
+                PolynomialId::Committed(CommittedPolynomial::UntrustedAdvice),
+                &opening_point,
+            ) {
+                if existing_id != key {
+                    assert_eq!(
+                        *claim, existing_claim,
+                        "Inconsistent duplicate opening claims for UntrustedAdvice at same point: {key:?} vs {existing_id:?}"
+                    );
+                }
+            }
             transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
-        } else {
-            panic!("Tried to populate opening point for non-existent key: {key:?}");
+            return;
         }
+
+        if let Some((existing_id, _existing_claim)) = self.find_existing_opening_at_point(
+            PolynomialId::Committed(CommittedPolynomial::UntrustedAdvice),
+            &opening_point,
+        ) {
+            self.aliases.insert(key, existing_id);
+            return;
+        }
+
+        panic!("Missing opening claim for key {key:?} (no canonical opening found to dedup)");
     }
 
     pub fn append_trusted_advice<T: Transcript>(
@@ -642,12 +812,32 @@ where
     ) {
         let key = OpeningId::TrustedAdvice(sumcheck_id);
         if let Some((_, claim)) = self.openings.get(&key) {
+            if let Some((existing_id, existing_claim)) = self.find_existing_opening_at_point(
+                PolynomialId::Committed(CommittedPolynomial::TrustedAdvice),
+                &opening_point,
+            ) {
+                if existing_id != key {
+                    assert_eq!(
+                        *claim, existing_claim,
+                        "Inconsistent duplicate opening claims for TrustedAdvice at same point: {key:?} vs {existing_id:?}"
+                    );
+                }
+            }
             transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
-        } else {
-            panic!("Tried to populate opening point for non-existent key: {key:?}");
+            return;
         }
+
+        if let Some((existing_id, _existing_claim)) = self.find_existing_opening_at_point(
+            PolynomialId::Committed(CommittedPolynomial::TrustedAdvice),
+            &opening_point,
+        ) {
+            self.aliases.insert(key, existing_id);
+            return;
+        }
+
+        panic!("Missing opening claim for key {key:?} (no canonical opening found to dedup)");
     }
 }
 
