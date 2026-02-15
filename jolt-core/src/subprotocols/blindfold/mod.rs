@@ -23,7 +23,7 @@ mod witness;
 
 pub use folding::{compute_cross_term, sample_random_satisfying_pair};
 pub use output_constraint::{
-    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, SumOfProductsVisitor, ValueSource,
 };
 pub use protocol::{
     BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifierInput,

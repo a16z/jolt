@@ -36,19 +36,23 @@ use num_traits::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
+
 use crate::{
     field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         unipoly::UniPoly,
     },
     subprotocols::{
-        constraint_types::{InputClaimConstraint, OutputClaimConstraint},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -1015,6 +1019,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
         OpeningPoint::<BIG_ENDIAN, F>::new([r_address_be, r_cycle_be].concat())
     }
 
+    #[cfg(feature = "zk")]
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         InputClaimConstraint::weighted_openings(&[
             OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation),
@@ -1024,16 +1029,19 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
         ])
     }
 
+    #[cfg(feature = "zk")]
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
         vec![self.gamma, self.gamma_squared, self.gamma_cubed]
     }
 
+    #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         Some(OutputClaimConstraint::all_weighted_openings(&[
             OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamRaClaimReduction),
         ]))
     }
 
+    #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         let r_address_reduced: Vec<_> = sumcheck_challenges[..self.log_K]
             .iter()

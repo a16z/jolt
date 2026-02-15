@@ -2,6 +2,12 @@ use std::{array, iter::once, sync::Arc};
 
 use num_traits::Zero;
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::{
     field::JoltField,
     poly::{
@@ -11,7 +17,7 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
@@ -19,7 +25,6 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         mles_product_sum::eval_linear_prod_assign,
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
@@ -1240,6 +1245,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         OpeningPoint::new(r)
     }
 
+    #[cfg(feature = "zk")]
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         // input_claim = Σᵢ gamma_powers[i] * rv_claim_i + gamma_powers[5]*raf_claim + gamma_powers[6]*raf_shift_claim
         // Each rv_claim_i = Σⱼ stage_i_gamma[j] * opening_ij
@@ -1508,6 +1514,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         InputClaimConstraint::sum_of_products(terms)
     }
 
+    #[cfg(feature = "zk")]
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
         // Compute coefficients: gamma_powers[stage] * stage_gammas[idx]
         // The order must match input_claim_constraint terms.
@@ -1555,6 +1562,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         challenges
     }
 
+    #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         let factors: Vec<ValueSource> = (0..self.d)
             .map(|i| {
@@ -1571,6 +1579,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         Some(OutputClaimConstraint::sum_of_products(terms))
     }
 
+    #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         let opening_point = self.normalize_opening_point(sumcheck_challenges);
         let (r_address_prime, r_cycle_prime) = opening_point.split_at(self.log_K);

@@ -217,21 +217,15 @@ pub struct ZkStageData<F: JoltField> {
     /// These are the polynomial evaluations at the random sumcheck point,
     /// proven correct via ZK-Dory externally.
     pub expected_evaluations: Vec<F>,
-    /// Output claim constraints from each sumcheck instance.
-    /// Used by BlindFold to generate R1CS constraints binding final claims to openings.
-    pub output_constraints:
-        Vec<Option<crate::subprotocols::constraint_types::OutputClaimConstraint>>,
-    /// Challenge values for each instance's output constraint.
-    /// For instance j, contains the values for Challenge(0), Challenge(1), etc. in its constraint.
+    #[cfg(feature = "zk")]
+    pub output_constraints: Vec<Option<crate::subprotocols::blindfold::OutputClaimConstraint>>,
+    #[cfg(feature = "zk")]
     pub constraint_challenge_values: Vec<Vec<F>>,
-    /// Input claim constraints from each sumcheck instance.
-    /// Describes how each instance's input claim relates to polynomial openings.
-    pub input_constraints: Vec<crate::subprotocols::constraint_types::InputClaimConstraint>,
-    /// Challenge values for each instance's input constraint.
+    #[cfg(feature = "zk")]
+    pub input_constraints: Vec<crate::subprotocols::blindfold::InputClaimConstraint>,
+    #[cfg(feature = "zk")]
     pub input_constraint_challenge_values: Vec<Vec<F>>,
-    /// Scaling exponents for each instance's input claim.
-    /// Each instance's claim is scaled by 2^(max_rounds - instance_rounds) before batching.
-    /// This field stores these exponents to enable proper constraint evaluation.
+    #[cfg(feature = "zk")]
     pub input_claim_scaling_exponents: Vec<usize>,
 }
 
@@ -251,9 +245,9 @@ pub struct UniSkipStageData<F: JoltField> {
     pub poly_degree: usize,
     /// Serialized commitment bytes
     pub commitment_bytes: Vec<u8>,
-    /// Input claim constraint for this uni-skip
-    pub input_constraint: crate::subprotocols::constraint_types::InputClaimConstraint,
-    /// Challenge values for the input constraint
+    #[cfg(feature = "zk")]
+    pub input_constraint: crate::subprotocols::blindfold::InputClaimConstraint,
+    #[cfg(feature = "zk")]
     pub input_constraint_challenge_values: Vec<F>,
 }
 
@@ -268,11 +262,10 @@ where
     #[cfg(test)]
     pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
     log_T: usize,
-    /// ZK auxiliary data for BlindFold, populated by BatchedSumcheck::prove_zk.
-    /// Each entry corresponds to one sumcheck stage.
+    #[cfg(feature = "zk")]
     #[allocative(skip)]
     zk_stage_data: Vec<ZkStageData<F>>,
-    /// ZK uni-skip data for BlindFold (Stages 1-2 first rounds).
+    #[cfg(feature = "zk")]
     #[allocative(skip)]
     uniskip_stage_data: Vec<UniSkipStageData<F>>,
     /// In ZK mode, skip absorbing cleartext claims into the transcript.
@@ -438,7 +431,9 @@ where
             #[cfg(test)]
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
             log_T,
+            #[cfg(feature = "zk")]
             zk_stage_data: Vec::new(),
+            #[cfg(feature = "zk")]
             uniskip_stage_data: Vec::new(),
             zk_mode,
         }
@@ -539,22 +534,22 @@ where
         );
     }
 
-    /// Store ZK stage data from a prove_zk call for later use by BlindFold.
+    #[cfg(feature = "zk")]
     pub fn push_zk_stage_data(&mut self, data: ZkStageData<F>) {
         self.zk_stage_data.push(data);
     }
 
-    /// Take all accumulated ZK stage data (used by prove_blindfold).
+    #[cfg(feature = "zk")]
     pub fn take_zk_stage_data(&mut self) -> Vec<ZkStageData<F>> {
         std::mem::take(&mut self.zk_stage_data)
     }
 
-    /// Store uni-skip stage data from prove_uniskip_round_zk for BlindFold.
+    #[cfg(feature = "zk")]
     pub fn push_uniskip_stage_data(&mut self, data: UniSkipStageData<F>) {
         self.uniskip_stage_data.push(data);
     }
 
-    /// Take all accumulated uni-skip stage data (used by prove_blindfold).
+    #[cfg(feature = "zk")]
     pub fn take_uniskip_stage_data(&mut self) -> Vec<UniSkipStageData<F>> {
         std::mem::take(&mut self.uniskip_stage_data)
     }

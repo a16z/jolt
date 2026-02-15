@@ -1,5 +1,6 @@
 use crate::poly::opening_proof::{OpeningAccumulator, OpeningPoint, BIG_ENDIAN};
-use crate::subprotocols::constraint_types::{InputClaimConstraint, OutputClaimConstraint};
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
 use crate::transcripts::Transcript;
 
 use crate::{field::JoltField, poly::opening_proof::VerifierOpeningAccumulator};
@@ -54,10 +55,14 @@ pub trait SumcheckInstanceParams<F: JoltField> {
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F>;
 
+    #[cfg(feature = "zk")]
     fn input_claim_constraint(&self) -> InputClaimConstraint;
 
+    #[cfg(feature = "zk")]
     fn input_constraint_challenge_values(&self, accumulator: &dyn OpeningAccumulator<F>) -> Vec<F>;
 
+    #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint>;
+    #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F>;
 }

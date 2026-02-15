@@ -7,7 +7,13 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{OpeningAccumulator, PolynomialId};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::read_write_matrix::{
     AddressMajorMatrixEntry, RamAddressMajorEntry, RamCycleMajorEntry, ReadWriteMatrixAddressMajor,
     ReadWriteMatrixCycleMajor,
@@ -25,12 +31,9 @@ use crate::{
     poly::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
-    },
-    subprotocols::constraint_types::{
-        InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
     },
     transcripts::Transcript,
     utils::math::Math,
@@ -153,6 +156,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
         [r_address, r_cycle].concat().into()
     }
 
+    #[cfg(feature = "zk")]
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         InputClaimConstraint::weighted_openings(&[
             OpeningId::virt(VirtualPolynomial::RamReadValue, SumcheckId::SpartanOuter),
@@ -160,10 +164,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
         ])
     }
 
+    #[cfg(feature = "zk")]
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
         vec![self.gamma]
     }
 
+    #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         // expected_output_claim = eq_eval * ra * (val + γ*(val + inc))
         //                       = eq_eval * ra * val * (1+γ) + eq_eval * ra * inc * γ
@@ -202,6 +208,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
         Some(OutputClaimConstraint::sum_of_products(terms))
     }
 
+    #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         self.constraint_challenge_values(sumcheck_challenges)
     }

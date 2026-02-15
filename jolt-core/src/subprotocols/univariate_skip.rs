@@ -1,15 +1,17 @@
 use std::marker::PhantomData;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+#[cfg(feature = "zk")]
 use rand_core::CryptoRngCore;
 
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
+#[cfg(feature = "zk")]
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangePolynomial;
-use crate::poly::opening_proof::{
-    ProverOpeningAccumulator, UniSkipStageData, VerifierOpeningAccumulator,
-};
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::UniSkipStageData;
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
@@ -147,6 +149,7 @@ pub fn prove_uniskip_round<F: JoltField, T: Transcript, I: SumcheckInstanceProve
 
 /// ZK variant: commits to coefficients instead of revealing them.
 /// The polynomial coefficients are stored in the accumulator for BlindFold verification.
+#[cfg(feature = "zk")]
 pub fn prove_uniskip_round_zk<
     F: JoltField,
     C: JoltCurve,

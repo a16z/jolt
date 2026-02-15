@@ -3,6 +3,7 @@
 
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
+#[cfg(feature = "zk")]
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
@@ -14,6 +15,7 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::profiling::print_current_memory_usage;
 
 use ark_serialize::*;
+#[cfg(feature = "zk")]
 use rand_core::CryptoRngCore;
 use std::marker::PhantomData;
 
@@ -187,6 +189,7 @@ impl BatchedSumcheck {
     /// Prove a batched sumcheck with Pedersen commitments (ZK mode).
     ///
     /// Instead of appending raw polynomial coefficients to the transcript,
+    #[cfg(feature = "zk")]
     /// this appends Pedersen commitments. The proof contains only commitments -
     /// coefficients and blindings are stored in the accumulator for BlindFold.
     ///

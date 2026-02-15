@@ -48,9 +48,7 @@ use crate::{
         streaming_schedule::LinearOnlySchedule,
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
-        univariate_skip::{
-            prove_uniskip_round, prove_uniskip_round_zk, UniSkipFirstRoundProofVariant,
-        },
+        univariate_skip::{prove_uniskip_round, UniSkipFirstRoundProofVariant},
     },
     transcripts::Transcript,
     utils::{math::Math, thread::drop_in_background_thread},
@@ -152,9 +150,9 @@ use crate::subprotocols::blindfold::{
     RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
 };
 #[cfg(feature = "zk")]
-use crate::subprotocols::constraint_types::{
-    InputClaimConstraint, OutputClaimConstraint, ValueSource,
-};
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
+#[cfg(feature = "zk")]
+use crate::subprotocols::univariate_skip::prove_uniskip_round_zk;
 #[cfg(feature = "zk")]
 use crate::zkvm::r1cs::constraints::{
     OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
@@ -592,29 +590,30 @@ impl<
         Vec<F::Challenge>,
         F,
     ) {
+        #[cfg(feature = "zk")]
         if self.zk_mode {
             let mut rng = rand::thread_rng();
-            BatchedSumcheck::prove_zk::<F, C, _, _>(
+            return BatchedSumcheck::prove_zk::<F, C, _, _>(
                 instances,
                 &mut self.opening_accumulator,
                 &mut self.transcript,
                 &self.pedersen_generators,
                 &mut rng,
-            )
-        } else {
-            let (proof, r, claim) = BatchedSumcheck::prove(
-                instances,
-                &mut self.opening_accumulator,
-                &mut self.transcript,
             );
-            (SumcheckInstanceProof::Standard(proof), r, claim)
         }
+        let (proof, r, claim) = BatchedSumcheck::prove(
+            instances,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        );
+        (SumcheckInstanceProof::Standard(proof), r, claim)
     }
 
     fn prove_uniskip(
         &mut self,
         instance: &mut impl SumcheckInstanceProver<F, ProofTranscript>,
     ) -> UniSkipFirstRoundProofVariant<F, C, ProofTranscript> {
+        #[cfg(feature = "zk")]
         if self.zk_mode {
             let mut rng = rand::thread_rng();
             let zk_proof = prove_uniskip_round_zk::<F, C, _, _, _>(
@@ -624,15 +623,14 @@ impl<
                 &self.pedersen_generators,
                 &mut rng,
             );
-            UniSkipFirstRoundProofVariant::Zk(zk_proof)
-        } else {
-            let proof = prove_uniskip_round(
-                instance,
-                &mut self.opening_accumulator,
-                &mut self.transcript,
-            );
-            UniSkipFirstRoundProofVariant::Standard(proof)
+            return UniSkipFirstRoundProofVariant::Zk(zk_proof);
         }
+        let proof = prove_uniskip_round(
+            instance,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        );
+        UniSkipFirstRoundProofVariant::Standard(proof)
     }
 
     #[tracing::instrument(skip_all, name = "generate_and_commit_witness_polynomials")]

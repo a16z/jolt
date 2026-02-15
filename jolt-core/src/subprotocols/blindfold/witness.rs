@@ -7,9 +7,9 @@ use std::collections::HashSet;
 
 use super::r1cs::VerifierR1CS;
 use super::{OutputClaimConstraint, StageConfig};
+use super::{SumOfProductsVisitor, ValueSource};
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
-use crate::subprotocols::constraint_types::{SumOfProductsVisitor, ValueSource};
 
 /// Witness data for a single sumcheck round
 #[derive(Clone, Debug)]

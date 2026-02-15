@@ -4,20 +4,25 @@ use allocative::Allocative;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::{
     field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, ProverOpeningAccumulator,
-            SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
     subprotocols::{
-        constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_claim::{
             CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
             VerifierEvaluablePolynomial,
@@ -104,6 +109,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
     }
 
+    #[cfg(feature = "zk")]
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         InputClaimConstraint::weighted_openings(&[
             OpeningId::virt(
@@ -125,12 +131,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
         ])
     }
 
+    #[cfg(feature = "zk")]
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
         let gamma_sqr = self.gamma.square();
         let gamma_cub = gamma_sqr * self.gamma;
         vec![self.gamma, gamma_sqr, gamma_cub]
     }
 
+    #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         // expected_output_claim =
         //   (E1 + γ²*E2) * (right_input + γ*left_input)
@@ -238,6 +246,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
         Some(OutputClaimConstraint::sum_of_products(terms))
     }
 
+    #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         let r = self.normalize_opening_point(sumcheck_challenges);
         let e1 = EqPolynomial::mle_endian(&r, &self.r_cycle_stage_1);

@@ -82,18 +82,23 @@ use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
 use crate::field::JoltField;
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::{
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     opening_proof::{
-        OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+        OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
         VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
     },
     shared_ra_polys::compute_all_G,
     unipoly::UniPoly,
 };
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::{
-    constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
     sumcheck_prover::SumcheckInstanceProver,
     sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
 };
@@ -281,6 +286,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
         OpeningPoint::<BIG_ENDIAN, F>::new(full_point)
     }
 
+    #[cfg(feature = "zk")]
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         let n = self.polynomial_types.len();
         let mut terms = Vec::new();
@@ -336,6 +342,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
         InputClaimConstraint::sum_of_products(terms)
     }
 
+    #[cfg(feature = "zk")]
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
         let n = self.polynomial_types.len();
         let mut values = Vec::with_capacity(3 * n);
@@ -352,6 +359,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
         values
     }
 
+    #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         let N = self.polynomial_types.len();
 
@@ -371,6 +379,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
         Some(OutputClaimConstraint::sum_of_products(terms))
     }
 
+    #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         let N = self.polynomial_types.len();
 
