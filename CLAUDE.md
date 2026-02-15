@@ -11,7 +11,9 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that effic
 ### Linting and Formatting
 
 ```bash
-cargo clippy --all --message-format=short -q --all-targets --features allocative,host -- -D warnings
+# CRITICAL: Must pass in BOTH standard and ZK modes
+cargo clippy -p jolt-core --features host --message-format=short -q --all-targets -- -D warnings
+cargo clippy -p jolt-core --features host,zk --message-format=short -q --all-targets -- -D warnings
 cargo fmt -q
 ```
 
@@ -24,8 +26,10 @@ cargo nextest run --cargo-quiet
 # Run specific test in specific package
 cargo nextest run -p [package_name] [test_name] --cargo-quiet
 
-# CRITICAL: Primary correctness check — run muldiv e2e test
-cargo nextest run -p jolt-core muldiv --cargo-quiet
+# CRITICAL: Primary correctness check — run muldiv e2e test in BOTH modes
+cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
+
 ```
 
 ### Building
@@ -121,6 +125,33 @@ Virtual (derived during proving): PC, register values, RAM values, instruction f
 - `bytecode/`: Bytecode preprocessing and PC mapping, read-RAF checking
 - `config.rs`: `OneHotParams`, `OneHotConfig`, `ReadWriteConfig` — control proof structure (chunk sizes, phase rounds)
 
+### ZK Feature Gate
+
+The `zk` Cargo feature (`cfg(feature = "zk")`) controls zero-knowledge mode:
+
+| Aspect | Standard (`--features host`) | ZK (`--features host,zk`) |
+|---|---|---|
+| Sumcheck proving | `BatchedSumcheck::prove` — cleartext round polys | `BatchedSumcheck::prove_zk` — Pedersen-committed |
+| Uni-skip | `prove_uniskip_round` | `prove_uniskip_round_zk` |
+| Proof contains | `Claims<F>` (all opening claims) | `BlindFoldProof` (no cleartext claims) |
+| `input_claim()` | Called, appended to Fiat-Shamir transcript | Skipped; `input_claim_constraint()` used by BlindFold |
+| Output claim check | Explicit equality check | Skipped; verified by BlindFold R1CS |
+| Opening proof | `bind_opening_inputs` (raw eval) | `bind_opening_inputs_zk` (committed eval) |
+
+**Key cfg-gated items:**
+- `JoltProof::opening_claims: Claims<F>` — `#[cfg(not(feature = "zk"))]`
+- `JoltProof::blindfold_proof: BlindFoldProof` — `#[cfg(feature = "zk")]`
+- Prover `zk_mode: cfg!(feature = "zk")` — selects prove/verify path at runtime
+- Verifier detects mode from proof: `proof.stage1_sumcheck_proof.is_zk()`
+
+**CRITICAL — Verifier `new_from_verifier` must support both modes:**
+
+In ZK mode, `input_claim()` is never called so verifier params can use partial values (e.g., `init_eval = init_eval_public`). In standard mode, `input_claim()` IS called and the values must match the prover exactly. Any verifier param that decomposes a value for BlindFold constraints must reconstruct the full value for standard mode. Use `ram::reconstruct_full_eval()` to add advice contributions back.
+
+**Opening accumulator transcript changes (vs main):**
+
+On this branch, `ProverOpeningAccumulator::append_*` and `VerifierOpeningAccumulator::append_*` do NOT append claims to the Fiat-Shamir transcript (the `transcript` parameter was removed). Both sides are consistent. On main, these methods DO append `opening_claim` scalars.
+
 ### BlindFold Zero-Knowledge Protocol (subprotocols/blindfold/)
 
 BlindFold makes all sumcheck proofs zero-knowledge without SNARK composition. Instead of revealing sumcheck round polynomial coefficients, the prover sends Pedersen commitments. Sumcheck verifier checks are encoded into a small verifier R1CS, proved via Nova folding + Spartan.
@@ -158,6 +189,8 @@ Every sumcheck instance implements `SumcheckInstanceParams` which defines both t
 - `output_claim_constraint()` / `output_constraint_challenge_values()` — same pattern for output claims
 
 **Any change to how a sumcheck's input or output claim is derived requires a matching update to its constraint.** If you modify `input_claim()` to include a new term, you must add a corresponding `ProductTerm` to `input_claim_constraint()` and supply any new challenge values. Failure to synchronize causes BlindFold R1CS unsatisfiability — the `muldiv` e2e test will catch this.
+
+**Corollary — prover/verifier `input_claim()` consistency:** When a value is decomposed for BlindFold constraints (e.g., `init_eval` split into `init_eval_public` + advice terms), the verifier's `new_from_verifier` must reconstruct the full value for `input_claim()` in standard mode. If only the public portion is stored, the verifier computes a different `input_claim` than the prover, causing a Fiat-Shamir transcript mismatch. The `advice` e2e tests catch this (they exercise non-ZK mode with advice polynomials).
 
 Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `RamReadWriteCheckingParams` (ram/read_write_checking.rs), `InstructionRaSumcheckParams` (instruction_lookups/ra_virtual.rs), and all claim reduction params.
 
