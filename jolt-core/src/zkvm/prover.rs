@@ -1859,6 +1859,9 @@ impl<
             SumcheckId::HammingWeightClaimReduction,
         );
 
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        let r_address_stage7 = &opening_point.r[..log_k_chunk];
+
         let mut polynomial_claims = Vec::new();
         let mut scaling_factors = Vec::new();
 
@@ -1873,11 +1876,19 @@ impl<
             SumcheckId::IncClaimReduction,
         );
 
-        // Dense polynomials are independent of address variables, so no Lagrange scaling.
-        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim));
-        scaling_factors.push(F::one());
-        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim));
-        scaling_factors.push(F::one());
+        // In AddressMajor, dense coefficients occupy every K-th column (sparse embedding),
+        // so the Dory VMV includes a factor eq(r_addr, 0) = ∏(1 − r_addr_i).
+        // In CycleMajor, dense rows are replicated K times, and the streaming VMV
+        // sums row_factors = Σ_addr eq(r_addr, addr) = 1, so no correction is needed.
+        let lagrange_factor: F = if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+            r_address_stage7.iter().map(|r| F::one() - r).product()
+        } else {
+            F::one()
+        };
+        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
+        scaling_factors.push(lagrange_factor);
+        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
+        scaling_factors.push(lagrange_factor);
 
         // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
         // These are at (r_address_stage7, r_cycle_stage6)
