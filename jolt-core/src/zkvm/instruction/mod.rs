@@ -42,6 +42,58 @@ pub trait LookupQuery<const XLEN: usize> {
     fn to_lookup_output(&self) -> u64;
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DerivedLookupQuery {
+    pub instruction_inputs: (u64, i128),
+    pub lookup_operands: (u64, u128),
+    pub lookup_index: u128,
+    pub lookup_output: u64,
+}
+
+#[inline(always)]
+pub fn derive_lookup_query<const XLEN: usize>(cycle: &Cycle) -> DerivedLookupQuery {
+    let instruction_inputs = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+    let (left_instruction_input, right_instruction_input) = instruction_inputs;
+
+    let circuit_flags = cycle.instruction().circuit_flags();
+    let right_u64 = right_instruction_input as u64;
+
+    let lookup_operands = if circuit_flags[CircuitFlags::Advice] {
+        // Advice lookup operands are not derived from instruction inputs.
+        LookupQuery::<XLEN>::to_lookup_operands(cycle)
+    } else if circuit_flags[CircuitFlags::AddOperands] {
+        (0, (left_instruction_input as u128) + (right_u64 as u128))
+    } else if circuit_flags[CircuitFlags::SubtractOperands] {
+        let x = left_instruction_input as u128;
+        let y = right_u64 as u128;
+        (0, x + ((1u128 << XLEN) - y))
+    } else if circuit_flags[CircuitFlags::MultiplyOperands] {
+        (0, (left_instruction_input as u128) * (right_u64 as u128))
+    } else {
+        // Default: lookup operands are the instruction inputs.
+        (left_instruction_input, right_u64 as u128)
+    };
+
+    let (left_lookup_operand, right_lookup_operand) = lookup_operands;
+    let lookup_index = if circuit_flags.is_interleaved_operands() {
+        interleave_bits(left_lookup_operand, right_lookup_operand as u64)
+    } else {
+        right_lookup_operand
+    };
+
+    let lookup_output = match InstructionLookup::<XLEN>::lookup_table(cycle) {
+        Some(table) => table.materialize_entry(lookup_index),
+        None => 0,
+    };
+
+    DerivedLookupQuery {
+        instruction_inputs,
+        lookup_operands,
+        lookup_index,
+        lookup_output,
+    }
+}
+
 /// Boolean flags used in Jolt's R1CS constraints (`opflags` in the Jolt paper).
 /// Note that the flags below deviate somewhat from those described in Appendix A.1
 /// of the Jolt paper.
