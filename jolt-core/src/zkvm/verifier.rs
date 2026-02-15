@@ -261,18 +261,18 @@ impl<
 
         let zk_mode = proof.stage1_sumcheck_proof.is_zk();
         #[cfg(test)]
+        #[allow(unused_mut)]
         let mut opening_accumulator =
             VerifierOpeningAccumulator::new(proof.trace_length.log_2(), zk_mode);
         #[cfg(not(test))]
+        #[allow(unused_mut)]
         let mut opening_accumulator =
             VerifierOpeningAccumulator::new(proof.trace_length.log_2(), zk_mode);
 
-        // In standard mode, pre-populate the accumulator with polynomial evaluation claims.
-        // During stages 1-7, append_dense/sparse/virtual preserve these claims while
-        // updating opening points. PCS (stage 8) proves the claims are correct.
-        if let Some(ref claims) = proof.opening_claims {
+        #[cfg(not(feature = "zk"))]
+        {
             use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
-            for (id, claim) in claims {
+            for (id, (_, claim)) in &proof.opening_claims.0 {
                 let dummy_point = OpeningPoint::<BIG_ENDIAN, F>::new(vec![]);
                 opening_accumulator
                     .openings
@@ -330,6 +330,7 @@ impl<
     }
 
     #[tracing::instrument(skip_all)]
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
     pub fn verify(mut self) -> Result<(), anyhow::Error> {
         let _pprof_verify = pprof_scope!("verify");
         let zk_mode = self.opening_accumulator.zk_mode;
@@ -357,71 +358,71 @@ impl<
                 .append_serializable(b"trusted_advice", trusted_advice_commitment);
         }
 
-        let (_stage1_result, _uniskip_challenge1) = self.verify_stage1()?;
-        let (_stage2_result, _uniskip_challenge2) = self.verify_stage2()?;
-        let _stage3_result = self.verify_stage3()?;
-        let _stage4_result = self.verify_stage4()?;
-        let _stage5_result = self.verify_stage5()?;
-        let _stage6_result = self.verify_stage6()?;
-        let _stage7_result = self.verify_stage7()?;
-        let _stage8_data = self.verify_stage8()?;
+        let (stage1_result, uniskip_challenge1) = self.verify_stage1()?;
+        let (stage2_result, uniskip_challenge2) = self.verify_stage2()?;
+        let stage3_result = self.verify_stage3()?;
+        let stage4_result = self.verify_stage4()?;
+        let stage5_result = self.verify_stage5()?;
+        let stage6_result = self.verify_stage6()?;
+        let stage7_result = self.verify_stage7()?;
+        let stage8_data = self.verify_stage8()?;
 
         if zk_mode {
             #[cfg(feature = "zk")]
             {
                 let sumcheck_challenges = [
-                    _stage1_result.challenges.clone(),
-                    _stage2_result.challenges.clone(),
-                    _stage3_result.challenges.clone(),
-                    _stage4_result.challenges.clone(),
-                    _stage5_result.challenges.clone(),
-                    _stage6_result.challenges.clone(),
-                    _stage7_result.challenges.clone(),
+                    stage1_result.challenges.clone(),
+                    stage2_result.challenges.clone(),
+                    stage3_result.challenges.clone(),
+                    stage4_result.challenges.clone(),
+                    stage5_result.challenges.clone(),
+                    stage6_result.challenges.clone(),
+                    stage7_result.challenges.clone(),
                 ];
-                let uniskip_challenges = [_uniskip_challenge1, _uniskip_challenge2];
+                let uniskip_challenges = [uniskip_challenge1, uniskip_challenge2];
 
                 let stage_output_constraints = [
-                    _stage1_result.batched_output_constraint,
-                    _stage2_result.batched_output_constraint,
-                    _stage3_result.batched_output_constraint,
-                    _stage4_result.batched_output_constraint,
-                    _stage5_result.batched_output_constraint,
-                    _stage6_result.batched_output_constraint,
-                    _stage7_result.batched_output_constraint,
+                    stage1_result.batched_output_constraint,
+                    stage2_result.batched_output_constraint,
+                    stage3_result.batched_output_constraint,
+                    stage4_result.batched_output_constraint,
+                    stage5_result.batched_output_constraint,
+                    stage6_result.batched_output_constraint,
+                    stage7_result.batched_output_constraint,
                 ];
 
                 let stage_input_constraints = [
-                    _stage1_result.uniskip_input_constraint.clone().unwrap(),
-                    _stage2_result.uniskip_input_constraint.clone().unwrap(),
-                    _stage3_result.batched_input_constraint.clone(),
-                    _stage4_result.batched_input_constraint.clone(),
-                    _stage5_result.batched_input_constraint.clone(),
-                    _stage6_result.batched_input_constraint.clone(),
-                    _stage7_result.batched_input_constraint.clone(),
+                    stage1_result.uniskip_input_constraint.clone().unwrap(),
+                    stage2_result.uniskip_input_constraint.clone().unwrap(),
+                    stage3_result.batched_input_constraint.clone(),
+                    stage4_result.batched_input_constraint.clone(),
+                    stage5_result.batched_input_constraint.clone(),
+                    stage6_result.batched_input_constraint.clone(),
+                    stage7_result.batched_input_constraint.clone(),
                 ];
 
                 let stage_input_constraint_values = [
-                    _stage1_result
+                    stage1_result
                         .uniskip_input_constraint_challenge_values
                         .clone(),
-                    _stage2_result
+                    stage2_result
                         .uniskip_input_constraint_challenge_values
                         .clone(),
-                    _stage3_result.input_constraint_challenge_values.clone(),
-                    _stage4_result.input_constraint_challenge_values.clone(),
-                    _stage5_result.input_constraint_challenge_values.clone(),
-                    _stage6_result.input_constraint_challenge_values.clone(),
-                    _stage7_result.input_constraint_challenge_values.clone(),
+                    stage3_result.input_constraint_challenge_values.clone(),
+                    stage4_result.input_constraint_challenge_values.clone(),
+                    stage5_result.input_constraint_challenge_values.clone(),
+                    stage6_result.input_constraint_challenge_values.clone(),
+                    stage7_result.input_constraint_challenge_values.clone(),
                 ];
 
                 let output_constraint_challenge_values: [Vec<F>; 7] = [
-                    _stage1_result.output_constraint_challenge_values.clone(),
-                    _stage2_result.output_constraint_challenge_values.clone(),
-                    _stage3_result.output_constraint_challenge_values.clone(),
-                    _stage4_result.output_constraint_challenge_values.clone(),
-                    _stage5_result.output_constraint_challenge_values.clone(),
-                    _stage6_result.output_constraint_challenge_values.clone(),
-                    _stage7_result.output_constraint_challenge_values.clone(),
+                    stage1_result.output_constraint_challenge_values.clone(),
+                    stage2_result.output_constraint_challenge_values.clone(),
+                    stage3_result.output_constraint_challenge_values.clone(),
+                    stage4_result.output_constraint_challenge_values.clone(),
+                    stage5_result.output_constraint_challenge_values.clone(),
+                    stage6_result.output_constraint_challenge_values.clone(),
+                    stage7_result.output_constraint_challenge_values.clone(),
                 ];
 
                 self.verify_blindfold(
@@ -431,11 +432,11 @@ impl<
                     &output_constraint_challenge_values,
                     &stage_input_constraints,
                     &stage_input_constraint_values,
-                    &_stage1_result.batched_input_constraint,
-                    &_stage2_result.batched_input_constraint,
-                    &_stage1_result.input_constraint_challenge_values,
-                    &_stage2_result.input_constraint_challenge_values,
-                    &_stage8_data,
+                    &stage1_result.batched_input_constraint,
+                    &stage2_result.batched_input_constraint,
+                    &stage1_result.input_constraint_challenge_values,
+                    &stage2_result.input_constraint_challenge_values,
+                    &stage8_data,
                 )?;
             }
             #[cfg(not(feature = "zk"))]
@@ -743,7 +744,6 @@ impl<
             self.proof.untrusted_advice_commitment.is_some(),
             self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
-            &mut self.transcript,
             self.proof
                 .rw_config
                 .needs_single_advice_opening(self.proof.trace_length.log_2()),

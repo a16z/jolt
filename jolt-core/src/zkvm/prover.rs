@@ -1,4 +1,6 @@
 #[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
 use crate::zkvm::{claim_reductions::advice::ReductionPhase, config::OneHotConfig};
 use std::{
@@ -35,7 +37,7 @@ use crate::{
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
-            compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningId,
+            compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator,
             ProverOpeningAccumulator, SumcheckId,
         },
         rlc_polynomial::{RLCStreamingData, TraceSource},
@@ -518,9 +520,13 @@ impl<
             r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
         ];
 
-        let (joint_opening_proof, opening_claims) = self.prove_stage8(opening_proof_hints);
+        let joint_opening_proof = self.prove_stage8(opening_proof_hints);
         #[cfg(feature = "zk")]
         let blindfold_proof = self.prove_blindfold(&joint_opening_proof);
+
+        #[cfg(not(feature = "zk"))]
+        let opening_claims =
+            crate::zkvm::proof_serialization::Claims(self.opening_accumulator.openings.clone());
 
         #[cfg(test)]
         assert!(
@@ -556,6 +562,7 @@ impl<
             #[cfg(feature = "zk")]
             blindfold_proof,
             joint_opening_proof,
+            #[cfg(not(feature = "zk"))]
             opening_claims,
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
@@ -578,51 +585,52 @@ impl<
     }
 
     fn prove_batched_sumcheck(
-        zk_mode: bool,
+        &mut self,
         instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
-        pedersen_generators: &PedersenGenerators<C>,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
         F,
     ) {
-        if zk_mode {
+        if self.zk_mode {
             let mut rng = rand::thread_rng();
             BatchedSumcheck::prove_zk::<F, C, _, _>(
                 instances,
-                opening_accumulator,
-                transcript,
-                pedersen_generators,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+                &self.pedersen_generators,
                 &mut rng,
             )
         } else {
-            let (proof, r, claim) =
-                BatchedSumcheck::prove(instances, opening_accumulator, transcript);
+            let (proof, r, claim) = BatchedSumcheck::prove(
+                instances,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+            );
             (SumcheckInstanceProof::Standard(proof), r, claim)
         }
     }
 
     fn prove_uniskip(
-        zk_mode: bool,
+        &mut self,
         instance: &mut impl SumcheckInstanceProver<F, ProofTranscript>,
-        opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
-        pedersen_generators: &PedersenGenerators<C>,
     ) -> UniSkipFirstRoundProofVariant<F, C, ProofTranscript> {
-        if zk_mode {
+        if self.zk_mode {
             let mut rng = rand::thread_rng();
             let zk_proof = prove_uniskip_round_zk::<F, C, _, _, _>(
                 instance,
-                opening_accumulator,
-                transcript,
-                pedersen_generators,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+                &self.pedersen_generators,
                 &mut rng,
             );
             UniSkipFirstRoundProofVariant::Zk(zk_proof)
         } else {
-            let proof = prove_uniskip_round(instance, opening_accumulator, transcript);
+            let proof = prove_uniskip_round(
+                instance,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+            );
             UniSkipFirstRoundProofVariant::Standard(proof)
         }
     }
@@ -826,13 +834,7 @@ impl<
             &self.trace,
             &self.preprocessing.shared.bytecode,
         );
-        let first_round_proof = Self::prove_uniskip(
-            self.zk_mode,
-            &mut uni_skip,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-            &self.pedersen_generators,
-        );
+        let first_round_proof = self.prove_uniskip(&mut uni_skip);
 
         let schedule = LinearOnlySchedule::new(uni_skip_params.tau.len() - 1);
         let shared = OuterSharedState::new(
@@ -844,13 +846,9 @@ impl<
         let mut spartan_outer_remaining: OuterRemainingStreamingSumcheck<_, _> =
             OuterRemainingStreamingSumcheck::new(shared, schedule);
 
-        let (sumcheck_proof, r_stage1, _initial_claim) = Self::prove_batched_sumcheck(
-            self.zk_mode,
-            vec![&mut spartan_outer_remaining as &mut dyn SumcheckInstanceProver<_, _>],
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-            &self.pedersen_generators,
-        );
+        let (sumcheck_proof, r_stage1, _initial_claim) = self.prove_batched_sumcheck(vec![
+            &mut spartan_outer_remaining as &mut dyn SumcheckInstanceProver<_, _>,
+        ]);
 
         (first_round_proof, sumcheck_proof, r_stage1)
     }
@@ -872,13 +870,7 @@ impl<
             ProductVirtualUniSkipParams::new(&self.opening_accumulator, &mut self.transcript);
         let mut uni_skip =
             ProductVirtualUniSkipProver::initialize(uni_skip_params.clone(), &self.trace);
-        let first_round_proof = Self::prove_uniskip(
-            self.zk_mode,
-            &mut uni_skip,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-            &self.pedersen_generators,
-        );
+        let first_round_proof = self.prove_uniskip(&mut uni_skip);
 
         let ram_read_write_checking_params = RamReadWriteCheckingParams::new(
             &self.opening_accumulator,
@@ -963,13 +955,8 @@ impl<
         write_boxed_instance_flamegraph_svg(&instances, "stage2_start_flamechart.svg");
         tracing::info!("Stage 2 proving");
 
-        let (sumcheck_proof, r_stage2, _initial_claim) = Self::prove_batched_sumcheck(
-            self.zk_mode,
-            instances.iter_mut().map(|v| &mut **v as _).collect(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-            &self.pedersen_generators,
-        );
+        let (sumcheck_proof, r_stage2, _initial_claim) =
+            self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
 
         #[cfg(feature = "allocative")]
         write_boxed_instance_flamegraph_svg(&instances, "stage2_end_flamechart.svg");
@@ -1041,13 +1028,8 @@ impl<
         write_boxed_instance_flamegraph_svg(&instances, "stage3_start_flamechart.svg");
         tracing::info!("Stage 3 proving");
 
-        let (sumcheck_proof, r_stage3, _initial_claim) = Self::prove_batched_sumcheck(
-            self.zk_mode,
-            instances.iter_mut().map(|v| &mut **v as _).collect(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-            &self.pedersen_generators,
-        );
+        let (sumcheck_proof, r_stage3, _initial_claim) =
+            self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
         #[cfg(feature = "allocative")]
         write_boxed_instance_flamegraph_svg(&instances, "stage3_end_flamechart.svg");
         drop_in_background_thread(instances);
@@ -1070,7 +1052,6 @@ impl<
             &self.program_io.memory_layout,
             &self.one_hot_params,
             &mut self.opening_accumulator,
-            &mut self.transcript,
             self.rw_config
                 .needs_single_advice_opening(self.trace.len().log_2()),
         );
@@ -1137,13 +1118,8 @@ impl<
         write_boxed_instance_flamegraph_svg(&instances, "stage4_start_flamechart.svg");
         tracing::info!("Stage 4 proving");
 
-        let (sumcheck_proof, r_stage4, _initial_claim) = Self::prove_batched_sumcheck(
-            self.zk_mode,
-            instances.iter_mut().map(|v| &mut **v as _).collect(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-            &self.pedersen_generators,
-        );
+        let (sumcheck_proof, r_stage4, _initial_claim) =
+            self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
         #[cfg(feature = "allocative")]
         write_boxed_instance_flamegraph_svg(&instances, "stage4_end_flamechart.svg");
         drop_in_background_thread(instances);
@@ -1213,13 +1189,8 @@ impl<
         write_boxed_instance_flamegraph_svg(&instances, "stage5_start_flamechart.svg");
         tracing::info!("Stage 5 proving");
 
-        let (sumcheck_proof, r_stage5, _initial_claim) = Self::prove_batched_sumcheck(
-            self.zk_mode,
-            instances.iter_mut().map(|v| &mut **v as _).collect(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-            &self.pedersen_generators,
-        );
+        let (sumcheck_proof, r_stage5, _initial_claim) =
+            self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
         #[cfg(feature = "allocative")]
         write_boxed_instance_flamegraph_svg(&instances, "stage5_end_flamechart.svg");
         drop_in_background_thread(instances);
@@ -1367,6 +1338,9 @@ impl<
             }
         }
 
+        let mut advice_trusted = self.advice_reduction_prover_trusted.take();
+        let mut advice_untrusted = self.advice_reduction_prover_untrusted.take();
+
         let mut instances: Vec<&mut dyn SumcheckInstanceProver<_, _>> = vec![
             &mut bytecode_read_raf,
             &mut booleanity,
@@ -1375,10 +1349,10 @@ impl<
             &mut lookups_ra_virtual,
             &mut inc_reduction,
         ];
-        if let Some(advice) = self.advice_reduction_prover_trusted.as_mut() {
+        if let Some(ref mut advice) = advice_trusted {
             instances.push(advice);
         }
-        if let Some(advice) = self.advice_reduction_prover_untrusted.as_mut() {
+        if let Some(ref mut advice) = advice_untrusted {
             instances.push(advice);
         }
 
@@ -1386,13 +1360,8 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage6_start_flamechart.svg");
         tracing::info!("Stage 6 proving");
 
-        let (sumcheck_proof, r_stage6, _initial_claim) = Self::prove_batched_sumcheck(
-            self.zk_mode,
-            instances.iter_mut().map(|v| &mut **v as _).collect(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-            &self.pedersen_generators,
-        );
+        let (sumcheck_proof, r_stage6, _initial_claim) =
+            self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
         #[cfg(feature = "allocative")]
         write_instance_flamegraph_svg(&instances, "stage6_end_flamechart.svg");
         drop_in_background_thread(bytecode_read_raf);
@@ -1401,6 +1370,9 @@ impl<
         drop_in_background_thread(ram_ra_virtual);
         drop_in_background_thread(lookups_ra_virtual);
         drop_in_background_thread(inc_reduction);
+
+        self.advice_reduction_prover_trusted = advice_trusted;
+        self.advice_reduction_prover_untrusted = advice_untrusted;
 
         (sumcheck_proof, r_stage6)
     }
@@ -1870,13 +1842,8 @@ impl<
         write_boxed_instance_flamegraph_svg(&instances, "stage7_start_flamechart.svg");
         tracing::info!("Stage 7 proving");
 
-        let (sumcheck_proof, r_stage7, _initial_claim) = Self::prove_batched_sumcheck(
-            self.zk_mode,
-            instances.iter_mut().map(|v| &mut **v as _).collect(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-            &self.pedersen_generators,
-        );
+        let (sumcheck_proof, r_stage7, _initial_claim) =
+            self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
         #[cfg(feature = "allocative")]
         write_boxed_instance_flamegraph_svg(&instances, "stage7_end_flamechart.svg");
         drop_in_background_thread(instances);
@@ -1887,11 +1854,10 @@ impl<
     /// Stage 8: Dory batch opening proof.
     /// Builds streaming RLC polynomial directly from trace (no witness regeneration needed).
     #[tracing::instrument(skip_all)]
-    #[allow(clippy::type_complexity)]
     fn prove_stage8(
         &mut self,
         opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-    ) -> (PCS::Proof, Option<Vec<(OpeningId, F)>>) {
+    ) -> PCS::Proof {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
         let _guard = DoryGlobals::initialize_context(
@@ -2086,19 +2052,7 @@ impl<
             bind_opening_inputs::<F, _>(&mut self.transcript, &opening_point.r, &joint_claim);
         }
 
-        let opening_claims = if !self.zk_mode {
-            Some(
-                self.opening_accumulator
-                    .openings
-                    .iter()
-                    .map(|(id, (_, claim))| (*id, *claim))
-                    .collect(),
-            )
-        } else {
-            None
-        };
-
-        (proof, opening_claims)
+        proof
     }
 }
 
