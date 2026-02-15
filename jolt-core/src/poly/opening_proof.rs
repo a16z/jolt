@@ -21,6 +21,7 @@ use super::{
 };
 use crate::{
     field::JoltField,
+    transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -198,6 +199,7 @@ pub type Openings<F> = BTreeMap<OpeningId, Opening<F>>;
 /// blinding factors that are needed to construct the BlindFold witness.
 /// The commitments are stored as serialized bytes to keep the accumulator
 /// curve-agnostic.
+#[cfg(feature = "zk")]
 #[derive(Clone, Debug)]
 pub struct ZkStageData<F: JoltField> {
     /// Initial batched claim for this sumcheck stage
@@ -217,20 +219,18 @@ pub struct ZkStageData<F: JoltField> {
     /// These are the polynomial evaluations at the random sumcheck point,
     /// proven correct via ZK-Dory externally.
     pub expected_evaluations: Vec<F>,
-    #[cfg(feature = "zk")]
     pub output_constraints: Vec<Option<crate::subprotocols::blindfold::OutputClaimConstraint>>,
-    #[cfg(feature = "zk")]
     pub constraint_challenge_values: Vec<Vec<F>>,
-    #[cfg(feature = "zk")]
     pub input_constraints: Vec<crate::subprotocols::blindfold::InputClaimConstraint>,
-    #[cfg(feature = "zk")]
     pub input_constraint_challenge_values: Vec<Vec<F>>,
-    #[cfg(feature = "zk")]
     pub input_claim_scaling_exponents: Vec<usize>,
+    pub output_claims_blinding: F,
+    pub output_claims_commitment_bytes: Vec<u8>,
 }
 
 /// ZK data for uni-skip first round (Stages 1-2).
 /// Unlike regular sumcheck, uni-skip uses full polynomial (not compressed).
+#[cfg(feature = "zk")]
 #[derive(Clone, Debug)]
 pub struct UniSkipStageData<F: JoltField> {
     /// Initial claim for this uni-skip round
@@ -245,10 +245,11 @@ pub struct UniSkipStageData<F: JoltField> {
     pub poly_degree: usize,
     /// Serialized commitment bytes
     pub commitment_bytes: Vec<u8>,
-    #[cfg(feature = "zk")]
     pub input_constraint: crate::subprotocols::blindfold::InputClaimConstraint,
-    #[cfg(feature = "zk")]
     pub input_constraint_challenge_values: Vec<F>,
+    pub output_claims: Vec<F>,
+    pub output_claims_blinding: F,
+    pub output_claims_commitment_bytes: Vec<u8>,
 }
 
 /// Accumulates openings computed by the prover over the course of Jolt,
@@ -270,6 +271,8 @@ where
     uniskip_stage_data: Vec<UniSkipStageData<F>>,
     /// In ZK mode, skip absorbing cleartext claims into the transcript.
     pub zk_mode: bool,
+    #[allocative(skip)]
+    pending_claims: Vec<F>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -286,6 +289,7 @@ where
     pub log_T: usize,
     /// In ZK mode, skip absorbing cleartext claims into the transcript.
     pub zk_mode: bool,
+    pending_claims: Vec<F>,
 }
 
 pub trait OpeningAccumulator<F: JoltField> {
@@ -436,6 +440,7 @@ where
             #[cfg(feature = "zk")]
             uniskip_stage_data: Vec::new(),
             zk_mode,
+            pending_claims: Vec::new(),
         }
     }
 
@@ -467,6 +472,7 @@ where
                 claim,
             ),
         );
+        self.pending_claims.push(claim);
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_sparse")]
@@ -485,6 +491,7 @@ where
             let key = OpeningId::committed(*label, sumcheck);
             self.openings
                 .insert(key, (opening_point_struct.clone(), *claim));
+            self.pending_claims.push(*claim);
         }
     }
 
@@ -508,6 +515,7 @@ where
         self.appended_virtual_openings
             .borrow_mut()
             .push(OpeningId::virt(polynomial, sumcheck));
+        self.pending_claims.push(claim);
     }
 
     pub fn append_untrusted_advice(
@@ -520,6 +528,7 @@ where
             OpeningId::UntrustedAdvice(sumcheck_id),
             (opening_point, claim),
         );
+        self.pending_claims.push(claim);
     }
 
     pub fn append_trusted_advice(
@@ -532,6 +541,7 @@ where
             OpeningId::TrustedAdvice(sumcheck_id),
             (opening_point, claim),
         );
+        self.pending_claims.push(claim);
     }
 
     #[cfg(feature = "zk")]
@@ -552,6 +562,16 @@ where
     #[cfg(feature = "zk")]
     pub fn take_uniskip_stage_data(&mut self) -> Vec<UniSkipStageData<F>> {
         std::mem::take(&mut self.uniskip_stage_data)
+    }
+
+    pub fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
+        for claim in self.pending_claims.drain(..) {
+            transcript.append_scalar(b"opening_claim", &claim);
+        }
+    }
+
+    pub fn take_pending_claims(&mut self) -> Vec<F> {
+        std::mem::take(&mut self.pending_claims)
     }
 }
 
@@ -614,6 +634,7 @@ where
             prover_opening_accumulator: None,
             log_T,
             zk_mode,
+            pending_claims: Vec::new(),
         }
     }
 
@@ -643,6 +664,7 @@ where
                 claim,
             ),
         );
+        self.pending_claims.push(claim);
     }
 
     pub fn append_sparse(
@@ -665,6 +687,7 @@ where
                     claim,
                 ),
             );
+            self.pending_claims.push(claim);
         }
     }
 
@@ -681,6 +704,7 @@ where
             .map(|(_, c)| *c)
             .unwrap_or(F::zero());
         self.openings.insert(key, (opening_point.clone(), claim));
+        self.pending_claims.push(claim);
     }
 
     pub fn append_untrusted_advice(
@@ -695,6 +719,7 @@ where
             .map(|(_, c)| *c)
             .unwrap_or(F::zero());
         self.openings.insert(key, (opening_point.clone(), claim));
+        self.pending_claims.push(claim);
     }
 
     pub fn append_trusted_advice(
@@ -709,6 +734,17 @@ where
             .map(|(_, c)| *c)
             .unwrap_or(F::zero());
         self.openings.insert(key, (opening_point.clone(), claim));
+        self.pending_claims.push(claim);
+    }
+
+    pub fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
+        for claim in self.pending_claims.drain(..) {
+            transcript.append_scalar(b"opening_claim", &claim);
+        }
+    }
+
+    pub fn take_pending_claims(&mut self) -> Vec<F> {
+        std::mem::take(&mut self.pending_claims)
     }
 }
 

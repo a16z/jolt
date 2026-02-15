@@ -201,8 +201,12 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
         #[cfg(feature = "zk")]
+        type DoryMode = dory::ZK;
+        #[cfg(not(feature = "zk"))]
+        type DoryMode = dory::Transparent;
+
         let (proof, y_blinding) =
-            dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _, dory::ZK, _>(
+            dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _, DoryMode, _>(
                 poly,
                 &ark_point,
                 row_commitments,
@@ -213,28 +217,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
                 &mut rng,
             )
             .expect("proof generation should succeed");
-
-        #[cfg(not(feature = "zk"))]
-        let (proof, y_blinding) = dory::prove::<
-            ArkFr,
-            BN254,
-            JoltG1Routines,
-            JoltG2Routines,
-            _,
-            _,
-            dory::Transparent,
-            _,
-        >(
-            poly,
-            &ark_point,
-            row_commitments,
-            nu,
-            sigma,
-            setup,
-            &mut dory_transcript,
-            &mut rng,
-        )
-        .expect("proof generation should succeed");
 
         (proof, y_blinding.map(|b| ark_to_jolt(&b)))
     }

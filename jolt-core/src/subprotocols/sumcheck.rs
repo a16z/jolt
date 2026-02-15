@@ -179,6 +179,8 @@ impl BatchedSumcheck {
             sumcheck.cache_openings(opening_accumulator, r_slice);
         }
 
+        opening_accumulator.flush_to_transcript(transcript);
+
         (
             StandardSumcheckProof::new(compressed_polys),
             r_sumcheck,
@@ -337,6 +339,17 @@ impl BatchedSumcheck {
             sumcheck.cache_openings(opening_accumulator, r_slice);
         }
 
+        let output_claims = opening_accumulator.take_pending_claims();
+        let output_claims_blinding = F::random(rng);
+        let output_claims_commitment =
+            pedersen_gens.commit(&output_claims, &output_claims_blinding);
+
+        let mut output_claims_commitment_bytes = Vec::new();
+        output_claims_commitment
+            .serialize_compressed(&mut output_claims_commitment_bytes)
+            .expect("Serialization should not fail");
+        transcript.append_bytes(b"output_claims_commitment", &output_claims_commitment_bytes);
+
         // Collect output constraints and challenge values from each sumcheck instance
         let output_constraints: Vec<_> = sumcheck_instances
             .iter()
@@ -386,16 +399,22 @@ impl BatchedSumcheck {
             blinding_factors,
             challenges: r_sumcheck.clone(),
             batching_coefficients: batching_coefficients_f,
-            expected_evaluations: Vec::new(),
+            expected_evaluations: output_claims,
             output_constraints,
             constraint_challenge_values,
             input_constraints,
             input_constraint_challenge_values,
             input_claim_scaling_exponents,
+            output_claims_blinding,
+            output_claims_commitment_bytes,
         });
 
         (
-            SumcheckInstanceProof::new_zk(round_commitments_g1, poly_degrees),
+            SumcheckInstanceProof::new_zk(
+                round_commitments_g1,
+                poly_degrees,
+                output_claims_commitment,
+            ),
             r_sumcheck,
             initial_batched_claim,
         )
@@ -465,6 +484,18 @@ impl BatchedSumcheck {
             })
             .sum();
 
+        if !is_zk {
+            opening_accumulator.flush_to_transcript(transcript);
+        } else if let SumcheckInstanceProof::Zk(zk_proof) = proof {
+            let mut commitment_bytes = Vec::new();
+            zk_proof
+                .output_claims_commitment
+                .serialize_compressed(&mut commitment_bytes)
+                .expect("Serialization should not fail");
+            transcript.append_bytes(b"output_claims_commitment", &commitment_bytes);
+            opening_accumulator.take_pending_claims();
+        }
+
         // In ZK mode, skip output claim verification — BlindFold proves this
         if !is_zk && output_claim != expected_output_claim {
             return Err(ProofVerifyError::SumcheckVerificationError);
@@ -524,6 +555,8 @@ impl BatchedSumcheck {
                 claim * coeff
             })
             .sum();
+
+        opening_accumulator.flush_to_transcript(transcript);
 
         if output_claim != expected_output_claim {
             return Err(ProofVerifyError::SumcheckVerificationError);
@@ -599,6 +632,8 @@ pub struct ZkSumcheckProof<F: JoltField, C: JoltCurve, ProofTranscript: Transcri
     pub round_commitments: Vec<C::G1>,
     /// Polynomial degrees for each round (public info needed for R1CS construction)
     pub poly_degrees: Vec<usize>,
+    /// Pedersen commitment to output claims (Fiat-Shamir binding)
+    pub output_claims_commitment: C::G1,
     _marker: PhantomData<(F, ProofTranscript)>,
 }
 
@@ -612,12 +647,16 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalSerialize
     ) -> Result<(), ark_serialize::SerializationError> {
         self.round_commitments
             .serialize_with_mode(&mut writer, compress)?;
-        self.poly_degrees.serialize_with_mode(writer, compress)
+        self.poly_degrees
+            .serialize_with_mode(&mut writer, compress)?;
+        self.output_claims_commitment
+            .serialize_with_mode(writer, compress)
     }
 
     fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
         self.round_commitments.serialized_size(compress)
             + self.poly_degrees.serialized_size(compress)
+            + self.output_claims_commitment.serialized_size(compress)
     }
 }
 
@@ -626,7 +665,8 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> ark_serialize::Val
 {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         self.round_commitments.check()?;
-        self.poly_degrees.check()
+        self.poly_degrees.check()?;
+        self.output_claims_commitment.check()
     }
 }
 
@@ -640,10 +680,12 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalDeseriali
     ) -> Result<Self, ark_serialize::SerializationError> {
         let round_commitments =
             Vec::<C::G1>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let poly_degrees = Vec::<usize>::deserialize_with_mode(reader, compress, validate)?;
+        let poly_degrees = Vec::<usize>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let output_claims_commitment = C::G1::deserialize_with_mode(reader, compress, validate)?;
         Ok(Self {
             round_commitments,
             poly_degrees,
+            output_claims_commitment,
             _marker: PhantomData,
         })
     }
@@ -652,10 +694,15 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalDeseriali
 impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
     ZkSumcheckProof<F, C, ProofTranscript>
 {
-    pub fn new(round_commitments: Vec<C::G1>, poly_degrees: Vec<usize>) -> Self {
+    pub fn new(
+        round_commitments: Vec<C::G1>,
+        poly_degrees: Vec<usize>,
+        output_claims_commitment: C::G1,
+    ) -> Self {
         Self {
             round_commitments,
             poly_degrees,
+            output_claims_commitment,
             _marker: PhantomData,
         }
     }
@@ -786,8 +833,16 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
     }
 
     /// Create a ZK sumcheck proof with only commitments and polynomial degrees.
-    pub fn new_zk(round_commitments: Vec<C::G1>, poly_degrees: Vec<usize>) -> Self {
-        Self::Zk(ZkSumcheckProof::new(round_commitments, poly_degrees))
+    pub fn new_zk(
+        round_commitments: Vec<C::G1>,
+        poly_degrees: Vec<usize>,
+        output_claims_commitment: C::G1,
+    ) -> Self {
+        Self::Zk(ZkSumcheckProof::new(
+            round_commitments,
+            poly_degrees,
+            output_claims_commitment,
+        ))
     }
 
     /// Verify the sumcheck proof.

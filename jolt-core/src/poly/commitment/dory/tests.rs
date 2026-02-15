@@ -274,12 +274,7 @@ mod tests {
 
         // Test 1: Tamper with the evaluation
         {
-            use ark_ff::One;
-
-            let mut tampered_evaluation = Fr::rand(&mut rng);
-            if tampered_evaluation == correct_evaluation {
-                tampered_evaluation += Fr::one();
-            }
+            let tampered_evaluation = Fr::rand(&mut rng);
 
             let mut verify_transcript =
                 Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
