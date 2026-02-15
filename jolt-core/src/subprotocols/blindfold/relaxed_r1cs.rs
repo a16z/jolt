@@ -153,20 +153,26 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
     /// then padding to R'.
     pub fn all_w_row_commitments(
         &self,
-        total_rounds: usize,
         R_coeff: usize,
         R_prime: usize,
-    ) -> Vec<C::G1> {
+    ) -> Result<Vec<C::G1>, BlindFoldVerifyError> {
+        let expected_noncoeff = R_prime - R_coeff;
+        if self.round_commitments.len() > R_coeff
+            || self.noncoeff_row_commitments.len() > expected_noncoeff
+        {
+            return Err(BlindFoldVerifyError::MalformedProof);
+        }
+
         let mut rows = Vec::with_capacity(R_prime);
         rows.extend_from_slice(&self.round_commitments);
-        for _ in total_rounds..R_coeff {
+        for _ in self.round_commitments.len()..R_coeff {
             rows.push(C::G1::zero());
         }
         rows.extend_from_slice(&self.noncoeff_row_commitments);
-        while rows.len() < R_prime {
+        for _ in rows.len()..R_prime {
             rows.push(C::G1::zero());
         }
-        rows
+        Ok(rows)
     }
 }
 

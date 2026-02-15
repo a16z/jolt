@@ -184,7 +184,6 @@ fn scale_batching_coefficients<F: JoltField, T: Transcript>(
 }
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use itertools::Itertools;
 use tracer::instruction::Instruction;
 use tracer::JoltDevice;
 
@@ -1509,9 +1508,17 @@ impl<
 
         // Build commitments map
         let mut commitments_map = HashMap::new();
-        for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
+        let expected_polynomials = all_committed_polynomials(&self.one_hot_params);
+        if expected_polynomials.len() != self.proof.commitments.len() {
+            return Err(ProofVerifyError::InvalidInputLength(
+                expected_polynomials.len(),
+                self.proof.commitments.len(),
+            )
+            .into());
+        }
+        for (polynomial, commitment) in expected_polynomials
             .into_iter()
-            .zip_eq(&self.proof.commitments)
+            .zip(&self.proof.commitments)
         {
             commitments_map.insert(polynomial, commitment.clone());
         }
@@ -1549,7 +1556,7 @@ impl<
         .context("Stage 8")?;
 
         let y_com: C::G1 = PCS::eval_commitment(&self.proof.joint_opening_proof)
-            .expect("ZK proof must have y_com");
+            .ok_or(ProofVerifyError::InternalError)?;
         bind_opening_inputs_zk::<F, C, _>(&mut self.transcript, &opening_point.r, &y_com);
 
         Ok(Stage8VerifyData {
