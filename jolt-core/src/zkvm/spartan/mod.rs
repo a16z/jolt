@@ -16,9 +16,6 @@ pub mod outer;
 pub mod product;
 pub mod shift;
 
-/// Stage 1a: Verify first round of Spartan outer sum-check with univariate skip.
-/// For ZK variant: only verifies transcript consistency, polynomial verification is deferred to BlindFold.
-/// Returns (params, challenge) - the challenge is needed for BlindFold verification.
 pub fn verify_stage1_uni_skip<F: JoltField, C: JoltCurve, T: Transcript>(
     proof: &UniSkipFirstRoundProofVariant<F, C, T>,
     key: &UniformSpartanKey<F>,
@@ -35,22 +32,16 @@ pub fn verify_stage1_uni_skip<F: JoltField, C: JoltCurve, T: Transcript>(
             >(std_proof, &verifier, opening_accumulator, transcript)
             .map_err(|_| anyhow::anyhow!("UniSkip first-round verification failed"))?
         }
-        UniSkipFirstRoundProofVariant::Zk(zk_proof) => {
-            // ZK mode: verify transcript only, polynomial verification deferred to BlindFold
-            zk_proof
-                .verify_transcript(&verifier, opening_accumulator, transcript)
-                .map_err(|_| {
-                    anyhow::anyhow!("UniSkip ZK first-round transcript verification failed")
-                })?
-        }
+        UniSkipFirstRoundProofVariant::Zk(zk_proof) => zk_proof
+            .verify_transcript(&verifier, opening_accumulator, transcript)
+            .map_err(|_| {
+                anyhow::anyhow!("UniSkip ZK first-round transcript verification failed")
+            })?,
     };
 
     Ok((verifier.params, challenge))
 }
 
-/// Stage 2a: Verify first round of product virtualization sum-check with univariate skip.
-/// For ZK variant: only verifies transcript consistency, polynomial verification is deferred to BlindFold.
-/// Returns (params, challenge) - the challenge is needed for BlindFold verification.
 pub fn verify_stage2_uni_skip<F: JoltField, C: JoltCurve, T: Transcript>(
     proof: &UniSkipFirstRoundProofVariant<F, C, T>,
     opening_accumulator: &mut VerifierOpeningAccumulator<F>,
@@ -68,16 +59,13 @@ pub fn verify_stage2_uni_skip<F: JoltField, C: JoltCurve, T: Transcript>(
                 anyhow::anyhow!("ProductVirtual uni-skip first-round verification failed")
             })?
         }
-        UniSkipFirstRoundProofVariant::Zk(zk_proof) => {
-            // ZK mode: verify transcript only, polynomial verification deferred to BlindFold
-            zk_proof
-                .verify_transcript(&verifier, opening_accumulator, transcript)
-                .map_err(|_| {
-                    anyhow::anyhow!(
-                        "ProductVirtual ZK uni-skip first-round transcript verification failed"
-                    )
-                })?
-        }
+        UniSkipFirstRoundProofVariant::Zk(zk_proof) => zk_proof
+            .verify_transcript(&verifier, opening_accumulator, transcript)
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "ProductVirtual ZK uni-skip first-round transcript verification failed"
+                )
+            })?,
     };
 
     Ok((verifier.params, challenge))

@@ -29,7 +29,7 @@ use crate::{
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
     },
-    subprotocols::blindfold::{
+    subprotocols::constraint_types::{
         InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
     },
     transcripts::Transcript,

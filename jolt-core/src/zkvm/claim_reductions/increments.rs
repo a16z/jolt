@@ -62,7 +62,7 @@ use crate::poly::opening_proof::{
     SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::blindfold::{
+use crate::subprotocols::constraint_types::{
     InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;

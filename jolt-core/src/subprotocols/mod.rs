@@ -1,5 +1,7 @@
+#[cfg(feature = "zk")]
 pub mod blindfold;
 pub mod booleanity;
+pub mod constraint_types;
 pub mod mles_product_sum;
 pub mod read_write_matrix;
 pub mod streaming_schedule;

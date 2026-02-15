@@ -30,7 +30,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+        constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         mles_product_sum::{eval_linear_prod_accumulate, finish_mles_product_sum_from_evals},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
@@ -1528,9 +1528,11 @@ mod tests {
         );
 
         let prover_transcript = &mut Blake2bTranscript::new(&[]);
-        let mut prover_opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
+        let mut prover_opening_accumulator =
+            ProverOpeningAccumulator::new(trace.len().log_2(), false);
         let verifier_transcript = &mut Blake2bTranscript::new(&[]);
-        let mut verifier_opening_accumulator = VerifierOpeningAccumulator::new(trace.len().log_2());
+        let mut verifier_opening_accumulator =
+            VerifierOpeningAccumulator::new(trace.len().log_2(), false);
 
         let r_cycle: Vec<<Fr as JoltField>::Challenge> =
             prover_transcript.challenge_vector_optimized::<Fr>(LOG_T);

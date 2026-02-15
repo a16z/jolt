@@ -7,7 +7,7 @@ use crate::poly::opening_proof::{
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::blindfold::{
+use crate::subprotocols::constraint_types::{
     InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
 };
 use crate::subprotocols::sumcheck_claim::{

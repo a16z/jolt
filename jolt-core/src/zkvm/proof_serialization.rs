@@ -6,6 +6,8 @@ use ark_serialize::{
 use num::FromPrimitive;
 use strum::EnumCount;
 
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::BlindFoldProof;
 use crate::{
     curve::JoltCurve,
     field::JoltField,
@@ -14,8 +16,7 @@ use crate::{
         opening_proof::{OpeningId, PolynomialId, SumcheckId},
     },
     subprotocols::{
-        blindfold::BlindFoldProof, sumcheck::SumcheckInstanceProof,
-        univariate_skip::UniSkipFirstRoundProofVariant,
+        sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
     },
     transcripts::Transcript,
     zkvm::{
@@ -25,7 +26,6 @@ use crate::{
     },
 };
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub commitments: Vec<PCS::Commitment>,
     pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
@@ -37,15 +37,212 @@ pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    #[cfg(feature = "zk")]
     pub blindfold_proof: BlindFoldProof<F, C>,
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
+    /// Polynomial evaluation claims for standard (non-ZK) proofs.
+    /// The verifier pre-populates its opening accumulator with these claims
+    /// before stages 1-7. PCS (stage 8) proves the claims are correct.
+    /// None in ZK mode — BlindFold handles claim verification.
+    pub opening_claims: Option<Vec<(OpeningId, F)>>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub bytecode_K: usize,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
     pub dory_layout: DoryLayout,
+}
+
+macro_rules! ser_field {
+    ($self:ident, $field:ident, $writer:ident, $compress:ident) => {
+        $self.$field.serialize_with_mode(&mut $writer, $compress)?;
+    };
+}
+
+macro_rules! ser_field_size {
+    ($self:ident, $field:ident, $compress:ident) => {
+        $self.$field.serialized_size($compress)
+    };
+}
+
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalSerialize for JoltProof<F, C, PCS, FS>
+{
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        ser_field!(self, commitments, writer, compress);
+        ser_field!(self, stage1_uni_skip_first_round_proof, writer, compress);
+        ser_field!(self, stage1_sumcheck_proof, writer, compress);
+        ser_field!(self, stage2_uni_skip_first_round_proof, writer, compress);
+        ser_field!(self, stage2_sumcheck_proof, writer, compress);
+        ser_field!(self, stage3_sumcheck_proof, writer, compress);
+        ser_field!(self, stage4_sumcheck_proof, writer, compress);
+        ser_field!(self, stage5_sumcheck_proof, writer, compress);
+        ser_field!(self, stage6_sumcheck_proof, writer, compress);
+        ser_field!(self, stage7_sumcheck_proof, writer, compress);
+        #[cfg(feature = "zk")]
+        ser_field!(self, blindfold_proof, writer, compress);
+        ser_field!(self, joint_opening_proof, writer, compress);
+        ser_field!(self, untrusted_advice_commitment, writer, compress);
+        ser_field!(self, opening_claims, writer, compress);
+        ser_field!(self, trace_length, writer, compress);
+        ser_field!(self, ram_K, writer, compress);
+        ser_field!(self, bytecode_K, writer, compress);
+        ser_field!(self, rw_config, writer, compress);
+        ser_field!(self, one_hot_config, writer, compress);
+        ser_field!(self, dory_layout, writer, compress);
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let mut size = 0;
+        size += ser_field_size!(self, commitments, compress);
+        size += ser_field_size!(self, stage1_uni_skip_first_round_proof, compress);
+        size += ser_field_size!(self, stage1_sumcheck_proof, compress);
+        size += ser_field_size!(self, stage2_uni_skip_first_round_proof, compress);
+        size += ser_field_size!(self, stage2_sumcheck_proof, compress);
+        size += ser_field_size!(self, stage3_sumcheck_proof, compress);
+        size += ser_field_size!(self, stage4_sumcheck_proof, compress);
+        size += ser_field_size!(self, stage5_sumcheck_proof, compress);
+        size += ser_field_size!(self, stage6_sumcheck_proof, compress);
+        size += ser_field_size!(self, stage7_sumcheck_proof, compress);
+        #[cfg(feature = "zk")]
+        {
+            size += ser_field_size!(self, blindfold_proof, compress);
+        }
+        size += ser_field_size!(self, joint_opening_proof, compress);
+        size += ser_field_size!(self, untrusted_advice_commitment, compress);
+        size += ser_field_size!(self, opening_claims, compress);
+        size += ser_field_size!(self, trace_length, compress);
+        size += ser_field_size!(self, ram_K, compress);
+        size += ser_field_size!(self, bytecode_K, compress);
+        size += ser_field_size!(self, rw_config, compress);
+        size += ser_field_size!(self, one_hot_config, compress);
+        size += ser_field_size!(self, dory_layout, compress);
+        size
+    }
+}
+
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
+    for JoltProof<F, C, PCS, FS>
+{
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalDeserialize for JoltProof<F, C, PCS, FS>
+{
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        Ok(Self {
+            commitments: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage1_uni_skip_first_round_proof: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage1_sumcheck_proof: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage2_uni_skip_first_round_proof: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage2_sumcheck_proof: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage3_sumcheck_proof: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage4_sumcheck_proof: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage5_sumcheck_proof: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage6_sumcheck_proof: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            stage7_sumcheck_proof: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            #[cfg(feature = "zk")]
+            blindfold_proof: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            joint_opening_proof: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            untrusted_advice_commitment: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            opening_claims: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            trace_length: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            ram_K: CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?,
+            bytecode_K: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            rw_config: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            one_hot_config: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            dory_layout: CanonicalDeserialize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+        })
+    }
 }
 
 impl CanonicalSerialize for DoryLayout {

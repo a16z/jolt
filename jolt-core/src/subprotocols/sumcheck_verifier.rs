@@ -1,5 +1,5 @@
 use crate::poly::opening_proof::{OpeningAccumulator, OpeningPoint, BIG_ENDIAN};
-use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
+use crate::subprotocols::constraint_types::{InputClaimConstraint, OutputClaimConstraint};
 use crate::transcripts::Transcript;
 
 use crate::{field::JoltField, poly::opening_proof::VerifierOpeningAccumulator};

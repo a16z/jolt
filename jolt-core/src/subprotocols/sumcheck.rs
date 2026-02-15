@@ -44,12 +44,10 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
-        // Append input claims to transcript
         sumcheck_instances.iter().for_each(|sumcheck| {
             let input_claim = sumcheck.input_claim(opening_accumulator);
             transcript.append_scalar(b"sumcheck_claim", &input_claim);
         });
-
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
@@ -418,15 +416,12 @@ impl BatchedSumcheck {
             .unwrap();
 
         let is_zk = matches!(proof, SumcheckInstanceProof::Zk(_));
-
-        // In ZK mode, skip absorbing cleartext claims — polynomial commitments provide binding.
         if !is_zk {
             sumcheck_instances.iter().for_each(|sumcheck| {
                 let input_claim = sumcheck.input_claim(opening_accumulator);
                 transcript.append_scalar(b"sumcheck_claim", &input_claim);
             });
         }
-
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
@@ -451,10 +446,6 @@ impl BatchedSumcheck {
         let (output_claim, r_sumcheck) =
             proof.verify(claim, max_num_rounds, max_degree, transcript)?;
 
-        // In ZK mode (Zk variant), output_claim is F::zero() since polynomial
-        // evaluation is verified by BlindFold, not by the verifier directly.
-        let is_zk_mode = matches!(proof, SumcheckInstanceProof::Zk(_));
-
         let expected_output_claim: F = sumcheck_instances
             .iter()
             .zip(batching_coeffs.iter())
@@ -471,8 +462,8 @@ impl BatchedSumcheck {
             })
             .sum();
 
-        // In ZK mode, skip output claim verification - BlindFold proves this
-        if !is_zk_mode && output_claim != expected_output_claim {
+        // In ZK mode, skip output claim verification — BlindFold proves this
+        if !is_zk && output_claim != expected_output_claim {
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
@@ -818,7 +809,10 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
         }
     }
 
-    /// Get the number of rounds in this proof.
+    pub fn is_zk(&self) -> bool {
+        matches!(self, Self::Zk(_))
+    }
+
     pub fn num_rounds(&self) -> usize {
         match self {
             Self::Standard(proof) => proof.compressed_polys.len(),

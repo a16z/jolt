@@ -14,7 +14,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+        constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         mles_product_sum::{
             compute_mles_product_sum_evals_sum_of_products_d16,
             compute_mles_product_sum_evals_sum_of_products_d4,

@@ -24,6 +24,7 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
 default = ["host"]
+zk = ["dory/zk"]
 host = [
     "prover",
     "dep:jolt-inlines-sha2",
@@ -37,7 +38,6 @@ prover = [
     "dory/backends",
     "dory/cache", # This includes `parallel` feature
     "dory/disk-persistence",
-    "dory/zk"
 ]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.

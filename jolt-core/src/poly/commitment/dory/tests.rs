@@ -304,7 +304,7 @@ mod tests {
         }
 
         // Test 1b: Tamper with the committed evaluation in ZK proofs
-        #[cfg(feature = "prover")]
+        #[cfg(all(feature = "prover", feature = "zk"))]
         {
             let mut tampered_proof = proof.clone();
             if let Some(ref mut y_com) = tampered_proof.y_com {

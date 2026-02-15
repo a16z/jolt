@@ -93,7 +93,7 @@ use crate::poly::{
     unipoly::UniPoly,
 };
 use crate::subprotocols::{
-    blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+    constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
     sumcheck_prover::SumcheckInstanceProver,
     sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
 };

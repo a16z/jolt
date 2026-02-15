@@ -20,11 +20,13 @@ use crate::{
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
+#[cfg(feature = "zk")]
 use ark_serialize::CanonicalSerialize;
 use dory::primitives::{
     arithmetic::{Group, PairingCurve},
     poly::Polynomial,
 };
+#[cfg(feature = "zk")]
 use dory::ZK;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -80,7 +82,7 @@ pub fn bind_opening_inputs<F: JoltField, ProofTranscript: Transcript>(
     transcript.append_scalar(b"dory_opening_eval", opening);
 }
 
-/// ZK variant: absorbs y_com (evaluation commitment) instead of cleartext evaluation.
+#[cfg(feature = "zk")]
 pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>(
     transcript: &mut ProofTranscript,
     opening_point: &[F::Challenge],
@@ -203,6 +205,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
+        #[cfg(feature = "zk")]
         let (proof, y_blinding) =
             dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _, ZK, _>(
                 poly,
@@ -215,6 +218,28 @@ impl CommitmentScheme for DoryCommitmentScheme {
                 &mut rng,
             )
             .expect("proof generation should succeed");
+
+        #[cfg(not(feature = "zk"))]
+        let (proof, y_blinding) = dory::prove::<
+            ArkFr,
+            BN254,
+            JoltG1Routines,
+            JoltG2Routines,
+            _,
+            _,
+            dory::Transparent,
+            _,
+        >(
+            poly,
+            &ark_point,
+            row_commitments,
+            nu,
+            sigma,
+            setup,
+            &mut dory_transcript,
+            &mut rng,
+        )
+        .expect("proof generation should succeed");
 
         (proof, y_blinding.map(|b| ark_to_jolt(&b)))
     }
@@ -479,7 +504,15 @@ where
     C::G1: From<ArkG1>,
 {
     fn eval_commitment(proof: &Self::Proof) -> Option<C::G1> {
-        proof.y_com.as_ref().copied().map(C::G1::from)
+        #[cfg(feature = "zk")]
+        {
+            proof.y_com.as_ref().copied().map(C::G1::from)
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            let _ = proof;
+            None
+        }
     }
 
     fn eval_commitment_gens(setup: &Self::ProverSetup) -> Option<(C::G1, C::G1)> {
