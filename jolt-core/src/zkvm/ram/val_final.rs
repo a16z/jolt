@@ -12,7 +12,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+        constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -124,9 +124,13 @@ impl<F: JoltField> ValFinalSumcheckParams<F> {
             advice_sumcheck_id,
         );
 
-        // Verifier can't compute full val_init_eval in ZK mode (advice evals are private),
-        // but val_init_eval is only used by input_claim() which is irrelevant in ZK mode.
-        let val_init_eval = val_init_eval_public;
+        // Reconstruct full val_init_eval from public portion + advice contributions.
+        // In ZK mode advice evals are zero (not pre-populated), so this is a no-op.
+        let val_init_eval = super::reconstruct_full_eval(
+            val_init_eval_public,
+            &advice_contributions,
+            opening_accumulator,
+        );
 
         ValFinalSumcheckParams {
             T: trace_len,
@@ -324,7 +328,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValFinalSumch
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle_prime = self.params.normalize_opening_point(sumcheck_challenges);
@@ -337,14 +340,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValFinalSumch
         let wa_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle_prime.r].concat());
 
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RamInc,
             SumcheckId::RamValFinalEvaluation,
             r_cycle_prime.r,
             self.inc.final_sumcheck_claim(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamValFinalEvaluation,
             wa_opening_point,
@@ -411,7 +412,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ValFinalSum
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let r_cycle_prime = self.params.normalize_opening_point(sumcheck_challenges);
@@ -424,13 +424,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ValFinalSum
         let wa_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle_prime.r].concat());
 
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RamInc,
             SumcheckId::RamValFinalEvaluation,
             r_cycle_prime.r,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamValFinalEvaluation,
             wa_opening_point,

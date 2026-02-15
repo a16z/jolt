@@ -253,7 +253,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BlindFoldSpar
     fn cache_openings(
         &self,
         _accumulator: &mut ProverOpeningAccumulator<F>,
-        _transcript: &mut T,
         _sumcheck_challenges: &[F::Challenge],
     ) {
         // The opening proofs for W and E contributions are handled by BlindFold
@@ -428,7 +427,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         _accumulator: &mut VerifierOpeningAccumulator<F>,
-        _transcript: &mut T,
         _sumcheck_challenges: &[F::Challenge],
     ) {
         // Opening verification is handled by BlindFold after sumcheck

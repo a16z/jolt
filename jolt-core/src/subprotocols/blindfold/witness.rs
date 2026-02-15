@@ -9,6 +9,7 @@ use super::r1cs::VerifierR1CS;
 use super::{OutputClaimConstraint, StageConfig};
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
+use crate::subprotocols::constraint_types::{SumOfProductsVisitor, ValueSource};
 
 /// Witness data for a single sumcheck round
 #[derive(Clone, Debug)]
@@ -440,14 +441,76 @@ impl<F: JoltField> BlindFoldWitness<F> {
         opening_values: &[F],
         challenge_values: &[F],
     ) -> Vec<F> {
-        let mut visitor = super::output_constraint::WitnessAuxVisitor::new(
-            constraint,
-            opening_values,
-            challenge_values,
-        );
+        let mut visitor = WitnessAuxVisitor::new(constraint, opening_values, challenge_values);
         let mut aux_vars = Vec::new();
         constraint.visit(&mut visitor, &mut aux_vars);
         aux_vars
+    }
+}
+
+struct WitnessAuxVisitor<'a, F> {
+    opening_map: std::collections::HashMap<OpeningId, usize>,
+    opening_values: &'a [F],
+    challenge_values: &'a [F],
+    current_product: F,
+}
+
+impl<'a, F: JoltField> WitnessAuxVisitor<'a, F> {
+    fn new(
+        constraint: &OutputClaimConstraint,
+        opening_values: &'a [F],
+        challenge_values: &'a [F],
+    ) -> Self {
+        let opening_map = constraint
+            .required_openings
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (*id, i))
+            .collect();
+        Self {
+            opening_map,
+            opening_values,
+            challenge_values,
+            current_product: F::zero(),
+        }
+    }
+}
+
+impl<F: JoltField> SumOfProductsVisitor for WitnessAuxVisitor<'_, F> {
+    type Resolved = F;
+    type Acc = Vec<F>;
+
+    fn resolve(&self, vs: &ValueSource) -> F {
+        match vs {
+            ValueSource::Opening(id) => {
+                let idx = *self.opening_map.get(id).expect("Opening not found");
+                self.opening_values[idx]
+            }
+            ValueSource::Challenge(idx) => self.challenge_values[*idx],
+            ValueSource::Constant(val) => F::from_i128(*val),
+        }
+    }
+
+    fn on_no_factors(&mut self, acc: &mut Vec<F>, coeff: F) {
+        acc.push(coeff);
+    }
+
+    fn on_single_factor(&mut self, acc: &mut Vec<F>, coeff: F, factor: F) {
+        acc.push(coeff * factor);
+    }
+
+    fn on_chain_start(&mut self, acc: &mut Vec<F>, f0: F, f1: F) {
+        self.current_product = f0 * f1;
+        acc.push(self.current_product);
+    }
+
+    fn on_chain_step(&mut self, acc: &mut Vec<F>, factor: F) {
+        self.current_product *= factor;
+        acc.push(self.current_product);
+    }
+
+    fn on_chain_finalize(&mut self, acc: &mut Vec<F>, coeff: F) {
+        acc.push(coeff * self.current_product);
     }
 }
 

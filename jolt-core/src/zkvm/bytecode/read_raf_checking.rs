@@ -19,7 +19,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+        constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         mles_product_sum::eval_linear_prod_assign,
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
@@ -558,7 +558,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -572,7 +571,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
         for i in 0..self.params.d {
             accumulator.append_sparse(
-                transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
                 SumcheckId::BytecodeReadRaf,
                 r_address_chunks[i].clone(),
@@ -675,7 +673,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -690,7 +687,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         (0..self.params.d).for_each(|i| {
             let opening_point = [&r_address_chunks[i][..], &r_cycle.r].concat();
             accumulator.append_sparse(
-                transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
                 SumcheckId::BytecodeReadRaf,
                 opening_point,

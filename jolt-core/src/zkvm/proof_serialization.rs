@@ -1,3 +1,5 @@
+#[cfg(not(feature = "zk"))]
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 
 use ark_serialize::{
@@ -6,6 +8,10 @@ use ark_serialize::{
 use num::FromPrimitive;
 use strum::EnumCount;
 
+#[cfg(not(feature = "zk"))]
+use crate::poly::opening_proof::{OpeningPoint, Openings};
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::BlindFoldProof;
 use crate::{
     curve::JoltCurve,
     field::JoltField,
@@ -13,9 +19,10 @@ use crate::{
         commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
         opening_proof::{OpeningId, PolynomialId, SumcheckId},
     },
+};
+use crate::{
     subprotocols::{
-        blindfold::BlindFoldProof, sumcheck::SumcheckInstanceProof,
-        univariate_skip::UniSkipFirstRoundProofVariant,
+        sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
     },
     transcripts::Transcript,
     zkvm::{
@@ -37,15 +44,71 @@ pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    #[cfg(feature = "zk")]
     pub blindfold_proof: BlindFoldProof<F, C>,
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
+    #[cfg(not(feature = "zk"))]
+    pub opening_claims: Claims<F>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub bytecode_K: usize,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
     pub dory_layout: DoryLayout,
+}
+
+#[cfg(not(feature = "zk"))]
+pub struct Claims<F: JoltField>(pub Openings<F>);
+
+#[cfg(not(feature = "zk"))]
+impl<F: JoltField> CanonicalSerialize for Claims<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.0.len().serialize_with_mode(&mut writer, compress)?;
+        for (key, (_opening_point, claim)) in self.0.iter() {
+            key.serialize_with_mode(&mut writer, compress)?;
+            claim.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let mut size = self.0.len().serialized_size(compress);
+        for (key, (_opening_point, claim)) in self.0.iter() {
+            size += key.serialized_size(compress);
+            size += claim.serialized_size(compress);
+        }
+        size
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+impl<F: JoltField> Valid for Claims<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+impl<F: JoltField> CanonicalDeserialize for Claims<F> {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let size = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let mut claims = BTreeMap::new();
+        for _ in 0..size {
+            let key = OpeningId::deserialize_with_mode(&mut reader, compress, validate)?;
+            let claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
+            claims.insert(key, (OpeningPoint::default(), claim));
+        }
+        Ok(Claims(claims))
+    }
 }
 
 impl CanonicalSerialize for DoryLayout {
@@ -126,11 +189,9 @@ impl CanonicalSerialize for OpeningId {
         match self {
             OpeningId::UntrustedAdvice(_) | OpeningId::TrustedAdvice(_) => 1,
             OpeningId::Polynomial(PolynomialId::Committed(committed_polynomial), _) => {
-                // 1 byte fused (variant + sumcheck_id) + poly index
                 1 + committed_polynomial.serialized_size(compress)
             }
             OpeningId::Polynomial(PolynomialId::Virtual(virtual_polynomial), _) => {
-                // 1 byte fused (variant + sumcheck_id) + poly index
                 1 + virtual_polynomial.serialized_size(compress)
             }
         }

@@ -93,7 +93,7 @@ use crate::poly::{
     unipoly::UniPoly,
 };
 use crate::subprotocols::{
-    blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+    constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
     sumcheck_prover::SumcheckInstanceProver,
     sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
 };
@@ -529,7 +529,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let N = self.params.polynomial_types.len();
@@ -545,7 +544,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
             // All three claim types (HW, Bool, Virt) collapse to this single opening
             accumulator.append_sparse(
-                transcript,
                 vec![self.params.polynomial_types[i]],
                 SumcheckId::HammingWeightClaimReduction,
                 r_address.clone(),
@@ -628,7 +626,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let N = self.params.polynomial_types.len();
@@ -641,7 +638,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
         for i in 0..N {
             accumulator.append_sparse(
-                transcript,
                 vec![self.params.polynomial_types[i]],
                 SumcheckId::HammingWeightClaimReduction,
                 full_point.clone(),

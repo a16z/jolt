@@ -30,7 +30,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+        constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         mles_product_sum::{eval_linear_prod_accumulate, finish_mles_product_sum_from_evals},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
@@ -969,7 +969,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_sumcheck = self.params.normalize_opening_point(sumcheck_challenges);
@@ -986,7 +985,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
         for (i, claim) in flag_claims.into_iter().enumerate() {
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::LookupTableFlag(i),
                 SumcheckId::InstructionReadRaf,
                 r_cycle.clone(),
@@ -1001,7 +999,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             let opening_point =
                 OpeningPoint::<BIG_ENDIAN, F>::new([r_address, &*r_cycle.r].concat());
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::InstructionRa(i),
                 SumcheckId::InstructionReadRaf,
                 opening_point,
@@ -1010,7 +1007,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         }
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionRafFlag,
             SumcheckId::InstructionReadRaf,
             r_cycle.clone(),
@@ -1391,7 +1387,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_sumcheck = self.params.normalize_opening_point(sumcheck_challenges);
@@ -1401,7 +1396,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
         (0..LookupTables::<XLEN>::COUNT).for_each(|i| {
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::LookupTableFlag(i),
                 SumcheckId::InstructionReadRaf,
                 r_cycle.clone(),
@@ -1416,7 +1410,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             let opening_point =
                 OpeningPoint::<BIG_ENDIAN, F>::new([r_address_chunk, &*r_cycle.r].concat());
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::InstructionRa(i),
                 SumcheckId::InstructionReadRaf,
                 opening_point,
@@ -1424,7 +1417,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         }
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionRafFlag,
             SumcheckId::InstructionReadRaf,
             r_cycle.clone(),
@@ -1528,9 +1520,11 @@ mod tests {
         );
 
         let prover_transcript = &mut Blake2bTranscript::new(&[]);
-        let mut prover_opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
+        let mut prover_opening_accumulator =
+            ProverOpeningAccumulator::new(trace.len().log_2(), false);
         let verifier_transcript = &mut Blake2bTranscript::new(&[]);
-        let mut verifier_opening_accumulator = VerifierOpeningAccumulator::new(trace.len().log_2());
+        let mut verifier_opening_accumulator =
+            VerifierOpeningAccumulator::new(trace.len().log_2(), false);
 
         let r_cycle: Vec<<Fr as JoltField>::Challenge> =
             prover_transcript.challenge_vector_optimized::<Fr>(LOG_T);
@@ -1557,28 +1551,24 @@ mod tests {
         }
 
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
             rv_claim,
         );
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
             left_operand_claim,
         );
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
             right_operand_claim,
         );
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanProductVirtualization,
             OpeningPoint::new(r_cycle.clone()),
@@ -1611,25 +1601,21 @@ mod tests {
         }
 
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanProductVirtualization,
             OpeningPoint::new(r_cycle.clone()),

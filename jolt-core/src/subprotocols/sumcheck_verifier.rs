@@ -1,5 +1,5 @@
 use crate::poly::opening_proof::{OpeningAccumulator, OpeningPoint, BIG_ENDIAN};
-use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
+use crate::subprotocols::constraint_types::{InputClaimConstraint, OutputClaimConstraint};
 use crate::transcripts::Transcript;
 
 use crate::{field::JoltField, poly::opening_proof::VerifierOpeningAccumulator};
@@ -41,7 +41,6 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     );
 }

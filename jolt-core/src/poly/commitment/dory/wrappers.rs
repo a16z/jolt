@@ -11,10 +11,12 @@ use crate::{
 use ark_bn254::Fr;
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
+#[cfg(feature = "zk")]
+use dory::primitives::arithmetic::Field;
 use dory::{
     error::DoryError,
     primitives::{
-        arithmetic::{DoryRoutines, Field, Group as DoryGroup, PairingCurve},
+        arithmetic::{DoryRoutines, Group as DoryGroup, PairingCurve},
         poly::{MultilinearLagrange, Polynomial as DoryPolynomial},
         transcript::Transcript as DoryTranscript,
         DorySerialize,
@@ -76,6 +78,7 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
         Ok((commitment, row_commitments))
     }
 
+    #[cfg(feature = "zk")]
     #[allow(clippy::type_complexity)]
     fn commit_zk<E, _M1, R>(
         &self,

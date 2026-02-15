@@ -141,7 +141,7 @@ pub fn prove_uniskip_round<F: JoltField, T: Transcript, I: SumcheckInstanceProve
     // Append full polynomial and derive r0
     transcript.append_scalars(b"uniskip_poly", &uni_poly.coeffs);
     let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-    instance.cache_openings(opening_accumulator, transcript, &[r0]);
+    instance.cache_openings(opening_accumulator, &[r0]);
     UniSkipFirstRoundProof::new(uni_poly)
 }
 
@@ -178,7 +178,7 @@ pub fn prove_uniskip_round_zk<
     transcript.append_bytes(b"sumcheck_commitment", &commitment_bytes);
 
     let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-    instance.cache_openings(opening_accumulator, transcript, &[r0]);
+    instance.cache_openings(opening_accumulator, &[r0]);
 
     // Get input constraint from the instance params
     let input_constraint = instance.get_params().input_claim_constraint();
@@ -243,7 +243,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
         let ok = proof
             .uni_poly
             .check_sum_evals::<N, FIRST_ROUND_POLY_NUM_COEFFS>(input_claim);
-        sumcheck_instance.cache_openings(opening_accumulator, transcript, &[r0]);
+        sumcheck_instance.cache_openings(opening_accumulator, &[r0]);
 
         if !ok {
             Err(ProofVerifyError::UniSkipVerificationError)
@@ -297,7 +297,7 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> ZkUniSkipFirstRoundProof<F, C, T
         transcript.append_bytes(b"sumcheck_commitment", &commitment_bytes);
 
         let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-        sumcheck_instance.cache_openings(opening_accumulator, transcript, &[r0]);
+        sumcheck_instance.cache_openings(opening_accumulator, &[r0]);
 
         Ok(r0)
     }

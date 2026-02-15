@@ -16,7 +16,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+        constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
@@ -240,7 +240,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle: OpeningPoint<BIG_ENDIAN, F> =
@@ -255,7 +254,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
         let wa_claim = self.wa.final_sumcheck_claim();
 
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersValEvaluation,
             r_cycle.r.clone(),
@@ -264,7 +262,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
 
         let r = [r_address.r.as_slice(), r_cycle.r.as_slice()].concat();
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),
@@ -334,7 +331,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle: OpeningPoint<BIG_ENDIAN, F> =
@@ -347,7 +343,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
         // Append claims to accumulator
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersValEvaluation,
             r_cycle.r.clone(),
@@ -355,7 +350,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
         let r = [r_address.r.as_slice(), r_cycle.r.as_slice()].concat();
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),

@@ -21,7 +21,6 @@ use super::{
 };
 use crate::{
     field::JoltField,
-    transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -210,13 +209,14 @@ pub struct ZkStageData<F: JoltField> {
     pub expected_evaluations: Vec<F>,
     /// Output claim constraints from each sumcheck instance.
     /// Used by BlindFold to generate R1CS constraints binding final claims to openings.
-    pub output_constraints: Vec<Option<crate::subprotocols::blindfold::OutputClaimConstraint>>,
+    pub output_constraints:
+        Vec<Option<crate::subprotocols::constraint_types::OutputClaimConstraint>>,
     /// Challenge values for each instance's output constraint.
     /// For instance j, contains the values for Challenge(0), Challenge(1), etc. in its constraint.
     pub constraint_challenge_values: Vec<Vec<F>>,
     /// Input claim constraints from each sumcheck instance.
     /// Describes how each instance's input claim relates to polynomial openings.
-    pub input_constraints: Vec<crate::subprotocols::blindfold::InputClaimConstraint>,
+    pub input_constraints: Vec<crate::subprotocols::constraint_types::InputClaimConstraint>,
     /// Challenge values for each instance's input constraint.
     pub input_constraint_challenge_values: Vec<Vec<F>>,
     /// Scaling exponents for each instance's input claim.
@@ -242,7 +242,7 @@ pub struct UniSkipStageData<F: JoltField> {
     /// Serialized commitment bytes
     pub commitment_bytes: Vec<u8>,
     /// Input claim constraint for this uni-skip
-    pub input_constraint: crate::subprotocols::blindfold::InputClaimConstraint,
+    pub input_constraint: crate::subprotocols::constraint_types::InputClaimConstraint,
     /// Challenge values for the input constraint
     pub input_constraint_challenge_values: Vec<F>,
 }
@@ -365,7 +365,7 @@ where
     F: JoltField,
 {
     fn default() -> Self {
-        Self::new(0)
+        Self::new(0, false)
     }
 }
 
@@ -427,7 +427,7 @@ impl<F> ProverOpeningAccumulator<F>
 where
     F: JoltField,
 {
-    pub fn new(log_T: usize) -> Self {
+    pub fn new(log_T: usize, zk_mode: bool) -> Self {
         Self {
             openings: BTreeMap::new(),
             #[cfg(test)]
@@ -435,7 +435,7 @@ where
             log_T,
             zk_stage_data: Vec::new(),
             uniskip_stage_data: Vec::new(),
-            zk_mode: true,
+            zk_mode,
         }
     }
 
@@ -452,18 +452,13 @@ where
     /// The given `polynomial` is opened at `opening_point`, yielding the claimed
     /// evaluation `claim`.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_dense")]
-    pub fn append_dense<T: Transcript>(
+    pub fn append_dense(
         &mut self,
-        transcript: &mut T,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
         claim: F,
     ) {
-        if !self.zk_mode {
-            transcript.append_scalar(b"opening_claim", &claim);
-        }
-
         let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
         self.openings.insert(
             key,
@@ -475,20 +470,14 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_sparse")]
-    pub fn append_sparse<T: Transcript>(
+    pub fn append_sparse(
         &mut self,
-        transcript: &mut T,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
         r_address: Vec<F::Challenge>,
         r_cycle: Vec<F::Challenge>,
         claims: Vec<F>,
     ) {
-        if !self.zk_mode {
-            claims.iter().for_each(|claim| {
-                transcript.append_scalar(b"opening_claim", claim);
-            });
-        }
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
 
         // Add openings to map
@@ -500,17 +489,13 @@ where
         }
     }
 
-    pub fn append_virtual<T: Transcript>(
+    pub fn append_virtual(
         &mut self,
-        transcript: &mut T,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        if !self.zk_mode {
-            transcript.append_scalar(b"opening_claim", &claim);
-        }
         assert!(
             self.openings
                 .insert(
@@ -529,32 +514,24 @@ where
             ));
     }
 
-    pub fn append_untrusted_advice<T: Transcript>(
+    pub fn append_untrusted_advice(
         &mut self,
-        transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        if !self.zk_mode {
-            transcript.append_scalar(b"opening_claim", &claim);
-        }
         self.openings.insert(
             OpeningId::UntrustedAdvice(sumcheck_id),
             (opening_point, claim),
         );
     }
 
-    pub fn append_trusted_advice<T: Transcript>(
+    pub fn append_trusted_advice(
         &mut self,
-        transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        if !self.zk_mode {
-            transcript.append_scalar(b"opening_claim", &claim);
-        }
         self.openings.insert(
             OpeningId::TrustedAdvice(sumcheck_id),
             (opening_point, claim),
@@ -587,7 +564,7 @@ where
     F: JoltField,
 {
     fn default() -> Self {
-        Self::new(0)
+        Self::new(0, false)
     }
 }
 
@@ -640,13 +617,13 @@ impl<F> VerifierOpeningAccumulator<F>
 where
     F: JoltField,
 {
-    pub fn new(log_T: usize) -> Self {
+    pub fn new(log_T: usize, zk_mode: bool) -> Self {
         Self {
             openings: BTreeMap::new(),
             #[cfg(test)]
             prover_opening_accumulator: None,
             log_T,
-            zk_mode: true,
+            zk_mode,
         }
     }
 
@@ -657,9 +634,8 @@ where
         self.prover_opening_accumulator = Some(prover_openings);
     }
 
-    pub fn append_dense<T: Transcript>(
+    pub fn append_dense(
         &mut self,
-        transcript: &mut T,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
@@ -670,9 +646,6 @@ where
             .get(&key)
             .map(|(_, c)| *c)
             .unwrap_or(F::zero());
-        if !self.zk_mode {
-            transcript.append_scalar(b"opening_claim", &claim);
-        }
         self.openings.insert(
             key,
             (
@@ -682,9 +655,8 @@ where
         );
     }
 
-    pub fn append_sparse<T: Transcript>(
+    pub fn append_sparse(
         &mut self,
-        transcript: &mut T,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
@@ -696,9 +668,6 @@ where
                 .get(&key)
                 .map(|(_, c)| *c)
                 .unwrap_or(F::zero());
-            if !self.zk_mode {
-                transcript.append_scalar(b"opening_claim", &claim);
-            }
             self.openings.insert(
                 key,
                 (
@@ -709,9 +678,8 @@ where
         }
     }
 
-    pub fn append_virtual<T: Transcript>(
+    pub fn append_virtual(
         &mut self,
-        transcript: &mut T,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
@@ -722,15 +690,11 @@ where
             .get(&key)
             .map(|(_, c)| *c)
             .unwrap_or(F::zero());
-        if !self.zk_mode {
-            transcript.append_scalar(b"opening_claim", &claim);
-        }
         self.openings.insert(key, (opening_point.clone(), claim));
     }
 
-    pub fn append_untrusted_advice<T: Transcript>(
+    pub fn append_untrusted_advice(
         &mut self,
-        transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
@@ -740,15 +704,11 @@ where
             .get(&key)
             .map(|(_, c)| *c)
             .unwrap_or(F::zero());
-        if !self.zk_mode {
-            transcript.append_scalar(b"opening_claim", &claim);
-        }
         self.openings.insert(key, (opening_point.clone(), claim));
     }
 
-    pub fn append_trusted_advice<T: Transcript>(
+    pub fn append_trusted_advice(
         &mut self,
-        transcript: &mut T,
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
@@ -758,9 +718,6 @@ where
             .get(&key)
             .map(|(_, c)| *c)
             .unwrap_or(F::zero());
-        if !self.zk_mode {
-            transcript.append_scalar(b"opening_claim", &claim);
-        }
         self.openings.insert(key, (opening_point.clone(), claim));
     }
 }

@@ -162,7 +162,7 @@ sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", git = "https://github.com/a16z/dory", branch = "feat/zk", features = ["backends", "cache", "disk-persistence", "zk"] }
+dory = { package = "dory-pcs", git = "https://github.com/a16z/dory", branch = "feat/zk", features = ["backends", "cache", "disk-persistence"] }
 
 # Core Utilities
 clap = { version = "4.5.4", features = ["derive"] }

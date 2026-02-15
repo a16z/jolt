@@ -22,7 +22,7 @@ use crate::{
         unipoly::UniPoly,
     },
     subprotocols::{
-        blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+        constraint_types::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
         sumcheck_claim::{Claim, InputOutputClaims, SumcheckFrontend, VerifierEvaluablePolynomial},
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
@@ -256,14 +256,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_address = self.params.normalize_opening_point(sumcheck_challenges);
         let r_cycle = &self.params.r_cycle;
         let ra_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle.r].concat());
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamRafEvaluation,
             ra_opening_point,
@@ -354,14 +352,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_address = self.params.normalize_opening_point(sumcheck_challenges);
         let r_cycle = &self.params.r_cycle;
         let ra_opening_point = OpeningPoint::new([&*r_address.r, &*r_cycle.r].concat());
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamRafEvaluation,
             ra_opening_point,

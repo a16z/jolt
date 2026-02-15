@@ -20,7 +20,7 @@ use crate::poly::opening_proof::{
 use crate::poly::opening_proof::{OpeningId, PolynomialId};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::blindfold::{
+use crate::subprotocols::constraint_types::{
     InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
 };
 use crate::subprotocols::streaming_sumcheck::{
@@ -287,7 +287,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterUniSkipP
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -295,7 +294,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterUniSkipP
         let claim = self.uni_poly.as_ref().unwrap().evaluate(&opening_point[0]);
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanOuter,
             opening_point,
@@ -336,13 +334,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OuterUniSki
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         debug_assert_eq!(opening_point.len(), 1);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanOuter,
             opening_point,
@@ -727,13 +723,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
         for input in &ALL_R1CS_INPUTS {
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::from(input),
                 SumcheckId::SpartanOuter,
                 r_cycle.clone(),
@@ -1703,11 +1697,10 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
     }
 
     #[tracing::instrument(skip_all, name = "OuterLinearStage::cache_openings")]
-    fn cache_openings<T: Transcript>(
+    fn cache_openings(
         &self,
         shared: &Self::Shared,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle = shared.params.normalize_opening_point(sumcheck_challenges);
@@ -1720,7 +1713,6 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
 
         for (i, input) in ALL_R1CS_INPUTS.iter().enumerate() {
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::from(input),
                 SumcheckId::SpartanOuter,
                 r_cycle.clone(),
