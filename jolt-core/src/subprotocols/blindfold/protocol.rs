@@ -353,6 +353,16 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
 
         let hyrax = &self.r1cs.hyrax;
         let (R_E, _C_E) = hyrax.e_grid(self.r1cs.num_constraints);
+        let expected_noncoeff_rows = hyrax.noncoeff_rows();
+
+        if proof.noncoeff_row_commitments.len() != expected_noncoeff_rows
+            || proof.random_noncoeff_row_commitments.len() != expected_noncoeff_rows
+        {
+            return Err(BlindFoldVerifyError::MalformedProof);
+        }
+        if proof.random_e_row_commitments.len() != R_E {
+            return Err(BlindFoldVerifyError::MalformedProof);
+        }
 
         let real_instance = RelaxedR1CSInstance {
             u: F::one(),
@@ -515,8 +525,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let ry_w: Vec<F> = inner_challenges.iter().map(|c| (*c).into()).collect();
         let (ry_row, ry_col) = ry_w.split_at(log_R_prime);
 
-        let all_w_rows =
-            folded_instance.all_w_row_commitments(hyrax.total_rounds, hyrax.R_coeff, hyrax.R_prime);
+        let all_w_rows = folded_instance.all_w_row_commitments(hyrax.R_coeff, hyrax.R_prime)?;
         let eq_ry_row: Vec<F> = EqPolynomial::evals(ry_row);
         let mut c_combined_w = C::G1::zero();
         for (i, com) in all_w_rows.iter().enumerate() {
