@@ -61,7 +61,7 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 - `zkvm/`: Jolt PIOP — prover, verifier, R1CS/Spartan, memory checking, instruction lookups
 - `poly/`: Polynomial types, commitment schemes (Dory, HyperKZG), opening proofs
 - `field/`: `JoltField` trait and BN254 scalar field implementation
-- `subprotocols/`: Sumcheck (batched, streaming, univariate skip), booleanity checks
+- `subprotocols/`: Sumcheck (batched, streaming, univariate skip), booleanity checks, BlindFold ZK protocol
 - `msm/`: Multi-scalar multiplication
 - `transcripts/`: Fiat-Shamir transcripts (Blake2b, Keccak)
 
@@ -93,6 +93,7 @@ ProofTranscript: Transcript               — Fiat-Shamir transcript (Blake2bTra
 4. **Spartan**: R1CS constraint satisfaction via univariate skip + outer/product sumchecks
 5. **Sumcheck rounds**: Batched sumchecks for instruction lookups, bytecode, RAM/register read-write checking, Hamming booleanity, claim reductions
 6. **Opening proofs**: Batched Dory opening proofs via `ProverOpeningAccumulator`
+7. **BlindFold**: ZK proof over all sumcheck stages (see BlindFold section below)
 
 ### Polynomial Types (poly/)
 
@@ -119,6 +120,46 @@ Virtual (derived during proving): PC, register values, RAM values, instruction f
 - `claim_reductions/`: Advice, Hamming weight, increment, instruction lookups, register, RAM RA reductions
 - `bytecode/`: Bytecode preprocessing and PC mapping, read-RAF checking
 - `config.rs`: `OneHotParams`, `OneHotConfig`, `ReadWriteConfig` — control proof structure (chunk sizes, phase rounds)
+
+### BlindFold Zero-Knowledge Protocol (subprotocols/blindfold/)
+
+BlindFold makes all sumcheck proofs zero-knowledge without SNARK composition. Instead of revealing sumcheck round polynomial coefficients, the prover sends Pedersen commitments. Sumcheck verifier checks are encoded into a small verifier R1CS, proved via Nova folding + Spartan.
+
+**Module structure:**
+- `mod.rs`: `StageConfig`, `BakedPublicInputs`, `HyraxParams`, R1CS primitives (`Variable`, `LinearCombination`, `Constraint`)
+- `r1cs.rs`: `VerifierR1CS`, `VerifierR1CSBuilder` — sparse R1CS encoding of sumcheck verification
+- `protocol.rs`: `BlindFoldProver`, `BlindFoldVerifier`, `BlindFoldProof`
+- `folding.rs`: Nova folding — cross-term computation, random instance sampling
+- `spartan.rs`: Spartan outer + inner sumcheck over the folded R1CS
+- `relaxed_r1cs.rs`: Relaxed R1CS instance/witness with Hyrax grid layout
+- `witness.rs`: `BlindFoldWitness` — witness assignment from sumcheck stage data
+- `output_constraint.rs`: `OutputClaimConstraint`, `InputClaimConstraint` — sum-of-products constraint descriptors
+
+**Protocol flow:**
+1. During stages 1–7, `prove_zk` commits each sumcheck round's coefficients via Pedersen and caches them in `ProverOpeningAccumulator`
+2. At stage 8, prover and verifier build the same `VerifierR1CS` from `StageConfig`s and `BakedPublicInputs` (Fiat-Shamir-derived values baked into matrix coefficients)
+3. Nova folds the real instance with a random satisfying instance to hide the witness
+4. Spartan outer sumcheck proves relaxed R1CS satisfaction; inner sumcheck reduces to a single witness evaluation
+5. Hyrax-style openings verify W(ry) and E(rx) against folded row commitments
+
+**Supporting changes:**
+- `poly/commitment/pedersen.rs`: Pedersen commitment scheme for small vectors (round polynomials)
+- `curve.rs`: `JoltCurve`/`JoltGroupElement` traits for elliptic curve abstractions
+- `poly/commitment/dory/commitment_scheme.rs`: ZK evaluation commitments (`y_com`) — Dory proves evaluation correctness without revealing the evaluation value
+- `sumcheck.rs` / `univariate_skip.rs`: `prove_zk`/`verify_zk` variants
+
+**CRITICAL INVARIANT — Sumcheck claim/constraint synchronization:**
+
+Every sumcheck instance implements `SumcheckInstanceParams` which defines both the claim computation AND the corresponding BlindFold constraint. These must stay in sync:
+
+- `input_claim(accumulator)` computes the input claim value from polynomial openings
+- `input_claim_constraint()` returns an `InputClaimConstraint` describing the same formula as a sum-of-products over `ValueSource::{Opening, Challenge, Constant}` terms
+- `input_constraint_challenge_values(accumulator)` returns the public challenge values the constraint evaluates against
+- `output_claim_constraint()` / `output_constraint_challenge_values()` — same pattern for output claims
+
+**Any change to how a sumcheck's input or output claim is derived requires a matching update to its constraint.** If you modify `input_claim()` to include a new term, you must add a corresponding `ProductTerm` to `input_claim_constraint()` and supply any new challenge values. Failure to synchronize causes BlindFold R1CS unsatisfiability — the `muldiv` e2e test will catch this.
+
+Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `RamReadWriteCheckingParams` (ram/read_write_checking.rs), `InstructionRaSumcheckParams` (instruction_lookups/ra_virtual.rs), and all claim reduction params.
 
 ## Development Guidelines
 
