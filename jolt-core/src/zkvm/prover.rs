@@ -2889,8 +2889,6 @@ mod tests {
         use crate::subprotocols::sumcheck::SumcheckInstanceProof;
         use crate::transcripts::{KeccakTranscript, Transcript};
         use crate::zkvm::verifier::JoltSharedPreprocessing;
-        use ark_serialize::CanonicalSerialize;
-
         /// Helper to process a single stage's sumcheck proof.
         /// Returns a list of (RoundWitness, degree) for each round.
         /// For ZK proofs, creates synthetic witnesses with correct degrees to test R1CS structure.
@@ -2950,12 +2948,7 @@ mod tests {
                     let mut rounds = Vec::with_capacity(num_rounds);
 
                     for (round_idx, commitment) in zk_proof.round_commitments.iter().enumerate() {
-                        // Append commitment to transcript for challenge derivation
-                        let mut commitment_bytes = Vec::new();
-                        commitment
-                            .serialize_compressed(&mut commitment_bytes)
-                            .expect("Serialization should not fail");
-                        transcript.append_bytes(b"sumcheck_commitment", &commitment_bytes);
+                        transcript.append_point(b"sumcheck_commitment", commitment);
                         let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
 
                         let degree = zk_proof.poly_degrees[round_idx];

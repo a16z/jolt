@@ -283,14 +283,14 @@ impl BatchedSumcheck {
             let blinding = F::random(rng);
             let commitment = pedersen_gens.commit(&batched_univariate_poly.coeffs, &blinding);
 
-            // Serialize commitment for transcript
+            // Append commitment to transcript (instead of raw coefficients)
+            transcript.append_point(b"sumcheck_commitment", &commitment);
+
+            // Serialize commitment for BlindFold storage
             let mut commitment_bytes = Vec::new();
             commitment
                 .serialize_compressed(&mut commitment_bytes)
                 .expect("Serialization should not fail");
-
-            // Append commitment to transcript (instead of raw coefficients)
-            transcript.append_bytes(b"sumcheck_commitment", &commitment_bytes);
 
             let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
@@ -344,11 +344,12 @@ impl BatchedSumcheck {
         let output_claims_commitment =
             pedersen_gens.commit(&output_claims, &output_claims_blinding);
 
+        transcript.append_point(b"output_claims_commitment", &output_claims_commitment);
+
         let mut output_claims_commitment_bytes = Vec::new();
         output_claims_commitment
             .serialize_compressed(&mut output_claims_commitment_bytes)
             .expect("Serialization should not fail");
-        transcript.append_bytes(b"output_claims_commitment", &output_claims_commitment_bytes);
 
         // Collect output constraints and challenge values from each sumcheck instance
         let output_constraints: Vec<_> = sumcheck_instances
@@ -487,12 +488,10 @@ impl BatchedSumcheck {
         if !is_zk {
             opening_accumulator.flush_to_transcript(transcript);
         } else if let SumcheckInstanceProof::Zk(zk_proof) = proof {
-            let mut commitment_bytes = Vec::new();
-            zk_proof
-                .output_claims_commitment
-                .serialize_compressed(&mut commitment_bytes)
-                .expect("Serialization should not fail");
-            transcript.append_bytes(b"output_claims_commitment", &commitment_bytes);
+            transcript.append_point(
+                b"output_claims_commitment",
+                &zk_proof.output_claims_commitment,
+            );
             opening_accumulator.take_pending_claims();
         }
 
@@ -736,14 +735,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
 
         let mut r: Vec<F::Challenge> = Vec::new();
         for commitment in &self.round_commitments {
-            // Serialize commitment for transcript
-            let mut commitment_bytes = Vec::new();
-            commitment
-                .serialize_compressed(&mut commitment_bytes)
-                .expect("Serialization should not fail");
-
-            transcript.append_bytes(b"sumcheck_commitment", &commitment_bytes);
-
+            transcript.append_point(b"sumcheck_commitment", commitment);
             let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
             r.push(r_i);
         }

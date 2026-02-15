@@ -97,7 +97,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
 
         let mut rng = rand::thread_rng();
 
-        transcript.raw_append_label(b"BlindFold_real_instance");
+        transcript.append_label(b"BlindFold_real_instance");
         append_instance_to_transcript(real_instance, transcript);
 
         let (random_instance, random_witness, random_z) = sample_random_satisfying_pair(
@@ -107,7 +107,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             &mut rng,
         );
 
-        transcript.raw_append_label(b"BlindFold_random_instance");
+        transcript.append_label(b"BlindFold_random_instance");
         append_instance_to_transcript(&random_instance, transcript);
 
         let T = compute_cross_term(
@@ -123,10 +123,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         let (t_row_commitments, t_row_blindings) =
             commit_cross_term_rows(self.gens, &T, R_E, C_E, &mut rng);
 
-        transcript.raw_append_label(b"BlindFold_cross_term");
-        for com in &t_row_commitments {
-            append_g1_to_transcript::<C>(com, transcript);
-        }
+        transcript.append_points(b"blindfold_cross_term", &t_row_commitments);
 
         let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let r_field: F = r.into();
@@ -165,7 +162,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         e_padded.resize(padded_e_len, F::zero());
         let e_for_hyrax = e_padded.clone();
 
-        transcript.raw_append_label(b"BlindFold_spartan");
+        transcript.append_label(b"BlindFold_spartan");
         let num_vars = padded_e_len.log_2();
         let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
 
@@ -372,7 +369,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
             eval_commitments: input.eval_commitments.clone(),
         };
 
-        transcript.raw_append_label(b"BlindFold_real_instance");
+        transcript.append_label(b"BlindFold_real_instance");
         append_instance_to_transcript(&real_instance, transcript);
 
         let random_instance: RelaxedR1CSInstance<F, C> = RelaxedR1CSInstance {
@@ -383,13 +380,10 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
             eval_commitments: proof.random_eval_commitments.clone(),
         };
 
-        transcript.raw_append_label(b"BlindFold_random_instance");
+        transcript.append_label(b"BlindFold_random_instance");
         append_instance_to_transcript(&random_instance, transcript);
 
-        transcript.raw_append_label(b"BlindFold_cross_term");
-        for com in &proof.cross_term_row_commitments {
-            append_g1_to_transcript::<C>(com, transcript);
-        }
+        transcript.append_points(b"blindfold_cross_term", &proof.cross_term_row_commitments);
 
         let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let r_field: F = r.into();
@@ -412,7 +406,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
             }
         }
 
-        transcript.raw_append_label(b"BlindFold_spartan");
+        transcript.append_label(b"BlindFold_spartan");
         let num_vars = self.r1cs.num_constraints.next_power_of_two().log_2();
 
         if proof.spartan_proof.len() != num_vars {
@@ -549,13 +543,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
     }
 }
 
-fn append_g1_to_transcript<C: JoltCurve>(g: &C::G1, transcript: &mut impl Transcript) {
-    let mut bytes = Vec::new();
-    g.serialize_compressed(&mut bytes)
-        .expect("Serialization should not fail");
-    transcript.append_bytes(b"blindfold_g1", &bytes);
-}
-
 fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
     instance: &RelaxedR1CSInstance<F, C>,
     transcript: &mut impl Transcript,
@@ -567,21 +554,10 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
         .expect("Serialization should not fail");
     transcript.append_bytes(b"blindfold_u", &u_bytes);
 
-    for commitment in &instance.round_commitments {
-        append_g1_to_transcript::<C>(commitment, transcript);
-    }
-
-    for commitment in &instance.noncoeff_row_commitments {
-        append_g1_to_transcript::<C>(commitment, transcript);
-    }
-
-    for commitment in &instance.e_row_commitments {
-        append_g1_to_transcript::<C>(commitment, transcript);
-    }
-
-    for commitment in &instance.eval_commitments {
-        append_g1_to_transcript::<C>(commitment, transcript);
-    }
+    transcript.append_points(b"blindfold_round_coms", &instance.round_commitments);
+    transcript.append_points(b"blindfold_noncoeff", &instance.noncoeff_row_commitments);
+    transcript.append_points(b"blindfold_e_rows", &instance.e_row_commitments);
+    transcript.append_points(b"blindfold_eval_coms", &instance.eval_commitments);
 }
 
 #[cfg(test)]

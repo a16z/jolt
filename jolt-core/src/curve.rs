@@ -183,6 +183,12 @@ impl From<ArkG1> for Bn254G1 {
     }
 }
 
+impl From<G1Projective> for Bn254G1 {
+    fn from(value: G1Projective) -> Self {
+        Bn254G1(value)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Bn254G2(pub G2Projective);
 impl_group_ops!(Bn254G2, G2Projective);

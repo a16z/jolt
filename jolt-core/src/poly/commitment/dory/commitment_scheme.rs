@@ -91,10 +91,7 @@ pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve, ProofTranscript: Trans
     }
     transcript.append_scalars(b"dory_opening_point", &point_scalars);
 
-    let mut bytes = Vec::new();
-    ark_serialize::CanonicalSerialize::serialize_compressed(y_com, &mut bytes)
-        .expect("serialization");
-    transcript.append_bytes(b"dory_eval_commitment", &bytes);
+    transcript.append_point(b"dory_eval_commitment", y_com);
 }
 
 impl CommitmentScheme for DoryCommitmentScheme {
