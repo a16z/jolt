@@ -2,7 +2,7 @@
 name = "gnark-transpiler"
 version = "0.1.0"
 edition = "2021"
-description = "Transpiles Jolt's Stage 1 verifier into Gnark circuits for Groth16 proving"
+description = "Transpiles Jolt verifier stages to Gnark circuits for Groth16 proving"
 
 [dependencies]
 ark-std.workspace = true
@@ -12,24 +12,18 @@ ark-ff.workspace = true
 ark-ec.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+clap = { version = "4.0", features = ["derive"] }
 
 jolt-core = { path = "../jolt-core", features = ["transcript-poseidon"] }
 zklean-extractor = { path = "../zklean-extractor" }
 common = { path = "../common" }
 light-poseidon = "0.4.0"
 num-bigint = "0.4"
-blake2 = "0.10"
-hex = "0.4"
 
 [features]
 default = []
 debug-expected-output = ["jolt-core/debug-expected-output"]
 
-# Main binaries disabled for now - need update for new Transcript API
-# [[bin]]
-# name = "gnark-transpiler"
-# path = "src/main.rs"
-
-# [[bin]]
-# name = "debug_transcript_full"
-# path = "src/bin/debug_transcript_full.rs"
+[[bin]]
+name = "gnark-transpiler"
+path = "src/main.rs"
