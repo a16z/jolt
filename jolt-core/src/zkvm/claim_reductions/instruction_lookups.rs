@@ -236,22 +236,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             opening_point,
             right_instruction_input_claim,
         );
-
-        // These openings are only used by the verifier's `expected_output_claim`, not by any
-        // subsequent prover-side sumcheck. In tests, we track "unused" appended virtual openings
-        // by removing them on `get_virtual_polynomial_opening`; consume them here to keep that
-        // invariant satisfied.
-        #[cfg(test)]
-        {
-            let _ = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::InstructionClaimReduction,
-            );
-            let _ = accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RightInstructionInput,
-                SumcheckId::InstructionClaimReduction,
-            );
-        }
     }
 
     #[cfg(feature = "allocative")]

@@ -67,14 +67,35 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
     }
 
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let (_, left_claim_stage_2) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::LeftInstructionInput,
-            SumcheckId::SpartanProductVirtualization,
-        );
-        let (_, right_claim_stage_2) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RightInstructionInput,
-            SumcheckId::SpartanProductVirtualization,
-        );
+        let (r_left_claim_instruction, left_claim_instruction) = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LeftInstructionInput,
+                SumcheckId::InstructionClaimReduction,
+            );
+        let (r_right_claim_instruction, right_claim_instruction) = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RightInstructionInput,
+                SumcheckId::InstructionClaimReduction,
+            );
+
+        let (r_left_claim_stage_2, left_claim_stage_2) = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LeftInstructionInput,
+                SumcheckId::SpartanProductVirtualization,
+            );
+        let (r_right_claim_stage_2, right_claim_stage_2) = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RightInstructionInput,
+                SumcheckId::SpartanProductVirtualization,
+            );
+
+        // Soundness: InstructionClaimReduction and SpartanProductVirtualization must produce
+        // the same claims at the same opening points.
+        assert_eq!(r_left_claim_instruction, r_left_claim_stage_2);
+        assert_eq!(left_claim_instruction, left_claim_stage_2);
+        assert_eq!(r_right_claim_instruction, r_right_claim_stage_2);
+        assert_eq!(right_claim_instruction, right_claim_stage_2);
+
         right_claim_stage_2 + self.gamma * left_claim_stage_2
     }
 
