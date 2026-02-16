@@ -336,13 +336,9 @@ impl<'a> MemoizedCodeGen<'a> {
         match atom {
             Atom::Scalar(value) => format_scalar_for_gnark(value),
             Atom::Var(index) => {
-                // Use custom variable name if available, otherwise fall back to X_{index}
-                if let Some(name) = self.var_names.get(&index) {
-                    let sanitized = sanitize_go_name(name);
-                    format!("circuit.{sanitized}")
-                } else {
-                    format!("circuit.X_{index}")
-                }
+                self.var_names.get(&index)
+                    .map(|name| format!("circuit.{}", sanitize_go_name(name)))
+                    .unwrap_or_else(|| format!("circuit.X_{index}"))
             }
             Atom::NamedVar(index) => {
                 let constraint_idx = self.constraint_idx;
@@ -356,18 +352,13 @@ impl<'a> MemoizedCodeGen<'a> {
         match edge {
             Edge::Atom(atom) => self.atom_to_gnark(atom),
             Edge::NodeRef(node_id) => {
-                // Child should already be generated (we're in post-order)
-                if let Some(expr) = self.generated.get(&node_id) {
-                    expr.clone()
-                } else {
-                    // Must be an atom node
-                    let node = self.nodes[node_id];
-                    if let Node::Atom(atom) = node {
-                        self.atom_to_gnark(atom)
-                    } else {
-                        panic!("Node {node_id} not found in generated - post-order traversal bug?")
+                // Child should already be generated (we're in post-order), or it's an atom
+                self.generated.get(&node_id).cloned().unwrap_or_else(|| {
+                    match self.nodes[node_id] {
+                        Node::Atom(atom) => self.atom_to_gnark(atom),
+                        _ => panic!("Node {node_id} not in generated - post-order traversal bug"),
                     }
-                }
+                })
             }
         }
     }
