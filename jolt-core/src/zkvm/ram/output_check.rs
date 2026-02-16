@@ -17,11 +17,7 @@ use crate::{
     },
     transcripts::Transcript,
     utils::math::Math,
-    zkvm::{
-        config::ReadWriteConfig,
-        ram::remap_address,
-        witness::VirtualPolynomial,
-    },
+    zkvm::{config::ReadWriteConfig, ram::remap_address, witness::VirtualPolynomial},
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -264,11 +260,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let Self {
-            val_final,
-            val_init,
-            ..
-        } = self;
+        let Self { val_final, .. } = self;
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             transcript,
@@ -276,13 +268,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
             SumcheckId::RamOutputCheck,
             opening_point.clone(),
             val_final.final_sumcheck_claim(),
-        );
-        accumulator.append_virtual(
-            transcript,
-            VirtualPolynomial::RamValInit,
-            SumcheckId::RamOutputCheck,
-            opening_point,
-            val_init.final_sumcheck_claim(),
         );
     }
 
@@ -360,12 +345,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
             VirtualPolynomial::RamValFinal,
             SumcheckId::RamOutputCheck,
             opening_point.clone(),
-        );
-        accumulator.append_virtual(
-            transcript,
-            VirtualPolynomial::RamValInit,
-            SumcheckId::RamOutputCheck,
-            opening_point,
         );
     }
 

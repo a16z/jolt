@@ -99,7 +99,7 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
         #[cfg(debug_assertions)]
         {
             let (r_out, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValInit,
+                VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
             );
             debug_assert_eq!(r_out.r, r_address.r);
@@ -265,9 +265,7 @@ impl<F: JoltField> RamValCheckSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
-    for RamValCheckSumcheckProver<F>
-{
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamValCheckSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -420,16 +418,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         }
 
         let inc_claim = accumulator
-            .get_committed_polynomial_opening(
-                CommittedPolynomial::RamInc,
-                SumcheckId::RamValCheck,
-            )
+            .get_committed_polynomial_opening(CommittedPolynomial::RamInc, SumcheckId::RamValCheck)
             .1;
         let wa_claim = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamRa,
-                SumcheckId::RamValCheck,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamValCheck)
             .1;
 
         inc_claim * wa_claim * (lt_eval + self.params.gamma)
