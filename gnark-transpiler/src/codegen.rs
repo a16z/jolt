@@ -6,6 +6,20 @@
 //! into Gnark circuit code. The AST represents all arithmetic operations performed by
 //! the Jolt verifier, and this module emits equivalent Go code using gnark's API.
 //!
+//! # Target Coupling
+//!
+//! This codegen emits hardcoded Go syntax and gnark API calls. It would need updates if:
+//!
+//! - **Go syntax changes** (unlikely, Go has strong backward compatibility)
+//! - **gnark API changes** (e.g., `api.Add()` renamed, `frontend.Variable` changed)
+//! - **Our poseidon package changes** (function signatures in `jolt_verifier/poseidon`)
+//! - **New AST primitives added** (new `Node` variants require new codegen cases)
+//!
+//! The coupling is intentional: we emit target-specific code for gnark. If we add other
+//! targets (Circom, Plonky2), they'd need separate codegen modules.
+//!
+//! Currently targets: **gnark v0.10.x** with Go 1.21+
+//!
 //! # Key Components
 //!
 //! - [`MemoizedCodeGen`]: The main code generator with CSE (Common Subexpression Elimination)
@@ -46,8 +60,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use zklean_extractor::mle_ast::{
-    Atom, Edge, Node, Scalar,
-    scalar_add_mod, scalar_sub_mod, scalar_neg_mod, scalar_mul_mod,
+    Atom, Edge, Node, Scalar, scalar_add_mod, scalar_mul_mod, scalar_neg_mod, scalar_sub_mod,
 };
 
 // =============================================================================
@@ -69,18 +82,18 @@ fn edge_to_child(edge: Edge) -> Option<usize> {
 fn node_children(node: Node) -> Vec<usize> {
     match node {
         Node::Atom(_) => vec![],
-        Node::Neg(e) | Node::Inv(e)
+        Node::Neg(e)
+        | Node::Inv(e)
         | Node::ByteReverse(e)
         | Node::Truncate128Reverse(e)
         | Node::Truncate128(e)
         | Node::AppendU64Transform(e) => edge_to_child(e).into_iter().collect(),
-        Node::Add(e1, e2)
-        | Node::Mul(e1, e2)
-        | Node::Sub(e1, e2)
-        | Node::Div(e1, e2) => [edge_to_child(e1), edge_to_child(e2)]
-            .into_iter()
-            .flatten()
-            .collect(),
+        Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
+            [edge_to_child(e1), edge_to_child(e2)]
+                .into_iter()
+                .flatten()
+                .collect()
+        }
         Node::Poseidon(e1, e2, e3) => [edge_to_child(e1), edge_to_child(e2), edge_to_child(e3)]
             .into_iter()
             .flatten()
@@ -103,6 +116,32 @@ pub struct ConstantAssertionStats {
     pub constant_failed: usize,
     /// Names of failed constant assertions
     pub failed_names: Vec<String>,
+    /// Whether poseidon was used (for import generation)
+    pub uses_poseidon: bool,
+}
+
+/// Processed constraint data for code generation.
+struct ProcessedConstraint {
+    /// Constraint name (for comments and variable naming)
+    name: String,
+    /// Generated Go expression for the constraint's root
+    expr: String,
+    /// CSE bindings code for this constraint
+    bindings: String,
+    /// The assertion type
+    assertion: ConstraintAssertion,
+    /// Whether the expression is entirely constant
+    is_const: bool,
+    /// Evaluated constant value (if is_const is true)
+    const_val: Option<[u64; 4]>,
+}
+
+/// Assertion type for processed constraints (owned version of Assertion).
+#[allow(clippy::enum_variant_names)] // Mirrors zklean_extractor::mle_ast::Assertion naming
+enum ConstraintAssertion {
+    EqualZero,
+    EqualPublicInput { name: String },
+    EqualNode { other_expr: String },
 }
 
 /// Memoized code generator that converts AST nodes to Gnark expressions.
@@ -139,9 +178,11 @@ pub(crate) struct MemoizedCodeGen<'a> {
     /// Next CSE variable index
     cse_counter: usize,
     /// Maps variable index to input name (e.g., 0 -> "UniSkipCoeff0")
-    var_names: HashMap<u16, String>,
+    var_names: &'a HashMap<u16, String>,
     /// Constraint index for per-constraint CSE naming (e.g., constraint 3 uses cse_3_*)
     constraint_idx: usize,
+    /// Whether poseidon was used in this constraint
+    uses_poseidon: bool,
 }
 
 impl<'a> MemoizedCodeGen<'a> {
@@ -149,7 +190,11 @@ impl<'a> MemoizedCodeGen<'a> {
     ///
     /// CSE variable names are prefixed with the constraint index (e.g., "cse_3_0" for constraint 3).
     /// This keeps each constraint's expression tree isolated for easier debugging.
-    pub(crate) fn new(nodes: &'a [Node], var_names: HashMap<u16, String>, constraint_idx: usize) -> Self {
+    pub(crate) fn new(
+        nodes: &'a [Node],
+        var_names: &'a HashMap<u16, String>,
+        constraint_idx: usize,
+    ) -> Self {
         Self {
             nodes,
             ref_counts: HashMap::new(),
@@ -158,7 +203,13 @@ impl<'a> MemoizedCodeGen<'a> {
             cse_counter: 0,
             var_names,
             constraint_idx,
+            uses_poseidon: false,
         }
+    }
+
+    /// Returns whether poseidon was used in this constraint
+    pub(crate) fn uses_poseidon(&self) -> bool {
+        self.uses_poseidon
     }
 
     /// Get all CSE bindings as Go code
@@ -256,13 +307,26 @@ impl<'a> MemoizedCodeGen<'a> {
 
                 // Unary ops
                 Node::Inv(e) => self.unary_op("api.Inverse", e),
-                Node::ByteReverse(e) => self.unary_op("poseidon.ByteReverse", e),
-                Node::Truncate128Reverse(e) => self.unary_op("poseidon.Truncate128Reverse", e),
-                Node::Truncate128(e) => self.unary_op("poseidon.Truncate128", e),
-                Node::AppendU64Transform(e) => self.unary_op("poseidon.AppendU64Transform", e),
+                Node::ByteReverse(e) => {
+                    self.uses_poseidon = true;
+                    self.unary_op("poseidon.ByteReverse", e)
+                }
+                Node::Truncate128Reverse(e) => {
+                    self.uses_poseidon = true;
+                    self.unary_op("poseidon.Truncate128Reverse", e)
+                }
+                Node::Truncate128(e) => {
+                    self.uses_poseidon = true;
+                    self.unary_op("poseidon.Truncate128", e)
+                }
+                Node::AppendU64Transform(e) => {
+                    self.uses_poseidon = true;
+                    self.unary_op("poseidon.AppendU64Transform", e)
+                }
 
                 // Ternary: Poseidon hash
                 Node::Poseidon(state, n_rounds, data) => {
+                    self.uses_poseidon = true;
                     let s = self.edge_to_gnark_iterative(state);
                     let r = self.edge_to_gnark_iterative(n_rounds);
                     let d = self.edge_to_gnark_iterative(data);
@@ -335,11 +399,11 @@ impl<'a> MemoizedCodeGen<'a> {
     fn atom_to_gnark(&mut self, atom: Atom) -> String {
         match atom {
             Atom::Scalar(value) => format_scalar_for_gnark(value),
-            Atom::Var(index) => {
-                self.var_names.get(&index)
-                    .map(|name| format!("circuit.{}", sanitize_go_name(name)))
-                    .unwrap_or_else(|| format!("circuit.X_{index}"))
-            }
+            Atom::Var(index) => self
+                .var_names
+                .get(&index)
+                .map(|name| format!("circuit.{}", sanitize_go_name(name)))
+                .unwrap_or_else(|| format!("circuit.X_{index}")),
             Atom::NamedVar(index) => {
                 let constraint_idx = self.constraint_idx;
                 format!("cse_{constraint_idx}_{index}")
@@ -353,12 +417,13 @@ impl<'a> MemoizedCodeGen<'a> {
             Edge::Atom(atom) => self.atom_to_gnark(atom),
             Edge::NodeRef(node_id) => {
                 // Child should already be generated (we're in post-order), or it's an atom
-                self.generated.get(&node_id).cloned().unwrap_or_else(|| {
-                    match self.nodes[node_id] {
+                self.generated
+                    .get(&node_id)
+                    .cloned()
+                    .unwrap_or_else(|| match self.nodes[node_id] {
                         Node::Atom(atom) => self.atom_to_gnark(atom),
                         _ => panic!("Node {node_id} not in generated - post-order traversal bug"),
-                    }
-                })
+                    })
             }
         }
     }
@@ -370,16 +435,12 @@ impl<'a> MemoizedCodeGen<'a> {
 
 /// Generate a complete Gnark circuit from an AstBundle.
 ///
-/// This is the generic codegen that works with any stage/verifier.
-/// It reads constraints and inputs from the bundle and generates
-/// appropriate gnark code based on the Assertion types.
+/// Wrapper around [`generate_circuit_from_bundle_with_stats`] that panics on
+/// static verification failures.
 ///
-/// **Constant Assertion Handling**: If a constraint expression is entirely
-/// constant (contains no variables), the assertion is verified at compile-time:
-/// - If constant == 0 for EqualZero assertions, the constraint is SKIPPED
-/// - If constant != 0, the function PANICS (static verification failure)
+/// # Panics
 ///
-/// Returns the generated Go code and statistics about constant assertions.
+/// Panics if any constant assertion evaluates to non-zero (static verification failure).
 pub fn generate_circuit_from_bundle(
     bundle: &zklean_extractor::mle_ast::AstBundle,
     circuit_name: &str,
@@ -405,26 +466,36 @@ pub fn generate_circuit_from_bundle(
     code
 }
 
-/// Generate a complete Gnark circuit from an AstBundle, with statistics.
+/// Generate a complete Gnark circuit from an AstBundle, returning statistics.
 ///
-/// This version returns statistics about constant assertion handling,
-/// useful for debugging and testing.
+/// This is the core codegen function. Unlike [`generate_circuit_from_bundle`], it does
+/// not panic on failures. Instead it records them in the returned statistics.
 ///
-/// **Per-Constraint Expression Trees**: Each constraint (sumcheck assertion) gets its own
-/// isolated expression tree with independent CSE namespacing (constraint 0 uses `cse_0_*`,
-/// constraint 1 uses `cse_1_*`, etc.). This makes debugging easier: when a constraint fails,
-/// all `cse_N_*` variables belong to that constraint, so you can trace through its
-/// expression tree in isolation without cross-referencing other sumchecks.
+/// # Constant Assertion Handling
+///
+/// If a constraint expression is entirely constant (contains no variables):
+/// - **EqualZero + constant == 0**: Constraint is skipped (statically satisfied)
+/// - **EqualZero + constant != 0**: Failure recorded in `stats.constant_failed`,
+///   constraint still emitted (will fail at prove time)
+/// - **Other assertion types**: Emitted normally (no static verification)
+///
+/// Callers should check `stats.constant_failed > 0` to detect static failures.
+///
+/// # Per-Constraint Expression Trees
+///
+/// Each constraint gets isolated CSE namespacing (`cse_0_*`, `cse_1_*`, etc.).
+/// This makes debugging easier: when a constraint fails, all its CSE variables
+/// are self-contained.
 pub fn generate_circuit_from_bundle_with_stats(
     bundle: &zklean_extractor::mle_ast::AstBundle,
     circuit_name: &str,
 ) -> (String, ConstantAssertionStats) {
     use zklean_extractor::mle_ast::{Assertion, InputKind};
 
-    // Type alias for constraint data tuple
-    type ConstraintData<'a> = (String, String, &'a Assertion, bool, Option<[u64; 4]>, Option<String>);
-
     let mut stats = ConstantAssertionStats::default();
+
+    // Validate circuit name: must be a valid Go identifier
+    let circuit_name = sanitize_go_name(circuit_name);
 
     // Build var_names mapping from bundle inputs
     let var_names: HashMap<u16, String> = bundle
@@ -433,20 +504,12 @@ pub fn generate_circuit_from_bundle_with_stats(
         .map(|input| (input.index, input.name.clone()))
         .collect();
 
-    // Per-constraint CSE: generate each constraint with its own CSE context.
-    // This makes debugging easier - each constraint's cse_N_* variables are isolated.
-    let mut all_bindings_code = String::new();
-    let mut constraint_data: Vec<ConstraintData> = Vec::new();
+    // Process each constraint with its own CSE context.
+    // This makes debugging easier: each constraint's cse_N_* variables are isolated.
+    let mut processed_constraints: Vec<ProcessedConstraint> = Vec::new();
 
     for (constraint_idx, c) in bundle.constraints.iter().enumerate() {
-        // Create a fresh codegen context for this constraint with per-constraint CSE naming
-        // This ensures CSE variables from different constraints don't collide
-        // e.g., constraint 0 uses cse_0_0, cse_0_1, constraint 1 uses cse_1_0, cse_1_1, etc.
-        let mut codegen = MemoizedCodeGen::new(
-            &bundle.nodes,
-            var_names.clone(),
-            constraint_idx,
-        );
+        let mut codegen = MemoizedCodeGen::new(&bundle.nodes, &var_names, constraint_idx);
 
         // Count references within this constraint only
         codegen.count_refs(c.root);
@@ -457,14 +520,19 @@ pub fn generate_circuit_from_bundle_with_stats(
         // Generate expression for this constraint
         let expr = codegen.generate_expr(c.root);
 
-        // Generate other_expr for EqualNode assertions
-        let other_expr = if let Assertion::EqualNode(other_id) = &c.assertion {
-            Some(codegen.generate_expr(*other_id))
-        } else {
-            None
+        // Build the assertion (converting to owned form and generating other_expr if needed)
+        let assertion = match &c.assertion {
+            Assertion::EqualZero => ConstraintAssertion::EqualZero,
+            Assertion::EqualPublicInput { name } => {
+                ConstraintAssertion::EqualPublicInput { name: name.clone() }
+            }
+            Assertion::EqualNode(other_id) => {
+                let other_expr = codegen.generate_expr(*other_id);
+                ConstraintAssertion::EqualNode { other_expr }
+            }
         };
 
-        // Check if constant (reads from bundle.nodes, not global arena)
+        // Check if constant and evaluate
         let is_const = is_node_constant_in(&bundle.nodes, c.root);
         let const_val = if is_const {
             Some(evaluate_constant_node_in(&bundle.nodes, c.root))
@@ -472,20 +540,48 @@ pub fn generate_circuit_from_bundle_with_stats(
             None
         };
 
-        // Collect bindings for this constraint (already have prefixed names from codegen)
-        let constraint_bindings = codegen.bindings_code();
-        if !constraint_bindings.is_empty() {
-            all_bindings_code.push_str(&format!("\t// CSE bindings for constraint {constraint_idx}\n"));
-            all_bindings_code.push_str(&constraint_bindings);
+        // Track poseidon usage
+        if codegen.uses_poseidon() {
+            stats.uses_poseidon = true;
         }
 
-        constraint_data.push((c.name.clone(), expr, &c.assertion, is_const, const_val, other_expr));
+        // Get bindings (will be empty string if none)
+        let bindings = if codegen.bindings_code().is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\t// CSE bindings for constraint {constraint_idx}\n{}",
+                codegen.bindings_code()
+            )
+        };
+
+        processed_constraints.push(ProcessedConstraint {
+            name: c.name.clone(),
+            expr,
+            bindings,
+            assertion,
+            is_const,
+            const_val,
+        });
     }
 
-    stats.total_constraints = constraint_data.len();
+    stats.total_constraints = processed_constraints.len();
 
-    let bindings_code = all_bindings_code;
+    // Collect all struct field names into a single set to avoid duplicates
+    let mut struct_fields: BTreeSet<String> = BTreeSet::new();
 
+    for input in &bundle.inputs {
+        if input.kind == InputKind::ProofData || input.kind == InputKind::PublicStatement {
+            struct_fields.insert(sanitize_go_name(&input.name));
+        }
+    }
+    for constraint in &bundle.constraints {
+        if let Assertion::EqualPublicInput { name } = &constraint.assertion {
+            struct_fields.insert(sanitize_go_name(name));
+        }
+    }
+
+    // Build output
     let mut output = String::new();
 
     // Package and imports
@@ -494,53 +590,30 @@ pub fn generate_circuit_from_bundle_with_stats(
     output.push_str("\t\"math/big\"\n");
     output.push('\n');
     output.push_str("\t\"github.com/consensys/gnark/frontend\"\n");
-    if bindings_code.contains("poseidon.Hash")
-        || constraint_data.iter().any(|(_, e, _, _, _, _)| e.contains("poseidon.Hash"))
-    {
+    if stats.uses_poseidon {
         output.push_str("\t\"jolt_verifier/poseidon\"\n");
     }
     output.push_str(")\n\n");
 
     // bigInt helper for large constants that overflow Go's int64
-    output.push_str("// bigInt creates a *big.Int from a string, for constants too large for int64\n");
+    output.push_str(
+        "// bigInt creates a *big.Int from a string, for constants too large for int64\n",
+    );
     output.push_str("func bigInt(s string) *big.Int {\n");
-    output.push_str("\tn, _ := new(big.Int).SetString(s, 10)\n");
+    output.push_str("\tn, ok := new(big.Int).SetString(s, 10)\n");
+    output.push_str("\tif !ok {\n");
+    output.push_str("\t\tpanic(\"invalid bigInt: \" + s)\n");
+    output.push_str("\t}\n");
     output.push_str("\treturn n\n");
     output.push_str("}\n\n");
 
-    // Circuit struct - use input descriptions from bundle
+    // Circuit struct - deduplicated fields
     output.push_str(&format!("type {circuit_name} struct {{\n"));
-
-    // Add proof data inputs (variables)
-    for input in bundle.inputs.iter().filter(|i| i.kind == InputKind::ProofData) {
+    for field_name in &struct_fields {
         output.push_str(&format!(
-            "\t{} frontend.Variable `gnark:\",public\"`\n",
-            sanitize_go_name(&input.name)
+            "\t{field_name} frontend.Variable `gnark:\",public\"`\n"
         ));
     }
-
-    // Add public statement inputs (constants in circuit, but still need to be declared)
-    for input in bundle.inputs.iter().filter(|i| i.kind == InputKind::PublicStatement) {
-        output.push_str(&format!(
-            "\t{} frontend.Variable `gnark:\",public\"`\n",
-            sanitize_go_name(&input.name)
-        ));
-    }
-
-    // Add any public inputs referenced by EqualPublicInput assertions
-    let mut public_input_names: BTreeSet<String> = BTreeSet::new();
-    for constraint in &bundle.constraints {
-        if let Assertion::EqualPublicInput { name } = &constraint.assertion {
-            public_input_names.insert(name.clone());
-        }
-    }
-    for name in &public_input_names {
-        output.push_str(&format!(
-            "\t{} frontend.Variable `gnark:\",public\"`\n",
-            sanitize_go_name(name)
-        ));
-    }
-
     output.push_str("}\n\n");
 
     // Define method
@@ -548,63 +621,68 @@ pub fn generate_circuit_from_bundle_with_stats(
         "func (circuit *{circuit_name}) Define(api frontend.API) error {{\n"
     ));
 
-    // CSE bindings
-    if !bindings_code.is_empty() {
-        output.push_str("\t// Memoized subexpressions\n");
-        output.push_str(&bindings_code);
+    // Emit CSE bindings only for non-skipped constraints
+    let mut has_bindings = false;
+    for pc in &processed_constraints {
+        // Skip bindings for constant-zero constraints (they'll be skipped entirely)
+        let is_skippable_constant = pc.is_const
+            && matches!(&pc.assertion, ConstraintAssertion::EqualZero)
+            && pc.const_val.unwrap_or([0, 0, 0, 0]) == [0, 0, 0, 0];
+
+        if is_skippable_constant {
+            continue;
+        }
+        if !pc.bindings.is_empty() {
+            if !has_bindings {
+                output.push_str("\t// Memoized subexpressions\n");
+                has_bindings = true;
+            }
+            output.push_str(&pc.bindings);
+        }
+    }
+    if has_bindings {
         output.push('\n');
     }
 
-    // Generate constraints based on assertion type
-    // Skip constant assertions that are satisfied, track those that fail
-    for (name, expr, assertion, is_const, const_val, other_expr) in &constraint_data {
-        // Handle constant assertions specially
-        if *is_const {
-            match assertion {
-                Assertion::EqualZero => {
-                    let val = const_val.unwrap_or([0, 0, 0, 0]);
-                    if val == [0, 0, 0, 0] {
-                        // Constant equals zero - statically satisfied, skip
-                        output.push_str(&format!("\t// {name} = 0 (statically verified, skipped)\n\n"));
-                        stats.constant_skipped += 1;
-                        continue;
-                    } else {
-                        // Constant != 0 - static failure
-                        output.push_str(&format!(
-                            "\t// {name} STATIC FAILURE: constant != 0\n"
-                        ));
-                        stats.constant_failed += 1;
-                        stats.failed_names.push(name.clone());
-                        // Still emit the constraint so the error is visible
-                    }
-                }
-                _ => {
-                    // For other assertion types with constants, we can't easily
-                    // verify statically, so emit them as normal
-                }
+    // Generate constraints
+    for pc in &processed_constraints {
+        // Static verification for constant EqualZero assertions
+        if pc.is_const && matches!(&pc.assertion, ConstraintAssertion::EqualZero) {
+            let val = pc.const_val.unwrap_or([0, 0, 0, 0]);
+            if val == [0, 0, 0, 0] {
+                // Constant equals zero - statically satisfied, skip entirely
+                output.push_str(&format!(
+                    "\t// {} = 0 (statically verified, skipped)\n\n",
+                    pc.name
+                ));
+                stats.constant_skipped += 1;
+                continue;
+            } else {
+                // Constant != 0 - static failure, emit warning comment but still generate constraint
+                output.push_str(&format!("\t// {} STATIC FAILURE: constant != 0\n", pc.name));
+                stats.constant_failed += 1;
+                stats.failed_names.push(pc.name.clone());
             }
         }
 
-        output.push_str(&format!("\t// {name}\n"));
-        let var_name = sanitize_go_name(name);
-        output.push_str(&format!("\t{var_name} := {expr}\n"));
+        // Emit constraint
+        output.push_str(&format!("\t// {}\n", pc.name));
+        let var_name = sanitize_go_name(&pc.name);
+        output.push_str(&format!("\t{var_name} := {}\n", pc.expr));
 
-        match assertion {
-            Assertion::EqualZero => {
+        match &pc.assertion {
+            ConstraintAssertion::EqualZero => {
                 output.push_str(&format!("\tapi.AssertIsEqual({var_name}, 0)\n\n"));
             }
-            Assertion::EqualPublicInput { name: pub_name } => {
+            ConstraintAssertion::EqualPublicInput { name: pub_name } => {
                 output.push_str(&format!(
-                    "\tapi.AssertIsEqual({}, circuit.{})\n\n",
-                    var_name,
+                    "\tapi.AssertIsEqual({var_name}, circuit.{})\n\n",
                     sanitize_go_name(pub_name)
                 ));
             }
-            Assertion::EqualNode(_) => {
-                // other_expr was generated during the constraint processing loop
-                let other = other_expr.as_ref().expect("EqualNode assertion must have other_expr");
+            ConstraintAssertion::EqualNode { other_expr } => {
                 output.push_str(&format!(
-                    "\tapi.AssertIsEqual({var_name}, {other})\n\n"
+                    "\tapi.AssertIsEqual({var_name}, {other_expr})\n\n"
                 ));
             }
         }
@@ -616,8 +694,12 @@ pub fn generate_circuit_from_bundle_with_stats(
     (output, stats)
 }
 
-/// Sanitize a name for use as a Go identifier.
-/// Replaces all non-alphanumeric characters with underscores, then PascalCases each segment.
+/// Sanitize a name for use as a Go identifier (PascalCase).
+///
+/// Converts any input string to idiomatic Go PascalCase:
+/// - `"foo_bar_baz"` → `"FooBarBaz"`
+/// - `"stage1.sumcheck[0]"` → `"Stage1Sumcheck0"`
+/// - `"UPPER_CASE"` → `"UpperCase"`
 pub fn sanitize_go_name(name: &str) -> String {
     // Replace any non-alphanumeric character with underscore
     let cleaned: String = name
@@ -626,19 +708,23 @@ pub fn sanitize_go_name(name: &str) -> String {
         .collect();
 
     // Split by underscores and PascalCase each segment
-    let parts: Vec<&str> = cleaned.split('_').filter(|s| !s.is_empty()).collect();
-
-    parts
-        .iter()
+    cleaned
+        .split('_')
+        .filter(|s| !s.is_empty())
         .map(|s| {
-            let mut c = s.chars();
-            match c.next() {
+            let mut chars = s.chars();
+            match chars.next() {
                 None => String::new(),
-                Some(first) => first.to_uppercase().chain(c).collect(),
+                Some(first) => {
+                    // Capitalize first char, lowercase the rest
+                    first
+                        .to_uppercase()
+                        .chain(chars.flat_map(|c| c.to_lowercase()))
+                        .collect()
+                }
             }
         })
-        .collect::<Vec<_>>()
-        .join("_")
+        .collect()
 }
 
 // =============================================================================
@@ -679,15 +765,19 @@ fn is_node_constant_in(nodes: &[Node], node_id: usize) -> bool {
         Node::Atom(Atom::Scalar(_)) => true,
         Node::Atom(Atom::Var(_)) => false,
         Node::Atom(Atom::NamedVar(_)) => false,
-        Node::Neg(e) | Node::Inv(e) | Node::ByteReverse(e)
-        | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::AppendU64Transform(e) => {
-            is_edge_constant_in(nodes, e)
-        }
+        Node::Neg(e)
+        | Node::Inv(e)
+        | Node::ByteReverse(e)
+        | Node::Truncate128Reverse(e)
+        | Node::Truncate128(e)
+        | Node::AppendU64Transform(e) => is_edge_constant_in(nodes, e),
         Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
             is_edge_constant_in(nodes, e1) && is_edge_constant_in(nodes, e2)
         }
         Node::Poseidon(e1, e2, e3) => {
-            is_edge_constant_in(nodes, e1) && is_edge_constant_in(nodes, e2) && is_edge_constant_in(nodes, e3)
+            is_edge_constant_in(nodes, e1)
+                && is_edge_constant_in(nodes, e2)
+                && is_edge_constant_in(nodes, e3)
         }
     }
 }
@@ -708,21 +798,27 @@ fn evaluate_constant_node_in(nodes: &[Node], node_id: usize) -> Scalar {
         Node::Atom(Atom::Var(_)) | Node::Atom(Atom::NamedVar(_)) => {
             panic!("Cannot evaluate non-constant node")
         }
-        Node::Add(e1, e2) => {
-            scalar_add_mod(evaluate_constant_edge_in(nodes, e1), evaluate_constant_edge_in(nodes, e2))
-        }
-        Node::Sub(e1, e2) => {
-            scalar_sub_mod(evaluate_constant_edge_in(nodes, e1), evaluate_constant_edge_in(nodes, e2))
-        }
-        Node::Mul(e1, e2) => {
-            scalar_mul_mod(evaluate_constant_edge_in(nodes, e1), evaluate_constant_edge_in(nodes, e2))
-        }
+        Node::Add(e1, e2) => scalar_add_mod(
+            evaluate_constant_edge_in(nodes, e1),
+            evaluate_constant_edge_in(nodes, e2),
+        ),
+        Node::Sub(e1, e2) => scalar_sub_mod(
+            evaluate_constant_edge_in(nodes, e1),
+            evaluate_constant_edge_in(nodes, e2),
+        ),
+        Node::Mul(e1, e2) => scalar_mul_mod(
+            evaluate_constant_edge_in(nodes, e1),
+            evaluate_constant_edge_in(nodes, e2),
+        ),
         Node::Neg(e) => scalar_neg_mod(evaluate_constant_edge_in(nodes, e)),
         Node::Inv(_) | Node::Div(_, _) => {
             panic!("Modular inverse not implemented for constant evaluation")
         }
-        Node::Poseidon(_, _, _) | Node::ByteReverse(_)
-        | Node::Truncate128Reverse(_) | Node::Truncate128(_) | Node::AppendU64Transform(_) => {
+        Node::Poseidon(_, _, _)
+        | Node::ByteReverse(_)
+        | Node::Truncate128Reverse(_)
+        | Node::Truncate128(_)
+        | Node::AppendU64Transform(_) => {
             panic!("Hash/transform operations cannot be evaluated as constants")
         }
     }

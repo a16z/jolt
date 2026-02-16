@@ -1118,10 +1118,9 @@ impl std::ops::Mul<&Self> for MleAst {
 impl std::ops::Div<&Self> for MleAst {
     type Output = Self;
 
-    fn div(self, rhs: &Self) -> Self::Output {
-        // Division is x * inv(y) (Jolt transpiler doesn't use Node::Div)
-        let inv_rhs = rhs.inverse().expect("division by zero");
-        self * &inv_rhs
+    fn div(mut self, rhs: &Self) -> Self::Output {
+        self.binop(Node::Div, rhs);
+        self
     }
 }
 
