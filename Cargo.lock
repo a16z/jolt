@@ -2860,7 +2860,6 @@ name = "jolt-core"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "anyhow",
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",

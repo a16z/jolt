@@ -141,8 +141,8 @@ The `zk` Cargo feature (`cfg(feature = "zk")`) controls zero-knowledge mode:
 **Key cfg-gated items:**
 - `JoltProof::opening_claims: Claims<F>` — `#[cfg(not(feature = "zk"))]`
 - `JoltProof::blindfold_proof: BlindFoldProof` — `#[cfg(feature = "zk")]`
-- Prover `zk_mode: cfg!(feature = "zk")` — selects prove/verify path at runtime
-- Verifier detects mode from proof: `proof.stage1_sumcheck_proof.is_zk()`
+- Prover uses `#[cfg(feature = "zk")]` / `#[cfg(not(feature = "zk"))]` blocks — compile-time path selection, no runtime `zk_mode` field
+- Verifier detects mode from proof at runtime: `proof.stage1_sumcheck_proof.is_zk()` — stored as `VerifierOpeningAccumulator::zk_mode`
 
 **CRITICAL — Verifier `new_from_verifier` must support both modes:**
 

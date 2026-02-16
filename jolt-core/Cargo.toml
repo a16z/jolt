@@ -84,7 +84,6 @@ common.workspace = true
 tracer = { workspace = true, default-features = false, features = ["std"] }
 bincode.workspace = true
 rand_distr.workspace = true
-anyhow.workspace = true
 derive_more.workspace = true
 paste.workspace = true
 dory.workspace = true
