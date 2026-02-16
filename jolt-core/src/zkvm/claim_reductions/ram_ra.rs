@@ -115,7 +115,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::compute_message")]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         match &self.phase {
-            RamRaClaimReductionPhase::Phase1(state) => state.compute_message(&self.params, previous_claim),
+            RamRaClaimReductionPhase::Phase1(state) => {
+                state.compute_message(&self.params, previous_claim)
+            }
             RamRaClaimReductionPhase::Phase2(state) => state.compute_message(previous_claim),
         }
     }
@@ -615,10 +617,8 @@ impl<F: JoltField> RaReductionParams<F> {
             VirtualPolynomial::RamRa,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_val, claim_val) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamValCheck,
-        );
+        let (r_val, claim_val) = opening_accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamValCheck);
 
         // Extract r_address and r_cycle from each opening point.
         let (r_address_raf, r_cycle_raf) = r_raf.split_at_r(log_K);
@@ -704,18 +704,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let r_cycle_reduced: Vec<_> = sumcheck_challenges
-            .iter()
-            .rev()
-            .copied()
-            .collect();
+        let r_cycle_reduced: Vec<_> = sumcheck_challenges.iter().rev().copied().collect();
 
         // Compute eq_combined(r_cycle_reduced) at the fixed aligned address point.
         let eq_cycle_raf = EqPolynomial::<F>::mle(&self.params.r_cycle_raf, &r_cycle_reduced);
         let eq_cycle_rw = EqPolynomial::<F>::mle(&self.params.r_cycle_rw, &r_cycle_reduced);
         let eq_cycle_val = EqPolynomial::<F>::mle(&self.params.r_cycle_val, &r_cycle_reduced);
 
-        let eq_cycle_combined = eq_cycle_raf + self.params.gamma * eq_cycle_rw
+        let eq_cycle_combined = eq_cycle_raf
+            + self.params.gamma * eq_cycle_rw
             + self.params.gamma_squared * eq_cycle_val;
         let eq_combined = eq_cycle_combined;
 
@@ -738,8 +735,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         // The address part is fixed to the aligned `r_address`; the cycle part is the sumcheck's
         // reduced cycle point.
         let r_cycle_be: Vec<_> = sumcheck_challenges.iter().rev().copied().collect();
-        let opening_point =
-            OpeningPoint::<BIG_ENDIAN, F>::new([self.params.r_address.clone(), r_cycle_be].concat());
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(
+            [self.params.r_address.clone(), r_cycle_be].concat(),
+        );
 
         accumulator.append_virtual(
             transcript,

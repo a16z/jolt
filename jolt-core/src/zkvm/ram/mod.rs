@@ -264,11 +264,7 @@ pub fn verifier_accumulate_advice<F: JoltField>(
 
         // Single opening at r_address.
         let point_rw = compute_advice_point(&r_address_rw, max_size);
-        opening_accumulator.append_untrusted_advice(
-            transcript,
-            SumcheckId::RamValCheck,
-            point_rw,
-        );
+        opening_accumulator.append_untrusted_advice(transcript, SumcheckId::RamValCheck, point_rw);
     }
 
     if has_trusted_advice_commitment {
@@ -276,11 +272,7 @@ pub fn verifier_accumulate_advice<F: JoltField>(
 
         // Single opening at r_address.
         let point_rw = compute_advice_point(&r_address_rw, max_size);
-        opening_accumulator.append_trusted_advice(
-            transcript,
-            SumcheckId::RamValCheck,
-            point_rw,
-        );
+        opening_accumulator.append_trusted_advice(transcript, SumcheckId::RamValCheck, point_rw);
     }
 }
 

@@ -34,8 +34,7 @@ use crate::zkvm::{
         hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
-        read_write_checking::RamReadWriteCheckingVerifier,
-        val_check::RamValCheckSumcheckVerifier,
+        read_write_checking::RamReadWriteCheckingVerifier, val_check::RamValCheckSumcheckVerifier,
         verifier_accumulate_advice,
     },
     registers::{

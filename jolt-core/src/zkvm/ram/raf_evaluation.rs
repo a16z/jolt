@@ -339,7 +339,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
         #[cfg(test)]
         {
-            let reference_result = Self::input_output_claims().input_claim(&[F::one()], accumulator);
+            let reference_result =
+                Self::input_output_claims().input_claim(&[F::one()], accumulator);
             assert_eq!(
                 result,
                 reference_result.mul_pow_2(self.params.phase3_cycle_rounds()),
@@ -544,7 +545,9 @@ mod tests {
             phase2_num_rounds: p2,
             start_address: 0,
             r_cycle: OpeningPoint::<BIG_ENDIAN, F>::new(vec![
-                <F as JoltField>::Challenge::from(0u128);
+                <F as JoltField>::Challenge::from(
+                    0u128
+                );
                 log_t
             ]),
         };

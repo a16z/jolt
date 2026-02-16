@@ -97,10 +97,8 @@ impl<F: JoltField> IncClaimReductionSumcheckParams<F> {
             CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_cycle_stage4, _) = accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RamInc,
-            SumcheckId::RamValCheck,
-        );
+        let (r_cycle_stage4, _) = accumulator
+            .get_committed_polynomial_opening(CommittedPolynomial::RamInc, SumcheckId::RamValCheck);
 
         let (s_cycle_stage4, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RdInc,
@@ -130,10 +128,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams
             CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
         );
-        let (_, v_2) = accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RamInc,
-            SumcheckId::RamValCheck,
-        );
+        let (_, v_2) = accumulator
+            .get_committed_polynomial_opening(CommittedPolynomial::RamInc, SumcheckId::RamValCheck);
         // Note: v_2 already includes ValFinal claim (same point, combined)
 
         let (_, w_1) = accumulator.get_committed_polynomial_opening(

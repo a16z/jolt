@@ -499,12 +499,7 @@ impl<F: JoltField> AdviceClaimReductionVerifier<F> {
         trace_len: usize,
         accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
-        let params = AdviceClaimReductionParams::new(
-            kind,
-            memory_layout,
-            trace_len,
-            accumulator,
-        );
+        let params = AdviceClaimReductionParams::new(kind, memory_layout, trace_len, accumulator);
 
         Self {
             params: RefCell::new(params),
