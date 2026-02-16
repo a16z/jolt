@@ -570,7 +570,9 @@ where
         self.openings.insert(key, (opening_point, claim));
         self.index_opening_id(key);
         #[cfg(test)]
-        self.appended_committed_openings.borrow_mut().push(key);
+        if !self.openings.get(&key).unwrap().0.r.is_empty() {
+            self.appended_committed_openings.borrow_mut().push(key);
+        }
     }
 
     pub fn append_trusted_advice<T: Transcript>(
@@ -598,7 +600,9 @@ where
         self.openings.insert(key, (opening_point, claim));
         self.index_opening_id(key);
         #[cfg(test)]
-        self.appended_committed_openings.borrow_mut().push(key);
+        if !self.openings.get(&key).unwrap().0.r.is_empty() {
+            self.appended_committed_openings.borrow_mut().push(key);
+        }
     }
 }
 
