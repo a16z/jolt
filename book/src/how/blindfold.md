@@ -121,13 +121,13 @@ BlindFold sits at Stage 8 of the Jolt prover pipeline, after all sumcheck stages
 
 | Stage | Protocol | BlindFold role |
 |-------|----------|----------------|
-| 1 | Spartan (outer + product) | Collect round commitments, stage configs |
-| 2 | Spartan (shift + instruction input) | Collect round commitments, stage configs |
-| 3 | Instruction lookups (RA virtual + read-RAF) | Collect round commitments, stage configs |
-| 4 | Bytecode (read-RAF) | Collect round commitments, stage configs |
-| 5 | RAM (read-write + val-eval + val-final + output + booleanity + RAF) | Collect round commitments, stage configs |
-| 6 | Register (read-write + val-eval) | Collect round commitments, stage configs |
-| 7 | Claim reductions (instruction, register, RAM RA, increments, Hamming, advice) | Collect round commitments, stage configs |
+| 1 | Spartan outer (uni-skip) | Collect round commitments, stage configs |
+| 2 | RAM read-write, product virtual, instruction claim reduction, RAM RAF eval, output check (uni-skip) | Collect round commitments, stage configs |
+| 3 | Spartan shift, instruction input, registers claim reduction | Collect round commitments, stage configs |
+| 4 | Registers read-write, RAM val evaluation, RAM val final | Collect round commitments, stage configs |
+| 5 | Instruction read-RAF, RAM RA reduction, registers val evaluation | Collect round commitments, stage configs |
+| 6 | Bytecode read-RAF, booleanity, Hamming booleanity, RA virtual, inc reduction, advice reduction | Collect round commitments, stage configs |
+| 7 | Hamming weight claim reduction, advice reduction (address phase) | Collect round commitments, stage configs |
 | **8** | **Batched opening proof + BlindFold** | Build R1CS, fold, prove |
 
 Each stage contributes:
