@@ -1,5 +1,8 @@
 use jolt_core::zkvm::{
-    instruction::{CircuitFlags, Flags as _, InstructionLookup as _, InterleavedBitsMarker as _},
+    instruction::{
+        CircuitFlags, Flags as _, InstructionLookup as _, InterleavedBitsMarker as _,
+        SupportedInstruction as _,
+    },
     r1cs::inputs::JoltR1CSInputs,
 };
 use strum::IntoEnumIterator as _;
@@ -75,24 +78,10 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
-        Instruction::iter().filter_map(|instr| {
-            // Needed to call `Instruction::inline_sequence`
-            let allocator = tracer::utils::virtual_registers::VirtualRegisterAllocator::new();
-            let xlen = match J::XLEN {
-                32 => tracer::emulator::cpu::Xlen::Bit32,
-                64 => tracer::emulator::cpu::Xlen::Bit64,
-                _ => panic!("Unsupported bit width"),
-            };
-
-            match instr {
-                Instruction::NoOp | Instruction::UNIMPL | Instruction::INLINE(_) => None,
-                // NOTE: The functions we would like to call on each instruction (`lookup_table`
-                // and `circuit_flags`) panic on inline sequences. We check to see if
-                // `inline_sequence` returns a non-empty vector in order to filter out inline
-                // sequences here.
-                _ if !instr.inline_sequence(&allocator, xlen).is_empty() => None,
-                _ => Some(Self::from(instr)),
-            }
+        Instruction::iter().filter_map(|instr| match instr {
+            Instruction::NoOp | Instruction::UNIMPL | Instruction::INLINE(_) => None,
+            _ if instr.is_supported_instruction() => Some(Self::from(instr)),
+            _ => None,
         })
     }
 
@@ -165,7 +154,7 @@ impl<J: JoltParameterSet> ZkLeanInstructions<J> {
     }
 
     pub fn zklean_imports(&self) -> Vec<String> {
-        vec![String::from("ZkLean"), String::from("Jolt.LookupTables")]
+        vec![String::from("zkLean"), String::from("Jolt.LookupTables")]
     }
 }
 

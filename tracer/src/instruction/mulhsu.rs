@@ -51,27 +51,24 @@ impl RISCVTrace for MULHSU {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let v_sx = allocator.allocate();
-        let v_sx_0 = allocator.allocate();
-        let v_rs1 = allocator.allocate();
-        let v_hi = allocator.allocate();
-        let v_lo = allocator.allocate();
-        let v_tmp = allocator.allocate();
-        let v_carry = allocator.allocate();
+        let v0 = allocator.allocate();
+        let v1 = allocator.allocate();
+        let v2 = allocator.allocate();
+        let v3 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0);
-        asm.emit_i::<ANDI>(*v_sx_0, *v_sx, 1);
-        asm.emit_r::<XOR>(*v_rs1, self.operands.rs1, *v_sx);
-        asm.emit_r::<ADD>(*v_rs1, *v_rs1, *v_sx_0);
-        asm.emit_r::<MULHU>(*v_hi, *v_rs1, self.operands.rs2);
-        asm.emit_r::<MUL>(*v_lo, *v_rs1, self.operands.rs2);
-        asm.emit_r::<XOR>(*v_hi, *v_hi, *v_sx);
-        asm.emit_r::<XOR>(*v_lo, *v_lo, *v_sx);
-        asm.emit_r::<ADD>(*v_tmp, *v_lo, *v_sx_0);
-        asm.emit_r::<SLTU>(*v_carry, *v_tmp, *v_lo);
-        asm.emit_r::<ADD>(self.operands.rd, *v_hi, *v_carry);
+        asm.emit_i::<VirtualMovsign>(*v0, self.operands.rs1, 0);
+        asm.emit_i::<ANDI>(*v1, *v0, 1);
+        asm.emit_r::<XOR>(*v2, self.operands.rs1, *v0);
+        asm.emit_r::<ADD>(*v2, *v2, *v1);
+        asm.emit_r::<MULHU>(*v3, *v2, self.operands.rs2);
+        asm.emit_r::<MUL>(*v2, *v2, self.operands.rs2);
+        asm.emit_r::<XOR>(*v3, *v3, *v0);
+        asm.emit_r::<XOR>(*v2, *v2, *v0);
+        asm.emit_r::<ADD>(*v0, *v2, *v1);
+        asm.emit_r::<SLTU>(*v0, *v0, *v2);
+        asm.emit_r::<ADD>(self.operands.rd, *v3, *v0);
 
         asm.finalize()
     }
