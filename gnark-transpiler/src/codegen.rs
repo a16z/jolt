@@ -1,10 +1,42 @@
-//! Gnark code generation from zkLean's MLE AST
+//! Gnark/Go code generation from MleAst symbolic expressions.
 //!
-//! This module traverses zkLean's global NODE_ARENA and generates
-//! corresponding Gnark/Go circuit code.
+//! # Overview
 //!
-//! Supports Common Subexpression Elimination (CSE) to reduce circuit size
-//! by hoisting repeated subexpressions into named variables.
+//! This module converts the AST (Abstract Syntax Tree) built during symbolic execution
+//! into Gnark circuit code. The AST represents all arithmetic operations performed by
+//! the Jolt verifier, and this module emits equivalent Go code using gnark's API.
+//!
+//! # Key Components
+//!
+//! - [`MemoizedCodeGen`]: The main code generator with CSE (Common Subexpression Elimination)
+//! - [`generate_circuit_from_bundle`]: Entry point that generates a complete circuit file
+//! - [`sanitize_go_name`]: Converts Rust identifiers to valid Go identifiers
+//!
+//! # Code Generation Pipeline
+//!
+//! 1. **Reference Counting**: First pass counts how many times each AST node is used
+//! 2. **Post-Order Traversal**: Generate expressions bottom-up (children before parents)
+//! 3. **CSE Hoisting**: Nodes used more than once become named variables (e.g., `cse_0_1`)
+//! 4. **Per-Constraint Namespacing**: Each constraint gets isolated CSE to prevent aliasing bugs
+//!
+//! # Example Output
+//!
+//! ```go
+//! // CSE bindings for constraint 0
+//! cse_0_0 := api.Mul(circuit.Stage1_Sumcheck_R0_0, circuit.Stage1_Sumcheck_R0_1)
+//! cse_0_1 := api.Add(cse_0_0, circuit.Stage1_Sumcheck_R0_2)
+//!
+//! // assertion_0
+//! assertion_0 := api.Sub(cse_0_1, circuit.Expected_0)
+//! api.AssertIsEqual(assertion_0, 0)
+//! ```
+//!
+//! # CSE Aliasing Bug Prevention
+//!
+//! Early versions used global CSE, which caused a subtle bug: structurally identical
+//! expressions from different constraints (e.g., two EqPolynomial evaluations with the
+//! same shape but different semantic meaning) would be incorrectly merged. The fix is
+//! per-constraint CSE namespacing: constraint 0 uses `cse_0_*`, constraint 1 uses `cse_1_*`, etc.
 
 use std::collections::{BTreeSet, HashMap};
 use zklean_extractor::mle_ast::{
@@ -35,7 +67,27 @@ fn format_scalar_for_gnark(limbs: [u64; 4]) -> String {
     format!("bigInt(\"{}\")", value)
 }
 
-/// State for memoized code generation with reference counting
+/// Memoized code generator that converts AST nodes to Gnark expressions.
+///
+/// This struct maintains state for a single code generation pass:
+/// - Tracks reference counts to determine which expressions to hoist
+/// - Caches generated expressions to avoid regenerating subtrees
+/// - Collects CSE bindings (named intermediate variables)
+///
+/// # Usage
+///
+/// ```ignore
+/// let mut codegen = MemoizedCodeGen::with_var_names(&bundle.nodes, var_names);
+/// codegen.count_refs(root_node_id);  // First pass: count references
+/// let expr = codegen.generate_expr(root_node_id);  // Second pass: generate code
+/// let bindings = codegen.bindings_code();  // Get CSE variable definitions
+/// ```
+///
+/// # Per-Constraint Isolation
+///
+/// Use `with_var_names_and_constraint_idx` to create isolated CSE namespaces
+/// for each constraint. This prevents the aliasing bug where structurally
+/// identical nodes from different constraints get incorrectly merged.
 pub struct MemoizedCodeGen<'a> {
     /// Reference to the node arena (from AstBundle.nodes)
     nodes: &'a [Node],
@@ -122,7 +174,14 @@ impl<'a> MemoizedCodeGen<'a> {
         &self.ref_counts
     }
 
-    /// First pass: count references to each node (iterative to avoid stack overflow)
+    /// First pass: count how many times each node is referenced.
+    ///
+    /// This determines which nodes should be hoisted to CSE variables.
+    /// Nodes with ref_count > 1 will become named variables to avoid
+    /// redundant computation in the circuit.
+    ///
+    /// Uses iterative traversal to avoid stack overflow on deep ASTs
+    /// (the Jolt verifier AST can be very deep due to sumcheck chains).
     pub fn count_refs(&mut self, root_node_id: usize) {
         let mut stack = vec![root_node_id];
 
@@ -185,8 +244,17 @@ impl<'a> MemoizedCodeGen<'a> {
         }
     }
 
-    /// Generate Gnark expression for a node, with memoization based on ref count
-    /// (Iterative implementation to avoid stack overflow on deep ASTs)
+    /// Generate Gnark expression for a node, with memoization based on ref count.
+    ///
+    /// This is the main code generation method. It:
+    /// 1. Builds a post-order traversal (children before parents)
+    /// 2. Generates Go expressions for each node
+    /// 3. Hoists multi-referenced nodes to CSE variables
+    /// 4. Returns the final expression for the root
+    ///
+    /// Uses iterative traversal to avoid stack overflow on deep ASTs.
+    /// The Jolt verifier can produce ASTs with thousands of nodes in
+    /// a single chain (e.g., sumcheck polynomial evaluations).
     pub fn generate_expr(&mut self, root_node_id: usize) -> String {
         // Phase 1: Build post-order traversal (children before parents)
         // We need to process nodes in an order where all children are processed before their parent

@@ -1,12 +1,38 @@
-//! Poseidon transcript for symbolic execution (MleAst)
+//! Poseidon transcript for symbolic execution (MleAst).
 //!
-//! This implementation mirrors jolt-core's PoseidonTranscript but records
-//! operations in MleAst instead of computing actual hashes. The structure
-//! matches exactly to ensure circuit compatibility:
+//! # Overview
 //!
-//! - Width-3 Poseidon: poseidon(state, n_rounds, data)
-//! - Domain separation via n_rounds counter
-//! - Same byte chunking and padding behavior
+//! This module implements the `Transcript` trait for symbolic execution. Instead of
+//! computing actual Poseidon hashes, it records hash operations as AST nodes that
+//! will be converted to Gnark code.
+//!
+//! # Why Poseidon?
+//!
+//! The Jolt proof must use Poseidon (not Blake2b/Keccak) because:
+//! - Poseidon is SNARK-friendly: ~250 constraints per hash vs ~150,000 for Keccak
+//! - The circuit recomputes all Fiat-Shamir challenges from the transcript
+//! - Using Blake2b would make the circuit infeasibly large
+//!
+//! # Structure (Must Match jolt-core Exactly)
+//!
+//! - **Width-3 Poseidon**: `hash(state, n_rounds, data)` with 3 inputs
+//! - **Domain separation**: `n_rounds` counter increments on each append operation
+//! - **State update**: `new_state = poseidon(old_state, n_rounds, data)`
+//! - **Challenge derivation**: `challenge = truncate_128(poseidon(state, n_rounds, 0))`
+//!
+//! # Fiat-Shamir Challenge Types
+//!
+//! Two challenge derivation methods exist:
+//! - `challenge_scalar_128_bits()`: For batching coefficients. Uses `Truncate128`.
+//! - `challenge_scalar_optimized()`: For sumcheck challenges. Uses `Truncate128Reverse`.
+//!
+//! The "Reverse" variant reverses bytes before truncation for EVM compatibility.
+//!
+//! # Critical: Transcript Matching
+//!
+//! The proof MUST be generated with `--features transcript-poseidon`. If generated
+//! with Blake2b (the default), all challenge values will differ and verification
+//! will fail silently (assertions won't be zero).
 
 use ark_ec::CurveGroup;
 use ark_serialize::CanonicalSerialize;

@@ -1,7 +1,35 @@
-//! Convert a real JoltProof to a symbolic JoltProof for transpilation
+//! Convert a real JoltProof to a symbolic JoltProof for transpilation.
 //!
-//! This module provides functions to create symbolic versions of proof data structures,
-//! where concrete field elements are replaced with MleAst variables.
+//! # Overview
+//!
+//! This module creates symbolic versions of proof data structures. During symbolic
+//! execution, we need a `JoltProof<MleAst>` where each field element is replaced
+//! with an `MleAst::Var(index)`, a unique symbolic variable.
+//!
+//! # Key Functions
+//!
+//! - [`symbolize_proof`]: Convert a concrete `RV64IMACProof` to symbolic form
+//! - [`extract_witness_values`]: Extract concrete values for witness generation
+//!
+//! # How It Works
+//!
+//! 1. **Symbolization**: Each field in the proof (commitments, sumcheck coefficients,
+//!    opening claims) gets a unique variable index. For example:
+//!    - `commitment_0_0`, `commitment_0_1`, ... (12 chunks per commitment)
+//!    - `stage1_sumcheck_r0_0`, `stage1_sumcheck_r0_1`, ... (coefficients per round)
+//!
+//! 2. **Witness Extraction**: The same traversal order is used to extract concrete
+//!    values from the real proof. The indices match exactly, so `values[i]` corresponds
+//!    to the variable allocated at position `i`.
+//!
+//! # Commitment Serialization
+//!
+//! Dory commitments are 384-byte elliptic curve points. They're split into 12 chunks
+//! of 32 bytes each (to fit in BN254 field elements). The serialization uses:
+//! - `serialize_uncompressed` (not compressed)
+//! - Byte reversal for big-endian/EVM compatibility
+//!
+//! This must match exactly how the Poseidon transcript hashes commitments.
 
 use crate::ast_commitment_scheme::{AstCommitmentScheme, AstProof};
 use crate::MleOpeningAccumulator;
@@ -17,7 +45,13 @@ use std::collections::BTreeMap;
 use zklean_extractor::mle_ast::MleAst;
 use zklean_extractor::AstCommitment;
 
-/// Tracks variable index allocation during symbolization
+/// Tracks variable index allocation during symbolization.
+///
+/// Each call to `alloc()` returns a fresh `MleAst::Var(index)` with a unique index.
+/// The allocator also records a human-readable description for each variable,
+/// which is used for:
+/// - Generating readable Go struct field names (e.g., `Stage1_Sumcheck_R0_0`)
+/// - Mapping witness values back to their semantic meaning
 pub struct VarAllocator {
     next_idx: u16,
     descriptions: Vec<(u16, String)>,
@@ -62,12 +96,24 @@ impl Default for VarAllocator {
 /// Number of 32-byte chunks per commitment (384 bytes / 32 = 12)
 const CHUNKS_PER_COMMITMENT: usize = 12;
 
-/// Convert a real proof to a symbolic proof (Poseidon transcript version)
+/// Convert a real proof to a symbolic proof for transpilation.
 ///
-/// Returns:
-/// - The symbolic JoltProof
-/// - The MleOpeningAccumulator with symbolic claims
-/// - The VarAllocator with all variable descriptions
+/// This is the main entry point for proof symbolization. It creates symbolic
+/// variables for every field element in the proof structure.
+///
+/// # Returns
+///
+/// - `JoltProof<MleAst>`: The symbolic proof with variables instead of concrete values
+/// - `MleOpeningAccumulator`: Accumulator pre-populated with symbolic opening claims
+/// - `VarAllocator`: Tracks all allocated variables and their descriptions
+///
+/// # Variable Naming Convention
+///
+/// Variables are named by their semantic role:
+/// - `commitment_N_M`: Chunk M of commitment N
+/// - `stageX_sumcheck_rY_Z`: Stage X, round Y, coefficient Z
+/// - `stageX_uni_skip_coeff_Y`: Univariate skip polynomial coefficient
+/// - `claim_KEY`: Opening claim for polynomial KEY
 pub fn symbolize_proof(
     real_proof: &RV64IMACProof,
 ) -> (
@@ -238,10 +284,29 @@ fn symbolize_sumcheck_proof<T: Transcript, OutT: Transcript>(
     SumcheckInstanceProof::new(compressed_polys)
 }
 
-/// Extract concrete witness values from a real proof
-/// Returns a HashMap<variable_index, value_as_decimal_string>
+/// Extract concrete witness values from a real proof.
 ///
-/// The indices match exactly what symbolize_proof allocates.
+/// This function traverses the proof in exactly the same order as `symbolize_proof`,
+/// extracting the concrete field element values. The indices in the returned HashMap
+/// correspond directly to the variable indices allocated during symbolization.
+///
+/// # Returns
+///
+/// A `HashMap<variable_index, decimal_string>` where:
+/// - Key: Variable index (matches `VarAllocator` allocation order)
+/// - Value: Field element as decimal string (for JSON serialization to Go)
+///
+/// # Important: Traversal Order
+///
+/// The traversal order MUST match `symbolize_proof` exactly:
+/// 1. Commitments (12 chunks each)
+/// 2. Opening claims
+/// 3. Stage 1 uni-skip coefficients
+/// 4. Stage 1 sumcheck coefficients (by round)
+/// 5. ... repeat for stages 2-7 ...
+/// 6. Untrusted advice commitment (if present)
+///
+/// Any mismatch will cause witness values to be assigned to wrong variables.
 pub fn extract_witness_values(real_proof: &RV64IMACProof) -> std::collections::HashMap<usize, String> {
     use ark_ff::PrimeField;
     use ark_serialize::CanonicalSerialize;
