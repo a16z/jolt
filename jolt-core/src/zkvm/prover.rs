@@ -463,14 +463,17 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
 
         #[cfg(test)]
-        assert!(
-            self.opening_accumulator
-                .appended_virtual_openings
-                .borrow()
-                .is_empty(),
-            "Not all virtual openings have been proven, missing: {:?}",
-            self.opening_accumulator.appended_virtual_openings.borrow()
-        );
+        {
+            let missing_virtual = self.opening_accumulator.appended_virtual_openings.borrow();
+            let missing_committed = self
+                .opening_accumulator
+                .appended_committed_openings
+                .borrow();
+            assert!(
+                missing_virtual.is_empty() && missing_committed.is_empty(),
+                "Not all openings have been proven. Missing virtual: {missing_virtual:?}. Missing committed: {missing_committed:?}",
+            );
+        }
 
         #[cfg(test)]
         let debug_info = Some(ProverDebugInfo {

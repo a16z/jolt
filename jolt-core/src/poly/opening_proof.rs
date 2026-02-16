@@ -207,6 +207,8 @@ where
     pub aliases: BTreeMap<OpeningId, OpeningId>,
     #[cfg(test)]
     pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
+    #[cfg(test)]
+    pub appended_committed_openings: RefCell<Vec<OpeningId>>,
     pub log_T: usize,
 }
 
@@ -343,6 +345,13 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
             .openings
             .get(&key)
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
+        #[cfg(test)]
+        {
+            let mut committed_openings = self.appended_committed_openings.borrow_mut();
+            if let Some(index) = committed_openings.iter().position(|id| id == &key) {
+                committed_openings.remove(index);
+            }
+        }
         (point.clone(), *claim)
     }
 
@@ -357,6 +366,13 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
         };
         let key = self.resolve_alias(opening_id);
         let (point, claim) = self.openings.get(&key)?;
+        #[cfg(test)]
+        {
+            let mut committed_openings = self.appended_committed_openings.borrow_mut();
+            if let Some(index) = committed_openings.iter().position(|id| id == &key) {
+                committed_openings.remove(index);
+            }
+        }
         Some((point.clone(), *claim))
     }
 }
@@ -371,6 +387,8 @@ where
             aliases: BTreeMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
+            #[cfg(test)]
+            appended_committed_openings: std::cell::RefCell::new(vec![]),
             log_T,
         }
     }
@@ -436,6 +454,8 @@ where
 
         transcript.append_scalar(b"opening_claim", &claim);
         self.openings.insert(key, (point, claim));
+        #[cfg(test)]
+        self.appended_committed_openings.borrow_mut().push(key);
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_sparse")]
@@ -468,6 +488,8 @@ where
 
             transcript.append_scalar(b"opening_claim", claim);
             self.openings.insert(key, (point, *claim));
+            #[cfg(test)]
+            self.appended_committed_openings.borrow_mut().push(key);
         }
     }
 
@@ -523,6 +545,8 @@ where
 
         transcript.append_scalar(b"opening_claim", &claim);
         self.openings.insert(key, (opening_point, claim));
+        #[cfg(test)]
+        self.appended_committed_openings.borrow_mut().push(key);
     }
 
     pub fn append_trusted_advice<T: Transcript>(
@@ -547,6 +571,8 @@ where
 
         transcript.append_scalar(b"opening_claim", &claim);
         self.openings.insert(key, (opening_point, claim));
+        #[cfg(test)]
+        self.appended_committed_openings.borrow_mut().push(key);
     }
 }
 
