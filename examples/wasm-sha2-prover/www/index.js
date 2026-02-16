@@ -49,7 +49,7 @@ async function main() {
         worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 
         worker.onmessage = (e) => {
-            const { type, error, proof, programIo, valid, elapsed, trace } = e.data;
+            const { type, error, proof, proofSize, compressedProofSize, programIo, valid, elapsed, trace } = e.data;
 
             if (type === 'error') {
                 setStatus('Error: ' + error, 'error');
@@ -84,8 +84,8 @@ async function main() {
                 lastProgramIoBytes = programIo;
 
                 log(`Proof generated in ${(elapsed / 1000).toFixed(2)}s`);
-                log(`Proof size: ${proof.length} bytes (${(proof.length / 1024).toFixed(2)} KB)`);
-                log(`Program IO size: ${programIo.length} bytes`);
+                log(`Proof size: ${(proofSize / 1024).toFixed(2)} KB`);
+                log(`Proof size (compressed): ${(compressedProofSize / 1024).toFixed(2)} KB`);
 
                 setStatus('Proof generated!', 'ready');
                 proveBtn.disabled = false;

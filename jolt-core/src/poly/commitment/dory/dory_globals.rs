@@ -2,9 +2,9 @@
 
 use crate::utils::math::Math;
 use allocative::Allocative;
-use dory::backends::arkworks::{ArkG1, ArkG2};
 #[cfg(not(target_arch = "wasm32"))]
 use dory::backends::arkworks::init_cache;
+use dory::backends::arkworks::{ArkG1, ArkG2};
 use std::sync::{
     atomic::{AtomicU8, Ordering},
     RwLock,

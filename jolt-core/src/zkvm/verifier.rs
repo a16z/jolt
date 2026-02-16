@@ -840,8 +840,10 @@ where
         compress: ark_serialize::Compress,
         validate: ark_serialize::Validate,
     ) -> Result<Self, ark_serialize::SerializationError> {
-        let generators = PCS::VerifierSetup::deserialize_with_mode(&mut reader, compress, validate)?;
-        let shared = JoltSharedPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
+        let generators =
+            PCS::VerifierSetup::deserialize_with_mode(&mut reader, compress, validate)?;
+        let shared =
+            JoltSharedPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
         Ok(Self { generators, shared })
     }
 }

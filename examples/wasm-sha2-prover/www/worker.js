@@ -41,6 +41,8 @@ self.onmessage = async (e) => {
                 self.postMessage({
                     type: 'prove-done',
                     proof: result.proof,
+                    proofSize: result.proof_size,
+                    compressedProofSize: result.compressed_proof_size,
                     programIo: result.program_io,
                     elapsed,
                 });

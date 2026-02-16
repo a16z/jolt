@@ -4,6 +4,8 @@ use crate::{
     subprotocols::streaming_schedule::LinearOnlySchedule,
     zkvm::{claim_reductions::advice::ReductionPhase, config::OneHotConfig},
 };
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 use std::{
     collections::HashMap,
     fs::File,
@@ -11,8 +13,6 @@ use std::{
     path::Path,
     sync::Arc,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
 
 use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

@@ -43,7 +43,8 @@ fn main() {
         .serialize_to_bytes_uncompressed()
         .expect("Failed to serialize verifier preprocessing");
     let verifier_path = www_dir.join("verifier_preprocessing.bin");
-    std::fs::write(&verifier_path, &verifier_bytes).expect("Failed to write verifier preprocessing");
+    std::fs::write(&verifier_path, &verifier_bytes)
+        .expect("Failed to write verifier preprocessing");
     println!(
         "Verifier preprocessing: {} bytes -> {:?}",
         verifier_bytes.len(),

@@ -33,7 +33,12 @@ fn test_prover_roundtrip(bytes: &[u8]) -> Result<(), String> {
         ark_serialize::Compress::No,
         ark_serialize::Validate::No,
     )
-    .map_err(|e| format!("SharedPreprocessing failed at pos {}: {e}", cursor.position()))?;
+    .map_err(|e| {
+        format!(
+            "SharedPreprocessing failed at pos {}: {e}",
+            cursor.position()
+        )
+    })?;
     let pos_after_shared = cursor.position() as usize;
     println!(
         "  OK - consumed {} bytes (total: {})",
@@ -106,7 +111,12 @@ fn test_verifier_roundtrip(bytes: &[u8]) -> Result<(), String> {
         ark_serialize::Compress::No,
         ark_serialize::Validate::No,
     )
-    .map_err(|e| format!("SharedPreprocessing failed at pos {}: {e}", cursor.position()))?;
+    .map_err(|e| {
+        format!(
+            "SharedPreprocessing failed at pos {}: {e}",
+            cursor.position()
+        )
+    })?;
     let pos_after_shared = cursor.position() as usize;
     println!(
         "  OK - consumed {} bytes (total: {})",

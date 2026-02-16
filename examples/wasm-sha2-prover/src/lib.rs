@@ -1,5 +1,5 @@
 use ark_bn254::Fr;
-use ark_serialize::CanonicalDeserialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_core::{
     poly::commitment::dory::DoryCommitmentScheme,
@@ -106,7 +106,15 @@ impl WasmProver {
         };
 
         let (lazy_trace, trace, final_memory, program_io, _advice_tape) =
-            jolt_core::guest::program::trace(&self.elf_bytes, None, &inputs, &[], &[], &memory_config, None);
+            jolt_core::guest::program::trace(
+                &self.elf_bytes,
+                None,
+                &inputs,
+                &[],
+                &[],
+                &memory_config,
+                None,
+            );
 
         let prover: JoltCpuProver<'_, Fr, DoryCommitmentScheme, _> = JoltCpuProver::gen_from_trace(
             &self.preprocessing,
@@ -120,6 +128,26 @@ impl WasmProver {
 
         let (proof, _) = prover.prove();
 
+        let proof_size = proof.serialized_size(ark_serialize::Compress::Yes);
+
+        let stage8_compressed = proof
+            .joint_opening_proof
+            .serialized_size(ark_serialize::Compress::Yes);
+        let stage8_uncompressed = proof
+            .joint_opening_proof
+            .serialized_size(ark_serialize::Compress::No);
+        let commitments_compressed = proof
+            .commitments
+            .serialized_size(ark_serialize::Compress::Yes);
+        let commitments_uncompressed = proof
+            .commitments
+            .serialized_size(ark_serialize::Compress::No);
+
+        // Estimate with full Dory torus compression (~3x on curve points)
+        let compressed_proof_size = proof_size - stage8_compressed + (stage8_uncompressed / 3)
+            - commitments_compressed
+            + (commitments_uncompressed / 3);
+
         let proof_bytes = proof
             .serialize_to_bytes()
             .map_err(|e| JsValue::from_str(&format!("Proof serialization error: {e}")))?;
@@ -130,6 +158,8 @@ impl WasmProver {
 
         Ok(ProveResult {
             proof_bytes,
+            proof_size,
+            compressed_proof_size,
             program_io_bytes,
         })
     }
@@ -138,6 +168,8 @@ impl WasmProver {
 #[wasm_bindgen]
 pub struct ProveResult {
     proof_bytes: Vec<u8>,
+    proof_size: usize,
+    compressed_proof_size: usize,
     program_io_bytes: Vec<u8>,
 }
 
@@ -146,6 +178,16 @@ impl ProveResult {
     #[wasm_bindgen(getter)]
     pub fn proof(&self) -> Vec<u8> {
         self.proof_bytes.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn proof_size(&self) -> usize {
+        self.proof_size
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn compressed_proof_size(&self) -> usize {
+        self.compressed_proof_size
     }
 
     #[wasm_bindgen(getter)]
