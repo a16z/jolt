@@ -3058,7 +3058,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-wasm-ecdsa-prover"
+name = "jolt-wasm-sha2-prover"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
@@ -3067,13 +3067,13 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom 0.2.17",
  "jolt-core",
- "jolt-inlines-secp256k1",
+ "jolt-inlines-sha2",
  "jolt-sdk",
  "js-sys",
  "postcard",
- "secp256k1-ecdsa-verify-guest",
  "serde",
  "serde_json",
+ "sha2-guest",
  "tracer",
  "tracing",
  "tracing-subscriber",

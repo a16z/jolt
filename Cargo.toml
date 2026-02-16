@@ -83,7 +83,7 @@ members = [
     "examples/advice-demo/guest",
     "examples/sig-recovery/host",
     "examples/sig-recovery/guest",
-    "examples/wasm-ecdsa-prover",
+    "examples/wasm-sha2-prover",
     "zklean-extractor",
     "z3-verifier",
 ]
