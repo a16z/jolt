@@ -109,6 +109,8 @@ impl WasmProver {
                 None,
             );
 
+        let num_cycles = trace.len();
+
         let prover: JoltCpuProver<'_, Fr, DoryCommitmentScheme, _> = JoltCpuProver::gen_from_trace(
             &self.preprocessing,
             lazy_trace,
@@ -153,6 +155,7 @@ impl WasmProver {
             proof_size,
             compressed_proof_size,
             program_io_bytes,
+            num_cycles,
         })
     }
 
@@ -226,6 +229,7 @@ pub struct ProveResult {
     proof_size: usize,
     compressed_proof_size: usize,
     program_io_bytes: Vec<u8>,
+    num_cycles: usize,
 }
 
 #[wasm_bindgen]
@@ -248,6 +252,11 @@ impl ProveResult {
     #[wasm_bindgen(getter)]
     pub fn program_io(&self) -> Vec<u8> {
         self.program_io_bytes.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn num_cycles(&self) -> usize {
+        self.num_cycles
     }
 }
 

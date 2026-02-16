@@ -196,9 +196,10 @@ async function main() {
                 st.programIoBytes = msg.programIo;
 
                 log(p, `Proof generated in ${(msg.elapsed / 1000).toFixed(2)}s`);
+                log(p, `RISC-V cycles: ${msg.numCycles.toLocaleString()}`);
                 log(p, `Proof size: ${(msg.proofSize / 1024).toFixed(2)} KB`);
                 log(p, `Proof size (compressed): ${(msg.compressedProofSize / 1024).toFixed(2)} KB`);
-                log(p, `WASM memory: ${(msg.wasmMemory / 1024 / 1024).toFixed(2)} MB`);
+                log(p, `Peak WASM memory: ${(msg.peakMemory / 1024 / 1024).toFixed(0)} MB`);
 
                 setStatus('Proof generated!', 'ready');
                 setButtonsEnabled(p, true, true);
@@ -238,8 +239,8 @@ function setupProveHandlers() {
     document.querySelector('#page-sha2 .prove-btn').addEventListener('click', async () => {
         const message = document.getElementById('sha2-message').value;
         const input = new TextEncoder().encode(message);
-        if (!await ensureProgramLoaded('sha2')) return;
         setButtonsEnabled('sha2', false, false);
+        if (!await ensureProgramLoaded('sha2')) { updateTabButtons('sha2'); return; }
         setStatus('Proving...', 'proving');
         log('sha2', `\nProving SHA-256("${message}") [${input.length} bytes]`);
         worker.postMessage({
@@ -249,8 +250,8 @@ function setupProveHandlers() {
     });
 
     document.querySelector('#page-ecdsa .prove-btn').addEventListener('click', async () => {
-        if (!await ensureProgramLoaded('ecdsa')) return;
         setButtonsEnabled('ecdsa', false, false);
+        if (!await ensureProgramLoaded('ecdsa')) { updateTabButtons('ecdsa'); return; }
         setStatus('Proving...', 'proving');
         log('ecdsa', '\nProving ECDSA signature verification ("hello world")');
         worker.postMessage({
@@ -274,8 +275,8 @@ function setupProveHandlers() {
         }
         const messageBytes = new TextEncoder().encode(message);
         const input = await sha256Digest(messageBytes);
-        if (!await ensureProgramLoaded('keccak')) return;
         setButtonsEnabled('keccak', false, false);
+        if (!await ensureProgramLoaded('keccak')) { updateTabButtons('keccak'); return; }
         setStatus('Proving...', 'proving');
         log('keccak', `\nProving Keccak chain("${message}", ${numIters} iters)`);
         worker.postMessage({

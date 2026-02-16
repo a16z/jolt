@@ -33,7 +33,7 @@
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
-        p { color: #8b949e; }
+        p { color: #c9d1d9; }
         .tabs {
             display: flex;
             gap: 0;
@@ -89,7 +89,6 @@
         #status.error { background: #3d1114; color: #f85149; }
         #status.proving { background: #0c2d6b; color: #58a6ff; }
         button {
-            background: #238636;
             color: #fff;
             border: 1px solid rgba(240,246,252,0.1);
             padding: 0.6rem 1rem;
@@ -97,14 +96,21 @@
             cursor: pointer;
             font-size: 0.85rem;
             font-weight: 500;
+            background: #30363d;
         }
         button:disabled {
             background: #21262d;
-            color: #484f58;
+            color: #c9d1d9;
             border-color: #30363d;
             cursor: not-allowed;
         }
         button:hover:not(:disabled) {
+            background: #3c444d;
+        }
+        button.prove-btn {
+            background: #238636;
+        }
+        button.prove-btn:hover:not(:disabled) {
             background: #2ea043;
         }
         button.verify-btn {

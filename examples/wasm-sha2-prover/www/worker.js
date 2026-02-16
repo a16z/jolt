@@ -65,7 +65,7 @@ self.onmessage = async (e) => {
                 }
 
                 const elapsed = performance.now() - start;
-                const wasmMemory = wasmExports.memory.buffer.byteLength;
+                const peakMemory = wasmExports.memory.buffer.byteLength;
 
                 self.postMessage({
                     type: 'prove-done',
@@ -74,7 +74,8 @@ self.onmessage = async (e) => {
                     proofSize: result.proof_size,
                     compressedProofSize: result.compressed_proof_size,
                     programIo: result.program_io,
-                    wasmMemory,
+                    numCycles: result.num_cycles,
+                    peakMemory,
                     elapsed,
                 });
                 break;
