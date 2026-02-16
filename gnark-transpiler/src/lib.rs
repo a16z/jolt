@@ -64,7 +64,7 @@ pub mod mle_opening_accumulator;
 pub mod poseidon;
 pub mod symbolic_proof;
 
-pub use codegen::{generate_circuit_from_bundle, sanitize_go_name};
+pub use codegen::{generate_circuit_from_bundle, sanitize_go_name, MemoizedCodeGen};
 pub use ast_commitment_scheme::AstCommitmentScheme;
 pub use mle_opening_accumulator::MleOpeningAccumulator;
 pub use poseidon::PoseidonAstTranscript;

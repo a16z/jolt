@@ -27,3 +27,7 @@ debug-expected-output = ["jolt-core/debug-expected-output"]
 [[bin]]
 name = "gnark-transpiler"
 path = "src/main.rs"
+
+[[bin]]
+name = "compute_r_inv"
+path = "src/bin/compute_r_inv.rs"
