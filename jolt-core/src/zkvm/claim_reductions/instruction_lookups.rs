@@ -197,6 +197,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let lookup_output_claim = state.lookup_output_poly.final_sumcheck_claim();
         let left_lookup_operand_claim = state.left_lookup_operand_poly.final_sumcheck_claim();
         let right_lookup_operand_claim = state.right_lookup_operand_poly.final_sumcheck_claim();
+        let left_instruction_input_claim = state.left_instruction_input_poly.final_sumcheck_claim();
+        let right_instruction_input_claim =
+            state.right_instruction_input_poly.final_sumcheck_claim();
 
         accumulator.append_virtual(
             transcript,
@@ -216,9 +219,39 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
-            opening_point,
+            opening_point.clone(),
             right_lookup_operand_claim,
         );
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::LeftInstructionInput,
+            SumcheckId::InstructionClaimReduction,
+            opening_point.clone(),
+            left_instruction_input_claim,
+        );
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::RightInstructionInput,
+            SumcheckId::InstructionClaimReduction,
+            opening_point,
+            right_instruction_input_claim,
+        );
+
+        // These openings are only used by the verifier's `expected_output_claim`, not by any
+        // subsequent prover-side sumcheck. In tests, we track "unused" appended virtual openings
+        // by removing them on `get_virtual_polynomial_opening`; consume them here to keep that
+        // invariant satisfied.
+        #[cfg(test)]
+        {
+            let _ = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::LeftInstructionInput,
+                SumcheckId::InstructionClaimReduction,
+            );
+            let _ = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::RightInstructionInput,
+                SumcheckId::InstructionClaimReduction,
+            );
+        }
     }
 
     #[cfg(feature = "allocative")]
@@ -573,15 +606,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
         );
-        // Use stage-2 instruction-input claims (cached by product virtualization) to fold
-        // stage-1 instruction-input claims via this claim-reduction sumcheck.
         let (_, left_instruction_input_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftInstructionInput,
-            SumcheckId::SpartanProductVirtualization,
+            SumcheckId::InstructionClaimReduction,
         );
         let (_, right_instruction_input_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RightInstructionInput,
-            SumcheckId::SpartanProductVirtualization,
+            SumcheckId::InstructionClaimReduction,
         );
 
         EqPolynomial::mle(&opening_point.r, &r_spartan.r)
@@ -616,6 +647,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RightLookupOperand,
+            SumcheckId::InstructionClaimReduction,
+            opening_point.clone(),
+        );
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::LeftInstructionInput,
+            SumcheckId::InstructionClaimReduction,
+            opening_point.clone(),
+        );
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::RightInstructionInput,
             SumcheckId::InstructionClaimReduction,
             opening_point,
         );
