@@ -6,7 +6,7 @@ extern crate core;
 
 use itertools::Itertools;
 use std::vec;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
@@ -218,6 +218,15 @@ fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut 
     // into an infinite loop. It seems to be a good heuristic for now but we
     // should eventually migrate to an explicit shutdown signal.
     if *prev_pc == pc {
+        #[cfg(feature = "std")]
+        {
+            let disas = emulator.get_mut_cpu().disassemble_next_instruction();
+            debug!("PC stall termination at pc=0x{pc:x}: {disas}");
+            if std::env::var_os("JOLT_BACKTRACE").is_some() {
+                println!("termination backtrace (JOLT_BACKTRACE=1):");
+                utils::panic::display_panic_backtrace(emulator);
+            }
+        }
         return;
     }
     emulator.tick(trace);

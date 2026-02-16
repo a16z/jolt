@@ -53,11 +53,8 @@ pub unsafe extern "C" fn trap_handler(regs: *mut u8) {
             let pc = (*regs).mepc;
             (*regs).mepc = pc + 4;
 
-            #[cfg(feature = "debug")]
-            {
-                let nr = (*regs).a7;
-                zeroos::debug::writeln!("[syscall] {}", zeroos::os::linux::syscall_name(nr));
-            }
+            // Avoid printing every syscall in the guest runtime: it is extremely noisy and can
+            // interfere with profiling/debugging (it also perturbs cycle counts).
 
             let ret = zeroos::foundation::kfn::trap::ksyscall(
                 (*regs).a0,
@@ -74,6 +71,15 @@ pub unsafe extern "C" fn trap_handler(regs: *mut u8) {
             advance_mepc_for_breakpoint(regs);
         }
         code => {
+            #[cfg(feature = "debug")]
+            {
+                zeroos::debug::writeln!(
+                    "[trap] mcause_code={} mepc=0x{:x} mtval=0x{:x}",
+                    code,
+                    (*regs).mepc,
+                    (*regs).mtval
+                );
+            }
             zeroos::foundation::kfn::kexit(code as i32);
         }
     }
