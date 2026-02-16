@@ -1530,8 +1530,7 @@ mod tests {
         );
 
         let prover_transcript = &mut Blake2bTranscript::new(&[]);
-        let mut prover_opening_accumulator =
-            ProverOpeningAccumulator::new(trace.len().log_2(), false);
+        let mut prover_opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
         let verifier_transcript = &mut Blake2bTranscript::new(&[]);
         let mut verifier_opening_accumulator =
             VerifierOpeningAccumulator::new(trace.len().log_2(), false);

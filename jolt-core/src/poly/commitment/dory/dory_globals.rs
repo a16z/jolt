@@ -469,6 +469,8 @@ impl DoryGlobals {
     /// in repeated pairing operations.
     ///
     /// init_cache handles smart re-initialization internally:
+    /// - If cache doesn't exist, creates it
+    /// - If cache is too small, replaces with larger one
     /// - If cache is large enough, no-op (reuses existing)
     ///
     /// # Arguments

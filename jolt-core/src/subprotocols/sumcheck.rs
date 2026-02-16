@@ -191,7 +191,6 @@ impl BatchedSumcheck {
     /// Prove a batched sumcheck with Pedersen commitments (ZK mode).
     ///
     /// Instead of appending raw polynomial coefficients to the transcript,
-    #[cfg(feature = "zk")]
     /// this appends Pedersen commitments. The proof contains only commitments -
     /// coefficients and blindings are stored in the accumulator for BlindFold.
     ///
@@ -200,6 +199,7 @@ impl BatchedSumcheck {
     /// BlindFold proves that the committed coefficients satisfy the sumcheck equations.
     ///
     /// Returns (proof, challenges, initial_batched_claim)
+    #[cfg(feature = "zk")]
     pub fn prove_zk<F: JoltField, C: JoltCurve, ProofTranscript: Transcript, R: CryptoRngCore>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
@@ -850,10 +850,11 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
         match self {
             Self::Standard(proof) => proof.verify(claim, num_rounds, degree_bound, transcript),
             Self::Zk(proof) => {
+                if !cfg!(feature = "zk") {
+                    return Err(ProofVerifyError::ZkFeatureRequired);
+                }
                 let challenges =
                     proof.verify_transcript_only(num_rounds, degree_bound, transcript)?;
-                // For ZK mode, we don't compute the final claim here
-                // BlindFold verification ensures the R1CS constraints are satisfied
                 Ok((F::zero(), challenges))
             }
         }

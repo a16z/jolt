@@ -87,8 +87,6 @@ use crate::{
     zkvm::witness::CommittedPolynomial,
 };
 
-use anyhow::Context;
-
 #[cfg(feature = "zk")]
 struct StageVerifyResult<F: JoltField> {
     challenges: Vec<F::Challenge>,
@@ -327,7 +325,7 @@ impl<
 
     #[tracing::instrument(skip_all)]
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    pub fn verify(mut self) -> Result<(), anyhow::Error> {
+    pub fn verify(mut self) -> Result<(), ProofVerifyError> {
         let _pprof_verify = pprof_scope!("verify");
         let zk_mode = self.opening_accumulator.zk_mode;
 
@@ -354,14 +352,30 @@ impl<
                 .append_serializable(b"trusted_advice", trusted_advice_commitment);
         }
 
-        let (stage1_result, uniskip_challenge1) = self.verify_stage1()?;
-        let (stage2_result, uniskip_challenge2) = self.verify_stage2()?;
-        let stage3_result = self.verify_stage3()?;
-        let stage4_result = self.verify_stage4()?;
-        let stage5_result = self.verify_stage5()?;
-        let stage6_result = self.verify_stage6()?;
-        let stage7_result = self.verify_stage7()?;
-        let stage8_data = self.verify_stage8()?;
+        let (stage1_result, uniskip_challenge1) = self
+            .verify_stage1()
+            .inspect_err(|e| tracing::error!("Stage 1: {e}"))?;
+        let (stage2_result, uniskip_challenge2) = self
+            .verify_stage2()
+            .inspect_err(|e| tracing::error!("Stage 2: {e}"))?;
+        let stage3_result = self
+            .verify_stage3()
+            .inspect_err(|e| tracing::error!("Stage 3: {e}"))?;
+        let stage4_result = self
+            .verify_stage4()
+            .inspect_err(|e| tracing::error!("Stage 4: {e}"))?;
+        let stage5_result = self
+            .verify_stage5()
+            .inspect_err(|e| tracing::error!("Stage 5: {e}"))?;
+        let stage6_result = self
+            .verify_stage6()
+            .inspect_err(|e| tracing::error!("Stage 6: {e}"))?;
+        let stage7_result = self
+            .verify_stage7()
+            .inspect_err(|e| tracing::error!("Stage 7: {e}"))?;
+        let stage8_data = self
+            .verify_stage8()
+            .inspect_err(|e| tracing::error!("Stage 8: {e}"))?;
 
         if zk_mode {
             #[cfg(feature = "zk")]
@@ -436,21 +450,20 @@ impl<
                 )?;
             }
             #[cfg(not(feature = "zk"))]
-            anyhow::bail!("ZK proof verification requires `zk` feature");
+            return Err(ProofVerifyError::ZkFeatureRequired);
         }
 
         Ok(())
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage1(&mut self) -> Result<(StageVerifyResult<F>, F::Challenge), anyhow::Error> {
+    fn verify_stage1(&mut self) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
         let (uni_skip_params, uni_skip_challenge) = verify_stage1_uni_skip(
             &self.proof.stage1_uni_skip_first_round_proof,
             &self.spartan_key,
             &mut self.opening_accumulator,
             &mut self.transcript,
-        )
-        .context("Stage 1 univariate skip first round")?;
+        )?;
 
         let spartan_outer_remaining = OuterRemainingSumcheckVerifier::new(
             self.spartan_key,
@@ -481,8 +494,7 @@ impl<
             instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-        )
-        .context("Stage 1")?;
+        )?;
 
         #[cfg(feature = "zk")]
         {
@@ -544,13 +556,12 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage2(&mut self) -> Result<(StageVerifyResult<F>, F::Challenge), anyhow::Error> {
+    fn verify_stage2(&mut self) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
         let (uni_skip_params, uni_skip_challenge) = verify_stage2_uni_skip(
             &self.proof.stage2_uni_skip_first_round_proof,
             &mut self.opening_accumulator,
             &mut self.transcript,
-        )
-        .context("Stage 2 univariate skip first round")?;
+        )?;
 
         let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
             &self.opening_accumulator,
@@ -608,8 +619,7 @@ impl<
             instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-        )
-        .context("Stage 2")?;
+        )?;
 
         #[cfg(feature = "zk")]
         {
@@ -662,7 +672,7 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage3(&mut self) -> Result<StageVerifyResult<F>, anyhow::Error> {
+    fn verify_stage3(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let spartan_shift = ShiftSumcheckVerifier::new(
             self.proof.trace_length.log_2(),
             &self.opening_accumulator,
@@ -701,8 +711,7 @@ impl<
             instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-        )
-        .context("Stage 3")?;
+        )?;
 
         #[cfg(feature = "zk")]
         {
@@ -742,7 +751,7 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage4(&mut self) -> Result<StageVerifyResult<F>, anyhow::Error> {
+    fn verify_stage4(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         verifier_accumulate_advice::<F>(
             self.proof.ram_K,
             &self.program_io,
@@ -800,8 +809,7 @@ impl<
             instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-        )
-        .context("Stage 4")?;
+        )?;
 
         #[cfg(feature = "zk")]
         {
@@ -841,7 +849,7 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage5(&mut self) -> Result<StageVerifyResult<F>, anyhow::Error> {
+    fn verify_stage5(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let n_cycle_vars = self.proof.trace_length.log_2();
 
         let lookups_read_raf = InstructionReadRafSumcheckVerifier::new(
@@ -884,8 +892,7 @@ impl<
             instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-        )
-        .context("Stage 5")?;
+        )?;
 
         #[cfg(feature = "zk")]
         {
@@ -925,7 +932,7 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage6(&mut self) -> Result<StageVerifyResult<F>, anyhow::Error> {
+    fn verify_stage6(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
             &self.preprocessing.shared.bytecode,
@@ -1022,8 +1029,7 @@ impl<
             instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-        )
-        .context("Stage 6")?;
+        )?;
 
         #[cfg(feature = "zk")]
         {
@@ -1078,7 +1084,7 @@ impl<
         stage1_batched_input_values: &[F],
         stage2_batched_input_values: &[F],
         stage8_data: &Stage8VerifyData<F>,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<(), ProofVerifyError> {
         // Build stage configurations including uni-skip rounds.
         // Uni-skip rounds are the first round of stages 1 and 2 (indices 0 and 1).
         let stage_proofs = [
@@ -1279,7 +1285,7 @@ impl<
 
         // 7. Build eval_commitments from PCS proof
         let eval_commitment = PCS::eval_commitment(&self.proof.joint_opening_proof)
-            .ok_or_else(|| anyhow::anyhow!("Missing evaluation commitment in PCS proof"))?;
+            .ok_or(ProofVerifyError::InvalidOpeningProof)?;
         let eval_commitments = vec![eval_commitment];
 
         let verifier_input = BlindFoldVerifierInput {
@@ -1302,7 +1308,7 @@ impl<
                 &verifier_input,
                 &mut blindfold_transcript,
             )
-            .map_err(|e| anyhow::anyhow!("BlindFold verification failed: {e:?}"))?;
+            .map_err(|e| ProofVerifyError::BlindFoldError(format!("{e:?}")))?;
 
         tracing::debug!(
             "BlindFold verification passed: {} R1CS constraints",
@@ -1313,7 +1319,7 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage7(&mut self) -> Result<StageVerifyResult<F>, anyhow::Error> {
+    fn verify_stage7(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         // Create verifier for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_verifier = HammingWeightClaimReductionVerifier::new(
@@ -1364,8 +1370,7 @@ impl<
             instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-        )
-        .context("Stage 7")?;
+        )?;
 
         #[cfg(feature = "zk")]
         {
@@ -1405,7 +1410,7 @@ impl<
     }
 
     /// Stage 8: Dory batch opening verification.
-    fn verify_stage8(&mut self) -> Result<Stage8VerifyData<F>, anyhow::Error> {
+    fn verify_stage8(&mut self) -> Result<Stage8VerifyData<F>, ProofVerifyError> {
         // Initialize DoryGlobals with the layout from the proof
         // This ensures the verifier uses the same layout as the prover
         let _guard = DoryGlobals::initialize_context(
@@ -1550,8 +1555,7 @@ impl<
             return Err(ProofVerifyError::InvalidInputLength(
                 expected_polynomials.len(),
                 self.proof.commitments.len(),
-            )
-            .into());
+            ));
         }
         for (polynomial, commitment) in expected_polynomials
             .into_iter()
@@ -1591,18 +1595,17 @@ impl<
                 &opening_point.r,
                 &F::zero(),
                 &joint_commitment,
-            )
-            .context("Stage 8")?;
+            )?;
 
             #[cfg(feature = "zk")]
             {
                 let y_com: C::G1 = PCS::eval_commitment(&self.proof.joint_opening_proof)
-                    .ok_or(ProofVerifyError::InternalError)?;
+                    .ok_or(ProofVerifyError::InvalidOpeningProof)?;
                 bind_opening_inputs_zk::<F, C, _>(&mut self.transcript, &opening_point.r, &y_com);
             }
             #[cfg(not(feature = "zk"))]
             {
-                anyhow::bail!("ZK proof verification requires `zk` feature");
+                return Err(ProofVerifyError::ZkFeatureRequired);
             }
         } else {
             PCS::verify(
@@ -1612,8 +1615,7 @@ impl<
                 &opening_point.r,
                 &joint_claim,
                 &joint_commitment,
-            )
-            .context("Stage 8")?;
+            )?;
 
             bind_opening_inputs::<F, _>(&mut self.transcript, &opening_point.r, &joint_claim);
         }

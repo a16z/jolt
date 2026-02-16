@@ -36,4 +36,8 @@ pub enum ProofVerifyError {
     UniSkipVerificationError,
     #[error("Serialization failed")]
     SerializationError,
+    #[error("ZK proof received but `zk` feature is not enabled")]
+    ZkFeatureRequired,
+    #[error("BlindFold verification failed: {0}")]
+    BlindFoldError(String),
 }

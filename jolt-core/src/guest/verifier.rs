@@ -2,6 +2,7 @@ use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
+use crate::utils::errors::ProofVerifyError;
 
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
@@ -39,7 +40,7 @@ pub fn verify<
     outputs_bytes: &[u8],
     proof: JoltProof<F, C, PCS, FS>,
     preprocessing: &JoltVerifierPreprocessing<F, PCS>,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), ProofVerifyError> {
     use common::jolt_device::JoltDevice;
     let memory_layout = &preprocessing.shared.memory_layout;
     let memory_config = MemoryConfig {

@@ -269,8 +269,6 @@ where
     #[cfg(feature = "zk")]
     #[allocative(skip)]
     uniskip_stage_data: Vec<UniSkipStageData<F>>,
-    /// In ZK mode, skip absorbing cleartext claims into the transcript.
-    pub zk_mode: bool,
     #[allocative(skip)]
     pending_claims: Vec<F>,
 }
@@ -287,7 +285,6 @@ where
     #[cfg(test)]
     prover_opening_accumulator: Option<ProverOpeningAccumulator<F>>,
     pub log_T: usize,
-    /// In ZK mode, skip absorbing cleartext claims into the transcript.
     pub zk_mode: bool,
     pending_claims: Vec<F>,
 }
@@ -372,7 +369,7 @@ where
     F: JoltField,
 {
     fn default() -> Self {
-        Self::new(0, false)
+        Self::new(0)
     }
 }
 
@@ -429,7 +426,7 @@ impl<F> ProverOpeningAccumulator<F>
 where
     F: JoltField,
 {
-    pub fn new(log_T: usize, zk_mode: bool) -> Self {
+    pub fn new(log_T: usize) -> Self {
         Self {
             openings: BTreeMap::new(),
             #[cfg(test)]
@@ -439,7 +436,6 @@ where
             zk_stage_data: Vec::new(),
             #[cfg(feature = "zk")]
             uniskip_stage_data: Vec::new(),
-            zk_mode,
             pending_claims: Vec::new(),
         }
     }
