@@ -182,14 +182,28 @@ pub enum OpeningId {
 pub type Opening<F> = (OpeningPoint<BIG_ENDIAN, F>, F);
 pub type Openings<F> = BTreeMap<OpeningId, Opening<F>>;
 
-fn underlying_polynomial_id(opening_id: OpeningId) -> PolynomialId {
+fn underlying_polynomial_id(opening_id: OpeningId) -> Option<PolynomialId> {
     match opening_id {
-        OpeningId::Polynomial(poly_id, _sumcheck_id) => poly_id,
-        OpeningId::TrustedAdvice(_sumcheck_id) => {
-            PolynomialId::Committed(CommittedPolynomial::TrustedAdvice)
+        OpeningId::Polynomial(poly_id, _sumcheck_id) => Some(poly_id),
+        OpeningId::TrustedAdvice(sumcheck_id) => {
+            if sumcheck_id == SumcheckId::AdviceClaimReductionCyclePhase {
+                // This is an intermediate reduction claim (not a TrustedAdvice polynomial
+                // evaluation), so it must not participate in opening dedup/indexing.
+                None
+            } else {
+                Some(PolynomialId::Committed(CommittedPolynomial::TrustedAdvice))
+            }
         }
-        OpeningId::UntrustedAdvice(_sumcheck_id) => {
-            PolynomialId::Committed(CommittedPolynomial::UntrustedAdvice)
+        OpeningId::UntrustedAdvice(sumcheck_id) => {
+            if sumcheck_id == SumcheckId::AdviceClaimReductionCyclePhase {
+                // This is an intermediate reduction claim (not an UntrustedAdvice polynomial
+                // evaluation), so it must not participate in opening dedup/indexing.
+                None
+            } else {
+                Some(PolynomialId::Committed(
+                    CommittedPolynomial::UntrustedAdvice,
+                ))
+            }
         }
     }
 }
@@ -203,9 +217,6 @@ where
 {
     pub openings: Openings<F>,
     /// Index of canonical openings by underlying polynomial id.
-    ///
-    /// This avoids scanning the full `openings` map for dedup checks: we only scan openings
-    /// that share the same underlying polynomial.
     opening_ids_by_poly: BTreeMap<PolynomialId, Vec<OpeningId>>,
     /// Maps an `OpeningId` that was deduplicated to its canonical representative.
     pub aliases: BTreeMap<OpeningId, OpeningId>,
@@ -421,8 +432,11 @@ where
     }
 
     fn index_opening_id(&mut self, key: OpeningId) {
+        let Some(poly_id) = underlying_polynomial_id(key) else {
+            return;
+        };
         self.opening_ids_by_poly
-            .entry(underlying_polynomial_id(key))
+            .entry(poly_id)
             .or_default()
             .push(key);
     }
@@ -555,16 +569,18 @@ where
         claim: F,
     ) {
         let key = OpeningId::UntrustedAdvice(sumcheck_id);
-        if let Some((existing_id, existing_claim)) = self.find_existing_opening_at_point(
-            PolynomialId::Committed(CommittedPolynomial::UntrustedAdvice),
-            &opening_point,
-        ) {
-            assert_eq!(
-                claim, existing_claim,
-                "Duplicate untrusted advice opening claim mismatch: {key:?} vs {existing_id:?}"
-            );
-            self.aliases.insert(key, existing_id);
-            return;
+
+        if let Some(poly_id) = underlying_polynomial_id(key) {
+            if let Some((existing_id, existing_claim)) =
+                self.find_existing_opening_at_point(poly_id, &opening_point)
+            {
+                assert_eq!(
+                    claim, existing_claim,
+                    "Duplicate untrusted advice opening claim mismatch: {key:?} vs {existing_id:?}"
+                );
+                self.aliases.insert(key, existing_id);
+                return;
+            }
         }
 
         transcript.append_scalar(b"opening_claim", &claim);
@@ -582,16 +598,18 @@ where
         claim: F,
     ) {
         let key = OpeningId::TrustedAdvice(sumcheck_id);
-        if let Some((existing_id, existing_claim)) = self.find_existing_opening_at_point(
-            PolynomialId::Committed(CommittedPolynomial::TrustedAdvice),
-            &opening_point,
-        ) {
-            assert_eq!(
-                claim, existing_claim,
-                "Duplicate trusted advice opening claim mismatch: {key:?} vs {existing_id:?}"
-            );
-            self.aliases.insert(key, existing_id);
-            return;
+
+        if let Some(poly_id) = underlying_polynomial_id(key) {
+            if let Some((existing_id, existing_claim)) =
+                self.find_existing_opening_at_point(poly_id, &opening_point)
+            {
+                assert_eq!(
+                    claim, existing_claim,
+                    "Duplicate trusted advice opening claim mismatch: {key:?} vs {existing_id:?}"
+                );
+                self.aliases.insert(key, existing_id);
+                return;
+            }
         }
 
         transcript.append_scalar(b"opening_claim", &claim);
@@ -684,10 +702,10 @@ where
         if point.r.is_empty() {
             return;
         }
-        let entry = self
-            .opening_ids_by_poly
-            .entry(underlying_polynomial_id(key))
-            .or_default();
+        let Some(poly_id) = underlying_polynomial_id(key) else {
+            return;
+        };
+        let entry = self.opening_ids_by_poly.entry(poly_id).or_default();
         if !entry.contains(&key) {
             entry.push(key);
         }
@@ -852,17 +870,6 @@ where
     ) {
         let key = OpeningId::UntrustedAdvice(sumcheck_id);
         if let Some((_, claim)) = self.openings.get(&key) {
-            if let Some((existing_id, existing_claim)) = self.find_existing_opening_at_point(
-                PolynomialId::Committed(CommittedPolynomial::UntrustedAdvice),
-                &opening_point,
-            ) {
-                if existing_id != key {
-                    assert_eq!(
-                        *claim, existing_claim,
-                        "Inconsistent duplicate opening claims for UntrustedAdvice at same point: {key:?} vs {existing_id:?}"
-                    );
-                }
-            }
             transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
@@ -870,15 +877,18 @@ where
             return;
         }
 
-        if let Some((existing_id, _existing_claim)) = self.find_existing_opening_at_point(
-            PolynomialId::Committed(CommittedPolynomial::UntrustedAdvice),
-            &opening_point,
-        ) {
-            self.aliases.insert(key, existing_id);
-            return;
+        if let Some(poly_id) = underlying_polynomial_id(key) {
+            // Dedup: key was omitted from the proof, so alias to an existing identical opening.
+            if let Some((existing_id, _existing_claim)) =
+                self.find_existing_opening_at_point(poly_id, &opening_point)
+            {
+                self.aliases.insert(key, existing_id);
+                return;
+            }
+            panic!("Missing opening claim for key {key:?} (no canonical opening found to dedup)");
         }
 
-        panic!("Missing opening claim for key {key:?} (no canonical opening found to dedup)");
+        panic!("Missing opening claim for key {key:?}");
     }
 
     pub fn append_trusted_advice<T: Transcript>(
@@ -889,17 +899,6 @@ where
     ) {
         let key = OpeningId::TrustedAdvice(sumcheck_id);
         if let Some((_, claim)) = self.openings.get(&key) {
-            if let Some((existing_id, existing_claim)) = self.find_existing_opening_at_point(
-                PolynomialId::Committed(CommittedPolynomial::TrustedAdvice),
-                &opening_point,
-            ) {
-                if existing_id != key {
-                    assert_eq!(
-                        *claim, existing_claim,
-                        "Inconsistent duplicate opening claims for TrustedAdvice at same point: {key:?} vs {existing_id:?}"
-                    );
-                }
-            }
             transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
@@ -907,15 +906,17 @@ where
             return;
         }
 
-        if let Some((existing_id, _existing_claim)) = self.find_existing_opening_at_point(
-            PolynomialId::Committed(CommittedPolynomial::TrustedAdvice),
-            &opening_point,
-        ) {
-            self.aliases.insert(key, existing_id);
-            return;
+        if let Some(poly_id) = underlying_polynomial_id(key) {
+            if let Some((existing_id, _existing_claim)) =
+                self.find_existing_opening_at_point(poly_id, &opening_point)
+            {
+                self.aliases.insert(key, existing_id);
+                return;
+            }
+            panic!("Missing opening claim for key {key:?} (no canonical opening found to dedup)");
         }
 
-        panic!("Missing opening claim for key {key:?} (no canonical opening found to dedup)");
+        panic!("Missing opening claim for key {key:?}");
     }
 }
 
