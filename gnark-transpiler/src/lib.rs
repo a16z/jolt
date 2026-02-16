@@ -24,12 +24,13 @@
 //! as an AST instead of computing them. When we run the verifier with `MleAst`,
 //! every `+`, `*`, `-`, `==` operation creates AST nodes.
 //!
-//! ## Per-Constraint CSE
+//! ## Per-Constraint Expression Trees
 //!
-//! Code generation uses Common Subexpression Elimination (CSE) to avoid redundant
-//! computation. Each constraint gets its own CSE namespace to prevent an aliasing
-//! bug where structurally identical expressions from different constraints would
-//! be incorrectly merged.
+//! Each constraint (sumcheck assertion) gets its own isolated expression tree with
+//! independent CSE (Common Subexpression Elimination) namespacing: constraint 0 uses
+//! `cse_0_*`, constraint 1 uses `cse_1_*`, etc. This makes debugging easier - when a
+//! constraint fails, all its `cse_N_*` variables are self-contained, so you can trace
+//! through the expression tree without cross-referencing other sumchecks.
 //!
 //! ## Stages Covered
 //!
@@ -64,7 +65,7 @@ pub mod mle_opening_accumulator;
 pub mod poseidon;
 pub mod symbolic_proof;
 
-pub use codegen::{generate_circuit_from_bundle, sanitize_go_name, MemoizedCodeGen};
+pub use codegen::{generate_circuit_from_bundle, sanitize_go_name};
 pub use ast_commitment_scheme::AstCommitmentScheme;
 pub use mle_opening_accumulator::MleOpeningAccumulator;
 pub use poseidon::PoseidonAstTranscript;

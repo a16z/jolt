@@ -74,7 +74,7 @@ impl VarAllocator {
 
     pub fn alloc_n(&mut self, n: usize, prefix: &str) -> Vec<MleAst> {
         (0..n)
-            .map(|i| self.alloc(&format!("{}_{}", prefix, i)))
+            .map(|i| self.alloc(&format!("{prefix}_{i}")))
             .collect()
     }
 
@@ -137,7 +137,7 @@ fn symbolize_proof_generic<ProofTranscript: Transcript>(
     // === Symbolize commitments ===
     let commitments: Vec<AstCommitment> = (0..real_proof.commitments.len())
         .map(|c| {
-            let chunks = alloc.alloc_n(CHUNKS_PER_COMMITMENT, &format!("commitment_{}", c));
+            let chunks = alloc.alloc_n(CHUNKS_PER_COMMITMENT, &format!("commitment_{c}"));
             AstCommitment::new(chunks)
         })
         .collect();
@@ -145,8 +145,8 @@ fn symbolize_proof_generic<ProofTranscript: Transcript>(
     // === Symbolize opening claims ===
     let mut symbolic_claims = BTreeMap::new();
     for (key, (_point, _claim)) in &real_proof.opening_claims.0 {
-        let symbolic_claim = alloc.alloc(&format!("claim_{:?}", key));
-        symbolic_claims.insert(key.clone(), (OpeningPoint::default(), symbolic_claim));
+        let symbolic_claim = alloc.alloc(&format!("claim_{key:?}"));
+        symbolic_claims.insert(*key, (OpeningPoint::default(), symbolic_claim));
     }
 
     // === Symbolize stage 1 uni-skip proof ===
@@ -246,7 +246,7 @@ fn symbolize_proof_generic<ProofTranscript: Transcript>(
     for (key, (_, claim)) in &symbolic_proof.opening_claims.0 {
         accumulator
             .openings
-            .insert(key.clone(), (vec![], claim.clone()));
+            .insert(*key, (vec![], *claim));
     }
 
     (symbolic_proof, accumulator, alloc)
@@ -257,7 +257,7 @@ fn symbolize_uni_skip_proof<T: Transcript, OutT: Transcript>(
     alloc: &mut VarAllocator,
     prefix: &str,
 ) -> UniSkipFirstRoundProof<MleAst, OutT> {
-    let coeffs = alloc.alloc_n(real.uni_poly.coeffs.len(), &format!("{}_coeff", prefix));
+    let coeffs = alloc.alloc_n(real.uni_poly.coeffs.len(), &format!("{prefix}_coeff"));
     UniSkipFirstRoundProof::new(jolt_core::poly::unipoly::UniPoly::from_coeff(coeffs))
 }
 
@@ -273,7 +273,7 @@ fn symbolize_sumcheck_proof<T: Transcript, OutT: Transcript>(
         .map(|(round, poly)| {
             let coeffs = alloc.alloc_n(
                 poly.coeffs_except_linear_term.len(),
-                &format!("{}_r{}", prefix, round),
+                &format!("{prefix}_r{round}"),
             );
             CompressedUniPoly {
                 coeffs_except_linear_term: coeffs,
@@ -353,7 +353,7 @@ pub fn extract_witness_values(real_proof: &RV64IMACProof) -> std::collections::H
     }
 
     // === Opening claims ===
-    for (_key, (_point, claim)) in &real_proof.opening_claims.0 {
+    for (_point, claim) in real_proof.opening_claims.0.values() {
         values.insert(idx, format!("{}", claim.into_bigint()));
         idx += 1;
     }

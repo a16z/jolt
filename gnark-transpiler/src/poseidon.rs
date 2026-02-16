@@ -125,7 +125,7 @@ impl PoseidonAstTranscript {
         let round = MleAst::from_u64(self.n_rounds as u64);
         let zero = MleAst::from_u64(0);
         let challenge = MleAst::poseidon(&self.state, &round, &zero);
-        self.state = challenge.clone();
+        self.state = challenge;
         self.n_rounds += 1;
         challenge
     }
@@ -164,16 +164,12 @@ impl PoseidonAstTranscript {
 
     /// Append a single symbolic u64 (for preamble values as circuit inputs).
     ///
-    /// This applies the same BE-padding transformation as PoseidonTranscript::append_u64:
-    /// - u64 value is placed in bytes 24-31 of a 32-byte array (big-endian padding)
-    /// - The 32 bytes are then interpreted as little-endian
-    /// - Mathematically, this equals: value * 2^192
+    /// This applies the same transformation as PoseidonTranscript::raw_append_u64:
+    /// bswap64(x) * 2^192
     ///
-    /// Example: append_u64(4096) stores [0..0, 0x00, 0x00, 0x10, 0x00] (BE) in bytes 24-31
-    /// Interpreted as LE 32-byte integer: 4096 * 2^192
+    /// See `Node::AppendU64Transform` for details on the transformation.
     pub fn append_u64_symbolic(&mut self, value: MleAst) {
-        // Apply the BE-padding transformation: value * 2^192
-        let transformed = MleAst::mul_two_pow_192(&value);
+        let transformed = MleAst::append_u64_transform(&value);
         self.hash_and_update(transformed);
     }
 }
@@ -244,12 +240,10 @@ impl Transcript for PoseidonAstTranscript {
     }
 
     fn raw_append_u64(&mut self, x: u64) {
-        // PoseidonTranscript::raw_append_u64 does:
-        //   1. Pack u64 into 32-byte array with BE-padding: packed[24..32] = x.to_be_bytes()
-        //   2. Interpret packed as LE field element via from_le_bytes_mod_order
-        //   3. Mathematically: value * 2^192
+        // PoseidonTranscript::raw_append_u64 computes bswap64(x) * 2^192
+        // See Node::AppendU64Transform for details.
         let x_ast = MleAst::from_u64(x);
-        let transformed = MleAst::mul_two_pow_192(&x_ast);
+        let transformed = MleAst::append_u64_transform(&x_ast);
         let round = MleAst::from_u64(self.n_rounds as u64);
         self.state = MleAst::poseidon(&self.state, &round, &transformed);
         self.n_rounds += 1;
@@ -374,7 +368,7 @@ impl Transcript for PoseidonAstTranscript {
         let mut current = F::one();
         for _ in 0..len {
             powers.push(current);
-            current = current * base;
+            current *= base;
         }
         powers
     }
@@ -435,11 +429,10 @@ mod tests {
                 let expected: [u64; 4] = [1953263466, 0, 0, 0];
                 assert_eq!(
                     v, expected,
-                    "Label 'jolt' should be {:?} but got {:?}",
-                    expected, v
+                    "Label 'jolt' should be {expected:?} but got {v:?}"
                 );
             }
-            _ => panic!("Expected Scalar atom, got {:?}", node),
+            _ => panic!("Expected Scalar atom, got {node:?}"),
         }
     }
 
@@ -462,7 +455,7 @@ mod tests {
             zklean_extractor::mle_ast::Node::Poseidon(_, _, _) => {
                 // Expected: poseidon(label, 0, 0)
             }
-            _ => panic!("Expected Poseidon node for initial state, got {:?}", node),
+            _ => panic!("Expected Poseidon node for initial state, got {node:?}"),
         }
     }
 
@@ -503,24 +496,22 @@ mod tests {
                                     zklean_extractor::mle_ast::Edge::Atom(
                                         zklean_extractor::mle_ast::Atom::Var(idx),
                                     ) => {
-                                        assert_eq!(idx, 42, "Expected Var(42), got Var({})", idx);
+                                        assert_eq!(idx, 42, "Expected Var(42), got Var({idx})");
                                     }
                                     other => panic!(
-                                        "Expected Var(42) inside ByteReverse, got {:?}",
-                                        other
+                                        "Expected Var(42) inside ByteReverse, got {other:?}"
                                     ),
                                 }
                             }
-                            other => panic!("Expected ByteReverse node, got {:?}", other),
+                            other => panic!("Expected ByteReverse node, got {other:?}"),
                         }
                     }
                     other => panic!(
-                        "Expected NodeRef to ByteReverse as third Poseidon arg, got {:?}",
-                        other
+                        "Expected NodeRef to ByteReverse as third Poseidon arg, got {other:?}"
                     ),
                 }
             }
-            _ => panic!("Expected Poseidon node, got {:?}", node),
+            _ => panic!("Expected Poseidon node, got {node:?}"),
         }
     }
 }

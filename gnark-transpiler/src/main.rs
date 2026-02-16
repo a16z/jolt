@@ -196,7 +196,7 @@ fn main() {
     match verifier.verify() {
         Ok(()) => println!("  Verification completed successfully"),
         Err(e) => {
-            println!("  Verification error: {:?}", e);
+            println!("  Verification error: {e:?}");
             return;
         }
     }
@@ -230,7 +230,7 @@ fn main() {
     // Register all equality assertions as circuit constraints.
     // Each assertion (lhs == rhs) becomes api.AssertIsEqual(lhs, rhs) in Gnark.
     for (i, assertion) in assertions.iter().enumerate() {
-        bundle.add_constraint_eq_zero(format!("assertion_{}", i), assertion.root());
+        bundle.add_constraint_eq_zero(format!("assertion_{i}"), assertion.root());
     }
     println!("  Constraints: {}", bundle.constraints.len());
 
@@ -250,8 +250,8 @@ fn main() {
     let bundle_path = output_dir.join(BUNDLE_FILENAME);
     bundle
         .write_json(&bundle_path)
-        .unwrap_or_else(|e| panic!("Failed to write bundle file {:?}: {}", bundle_path, e));
-    println!("  Bundle written to: {:?}", bundle_path);
+        .unwrap_or_else(|e| panic!("Failed to write bundle file {bundle_path:?}: {e}"));
+    println!("  Bundle written to: {bundle_path:?}");
 
     // =========================================================================
     // Step 6: Generate Gnark circuit code
@@ -266,8 +266,8 @@ fn main() {
 
     let circuit_path = output_dir.join(CIRCUIT_FILENAME);
     std::fs::write(&circuit_path, &circuit_code)
-        .unwrap_or_else(|e| panic!("Failed to write circuit file {:?}: {}", circuit_path, e));
-    println!("  Circuit written to: {:?}", circuit_path);
+        .unwrap_or_else(|e| panic!("Failed to write circuit file {circuit_path:?}: {e}"));
+    println!("  Circuit written to: {circuit_path:?}");
     println!("  Circuit size: {} bytes", circuit_code.len());
 
     // =========================================================================
@@ -295,8 +295,8 @@ fn main() {
     let witness_json = serde_json::to_string_pretty(&witness_map).expect("Failed to serialize witness");
     let witness_path = output_dir.join(WITNESS_FILENAME);
     std::fs::write(&witness_path, &witness_json)
-        .unwrap_or_else(|e| panic!("Failed to write witness file {:?}: {}", witness_path, e));
-    println!("  Witness written to: {:?}", witness_path);
+        .unwrap_or_else(|e| panic!("Failed to write witness file {witness_path:?}: {e}"));
+    println!("  Witness written to: {witness_path:?}");
     println!("  Witness variables: {}", witness_map.len());
 
     println!("\n=== SUCCESS ===");

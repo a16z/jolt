@@ -29,7 +29,7 @@ use std::sync::{OnceLock, RwLock};
 // =============================================================================
 
 thread_local! {
-    static PENDING_CHALLENGE: RefCell<Option<MleAst>> = RefCell::new(None);
+    static PENDING_CHALLENGE: RefCell<Option<MleAst>> = const { RefCell::new(None) };
 }
 
 /// Set a pending challenge that will be returned by the next MleAst::from_bytes call.
@@ -46,7 +46,7 @@ fn take_pending_challenge() -> Option<MleAst> {
 }
 
 thread_local! {
-    static PENDING_APPEND: RefCell<Option<MleAst>> = RefCell::new(None);
+    static PENDING_APPEND: RefCell<Option<MleAst>> = const { RefCell::new(None) };
 }
 
 /// Set a pending MleAst value that will be retrieved by PoseidonAstTranscript::append_scalar.
@@ -64,7 +64,7 @@ pub fn take_pending_append() -> Option<MleAst> {
 }
 
 thread_local! {
-    static PENDING_COMMITMENT_CHUNKS: RefCell<Option<Vec<MleAst>>> = RefCell::new(None);
+    static PENDING_COMMITMENT_CHUNKS: RefCell<Option<Vec<MleAst>>> = const { RefCell::new(None) };
 }
 
 /// Set pending commitment chunks for PoseidonAstTranscript::append_serializable.
@@ -88,11 +88,11 @@ pub fn take_pending_commitment_chunks() -> Option<Vec<MleAst>> {
 thread_local! {
     /// Accumulated constraints during symbolic execution.
     /// Each constraint is an MleAst that should equal zero.
-    static SYMBOLIC_CONSTRAINTS: RefCell<Vec<MleAst>> = RefCell::new(Vec::new());
+    static SYMBOLIC_CONSTRAINTS: RefCell<Vec<MleAst>> = const { RefCell::new(Vec::new()) };
 
     /// Flag to enable constraint accumulation mode.
     /// When true, PartialEq comparisons register constraints instead of comparing NodeIds.
-    static CONSTRAINT_MODE: RefCell<bool> = RefCell::new(false);
+    static CONSTRAINT_MODE: RefCell<bool> = const { RefCell::new(false) };
 }
 
 /// Enable constraint accumulation mode.
@@ -272,11 +272,16 @@ pub enum Node {
     /// Used for challenge_scalar which produces F (raw field element).
     /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes.
     Truncate128(Edge),
-    /// Multiply by 2^192 (BE-padding transformation for append_u64).
-    /// This is value * 2^192, where 2^192 is the multiplier from BE-padding:
-    /// - u64 placed in bytes 24-31 of 32-byte array
-    /// - Interpreted as LE gives value * 2^192
-    MulTwoPow192(Edge),
+    /// Transform for PoseidonTranscript::append_u64.
+    ///
+    /// Computes: bswap64(x) * 2^192
+    ///
+    /// This matches PoseidonTranscript::raw_append_u64 which:
+    /// 1. Packs u64 x into bytes 24-31 of a 32-byte array using x.to_be_bytes()
+    /// 2. Interprets the 32 bytes as a little-endian field element
+    ///
+    /// The result is bswap64(x) * 2^192, not just x * 2^192.
+    AppendU64Transform(Edge),
 }
 
 /// An AST intended for representing an MLE computation (although it will actually work for any
@@ -401,17 +406,18 @@ impl MleAst {
         }
     }
 
-    /// Multiply a value by 2^192 (BE-padding transformation for append_u64).
+    /// Transform for PoseidonTranscript::append_u64.
     ///
-    /// This is used for the BE-padding transformation in append_u64:
-    /// - u64 value is placed in bytes 24-31 of a 32-byte array (big-endian padding)
-    /// - When interpreted as little-endian, this equals: value * 2^192
+    /// Computes: bswap64(x) * 2^192
     ///
-    /// 2^192 = 0x1000000000000000000000000000000000000000000000000 (hex)
-    ///       = 6277101735386680763835789423207666416102355444464034512896 (decimal)
-    pub fn mul_two_pow_192(input: &Self) -> Self {
+    /// This matches PoseidonTranscript::raw_append_u64 which:
+    /// 1. Packs u64 x into bytes 24-31 of a 32-byte array using x.to_be_bytes()
+    /// 2. Interprets the 32 bytes as a little-endian field element
+    ///
+    /// The result is bswap64(x) * 2^192, not just x * 2^192.
+    pub fn append_u64_transform(input: &Self) -> Self {
         let edge = edge_for_root(input.root);
-        let root = insert_node(Node::MulTwoPow192(edge));
+        let root = insert_node(Node::AppendU64Transform(edge));
         Self {
             root,
             reg_name: input.reg_name,
@@ -457,7 +463,7 @@ fn is_node_constant(node_id: NodeId) -> bool {
         Node::Atom(Atom::Var(_)) => false,
         Node::Atom(Atom::NamedVar(_)) => false,
         Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e)
-        | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::MulTwoPow192(e) => {
+        | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::AppendU64Transform(e) => {
             is_edge_constant(e)
         }
         Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
@@ -601,7 +607,7 @@ fn evaluate_constant_node(node_id: NodeId) -> Scalar {
             panic!("Modular inverse not implemented for constant evaluation")
         }
         Node::Poseidon(_, _, _) | Node::Keccak256(_) | Node::ByteReverse(_)
-        | Node::Truncate128Reverse(_) | Node::Truncate128(_) | Node::MulTwoPow192(_) => {
+        | Node::Truncate128Reverse(_) | Node::Truncate128(_) | Node::AppendU64Transform(_) => {
             panic!("Hash/transform operations cannot be evaluated as constants")
         }
     }
@@ -625,7 +631,7 @@ fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
         Node::Mul(e1, e2) => evaluate_edge(e1, env) * evaluate_edge(e2, env),
         Node::Sub(e1, e2) => evaluate_edge(e1, env) - evaluate_edge(e2, env),
         Node::Div(e1, e2) => evaluate_edge(e1, env) / evaluate_edge(e2, env),
-        Node::Poseidon(_, _, _) | Node::Keccak256(_) | Node::ByteReverse(_) | Node::Truncate128Reverse(_) | Node::Truncate128(_) | Node::MulTwoPow192(_) => {
+        Node::Poseidon(_, _, _) | Node::Keccak256(_) | Node::ByteReverse(_) | Node::Truncate128Reverse(_) | Node::Truncate128(_) | Node::AppendU64Transform(_) => {
             // Hash/transform nodes are for circuit generation only, not field evaluation
             unreachable!("Hash/transform nodes should not appear in zklean-extractor tests")
         }
@@ -693,7 +699,7 @@ fn node_depth(node: Node) -> usize {
         Node::ByteReverse(e) => 1 + edge_depth(e),
         Node::Truncate128Reverse(e) => 1 + edge_depth(e),
         Node::Truncate128(e) => 1 + edge_depth(e),
-        Node::MulTwoPow192(e) => 1 + edge_depth(e),
+        Node::AppendU64Transform(e) => 1 + edge_depth(e),
         Node::Add(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
         Node::Mul(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
         Node::Sub(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
@@ -811,9 +817,9 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
                 let cse_e = aux_edge(bindings, nodes, e);
                 register(bindings, nodes, Node::Truncate128(cse_e))
             }
-            Node::MulTwoPow192(e) => {
+            Node::AppendU64Transform(e) => {
                 let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::MulTwoPow192(cse_e))
+                register(bindings, nodes, Node::AppendU64Transform(cse_e))
             }
         }
     }
@@ -912,8 +918,8 @@ fn fmt_node(
             fmt_edge(f, fmt_data, edge, false)?;
             write!(f, ")")
         }
-        Node::MulTwoPow192(edge) => {
-            write!(f, "mul_two_pow_192(")?;
+        Node::AppendU64Transform(edge) => {
+            write!(f, "append_u64_transform(")?;
             fmt_edge(f, fmt_data, edge, false)?;
             write!(f, ")")
         }
@@ -1084,7 +1090,7 @@ impl std::ops::Add<&Self> for MleAst {
         // Optimization: x + 0 = x, 0 + x = x
         // This prevents constant-vs-constant additions in generated code
         if self.is_zero() {
-            return rhs.clone();
+            return *rhs;
         }
         if rhs.is_zero() {
             return self;
@@ -1105,7 +1111,7 @@ impl std::ops::Sub<&Self> for MleAst {
         }
         // Optimization: 0 - x = -x
         if self.is_zero() {
-            return -rhs.clone();
+            return -*rhs;
         }
         self.binop(Node::Sub, rhs);
         self
@@ -1161,7 +1167,7 @@ impl<'a> std::ops::AddAssign<&'a Self> for MleAst {
         }
         // Optimization: 0 += x => self = x
         if self.is_zero() {
-            *self = rhs.clone();
+            *self = *rhs;
             return;
         }
         self.binop(Node::Add, rhs);
@@ -1191,7 +1197,7 @@ impl<'a> std::ops::SubAssign<&'a Self> for MleAst {
         }
         // Optimization: 0 -= x => self = -x
         if self.is_zero() {
-            *self = -rhs.clone();
+            *self = -*rhs;
             return;
         }
         self.binop(Node::Sub, rhs);
@@ -1601,7 +1607,7 @@ impl CanonicalSerialize for MleAst {
     ) -> Result<(), SerializationError> {
         // Store self in thread-local so PoseidonAstTranscript::append_scalar can retrieve it.
         // This is how we pass the MleAst through the generic Transcript trait.
-        set_pending_append(self.clone());
+        set_pending_append(*self);
         Ok(())
     }
 
