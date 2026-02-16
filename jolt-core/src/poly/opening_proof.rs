@@ -684,6 +684,8 @@ where
                         *claim, existing_claim,
                         "Inconsistent duplicate opening claims: {key:?} vs {existing_id:?}"
                     );
+                    self.aliases.insert(key, existing_id);
+                    return;
                 }
             }
             transcript.append_scalar(b"opening_claim", claim);
