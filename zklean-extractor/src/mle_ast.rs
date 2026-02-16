@@ -241,7 +241,7 @@ pub enum Node {
     /// An atomic (var or const) AST element. This should only be used for MLE's with a single
     /// node.
     Atom(Atom),
-    /// The negation of a node
+    /// The negation of a node (from zklean base, unused by Jolt transpiler)
     Neg(Edge),
     /// The multiplicative inverse of a node
     Inv(Edge),
@@ -251,14 +251,12 @@ pub enum Node {
     Mul(Edge, Edge),
     /// The difference between the first and second nodes
     Sub(Edge, Edge),
-    /// The quotient between the first and second nodes
+    /// The quotient between the first and second nodes (from zklean base, unused by Jolt transpiler)
     /// NOTE: No div-by-zero checks are performed here
     Div(Edge, Edge),
     /// Poseidon hash with 3 inputs (state, n_rounds, data).
     /// Matches jolt-core PoseidonTranscript which uses width-3 Poseidon.
     Poseidon(Edge, Edge, Edge),
-    /// Keccak256 hash of a single field element
-    Keccak256(Edge),
     /// Byte-reverse a field element.
     /// Transforms: serialize(x) as LE bytes -> reverse -> from_le_bytes_mod_order.
     /// This matches PoseidonTranscript::append_scalar which reverses bytes for EVM compatibility.
@@ -462,7 +460,7 @@ fn is_node_constant(node_id: NodeId) -> bool {
         Node::Atom(Atom::Scalar(_)) => true,
         Node::Atom(Atom::Var(_)) => false,
         Node::Atom(Atom::NamedVar(_)) => false,
-        Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e)
+        Node::Neg(e) | Node::Inv(e) | Node::ByteReverse(e)
         | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::AppendU64Transform(e) => {
             is_edge_constant(e)
         }
@@ -603,10 +601,9 @@ fn evaluate_constant_node(node_id: NodeId) -> Scalar {
             scalar_mul_mod(evaluate_constant_edge(e1), evaluate_constant_edge(e2))
         }
         Node::Inv(_) | Node::Div(_, _) => {
-            // Modular inverse is complex - for now, panic
             panic!("Modular inverse not implemented for constant evaluation")
         }
-        Node::Poseidon(_, _, _) | Node::Keccak256(_) | Node::ByteReverse(_)
+        Node::Poseidon(_, _, _) | Node::ByteReverse(_)
         | Node::Truncate128Reverse(_) | Node::Truncate128(_) | Node::AppendU64Transform(_) => {
             panic!("Hash/transform operations cannot be evaluated as constants")
         }
@@ -631,7 +628,7 @@ fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
         Node::Mul(e1, e2) => evaluate_edge(e1, env) * evaluate_edge(e2, env),
         Node::Sub(e1, e2) => evaluate_edge(e1, env) - evaluate_edge(e2, env),
         Node::Div(e1, e2) => evaluate_edge(e1, env) / evaluate_edge(e2, env),
-        Node::Poseidon(_, _, _) | Node::Keccak256(_) | Node::ByteReverse(_) | Node::Truncate128Reverse(_) | Node::Truncate128(_) | Node::AppendU64Transform(_) => {
+        Node::Poseidon(_, _, _) | Node::ByteReverse(_) | Node::Truncate128Reverse(_) | Node::Truncate128(_) | Node::AppendU64Transform(_) => {
             // Hash/transform nodes are for circuit generation only, not field evaluation
             unreachable!("Hash/transform nodes should not appear in zklean-extractor tests")
         }
@@ -693,17 +690,11 @@ fn node_depth(node: Node) -> usize {
     }
     match node {
         Node::Atom(_) => 0,
-        Node::Neg(e) => 1 + edge_depth(e),
-        Node::Inv(e) => 1 + edge_depth(e),
-        Node::Keccak256(e) => 1 + edge_depth(e),
-        Node::ByteReverse(e) => 1 + edge_depth(e),
-        Node::Truncate128Reverse(e) => 1 + edge_depth(e),
-        Node::Truncate128(e) => 1 + edge_depth(e),
-        Node::AppendU64Transform(e) => 1 + edge_depth(e),
-        Node::Add(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
-        Node::Mul(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
-        Node::Sub(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
-        Node::Div(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
+        Node::Neg(e) | Node::Inv(e) | Node::ByteReverse(e) | Node::Truncate128Reverse(e)
+        | Node::Truncate128(e) | Node::AppendU64Transform(e) => 1 + edge_depth(e),
+        Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
+            1 + max(edge_depth(e1), edge_depth(e2))
+        }
         Node::Poseidon(e1, e2, e3) => 1 + max(edge_depth(e1), max(edge_depth(e2), edge_depth(e3))),
     }
 }
@@ -774,10 +765,6 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
             Node::Inv(e) => {
                 let cse_e = aux_edge(bindings, nodes, e);
                 register(bindings, nodes, Node::Inv(cse_e))
-            }
-            Node::Keccak256(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::Keccak256(cse_e))
             }
             Node::Add(e1, e2) => {
                 let cse_e1 = aux_edge(bindings, nodes, e1);
@@ -854,11 +841,6 @@ fn fmt_node(
         Node::Inv(edge) => {
             write!(f, "1 / ")?;
             fmt_edge(f, fmt_data, edge, true)
-        }
-        Node::Keccak256(edge) => {
-            write!(f, "keccak256(")?;
-            fmt_edge(f, fmt_data, edge, false)?;
-            write!(f, ")")
         }
         Node::Add(e1, e2) => {
             if group {
@@ -1043,9 +1025,9 @@ impl One for MleAst {
 impl std::ops::Neg for MleAst {
     type Output = Self;
 
-    fn neg(mut self) -> Self::Output {
-        self.unop(Node::Neg);
-        self
+    fn neg(self) -> Self::Output {
+        // Negation is 0 - x (Jolt transpiler doesn't use Node::Neg)
+        Self::zero() - self
     }
 }
 
@@ -1136,9 +1118,10 @@ impl std::ops::Mul<&Self> for MleAst {
 impl std::ops::Div<&Self> for MleAst {
     type Output = Self;
 
-    fn div(mut self, rhs: &Self) -> Self::Output {
-        self.binop(Node::Div, rhs);
-        self
+    fn div(self, rhs: &Self) -> Self::Output {
+        // Division is x * inv(y) (Jolt transpiler doesn't use Node::Div)
+        let inv_rhs = rhs.inverse().expect("division by zero");
+        self * &inv_rhs
     }
 }
 
