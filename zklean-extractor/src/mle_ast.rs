@@ -104,9 +104,22 @@ pub fn enable_constraint_mode() {
     });
 }
 
+/// Disable constraint accumulation mode.
+/// After this, `MleAst == MleAst` will panic instead of registering constraints.
+pub fn disable_constraint_mode() {
+    CONSTRAINT_MODE.with(|cell| {
+        *cell.borrow_mut() = false;
+    });
+}
+
 /// Check if constraint mode is enabled.
 pub fn is_constraint_mode() -> bool {
     CONSTRAINT_MODE.with(|cell| *cell.borrow())
+}
+
+/// Return the number of accumulated constraints without taking them.
+pub fn num_constraints() -> usize {
+    SYMBOLIC_CONSTRAINTS.with(|cell| cell.borrow().len())
 }
 
 /// Take all accumulated constraints, clearing the list.
