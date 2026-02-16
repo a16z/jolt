@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+default = ["guest"]
 guest = []
 
 [dependencies]
 jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["guest-verifier"] }
 postcard.workspace = true
 ark-serialize.workspace = true
+rayon.workspace = true

@@ -4435,6 +4435,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "jolt-sdk",
  "postcard",
+ "rayon",
 ]
 
 [[package]]
