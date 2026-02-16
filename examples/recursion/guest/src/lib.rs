@@ -8,15 +8,12 @@ use ark_serialize::{CanonicalDeserialize, Compress, Validate};
 use jolt::transport;
 use jolt::{JoltDevice, JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, F, PCS};
 
+use jolt::transport::{
+    BUNDLE_SIGNATURE, BUNDLE_TAG_PREPROCESSING, BUNDLE_TAG_RECORD, RECORD_TAG_DEVICE,
+    RECORD_TAG_PROOF,
+};
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 use std::io::Read;
-
-const BUNDLE_SIGNATURE: &[u8; 8] = b"JOLTBDL\0";
-const BUNDLE_TAG_PREPROCESSING: u8 = 1;
-const BUNDLE_TAG_RECORD: u8 = 2;
-
-const RECORD_TAG_DEVICE: u8 = 1;
-const RECORD_TAG_PROOF: u8 = 2;
 
 mod embedded_bytes {
     include!("./embedded_bytes.rs");

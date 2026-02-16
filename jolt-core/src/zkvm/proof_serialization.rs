@@ -47,13 +47,7 @@ const TAG_STAGE6: u8 = 15;
 const TAG_STAGE7: u8 = 16;
 const TAG_JOINT_OPENING: u8 = 20;
 
-// Per-section payload caps (DoS resistance). These can be tuned if legitimate proofs grow.
-const MAX_PARAMS_LEN: u64 = 16 * 1024;
-const MAX_COMMITMENTS_LEN: u64 = 256 * 1024 * 1024;
-const MAX_OPENING_CLAIMS_LEN: u64 = 256 * 1024 * 1024;
-const MAX_STAGE_LEN: u64 = 512 * 1024 * 1024;
-const MAX_JOINT_OPENING_LEN: u64 = 512 * 1024 * 1024;
-const MAX_ANY_SECTION_LEN: u64 = 512 * 1024 * 1024;
+const MAX_SECTION_LEN: u64 = 512 * 1024 * 1024;
 
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
@@ -82,45 +76,28 @@ fn io_err(e: std::io::Error) -> SerializationError {
     SerializationError::IoError(e)
 }
 
-#[inline]
-fn write_u8<W: Write>(w: &mut W, b: u8) -> Result<(), SerializationError> {
-    w.write_all(&[b]).map_err(io_err)
+macro_rules! write_framed_section {
+    ($w:expr, $c:expr, $tag:expr, $($item:expr),+ $(,)?) => {{
+        let len: u64 = 0 $(+ $item.serialized_size($c) as u64)+;
+        transport::write_frame_header($w, $tag, len).map_err(io_err)?;
+        $($item.serialize_with_mode($w, $c)?;)+
+    }};
 }
 
-#[inline]
-fn write_varint_u64<W: Write>(w: &mut W, x: u64) -> Result<(), SerializationError> {
-    transport::write_varint_u64(w, x).map_err(io_err)
+macro_rules! framed_section_size {
+    ($c:expr, $($item:expr),+ $(,)?) => {{
+        let payload: u64 = 0 $(+ $item.serialized_size($c) as u64)+;
+        1 + transport::varint_u64_len(payload) + payload as usize
+    }};
 }
 
-#[inline]
-fn read_varint_u64<R: Read>(r: &mut R) -> Result<u64, SerializationError> {
-    transport::read_varint_u64(r).map_err(io_err)
-}
-
-#[inline]
-fn write_frame_header<W: Write>(w: &mut W, tag: u8, len: u64) -> Result<(), SerializationError> {
-    transport::write_frame_header(w, tag, len).map_err(io_err)
-}
-
-#[inline]
-fn read_frame_header<R: Read>(
-    r: &mut R,
-    max_len: u64,
-) -> Result<Option<(u8, u64)>, SerializationError> {
-    transport::read_frame_header(r, max_len).map_err(io_err)
-}
-
-#[inline]
-fn section_cap_for_tag(tag: u8) -> u64 {
-    match tag {
-        TAG_PARAMS => MAX_PARAMS_LEN,
-        TAG_COMMITMENTS => MAX_COMMITMENTS_LEN,
-        TAG_OPENING_CLAIMS => MAX_OPENING_CLAIMS_LEN,
-        TAG_STAGE1 | TAG_STAGE2 | TAG_STAGE3 | TAG_STAGE4 | TAG_STAGE5 | TAG_STAGE6
-        | TAG_STAGE7 => MAX_STAGE_LEN,
-        TAG_JOINT_OPENING => MAX_JOINT_OPENING_LEN,
-        _ => 0,
-    }
+macro_rules! read_singleton {
+    ($r:expr, $c:expr, $v:expr, $field:expr) => {{
+        if $field.is_some() {
+            return Err(SerializationError::InvalidData);
+        }
+        $field = Some(CanonicalDeserialize::deserialize_with_mode($r, $c, $v)?);
+    }};
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
@@ -133,24 +110,22 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
     ) -> Result<(), SerializationError> {
         transport::signature_write(&mut writer, PROOF_SIGNATURE).map_err(io_err)?;
 
-        // ---------------- Params ----------------
         let params_len = (transport::varint_u64_len(self.trace_length as u64)
             + transport::varint_u64_len(self.ram_K as u64)
             + transport::varint_u64_len(self.bytecode_K as u64)) as u64
             + self.rw_config.serialized_size(compress) as u64
             + self.one_hot_config.serialized_size(compress) as u64
             + self.dory_layout.serialized_size(compress) as u64;
-        write_frame_header(&mut writer, TAG_PARAMS, params_len)?;
-        write_varint_u64(&mut writer, self.trace_length as u64)?;
-        write_varint_u64(&mut writer, self.ram_K as u64)?;
-        write_varint_u64(&mut writer, self.bytecode_K as u64)?;
+        transport::write_frame_header(&mut writer, TAG_PARAMS, params_len).map_err(io_err)?;
+        transport::write_varint_u64(&mut writer, self.trace_length as u64).map_err(io_err)?;
+        transport::write_varint_u64(&mut writer, self.ram_K as u64).map_err(io_err)?;
+        transport::write_varint_u64(&mut writer, self.bytecode_K as u64).map_err(io_err)?;
         self.rw_config.serialize_with_mode(&mut writer, compress)?;
         self.one_hot_config
             .serialize_with_mode(&mut writer, compress)?;
         self.dory_layout
             .serialize_with_mode(&mut writer, compress)?;
 
-        // ---------------- Commitments ----------------
         let commitments_count_len = transport::varint_u64_len(self.commitments.len() as u64) as u64;
         let commitments_items_len: u64 = self
             .commitments
@@ -164,20 +139,20 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .unwrap_or(0);
         let commitments_len =
             commitments_count_len + commitments_items_len + 1 + untrusted_commitment_len;
-        write_frame_header(&mut writer, TAG_COMMITMENTS, commitments_len)?;
-        write_varint_u64(&mut writer, self.commitments.len() as u64)?;
+        transport::write_frame_header(&mut writer, TAG_COMMITMENTS, commitments_len)
+            .map_err(io_err)?;
+        transport::write_varint_u64(&mut writer, self.commitments.len() as u64).map_err(io_err)?;
         for c in &self.commitments {
             c.serialize_with_mode(&mut writer, compress)?;
         }
         match &self.untrusted_advice_commitment {
-            None => write_u8(&mut writer, 0)?,
+            None => writer.write_all(&[0]).map_err(io_err)?,
             Some(c) => {
-                write_u8(&mut writer, 1)?;
+                writer.write_all(&[1]).map_err(io_err)?;
                 c.serialize_with_mode(&mut writer, compress)?;
             }
         }
 
-        // ---------------- Opening claims ----------------
         let claims_count_len = transport::varint_u64_len(self.opening_claims.0.len() as u64) as u64;
         let claims_items_len: u64 = self
             .opening_claims
@@ -188,64 +163,65 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             })
             .sum();
         let claims_len = claims_count_len + claims_items_len;
-        write_frame_header(&mut writer, TAG_OPENING_CLAIMS, claims_len)?;
-        write_varint_u64(&mut writer, self.opening_claims.0.len() as u64)?;
+        transport::write_frame_header(&mut writer, TAG_OPENING_CLAIMS, claims_len)
+            .map_err(io_err)?;
+        transport::write_varint_u64(&mut writer, self.opening_claims.0.len() as u64)
+            .map_err(io_err)?;
         for (k, (_p, claim)) in self.opening_claims.0.iter() {
             k.serialize_with_mode(&mut writer, compress)?;
             claim.serialize_with_mode(&mut writer, compress)?;
         }
 
-        // ---------------- Stages ----------------
-        let stage1_len = self
-            .stage1_uni_skip_first_round_proof
-            .serialized_size(compress) as u64
-            + self.stage1_sumcheck_proof.serialized_size(compress) as u64;
-        write_frame_header(&mut writer, TAG_STAGE1, stage1_len)?;
-        self.stage1_uni_skip_first_round_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage1_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-
-        let stage2_len = self
-            .stage2_uni_skip_first_round_proof
-            .serialized_size(compress) as u64
-            + self.stage2_sumcheck_proof.serialized_size(compress) as u64;
-        write_frame_header(&mut writer, TAG_STAGE2, stage2_len)?;
-        self.stage2_uni_skip_first_round_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        self.stage2_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-
-        let stage3_len = self.stage3_sumcheck_proof.serialized_size(compress) as u64;
-        write_frame_header(&mut writer, TAG_STAGE3, stage3_len)?;
-        self.stage3_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-
-        let stage4_len = self.stage4_sumcheck_proof.serialized_size(compress) as u64;
-        write_frame_header(&mut writer, TAG_STAGE4, stage4_len)?;
-        self.stage4_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-
-        let stage5_len = self.stage5_sumcheck_proof.serialized_size(compress) as u64;
-        write_frame_header(&mut writer, TAG_STAGE5, stage5_len)?;
-        self.stage5_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-
-        let stage6_len = self.stage6_sumcheck_proof.serialized_size(compress) as u64;
-        write_frame_header(&mut writer, TAG_STAGE6, stage6_len)?;
-        self.stage6_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-
-        let stage7_len = self.stage7_sumcheck_proof.serialized_size(compress) as u64;
-        write_frame_header(&mut writer, TAG_STAGE7, stage7_len)?;
-        self.stage7_sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-
-        // ---------------- Joint opening proof ----------------
-        let joint_len = self.joint_opening_proof.serialized_size(compress) as u64;
-        write_frame_header(&mut writer, TAG_JOINT_OPENING, joint_len)?;
-        self.joint_opening_proof
-            .serialize_with_mode(&mut writer, compress)?;
+        write_framed_section!(
+            &mut writer,
+            compress,
+            TAG_STAGE1,
+            &self.stage1_uni_skip_first_round_proof,
+            &self.stage1_sumcheck_proof
+        );
+        write_framed_section!(
+            &mut writer,
+            compress,
+            TAG_STAGE2,
+            &self.stage2_uni_skip_first_round_proof,
+            &self.stage2_sumcheck_proof
+        );
+        write_framed_section!(
+            &mut writer,
+            compress,
+            TAG_STAGE3,
+            &self.stage3_sumcheck_proof
+        );
+        write_framed_section!(
+            &mut writer,
+            compress,
+            TAG_STAGE4,
+            &self.stage4_sumcheck_proof
+        );
+        write_framed_section!(
+            &mut writer,
+            compress,
+            TAG_STAGE5,
+            &self.stage5_sumcheck_proof
+        );
+        write_framed_section!(
+            &mut writer,
+            compress,
+            TAG_STAGE6,
+            &self.stage6_sumcheck_proof
+        );
+        write_framed_section!(
+            &mut writer,
+            compress,
+            TAG_STAGE7,
+            &self.stage7_sumcheck_proof
+        );
+        write_framed_section!(
+            &mut writer,
+            compress,
+            TAG_JOINT_OPENING,
+            &self.joint_opening_proof
+        );
 
         Ok(())
     }
@@ -288,35 +264,22 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         let claims_len = claims_count_len + claims_items_len;
         size += 1 + transport::varint_u64_len(claims_len) + claims_len as usize;
 
-        let stage1_len = self
-            .stage1_uni_skip_first_round_proof
-            .serialized_size(compress) as u64
-            + self.stage1_sumcheck_proof.serialized_size(compress) as u64;
-        size += 1 + transport::varint_u64_len(stage1_len) + stage1_len as usize;
-
-        let stage2_len = self
-            .stage2_uni_skip_first_round_proof
-            .serialized_size(compress) as u64
-            + self.stage2_sumcheck_proof.serialized_size(compress) as u64;
-        size += 1 + transport::varint_u64_len(stage2_len) + stage2_len as usize;
-
-        let stage3_len = self.stage3_sumcheck_proof.serialized_size(compress) as u64;
-        size += 1 + transport::varint_u64_len(stage3_len) + stage3_len as usize;
-
-        let stage4_len = self.stage4_sumcheck_proof.serialized_size(compress) as u64;
-        size += 1 + transport::varint_u64_len(stage4_len) + stage4_len as usize;
-
-        let stage5_len = self.stage5_sumcheck_proof.serialized_size(compress) as u64;
-        size += 1 + transport::varint_u64_len(stage5_len) + stage5_len as usize;
-
-        let stage6_len = self.stage6_sumcheck_proof.serialized_size(compress) as u64;
-        size += 1 + transport::varint_u64_len(stage6_len) + stage6_len as usize;
-
-        let stage7_len = self.stage7_sumcheck_proof.serialized_size(compress) as u64;
-        size += 1 + transport::varint_u64_len(stage7_len) + stage7_len as usize;
-
-        let joint_len = self.joint_opening_proof.serialized_size(compress) as u64;
-        size += 1 + transport::varint_u64_len(joint_len) + joint_len as usize;
+        size += framed_section_size!(
+            compress,
+            &self.stage1_uni_skip_first_round_proof,
+            &self.stage1_sumcheck_proof
+        );
+        size += framed_section_size!(
+            compress,
+            &self.stage2_uni_skip_first_round_proof,
+            &self.stage2_sumcheck_proof
+        );
+        size += framed_section_size!(compress, &self.stage3_sumcheck_proof);
+        size += framed_section_size!(compress, &self.stage4_sumcheck_proof);
+        size += framed_section_size!(compress, &self.stage5_sumcheck_proof);
+        size += framed_section_size!(compress, &self.stage6_sumcheck_proof);
+        size += framed_section_size!(compress, &self.stage7_sumcheck_proof);
+        size += framed_section_size!(compress, &self.joint_opening_proof);
 
         size
     }
@@ -362,11 +325,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let mut stage7_sumcheck: Option<SumcheckInstanceProof<F, FS>> = None;
         let mut joint_opening_proof: Option<PCS::Proof> = None;
 
-        while let Some((tag, len)) = read_frame_header(&mut reader, MAX_ANY_SECTION_LEN)? {
-            let cap = section_cap_for_tag(tag);
-            if cap == 0 || len > cap {
-                return Err(SerializationError::InvalidData);
-            }
+        while let Some((tag, len)) =
+            transport::read_frame_header(&mut reader, MAX_SECTION_LEN).map_err(io_err)?
+        {
             let mut limited = (&mut reader).take(len);
 
             match tag {
@@ -374,9 +335,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                     if trace_length.is_some() {
                         return Err(SerializationError::InvalidData);
                     }
-                    let t = read_varint_u64(&mut limited)?;
-                    let r = read_varint_u64(&mut limited)?;
-                    let b = read_varint_u64(&mut limited)?;
+                    let t = transport::read_varint_u64(&mut limited).map_err(io_err)?;
+                    let r = transport::read_varint_u64(&mut limited).map_err(io_err)?;
+                    let b = transport::read_varint_u64(&mut limited).map_err(io_err)?;
                     trace_length =
                         Some(usize::try_from(t).map_err(|_| SerializationError::InvalidData)?);
                     ram_K = Some(usize::try_from(r).map_err(|_| SerializationError::InvalidData)?);
@@ -402,7 +363,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                     if commitments.is_some() {
                         return Err(SerializationError::InvalidData);
                     }
-                    let n = read_varint_u64(&mut limited)?;
+                    let n = transport::read_varint_u64(&mut limited).map_err(io_err)?;
                     let n_usize =
                         usize::try_from(n).map_err(|_| SerializationError::InvalidData)?;
                     if n_usize > 1_000_000 {
@@ -433,7 +394,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                     if opening_claims.is_some() {
                         return Err(SerializationError::InvalidData);
                     }
-                    let n = read_varint_u64(&mut limited)?;
+                    let n = transport::read_varint_u64(&mut limited).map_err(io_err)?;
                     let n_usize =
                         usize::try_from(n).map_err(|_| SerializationError::InvalidData)?;
                     if n_usize > 10_000_000 {
@@ -449,94 +410,20 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                     opening_claims = Some(Claims(claims));
                 }
                 TAG_STAGE1 => {
-                    if stage1_uni.is_some() {
-                        return Err(SerializationError::InvalidData);
-                    }
-                    stage1_uni = Some(UniSkipFirstRoundProof::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
-                    stage1_sumcheck = Some(SumcheckInstanceProof::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
+                    read_singleton!(&mut limited, compress, validate, stage1_uni);
+                    read_singleton!(&mut limited, compress, validate, stage1_sumcheck);
                 }
                 TAG_STAGE2 => {
-                    if stage2_uni.is_some() {
-                        return Err(SerializationError::InvalidData);
-                    }
-                    stage2_uni = Some(UniSkipFirstRoundProof::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
-                    stage2_sumcheck = Some(SumcheckInstanceProof::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
+                    read_singleton!(&mut limited, compress, validate, stage2_uni);
+                    read_singleton!(&mut limited, compress, validate, stage2_sumcheck);
                 }
-                TAG_STAGE3 => {
-                    if stage3_sumcheck.is_some() {
-                        return Err(SerializationError::InvalidData);
-                    }
-                    stage3_sumcheck = Some(SumcheckInstanceProof::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
-                }
-                TAG_STAGE4 => {
-                    if stage4_sumcheck.is_some() {
-                        return Err(SerializationError::InvalidData);
-                    }
-                    stage4_sumcheck = Some(SumcheckInstanceProof::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
-                }
-                TAG_STAGE5 => {
-                    if stage5_sumcheck.is_some() {
-                        return Err(SerializationError::InvalidData);
-                    }
-                    stage5_sumcheck = Some(SumcheckInstanceProof::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
-                }
-                TAG_STAGE6 => {
-                    if stage6_sumcheck.is_some() {
-                        return Err(SerializationError::InvalidData);
-                    }
-                    stage6_sumcheck = Some(SumcheckInstanceProof::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
-                }
-                TAG_STAGE7 => {
-                    if stage7_sumcheck.is_some() {
-                        return Err(SerializationError::InvalidData);
-                    }
-                    stage7_sumcheck = Some(SumcheckInstanceProof::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
-                }
+                TAG_STAGE3 => read_singleton!(&mut limited, compress, validate, stage3_sumcheck),
+                TAG_STAGE4 => read_singleton!(&mut limited, compress, validate, stage4_sumcheck),
+                TAG_STAGE5 => read_singleton!(&mut limited, compress, validate, stage5_sumcheck),
+                TAG_STAGE6 => read_singleton!(&mut limited, compress, validate, stage6_sumcheck),
+                TAG_STAGE7 => read_singleton!(&mut limited, compress, validate, stage7_sumcheck),
                 TAG_JOINT_OPENING => {
-                    if joint_opening_proof.is_some() {
-                        return Err(SerializationError::InvalidData);
-                    }
-                    joint_opening_proof = Some(PCS::Proof::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
+                    read_singleton!(&mut limited, compress, validate, joint_opening_proof)
                 }
                 _ => return Err(SerializationError::InvalidData),
             }
@@ -706,7 +593,7 @@ impl CanonicalSerialize for OpeningId {
         };
         header.serialize_with_mode(&mut writer, compress)?;
         if (header & 0x3F) == OPENING_ID_SUMCHECK_ESCAPE {
-            write_varint_u64(&mut writer, sumcheck_u64)?;
+            transport::write_varint_u64(&mut writer, sumcheck_u64).map_err(io_err)?;
         }
         if let Some(poly) = poly {
             match poly {
@@ -755,7 +642,7 @@ impl CanonicalDeserialize for OpeningId {
         let small = header & 0x3F;
 
         let sumcheck_u64 = if small == OPENING_ID_SUMCHECK_ESCAPE {
-            read_varint_u64(&mut reader)?
+            transport::read_varint_u64(&mut reader).map_err(io_err)?
         } else {
             small as u64
         };
@@ -924,47 +811,11 @@ impl CanonicalSerialize for VirtualPolynomial {
 
     fn serialized_size(&self, _compress: Compress) -> usize {
         match self {
-            Self::PC
-            | Self::UnexpandedPC
-            | Self::NextPC
-            | Self::NextUnexpandedPC
-            | Self::NextIsNoop
-            | Self::NextIsVirtual
-            | Self::NextIsFirstInSequence
-            | Self::LeftLookupOperand
-            | Self::RightLookupOperand
-            | Self::LeftInstructionInput
-            | Self::RightInstructionInput
-            | Self::Product
-            | Self::ShouldJump
-            | Self::ShouldBranch
-            | Self::WritePCtoRD
-            | Self::WriteLookupOutputToRD
-            | Self::Rd
-            | Self::Imm
-            | Self::Rs1Value
-            | Self::Rs2Value
-            | Self::RdWriteValue
-            | Self::Rs1Ra
-            | Self::Rs2Ra
-            | Self::RdWa
-            | Self::LookupOutput
-            | Self::InstructionRaf
-            | Self::InstructionRafFlag
-            | Self::RegistersVal
-            | Self::RamAddress
-            | Self::RamRa
-            | Self::RamReadValue
-            | Self::RamWriteValue
-            | Self::RamVal
-            | Self::RamValInit
-            | Self::RamValFinal
-            | Self::RamHammingWeight
-            | Self::UnivariateSkip => 1,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
             | Self::LookupTableFlag(_) => 2,
+            _ => 1,
         }
     }
 }

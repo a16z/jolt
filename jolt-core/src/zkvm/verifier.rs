@@ -583,14 +583,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         );
         end_cycle_tracking("verifier_stage8_init_context");
 
-        // Get the unified opening point from HammingWeightClaimReduction
-        // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
-        start_cycle_tracking("verifier_stage8_opening_point");
         let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::InstructionRa(0),
             SumcheckId::HammingWeightClaimReduction,
         );
-        end_cycle_tracking("verifier_stage8_opening_point");
         let log_k_chunk = self.one_hot_params.log_k_chunk;
         let r_address_stage7 = &opening_point.r[..log_k_chunk];
 
@@ -673,26 +669,18 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
         end_cycle_tracking("verifier_stage8_sample_gamma");
 
-        // Build state for computing joint commitment/claim
-        start_cycle_tracking("verifier_stage8_build_state");
         let state = DoryOpeningState {
             opening_point: opening_point.r.clone(),
             gamma_powers: gamma_powers.clone(),
             polynomial_claims,
         };
-        end_cycle_tracking("verifier_stage8_build_state");
 
         // Build commitments map.
         //
         // Note: `itertools::zip_eq` panics on length mismatch. In guest-verifier contexts panics
         // are fatal (guest builds use `-Cpanic=abort`), so keep this path panic-free.
         let mut commitments_map = BTreeMap::new();
-
-        start_cycle_tracking("verifier_stage8_expected_polys");
         let expected_polys = all_committed_polynomials(&self.one_hot_params);
-        end_cycle_tracking("verifier_stage8_expected_polys");
-
-        start_cycle_tracking("verifier_stage8_commitments_len_check");
         if expected_polys.len() != self.proof.commitments.len() {
             return Err(anyhow::anyhow!(
                 "commitment vector length mismatch: expected {}, got {}",
@@ -701,19 +689,13 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             ))
             .context("Stage 8");
         }
-        end_cycle_tracking("verifier_stage8_commitments_len_check");
-
-        start_cycle_tracking("verifier_stage8_commitments_insert_main");
         for (polynomial, commitment) in expected_polys
             .into_iter()
             .zip(self.proof.commitments.iter())
         {
             commitments_map.insert(polynomial, commitment.clone());
         }
-        end_cycle_tracking("verifier_stage8_commitments_insert_main");
 
-        // Add advice commitments if they're part of the batch
-        start_cycle_tracking("verifier_stage8_commitments_insert_advice");
         if let Some(ref commitment) = self.trusted_advice_commitment {
             if state
                 .polynomial_claims
@@ -732,7 +714,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 commitments_map.insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
             }
         }
-        end_cycle_tracking("verifier_stage8_commitments_insert_advice");
 
         // Compute joint commitment: Σ γ_i · C_i
         start_cycle_tracking("verifier_stage8_joint_commitment");

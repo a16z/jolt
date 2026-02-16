@@ -2,20 +2,16 @@ use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use clap::{Parser, Subcommand};
 use jolt_sdk::transport;
+use jolt_sdk::transport::{
+    BUNDLE_SIGNATURE, BUNDLE_TAG_PREPROCESSING, BUNDLE_TAG_RECORD, RECORD_TAG_DEVICE,
+    RECORD_TAG_PROOF,
+};
 use jolt_sdk::{JoltDevice, MemoryConfig, RV64IMACProof, Serializable};
 use std::cmp::PartialEq;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{error, info};
-
-// Bundle framing (example-only transport).
-const BUNDLE_SIGNATURE: &[u8; 8] = b"JOLTBDL\0";
-const BUNDLE_TAG_PREPROCESSING: u8 = 1;
-const BUNDLE_TAG_RECORD: u8 = 2;
-
-const RECORD_TAG_DEVICE: u8 = 1;
-const RECORD_TAG_PROOF: u8 = 2;
 
 fn get_guest_src_dir() -> PathBuf {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
