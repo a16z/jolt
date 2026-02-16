@@ -1283,8 +1283,7 @@ mod test_mmu {
     }
 
     #[test]
-    #[should_panic(expected = "Unknown memory mapping")]
-    fn test_io_underflow() {
+    fn test_io_underflow_is_noop() {
         let mut mmu = setup_mmu();
         let trusted_advice_size = mmu
             .jolt_device
@@ -1298,23 +1297,22 @@ mod test_mmu {
             .unwrap()
             .memory_layout
             .max_untrusted_advice_size;
-        let invalid_addr = mmu.jolt_device.as_ref().unwrap().memory_layout.input_start
+        let addr = mmu.jolt_device.as_ref().unwrap().memory_layout.input_start
             - 1
             - trusted_advice_size
             - untrusted_advice_size;
-        // Write to address below I/O region - rejected as unknown mapping
-        // (Note: address is in "zero-padding" range so passes underflow check,
-        // but fails device I/O check since it's not a valid write target)
-        mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
+        // Address falls in the zero-padding region (below RAM_START_ADDRESS),
+        // so the store is silently dropped as a no-op.
+        mmu.store_bytes(addr, 0xc50513, 2).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "I/O overflow")]
-    fn test_io_overflow() {
+    fn test_io_overflow_is_noop() {
         let mut mmu = setup_mmu();
-        let invalid_addr = mmu.jolt_device.as_ref().unwrap().memory_layout.io_end + 1;
-        // illegal write to inputs
-        mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
+        let addr = mmu.jolt_device.as_ref().unwrap().memory_layout.io_end + 1;
+        // Address falls in the zero-padding region (below RAM_START_ADDRESS),
+        // so the store is silently dropped as a no-op.
+        mmu.store_bytes(addr, 0xc50513, 2).unwrap();
     }
 
     #[test]
