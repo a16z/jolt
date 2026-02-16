@@ -38,7 +38,6 @@
 pub mod ast_commitment_scheme;
 pub mod ast_json;
 pub mod codegen;
-pub mod keccak;
 pub mod mle_opening_accumulator;
 pub mod poseidon;
 pub mod symbolic_proof;
@@ -46,11 +45,9 @@ pub mod witness;
 
 pub use ast_json::Stage1AstJson;
 pub use codegen::{
-    generate_circuit, generate_circuit_from_bundle, generate_gnark_expr,
-    MemoizedCodeGen, sanitize_go_name,
+    generate_circuit_from_bundle, MemoizedCodeGen, sanitize_go_name,
 };
 pub use ast_commitment_scheme::AstCommitmentScheme;
-pub use keccak::KeccakMleTranscript;
 pub use mle_opening_accumulator::MleOpeningAccumulator;
 pub use poseidon::PoseidonAstTranscript;
 pub use symbolic_proof::{symbolize_proof, extract_witness_values, VarAllocator};

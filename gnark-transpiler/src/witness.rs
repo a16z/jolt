@@ -88,7 +88,6 @@ mod tests {
         };
 
         let json = witness.to_json().unwrap();
-        println!("Serialized witness:\n{}", json);
 
         let deserialized = Stage1Witness::from_json(&json).unwrap();
         assert_eq!(deserialized.tau, witness.tau);
