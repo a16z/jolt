@@ -13,6 +13,8 @@ use crate::zkvm::Serializable;
 #[cfg(feature = "allocative")]
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 #[cfg(feature = "allocative")]
+use crate::transcripts::Transcript;
+#[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
