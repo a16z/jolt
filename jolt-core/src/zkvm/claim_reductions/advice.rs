@@ -475,13 +475,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    opening_point.clone(),
+                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
                     c_mid,
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                     transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    opening_point.clone(),
+                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
                     c_mid,
                 ),
             }
@@ -622,12 +622,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    opening_point.clone(),
+                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                     transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    opening_point.clone(),
+                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
                 ),
             }
             let opening_point_le: OpeningPoint<LITTLE_ENDIAN, F> = opening_point.match_endianness();
