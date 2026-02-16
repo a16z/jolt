@@ -1,4 +1,3 @@
-#![allow(dead_code, unused)]
 //#![feature(iter_intersperse, generic_const_exprs, generic_const_items)]
 //#![allow(incomplete_features)] // Silence warnings for generic_const_exprs
 

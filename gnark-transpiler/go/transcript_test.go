@@ -1,51 +1,15 @@
 package jolt_verifier
 
 import (
-	"fmt"
 	"math/big"
 	"testing"
 
 	"jolt_verifier/poseidon"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/test"
 )
-
-// TestTranscriptInit verifies that the initial transcript state matches Rust
-// Rust: Transcript::new(b"Jolt") produces initial_state = hash([label_f, 0, 0])
-func TestTranscriptInit(t *testing.T) {
-	// "Jolt" = [0x4A, 0x6F, 0x6C, 0x74] in ASCII (big endian)
-	// As little-endian 32-byte integer: 0x746C6F4A = 1953263434
-	joltLabel := big.NewInt(1953263434)
-
-	// Expected initial state from Rust: hash([1953263434, 0, 0])
-	// We need to compute this with gnark's native arithmetic
-
-	fmt.Printf("Jolt label as Fr: %s\n", joltLabel.String())
-
-	// Create a test circuit that verifies the initial hash
-	type InitCircuit struct {
-		ExpectedHash frontend.Variable `gnark:",public"`
-	}
-
-	circuit := &InitCircuit{}
-
-	// Compute expected hash using concrete field arithmetic
-	var labelFr, zeroFr fr.Element
-	labelFr.SetBigInt(joltLabel)
-	zeroFr.SetZero()
-
-	// Use light-poseidon compatible hash
-	// We need to match: poseidon.Hash(api, 1953263434, 0, 0)
-
-	// For now, let's just verify the circuit compiles
-	_ = test.NewAssert(t)
-	fmt.Printf("InitCircuit would verify: Hash(%s, 0, 0)\n", joltLabel.String())
-	_ = circuit
-}
-
 
 // TransformCircuit tests AppendU64Transform
 type TransformCircuit struct {
@@ -160,9 +124,6 @@ func TestTruncate128Circuit(t *testing.T) {
 		be16[i] = le16[15-i]
 	}
 	expected := new(big.Int).SetBytes(be16)
-
-	fmt.Printf("Input: %s\n", input.String())
-	fmt.Printf("Expected truncate128: %s\n", expected.String())
 
 	circuit := &Truncate128Circuit{}
 	assignment := &Truncate128Circuit{

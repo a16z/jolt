@@ -335,13 +335,6 @@ func truncate128Hint(_ *big.Int, inputs []*big.Int, outputs []*big.Int) error {
 	return nil
 }
 
-// twoPow192 is 2^192 as a big.Int constant
-// 2^192 = 6277101735386680763835789423207666416102355444464034512896
-var twoPow192 = func() *big.Int {
-	result := new(big.Int).Lsh(big.NewInt(1), 192)
-	return result
-}()
-
 // AppendU64Transform computes the field element for append_u64(x).
 //
 // PoseidonTranscript::append_u64 does:
@@ -392,11 +385,4 @@ func appendU64TransformHint(_ *big.Int, inputs []*big.Int, outputs []*big.Int) e
 	}
 	outputs[0] = new(big.Int).SetBytes(be)
 	return nil
-}
-
-// MulTwoPow192 multiplies a field element by 2^192.
-// DEPRECATED: Use AppendU64Transform for append_u64 operations.
-// This function is kept for backwards compatibility but is incorrect for append_u64.
-func MulTwoPow192(api frontend.API, x frontend.Variable) frontend.Variable {
-	return api.Mul(x, twoPow192)
 }

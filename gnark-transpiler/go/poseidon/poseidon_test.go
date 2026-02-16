@@ -1,7 +1,6 @@
 package poseidon
 
 import (
-	"fmt"
 	"math/big"
 	"testing"
 
@@ -62,22 +61,13 @@ func TestPoseidonHash123(t *testing.T) {
 	assert.ProverSucceeded(&circuit, assignment, test.WithCurves(ecc.BN254))
 }
 
-func TestPoseidonManual(t *testing.T) {
-	// Print the first few constants to verify they match
-	fmt.Println("=== Go Poseidon Constants ===")
-	fmt.Println("cConstants[0] =", cConstants[0].String())
-	fmt.Println("cConstants[1] =", cConstants[1].String())
-	fmt.Println("cConstants[2] =", cConstants[2].String())
-	fmt.Println("cConstants[3] =", cConstants[3].String())
-
-	// Expected from light-poseidon circom t=4:
+func TestPoseidonConstants(t *testing.T) {
+	// Verify first constant matches light-poseidon circom t=4
 	// ark[0] = 11633431549750490989983886834189948010834808234699737327785600195936805266405
 	expected := new(big.Int)
 	expected.SetString("11633431549750490989983886834189948010834808234699737327785600195936805266405", 10)
 
 	if cConstants[0].Cmp(expected) != 0 {
 		t.Errorf("cConstants[0] mismatch!\nGot:      %s\nExpected: %s", cConstants[0].String(), expected.String())
-	} else {
-		fmt.Println("cConstants[0] matches light-poseidon!")
 	}
 }
