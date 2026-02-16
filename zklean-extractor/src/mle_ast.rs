@@ -104,13 +104,6 @@ pub fn enable_constraint_mode() {
     });
 }
 
-/// Disable constraint accumulation mode.
-pub fn disable_constraint_mode() {
-    CONSTRAINT_MODE.with(|cell| {
-        *cell.borrow_mut() = false;
-    });
-}
-
 /// Check if constraint mode is enabled.
 pub fn is_constraint_mode() -> bool {
     CONSTRAINT_MODE.with(|cell| *cell.borrow())
@@ -119,11 +112,6 @@ pub fn is_constraint_mode() -> bool {
 /// Take all accumulated constraints, clearing the list.
 pub fn take_constraints() -> Vec<MleAst> {
     SYMBOLIC_CONSTRAINTS.with(|cell| cell.borrow_mut().drain(..).collect())
-}
-
-/// Get the number of accumulated constraints.
-pub fn num_constraints() -> usize {
-    SYMBOLIC_CONSTRAINTS.with(|cell| cell.borrow().len())
 }
 
 /// Add a constraint that should equal zero.
@@ -362,16 +350,6 @@ impl MleAst {
         Self {
             root,
             reg_name: state.reg_name.or(n_rounds.reg_name).or(data.reg_name),
-        }
-    }
-
-    /// Keccak256 hash of a single field element.
-    pub fn keccak256(input: &Self) -> Self {
-        let edge = edge_for_root(input.root);
-        let root = insert_node(Node::Keccak256(edge));
-        Self {
-            root,
-            reg_name: input.reg_name,
         }
     }
 
@@ -840,120 +818,6 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
     let mut nodes = Vec::new();
     let new_node = aux_node(&mut bindings, &mut nodes, node);
     (nodes, new_node)
-}
-
-/// Incremental common subexpression elimination that accepts external state.
-///
-/// This allows CSE to be applied across multiple ASTs while sharing the same
-/// bindings and nodes vectors. This is crucial for global CSE where multiple
-/// constraints share common subexpressions (e.g., Poseidon hash chains).
-///
-/// # Arguments
-/// * `node` - The root node to process
-/// * `bindings` - Shared HashMap tracking seen subexpressions (mutated in place)
-/// * `nodes` - Shared Vec of hoisted nodes (mutated in place)
-///
-/// # Returns
-/// The transformed root node with common subexpressions replaced by NamedVar references.
-/// The `bindings` and `nodes` are updated in place with any new hoisted subexpressions.
-pub fn common_subexpression_elimination_incremental(
-    node: Node,
-    bindings: &mut Bindings,
-    nodes: &mut Vec<Node>,
-) -> Node {
-    /// Assumption: the sub-nodes have already been CSE-d
-    fn register(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
-        let node_hash = compute_hash(&node);
-        if let Some(v) = bindings.get(&node_hash) {
-            if let Some((_, i)) = v.iter().find(|(n, _)| n == &node) {
-                return Node::Atom(Atom::NamedVar(*i));
-            }
-        }
-        if node_depth(node) < CSE_DEPTH_THRESHOLD {
-            return node;
-        }
-        // Registering a new node
-        let index = nodes.len();
-        bindings
-            .entry(node_hash)
-            .and_modify(|v| {
-                v.push((node, index));
-            })
-            .or_insert(vec![(node, index)]);
-        nodes.push(node);
-        Node::Atom(Atom::NamedVar(index))
-    }
-
-    fn aux_node(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
-        match node {
-            Node::Atom(_) => node,
-            Node::Neg(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::Neg(cse_e))
-            }
-            Node::Inv(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::Inv(cse_e))
-            }
-            Node::Keccak256(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::Keccak256(cse_e))
-            }
-            Node::Add(e1, e2) => {
-                let cse_e1 = aux_edge(bindings, nodes, e1);
-                let cse_e2 = aux_edge(bindings, nodes, e2);
-                register(bindings, nodes, Node::Add(cse_e1, cse_e2))
-            }
-            Node::Mul(e1, e2) => {
-                let cse_e1 = aux_edge(bindings, nodes, e1);
-                let cse_e2 = aux_edge(bindings, nodes, e2);
-                register(bindings, nodes, Node::Mul(cse_e1, cse_e2))
-            }
-            Node::Sub(e1, e2) => {
-                let cse_e1 = aux_edge(bindings, nodes, e1);
-                let cse_e2 = aux_edge(bindings, nodes, e2);
-                register(bindings, nodes, Node::Sub(cse_e1, cse_e2))
-            }
-            Node::Div(e1, e2) => {
-                let cse_e1 = aux_edge(bindings, nodes, e1);
-                let cse_e2 = aux_edge(bindings, nodes, e2);
-                register(bindings, nodes, Node::Div(cse_e1, cse_e2))
-            }
-            Node::Poseidon(e1, e2, e3) => {
-                let cse_e1 = aux_edge(bindings, nodes, e1);
-                let cse_e2 = aux_edge(bindings, nodes, e2);
-                let cse_e3 = aux_edge(bindings, nodes, e3);
-                register(bindings, nodes, Node::Poseidon(cse_e1, cse_e2, cse_e3))
-            }
-            Node::ByteReverse(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::ByteReverse(cse_e))
-            }
-            Node::Truncate128Reverse(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::Truncate128Reverse(cse_e))
-            }
-            Node::Truncate128(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::Truncate128(cse_e))
-            }
-            Node::MulTwoPow192(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::MulTwoPow192(cse_e))
-            }
-        }
-    }
-
-    fn aux_edge(bindings: &mut Bindings, nodes: &mut Vec<Node>, edge: Edge) -> Edge {
-        match edge {
-            Edge::Atom(_) => edge,
-            Edge::NodeRef(node) => {
-                Edge::NodeRef(insert_node(aux_node(bindings, nodes, get_node(node))))
-            }
-        }
-    }
-
-    aux_node(bindings, nodes, node)
 }
 
 fn fmt_node(
@@ -1919,30 +1783,12 @@ impl AstBundle {
         serde_json::to_string(self)
     }
 
-    /// Serialize to pretty-printed JSON string.
-    pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
-
-    /// Deserialize from JSON string.
-    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
-    }
-
     /// Write to a JSON file.
     pub fn write_json(&self, path: &std::path::Path) -> std::io::Result<()> {
-        let json = self.to_json_pretty().map_err(|e| {
+        let json = serde_json::to_string_pretty(self).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
         })?;
         std::fs::write(path, json)
-    }
-
-    /// Read from a JSON file.
-    pub fn read_json(path: &std::path::Path) -> std::io::Result<Self> {
-        let json = std::fs::read_to_string(path)?;
-        Self::from_json(&json).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })
     }
 }
 

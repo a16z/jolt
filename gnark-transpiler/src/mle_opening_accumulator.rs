@@ -135,7 +135,7 @@ impl MleOpeningAccumulator {
     }
 
     /// Update the opening point for a virtual polynomial (internal helper).
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn set_virtual_point(
         &mut self,
         polynomial: VirtualPolynomial,
@@ -148,25 +148,6 @@ impl MleOpeningAccumulator {
         } else {
             panic!(
                 "MleOpeningAccumulator::set_virtual_point: no claim found for {:?} {:?}",
-                polynomial, sumcheck
-            );
-        }
-    }
-
-    /// Update the opening point for a committed polynomial (internal helper).
-    #[allow(dead_code)]
-    fn set_committed_point(
-        &mut self,
-        polynomial: CommittedPolynomial,
-        sumcheck: SumcheckId,
-        point: Vec<MleAst>,
-    ) {
-        let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
-        if let Some((stored_point, _)) = self.openings.get_mut(&key) {
-            *stored_point = point;
-        } else {
-            panic!(
-                "MleOpeningAccumulator::set_committed_point: no claim found for {:?} {:?}",
                 polynomial, sumcheck
             );
         }
