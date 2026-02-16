@@ -34,7 +34,8 @@ use crate::zkvm::{
         hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
-        read_write_checking::RamReadWriteCheckingVerifier, val_fused::RamValFusedSumcheckVerifier,
+        read_write_checking::RamReadWriteCheckingVerifier,
+        val_check::RamValCheckSumcheckVerifier,
         verifier_accumulate_advice,
     },
     registers::{
@@ -271,11 +272,18 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let ram_raf_evaluation = RamRafEvaluationSumcheckVerifier::new(
             &self.program_io.memory_layout,
             &self.one_hot_params,
+            self.proof.trace_length,
+            &self.proof.rw_config,
             &self.opening_accumulator,
         );
 
-        let ram_output_check =
-            OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
+        let ram_output_check = OutputSumcheckVerifier::new(
+            self.proof.ram_K,
+            &self.program_io,
+            &mut self.transcript,
+            self.proof.trace_length,
+            &self.proof.rw_config,
+        );
 
         let _r_stage2 = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
@@ -337,24 +345,22 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
             &mut self.transcript,
-            self.proof
-                .rw_config
-                .needs_single_advice_opening(self.proof.trace_length.log_2()),
         );
-        self.transcript.append_message(b"ram_val_fused_gamma");
-        let ram_val_fused_gamma: F = self.transcript.challenge_scalar::<F>();
+        // Domain-separate the batching challenge.
+        self.transcript.append_bytes(b"ram_val_check_gamma", &[]);
+        let ram_val_check_gamma: F = self.transcript.challenge_scalar::<F>();
         let initial_ram_state = crate::zkvm::ram::gen_ram_initial_memory_state::<F>(
             self.proof.ram_K,
             &self.preprocessing.shared.ram,
             &self.program_io,
         );
-        let ram_val_fused = RamValFusedSumcheckVerifier::new(
+        let ram_val_check = RamValCheckSumcheckVerifier::new(
             &initial_ram_state,
             &self.program_io,
             self.proof.trace_length,
             self.proof.ram_K,
             &self.proof.rw_config,
-            ram_val_fused_gamma,
+            ram_val_check_gamma,
             &self.opening_accumulator,
         );
 
@@ -362,7 +368,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &self.proof.stage4_sumcheck_proof,
             vec![
                 &registers_read_write_checking as &dyn SumcheckInstanceVerifier<F, ProofTranscript>,
-                &ram_val_fused,
+                &ram_val_check,
             ],
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -449,10 +455,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 &self.program_io.memory_layout,
                 self.proof.trace_length,
                 &self.opening_accumulator,
-                &mut self.transcript,
-                self.proof
-                    .rw_config
-                    .needs_single_advice_opening(self.proof.trace_length.log_2()),
             ));
         }
         if self.proof.untrusted_advice_commitment.is_some() {
@@ -461,10 +463,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 &self.program_io.memory_layout,
                 self.proof.trace_length,
                 &self.opening_accumulator,
-                &mut self.transcript,
-                self.proof
-                    .rw_config
-                    .needs_single_advice_opening(self.proof.trace_length.log_2()),
             ));
         }
 

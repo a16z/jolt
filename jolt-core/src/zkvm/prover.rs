@@ -71,7 +71,7 @@ use crate::{
             ra_virtual::RamRaVirtualParams,
             raf_evaluation::RafEvaluationSumcheckParams,
             read_write_checking::RamReadWriteCheckingParams,
-            val_fused::{RamValFusedSumcheckParams, RamValFusedSumcheckProver},
+            val_check::{RamValCheckSumcheckParams, RamValCheckSumcheckProver},
         },
         registers::{
             read_write_checking::RegistersReadWriteCheckingParams,
@@ -780,11 +780,15 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.program_io.memory_layout,
             &self.one_hot_params,
             &self.opening_accumulator,
+            self.trace.len(),
+            &self.rw_config,
         );
         let ram_output_check_params = OutputSumcheckParams::new(
             self.one_hot_params.ram_k,
             &self.program_io,
             &mut self.transcript,
+            self.trace.len(),
+            &self.rw_config,
         );
         let ram_read_write_checking = RamReadWriteCheckingProver::initialize(
             ram_read_write_checking_params,
@@ -939,17 +943,16 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.one_hot_params,
             &mut self.opening_accumulator,
             &mut self.transcript,
-            self.rw_config
-                .needs_single_advice_opening(self.trace.len().log_2()),
         );
-        self.transcript.append_message(b"ram_val_fused_gamma");
-        let ram_val_fused_gamma: F = self.transcript.challenge_scalar::<F>();
-        let ram_val_fused_params = RamValFusedSumcheckParams::new_from_prover(
+        // Domain-separate the batching challenge.
+        self.transcript.append_bytes(b"ram_val_check_gamma", &[]);
+        let ram_val_check_gamma: F = self.transcript.challenge_scalar::<F>();
+        let ram_val_check_params = RamValCheckSumcheckParams::new_from_prover(
             &self.one_hot_params,
             &self.opening_accumulator,
             &self.initial_ram_state,
             self.trace.len(),
-            ram_val_fused_gamma,
+            ram_val_check_gamma,
         );
 
         let registers_read_write_checking = RegistersReadWriteCheckingProver::initialize(
@@ -958,8 +961,8 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
         );
-        let ram_val_fused = RamValFusedSumcheckProver::initialize(
-            ram_val_fused_params,
+        let ram_val_check = RamValCheckSumcheckProver::initialize(
+            ram_val_check_params,
             &self.trace,
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
@@ -971,12 +974,12 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 "RegistersReadWriteCheckingProver",
                 &registers_read_write_checking,
             );
-            print_data_structure_heap_usage("RamValFusedSumcheckProver", &ram_val_fused);
+            print_data_structure_heap_usage("RamValCheckSumcheckProver", &ram_val_check);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(registers_read_write_checking),
-            Box::new(ram_val_fused),
+            Box::new(ram_val_check),
         ];
 
         #[cfg(feature = "allocative")]
@@ -1108,9 +1111,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &self.program_io.memory_layout,
                 self.trace.len(),
                 &self.opening_accumulator,
-                &mut self.transcript,
-                self.rw_config
-                    .needs_single_advice_opening(self.trace.len().log_2()),
             );
             // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
             // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.
@@ -1133,9 +1133,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
                 &self.program_io.memory_layout,
                 self.trace.len(),
                 &self.opening_accumulator,
-                &mut self.transcript,
-                self.rw_config
-                    .needs_single_advice_opening(self.trace.len().log_2()),
             );
             // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
             // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.

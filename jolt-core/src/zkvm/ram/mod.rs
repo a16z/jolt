@@ -5,41 +5,44 @@
 //!
 //! # Important: Sumcheck Stage Constraints
 //!
-//! The RAM RA reduction sumcheck (`ra_reduction.rs`) consolidates four RA claims
-//! into a single claim. For this to work correctly, certain challenge coincidences
-//! must hold. These coincidences are guaranteed by the following constraints on
-//! how sumchecks are batched:
+//! The RAM RA reduction sumcheck (`ra_reduction.rs`) consolidates multiple RA claims
+//! into a single claim. For this to work correctly, we **purposefully align** the
+//! global sumcheck rounds so that all RAM protocols derive the **same address
+//! challenge vector** `r_address`, independent of `ReadWriteConfig`.
 //!
 //! ## Required Coincidences
 //!
-//! The four RA claims use these opening points:
+//! After Stage 2 address-round alignment, there is exactly **one** RAM address point:
+//! `r_address`.
+//!
+//! The RA claims use these opening points:
 //!
 //! | Sumcheck | Opening Point | Stage |
 //! |----------|---------------|-------|
-//! | RamReadWriteChecking | `ra(r_address_rw, r_cycle_rw)` | Stage 2 |
-//! | RamRafEvaluation | `ra(r_address_raf, r_cycle_raf)` | Stage 2 |
-//! | RamValEvaluation | `ra(r_address_rw, r_cycle_val)` | Stage 4 |
-//! | RamValFinalEvaluation | `ra(r_address_raf, r_cycle_val)` | Stage 4 |
-//!
-//! The following equalities must hold:
-//! - `r_address_raf = r_address_val_final`
-//! - `r_address_val_eval = r_address_rw`
-//! - `r_cycle_val_eval = r_cycle_val_final`
+//! | RamReadWriteChecking | `ra(r_address, r_cycle_rw)` | Stage 2 |
+//! | RamRafEvaluation | `ra(r_address, r_cycle_raf)` | Stage 2 |
+//! | RamValCheck | `ra(r_address, r_cycle_val)` | Stage 4 |
+//! where the cycle points `r_cycle_rw`, `r_cycle_raf`, and `r_cycle_val` are generally different,
+//! but the **address** point is shared.
 //!
 //! ## Constraints to Ensure Coincidences
 //!
 //! **These constraints MUST be maintained when modifying the prover/verifier:**
 //!
-//! 1. **OutputCheck and RafEvaluation** MUST be in the same batched sumcheck (currently Stage 2),
-//!    and both must use challenges `[0 .. log_K]` for `r_address`.
+//! 1. **Stage 2 alignment**:
+//!    - `RamReadWriteChecking` binds address variables in a config-dependent schedule.
+//!    - `RamRafEvaluation` and `OutputCheck` MUST be padded/aligned so that the challenges they
+//!      interpret as `r_address` come from the **exact same global rounds** where RW-check binds
+//!      address variables (implemented via inflated `num_rounds`, custom `round_offset`, and
+//!      internal dummy rounds).
 //!
-//! 2. **Stage 4** MUST cache both `RamValEvaluation` and `RamValFinalEvaluation` openings using the
-//!    same `r_cycle_val` challenge vector (length = log_T). This is currently done by the fused
-//!    RAM value sumcheck (`val_fused.rs`).
+//! 2. **Stage 4** MUST cache `RamValCheck` openings using the same `r_cycle_val` challenge vector
+//!    (length = log_T). This is currently done by the batched RAM value sumcheck (`val_check.rs`).
 //!
-//! 3. **ValEvaluation** MUST read `r_address` from RamReadWriteChecking's opening.
+//! 3. **RamValCheck** MUST derive `r_address` from `RamReadWriteChecking`'s `RamVal` opening, and
+//!    (debug-)assert it matches the `r_address` implied by `OutputCheck`'s `RamValFinal` opening.
 //!
-//! 4. **ValFinalEvaluation** MUST read `r_address` from OutputCheck's opening.
+//! 4. **RA reduction** MUST treat `r_address` as a single shared point across Stage 2 and Stage 4.
 //!
 //! Violating these constraints will cause the RA reduction sumcheck to fail with
 //! mismatched challenge vectors.
@@ -77,7 +80,7 @@ pub mod output_check;
 pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod read_write_checking;
-pub mod val_fused;
+pub mod val_check;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {
@@ -170,12 +173,8 @@ pub fn populate_memory_states(
 
 /// Accumulates advice polynomials (trusted and untrusted) into the prover's accumulator.
 ///
-/// When `single_opening` is true (all cycle vars bound in phase 1):
-/// - Only opens at `r_address_rw` (the two points are identical)
-///
-/// Otherwise opens at TWO points:
-/// 1. `r_address_rw` from `RamVal`/`RamReadWriteChecking` - used for `SumcheckId::RamValEvaluation`
-/// 2. `r_address_raf` from `RamValFinal`/`RamOutputCheck` - used for `SumcheckId::RamValFinalEvaluation`
+/// After Stage 2 address-round alignment, Stage 4 uses a *single* RAM address opening point for
+/// advice polynomials. We cache this opening under `SumcheckId::RamValCheck`.
 pub fn prover_accumulate_advice<F: JoltField>(
     untrusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
     trusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
@@ -183,11 +182,10 @@ pub fn prover_accumulate_advice<F: JoltField>(
     one_hot_params: &OneHotParams,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
-    single_opening: bool,
 ) {
     let total_variables = one_hot_params.ram_k.log_2();
 
-    // Get r_address_rw from RamVal/RamReadWriteChecking (used by ValEvaluation)
+    // Get r_address from RamVal/RamReadWriteChecking (unique Stage 4 RAM address point).
     let (r_rw, _) = opening_accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RamVal,
         SumcheckId::RamReadWriteChecking,
@@ -207,72 +205,36 @@ pub fn prover_accumulate_advice<F: JoltField>(
     if let Some(ref untrusted_advice_poly) = untrusted_advice_polynomial {
         let max_size = memory_layout.max_untrusted_advice_size as usize;
 
-        // Opening at r_address_rw (for RamValEvaluation)
+        // Single opening at r_address.
         let (point_rw, eval_rw) =
             compute_advice_opening(untrusted_advice_poly, &r_address_rw, max_size);
         opening_accumulator.append_untrusted_advice(
             transcript,
-            SumcheckId::RamValEvaluation,
+            SumcheckId::RamValCheck,
             point_rw,
             eval_rw,
         );
-
-        // Opening at r_address_raf (for RamValFinalEvaluation) - only if points differ
-        if !single_opening {
-            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            );
-            let (point_raf, eval_raf) =
-                compute_advice_opening(untrusted_advice_poly, &r_raf, max_size);
-            opening_accumulator.append_untrusted_advice(
-                transcript,
-                SumcheckId::RamValFinalEvaluation,
-                point_raf,
-                eval_raf,
-            );
-        }
     }
 
     if let Some(ref trusted_advice_poly) = trusted_advice_polynomial {
         let max_size = memory_layout.max_trusted_advice_size as usize;
 
-        // Opening at r_address_rw (for RamValEvaluation)
+        // Single opening at r_address.
         let (point_rw, eval_rw) =
             compute_advice_opening(trusted_advice_poly, &r_address_rw, max_size);
         opening_accumulator.append_trusted_advice(
             transcript,
-            SumcheckId::RamValEvaluation,
+            SumcheckId::RamValCheck,
             point_rw,
             eval_rw,
         );
-
-        // Opening at r_address_raf (for RamValFinalEvaluation) - only if points differ
-        if !single_opening {
-            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            );
-            let (point_raf, eval_raf) =
-                compute_advice_opening(trusted_advice_poly, &r_raf, max_size);
-            opening_accumulator.append_trusted_advice(
-                transcript,
-                SumcheckId::RamValFinalEvaluation,
-                point_raf,
-                eval_raf,
-            );
-        }
     }
 }
 
 /// Accumulates advice commitments into the verifier's accumulator.
 ///
-/// When `single_opening` is true (all cycle vars bound in phase 1):
-/// - Only opens at `r_address_rw` (the two points are identical)
-///
-/// Otherwise opens at TWO points:
-/// 1. `r_address_rw` from `RamVal`/`RamReadWriteChecking` - used by `ValEvaluationSumcheck`
-/// 2. `r_address_raf` from `RamValFinal`/`RamOutputCheck` - used by `ValFinalSumcheck`
+/// After Stage 2 address-round alignment, Stage 4 uses a *single* RAM address opening point for
+/// advice commitments. We cache this opening under `SumcheckId::RamValCheck`.
 pub fn verifier_accumulate_advice<F: JoltField>(
     ram_K: usize,
     program_io: &JoltDevice,
@@ -280,11 +242,10 @@ pub fn verifier_accumulate_advice<F: JoltField>(
     has_trusted_advice_commitment: bool,
     opening_accumulator: &mut VerifierOpeningAccumulator<F>,
     transcript: &mut impl Transcript,
-    single_opening: bool,
 ) {
     let total_vars = ram_K.log_2();
 
-    // Get r_address_rw from RamVal/RamReadWriteChecking (used by ValEvaluation)
+    // Get r_address from RamVal/RamReadWriteChecking (unique Stage 4 RAM address point).
     let (r_rw, _) = opening_accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RamVal,
         SumcheckId::RamReadWriteChecking,
@@ -301,53 +262,25 @@ pub fn verifier_accumulate_advice<F: JoltField>(
     if has_untrusted_advice_commitment {
         let max_size = program_io.memory_layout.max_untrusted_advice_size as usize;
 
-        // Opening at r_address_rw (for ValEvaluation)
+        // Single opening at r_address.
         let point_rw = compute_advice_point(&r_address_rw, max_size);
         opening_accumulator.append_untrusted_advice(
             transcript,
-            SumcheckId::RamValEvaluation,
+            SumcheckId::RamValCheck,
             point_rw,
         );
-
-        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
-        if !single_opening {
-            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            );
-            let point_raf = compute_advice_point(&r_raf, max_size);
-            opening_accumulator.append_untrusted_advice(
-                transcript,
-                SumcheckId::RamValFinalEvaluation,
-                point_raf,
-            );
-        }
     }
 
     if has_trusted_advice_commitment {
         let max_size = program_io.memory_layout.max_trusted_advice_size as usize;
 
-        // Opening at r_address_rw (for ValEvaluation)
+        // Single opening at r_address.
         let point_rw = compute_advice_point(&r_address_rw, max_size);
         opening_accumulator.append_trusted_advice(
             transcript,
-            SumcheckId::RamValEvaluation,
+            SumcheckId::RamValCheck,
             point_rw,
         );
-
-        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
-        if !single_opening {
-            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            );
-            let point_raf = compute_advice_point(&r_raf, max_size);
-            opening_accumulator.append_trusted_advice(
-                transcript,
-                SumcheckId::RamValFinalEvaluation,
-                point_raf,
-            );
-        }
     }
 }
 
