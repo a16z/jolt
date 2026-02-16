@@ -8,8 +8,9 @@ import init, {
     WasmVerifier,
 } from '../pkg/jolt_wasm_sha2_prover.js';
 
-let prover = null;
-let verifier = null;
+let wasmExports = null;
+const provers = {};
+const verifiers = {};
 
 self.onmessage = async (e) => {
     const { type, data } = e.data;
@@ -17,45 +18,77 @@ self.onmessage = async (e) => {
     try {
         switch (type) {
             case 'init': {
-                await init();
+                wasmExports = await init();
                 await initThreadPool(data.numThreads);
                 init_tracing();
                 init_inlines();
-
-                prover = new WasmProver(
-                    new Uint8Array(data.proverPreprocessing),
-                    new Uint8Array(data.elfBytes)
-                );
-
-                verifier = new WasmVerifier(new Uint8Array(data.verifierPreprocessing));
-
                 self.postMessage({ type: 'init-done' });
                 break;
             }
 
+            case 'load-program': {
+                const name = data.program;
+                provers[name] = new WasmProver(
+                    new Uint8Array(data.proverPreprocessing),
+                    new Uint8Array(data.elfBytes)
+                );
+                verifiers[name] = new WasmVerifier(
+                    new Uint8Array(data.verifierPreprocessing)
+                );
+                self.postMessage({ type: 'program-loaded', program: name });
+                break;
+            }
+
             case 'prove': {
+                const prover = provers[data.program];
                 const start = performance.now();
-                const result = prover.prove_sha2(new Uint8Array(data.input));
+                let result;
+
+                switch (data.program) {
+                    case 'sha2':
+                        result = prover.prove_sha2(new Uint8Array(data.input));
+                        break;
+                    case 'ecdsa':
+                        result = prover.prove_ecdsa(
+                            BigUint64Array.from(data.z.map(BigInt)),
+                            BigUint64Array.from(data.r.map(BigInt)),
+                            BigUint64Array.from(data.s.map(BigInt)),
+                            BigUint64Array.from(data.q.map(BigInt)),
+                        );
+                        break;
+                    case 'keccak':
+                        result = prover.prove_keccak_chain(
+                            new Uint8Array(data.input),
+                            data.numIters
+                        );
+                        break;
+                }
+
                 const elapsed = performance.now() - start;
+                const wasmMemory = wasmExports.memory.buffer.byteLength;
 
                 self.postMessage({
                     type: 'prove-done',
+                    program: data.program,
                     proof: result.proof,
                     proofSize: result.proof_size,
                     compressedProofSize: result.compressed_proof_size,
                     programIo: result.program_io,
+                    wasmMemory,
                     elapsed,
                 });
                 break;
             }
 
             case 'verify': {
+                const verifier = verifiers[data.program];
                 const start = performance.now();
                 const valid = verifier.verify(data.proof, data.programIo);
                 const elapsed = performance.now() - start;
 
                 self.postMessage({
                     type: 'verify-done',
+                    program: data.program,
                     valid,
                     elapsed,
                 });

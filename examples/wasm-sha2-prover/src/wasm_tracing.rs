@@ -143,7 +143,7 @@ impl<'a> tracing::field::Visit for JsonVisitor<'a> {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         self.0.insert(
             field.name().to_string(),
-            serde_json::Value::String(format!("{:?}", value)),
+            serde_json::Value::String(format!("{value:?}")),
         );
     }
 

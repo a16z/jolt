@@ -40,7 +40,10 @@ pub fn clear_trace() {
 
 #[wasm_bindgen]
 pub fn init_inlines() -> Result<(), JsValue> {
-    jolt_inlines_sha2::init_inlines().map_err(|e| JsValue::from_str(&e))
+    jolt_inlines_sha2::init_inlines().map_err(|e| JsValue::from_str(&e))?;
+    jolt_inlines_secp256k1::init_inlines().map_err(|e| JsValue::from_str(&e))?;
+    jolt_inlines_keccak256::init_inlines().map_err(|e| JsValue::from_str(&e))?;
+    Ok(())
 }
 
 #[wasm_bindgen]
@@ -81,35 +84,25 @@ impl WasmProver {
         })
     }
 
-    pub fn prove_sha2(&self, input: &[u8]) -> Result<ProveResult, JsValue> {
+    fn prove_with_inputs(&self, inputs: &[u8]) -> Result<ProveResult, JsValue> {
         use jolt_core::zkvm::prover::JoltCpuProver;
 
-        let inputs = postcard::to_allocvec(&input)
-            .map_err(|e| JsValue::from_str(&format!("Input serialization error: {e}")))?;
-
+        let layout = &self.preprocessing.shared.memory_layout;
         let memory_config = MemoryConfig {
-            max_untrusted_advice_size: self
-                .preprocessing
-                .shared
-                .memory_layout
-                .max_untrusted_advice_size,
-            max_trusted_advice_size: self
-                .preprocessing
-                .shared
-                .memory_layout
-                .max_trusted_advice_size,
-            max_input_size: self.preprocessing.shared.memory_layout.max_input_size,
-            max_output_size: self.preprocessing.shared.memory_layout.max_output_size,
-            stack_size: self.preprocessing.shared.memory_layout.stack_size,
-            heap_size: self.preprocessing.shared.memory_layout.heap_size,
-            program_size: Some(self.preprocessing.shared.memory_layout.program_size),
+            max_untrusted_advice_size: layout.max_untrusted_advice_size,
+            max_trusted_advice_size: layout.max_trusted_advice_size,
+            max_input_size: layout.max_input_size,
+            max_output_size: layout.max_output_size,
+            stack_size: layout.stack_size,
+            heap_size: layout.heap_size,
+            program_size: Some(layout.program_size),
         };
 
         let (lazy_trace, trace, final_memory, program_io, _advice_tape) =
             jolt_core::guest::program::trace(
                 &self.elf_bytes,
                 None,
-                &inputs,
+                inputs,
                 &[],
                 &[],
                 &memory_config,
@@ -143,7 +136,6 @@ impl WasmProver {
             .commitments
             .serialized_size(ark_serialize::Compress::No);
 
-        // Estimate with full Dory torus compression (~3x on curve points)
         let compressed_proof_size = proof_size - stage8_compressed + (stage8_uncompressed / 3)
             - commitments_compressed
             + (commitments_uncompressed / 3);
@@ -162,6 +154,69 @@ impl WasmProver {
             compressed_proof_size,
             program_io_bytes,
         })
+    }
+
+    pub fn prove_sha2(&self, input: &[u8]) -> Result<ProveResult, JsValue> {
+        let inputs = postcard::to_allocvec(&input)
+            .map_err(|e| JsValue::from_str(&format!("Input serialization error: {e}")))?;
+        self.prove_with_inputs(&inputs)
+    }
+
+    pub fn prove_ecdsa(
+        &self,
+        z: &[u64],
+        r: &[u64],
+        s: &[u64],
+        q: &[u64],
+    ) -> Result<ProveResult, JsValue> {
+        let z: [u64; 4] = z
+            .try_into()
+            .map_err(|_| JsValue::from_str("z must be 4 u64s"))?;
+        let r: [u64; 4] = r
+            .try_into()
+            .map_err(|_| JsValue::from_str("r must be 4 u64s"))?;
+        let s: [u64; 4] = s
+            .try_into()
+            .map_err(|_| JsValue::from_str("s must be 4 u64s"))?;
+        let q: [u64; 8] = q
+            .try_into()
+            .map_err(|_| JsValue::from_str("q must be 8 u64s"))?;
+
+        let mut inputs = Vec::new();
+        inputs.extend_from_slice(
+            &postcard::to_allocvec(&z)
+                .map_err(|e| JsValue::from_str(&format!("z serialization error: {e}")))?,
+        );
+        inputs.extend_from_slice(
+            &postcard::to_allocvec(&r)
+                .map_err(|e| JsValue::from_str(&format!("r serialization error: {e}")))?,
+        );
+        inputs.extend_from_slice(
+            &postcard::to_allocvec(&s)
+                .map_err(|e| JsValue::from_str(&format!("s serialization error: {e}")))?,
+        );
+        inputs.extend_from_slice(
+            &postcard::to_allocvec(&q)
+                .map_err(|e| JsValue::from_str(&format!("q serialization error: {e}")))?,
+        );
+        self.prove_with_inputs(&inputs)
+    }
+
+    pub fn prove_keccak_chain(&self, input: &[u8], num_iters: u32) -> Result<ProveResult, JsValue> {
+        let input: [u8; 32] = input
+            .try_into()
+            .map_err(|_| JsValue::from_str("input must be 32 bytes"))?;
+
+        let mut inputs = Vec::new();
+        inputs.extend_from_slice(
+            &postcard::to_allocvec(&input)
+                .map_err(|e| JsValue::from_str(&format!("input serialization error: {e}")))?,
+        );
+        inputs.extend_from_slice(
+            &postcard::to_allocvec(&num_iters)
+                .map_err(|e| JsValue::from_str(&format!("num_iters serialization error: {e}")))?,
+        );
+        self.prove_with_inputs(&inputs)
     }
 }
 

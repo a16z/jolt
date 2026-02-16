@@ -21,6 +21,8 @@ default = []
 native = [
     "jolt-core/host",
     "jolt-inlines-sha2/host",
+    "jolt-inlines-secp256k1/host",
+    "jolt-inlines-keccak256/host",
 ]
 
 [dependencies]
@@ -45,12 +47,18 @@ postcard = { workspace = true, features = ["use-std"] }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 jolt-core = { workspace = true, features = ["wasm-prover"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 jolt-core = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-sdk = { workspace = true, features = ["host"] }
 sha2-guest = { path = "../sha2-ex/guest" }
+secp256k1-ecdsa-verify-guest = { path = "../secp256k1-ecdsa-verify/guest" }
+sha3-chain-guest = { path = "../sha3-chain/guest" }
 
 [profile.release]
 opt-level = 3

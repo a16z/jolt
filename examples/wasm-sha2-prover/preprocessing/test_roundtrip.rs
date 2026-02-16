@@ -12,8 +12,9 @@ type ProverPrep = JoltProverPreprocessing<ark_bn254::Fr, DoryCommitmentScheme>;
 type VerifierPrep = JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme>;
 
 fn test_prover_roundtrip(bytes: &[u8]) -> Result<(), String> {
+    let total = bytes.len();
     println!("\nTesting Prover Preprocessing Roundtrip");
-    println!("Total bytes: {}", bytes.len());
+    println!("Total bytes: {total}");
 
     let mut cursor = Cursor::new(bytes);
 
@@ -25,7 +26,7 @@ fn test_prover_roundtrip(bytes: &[u8]) -> Result<(), String> {
     )
     .map_err(|e| format!("ProverSetup failed: {e}"))?;
     let pos_after_generators = cursor.position() as usize;
-    println!("  OK - consumed {} bytes", pos_after_generators);
+    println!("  OK - consumed {pos_after_generators} bytes");
 
     println!("Deserializing JoltSharedPreprocessing with Compress::No...");
     let shared = JoltSharedPreprocessing::deserialize_with_mode(
@@ -34,24 +35,18 @@ fn test_prover_roundtrip(bytes: &[u8]) -> Result<(), String> {
         ark_serialize::Validate::No,
     )
     .map_err(|e| {
-        format!(
-            "SharedPreprocessing failed at pos {}: {e}",
-            cursor.position()
-        )
+        let pos = cursor.position();
+        format!("SharedPreprocessing failed at pos {pos}: {e}")
     })?;
     let pos_after_shared = cursor.position() as usize;
-    println!(
-        "  OK - consumed {} bytes (total: {})",
-        pos_after_shared - pos_after_generators,
-        pos_after_shared
-    );
+    let shared_bytes = pos_after_shared - pos_after_generators;
+    println!("  OK - consumed {shared_bytes} bytes (total: {pos_after_shared})");
 
     if pos_after_shared != bytes.len() {
+        let total = bytes.len();
+        let extra = total - pos_after_shared;
         return Err(format!(
-            "Prover: consumed {} bytes but file has {} bytes ({} extra)",
-            pos_after_shared,
-            bytes.len(),
-            bytes.len() - pos_after_shared
+            "Prover: consumed {pos_after_shared} bytes but file has {total} bytes ({extra} extra)"
         ));
     }
 
@@ -67,10 +62,10 @@ fn test_prover_roundtrip(bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("Reserialize failed: {e}"))?;
 
     if reserialized.len() != bytes.len() {
+        let orig = bytes.len();
+        let reser = reserialized.len();
         return Err(format!(
-            "Prover roundtrip size mismatch: original {} vs reserialized {}",
-            bytes.len(),
-            reserialized.len()
+            "Prover roundtrip size mismatch: original {orig} vs reserialized {reser}"
         ));
     }
 
@@ -78,8 +73,7 @@ fn test_prover_roundtrip(bytes: &[u8]) -> Result<(), String> {
         for (i, (a, b)) in bytes.iter().zip(reserialized.iter()).enumerate() {
             if a != b {
                 return Err(format!(
-                    "Prover roundtrip byte mismatch at position {}: original {:02x} vs reserialized {:02x}",
-                    i, a, b
+                    "Prover roundtrip byte mismatch at position {i}: original {a:02x} vs reserialized {b:02x}"
                 ));
             }
         }
@@ -90,8 +84,9 @@ fn test_prover_roundtrip(bytes: &[u8]) -> Result<(), String> {
 }
 
 fn test_verifier_roundtrip(bytes: &[u8]) -> Result<(), String> {
+    let total = bytes.len();
     println!("\nTesting Verifier Preprocessing Roundtrip");
-    println!("Total bytes: {}", bytes.len());
+    println!("Total bytes: {total}");
 
     let mut cursor = Cursor::new(bytes);
 
@@ -103,7 +98,7 @@ fn test_verifier_roundtrip(bytes: &[u8]) -> Result<(), String> {
     )
     .map_err(|e| format!("VerifierSetup failed: {e}"))?;
     let pos_after_generators = cursor.position() as usize;
-    println!("  OK - consumed {} bytes", pos_after_generators);
+    println!("  OK - consumed {pos_after_generators} bytes");
 
     println!("Deserializing JoltSharedPreprocessing with Compress::No...");
     let shared = JoltSharedPreprocessing::deserialize_with_mode(
@@ -112,24 +107,18 @@ fn test_verifier_roundtrip(bytes: &[u8]) -> Result<(), String> {
         ark_serialize::Validate::No,
     )
     .map_err(|e| {
-        format!(
-            "SharedPreprocessing failed at pos {}: {e}",
-            cursor.position()
-        )
+        let pos = cursor.position();
+        format!("SharedPreprocessing failed at pos {pos}: {e}")
     })?;
     let pos_after_shared = cursor.position() as usize;
-    println!(
-        "  OK - consumed {} bytes (total: {})",
-        pos_after_shared - pos_after_generators,
-        pos_after_shared
-    );
+    let shared_bytes = pos_after_shared - pos_after_generators;
+    println!("  OK - consumed {shared_bytes} bytes (total: {pos_after_shared})");
 
     if pos_after_shared != bytes.len() {
+        let total = bytes.len();
+        let extra = total - pos_after_shared;
         return Err(format!(
-            "Verifier: consumed {} bytes but file has {} bytes ({} extra)",
-            pos_after_shared,
-            bytes.len(),
-            bytes.len() - pos_after_shared
+            "Verifier: consumed {pos_after_shared} bytes but file has {total} bytes ({extra} extra)"
         ));
     }
 
@@ -145,10 +134,10 @@ fn test_verifier_roundtrip(bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("Reserialize failed: {e}"))?;
 
     if reserialized.len() != bytes.len() {
+        let orig = bytes.len();
+        let reser = reserialized.len();
         return Err(format!(
-            "Verifier roundtrip size mismatch: original {} vs reserialized {}",
-            bytes.len(),
-            reserialized.len()
+            "Verifier roundtrip size mismatch: original {orig} vs reserialized {reser}"
         ));
     }
 
@@ -156,8 +145,7 @@ fn test_verifier_roundtrip(bytes: &[u8]) -> Result<(), String> {
         for (i, (a, b)) in bytes.iter().zip(reserialized.iter()).enumerate() {
             if a != b {
                 return Err(format!(
-                    "Verifier roundtrip byte mismatch at position {}: original {:02x} vs reserialized {:02x}",
-                    i, a, b
+                    "Verifier roundtrip byte mismatch at position {i}: original {a:02x} vs reserialized {b:02x}"
                 ));
             }
         }
@@ -169,30 +157,40 @@ fn test_verifier_roundtrip(bytes: &[u8]) -> Result<(), String> {
 
 fn main() {
     let _ = jolt_inlines_sha2::init_inlines();
+    let _ = jolt_inlines_secp256k1::init_inlines();
+    let _ = jolt_inlines_keccak256::init_inlines();
 
     let www_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("www");
 
-    let prover_path = www_dir.join("prover_preprocessing.bin");
-    println!("Reading prover preprocessing from {:?}", prover_path);
-    let prover_bytes = std::fs::read(&prover_path).expect("Failed to read prover file");
+    let programs = [
+        ("sha2", "sha2_prover.bin", "sha2_verifier.bin"),
+        ("ecdsa", "ecdsa_prover.bin", "ecdsa_verifier.bin"),
+        ("keccak", "keccak_prover.bin", "keccak_verifier.bin"),
+    ];
 
-    match test_prover_roundtrip(&prover_bytes) {
-        Ok(()) => println!("\nProver preprocessing: PASS"),
-        Err(e) => {
-            println!("\nProver preprocessing: FAIL - {}", e);
-            std::process::exit(1);
+    for (name, prover_file, verifier_file) in &programs {
+        let prover_path = www_dir.join(prover_file);
+        println!("\n[{name}] Reading prover preprocessing from {prover_path:?}");
+        let prover_bytes = std::fs::read(&prover_path).expect("Failed to read prover file");
+
+        match test_prover_roundtrip(&prover_bytes) {
+            Ok(()) => println!("[{name}] Prover preprocessing: PASS"),
+            Err(e) => {
+                println!("[{name}] Prover preprocessing: FAIL - {e}");
+                std::process::exit(1);
+            }
         }
-    }
 
-    let verifier_path = www_dir.join("verifier_preprocessing.bin");
-    println!("\nReading verifier preprocessing from {:?}", verifier_path);
-    let verifier_bytes = std::fs::read(&verifier_path).expect("Failed to read verifier file");
+        let verifier_path = www_dir.join(verifier_file);
+        println!("[{name}] Reading verifier preprocessing from {verifier_path:?}");
+        let verifier_bytes = std::fs::read(&verifier_path).expect("Failed to read verifier file");
 
-    match test_verifier_roundtrip(&verifier_bytes) {
-        Ok(()) => println!("\nVerifier preprocessing: PASS"),
-        Err(e) => {
-            println!("\nVerifier preprocessing: FAIL - {}", e);
-            std::process::exit(1);
+        match test_verifier_roundtrip(&verifier_bytes) {
+            Ok(()) => println!("[{name}] Verifier preprocessing: PASS"),
+            Err(e) => {
+                println!("[{name}] Verifier preprocessing: FAIL - {e}");
+                std::process::exit(1);
+            }
         }
     }
 
