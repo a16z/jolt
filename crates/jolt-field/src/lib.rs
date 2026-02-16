@@ -6,17 +6,12 @@
 // Core field traits
 mod field;
 pub use field::{
-    Field, UnreducedOps, ReductionOps, Challenge, WithChallenge,
-    MaybeAllocative, OptimizedMul,
+    Challenge, Field, MaybeAllocative, OptimizedMul, ReductionOps, UnreducedOps, WithChallenge,
 };
-
-// Unreduced arithmetic
-mod unreduced;
-pub use unreduced::UnreducedField;
 
 // Accumulation patterns
 mod accumulation;
-pub use accumulation::{FMAdd, BarrettReduce, MontgomeryReduce};
+pub use accumulation::{BarrettReduce, FMAdd, MontgomeryReduce};
 
 // Challenge types
 pub mod challenge;
@@ -29,4 +24,3 @@ pub mod arkworks;
 pub type DefaultChallenge<F> = challenge::MontU128Challenge<F>;
 #[cfg(feature = "challenge-254-bit")]
 pub type DefaultChallenge<F> = challenge::Mont254BitChallenge<F>;
-

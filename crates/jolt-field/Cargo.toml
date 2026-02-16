@@ -18,9 +18,6 @@ rand_core = { workspace = true }
 [features]
 default = []
 challenge-254-bit = []
-tracking = []
-# Note: allocative feature requires arkworks dependencies to be built with allocative support.
-# This should be configured at the workspace level if needed.
 
 [dev-dependencies]
 ark-std = { workspace = true }

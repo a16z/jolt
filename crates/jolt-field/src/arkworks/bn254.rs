@@ -2,7 +2,7 @@
 use crate::challenge::Mont254BitChallenge;
 #[cfg(not(feature = "challenge-254-bit"))]
 use crate::challenge::MontU128Challenge;
-use crate::{Field, ReductionOps, UnreducedField, UnreducedOps, WithChallenge};
+use crate::{Field, ReductionOps, UnreducedOps, WithChallenge};
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rand_core::RngCore;
 
@@ -52,145 +52,151 @@ impl Field for Fr {
         }
     }
 
+    #[inline]
     fn from_u8(n: u8) -> Self {
-        Self::from(n as u64)
+        <Self as ark_ff::PrimeField>::from_u64::<5>(n as u64).unwrap()
     }
 
+    #[inline]
     fn from_u16(n: u16) -> Self {
-        Self::from(n as u64)
+        <Self as ark_ff::PrimeField>::from_u64::<5>(n as u64).unwrap()
     }
 
+    #[inline]
     fn from_u32(n: u32) -> Self {
-        Self::from(n as u64)
+        <Self as ark_ff::PrimeField>::from_u64::<5>(n as u64).unwrap()
     }
 
+    #[inline]
     fn from_u64(n: u64) -> Self {
-        Self::from(n)
+        if n <= u16::MAX as u64 {
+            <Self as Field>::from_u16(n as u16)
+        } else if n <= u32::MAX as u64 {
+            <Self as Field>::from_u32(n as u32)
+        } else {
+            <Self as ark_ff::PrimeField>::from_u64::<5>(n).unwrap()
+        }
     }
 
+    #[inline]
     fn from_i64(val: i64) -> Self {
         if val.is_negative() {
-            -Self::from(val.unsigned_abs())
+            let val = val.unsigned_abs();
+            if val <= u16::MAX as u64 {
+                -<Self as Field>::from_u16(val as u16)
+            } else if val <= u32::MAX as u64 {
+                -<Self as Field>::from_u32(val as u32)
+            } else {
+                -<Self as Field>::from_u64(val)
+            }
         } else {
-            Self::from(val as u64)
+            let val = val as u64;
+            if val <= u16::MAX as u64 {
+                <Self as Field>::from_u16(val as u16)
+            } else if val <= u32::MAX as u64 {
+                <Self as Field>::from_u32(val as u32)
+            } else {
+                <Self as Field>::from_u64(val)
+            }
         }
     }
 
+    #[inline]
     fn from_i128(val: i128) -> Self {
         if val.is_negative() {
-            -Self::from_u128(val.unsigned_abs())
+            let val = val.unsigned_abs();
+            if val <= u16::MAX as u128 {
+                -<Self as Field>::from_u16(val as u16)
+            } else if val <= u32::MAX as u128 {
+                -<Self as Field>::from_u32(val as u32)
+            } else if val <= u64::MAX as u128 {
+                -<Self as Field>::from_u64(val as u64)
+            } else {
+                let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
+                -<Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
+            }
         } else {
-            Self::from_u128(val as u128)
+            let val = val as u128;
+            if val <= u16::MAX as u128 {
+                <Self as Field>::from_u16(val as u16)
+            } else if val <= u32::MAX as u128 {
+                <Self as Field>::from_u32(val as u32)
+            } else if val <= u64::MAX as u128 {
+                <Self as Field>::from_u64(val as u64)
+            } else {
+                let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
+                <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
+            }
         }
     }
 
+    #[inline]
     fn from_u128(val: u128) -> Self {
-        if val <= u64::MAX as u128 {
-            Self::from(val as u64)
+        if val <= u16::MAX as u128 {
+            <Self as Field>::from_u16(val as u16)
+        } else if val <= u32::MAX as u128 {
+            <Self as Field>::from_u32(val as u32)
+        } else if val <= u64::MAX as u128 {
+            <Self as Field>::from_u64(val as u64)
         } else {
             let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
             <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
         }
     }
-}
 
-impl<const N: usize> UnreducedField<Fr> for BigInt<N> {
-    fn mul_trunc<const M: usize>(&self, other: &Self) -> Self {
-        let mut result = Self::zero();
-        let len = std::cmp::min(N, N + N);
-
-        for i in 0..std::cmp::min(N, len) {
-            let mut carry = 0u64;
-            for j in 0..std::cmp::min(N, len - i) {
-                if i + j < N {
-                    let product = (self.0[i] as u128) * (other.0[j] as u128) + (result.0[i + j] as u128) + (carry as u128);
-                    result.0[i + j] = product as u64;
-                    carry = (product >> 64) as u64;
-                }
-            }
-            if i + N < N && i + N < len {
-                result.0[i + N] = carry;
-            }
+    #[inline]
+    fn mul_u64(&self, n: u64) -> Self {
+        if n == 0 || self.is_zero() {
+            Self::zero()
+        } else if n == 1 {
+            *self
+        } else {
+            ark_ff::Fp::mul_u64::<5>(*self, n)
         }
-
-        result
     }
 
-    fn add_assign_mixed<const M: usize>(&mut self, other: &Self) {
-        *self += *other;
+    #[inline(always)]
+    fn mul_i64(&self, n: i64) -> Self {
+        ark_ff::Fp::mul_i64::<5>(*self, n)
+    }
+
+    #[inline(always)]
+    fn mul_u128(&self, n: u128) -> Self {
+        ark_ff::Fp::mul_u128::<5, 6>(*self, n)
+    }
+
+    #[inline]
+    fn mul_i128(&self, n: i128) -> Self {
+        if n == 0 || self.is_zero() {
+            Self::zero()
+        } else if n == 1 {
+            *self
+        } else {
+            ark_ff::Fp::mul_i128::<5, 6>(*self, n)
+        }
     }
 }
 
 impl UnreducedOps for Fr {
-    type UnreducedType = BigInt<8>;
-
-    fn as_unreduced_ref(&self) -> &Self::UnreducedType {
-        // SAFETY: We're casting a reference to Fr (which contains BigInt<4>)
-        // to a reference to BigInt<8>. The first 4 limbs are valid.
-        unsafe {
-            let ptr = self as *const Self as *const BigInt<4>;
-            let extended_ptr = ptr as *const BigInt<8>;
-            &*extended_ptr
-        }
+    #[inline(always)]
+    fn as_unreduced_ref(&self) -> &BigInt<4> {
+        &self.0
     }
 
-    fn mul_unreduced(self, other: Self) -> Self::UnreducedType {
-        let mut result = Self::UnreducedType::zero();
-        let a = self.into_bigint();
-        let b = other.into_bigint();
-
-        for i in 0..4 {
-            let mut carry = 0u64;
-            for j in 0..4 {
-                if i + j < 8 {
-                    let product = (a.0[i] as u128) * (b.0[j] as u128) + (result.0[i + j] as u128) + (carry as u128);
-                    result.0[i + j] = product as u64;
-                    carry = (product >> 64) as u64;
-                }
-            }
-            if i + 4 < 8 {
-                result.0[i + 4] = carry;
-            }
-        }
-
-        result
+    #[inline]
+    fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L> {
+        self.0.mul_trunc::<4, L>(&other.0)
     }
 
-    fn mul_u64_unreduced(self, other: u64) -> Self::UnreducedType {
-        let mut result = Self::UnreducedType::zero();
-        let a = self.into_bigint();
-        let mut carry = 0u64;
-
-        for i in 0..4 {
-            let product = (a.0[i] as u128) * (other as u128) + (carry as u128);
-            result.0[i] = product as u64;
-            carry = (product >> 64) as u64;
-        }
-        result.0[4] = carry;
-
-        result
+    #[inline]
+    fn mul_u64_unreduced(self, other: u64) -> BigInt<5> {
+        self.0.mul_trunc::<1, 5>(&BigInt::new([other]))
     }
 
-    fn mul_u128_unreduced(self, other: u128) -> Self::UnreducedType {
-        // Split the u128 into two u64s: low and high
-        let low = other as u64;
-        let high = (other >> 64) as u64;
-
-        // Multiply by the low part
-        let mut result = self.mul_u64_unreduced(low);
-
-        // If high part is non-zero, multiply and add shifted
-        if high != 0 {
-            let high_result = self.mul_u64_unreduced(high);
-            let mut carry = 0u64;
-            for i in 0..7 {
-                let sum = (result.0[i + 1] as u128) + (high_result.0[i] as u128) + (carry as u128);
-                result.0[i + 1] = sum as u64;
-                carry = (sum >> 64) as u64;
-            }
-        }
-
-        result
+    #[inline]
+    fn mul_u128_unreduced(self, other: u128) -> BigInt<6> {
+        self.0
+            .mul_trunc::<2, 6>(&BigInt::new([other as u64, (other >> 64) as u64]))
     }
 }
 
@@ -204,16 +210,14 @@ impl ReductionOps for Fr {
         std::mem::transmute(<FrConfig as MontConfig<4>>::R2)
     };
 
-    fn from_montgomery_reduce(unreduced: Self::UnreducedType) -> Self {
-        use crate::{MontgomeryReduce, FMAdd};
-        let mut result = unreduced;
-        result.fmadd(&<Self as ReductionOps>::MONTGOMERY_R_SQUARE.into_bigint(), &BigInt::<4>::zero());
-        result.montgomery_reduce()
+    #[inline]
+    fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
+        Fr::from_montgomery_reduce::<L, 5>(unreduced)
     }
 
-    fn from_barrett_reduce(unreduced: Self::UnreducedType) -> Self {
-        use crate::BarrettReduce;
-        unreduced.barrett_reduce()
+    #[inline]
+    fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
+        Fr::from_barrett_reduce::<L, 5>(unreduced)
     }
 }
 
@@ -231,7 +235,9 @@ impl<const N: usize, const M: usize> crate::FMAdd<BigInt<4>, BigInt<M>> for BigI
             let mut carry = 0u64;
             for j in 0..M {
                 if i + j < N {
-                    let product = (left.0[i] as u128) * (right.0[j] as u128) + (self.0[i + j] as u128) + (carry as u128);
+                    let product = (left.0[i] as u128) * (right.0[j] as u128)
+                        + (self.0[i + j] as u128)
+                        + (carry as u128);
                     self.0[i + j] = product as u64;
                     carry = (product >> 64) as u64;
                 } else {
@@ -242,29 +248,5 @@ impl<const N: usize, const M: usize> crate::FMAdd<BigInt<4>, BigInt<M>> for BigI
                 self.0[i + M] = self.0[i + M].wrapping_add(carry);
             }
         }
-    }
-}
-
-impl crate::MontgomeryReduce<Fr> for BigInt<8> {
-    fn montgomery_reduce(&self) -> Fr {
-        // Convert to bytes and use mod_order reduction
-        let mut bytes = [0u8; 64];
-        for i in 0..8 {
-            let limb_bytes = self.0[i].to_le_bytes();
-            bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb_bytes);
-        }
-        Fr::from_le_bytes_mod_order(&bytes)
-    }
-}
-
-impl crate::BarrettReduce<Fr> for BigInt<8> {
-    fn barrett_reduce(&self) -> Fr {
-        // Convert to bytes and use mod_order reduction
-        let mut bytes = [0u8; 64];
-        for i in 0..8 {
-            let limb_bytes = self.0[i].to_le_bytes();
-            bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb_bytes);
-        }
-        Fr::from_le_bytes_mod_order(&bytes)
     }
 }

@@ -2902,9 +2902,9 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "ark-bn254",
- "ark-ff",
- "ark-serialize",
- "ark-std",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -3069,7 +3069,7 @@ name = "jolt-transcript"
 version = "0.1.0"
 dependencies = [
  "blake2",
- "digest",
+ "digest 0.10.7",
  "hex",
  "sha3",
 ]

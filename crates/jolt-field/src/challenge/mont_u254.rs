@@ -1,27 +1,19 @@
 //! Challenge type whose range is the same as the Field type
 
-use crate::{Field, OptimizedMul, Challenge};
+use crate::{Challenge, Field, OptimizedMul};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use ark_bn254::Fr;
 use ark_ff::UniformRand;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_traits::{One, Zero};
-use rand::{Rng, RngCore};
+use rand::RngCore;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::*;
 
 #[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    CanonicalSerialize,
-    CanonicalDeserialize,
+    Copy, Clone, Debug, Default, PartialEq, Eq, Hash, CanonicalSerialize, CanonicalDeserialize,
 )]
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct Mont254BitChallenge<F: Field> {
@@ -37,8 +29,8 @@ impl<F: Field> Mont254BitChallenge<F> {
         self.value
     }
 
-    pub fn random<R: Rng + ?Sized>(rng: &mut R) -> Self {
-        Self::from(rng.gen::<u128>())
+    pub fn random<R: RngCore>(rng: &mut R) -> Self {
+        Self::new(F::random(rng))
     }
 }
 
@@ -54,9 +46,12 @@ impl<F: Field> From<F> for Mont254BitChallenge<F> {
     }
 }
 
-impl<F: Field> UniformRand for Mont254BitChallenge<F> {
+impl<F: Field> UniformRand for Mont254BitChallenge<F>
+where
+    F: ark_ff::UniformRand,
+{
     fn rand<R: RngCore + ?Sized>(rng: &mut R) -> Self {
-        Self::from(rng.gen::<u128>())
+        Self::new(<F as ark_ff::UniformRand>::rand(rng))
     }
 }
 
@@ -66,7 +61,7 @@ where
     Self: From<u128> + Into<F> + Add<F, Output = F> + Sub<F, Output = F> + Mul<F, Output = F>,
 {
     fn rand<R: RngCore>(rng: &mut R) -> Self {
-        <Self as UniformRand>::rand(rng)
+        Self::new(F::random(rng))
     }
 }
 

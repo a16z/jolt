@@ -1,13 +1,12 @@
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
+use ark_ff::BigInt;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
-
-use crate::UnreducedField;
 
 /// Core field trait with minimal bounds
 pub trait Field:
@@ -60,16 +59,52 @@ pub trait Field:
     fn from_i64(val: i64) -> Self;
     fn from_i128(val: i128) -> Self;
     fn from_u128(val: u128) -> Self;
+
+    fn mul_u64(&self, n: u64) -> Self {
+        *self * Self::from_u64(n)
+    }
+
+    fn mul_i64(&self, n: i64) -> Self {
+        *self * Self::from_i64(n)
+    }
+
+    fn mul_u128(&self, n: u128) -> Self {
+        *self * Self::from_u128(n)
+    }
+
+    fn mul_i128(&self, n: i128) -> Self {
+        *self * Self::from_i128(n)
+    }
+
+    /// Multiplication of a field element and a power of 2.
+    /// Split into chunks of 63 bits, then multiply and accumulate.
+    fn mul_pow_2(&self, mut pow: usize) -> Self {
+        assert!(pow <= 255, "pow > 255");
+        let mut res = *self;
+        while pow >= 64 {
+            res = res.mul_u64(1 << 63);
+            pow -= 63;
+        }
+        res.mul_u64(1 << pow)
+    }
 }
 
-/// Trait for operations with unreduced representations
+/// Trait for operations with unreduced representations.
+///
+/// Uses `BigInt<N>` directly with const-generic sizes instead of an associated type,
+/// matching the arkworks fork's API for truncated multiplication.
 pub trait UnreducedOps: Field {
-    type UnreducedType: UnreducedField<Self>;
+    /// Direct reference to the inner Montgomery-form limbs as `BigInt<4>`.
+    fn as_unreduced_ref(&self) -> &BigInt<4>;
 
-    fn as_unreduced_ref(&self) -> &Self::UnreducedType;
-    fn mul_unreduced(self, other: Self) -> Self::UnreducedType;
-    fn mul_u64_unreduced(self, other: u64) -> Self::UnreducedType;
-    fn mul_u128_unreduced(self, other: u128) -> Self::UnreducedType;
+    /// Full Montgomery-form multiplication without reduction, returning `L` limbs.
+    fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L>;
+
+    /// Multiply by a `u64` without reduction, returning 5 limbs.
+    fn mul_u64_unreduced(self, other: u64) -> BigInt<5>;
+
+    /// Multiply by a `u128` without reduction, returning 6 limbs.
+    fn mul_u128_unreduced(self, other: u128) -> BigInt<6>;
 }
 
 /// Trait for field reduction operations
@@ -77,14 +112,20 @@ pub trait ReductionOps: UnreducedOps {
     const MONTGOMERY_R: Self;
     const MONTGOMERY_R_SQUARE: Self;
 
-    fn from_montgomery_reduce(unreduced: Self::UnreducedType) -> Self;
-    fn from_barrett_reduce(unreduced: Self::UnreducedType) -> Self;
+    fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Self;
+    fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self;
 }
 
 /// Challenge trait with minimal bounds
 pub trait Challenge<F: Field>:
-    Copy + Send + Sync + From<u128> + Into<F> +
-    Add<F, Output = F> + Sub<F, Output = F> + Mul<F, Output = F>
+    Copy
+    + Send
+    + Sync
+    + From<u128>
+    + Into<F>
+    + Add<F, Output = F>
+    + Sub<F, Output = F>
+    + Mul<F, Output = F>
 {
     fn rand<R: RngCore>(rng: &mut R) -> Self;
 }

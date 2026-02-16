@@ -5,14 +5,14 @@
 //! multiplication with Fr elements, resulting in ~1.3x speedup for polynomial
 //! binding operations.
 
-use crate::{Field, OptimizedMul, Challenge};
+use crate::{Challenge, Field, OptimizedMul};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use ark_bn254::Fr;
 use ark_ff::{BigInt, PrimeField, UniformRand};
 use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid,
-    Validate, Write,
+    CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
+    Write,
 };
 use num_traits::{One, Zero};
 use rand::{Rng, RngCore};
@@ -48,9 +48,11 @@ impl<F: Field> MontU128Challenge<F> {
     }
 
     /// Returns the value as a [u64; 4] BigInt array for field conversion.
+    /// Format: [0, 0, low, high] - zeros in lower limbs, value in upper limbs.
+    /// This layout is required for the optimized `mul_by_hi_2limbs` multiplication path.
     #[inline(always)]
     pub fn to_bigint_array(&self) -> [u64; 4] {
-        [self.low, self.high, 0, 0]
+        [0, 0, self.low, self.high]
     }
 
     #[inline(always)]
@@ -111,9 +113,11 @@ impl<F: Field> CanonicalDeserialize for MontU128Challenge<F> {
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let arr = <[u64; 4]>::deserialize_with_mode(reader, compress, validate)?;
+        // arr[0] and arr[1] should be 0, arr[2] is low, arr[3] is high
         Ok(Self {
-            low: arr[0],
-            high: arr[1],
+            low: arr[2],
+            // Enforce 125-bit invariant: mask top 3 bits
+            high: arr[3] & (u64::MAX >> 3),
             _marker: PhantomData,
         })
     }
@@ -136,18 +140,18 @@ impl<F: Field> Debug for MontU128Challenge<F> {
 impl From<MontU128Challenge<Fr>> for Fr {
     #[inline(always)]
     fn from(challenge: MontU128Challenge<Fr>) -> Fr {
-        Fr::from_bigint(BigInt::new(challenge.to_bigint_array())).unwrap()
+        Fr::from_bigint_unchecked(BigInt::new(challenge.to_bigint_array())).unwrap()
     }
 }
 
 impl From<&MontU128Challenge<Fr>> for Fr {
     #[inline(always)]
     fn from(challenge: &MontU128Challenge<Fr>) -> Fr {
-        Fr::from_bigint(BigInt::new(challenge.to_bigint_array())).unwrap()
+        Fr::from_bigint_unchecked(BigInt::new(challenge.to_bigint_array())).unwrap()
     }
 }
 
-impl_field_ops_inline!(MontU128Challenge<Fr>, Fr, standard);
+impl_field_ops_inline!(MontU128Challenge<Fr>, Fr, optimized);
 
 impl OptimizedMul<Fr, Fr> for MontU128Challenge<Fr> {
     #[inline(always)]
