@@ -12,11 +12,17 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::sumcheck_claim::{
     CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
     VerifierEvaluablePolynomial,
@@ -124,6 +130,120 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         normalize_opening_point(challenges)
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let next_unexpanded_pc = OpeningId::virt(
+            VirtualPolynomial::NextUnexpandedPC,
+            SumcheckId::SpartanOuter,
+        );
+        let next_pc = OpeningId::virt(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
+        let next_is_virtual =
+            OpeningId::virt(VirtualPolynomial::NextIsVirtual, SumcheckId::SpartanOuter);
+        let next_is_first_in_sequence = OpeningId::virt(
+            VirtualPolynomial::NextIsFirstInSequence,
+            SumcheckId::SpartanOuter,
+        );
+        let next_is_noop = OpeningId::virt(
+            VirtualPolynomial::NextIsNoop,
+            SumcheckId::SpartanProductVirtualization,
+        );
+
+        let terms = vec![
+            ProductTerm::single(ValueSource::Opening(next_unexpanded_pc)),
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(next_pc)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![ValueSource::Opening(next_is_virtual)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(2),
+                vec![ValueSource::Opening(next_is_first_in_sequence)],
+            ),
+            ProductTerm::single(ValueSource::Challenge(3)), // gamma[4] constant term
+            ProductTerm::scaled(
+                ValueSource::Challenge(4),
+                vec![ValueSource::Opening(next_is_noop)],
+            ), // -gamma[4] * next_is_noop
+        ];
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        vec![
+            self.gamma_powers[1],
+            self.gamma_powers[2],
+            self.gamma_powers[3],
+            self.gamma_powers[4],
+            -self.gamma_powers[4],
+        ]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let unexpanded_pc =
+            OpeningId::virt(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanShift);
+        let pc = OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        let is_virtual = OpeningId::virt(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanShift,
+        );
+        let is_first_in_sequence = OpeningId::virt(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
+            SumcheckId::SpartanShift,
+        );
+        let is_noop = OpeningId::virt(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
+            SumcheckId::SpartanShift,
+        );
+
+        let terms = vec![
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(unexpanded_pc)],
+            ),
+            ProductTerm::scaled(ValueSource::Challenge(1), vec![ValueSource::Opening(pc)]),
+            ProductTerm::scaled(
+                ValueSource::Challenge(2),
+                vec![ValueSource::Opening(is_virtual)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(3),
+                vec![ValueSource::Opening(is_first_in_sequence)],
+            ),
+            ProductTerm::single(ValueSource::Challenge(4)),
+            ProductTerm::scaled(
+                ValueSource::Challenge(5),
+                vec![ValueSource::Opening(is_noop)],
+            ),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r = normalize_opening_point::<F>(sumcheck_challenges);
+        let eq_plus_one_outer =
+            EqPlusOnePolynomial::<F>::new(self.r_outer.r.to_vec()).evaluate(&r.r);
+        let eq_plus_one_product =
+            EqPlusOnePolynomial::<F>::new(self.r_product.r.to_vec()).evaluate(&r.r);
+
+        let gamma_powers = &self.gamma_powers;
+
+        vec![
+            gamma_powers[0] * eq_plus_one_outer,
+            gamma_powers[1] * eq_plus_one_outer,
+            gamma_powers[2] * eq_plus_one_outer,
+            gamma_powers[3] * eq_plus_one_outer,
+            gamma_powers[4] * eq_plus_one_product,
+            -gamma_powers[4] * eq_plus_one_product,
+        ]
+    }
 }
 
 fn normalize_opening_point<F: JoltField>(
@@ -200,7 +320,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let ShiftSumcheckPhase::Phase2(state) = &self.phase else {
@@ -215,35 +334,30 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
 
         let opening_point = normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
             unexpanded_pc_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::PC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
             pc_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
             SumcheckId::SpartanShift,
             opening_point.clone(),
             is_virtual_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
             SumcheckId::SpartanShift,
             opening_point.clone(),
             is_first_in_sequence_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
             opening_point,
@@ -354,36 +468,30 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::PC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
             opening_point,

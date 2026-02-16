@@ -57,11 +57,15 @@ use tracer::instruction::{Cycle, RAMAccess};
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -176,6 +180,56 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::committed(
+                CommittedPolynomial::RamInc,
+                SumcheckId::RamReadWriteChecking,
+            ),
+            OpeningId::committed(CommittedPolynomial::RamInc, SumcheckId::RamValEvaluation),
+            OpeningId::committed(
+                CommittedPolynomial::RdInc,
+                SumcheckId::RegistersReadWriteChecking,
+            ),
+            OpeningId::committed(
+                CommittedPolynomial::RdInc,
+                SumcheckId::RegistersValEvaluation,
+            ),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        let [gamma, gamma_sqr, gamma_cub] = self.gamma_powers;
+        vec![gamma, gamma_sqr, gamma_cub]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::all_weighted_openings(&[
+            OpeningId::committed(CommittedPolynomial::RamInc, SumcheckId::IncClaimReduction),
+            OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::IncClaimReduction),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let [gamma, gamma_sqr, _] = self.gamma_powers;
+
+        let opening_point = self.normalize_opening_point(sumcheck_challenges);
+
+        let eq_r2: F = EqPolynomial::mle(&opening_point.r, &self.r_cycle_stage2.r);
+        let eq_r4: F = EqPolynomial::mle(&opening_point.r, &self.r_cycle_stage4.r);
+        let eq_s4: F = EqPolynomial::mle(&opening_point.r, &self.s_cycle_stage4.r);
+        let eq_s5: F = EqPolynomial::mle(&opening_point.r, &self.s_cycle_stage5.r);
+
+        let eq_ram_combined = eq_r2 + gamma * eq_r4;
+        let eq_rd_combined = eq_s4 + gamma * eq_s5;
+
+        vec![eq_ram_combined, gamma_sqr * eq_rd_combined]
+    }
 }
 
 #[derive(Allocative)]
@@ -243,7 +297,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let IncClaimReductionPhase::Phase2(state) = &self.phase else {
@@ -257,14 +310,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let rd_inc_claim = state.rd_inc.final_sumcheck_claim();
 
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RamInc,
             SumcheckId::IncClaimReduction,
             opening_point.r.clone(),
             ram_inc_claim,
         );
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RdInc,
             SumcheckId::IncClaimReduction,
             opening_point.r,
@@ -695,20 +746,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RamInc,
             SumcheckId::IncClaimReduction,
             opening_point.r.clone(),
         );
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RdInc,
             SumcheckId::IncClaimReduction,
             opening_point.r,

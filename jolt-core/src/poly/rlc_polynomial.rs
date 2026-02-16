@@ -532,14 +532,14 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                     VmvSetup::<F>::create_accumulators(num_columns);
 
                 let row_start = chunk_idx * rows_per_thread;
-                for (local_idx, &row_weight) in row_weights.iter().enumerate() {
+                for (local_idx, _) in row_weights.iter().enumerate() {
                     let row_idx = row_start + local_idx;
                     let chunk_start = row_idx * num_columns;
 
-                    // Row-scaled dense coefficients.
-                    let scaled_rd_inc = row_weight * setup.rd_inc_coeff;
-                    let scaled_ram_inc = row_weight * setup.ram_inc_coeff;
+                    // Dense polys use row_factors (summed over all K blocks) for correct embedding
                     let row_factor = setup.row_factors[row_idx];
+                    let scaled_rd_inc = row_factor * setup.rd_inc_coeff;
+                    let scaled_ram_inc = row_factor * setup.ram_inc_coeff;
 
                     // Split into valid trace range vs padding range.
                     let valid_end = std::cmp::min(chunk_start + num_columns, trace_len);
@@ -599,10 +599,10 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
             .fold(
                 || VmvSetup::<F>::create_accumulators(num_columns),
                 |(mut dense_accs, mut onehot_accs), (row_idx, chunk)| {
-                    let row_weight = left_vec[row_idx];
-                    let scaled_rd_inc = row_weight * setup.rd_inc_coeff;
-                    let scaled_ram_inc = row_weight * setup.ram_inc_coeff;
+                    // Dense polys use row_factors (summed over all K blocks) for correct embedding
                     let row_factor = setup.row_factors[row_idx];
+                    let scaled_rd_inc = row_factor * setup.rd_inc_coeff;
+                    let scaled_ram_inc = row_factor * setup.ram_inc_coeff;
 
                     // Process columns within chunk sequentially.
                     for (col_idx, cycle) in chunk.iter().enumerate() {

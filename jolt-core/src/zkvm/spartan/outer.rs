@@ -13,14 +13,20 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::poly::multiquadratic_poly::MultiquadraticPolynomial;
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::streaming_sumcheck::{
-    LinearSumcheckStage, SharedStreamingSumcheckState, StreamingSumcheck, StreamingSumcheckWindow,
+    LinearSumcheckStage, StreamingSumcheck, StreamingSumcheckWindow,
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
@@ -34,6 +40,10 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::r1cs::constraints::OUTER_FIRST_ROUND_POLY_DEGREE_BOUND;
+#[cfg(feature = "zk")]
+use crate::zkvm::r1cs::constraints::{R1CS_CONSTRAINTS_FIRST_GROUP, R1CS_CONSTRAINTS_SECOND_GROUP};
+#[cfg(feature = "zk")]
+use crate::zkvm::r1cs::inputs::NUM_R1CS_INPUTS;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::r1cs::{
     constraints::{
@@ -111,6 +121,28 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterUniSkipParams<F> {
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         challenges.to_vec().into()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::default()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // Uni-skip output = evaluation at challenge r0, stored as UnivariateSkip opening
+        let opening = OpeningId::virt(VirtualPolynomial::UnivariateSkip, SumcheckId::SpartanOuter);
+        Some(OutputClaimConstraint::direct(opening))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
     }
 }
 
@@ -259,7 +291,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterUniSkipP
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -267,7 +298,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterUniSkipP
         let claim = self.uni_poly.as_ref().unwrap().evaluate(&opening_point[0]);
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanOuter,
             opening_point,
@@ -308,13 +338,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OuterUniSki
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         debug_assert_eq!(opening_point.len(), 1);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanOuter,
             opening_point,
@@ -322,6 +350,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OuterUniSki
     }
 }
 
+#[derive(Allocative, Clone)]
 pub struct OuterRemainingSumcheckParams<F: JoltField> {
     /// Number of cycle bits for splitting opening points (consistent across prover/verifier)
     /// Total number of rounds is `1 + num_cycles_bits`
@@ -335,7 +364,7 @@ pub struct OuterRemainingSumcheckParams<F: JoltField> {
 impl<F: JoltField> OuterRemainingSumcheckParams<F> {
     pub fn new(
         trace_len: usize,
-        uni_skip_params: OuterUniSkipParams<F>,
+        uni_skip_params: &OuterUniSkipParams<F>,
         opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let (r_uni_skip, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -347,7 +376,7 @@ impl<F: JoltField> OuterRemainingSumcheckParams<F> {
 
         Self {
             num_cycles_bits: trace_len.log_2(),
-            tau: uni_skip_params.tau,
+            tau: uni_skip_params.tau.clone(),
             r0,
         }
     }
@@ -377,6 +406,267 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F>
         );
         uni_skip_claim
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let opening = OpeningId::virt(VirtualPolynomial::UnivariateSkip, SumcheckId::SpartanOuter);
+        InputClaimConstraint::direct(opening)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // output = tau_kernel * Az * Bz
+        // where Az = Σ_j az_coeff[j] * z[j] + az_const
+        //       Bz = Σ_j bz_coeff[j] * z[j] + bz_const
+        //
+        // Expanding: output = Σ_{i,j} (tau * az[i] * bz[j]) * z_i * z_j
+        //                   + Σ_i (tau * (az[i]*bz_c + az_c*bz[i])) * z_i
+        //                   + tau * az_c * bz_c
+        //
+        // Build structural template by iterating R1CS constraints to find
+        // which input indices appear in A-sides and B-sides.
+
+        use std::collections::BTreeSet;
+        let mut a_indices = BTreeSet::new();
+        let mut b_indices = BTreeSet::new();
+        let mut a_has_const = false;
+        let mut b_has_const = false;
+
+        for group in [
+            R1CS_CONSTRAINTS_FIRST_GROUP.as_slice(),
+            R1CS_CONSTRAINTS_SECOND_GROUP.as_slice(),
+        ] {
+            for constraint in group {
+                constraint.cons.a.for_each_term(|idx, _| {
+                    a_indices.insert(idx);
+                });
+                if constraint.cons.a.const_term().is_some() {
+                    a_has_const = true;
+                }
+                constraint.cons.b.for_each_term(|idx, _| {
+                    b_indices.insert(idx);
+                });
+                if constraint.cons.b.const_term().is_some() {
+                    b_has_const = true;
+                }
+            }
+        }
+
+        let a_indices: Vec<usize> = a_indices.into_iter().collect();
+        let b_indices: Vec<usize> = b_indices.into_iter().collect();
+
+        let mut terms = Vec::new();
+        let mut challenge_idx = 0;
+
+        // Quadratic terms: tau * az[i] * bz[j] * z_i * z_j
+        for &a_idx in &a_indices {
+            let a_opening = OpeningId::virt(
+                VirtualPolynomial::from(&ALL_R1CS_INPUTS[a_idx]),
+                SumcheckId::SpartanOuter,
+            );
+            for &b_idx in &b_indices {
+                let b_opening = OpeningId::virt(
+                    VirtualPolynomial::from(&ALL_R1CS_INPUTS[b_idx]),
+                    SumcheckId::SpartanOuter,
+                );
+                terms.push(ProductTerm::scaled(
+                    ValueSource::Challenge(challenge_idx),
+                    vec![
+                        ValueSource::Opening(a_opening),
+                        ValueSource::Opening(b_opening),
+                    ],
+                ));
+                challenge_idx += 1;
+            }
+        }
+
+        // Linear terms: tau * (az[i]*bz_c + az_c*bz[i]) * z_i
+        // Collect all unique indices from both sides
+        let mut all_indices = BTreeSet::new();
+        for &idx in &a_indices {
+            all_indices.insert(idx);
+        }
+        for &idx in &b_indices {
+            all_indices.insert(idx);
+        }
+        let all_indices: Vec<usize> = all_indices.into_iter().collect();
+
+        if a_has_const || b_has_const {
+            for &idx in &all_indices {
+                let opening = OpeningId::virt(
+                    VirtualPolynomial::from(&ALL_R1CS_INPUTS[idx]),
+                    SumcheckId::SpartanOuter,
+                );
+                terms.push(ProductTerm::scaled(
+                    ValueSource::Challenge(challenge_idx),
+                    vec![ValueSource::Opening(opening)],
+                ));
+                challenge_idx += 1;
+            }
+        }
+
+        // Constant term: tau * az_c * bz_c
+        if a_has_const && b_has_const {
+            terms.push(ProductTerm::single(ValueSource::Challenge(challenge_idx)));
+        }
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        use std::collections::BTreeSet;
+
+        let r_stream = sumcheck_challenges[0];
+
+        // Lagrange weights at r0
+        let w = LagrangePolynomial::<F>::evals::<F::Challenge, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE>(
+            &self.r0,
+        );
+
+        // Compute per-input-index coefficients for Az and Bz
+        let mut az_g0 = [F::zero(); NUM_R1CS_INPUTS];
+        let mut bz_g0 = [F::zero(); NUM_R1CS_INPUTS];
+        let mut az_g0_const = F::zero();
+        let mut bz_g0_const = F::zero();
+
+        for (i, constraint) in R1CS_CONSTRAINTS_FIRST_GROUP.iter().enumerate() {
+            constraint.cons.a.for_each_term(|idx, coeff| {
+                az_g0[idx] += w[i] * F::from_i128(coeff);
+            });
+            if let Some(c) = constraint.cons.a.const_term() {
+                az_g0_const += w[i] * F::from_i128(c);
+            }
+            constraint.cons.b.for_each_term(|idx, coeff| {
+                bz_g0[idx] += w[i] * F::from_i128(coeff);
+            });
+            if let Some(c) = constraint.cons.b.const_term() {
+                bz_g0_const += w[i] * F::from_i128(c);
+            }
+        }
+
+        let mut az_g1 = [F::zero(); NUM_R1CS_INPUTS];
+        let mut bz_g1 = [F::zero(); NUM_R1CS_INPUTS];
+        let mut az_g1_const = F::zero();
+        let mut bz_g1_const = F::zero();
+
+        let g2_len = core::cmp::min(
+            R1CS_CONSTRAINTS_SECOND_GROUP.len(),
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        );
+        for i in 0..g2_len {
+            let constraint = &R1CS_CONSTRAINTS_SECOND_GROUP[i];
+            constraint.cons.a.for_each_term(|idx, coeff| {
+                az_g1[idx] += w[i] * F::from_i128(coeff);
+            });
+            if let Some(c) = constraint.cons.a.const_term() {
+                az_g1_const += w[i] * F::from_i128(c);
+            }
+            constraint.cons.b.for_each_term(|idx, coeff| {
+                bz_g1[idx] += w[i] * F::from_i128(coeff);
+            });
+            if let Some(c) = constraint.cons.b.const_term() {
+                bz_g1_const += w[i] * F::from_i128(c);
+            }
+        }
+
+        // Blend groups: az = az_g0 + r_stream * (az_g1 - az_g0)
+        let r_stream_f: F = r_stream.into();
+        let mut az_coeff = [F::zero(); NUM_R1CS_INPUTS];
+        let mut bz_coeff = [F::zero(); NUM_R1CS_INPUTS];
+        for j in 0..NUM_R1CS_INPUTS {
+            az_coeff[j] = az_g0[j] + r_stream_f * (az_g1[j] - az_g0[j]);
+            bz_coeff[j] = bz_g0[j] + r_stream_f * (bz_g1[j] - bz_g0[j]);
+        }
+        let az_const = az_g0_const + r_stream_f * (az_g1_const - az_g0_const);
+        let bz_const = bz_g0_const + r_stream_f * (bz_g1_const - bz_g0_const);
+
+        // Compute tau_kernel
+        let tau = &self.tau;
+        let tau_high = &tau[tau.len() - 1];
+        let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
+            F::Challenge,
+            OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(tau_high, &self.r0);
+        let tau_low = &tau[..tau.len() - 1];
+        let r_tail_reversed: Vec<F::Challenge> =
+            sumcheck_challenges.iter().rev().copied().collect();
+        let tau_kernel = tau_high_bound_r0 * EqPolynomial::mle(tau_low, &r_tail_reversed);
+
+        // Collect structural index sets (must match output_claim_constraint order)
+        let mut a_set = BTreeSet::new();
+        let mut b_set = BTreeSet::new();
+        let mut a_has_const = false;
+        let mut b_has_const = false;
+
+        for group in [
+            R1CS_CONSTRAINTS_FIRST_GROUP.as_slice(),
+            R1CS_CONSTRAINTS_SECOND_GROUP.as_slice(),
+        ] {
+            for constraint in group {
+                constraint.cons.a.for_each_term(|idx, _| {
+                    a_set.insert(idx);
+                });
+                if constraint.cons.a.const_term().is_some() {
+                    a_has_const = true;
+                }
+                constraint.cons.b.for_each_term(|idx, _| {
+                    b_set.insert(idx);
+                });
+                if constraint.cons.b.const_term().is_some() {
+                    b_has_const = true;
+                }
+            }
+        }
+
+        let a_indices: Vec<usize> = a_set.iter().copied().collect();
+        let b_indices: Vec<usize> = b_set.iter().copied().collect();
+
+        let mut challenges = Vec::new();
+
+        // Quadratic: tau * az[i] * bz[j]
+        for &a_idx in &a_indices {
+            for &b_idx in &b_indices {
+                challenges.push(tau_kernel * az_coeff[a_idx] * bz_coeff[b_idx]);
+            }
+        }
+
+        // Linear: tau * (az[i]*bz_const + az_const*bz[i])
+        if a_has_const || b_has_const {
+            let mut all_indices = BTreeSet::new();
+            for &idx in &a_indices {
+                all_indices.insert(idx);
+            }
+            for &idx in &b_indices {
+                all_indices.insert(idx);
+            }
+            for idx in all_indices {
+                let from_a = if b_has_const {
+                    az_coeff[idx] * bz_const
+                } else {
+                    F::zero()
+                };
+                let from_b = if a_has_const {
+                    az_const * bz_coeff[idx]
+                } else {
+                    F::zero()
+                };
+                challenges.push(tau_kernel * (from_a + from_b));
+            }
+        }
+
+        // Constant: tau * az_const * bz_const
+        if a_has_const && b_has_const {
+            challenges.push(tau_kernel * az_const * bz_const);
+        }
+
+        challenges
+    }
 }
 
 pub struct OuterRemainingSumcheckVerifier<F: JoltField> {
@@ -388,7 +678,7 @@ impl<F: JoltField> OuterRemainingSumcheckVerifier<F> {
     pub fn new(
         key: UniformSpartanKey<F>,
         trace_len: usize,
-        uni_skip_params: OuterUniSkipParams<F>,
+        uni_skip_params: &OuterUniSkipParams<F>,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
         let params =
@@ -438,58 +728,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
         for input in &ALL_R1CS_INPUTS {
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::from(input),
                 SumcheckId::SpartanOuter,
                 r_cycle.clone(),
             );
         }
-    }
-}
-
-#[derive(Allocative, Clone)]
-pub struct OuterStreamingProverParams<F: JoltField> {
-    /// Number of cycle bits for splitting opening points
-    /// Total number of rounds equals num_cycles_bits
-    pub num_cycles_bits: usize,
-    /// The univariate-skip first round challenge
-    pub r0_uniskip: F::Challenge,
-}
-
-impl<F: JoltField> OuterStreamingProverParams<F> {
-    fn new(
-        uni_skip_params: &OuterUniSkipParams<F>,
-        opening_accumulator: &ProverOpeningAccumulator<F>,
-    ) -> Self {
-        let (r_uni_skip, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnivariateSkip,
-            SumcheckId::SpartanOuter,
-        );
-        debug_assert_eq!(r_uni_skip.len(), 1);
-        // tau.len() = num_rows_bits() = num_cycle_vars + 2
-        // num_cycles_bits = num_cycle_vars = tau.len() - 2
-        Self {
-            num_cycles_bits: uni_skip_params.tau.len() - 2,
-            r0_uniskip: r_uni_skip[0],
-        }
-    }
-
-    fn num_rounds(&self) -> usize {
-        // Total rounds = 1 + num_cycles_bits (one extra for streaming window)
-        1 + self.num_cycles_bits
-    }
-
-    fn get_inputs_opening_point(
-        sumcheck_challenges: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let r_cycle = sumcheck_challenges[1..].to_vec();
-        OpeningPoint::<LITTLE_ENDIAN, F>::new(r_cycle).match_endianness()
     }
 }
 
@@ -507,7 +755,7 @@ pub struct OuterSharedState<F: JoltField> {
     r_grid: ExpandingTable<F>,
     #[allocative(skip)]
     lagrange_evals_r0: [F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-    pub params: OuterStreamingProverParams<F>,
+    pub params: OuterRemainingSumcheckParams<F>,
 }
 
 impl<F: JoltField> OuterSharedState<F> {
@@ -519,8 +767,9 @@ impl<F: JoltField> OuterSharedState<F> {
         opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         let bytecode_preprocessing = bytecode_preprocessing.clone();
-        let outer_params = OuterStreamingProverParams::new(uni_skip_params, opening_accumulator);
-        let r0 = outer_params.r0_uniskip;
+        let outer_params =
+            OuterRemainingSumcheckParams::new(trace.len(), uni_skip_params, opening_accumulator);
+        let r0 = outer_params.r0;
 
         let lagrange_evals_r =
             LagrangePolynomial::<F>::evals::<F::Challenge, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0);
@@ -764,21 +1013,42 @@ impl<F: JoltField> OuterSharedState<F> {
     }
 }
 
-impl<F: JoltField> SharedStreamingSumcheckState<F> for OuterSharedState<F> {
+impl<F: JoltField> SumcheckInstanceParams<F> for OuterSharedState<F> {
     fn degree(&self) -> usize {
-        OUTER_REMAINING_DEGREE_BOUND
+        self.params.degree()
     }
 
     fn num_rounds(&self) -> usize {
         self.params.num_rounds()
     }
 
-    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
-        let (_, uni_skip_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnivariateSkip,
-            SumcheckId::SpartanOuter,
-        );
-        uni_skip_claim
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        self.params.input_claim(accumulator)
+    }
+
+    fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
+        self.params.normalize_opening_point(challenges)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        self.params.input_claim_constraint()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, accumulator: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        self.params.input_constraint_challenge_values(accumulator)
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        self.params.output_claim_constraint()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        self.params
+            .output_constraint_challenge_values(sumcheck_challenges)
     }
 }
 
@@ -1436,14 +1706,13 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
     }
 
     #[tracing::instrument(skip_all, name = "OuterLinearStage::cache_openings")]
-    fn cache_openings<T: Transcript>(
+    fn cache_openings(
         &self,
         shared: &Self::Shared,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let r_cycle = OuterStreamingProverParams::get_inputs_opening_point(sumcheck_challenges);
+        let r_cycle = shared.params.normalize_opening_point(sumcheck_challenges);
 
         let claimed_witness_evals = R1CSEval::compute_claimed_inputs(
             &shared.bytecode_preprocessing,
@@ -1453,7 +1722,6 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
 
         for (i, input) in ALL_R1CS_INPUTS.iter().enumerate() {
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::from(input),
                 SumcheckId::SpartanOuter,
                 r_cycle.clone(),

@@ -1,3 +1,5 @@
+#[cfg(feature = "zk")]
+pub mod blindfold;
 pub mod booleanity;
 pub mod mles_product_sum;
 pub mod read_write_matrix;

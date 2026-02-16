@@ -36,6 +36,11 @@ use num_traits::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
+
 use crate::{
     field::JoltField,
     poly::{
@@ -154,7 +159,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let RamRaClaimReductionPhase::PhaseCycle2(state) = &self.phase else {
@@ -177,7 +181,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let ra_claim_reduced = state.H_prime.final_sumcheck_claim();
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamRaClaimReduction,
             opening_point,
@@ -1015,6 +1018,56 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RaReductionParams<F> {
 
         OpeningPoint::<BIG_ENDIAN, F>::new([r_address_be, r_cycle_be].concat())
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation),
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation),
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking),
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        vec![self.gamma, self.gamma_squared, self.gamma_cubed]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::all_weighted_openings(&[
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamRaClaimReduction),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r_address_reduced: Vec<_> = sumcheck_challenges[..self.log_K]
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+        let r_cycle_reduced: Vec<_> = sumcheck_challenges[self.log_K..]
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+
+        let eq_addr_1 = EqPolynomial::<F>::mle(&self.r_address_1, &r_address_reduced);
+        let eq_addr_2 = EqPolynomial::<F>::mle(&self.r_address_2, &r_address_reduced);
+
+        let eq_cycle_raf = EqPolynomial::<F>::mle(&self.r_cycle_raf, &r_cycle_reduced);
+        let eq_cycle_rw = EqPolynomial::<F>::mle(&self.r_cycle_rw, &r_cycle_reduced);
+        let eq_cycle_val = EqPolynomial::<F>::mle(&self.r_cycle_val, &r_cycle_reduced);
+
+        let eq_cycle_A = eq_cycle_raf + self.gamma * eq_cycle_val;
+        let eq_cycle_B = eq_cycle_rw + self.gamma * eq_cycle_val;
+
+        let eq_combined = eq_addr_1 * eq_cycle_A + self.gamma_squared * eq_addr_2 * eq_cycle_B;
+
+        vec![eq_combined]
+    }
 }
 
 /// RAM RA reduction sumcheck verifier.
@@ -1085,7 +1138,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         // Cache the reduced RA opening point for RA virtualization
@@ -1101,7 +1153,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         );
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamRaClaimReduction,
             opening_point,

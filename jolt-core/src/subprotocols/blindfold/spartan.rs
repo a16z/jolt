@@ -1,0 +1,794 @@
+//! Spartan Sumcheck for BlindFold R1CS
+//!
+//! Proves relaxed R1CS satisfaction: (Az) ∘ (Bz) = u·(Cz) + E
+//! via a sumcheck over: Σ_x eq(τ,x) · [Az(x)·Bz(x) - u·Cz(x) - E(x)] = 0
+//!
+//! The sumcheck polynomial has degree 2 (Az·Bz is the quadratic term).
+//! After sumcheck, the verifier needs evaluation claims for:
+//! - Witness contributions to Az, Bz, Cz at the derived point
+//! - E at the sumcheck challenge point
+
+use super::HyraxParams;
+use crate::field::JoltField;
+use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::multilinear_polynomial::BindingOrder;
+use crate::poly::opening_proof::{
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+    BIG_ENDIAN,
+};
+use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
+use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
+use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
+use crate::transcripts::Transcript;
+use crate::utils::math::Math;
+
+use super::r1cs::VerifierR1CS;
+
+/// Spartan sumcheck degree bound.
+/// eq(τ,x) * Az(x) * Bz(x) is degree 3 in each variable.
+pub(super) const SPARTAN_DEGREE_BOUND: usize = 3;
+
+/// Inner sumcheck degree bound.
+/// L_w(j) * W(j) is degree 2 in each variable.
+pub(super) const INNER_SUMCHECK_DEGREE_BOUND: usize = 2;
+
+#[derive(Clone)]
+pub struct BlindFoldSpartanParams<F: JoltField> {
+    pub tau: Vec<F::Challenge>,
+    pub u: F,
+    pub num_vars: usize,
+}
+
+impl<F: JoltField> BlindFoldSpartanParams<F> {
+    pub fn new(tau: Vec<F::Challenge>, u: F, num_constraints: usize) -> Self {
+        let num_vars = num_constraints.next_power_of_two().log_2();
+        Self { tau, u, num_vars }
+    }
+}
+
+impl<F: JoltField> SumcheckInstanceParams<F> for BlindFoldSpartanParams<F> {
+    fn degree(&self) -> usize {
+        SPARTAN_DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.num_vars
+    }
+
+    fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
+        // Spartan starts with claim = 0 (we're proving Σ eq(τ,x)·[...] = 0)
+        F::zero()
+    }
+
+    fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
+        challenges.to_vec().into()
+    }
+
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        // No input constraint - Spartan starts at 0
+        InputClaimConstraint::default()
+    }
+
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &dyn OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        Vec::new()
+    }
+
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // The output claim is verified by BlindFold's final check
+        // We don't need a general constraint here
+        None
+    }
+
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
+    }
+}
+
+/// Prover for BlindFold Spartan sumcheck
+///
+/// Proves: Σ_x eq(τ,x) · [Az(x)·Bz(x) - u·Cz(x) - E(x)] = 0
+pub struct BlindFoldSpartanProver<'a, F: JoltField> {
+    params: BlindFoldSpartanParams<F>,
+    az: DensePolynomial<F>,
+    bz: DensePolynomial<F>,
+    cz: DensePolynomial<F>,
+    pub(super) e: DensePolynomial<F>,
+    eq_tau: DensePolynomial<F>,
+    r1cs: &'a VerifierR1CS<F>,
+    z: Vec<F>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: JoltField> allocative::Allocative for BlindFoldSpartanProver<'_, F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let _ = visitor;
+    }
+}
+
+impl<'a, F: JoltField> BlindFoldSpartanProver<'a, F> {
+    /// Create a new Spartan prover for the folded R1CS instance.
+    /// `z` layout: [u, W...] (public inputs baked into R1CS coefficients).
+    pub fn new(
+        r1cs: &'a VerifierR1CS<F>,
+        u: F,
+        z: Vec<F>,
+        e: Vec<F>,
+        tau: Vec<F::Challenge>,
+    ) -> Self {
+        let num_constraints = r1cs.num_constraints;
+        let padded_size = num_constraints.next_power_of_two();
+
+        // Compute A·Z, B·Z, C·Z
+        let az_raw = r1cs.a.mul_vector(&z);
+        let bz_raw = r1cs.b.mul_vector(&z);
+        let cz_raw = r1cs.c.mul_vector(&z);
+
+        // Pad to power of 2
+        let mut az_padded = az_raw;
+        let mut bz_padded = bz_raw;
+        let mut cz_padded = cz_raw;
+        let mut e_padded = e.clone();
+
+        az_padded.resize(padded_size, F::zero());
+        bz_padded.resize(padded_size, F::zero());
+        cz_padded.resize(padded_size, F::zero());
+        e_padded.resize(padded_size, F::zero());
+
+        // Build eq(τ, ·) table
+        let tau_f: Vec<F> = tau.iter().map(|c| (*c).into()).collect();
+        let eq_tau = EqPolynomial::evals(&tau_f);
+
+        let params = BlindFoldSpartanParams::new(tau, u, num_constraints);
+
+        Self {
+            params,
+            az: DensePolynomial::new(az_padded),
+            bz: DensePolynomial::new(bz_padded),
+            cz: DensePolynomial::new(cz_padded),
+            e: DensePolynomial::new(e_padded),
+            eq_tau: DensePolynomial::new(eq_tau),
+            r1cs,
+            z,
+        }
+    }
+
+    /// Compute the sumcheck polynomial for the current round
+    ///
+    /// g(X) = Σ_{x_i=0,1} eq(τ, prefix || X || suffix) · [Az·Bz - u·Cz - E]
+    ///
+    /// This is degree 3 in X (eq is linear, Az*Bz is quadratic).
+    ///
+    /// Uses big-endian indexing: pairs (i, i+half) differ in the MSB,
+    /// corresponding to the first sumcheck variable.
+    pub fn compute_round_polynomial(&self, _previous_claim: F) -> UniPoly<F> {
+        let u = self.params.u;
+        let n = self.az.len();
+        let half = n / 2;
+
+        // Compute evaluations at X = 0, 1, 2, 3
+        let mut evals = vec![F::zero(); 4];
+
+        // Iterate over pairs (i, i+half) which differ in the MSB (first variable)
+        for i in 0..half {
+            let eq_lo = self.eq_tau[i];
+            let eq_hi = self.eq_tau[i + half];
+
+            let az_lo = self.az[i];
+            let az_hi = self.az[i + half];
+
+            let bz_lo = self.bz[i];
+            let bz_hi = self.bz[i + half];
+
+            let cz_lo = self.cz[i];
+            let cz_hi = self.cz[i + half];
+
+            let e_lo = self.e[i];
+            let e_hi = self.e[i + half];
+
+            // Deltas for interpolation
+            let eq_delta = eq_hi - eq_lo;
+            let az_delta = az_hi - az_lo;
+            let bz_delta = bz_hi - bz_lo;
+            let cz_delta = cz_hi - cz_lo;
+            let e_delta = e_hi - e_lo;
+
+            // At X = 0: use _lo values
+            let term_0 = eq_lo * (az_lo * bz_lo - u * cz_lo - e_lo);
+            evals[0] += term_0;
+
+            // At X = 1: use _hi values
+            let term_1 = eq_hi * (az_hi * bz_hi - u * cz_hi - e_hi);
+            evals[1] += term_1;
+
+            // At X = 2: f(2) = f_lo + 2*delta
+            let eq_2 = eq_lo + eq_delta + eq_delta;
+            let az_2 = az_lo + az_delta + az_delta;
+            let bz_2 = bz_lo + bz_delta + bz_delta;
+            let cz_2 = cz_lo + cz_delta + cz_delta;
+            let e_2 = e_lo + e_delta + e_delta;
+
+            let term_2 = eq_2 * (az_2 * bz_2 - u * cz_2 - e_2);
+            evals[2] += term_2;
+
+            // At X = 3: f(3) = f_lo + 3*delta
+            let eq_3 = eq_2 + eq_delta;
+            let az_3 = az_2 + az_delta;
+            let bz_3 = bz_2 + bz_delta;
+            let cz_3 = cz_2 + cz_delta;
+            let e_3 = e_2 + e_delta;
+
+            let term_3 = eq_3 * (az_3 * bz_3 - u * cz_3 - e_3);
+            evals[3] += term_3;
+        }
+
+        // Interpolate to get coefficients of degree-3 polynomial
+        // p(X) = c0 + c1*X + c2*X^2 + c3*X^3
+        UniPoly::from_evals(&evals)
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BlindFoldSpartanProver<'_, F> {
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
+    }
+
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+        self.compute_round_polynomial(previous_claim)
+    }
+
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
+        // Bind all polynomials to the challenge
+        self.az.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.bz.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.cz.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.e.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.eq_tau.bind_parallel(r_j, BindingOrder::HighToLow);
+    }
+
+    fn cache_openings(
+        &self,
+        _accumulator: &mut ProverOpeningAccumulator<F>,
+        _sumcheck_challenges: &[F::Challenge],
+    ) {
+        // The opening proofs for W and E contributions are handled by BlindFold
+        // after verifying the final claim. We cache the final values here.
+        //
+        // After sumcheck completes, the bound polynomials contain the final evaluations:
+        // - self.az[0] = Az(r)
+        // - self.bz[0] = Bz(r)
+        // - self.cz[0] = Cz(r)
+        // - self.e[0] = E(r)
+        // - self.eq_tau[0] = eq(τ, r)
+        //
+        // The verifier will reconstruct the public contributions and verify:
+        // eq(τ, r) * (Az(r)*Bz(r) - u*Cz(r) - E(r)) = final_sumcheck_claim
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, _flamegraph: &mut allocative::FlameGraphBuilder) {
+        // No-op
+    }
+}
+
+/// Final claims from the Spartan sumcheck prover
+#[derive(Clone, Debug)]
+pub struct SpartanFinalClaims<F> {
+    /// eq(τ, r) where r is the sumcheck challenge point
+    pub eq_tau_r: F,
+    /// Az(r) = A·Z evaluated at the challenge point
+    pub az_r: F,
+    /// Bz(r) = B·Z evaluated at the challenge point
+    pub bz_r: F,
+    /// Cz(r) = C·Z evaluated at the challenge point
+    pub cz_r: F,
+    /// E(r) = error vector evaluated at the challenge point
+    pub e_r: F,
+}
+
+impl<F: JoltField> BlindFoldSpartanProver<'_, F> {
+    /// Get the number of sumcheck rounds
+    pub fn num_vars(&self) -> usize {
+        self.params.num_vars
+    }
+
+    /// Bind all polynomials to a challenge value
+    pub fn bind_challenge(&mut self, r_j: F::Challenge) {
+        self.az.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.bz.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.cz.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.e.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.eq_tau.bind_parallel(r_j, BindingOrder::HighToLow);
+    }
+
+    /// Get the final claims after sumcheck completes
+    pub fn final_claims(&self) -> SpartanFinalClaims<F> {
+        SpartanFinalClaims {
+            eq_tau_r: self.eq_tau[0],
+            az_r: self.az[0],
+            bz_r: self.bz[0],
+            cz_r: self.cz[0],
+            e_r: self.e[0],
+        }
+    }
+
+    /// Compute the witness contribution to Az(r), Bz(r), Cz(r)
+    ///
+    /// Returns (w_az, w_bz, w_cz) where:
+    /// - w_az = Σ_{j ∈ witness} A'[j] · W[j]
+    /// - w_bz = Σ_{j ∈ witness} B'[j] · W[j]
+    /// - w_cz = Σ_{j ∈ witness} C'[j] · W[j]
+    ///
+    /// And A'[j] = Σ_i A[i,j] · eq(r, i)
+    pub fn witness_contributions(&self, sumcheck_challenges: &[F::Challenge]) -> (F, F, F) {
+        let r: Vec<F> = sumcheck_challenges.iter().map(|c| (*c).into()).collect();
+        let padded = self.r1cs.num_constraints.next_power_of_two();
+        let eq_r: Vec<F> = EqPolynomial::evals(&r);
+        let witness_len = self.z.len() - 1;
+
+        let a_prime = self.r1cs.a.project_columns(&eq_r, 1, witness_len, padded);
+        let b_prime = self.r1cs.b.project_columns(&eq_r, 1, witness_len, padded);
+        let c_prime = self.r1cs.c.project_columns(&eq_r, 1, witness_len, padded);
+
+        let w = &self.z[1..];
+        let dot = |prime: &[F]| -> F { prime.iter().zip(w).map(|(p, w)| *p * *w).sum() };
+        (dot(&a_prime), dot(&b_prime), dot(&c_prime))
+    }
+}
+
+/// Verifier for BlindFold Spartan sumcheck
+pub struct BlindFoldSpartanVerifier<'a, F: JoltField> {
+    /// Parameters
+    params: BlindFoldSpartanParams<F>,
+    /// Reference to R1CS
+    r1cs: &'a VerifierR1CS<F>,
+}
+
+impl<'a, F: JoltField> BlindFoldSpartanVerifier<'a, F> {
+    pub fn new(r1cs: &'a VerifierR1CS<F>, tau: Vec<F::Challenge>, u: F) -> Self {
+        let params = BlindFoldSpartanParams::new(tau, u, r1cs.num_constraints);
+        Self { params, r1cs }
+    }
+
+    /// Compute the public contribution to Az(r), Bz(r), Cz(r).
+    ///
+    /// With baked public inputs, only column 0 (the u scalar) is public.
+    /// Returns (u·A'[0], u·B'[0], u·C'[0]) where A'[0] = Σ_i A[i,0]·eq(r, i).
+    pub fn public_contributions(&self, sumcheck_challenges: &[F::Challenge]) -> (F, F, F) {
+        let r: Vec<F> = sumcheck_challenges.iter().map(|c| (*c).into()).collect();
+        let padded = self.r1cs.num_constraints.next_power_of_two();
+        let eq_r: Vec<F> = EqPolynomial::evals(&r);
+
+        let u = self.params.u;
+        let a0 = self.r1cs.a.project_columns(&eq_r, 0, 1, padded)[0];
+        let b0 = self.r1cs.b.project_columns(&eq_r, 0, 1, padded)[0];
+        let c0 = self.r1cs.c.project_columns(&eq_r, 0, 1, padded)[0];
+        (a0 * u, b0 * u, c0 * u)
+    }
+
+    /// Compute eq(τ, r)
+    pub fn eq_tau_at_r(&self, sumcheck_challenges: &[F::Challenge]) -> F {
+        let tau: Vec<F> = self.params.tau.iter().map(|c| (*c).into()).collect();
+        let r: Vec<F> = sumcheck_challenges.iter().map(|c| (*c).into()).collect();
+        EqPolynomial::mle(&tau, &r)
+    }
+
+    /// Verify the final sumcheck claim given witness and error contributions
+    ///
+    /// The final claim should be:
+    /// final_claim = eq(τ, r) · [Az(r)·Bz(r) - u·Cz(r) - E(r)]
+    ///
+    /// Where:
+    /// - Az(r) = pub_az + w_az
+    /// - Bz(r) = pub_bz + w_bz
+    /// - Cz(r) = pub_cz + w_cz
+    pub fn expected_claim(
+        &self,
+        sumcheck_challenges: &[F::Challenge],
+        w_az: F,
+        w_bz: F,
+        w_cz: F,
+        e_r: F,
+    ) -> F {
+        let eq_tau_r = self.eq_tau_at_r(sumcheck_challenges);
+        let (pub_az, pub_bz, pub_cz) = self.public_contributions(sumcheck_challenges);
+
+        let az_r = pub_az + w_az;
+        let bz_r = pub_bz + w_bz;
+        let cz_r = pub_cz + w_cz;
+
+        eq_tau_r * (az_r * bz_r - self.params.u * cz_r - e_r)
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for BlindFoldSpartanVerifier<'_, F>
+{
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
+    }
+
+    fn expected_output_claim(
+        &self,
+        _accumulator: &VerifierOpeningAccumulator<F>,
+        _sumcheck_challenges: &[F::Challenge],
+    ) -> F {
+        // The BlindFold verifier handles the final claim verification
+        // after receiving witness and error contributions
+        unreachable!(
+            "BlindFold Spartan verifier uses expected_claim() with explicit witness contributions"
+        )
+    }
+
+    fn cache_openings(
+        &self,
+        _accumulator: &mut VerifierOpeningAccumulator<F>,
+        _sumcheck_challenges: &[F::Challenge],
+    ) {
+        // Opening verification is handled by BlindFold after sumcheck
+    }
+}
+
+/// Inner sumcheck prover for reducing matrix evaluation claims to a point evaluation of W.
+///
+/// Proves: Σ_j L_w(j) · W(j) = claim_inner
+/// where L_w(j) = ra·A'[ws+j] + rb·B'[ws+j] + rc·C'[ws+j]
+/// and A'[col] = Σ_row A[row,col]·eq(rx,row).
+///
+/// Degree 2 per variable (product of two multilinears).
+pub struct BlindFoldInnerSumcheckProver<F: JoltField> {
+    l_w: DensePolynomial<F>,
+    w: DensePolynomial<F>,
+    num_vars: usize,
+}
+
+impl<F: JoltField> BlindFoldInnerSumcheckProver<F> {
+    /// Build the inner sumcheck prover.
+    ///
+    /// `rx` — outer sumcheck challenge point (as Challenge type)
+    /// `w_padded` — padded witness vector (power-of-2 length)
+    /// `ra, rb, rc` — random linear combination scalars
+    pub fn new(
+        r1cs: &VerifierR1CS<F>,
+        rx: &[F::Challenge],
+        w_padded: Vec<F>,
+        ra: F,
+        rb: F,
+        rc: F,
+    ) -> Self {
+        let w_padded_len = w_padded.len();
+        let num_vars = w_padded_len.log_2();
+        let l_w = build_L_w(r1cs, rx, ra, rb, rc, w_padded_len);
+        Self {
+            l_w: DensePolynomial::new(l_w),
+            w: DensePolynomial::new(w_padded),
+            num_vars,
+        }
+    }
+
+    pub fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    /// Compute the degree-2 round polynomial: g(X) = Σ_suffix L_w(prefix||X||suffix)·W(prefix||X||suffix)
+    pub fn compute_round_polynomial(&self) -> UniPoly<F> {
+        let n = self.l_w.len();
+        let half = n / 2;
+
+        let mut evals = vec![F::zero(); 3];
+
+        for i in 0..half {
+            let lw_lo = self.l_w[i];
+            let lw_hi = self.l_w[i + half];
+            let w_lo = self.w[i];
+            let w_hi = self.w[i + half];
+
+            let lw_delta = lw_hi - lw_lo;
+            let w_delta = w_hi - w_lo;
+
+            evals[0] += lw_lo * w_lo;
+            evals[1] += lw_hi * w_hi;
+
+            let lw_2 = lw_lo + lw_delta + lw_delta;
+            let w_2 = w_lo + w_delta + w_delta;
+            evals[2] += lw_2 * w_2;
+        }
+
+        UniPoly::from_evals(&evals)
+    }
+
+    pub fn bind_challenge(&mut self, r_j: F::Challenge) {
+        self.l_w.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.w.bind_parallel(r_j, BindingOrder::HighToLow);
+    }
+}
+
+fn build_L_w<F: JoltField>(
+    r1cs: &VerifierR1CS<F>,
+    rx: &[F::Challenge],
+    ra: F,
+    rb: F,
+    rc: F,
+    w_padded_len: usize,
+) -> Vec<F> {
+    let r: Vec<F> = rx.iter().map(|c| (*c).into()).collect();
+    let padded = r1cs.num_constraints.next_power_of_two();
+    let eq_rx: Vec<F> = EqPolynomial::evals(&r);
+
+    let a_proj = r1cs.a.project_columns(&eq_rx, 1, w_padded_len, padded);
+    let b_proj = r1cs.b.project_columns(&eq_rx, 1, w_padded_len, padded);
+    let c_proj = r1cs.c.project_columns(&eq_rx, 1, w_padded_len, padded);
+
+    let mut l_w = vec![F::zero(); w_padded_len];
+    for j in 0..w_padded_len {
+        l_w[j] = ra * a_proj[j] + rb * b_proj[j] + rc * c_proj[j];
+    }
+    l_w
+}
+
+pub fn compute_L_w_at_ry<F: JoltField>(
+    r1cs: &VerifierR1CS<F>,
+    rx: &[F::Challenge],
+    ry_w: &[F::Challenge],
+    ra: F,
+    rb: F,
+    rc: F,
+) -> F {
+    let r: Vec<F> = rx.iter().map(|c| (*c).into()).collect();
+    let ry: Vec<F> = ry_w.iter().map(|c| (*c).into()).collect();
+    let padded = r1cs.num_constraints.next_power_of_two();
+    let w_len = 1usize << ry_w.len();
+
+    let eq_rx: Vec<F> = EqPolynomial::evals(&r);
+    let eq_ry: Vec<F> = EqPolynomial::evals(&ry);
+
+    let a_val = r1cs.a.bilinear_eval(&eq_rx, &eq_ry, 1, w_len, padded);
+    let b_val = r1cs.b.bilinear_eval(&eq_rx, &eq_ry, 1, w_len, padded);
+    let c_val = r1cs.c.bilinear_eval(&eq_rx, &eq_ry, 1, w_len, padded);
+
+    ra * a_val + rb * b_val + rc * c_val
+}
+
+/// Map coefficient positions in the witness vector W (grid layout).
+///
+/// With the Hyrax grid layout, round i's coefficients start at `i * C`
+/// in the witness. Returns `Vec<(start_offset_in_W, num_coefficients)>` for each round.
+pub fn coefficient_positions<F: JoltField>(r1cs: &VerifierR1CS<F>) -> Vec<(usize, usize)> {
+    let hyrax_C = r1cs.hyrax.C;
+    let mut positions = Vec::new();
+    let mut round_idx = 0;
+
+    for config in &r1cs.stage_configs {
+        for _ in 0..config.num_rounds {
+            let num_coeffs = config.poly_degree + 1;
+            positions.push((round_idx * hyrax_C, num_coeffs));
+            round_idx += 1;
+        }
+    }
+
+    positions
+}
+
+pub fn hyrax_combined_row<F: JoltField>(flat: &[F], hyrax_C: usize, ry_row: &[F]) -> Vec<F> {
+    HyraxParams::combined_row_static(flat, hyrax_C, ry_row)
+}
+
+pub fn hyrax_evaluate<F: JoltField>(combined_row: &[F], ry_col: &[F]) -> F {
+    HyraxParams::evaluate(combined_row, ry_col)
+}
+
+pub fn hyrax_combined_blinding<F: JoltField>(row_blindings: &[F], ry_row: &[F]) -> F {
+    HyraxParams::combined_blinding(row_blindings, ry_row)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
+    use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
+    use crate::subprotocols::blindfold::{BakedPublicInputs, StageConfig};
+    use crate::transcripts::KeccakTranscript;
+    use ark_bn254::Fr;
+    use ark_std::{One, Zero};
+
+    #[test]
+    fn test_eq_polynomial_binding_vs_mle() {
+        type F = Fr;
+
+        // Generate tau and challenges from transcript (using proper Challenge type)
+        let mut transcript = KeccakTranscript::new(b"test_eq_binding");
+        let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(3);
+        let challenges: Vec<_> = transcript.challenge_vector_optimized::<F>(3);
+
+        // Convert tau to F for building eq table
+        let tau_f: Vec<F> = tau.iter().map(|c| (*c).into()).collect();
+
+        // Method 1: Build eq table and bind
+        let eq_evals: Vec<F> = EqPolynomial::evals(&tau_f);
+        let mut eq_table = DensePolynomial::new(eq_evals);
+        for &c in &challenges {
+            eq_table.bind_parallel(c, BindingOrder::HighToLow);
+        }
+        let bound_result: F = eq_table[0];
+
+        // Method 2: Direct mle computation (convert Challenge to F first)
+        let challenges_f: Vec<F> = challenges.iter().map(|c| (*c).into()).collect();
+        let mle_result: F = EqPolynomial::mle(&tau_f, &challenges_f);
+
+        assert_eq!(
+            bound_result, mle_result,
+            "EqPolynomial binding mismatch: bound={bound_result:?}, mle={mle_result:?}",
+        );
+    }
+
+    #[test]
+    fn test_spartan_sumcheck_correctness() {
+        type F = Fr;
+
+        let configs = [StageConfig::new(2, 3)];
+
+        let round1 = RoundWitness::new(
+            vec![
+                F::from_u64(20),
+                F::from_u64(5),
+                F::from_u64(7),
+                F::from_u64(3),
+            ],
+            F::from_u64(2),
+        );
+        let next1 = round1.evaluate(F::from_u64(2));
+
+        let c0_2 = F::from_u64(85);
+        let c2_2 = F::from_u64(2);
+        let c3_2 = F::from_u64(1);
+        let c1_2 = next1 - F::from_u64(173);
+        let round2 = RoundWitness::new(vec![c0_2, c1_2, c2_2, c3_2], F::from_u64(3));
+
+        let initial_claim = F::from_u64(55);
+        let blindfold_witness =
+            BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round1, round2])]);
+
+        let baked = BakedPublicInputs {
+            challenges: vec![F::from_u64(2), F::from_u64(3)],
+            initial_claims: vec![initial_claim],
+            ..Default::default()
+        };
+        let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
+        let r1cs = builder.build();
+
+        let z = blindfold_witness.assign(&r1cs);
+        assert!(r1cs.is_satisfied(&z));
+
+        let e = vec![F::zero(); r1cs.num_constraints];
+
+        let mut transcript = KeccakTranscript::new(b"test_spartan");
+        let tau: Vec<_> = transcript
+            .challenge_vector_optimized::<F>(r1cs.num_constraints.next_power_of_two().log_2());
+
+        let mut prover = BlindFoldSpartanProver::new(&r1cs, F::one(), z.clone(), e, tau.clone());
+
+        let num_rounds = prover.num_vars();
+        let mut claim = F::zero();
+        let mut challenges = Vec::new();
+
+        for round in 0..num_rounds {
+            let poly = prover.compute_round_polynomial(claim);
+            let sum = poly.evaluate(&F::zero()) + poly.evaluate(&F::one());
+            assert_eq!(sum, claim, "Round {round}: p(0) + p(1) != claim");
+
+            let r_j = transcript.challenge_scalar_optimized::<F>();
+            challenges.push(r_j);
+            claim = poly.evaluate(&r_j);
+            prover.bind_challenge(r_j);
+        }
+
+        let final_claims = prover.final_claims();
+        let expected_final = final_claims.eq_tau_r
+            * (final_claims.az_r * final_claims.bz_r
+                - F::one() * final_claims.cz_r
+                - final_claims.e_r);
+        assert_eq!(claim, expected_final, "Final claim mismatch");
+
+        let verifier = BlindFoldSpartanVerifier::new(&r1cs, tau.clone(), F::one());
+
+        let verifier_eq_tau_r = verifier.eq_tau_at_r(&challenges);
+        assert_eq!(
+            final_claims.eq_tau_r, verifier_eq_tau_r,
+            "eq(tau, r) mismatch"
+        );
+
+        let (w_az, w_bz, w_cz) = prover.witness_contributions(&challenges);
+        let (pub_az, pub_bz, pub_cz) = verifier.public_contributions(&challenges);
+
+        assert_eq!(final_claims.az_r, pub_az + w_az, "Az(r) mismatch");
+        assert_eq!(final_claims.bz_r, pub_bz + w_bz, "Bz(r) mismatch");
+        assert_eq!(final_claims.cz_r, pub_cz + w_cz, "Cz(r) mismatch");
+
+        let verifier_expected =
+            verifier.expected_claim(&challenges, w_az, w_bz, w_cz, final_claims.e_r);
+        assert_eq!(claim, verifier_expected, "Verifier expected claim mismatch");
+    }
+
+    #[test]
+    fn test_spartan_with_relaxed_r1cs() {
+        type F = Fr;
+
+        let configs = [StageConfig::new(1, 3)];
+        let round = RoundWitness::new(
+            vec![
+                F::from_u64(40),
+                F::from_u64(5),
+                F::from_u64(10),
+                F::from_u64(5),
+            ],
+            F::from_u64(3),
+        );
+        let initial_claim = F::from_u64(100);
+
+        let baked = BakedPublicInputs {
+            challenges: vec![F::from_u64(3)],
+            initial_claims: vec![initial_claim],
+            ..Default::default()
+        };
+        let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
+        let r1cs = builder.build();
+
+        let blindfold_witness =
+            BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
+        let z = blindfold_witness.assign(&r1cs);
+
+        // For relaxed R1CS with u != 1, compute E = Az ∘ Bz - u·Cz
+        let u = F::from_u64(7); // Non-trivial u
+        let mut z_relaxed = z.clone();
+        z_relaxed[0] = u; // Set u scalar
+
+        let az = r1cs.a.mul_vector(&z_relaxed);
+        let bz = r1cs.b.mul_vector(&z_relaxed);
+        let cz = r1cs.c.mul_vector(&z_relaxed);
+
+        let e: Vec<F> = (0..r1cs.num_constraints)
+            .map(|i| az[i] * bz[i] - u * cz[i])
+            .collect();
+
+        // Create transcript and derive τ
+        let mut transcript = KeccakTranscript::new(b"test_spartan_relaxed");
+        let tau: Vec<_> = transcript
+            .challenge_vector_optimized::<F>(r1cs.num_constraints.next_power_of_two().log_2());
+
+        // Create Spartan prover with relaxed instance
+        let mut prover =
+            BlindFoldSpartanProver::new(&r1cs, u, z_relaxed.clone(), e.clone(), tau.clone());
+
+        // Run sumcheck
+        let num_rounds = prover.num_vars();
+        let mut claim = F::zero();
+        let mut challenges = Vec::new();
+
+        for round in 0..num_rounds {
+            let poly = prover.compute_round_polynomial(claim);
+
+            let sum = poly.evaluate(&F::zero()) + poly.evaluate(&F::one());
+            assert_eq!(sum, claim, "Round {round}: sum check failed");
+
+            let r_j = transcript.challenge_scalar_optimized::<F>();
+            challenges.push(r_j);
+            claim = poly.evaluate(&r_j);
+            prover.bind_challenge(r_j);
+        }
+
+        // Final claim should be 0 (relaxed R1CS is satisfied)
+        let final_claims = prover.final_claims();
+        let expected_final = final_claims.eq_tau_r
+            * (final_claims.az_r * final_claims.bz_r - u * final_claims.cz_r - final_claims.e_r);
+
+        // Since (Az)∘(Bz) = u·(Cz) + E by construction, the expression should be 0
+        assert_eq!(
+            expected_final, claim,
+            "Relaxed R1CS final claim should be 0"
+        );
+    }
+}

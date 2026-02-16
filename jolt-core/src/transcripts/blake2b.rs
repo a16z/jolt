@@ -1,7 +1,5 @@
 use super::transcript::Transcript;
 use crate::field::JoltField;
-use ark_ec::{AffineRepr, CurveGroup};
-use ark_serialize::CanonicalSerialize;
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 
@@ -144,29 +142,6 @@ impl Transcript for Blake2bTranscript {
         // to get an EVM compatible version.
         buf = buf.into_iter().rev().collect();
         self.raw_append_bytes(&buf);
-    }
-
-    fn raw_append_point<G: CurveGroup>(&mut self, point: &G) {
-        // If we add the point at infinity then we hash over a region of zeros
-        if point.is_zero() {
-            self.raw_append_bytes(&[0_u8; 64]);
-            return;
-        }
-
-        let aff = point.into_affine();
-        let mut x_bytes = vec![];
-        let mut y_bytes = vec![];
-        // The native serialize for the points are le encoded in x,y format and simply reversing
-        // can lead to errors so we extract the affine coordinates and the encode them be before writing
-        let x = aff.x().unwrap();
-        x.serialize_compressed(&mut x_bytes).unwrap();
-        x_bytes = x_bytes.into_iter().rev().collect();
-        let y = aff.y().unwrap();
-        y.serialize_compressed(&mut y_bytes).unwrap();
-        y_bytes = y_bytes.into_iter().rev().collect();
-
-        let hasher = self.hasher().chain_update(x_bytes).chain_update(y_bytes);
-        self.update_state(hasher.finalize().into());
     }
 
     // === Challenge generation methods ===

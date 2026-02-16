@@ -1,5 +1,5 @@
+use crate::curve::JoltGroupElement;
 use crate::field::JoltField;
-use ark_ec::CurveGroup;
 use ark_serialize::CanonicalSerialize;
 use std::borrow::Borrow;
 
@@ -45,10 +45,12 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     #[doc(hidden)]
     fn raw_append_scalar<F: JoltField>(&mut self, scalar: &F);
 
-    #[doc(hidden)]
-    fn raw_append_point<G: CurveGroup>(&mut self, point: &G);
-
     // === Public API - Labels required ===
+
+    /// Append a domain-separation label with no associated data.
+    fn append_label(&mut self, label: &'static [u8]) {
+        self.raw_append_label(label);
+    }
 
     /// Append raw bytes with a label.
     /// Variable-length: label and length packed into single 32-byte word.
@@ -71,11 +73,15 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
         self.raw_append_scalar(scalar);
     }
 
-    /// Append a curve point with a label.
+    /// Append a curve point with a label (compressed serialization).
     /// Fixed-size: no length prefix needed.
-    fn append_point<G: CurveGroup>(&mut self, label: &'static [u8], point: &G) {
+    fn append_point<G: JoltGroupElement>(&mut self, label: &'static [u8], point: &G) {
         self.raw_append_label(label);
-        self.raw_append_point(point);
+        let mut bytes = Vec::new();
+        point
+            .serialize_compressed(&mut bytes)
+            .expect("JoltGroupElement serialization should not fail");
+        self.raw_append_bytes(&bytes);
     }
 
     /// Append a serializable value with a label.
@@ -98,12 +104,31 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
         }
     }
 
-    /// Append a slice of curve points with a label.
+    /// Append a slice of curve points with a label (compressed serialization).
     /// Variable-length: label and count packed into single 32-byte word.
-    fn append_points<G: CurveGroup>(&mut self, label: &'static [u8], points: &[G]) {
+    fn append_points<G: JoltGroupElement>(&mut self, label: &'static [u8], points: &[G]) {
         self.raw_append_label_with_len(label, points.len() as u64);
         for p in points {
-            self.raw_append_point(p);
+            let mut bytes = Vec::new();
+            p.serialize_compressed(&mut bytes)
+                .expect("JoltGroupElement serialization should not fail");
+            self.raw_append_bytes(&bytes);
+        }
+    }
+
+    /// Append a slice of `CanonicalSerialize` points with a label (compressed serialization).
+    /// Same layout as `append_points` but works with any serializable type (e.g. arkworks affine points).
+    fn append_points_serializable<T: CanonicalSerialize>(
+        &mut self,
+        label: &'static [u8],
+        points: &[T],
+    ) {
+        self.raw_append_label_with_len(label, points.len() as u64);
+        for p in points {
+            let mut bytes = Vec::new();
+            p.serialize_compressed(&mut bytes)
+                .expect("Point serialization should not fail");
+            self.raw_append_bytes(&bytes);
         }
     }
 

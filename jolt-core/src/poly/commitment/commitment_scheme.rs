@@ -4,6 +4,7 @@ use std::fmt::Debug;
 
 use crate::transcripts::Transcript;
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
@@ -93,14 +94,16 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// * `transcript` - The transcript for Fiat-Shamir transformation
     ///
     /// # Returns
-    /// A proof of the polynomial evaluation at the specified point
+    /// A tuple containing:
+    /// - The proof of the polynomial evaluation at the specified point
+    /// - An optional ZK blinding factor (y_blinding) for use in BlindFold; None for non-ZK schemes
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
-    ) -> Self::Proof;
+    ) -> (Self::Proof, Option<Self::Field>);
 
     /// Verifies a proof of polynomial evaluation at a specific point.
     ///
@@ -124,6 +127,17 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     ) -> Result<(), ProofVerifyError>;
 
     fn protocol_name() -> &'static [u8];
+}
+
+pub trait ZkEvalCommitment<C: JoltCurve>: CommitmentScheme {
+    /// Returns the evaluation commitment (e.g. y_com) if present in the proof.
+    fn eval_commitment(proof: &Self::Proof) -> Option<C::G1>;
+
+    /// Returns the generators used for evaluation commitments in the prover setup.
+    fn eval_commitment_gens(setup: &Self::ProverSetup) -> Option<(C::G1, C::G1)>;
+
+    /// Returns the generators used for evaluation commitments in the verifier setup.
+    fn eval_commitment_gens_verifier(setup: &Self::VerifierSetup) -> Option<(C::G1, C::G1)>;
 }
 
 pub trait StreamingCommitmentScheme: CommitmentScheme {

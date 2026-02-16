@@ -179,8 +179,7 @@ where
 
     // The prover computes the challenge to keep the transcript in the same
     // state as that of the verifier
-    let w_points: Vec<P::G1> = w.iter().map(|g| g.into_group()).collect();
-    transcript.append_points(b"hyperkzg_witness", &w_points);
+    transcript.append_points_serializable(b"hyperkzg_witness", &w);
     let _d_0: P::ScalarField = transcript.challenge_scalar();
 
     (w, v)
@@ -205,8 +204,7 @@ where
     transcript.append_scalars(b"hyperkzg_evals", &scalars);
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(k);
 
-    let w_points: Vec<P::G1> = W.iter().map(|g| g.into_group()).collect();
-    transcript.append_points(b"hyperkzg_witness", &w_points);
+    transcript.append_points_serializable(b"hyperkzg_witness", W);
     let d_0: P::ScalarField = transcript.challenge_scalar();
     let d_1 = d_0 * d_0;
 
@@ -336,8 +334,7 @@ where
         // Phase 2
         // We do not need to add x to the transcript, because in our context x was obtained from the transcript.
         // We also do not need to absorb `C` and `eval` as they are already absorbed by the transcript by the caller
-        let com_points: Vec<P::G1> = com.iter().map(|g| g.into_group()).collect();
-        transcript.append_points(b"hyperkzg_com", &com_points);
+        transcript.append_points_serializable(b"hyperkzg_com", &com);
         let r: <P as Pairing>::ScalarField = transcript.challenge_scalar();
         let u = vec![r, -r, r * r];
 
@@ -364,8 +361,7 @@ where
 
         // we do not need to add x to the transcript, because in our context x was
         // obtained from the transcript
-        let com_points: Vec<P::G1> = com.iter().map(|g| g.into_group()).collect();
-        transcript.append_points(b"hyperkzg_com", &com_points);
+        transcript.append_points_serializable(b"hyperkzg_com", &com);
         let r: <P as Pairing>::ScalarField = transcript.challenge_scalar();
 
         if r == P::ScalarField::zero() || C.0 == P::G1Affine::zero() {
@@ -488,9 +484,10 @@ where
         opening_point: &[<Self::Field as JoltField>::Challenge], // point at which the polynomial is evaluated
         _hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
+    ) -> (Self::Proof, Option<Self::Field>) {
         let eval = poly.evaluate(opening_point);
-        HyperKZG::<P>::open(setup, poly, opening_point, &eval, transcript).unwrap()
+        let proof = HyperKZG::<P>::open(setup, poly, opening_point, &eval, transcript).unwrap();
+        (proof, None) // HyperKZG doesn't have ZK blinding
     }
 
     fn verify<ProofTranscript: Transcript>(

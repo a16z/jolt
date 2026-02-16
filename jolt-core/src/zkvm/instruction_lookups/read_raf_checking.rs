@@ -53,6 +53,13 @@ use crate::{
     },
 };
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
+
 use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 
 // Instruction lookups: Read + RAF batched sumcheck
@@ -177,6 +184,132 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParam
         let r_cycle_prime = r_cycle_prime.iter().copied().rev().collect::<Vec<_>>();
 
         OpeningPoint::new([r_address_prime.to_vec(), r_cycle_prime].concat())
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        // LookupOutput from both InstructionClaimReduction and SpartanProductVirtualization
+        // must be equal. Include both to ensure both output constraint chains are consumed.
+        // input = 0.5*rv + 0.5*rv_branch + γ*left + γ²*right
+        let rv = OpeningId::virt(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::InstructionClaimReduction,
+        );
+        let rv_branch = OpeningId::virt(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanProductVirtualization,
+        );
+        let left = OpeningId::virt(
+            VirtualPolynomial::LeftLookupOperand,
+            SumcheckId::InstructionClaimReduction,
+        );
+        let right = OpeningId::virt(
+            VirtualPolynomial::RightLookupOperand,
+            SumcheckId::InstructionClaimReduction,
+        );
+
+        let terms = vec![
+            ProductTerm::scaled(ValueSource::Challenge(0), vec![ValueSource::Opening(rv)]),
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(rv_branch)],
+            ),
+            ProductTerm::scaled(ValueSource::Challenge(1), vec![ValueSource::Opening(left)]),
+            ProductTerm::scaled(ValueSource::Challenge(2), vec![ValueSource::Opening(right)]),
+        ];
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        let half = F::from_u64(2).inverse().unwrap();
+        vec![half, self.gamma, self.gamma_sqr]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let n_virtual_ra_polys = LOG_K / self.ra_virtual_log_k_chunk;
+        let num_tables = LookupTables::<XLEN>::COUNT;
+
+        let ra_openings: Vec<ValueSource> = (0..n_virtual_ra_polys)
+            .map(|i| {
+                ValueSource::Opening(OpeningId::virt(
+                    VirtualPolynomial::InstructionRa(i),
+                    SumcheckId::InstructionReadRaf,
+                ))
+            })
+            .collect();
+
+        let mut terms = Vec::with_capacity(num_tables + 2);
+
+        for j in 0..num_tables {
+            let flag_opening = ValueSource::Opening(OpeningId::virt(
+                VirtualPolynomial::LookupTableFlag(j),
+                SumcheckId::InstructionReadRaf,
+            ));
+
+            let mut factors = ra_openings.clone();
+            factors.push(flag_opening);
+
+            terms.push(ProductTerm::scaled(ValueSource::Challenge(j), factors));
+        }
+
+        terms.push(ProductTerm::scaled(
+            ValueSource::Challenge(num_tables),
+            ra_openings.clone(),
+        ));
+
+        let raf_flag_opening = ValueSource::Opening(OpeningId::virt(
+            VirtualPolynomial::InstructionRafFlag,
+            SumcheckId::InstructionReadRaf,
+        ));
+        let mut raf_factors = ra_openings;
+        raf_factors.push(raf_flag_opening);
+        terms.push(ProductTerm::scaled(
+            ValueSource::Challenge(num_tables + 1),
+            raf_factors,
+        ));
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let opening_point = self.normalize_opening_point(sumcheck_challenges);
+        let (r_address_prime, r_cycle_prime) = opening_point.split_at(LOG_K);
+
+        let left_operand_eval =
+            OperandPolynomial::<F>::new(LOG_K, OperandSide::Left).evaluate(&r_address_prime.r);
+        let right_operand_eval =
+            OperandPolynomial::<F>::new(LOG_K, OperandSide::Right).evaluate(&r_address_prime.r);
+        let identity_poly_eval = IdentityPolynomial::<F>::new(LOG_K).evaluate(&r_address_prime.r);
+        let val_evals: Vec<_> = LookupTables::<XLEN>::iter()
+            .map(|table| table.evaluate_mle::<F, F::Challenge>(&r_address_prime.r))
+            .collect();
+
+        let eq_eval_r_reduction = EqPolynomial::<F>::mle(&self.r_reduction.r, &r_cycle_prime.r);
+
+        let gamma = self.gamma;
+        let gamma_sqr = self.gamma_sqr;
+
+        let num_tables = LookupTables::<XLEN>::COUNT;
+        let mut challenges = Vec::with_capacity(num_tables + 2);
+
+        for val_eval in val_evals {
+            challenges.push(eq_eval_r_reduction * val_eval);
+        }
+
+        let const_term =
+            eq_eval_r_reduction * (gamma * left_operand_eval + gamma_sqr * right_operand_eval);
+        challenges.push(const_term);
+
+        let raf_coeff = eq_eval_r_reduction
+            * (gamma_sqr * identity_poly_eval
+                - gamma * left_operand_eval
+                - gamma_sqr * right_operand_eval);
+        challenges.push(raf_coeff);
+
+        challenges
     }
 }
 
@@ -846,7 +979,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_sumcheck = self.params.normalize_opening_point(sumcheck_challenges);
@@ -863,7 +995,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
         for (i, claim) in flag_claims.into_iter().enumerate() {
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::LookupTableFlag(i),
                 SumcheckId::InstructionReadRaf,
                 r_cycle.clone(),
@@ -878,7 +1009,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             let opening_point =
                 OpeningPoint::<BIG_ENDIAN, F>::new([r_address, &*r_cycle.r].concat());
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::InstructionRa(i),
                 SumcheckId::InstructionReadRaf,
                 opening_point,
@@ -887,7 +1017,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         }
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionRafFlag,
             SumcheckId::InstructionReadRaf,
             r_cycle.clone(),
@@ -1268,7 +1397,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_sumcheck = self.params.normalize_opening_point(sumcheck_challenges);
@@ -1278,7 +1406,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
         (0..LookupTables::<XLEN>::COUNT).for_each(|i| {
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::LookupTableFlag(i),
                 SumcheckId::InstructionReadRaf,
                 r_cycle.clone(),
@@ -1293,7 +1420,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             let opening_point =
                 OpeningPoint::<BIG_ENDIAN, F>::new([r_address_chunk, &*r_cycle.r].concat());
             accumulator.append_virtual(
-                transcript,
                 VirtualPolynomial::InstructionRa(i),
                 SumcheckId::InstructionReadRaf,
                 opening_point,
@@ -1301,7 +1427,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         }
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionRafFlag,
             SumcheckId::InstructionReadRaf,
             r_cycle.clone(),
@@ -1407,7 +1532,8 @@ mod tests {
         let prover_transcript = &mut Blake2bTranscript::new(&[]);
         let mut prover_opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
         let verifier_transcript = &mut Blake2bTranscript::new(&[]);
-        let mut verifier_opening_accumulator = VerifierOpeningAccumulator::new(trace.len().log_2());
+        let mut verifier_opening_accumulator =
+            VerifierOpeningAccumulator::new(trace.len().log_2(), false);
 
         let r_cycle: Vec<<Fr as JoltField>::Challenge> =
             prover_transcript.challenge_vector_optimized::<Fr>(LOG_T);
@@ -1434,28 +1560,24 @@ mod tests {
         }
 
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
             rv_claim,
         );
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
             left_operand_claim,
         );
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
             right_operand_claim,
         );
         prover_opening_accumulator.append_virtual(
-            prover_transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanProductVirtualization,
             OpeningPoint::new(r_cycle.clone()),
@@ -1473,7 +1595,7 @@ mod tests {
         let mut prover_sumcheck =
             InstructionReadRafSumcheckProver::initialize(params, Arc::clone(&trace));
 
-        let (proof, r_sumcheck) = BatchedSumcheck::prove(
+        let (proof, r_sumcheck, _initial_claim) = BatchedSumcheck::prove(
             vec![&mut prover_sumcheck],
             &mut prover_opening_accumulator,
             prover_transcript,
@@ -1488,40 +1610,36 @@ mod tests {
         }
 
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_opening_accumulator.append_virtual(
-            verifier_transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanProductVirtualization,
             OpeningPoint::new(r_cycle.clone()),
         );
 
-        let mut verifier_sumcheck = InstructionReadRafSumcheckVerifier::new(
+        let verifier_sumcheck = InstructionReadRafSumcheckVerifier::new(
             trace.len().log_2(),
             &one_hot_params,
             &verifier_opening_accumulator,
             verifier_transcript,
         );
 
-        let r_sumcheck_verif = BatchedSumcheck::verify(
+        let r_sumcheck_verif = BatchedSumcheck::verify_standard(
             &proof,
-            vec![&mut verifier_sumcheck],
+            vec![&verifier_sumcheck],
             &mut verifier_opening_accumulator,
             verifier_transcript,
         )

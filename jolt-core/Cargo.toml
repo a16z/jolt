@@ -24,6 +24,7 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
 default = ["host"]
+zk = ["dory/zk"]
 host = [
     "prover",
     "dep:jolt-inlines-sha2",
@@ -36,7 +37,7 @@ prover = [
     "ark-std/parallel",
     "dory/backends",
     "dory/cache", # This includes `parallel` feature
-    "dory/disk-persistence"
+    "dory/disk-persistence",
 ]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
@@ -83,7 +84,6 @@ common.workspace = true
 tracer = { workspace = true, default-features = false, features = ["std"] }
 bincode.workspace = true
 rand_distr.workspace = true
-anyhow.workspace = true
 derive_more.workspace = true
 paste.workspace = true
 dory.workspace = true

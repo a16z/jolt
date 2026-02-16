@@ -82,6 +82,8 @@ use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
 use crate::field::JoltField;
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::{
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
@@ -91,6 +93,10 @@ use crate::poly::{
     },
     shared_ra_polys::compute_all_G,
     unipoly::UniPoly,
+};
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
 };
 use crate::subprotocols::{
     sumcheck_prover::SumcheckInstanceProver,
@@ -279,6 +285,119 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
         let full_point = [r_addr.r.as_slice(), self.r_cycle.as_slice()].concat();
         OpeningPoint::<BIG_ENDIAN, F>::new(full_point)
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let n = self.polynomial_types.len();
+        let mut terms = Vec::new();
+        let mut challenge_idx = 0;
+
+        for i in 0..n {
+            let poly_type = self.polynomial_types[i];
+
+            let virt_sumcheck_id = match poly_type {
+                CommittedPolynomial::InstructionRa(_) => SumcheckId::InstructionRaVirtualization,
+                CommittedPolynomial::BytecodeRa(_) => SumcheckId::BytecodeReadRaf,
+                CommittedPolynomial::RamRa(_) => SumcheckId::RamRaVirtualization,
+                _ => unreachable!(),
+            };
+
+            // HW claim term: γ^{3i} * hw_claim_i
+            // For RAM, hw_claim is RamHammingWeight opening; for others, it's F::one()
+            match poly_type {
+                CommittedPolynomial::RamRa(_) => {
+                    let hw_opening = OpeningId::virt(
+                        VirtualPolynomial::RamHammingWeight,
+                        SumcheckId::RamHammingBooleanity,
+                    );
+                    terms.push(ProductTerm::scaled(
+                        ValueSource::Challenge(challenge_idx),
+                        vec![ValueSource::Opening(hw_opening)],
+                    ));
+                }
+                _ => {
+                    // For instruction/bytecode, hw_claim = 1, so term is just γ^{3i}
+                    terms.push(ProductTerm::single(ValueSource::Challenge(challenge_idx)));
+                }
+            }
+            challenge_idx += 1;
+
+            // Bool claim term: γ^{3i+1} * bool_opening_i
+            let bool_opening = OpeningId::committed(poly_type, SumcheckId::Booleanity);
+            terms.push(ProductTerm::scaled(
+                ValueSource::Challenge(challenge_idx),
+                vec![ValueSource::Opening(bool_opening)],
+            ));
+            challenge_idx += 1;
+
+            // Virt claim term: γ^{3i+2} * virt_opening_i
+            let virt_opening = OpeningId::committed(poly_type, virt_sumcheck_id);
+            terms.push(ProductTerm::scaled(
+                ValueSource::Challenge(challenge_idx),
+                vec![ValueSource::Opening(virt_opening)],
+            ));
+            challenge_idx += 1;
+        }
+
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        let n = self.polynomial_types.len();
+        let mut values = Vec::with_capacity(3 * n);
+
+        for i in 0..n {
+            // γ^{3i} for hw term
+            values.push(self.gamma_powers[3 * i]);
+            // γ^{3i+1} for bool term
+            values.push(self.gamma_powers[3 * i + 1]);
+            // γ^{3i+2} for virt term
+            values.push(self.gamma_powers[3 * i + 2]);
+        }
+
+        values
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let N = self.polynomial_types.len();
+
+        let terms: Vec<ProductTerm> = (0..N)
+            .map(|i| {
+                let opening = OpeningId::committed(
+                    self.polynomial_types[i],
+                    SumcheckId::HammingWeightClaimReduction,
+                );
+                ProductTerm::scaled(
+                    ValueSource::Challenge(i),
+                    vec![ValueSource::Opening(opening)],
+                )
+            })
+            .collect();
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let N = self.polynomial_types.len();
+
+        let rho_rev: Vec<F::Challenge> = sumcheck_challenges.iter().cloned().rev().collect();
+        let eq_bool_eval: F = EqPolynomial::mle(&rho_rev, &self.r_addr_bool);
+
+        (0..N)
+            .map(|i| {
+                let eq_virt_eval: F = EqPolynomial::mle(&rho_rev, &self.r_addr_virt[i]);
+
+                let gamma_hw = self.gamma_powers[3 * i];
+                let gamma_bool = self.gamma_powers[3 * i + 1];
+                let gamma_virt = self.gamma_powers[3 * i + 2];
+
+                gamma_hw + gamma_bool * eq_bool_eval + gamma_virt * eq_virt_eval
+            })
+            .collect()
+    }
 }
 
 /// Prover for the fused HammingWeight + Address Reduction sumcheck.
@@ -417,7 +536,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let N = self.params.polynomial_types.len();
@@ -433,7 +551,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
             // All three claim types (HW, Bool, Virt) collapse to this single opening
             accumulator.append_sparse(
-                transcript,
                 vec![self.params.polynomial_types[i]],
                 SumcheckId::HammingWeightClaimReduction,
                 r_address.clone(),
@@ -516,7 +633,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let N = self.params.polynomial_types.len();
@@ -529,7 +645,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
         for i in 0..N {
             accumulator.append_sparse(
-                transcript,
                 vec![self.params.polynomial_types[i]],
                 SumcheckId::HammingWeightClaimReduction,
                 full_point.clone(),

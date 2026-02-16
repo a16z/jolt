@@ -1,5 +1,11 @@
 use std::sync::Arc;
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::{
     field::JoltField,
     poly::{
@@ -122,6 +128,59 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let openings: Vec<OpeningId> = (0..self.n_virtual_ra_polys)
+            .map(|i| {
+                OpeningId::virt(
+                    VirtualPolynomial::InstructionRa(i),
+                    SumcheckId::InstructionReadRaf,
+                )
+            })
+            .collect();
+        InputClaimConstraint::all_weighted_openings(&openings)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        self.gamma_powers.clone()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let m = self.n_committed_per_virtual;
+        let n = self.n_virtual_ra_polys;
+
+        let terms: Vec<ProductTerm> = (0..n)
+            .map(|i| {
+                let factors: Vec<ValueSource> = (0..m)
+                    .map(|j| {
+                        let opening = OpeningId::committed(
+                            CommittedPolynomial::InstructionRa(i * m + j),
+                            SumcheckId::InstructionRaVirtualization,
+                        );
+                        ValueSource::Opening(opening)
+                    })
+                    .collect();
+
+                ProductTerm::scaled(ValueSource::Challenge(i), factors)
+            })
+            .collect();
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r = self.normalize_opening_point(sumcheck_challenges);
+        let eq_eval: F = EqPolynomial::mle_endian(&self.r_cycle, &r);
+
+        self.gamma_powers
+            .iter()
+            .map(|gamma_i| eq_eval * *gamma_i)
+            .collect()
+    }
 }
 
 #[derive(Allocative)]
@@ -233,7 +292,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
@@ -256,7 +314,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
                 }
             }
             accumulator.append_sparse(
-                transcript,
                 vec![CommittedPolynomial::InstructionRa(i)],
                 SumcheckId::InstructionRaVirtualization,
                 r_address,
@@ -343,7 +400,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
@@ -358,7 +414,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for RaSumcheckV
             let opening_point = [r_address.as_slice(), r_cycle.r.as_slice()].concat();
 
             accumulator.append_sparse(
-                transcript,
                 vec![CommittedPolynomial::InstructionRa(i)],
                 SumcheckId::InstructionRaVirtualization,
                 opening_point,

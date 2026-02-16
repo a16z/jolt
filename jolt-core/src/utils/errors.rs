@@ -34,4 +34,10 @@ pub enum ProofVerifyError {
     SumcheckVerificationError,
     #[error("Univariate-skip round verification failed")]
     UniSkipVerificationError,
+    #[error("Serialization failed")]
+    SerializationError,
+    #[error("ZK proof received but `zk` feature is not enabled")]
+    ZkFeatureRequired,
+    #[error("BlindFold verification failed: {0}")]
+    BlindFoldError(String),
 }

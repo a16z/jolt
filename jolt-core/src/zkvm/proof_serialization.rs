@@ -1,7 +1,6 @@
-use std::{
-    collections::BTreeMap,
-    io::{Read, Write},
-};
+#[cfg(not(feature = "zk"))]
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
 
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
@@ -9,13 +8,22 @@ use ark_serialize::{
 use num::FromPrimitive;
 use strum::EnumCount;
 
+#[cfg(not(feature = "zk"))]
+use crate::poly::opening_proof::{OpeningPoint, Openings};
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::BlindFoldProof;
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
-        opening_proof::{OpeningId, OpeningPoint, Openings, SumcheckId},
+        opening_proof::{OpeningId, PolynomialId, SumcheckId},
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
+};
+use crate::{
+    subprotocols::{
+        sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
+    },
     transcripts::Transcript,
     zkvm::{
         config::{OneHotConfig, ReadWriteConfig},
@@ -23,31 +31,84 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use crate::{
-    poly::opening_proof::PolynomialId, subprotocols::univariate_skip::UniSkipFirstRoundProof,
-};
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
-    pub opening_claims: Claims<F>,
+pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub commitments: Vec<PCS::Commitment>,
-    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
-    pub stage1_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
-    pub stage2_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage3_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
+    pub stage1_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
+    pub stage2_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage3_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage4_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage6_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    #[cfg(feature = "zk")]
+    pub blindfold_proof: BlindFoldProof<F, C>,
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
+    #[cfg(not(feature = "zk"))]
+    pub opening_claims: Claims<F>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub bytecode_K: usize,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
     pub dory_layout: DoryLayout,
+}
+
+#[cfg(not(feature = "zk"))]
+pub struct Claims<F: JoltField>(pub Openings<F>);
+
+#[cfg(not(feature = "zk"))]
+impl<F: JoltField> CanonicalSerialize for Claims<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.0.len().serialize_with_mode(&mut writer, compress)?;
+        for (key, (_opening_point, claim)) in self.0.iter() {
+            key.serialize_with_mode(&mut writer, compress)?;
+            claim.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let mut size = self.0.len().serialized_size(compress);
+        for (key, (_opening_point, claim)) in self.0.iter() {
+            size += key.serialized_size(compress);
+            size += claim.serialized_size(compress);
+        }
+        size
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+impl<F: JoltField> Valid for Claims<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+impl<F: JoltField> CanonicalDeserialize for Claims<F> {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let size = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let mut claims = BTreeMap::new();
+        for _ in 0..size {
+            let key = OpeningId::deserialize_with_mode(&mut reader, compress, validate)?;
+            let claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
+            claims.insert(key, (OpeningPoint::default(), claim));
+        }
+        Ok(Claims(claims))
+    }
 }
 
 impl CanonicalSerialize for DoryLayout {
@@ -81,56 +142,6 @@ impl CanonicalDeserialize for DoryLayout {
             return Err(SerializationError::InvalidData);
         }
         Ok(DoryLayout::from(value))
-    }
-}
-
-pub struct Claims<F: JoltField>(pub Openings<F>);
-
-impl<F: JoltField> CanonicalSerialize for Claims<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.0.len().serialize_with_mode(&mut writer, compress)?;
-        for (key, (_opening_point, claim)) in self.0.iter() {
-            key.serialize_with_mode(&mut writer, compress)?;
-            claim.serialize_with_mode(&mut writer, compress)?;
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        let mut size = self.0.len().serialized_size(compress);
-        for (key, (_opening_point, claim)) in self.0.iter() {
-            size += key.serialized_size(compress);
-            size += claim.serialized_size(compress);
-        }
-        size
-    }
-}
-
-impl<F: JoltField> Valid for Claims<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl<F: JoltField> CanonicalDeserialize for Claims<F> {
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let size = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        let mut claims = BTreeMap::new();
-        for _ in 0..size {
-            let key = OpeningId::deserialize_with_mode(&mut reader, compress, validate)?;
-            let claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
-            claims.insert(key, (OpeningPoint::default(), claim));
-        }
-
-        Ok(Claims(claims))
     }
 }
 
@@ -178,11 +189,9 @@ impl CanonicalSerialize for OpeningId {
         match self {
             OpeningId::UntrustedAdvice(_) | OpeningId::TrustedAdvice(_) => 1,
             OpeningId::Polynomial(PolynomialId::Committed(committed_polynomial), _) => {
-                // 1 byte fused (variant + sumcheck_id) + poly index
                 1 + committed_polynomial.serialized_size(compress)
             }
             OpeningId::Polynomial(PolynomialId::Virtual(virtual_polynomial), _) => {
-                // 1 byte fused (variant + sumcheck_id) + poly index
                 1 + virtual_polynomial.serialized_size(compress)
             }
         }
@@ -219,8 +228,8 @@ impl CanonicalDeserialize for OpeningId {
                 let sumcheck_id = fused - OPENING_ID_COMMITTED_BASE;
                 let polynomial =
                     CommittedPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(OpeningId::Polynomial(
-                    PolynomialId::Committed(polynomial),
+                Ok(OpeningId::committed(
+                    polynomial,
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
@@ -228,8 +237,8 @@ impl CanonicalDeserialize for OpeningId {
                 let sumcheck_id = fused - OPENING_ID_VIRTUAL_BASE;
                 let polynomial =
                     VirtualPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(OpeningId::Polynomial(
-                    PolynomialId::Virtual(polynomial),
+                Ok(OpeningId::virt(
+                    polynomial,
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
