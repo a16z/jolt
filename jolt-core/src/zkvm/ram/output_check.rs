@@ -120,8 +120,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OutputSumcheckParams<F> {
 
 #[derive(Allocative)]
 pub struct OutputSumcheckProver<F: JoltField> {
-    /// Val(k, 0)
-    val_init: MultilinearPolynomial<F>,
     /// The MLE of the final RAM state
     val_final: MultilinearPolynomial<F>,
     /// Val_io(k) = Val_final(k) if k is in the "IO" region of memory,
@@ -172,7 +170,6 @@ impl<F: JoltField> OutputSumcheckProver<F> {
         let eq_r_address = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
 
         Self {
-            val_init: initial_ram_state.to_vec().into(),
             val_final: final_ram_state.to_vec().into(),
             val_io: val_io.into(),
             eq_r_address,
@@ -231,7 +228,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
         }
         // Bind address variable
         let Self {
-            val_init,
             val_final,
             val_io,
             eq_r_address,
@@ -239,9 +235,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
             ..
         } = self;
 
-        // We bind Val_init here despite the fact that it is not used in `compute_message`
-        // because we'll need Val_init(r) later when constructing the Stage 4 RAM value sumcheck.
-        val_init.bind_parallel(r_j, BindingOrder::LowToHigh);
         val_final.bind_parallel(r_j, BindingOrder::LowToHigh);
         val_io.bind_parallel(r_j, BindingOrder::LowToHigh);
         eq_r_address.bind(r_j);
