@@ -19,7 +19,7 @@ use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckIns
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::instruction::derive_lookup_query;
+use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
@@ -275,11 +275,11 @@ impl<F: JoltField> InstructionLookupsPhase1State<F> {
                         let x_lo = chunk_i * BLOCK_SIZE + i;
                         let x = x_lo + (x_hi << prefix_n_vars);
                         let cycle = &trace[x];
-                        let derived = derive_lookup_query::<XLEN>(cycle);
                         let (left_instruction_input, right_instruction_input) =
-                            derived.instruction_inputs;
-                        let (left_lookup, right_lookup) = derived.lookup_operands;
-                        let lookup_output = derived.lookup_output;
+                            LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+                        let (left_lookup, right_lookup) =
+                            LookupQuery::<XLEN>::to_lookup_operands(cycle);
+                        let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
 
                         q_lookup_output[i] +=
                             eq_suffix_evals[x_hi].mul_u64_unreduced(lookup_output);
@@ -402,11 +402,11 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
                     let mut right_instruction_input_neg_unreduced = F::Unreduced::<6>::zero();
 
                     for (i, cycle) in trace_chunk.iter().enumerate() {
-                        let derived = derive_lookup_query::<XLEN>(cycle);
                         let (left_instruction_input, right_instruction_input) =
-                            derived.instruction_inputs;
-                        let (left_lookup, right_lookup) = derived.lookup_operands;
-                        let lookup_output = derived.lookup_output;
+                            LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+                        let (left_lookup, right_lookup) =
+                            LookupQuery::<XLEN>::to_lookup_operands(cycle);
+                        let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
 
                         lookup_output_eval_unreduced +=
                             eq_evals[i].mul_u64_unreduced(lookup_output);
