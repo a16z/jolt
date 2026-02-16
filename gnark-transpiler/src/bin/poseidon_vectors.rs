@@ -9,7 +9,7 @@ use light_poseidon::{Poseidon, PoseidonHasher};
 
 fn print_fr(label: &str, val: Fr) {
     let bigint = val.into_bigint();
-    println!("{} = {}", label, bigint);
+    println!("{label} = {bigint}");
 }
 
 fn main() {
@@ -174,62 +174,62 @@ fn debug_poseidon() {
     // First half full rounds
     for round in 0..half_rounds {
         // ARK
-        for i in 0..4 {
-            state[i] += params.ark[round * 4 + i];
+        for (i, s) in state.iter_mut().enumerate() {
+            *s += params.ark[round * 4 + i];
         }
         // S-box full
-        for i in 0..4 {
-            state[i] = state[i].pow([5]);
+        for s in &mut state {
+            *s = s.pow([5]);
         }
         // MDS
         let old_state = state.clone();
-        for i in 0..4 {
-            state[i] = Fr::from(0u64);
-            for j in 0..4 {
-                state[i] += old_state[j] * params.mds[i][j];
+        for (i, s) in state.iter_mut().enumerate() {
+            *s = Fr::from(0u64);
+            for (j, &old_s) in old_state.iter().enumerate() {
+                *s += old_s * params.mds[i][j];
             }
         }
         if round < 2 {
-            println!("After full round {}: {} ...", round, state[0].into_bigint().to_string()[..20].to_string());
+            println!("After full round {round}: {} ...", &state[0].into_bigint().to_string()[..20]);
         }
     }
-    println!("After first half ({} full rounds): {} ...", half_rounds, state[0].into_bigint().to_string()[..20].to_string());
+    println!("After first half ({} full rounds): {} ...", half_rounds, &state[0].into_bigint().to_string()[..20]);
 
     // Partial rounds
     for round in half_rounds..(half_rounds + params.partial_rounds) {
         // ARK
-        for i in 0..4 {
-            state[i] += params.ark[round * 4 + i];
+        for (i, s) in state.iter_mut().enumerate() {
+            *s += params.ark[round * 4 + i];
         }
         // S-box partial (only first element)
         state[0] = state[0].pow([5]);
         // MDS
         let old_state = state.clone();
-        for i in 0..4 {
-            state[i] = Fr::from(0u64);
-            for j in 0..4 {
-                state[i] += old_state[j] * params.mds[i][j];
+        for (i, s) in state.iter_mut().enumerate() {
+            *s = Fr::from(0u64);
+            for (j, &old_s) in old_state.iter().enumerate() {
+                *s += old_s * params.mds[i][j];
             }
         }
     }
-    println!("After partial rounds: {} ...", state[0].into_bigint().to_string()[..20].to_string());
+    println!("After partial rounds: {} ...", &state[0].into_bigint().to_string()[..20]);
 
     // Second half full rounds
     for round in (half_rounds + params.partial_rounds)..all_rounds {
         // ARK
-        for i in 0..4 {
-            state[i] += params.ark[round * 4 + i];
+        for (i, s) in state.iter_mut().enumerate() {
+            *s += params.ark[round * 4 + i];
         }
         // S-box full
-        for i in 0..4 {
-            state[i] = state[i].pow([5]);
+        for s in &mut state {
+            *s = s.pow([5]);
         }
         // MDS
         let old_state = state.clone();
-        for i in 0..4 {
-            state[i] = Fr::from(0u64);
-            for j in 0..4 {
-                state[i] += old_state[j] * params.mds[i][j];
+        for (i, s) in state.iter_mut().enumerate() {
+            *s = Fr::from(0u64);
+            for (j, &old_s) in old_state.iter().enumerate() {
+                *s += old_s * params.mds[i][j];
             }
         }
     }

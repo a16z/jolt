@@ -42,16 +42,16 @@ fn main() {
         modulus_bytes.extend_from_slice(&limb.to_le_bytes());
     }
     let modulus_biguint = BigUint::from_bytes_le(&modulus_bytes);
-    println!("Modulus (decimal): {}", modulus_biguint);
+    println!("Modulus (decimal): {modulus_biguint}");
 
     // R = 2^256 mod p (Montgomery constant for 4-limb representation)
     let two_256 = BigUint::from(1u8) << 256;
     let r_value: BigUint = &two_256 % &modulus_biguint;
-    println!("\nR = 2^256 mod p = {}", r_value);
+    println!("\nR = 2^256 mod p = {r_value}");
 
     // R^-1 = modular inverse of R mod p
     let r_inv = r_value.modinv(&modulus_biguint).unwrap();
-    println!("R^-1 mod p = {}", r_inv);
+    println!("R^-1 mod p = {r_inv}");
 
     // Verify: R * R^-1 = 1 mod p
     let product = (&r_value * &r_inv) % &modulus_biguint;
@@ -63,7 +63,7 @@ fn main() {
     let bigint_one = BigInt::new([1u64, 0, 0, 0]);
     let fr_unchecked = Fr::from_bigint_unchecked(bigint_one).unwrap();
     println!("from_bigint_unchecked([1, 0, 0, 0]) = {}", fr_to_string(&fr_unchecked));
-    println!("Expected (R^-1 mod p) = {}", r_inv);
+    println!("Expected (R^-1 mod p) = {r_inv}");
 
     // Verify MontU128Challenge conversion (used in sumcheck challenges)
     println!("\n=== MontU128Challenge Verification ===");
@@ -72,9 +72,9 @@ fn main() {
     println!("\nThis matches the Go hint in poseidon.go which:");
     println!("1. Places low 64 bits at position 128 (limb 2)");
     println!("2. Places high 64 bits at position 192 (limb 3)");
-    println!("3. Multiplies by bn254RInv = {}", r_inv);
+    println!("3. Multiplies by bn254RInv = {r_inv}");
 
     println!("\n=== Go Constant ===");
     println!("// bn254RInv is R^-1 mod p for BN254 Fr Montgomery arithmetic");
-    println!("var bn254RInv = bigInt(\"{}\")  // Used in Truncate128Reverse hint", r_inv);
+    println!("var bn254RInv = bigInt(\"{r_inv}\")  // Used in Truncate128Reverse hint");
 }

@@ -109,7 +109,7 @@ impl MleOpeningAccumulator {
 
         for key in opening_ids {
             let claim = MleAst::from_var(var_idx);
-            var_mapping.push((var_idx, key.clone()));
+            var_mapping.push((var_idx, key));
             openings.insert(key, (vec![], claim));
             var_idx += 1;
         }
@@ -166,8 +166,7 @@ impl MleOpeningAccumulator {
             *stored_point = point;
         } else {
             panic!(
-                "MleOpeningAccumulator::set_virtual_point: no claim found for {:?} {:?}",
-                polynomial, sumcheck
+                "MleOpeningAccumulator::set_virtual_point: no claim found for {polynomial:?} {sumcheck:?}"
             );
         }
     }
@@ -204,12 +203,12 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         let (point, claim) = self
             .openings
             .get(&key)
-            .unwrap_or_else(|| panic!("No opening found for {:?} {:?}", sumcheck, polynomial));
+            .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
 
         // Convert Vec<MleAst> to OpeningPoint<BIG_ENDIAN, MleAst>
         // Note: MleAst::Challenge = MleAst, so this works directly
         let opening_point = OpeningPoint::new(point.clone());
-        (opening_point, claim.clone())
+        (opening_point, *claim)
     }
 
     fn get_committed_polynomial_opening(
@@ -221,10 +220,10 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         let (point, claim) = self
             .openings
             .get(&key)
-            .unwrap_or_else(|| panic!("No opening found for {:?} {:?}", sumcheck, polynomial));
+            .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
 
         let opening_point = OpeningPoint::new(point.clone());
-        (opening_point, claim.clone())
+        (opening_point, *claim)
     }
 
     fn append_virtual<T: Transcript>(
@@ -242,8 +241,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
             *stored_point = opening_point.r;
         } else {
             panic!(
-                "MleOpeningAccumulator::append_virtual: no claim found for {:?} {:?}",
-                polynomial, sumcheck
+                "MleOpeningAccumulator::append_virtual: no claim found for {polynomial:?} {sumcheck:?}"
             );
         }
     }
@@ -261,8 +259,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
             *stored_point = opening_point.r;
         } else {
             panic!(
-                "MleOpeningAccumulator::append_untrusted_advice: no claim found for {:?}",
-                sumcheck_id
+                "MleOpeningAccumulator::append_untrusted_advice: no claim found for {sumcheck_id:?}"
             );
         }
     }
@@ -280,8 +277,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
             *stored_point = opening_point.r;
         } else {
             panic!(
-                "MleOpeningAccumulator::append_trusted_advice: no claim found for {:?}",
-                sumcheck_id
+                "MleOpeningAccumulator::append_trusted_advice: no claim found for {sumcheck_id:?}"
             );
         }
     }
@@ -300,8 +296,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
             *stored_point = opening_point;
         } else {
             panic!(
-                "MleOpeningAccumulator::append_dense: no claim found for {:?} {:?}",
-                polynomial, sumcheck
+                "MleOpeningAccumulator::append_dense: no claim found for {polynomial:?} {sumcheck:?}"
             );
         }
     }
@@ -322,8 +317,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
                 *stored_point = opening_point.clone();
             } else {
                 panic!(
-                    "MleOpeningAccumulator::append_sparse: no claim found for {:?} {:?}",
-                    polynomial, sumcheck
+                    "MleOpeningAccumulator::append_sparse: no claim found for {polynomial:?} {sumcheck:?}"
                 );
             }
         }
@@ -340,7 +334,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         };
         let (point, claim) = self.openings.get(&key)?;
         let opening_point = OpeningPoint::new(point.clone());
-        Some((opening_point, claim.clone()))
+        Some((opening_point, *claim))
     }
 }
 
@@ -354,7 +348,7 @@ mod tests {
 
         // Add a claim
         let claim = MleAst::from_var(0);
-        acc.add_virtual_claim(VirtualPolynomial::Product, SumcheckId::SpartanOuter, claim.clone());
+        acc.add_virtual_claim(VirtualPolynomial::Product, SumcheckId::SpartanOuter, claim);
 
         // Update point
         let point = vec![MleAst::from_var(1), MleAst::from_var(2)];
