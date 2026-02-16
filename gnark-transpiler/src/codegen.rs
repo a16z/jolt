@@ -69,14 +69,15 @@ fn edge_to_child(edge: Edge) -> Option<usize> {
 fn node_children(node: Node) -> Vec<usize> {
     match node {
         Node::Atom(_) => vec![],
-        Node::Inv(e)
+        Node::Neg(e) | Node::Inv(e)
         | Node::ByteReverse(e)
         | Node::Truncate128Reverse(e)
         | Node::Truncate128(e)
         | Node::AppendU64Transform(e) => edge_to_child(e).into_iter().collect(),
         Node::Add(e1, e2)
         | Node::Mul(e1, e2)
-        | Node::Sub(e1, e2) => [edge_to_child(e1), edge_to_child(e2)]
+        | Node::Sub(e1, e2)
+        | Node::Div(e1, e2) => [edge_to_child(e1), edge_to_child(e2)]
             .into_iter()
             .flatten()
             .collect(),
@@ -84,10 +85,6 @@ fn node_children(node: Node) -> Vec<usize> {
             .into_iter()
             .flatten()
             .collect(),
-        // Unused by Jolt verifier - would fail at compile time if used
-        Node::Neg(_) | Node::Div(_, _) | Node::Keccak256(_) => {
-            unreachable!("Node type not used by Jolt verifier")
-        }
     }
 }
 
@@ -272,9 +269,9 @@ impl<'a> MemoizedCodeGen<'a> {
                     format!("poseidon.Hash(api, {s}, {r}, {d})")
                 }
 
-                // Unused by Jolt verifier
-                Node::Neg(_) | Node::Div(_, _) | Node::Keccak256(_) => {
-                    unreachable!("Node type not used by Jolt verifier")
+                // zklean base nodes - Jolt transpiler doesn't generate these
+                Node::Neg(_) | Node::Div(_, _) => {
+                    unreachable!("Neg/Div nodes not used by Jolt transpiler")
                 }
             };
 
@@ -691,7 +688,7 @@ fn is_node_constant_in(nodes: &[Node], node_id: usize) -> bool {
         Node::Atom(Atom::Scalar(_)) => true,
         Node::Atom(Atom::Var(_)) => false,
         Node::Atom(Atom::NamedVar(_)) => false,
-        Node::Neg(e) | Node::Inv(e) | Node::Keccak256(e) | Node::ByteReverse(e)
+        Node::Neg(e) | Node::Inv(e) | Node::ByteReverse(e)
         | Node::Truncate128Reverse(e) | Node::Truncate128(e) | Node::AppendU64Transform(e) => {
             is_edge_constant_in(nodes, e)
         }
@@ -720,7 +717,6 @@ fn evaluate_constant_node_in(nodes: &[Node], node_id: usize) -> Scalar {
         Node::Atom(Atom::Var(_)) | Node::Atom(Atom::NamedVar(_)) => {
             panic!("Cannot evaluate non-constant node")
         }
-        Node::Neg(e) => scalar_neg_mod(evaluate_constant_edge_in(nodes, e)),
         Node::Add(e1, e2) => {
             scalar_add_mod(evaluate_constant_edge_in(nodes, e1), evaluate_constant_edge_in(nodes, e2))
         }
@@ -730,10 +726,11 @@ fn evaluate_constant_node_in(nodes: &[Node], node_id: usize) -> Scalar {
         Node::Mul(e1, e2) => {
             scalar_mul_mod(evaluate_constant_edge_in(nodes, e1), evaluate_constant_edge_in(nodes, e2))
         }
+        Node::Neg(e) => scalar_neg_mod(evaluate_constant_edge_in(nodes, e)),
         Node::Inv(_) | Node::Div(_, _) => {
             panic!("Modular inverse not implemented for constant evaluation")
         }
-        Node::Poseidon(_, _, _) | Node::Keccak256(_) | Node::ByteReverse(_)
+        Node::Poseidon(_, _, _) | Node::ByteReverse(_)
         | Node::Truncate128Reverse(_) | Node::Truncate128(_) | Node::AppendU64Transform(_) => {
             panic!("Hash/transform operations cannot be evaluated as constants")
         }
