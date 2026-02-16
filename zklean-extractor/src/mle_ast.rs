@@ -1783,12 +1783,30 @@ impl AstBundle {
         serde_json::to_string(self)
     }
 
+    /// Serialize to pretty-printed JSON string.
+    pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    /// Deserialize from JSON string.
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
     /// Write to a JSON file.
     pub fn write_json(&self, path: &std::path::Path) -> std::io::Result<()> {
-        let json = serde_json::to_string_pretty(self).map_err(|e| {
+        let json = self.to_json_pretty().map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
         })?;
         std::fs::write(path, json)
+    }
+
+    /// Read from a JSON file.
+    pub fn read_json(path: &std::path::Path) -> std::io::Result<Self> {
+        let json = std::fs::read_to_string(path)?;
+        Self::from_json(&json).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })
     }
 }
 

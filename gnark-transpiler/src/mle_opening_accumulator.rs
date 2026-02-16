@@ -1,23 +1,42 @@
-//! MLE Opening Accumulator for symbolic transpilation
+//! MLE Opening Accumulator for symbolic transpilation.
+//!
+//! # Overview
 //!
 //! This module provides an `OpeningAccumulator` implementation that works with `MleAst`
-//! instead of concrete field elements. This allows the verifier code to be transpiled
-//! to Gnark circuits while keeping the code structure identical to the real verifier.
+//! symbolic values instead of concrete field elements. It allows the verifier to be
+//! transpiled while maintaining the exact same code structure as the real verifier.
 //!
-//! ## How it works
+//! # Background: What is an Opening Accumulator?
 //!
-//! In the real verifier:
-//! 1. Claims are loaded from the proof into `VerifierOpeningAccumulator`
-//! 2. During verification, stages read claims via `get_virtual_polynomial_opening`
-//! 3. Points are derived from transcript challenges and stored via `append_virtual`
+//! In the Jolt verifier, multiple polynomial evaluations need to be verified:
+//! - Virtual polynomials: Computed from combinations of committed polynomials
+//! - Dense polynomials: Directly committed and opened
 //!
-//! For transpilation:
-//! 1. Claims are `MleAst` variables (inputs to the circuit)
-//! 2. Points are `MleAst` derived from symbolic transcript challenges
-//! 3. The accumulator stores `(Vec<MleAst>, MleAst)` instead of `(Vec<F::Challenge>, F)`
+//! Instead of verifying each opening individually (expensive), openings are
+//! "accumulated" and verified in a single batched check at the end (PCS stage).
+//!
+//! # How the Accumulator Works
+//!
+//! **Real verifier flow:**
+//! 1. Proof contains pre-computed opening claims (evaluations at specific points)
+//! 2. Verifier loads claims into accumulator at start
+//! 3. During stages 1-6, verifier computes expected claims and checks against stored
+//! 4. Stage 7+ (PCS) batch-verifies all accumulated openings
+//!
+//! **Symbolic execution flow:**
+//! 1. Claims become `MleAst::Var` inputs to the circuit
+//! 2. Points are computed symbolically from transcript challenges
+//! 3. Equality checks become `api.AssertIsEqual` constraints
+//! 4. PCS verification is skipped (handled natively in Gnark, not transpiled)
+//!
+//! # Why This Design?
+//!
+//! The `OpeningAccumulator` trait is deeply integrated into Jolt's verifier. By
+//! implementing it for `MleAst`, we can run the exact same verifier code for
+//! transpilation. No separate "circuit verifier" implementation needed.
 
 use jolt_core::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId, SumcheckId, BIG_ENDIAN,
+    OpeningAccumulator, OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN,
 };
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::claim_reductions::AdviceKind;
@@ -119,7 +138,7 @@ impl MleOpeningAccumulator {
         sumcheck: SumcheckId,
         claim: MleAst,
     ) {
-        let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
+        let key = OpeningId::virtual_poly(polynomial, sumcheck);
         self.openings.insert(key, (vec![], claim));
     }
 
@@ -130,7 +149,7 @@ impl MleOpeningAccumulator {
         sumcheck: SumcheckId,
         claim: MleAst,
     ) {
-        let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
+        let key = OpeningId::committed(polynomial, sumcheck);
         self.openings.insert(key, (vec![], claim));
     }
 
@@ -142,7 +161,7 @@ impl MleOpeningAccumulator {
         sumcheck: SumcheckId,
         point: Vec<MleAst>,
     ) {
-        let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
+        let key = OpeningId::virtual_poly(polynomial, sumcheck);
         if let Some((stored_point, _)) = self.openings.get_mut(&key) {
             *stored_point = point;
         } else {
@@ -181,7 +200,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, MleAst>, MleAst) {
-        let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
+        let key = OpeningId::virtual_poly(polynomial, sumcheck);
         let (point, claim) = self
             .openings
             .get(&key)
@@ -198,7 +217,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, MleAst>, MleAst) {
-        let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
+        let key = OpeningId::committed(polynomial, sumcheck);
         let (point, claim) = self
             .openings
             .get(&key)
@@ -215,7 +234,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, MleAst>,
     ) {
-        let key = OpeningId::Polynomial(PolynomialId::Virtual(polynomial), sumcheck);
+        let key = OpeningId::virtual_poly(polynomial, sumcheck);
         if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
             // CRITICAL: Must append the claim to transcript, matching VerifierOpeningAccumulator behavior.
             // Without this, the transcript state diverges and challenges are incorrect.
@@ -274,7 +293,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         sumcheck: SumcheckId,
         opening_point: Vec<MleAst>,
     ) {
-        let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
+        let key = OpeningId::committed(polynomial, sumcheck);
         if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
             // CRITICAL: Must append the claim to transcript, matching VerifierOpeningAccumulator behavior.
             transcript.append_scalar(b"opening_claim", claim);
@@ -297,7 +316,7 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         // For sparse openings, we store each polynomial with the same point
         // CRITICAL: Must append ALL claims to transcript, matching VerifierOpeningAccumulator behavior.
         for polynomial in polynomials {
-            let key = OpeningId::Polynomial(PolynomialId::Committed(polynomial), sumcheck);
+            let key = OpeningId::committed(polynomial, sumcheck);
             if let Some((stored_point, claim)) = self.openings.get_mut(&key) {
                 transcript.append_scalar(b"opening_claim", claim);
                 *stored_point = opening_point.clone();

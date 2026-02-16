@@ -182,6 +182,10 @@ impl OpeningId {
     pub fn committed(poly: CommittedPolynomial, sc: SumcheckId) -> Self {
         Self::Polynomial(PolynomialId::Committed(poly), sc)
     }
+
+    pub fn virtual_poly(poly: VirtualPolynomial, sumcheck: SumcheckId) -> Self {
+        OpeningId::Polynomial(PolynomialId::Virtual(poly), sumcheck)
+    }
 }
 
 /// (point, claim)

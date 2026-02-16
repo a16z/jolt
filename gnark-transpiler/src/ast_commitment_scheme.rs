@@ -1,14 +1,40 @@
-//! Symbolic Commitment Scheme for MleAst transpilation
+//! Symbolic Commitment Scheme for MleAst transpilation.
 //!
-//! This module provides a `CommitmentScheme` implementation that works with `MleAst`
-//! instead of concrete field elements. This allows `TranspilableVerifier` to be
-//! instantiated with `MleAst` for symbolic execution and Gnark transpilation.
+//! # Overview
 //!
-//! ## Design for Stage 7/8 Extensibility
+//! This module provides a stub `CommitmentScheme` implementation that works with `MleAst`
+//! symbolic values. It allows `TranspilableVerifier` to be instantiated with symbolic
+//! types for transpilation to Gnark circuits.
 //!
-//! The associated types use MleAst-based wrappers (not unit types) so that when
-//! stages 7/8 are implemented, the verifier operations (`combine_commitments`,
-//! `verify`) can generate symbolic AST instead of doing real cryptographic operations.
+//! # Why a Stub?
+//!
+//! The real Jolt verifier uses Dory (or Hyrax) for polynomial commitments. These schemes
+//! involve elliptic curve operations (pairings, MSMs) that are too expensive to emulate
+//! inside a SNARK circuit:
+//!
+//! - **Dory pairings in BN254 circuit**: ~100-200M constraints (infeasible)
+//! - **Hyrax MSM in BN254 circuit**: ~5M constraints (feasible with GLV)
+//!
+//! For stages 1-6 transpilation, we skip PCS verification entirely. The stub implements
+//! the `CommitmentScheme` trait with no-ops, allowing the verifier to run while the
+//! actual cryptographic operations are elided.
+//!
+//! # Associated Types
+//!
+//! The types (`AstProof`, `AstBatchedProof`, etc.) use `Vec<MleAst>` internally rather
+//! than unit types. This is for future extensibility: if we later transpile PCS
+//! verification (e.g., for Hyrax over Grumpkin), these types can hold actual symbolic data.
+//!
+//! # Usage
+//!
+//! ```ignore
+//! type MyVerifier = TranspilableVerifier<
+//!     MleAst,                    // Field type
+//!     AstCommitmentScheme,       // PCS (stub)
+//!     PoseidonAstTranscript,     // Transcript
+//!     MleOpeningAccumulator,     // Accumulator
+//! >;
+//! ```
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Read, SerializationError, Valid, Write};
 use jolt_core::field::JoltField;
