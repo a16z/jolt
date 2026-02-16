@@ -203,6 +203,11 @@ where
     F: JoltField,
 {
     pub openings: Openings<F>,
+    /// Index of canonical openings by underlying polynomial id.
+    ///
+    /// This avoids scanning the full `openings` map for dedup checks: we only scan openings
+    /// that share the same underlying polynomial.
+    opening_ids_by_poly: BTreeMap<PolynomialId, Vec<OpeningId>>,
     /// Maps an `OpeningId` that was deduplicated to its canonical representative.
     pub aliases: BTreeMap<OpeningId, OpeningId>,
     #[cfg(test)]
@@ -219,6 +224,11 @@ where
     F: JoltField,
 {
     pub openings: Openings<F>,
+    /// Index of canonical (populated) openings by underlying polynomial id.
+    ///
+    /// Verifier openings are initially created with empty points; we only index entries once
+    /// their opening point has been populated.
+    opening_ids_by_poly: BTreeMap<PolynomialId, Vec<OpeningId>>,
     /// Maps an `OpeningId` that was omitted via deduplication to its canonical representative.
     pub aliases: BTreeMap<OpeningId, OpeningId>,
     /// In testing, the Jolt verifier may be provided the prover's openings so that we
@@ -384,6 +394,7 @@ where
     pub fn new(log_T: usize) -> Self {
         Self {
             openings: BTreeMap::new(),
+            opening_ids_by_poly: BTreeMap::new(),
             aliases: BTreeMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
@@ -410,20 +421,31 @@ where
         key
     }
 
+    fn index_opening_id(&mut self, key: OpeningId) {
+        self.opening_ids_by_poly
+            .entry(underlying_polynomial_id(key))
+            .or_default()
+            .push(key);
+    }
+
     fn find_existing_opening_at_point(
         &self,
         poly_id: PolynomialId,
         point: &OpeningPoint<BIG_ENDIAN, F>,
     ) -> Option<(OpeningId, F)> {
-        self.openings
-            .iter()
-            .find_map(|(existing_id, (existing_point, existing_claim))| {
-                if underlying_polynomial_id(*existing_id) == poly_id && existing_point == point {
+        self.opening_ids_by_poly.get(&poly_id).and_then(|ids| {
+            ids.iter().find_map(|existing_id| {
+                let (existing_point, existing_claim) = self
+                    .openings
+                    .get(existing_id)
+                    .expect("indexed opening missing");
+                if existing_point == point {
                     Some((*existing_id, *existing_claim))
                 } else {
                     None
                 }
             })
+        })
     }
 
     /// Adds an opening of a dense polynomial to the accumulator.
@@ -454,6 +476,7 @@ where
 
         transcript.append_scalar(b"opening_claim", &claim);
         self.openings.insert(key, (point, claim));
+        self.index_opening_id(key);
         #[cfg(test)]
         self.appended_committed_openings.borrow_mut().push(key);
     }
@@ -488,6 +511,7 @@ where
 
             transcript.append_scalar(b"opening_claim", claim);
             self.openings.insert(key, (point, *claim));
+            self.index_opening_id(key);
             #[cfg(test)]
             self.appended_committed_openings.borrow_mut().push(key);
         }
@@ -519,6 +543,7 @@ where
             self.openings.insert(key, (opening_point, claim),).is_none(),
             "Key ({polynomial:?}, {sumcheck:?}) is already in opening map"
         );
+        self.index_opening_id(key);
         #[cfg(test)]
         self.appended_virtual_openings.borrow_mut().push(key);
     }
@@ -545,6 +570,7 @@ where
 
         transcript.append_scalar(b"opening_claim", &claim);
         self.openings.insert(key, (opening_point, claim));
+        self.index_opening_id(key);
         #[cfg(test)]
         self.appended_committed_openings.borrow_mut().push(key);
     }
@@ -571,6 +597,7 @@ where
 
         transcript.append_scalar(b"opening_claim", &claim);
         self.openings.insert(key, (opening_point, claim));
+        self.index_opening_id(key);
         #[cfg(test)]
         self.appended_committed_openings.borrow_mut().push(key);
     }
@@ -636,6 +663,7 @@ where
     pub fn new(log_T: usize) -> Self {
         Self {
             openings: BTreeMap::new(),
+            opening_ids_by_poly: BTreeMap::new(),
             aliases: BTreeMap::new(),
             #[cfg(test)]
             prover_opening_accumulator: None,
@@ -650,23 +678,43 @@ where
         key
     }
 
+    fn index_opening_id(&mut self, key: OpeningId) {
+        let Some((point, _claim)) = self.openings.get(&key) else {
+            return;
+        };
+        if point.r.is_empty() {
+            return;
+        }
+        let entry = self
+            .opening_ids_by_poly
+            .entry(underlying_polynomial_id(key))
+            .or_default();
+        if !entry.contains(&key) {
+            entry.push(key);
+        }
+    }
+
     fn find_existing_opening_at_point(
         &self,
         poly_id: PolynomialId,
         point: &OpeningPoint<BIG_ENDIAN, F>,
     ) -> Option<(OpeningId, F)> {
-        self.openings
-            .iter()
-            .find_map(|(existing_id, (existing_point, existing_claim))| {
+        self.opening_ids_by_poly.get(&poly_id).and_then(|ids| {
+            ids.iter().find_map(|existing_id| {
+                let (existing_point, existing_claim) = self
+                    .openings
+                    .get(existing_id)
+                    .expect("indexed opening missing");
                 if existing_point.r.is_empty() {
                     return None;
                 }
-                if underlying_polynomial_id(*existing_id) == poly_id && existing_point == point {
+                if existing_point == point {
                     Some((*existing_id, *existing_claim))
                 } else {
                     None
                 }
             })
+        })
     }
 
     /// Compare this accumulator to the corresponding `ProverOpeningAccumulator` and panic
@@ -701,6 +749,7 @@ where
             transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim;
             self.openings.insert(key, (point, claim));
+            self.index_opening_id(key);
             return;
         }
 
@@ -744,6 +793,7 @@ where
                 transcript.append_scalar(b"opening_claim", claim);
                 let claim = *claim;
                 self.openings.insert(key, (point.clone(), claim));
+                self.index_opening_id(key);
                 continue;
             }
 
@@ -781,6 +831,7 @@ where
             transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim; // Copy the claim value
             self.openings.insert(key, (opening_point.clone(), claim));
+            self.index_opening_id(key);
             return;
         }
 
@@ -816,6 +867,7 @@ where
             transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
+            self.index_opening_id(key);
             return;
         }
 
@@ -852,6 +904,7 @@ where
             transcript.append_scalar(b"opening_claim", claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
+            self.index_opening_id(key);
             return;
         }
 

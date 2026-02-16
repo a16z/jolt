@@ -17,6 +17,7 @@ use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::zkvm::config::ReadWriteConfig;
+use crate::zkvm::ram::remap_address;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
 
@@ -355,7 +356,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let ram_K = trace
             .par_iter()
             .filter_map(|cycle| {
-                crate::zkvm::ram::remap_address(
+                remap_address(
                     cycle.ram_access().address() as u64,
                     &preprocessing.shared.memory_layout,
                 )
@@ -363,7 +364,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .max()
             .unwrap_or(0)
             .max(
-                crate::zkvm::ram::remap_address(
+                remap_address(
                     preprocessing.shared.ram.min_bytecode_address,
                     &preprocessing.shared.memory_layout,
                 )
