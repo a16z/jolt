@@ -38,7 +38,9 @@ use ark_ec::CurveGroup;
 use ark_serialize::CanonicalSerialize;
 use jolt_core::field::JoltField;
 use jolt_core::transcripts::Transcript;
-use zklean_extractor::mle_ast::{set_pending_challenge, take_pending_append, take_pending_commitment_chunks, MleAst};
+use zklean_extractor::mle_ast::{
+    set_pending_challenge, take_pending_append, take_pending_commitment_chunks, MleAst,
+};
 
 /// Convert 32 bytes (little-endian) to a [u64; 4] scalar.
 /// This matches Fr::from_le_bytes_mod_order behavior for the full 256 bits.
@@ -491,18 +493,16 @@ mod tests {
                     zklean_extractor::mle_ast::Edge::NodeRef(byte_rev_id) => {
                         let byte_rev_node = zklean_extractor::mle_ast::get_node(byte_rev_id);
                         match byte_rev_node {
-                            zklean_extractor::mle_ast::Node::ByteReverse(inner) => {
-                                match inner {
-                                    zklean_extractor::mle_ast::Edge::Atom(
-                                        zklean_extractor::mle_ast::Atom::Var(idx),
-                                    ) => {
-                                        assert_eq!(idx, 42, "Expected Var(42), got Var({idx})");
-                                    }
-                                    other => panic!(
-                                        "Expected Var(42) inside ByteReverse, got {other:?}"
-                                    ),
+                            zklean_extractor::mle_ast::Node::ByteReverse(inner) => match inner {
+                                zklean_extractor::mle_ast::Edge::Atom(
+                                    zklean_extractor::mle_ast::Atom::Var(idx),
+                                ) => {
+                                    assert_eq!(idx, 42, "Expected Var(42), got Var({idx})");
                                 }
-                            }
+                                other => {
+                                    panic!("Expected Var(42) inside ByteReverse, got {other:?}")
+                                }
+                            },
                             other => panic!("Expected ByteReverse node, got {other:?}"),
                         }
                     }

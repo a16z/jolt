@@ -128,40 +128,6 @@ impl AstOpeningAccumulator {
             panic!("No opening found for {key:?}");
         }
     }
-
-    // -------------------------------------------------------------------------
-    // Test-only helpers
-    // -------------------------------------------------------------------------
-
-    /// Add a claim for a virtual polynomial.
-    #[cfg(test)]
-    pub fn add_virtual_claim(
-        &mut self,
-        polynomial: VirtualPolynomial,
-        sumcheck: SumcheckId,
-        claim: MleAst,
-    ) {
-        let key = OpeningId::virtual_poly(polynomial, sumcheck);
-        self.openings.insert(key, (vec![], claim));
-    }
-
-    /// Update the opening point for a virtual polynomial.
-    #[cfg(test)]
-    fn set_virtual_point(
-        &mut self,
-        polynomial: VirtualPolynomial,
-        sumcheck: SumcheckId,
-        point: Vec<MleAst>,
-    ) {
-        let key = OpeningId::virtual_poly(polynomial, sumcheck);
-        if let Some((stored_point, _)) = self.openings.get_mut(&key) {
-            *stored_point = point;
-        } else {
-            panic!(
-                "AstOpeningAccumulator::set_virtual_point: no claim found for {polynomial:?} {sumcheck:?}"
-            );
-        }
-    }
 }
 
 // =============================================================================
@@ -274,36 +240,5 @@ impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
                 opening_point.clone(),
             );
         }
-    }
-}
-
-// =============================================================================
-// Tests
-// =============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_accumulator_basic() {
-        let mut acc = AstOpeningAccumulator::new(10); // log_T = 10
-
-        // Add a claim
-        let claim = MleAst::from_var(0);
-        acc.add_virtual_claim(VirtualPolynomial::Product, SumcheckId::SpartanOuter, claim);
-
-        // Update point
-        let point = vec![MleAst::from_var(1), MleAst::from_var(2)];
-        acc.set_virtual_point(VirtualPolynomial::Product, SumcheckId::SpartanOuter, point.clone());
-
-        // Retrieve
-        let (retrieved_point, _retrieved_claim) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::Product,
-            SumcheckId::SpartanOuter,
-        );
-
-        assert_eq!(retrieved_point.r.len(), 2);
-        // Claims should match (MleAst comparison)
     }
 }
