@@ -11,6 +11,7 @@ pub mod program;
 pub struct Program {
     guest: String,
     func: Option<String>,
+    profile: Option<String>,
     heap_size: u64,
     stack_size: u64,
     max_input_size: u64,
@@ -18,6 +19,7 @@ pub struct Program {
     max_trusted_advice_size: u64,
     max_output_size: u64,
     std: bool,
+    backtrace: Option<String>,
     pub elf: Option<PathBuf>,
     pub elf_compute_advice: Option<PathBuf>,
 }
