@@ -28,7 +28,11 @@ use crate::{
     },
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::{config::OneHotParams, ram::remap_address, witness::VirtualPolynomial},
+    zkvm::{
+        config::{OneHotParams, ReadWriteConfig},
+        ram::remap_address,
+        witness::VirtualPolynomial,
+    },
 };
 
 // RAM RAF evaluation sumcheck
@@ -47,6 +51,12 @@ const DEGREE_BOUND: usize = 2;
 pub struct RafEvaluationSumcheckParams<F: JoltField> {
     /// log K (number of rounds)
     pub log_K: usize,
+    /// log T (cycle variables in Stage 2)
+    pub log_T: usize,
+    /// RAM RW-check phase 1 rounds (cycle variables)
+    pub phase1_num_rounds: usize,
+    /// RAM RW-check phase 2 rounds (address variables)
+    pub phase2_num_rounds: usize,
     /// Start address for unmap polynomial
     pub start_address: u64,
     pub r_cycle: OpeningPoint<BIG_ENDIAN, F>,
@@ -57,18 +67,41 @@ impl<F: JoltField> RafEvaluationSumcheckParams<F> {
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
+        trace_len: usize,
+        rw_config: &ReadWriteConfig,
     ) -> Self {
         let start_address = memory_layout.get_lowest_address();
         let log_K = one_hot_params.ram_k.log_2();
+        let log_T = trace_len.log_2();
         let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamAddress,
             SumcheckId::SpartanOuter,
         );
+        debug_assert_eq!(r_cycle.len(), log_T);
         Self {
             log_K,
+            log_T,
+            phase1_num_rounds: rw_config.ram_rw_phase1_num_rounds as usize,
+            phase2_num_rounds: rw_config.ram_rw_phase2_num_rounds as usize,
             start_address,
             r_cycle,
         }
+    }
+
+    #[inline]
+    fn phase3_cycle_rounds(&self) -> usize {
+        self.log_T - self.phase1_num_rounds
+    }
+
+    #[inline]
+    fn is_internal_cycle_gap_round(&self, round: usize) -> bool {
+        // Local round indexing (after round_offset):
+        // [0..phase2_num_rounds) are Phase 2 address rounds
+        // [phase2_num_rounds..phase2_num_rounds + phase3_cycle_rounds) are RW Phase 3 cycle rounds
+        // remaining rounds are RW Phase 3 address rounds
+        let start = self.phase2_num_rounds;
+        let end = start + self.phase3_cycle_rounds();
+        round >= start && round < end
     }
 }
 
@@ -78,7 +111,9 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> 
     }
 
     fn num_rounds(&self) -> usize {
-        self.log_K
+        // Align to RW-check's address binding schedule: active from RW Phase 2 start through
+        // the end of Stage 2, with internal dummy rounds for RW Phase 3's cycle rounds.
+        self.log_T + self.log_K - self.phase1_num_rounds
     }
 
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
@@ -86,14 +121,26 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> 
             VirtualPolynomial::RamAddress,
             SumcheckId::SpartanOuter,
         );
-        raf_input_claim
+        // Renormalize to account for internal dummy rounds (cycle gap) that are now part of this
+        // instance's active window.
+        raf_input_claim.mul_pow_2(self.phase3_cycle_rounds())
     }
 
     fn normalize_opening_point(
         &self,
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+        // Extract the address challenges, skipping the internal dummy cycle-gap rounds.
+        let phase2_addr = self.phase2_num_rounds;
+        let gap = self.phase3_cycle_rounds();
+        let phase3_addr_start = phase2_addr + gap;
+        let addr_challenges = [
+            challenges[..phase2_addr].to_vec(),
+            challenges[phase3_addr_start..].to_vec(),
+        ]
+        .concat();
+        debug_assert_eq!(addr_challenges.len(), self.log_K);
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(addr_challenges).match_endianness()
     }
 }
 
@@ -189,7 +236,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
     }
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::compute_message")]
-    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
+        if self.params.is_internal_cycle_gap_round(round) {
+            let two_inv = F::from_u64(2).inverse().unwrap();
+            return UniPoly::from_coeff(vec![previous_claim * two_inv]);
+        }
+
         let evals = (0..self.ra.len() / 2)
             .into_par_iter()
             .map(|i| {
@@ -216,9 +268,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
     }
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::ingest_challenge")]
-    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
+        if self.params.is_internal_cycle_gap_round(round) {
+            return;
+        }
         self.ra.bind_parallel(r_j, BindingOrder::LowToHigh);
         self.unmap.bind_parallel(r_j, BindingOrder::LowToHigh);
+    }
+
+    fn round_offset(&self, max_num_rounds: usize) -> usize {
+        // Align to RW-check's Phase 2 start (global round = phase1_num_rounds), even if the batch
+        // has additional leading rounds from other instances.
+        let stage2_rounds = self.params.log_T + self.params.log_K;
+        let stage2_offset = max_num_rounds - stage2_rounds;
+        stage2_offset + self.params.phase1_num_rounds
     }
 
     fn cache_openings(
@@ -253,10 +316,17 @@ impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
     pub fn new(
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
+        trace_len: usize,
+        rw_config: &ReadWriteConfig,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
     ) -> Self {
-        let params =
-            RafEvaluationSumcheckParams::new(memory_layout, one_hot_params, opening_accumulator);
+        let params = RafEvaluationSumcheckParams::new(
+            memory_layout,
+            one_hot_params,
+            opening_accumulator,
+            trace_len,
+            rw_config,
+        );
         Self { params }
     }
 }
@@ -271,7 +341,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         {
             let reference_result =
                 Self::input_output_claims().input_claim(&[F::one()], accumulator);
-            assert_eq!(result, reference_result);
+            assert_eq!(
+                result,
+                reference_result.mul_pow_2(self.params.phase3_cycle_rounds()),
+                "RafEvaluation input claim should include dummy-round scaling"
+            );
         }
 
         result
@@ -335,6 +409,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             ra_opening_point,
         );
     }
+
+    fn round_offset(&self, max_num_rounds: usize) -> usize {
+        let stage2_rounds = self.params.log_T + self.params.log_K;
+        let stage2_offset = max_num_rounds - stage2_rounds;
+        stage2_offset + self.params.phase1_num_rounds
+    }
 }
 
 impl<F: JoltField> SumcheckFrontend<F> for RafEvaluationSumcheckVerifier<F> {
@@ -351,5 +431,128 @@ impl<F: JoltField> SumcheckFrontend<F> for RafEvaluationSumcheckVerifier<F> {
             }],
             output_sumcheck_id: SumcheckId::RamRafEvaluation,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RafEvaluationSumcheckParams;
+    use crate::{
+        field::JoltField,
+        poly::opening_proof::{OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN},
+        subprotocols::sumcheck_verifier::SumcheckInstanceParams,
+        transcripts::{KeccakTranscript, Transcript},
+        zkvm::ram::{
+            output_check::OutputSumcheckParams, read_write_checking::RamReadWriteCheckingParams,
+        },
+        zkvm::witness::VirtualPolynomial,
+    };
+    use ark_bn254::Fr;
+    use common::jolt_device::JoltDevice;
+
+    fn make_challenges(n: usize) -> Vec<<Fr as JoltField>::Challenge> {
+        (0..n)
+            .map(|i| <Fr as JoltField>::Challenge::from((i as u128) + 1))
+            .collect()
+    }
+
+    #[test]
+    fn stage2_address_round_alignment_matches_rw_schedule() {
+        type F = Fr;
+
+        for log_t in [3_usize, 4, 6] {
+            for log_k in [2_usize, 3, 5] {
+                let t = 1 << log_t;
+                let k = 1 << log_k;
+
+                for p1 in 0..=log_t {
+                    for p2 in 0..=log_k {
+                        let stage2_rounds = log_t + log_k;
+                        let global_challenges = make_challenges(stage2_rounds);
+
+                        let rw_params = RamReadWriteCheckingParams::<F> {
+                            K: k,
+                            T: t,
+                            gamma: F::from_u64(1),
+                            r_cycle: OpeningPoint::<BIG_ENDIAN, F>::new(vec![
+                                <F as JoltField>::Challenge::from(0u128);
+                                log_t
+                            ]),
+                            phase1_num_rounds: p1,
+                            phase2_num_rounds: p2,
+                        };
+                        let rw_opening = rw_params.normalize_opening_point(&global_challenges);
+                        let (rw_addr, _) = rw_opening.split_at_r(log_k);
+
+                        // Raf/Output are active starting at global round p1.
+                        let local_slice = &global_challenges[p1..];
+
+                        let raf_params = RafEvaluationSumcheckParams::<F> {
+                            log_K: log_k,
+                            log_T: log_t,
+                            phase1_num_rounds: p1,
+                            phase2_num_rounds: p2,
+                            start_address: 0,
+                            r_cycle: OpeningPoint::<BIG_ENDIAN, F>::new(vec![
+                                <F as JoltField>::Challenge::from(0u128);
+                                log_t
+                            ]),
+                        };
+                        let raf_addr = raf_params.normalize_opening_point(local_slice);
+                        assert_eq!(raf_addr.r, rw_addr.to_vec());
+
+                        let out_params = OutputSumcheckParams::<F> {
+                            K: k,
+                            log_T: log_t,
+                            phase1_num_rounds: p1,
+                            phase2_num_rounds: p2,
+                            r_address: vec![<F as JoltField>::Challenge::from(0u128); log_k],
+                            program_io: JoltDevice::default(),
+                        };
+                        let out_addr = out_params.normalize_opening_point(local_slice);
+                        assert_eq!(out_addr.r, rw_addr.to_vec());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn raf_input_claim_is_scaled_by_internal_cycle_gap_rounds() {
+        type F = Fr;
+
+        let log_t = 6_usize;
+        let log_k = 4_usize;
+        let p1 = 2_usize;
+        let p2 = 3_usize;
+
+        let mut transcript = KeccakTranscript::new(b"raf_scaling_test");
+        let mut acc = ProverOpeningAccumulator::<F>::new(log_t);
+
+        let raf_claim = F::from_u64(7);
+        acc.append_virtual(
+            &mut transcript,
+            VirtualPolynomial::RamAddress,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
+            raf_claim,
+        );
+
+        let params = RafEvaluationSumcheckParams::<F> {
+            log_K: log_k,
+            log_T: log_t,
+            phase1_num_rounds: p1,
+            phase2_num_rounds: p2,
+            start_address: 0,
+            r_cycle: OpeningPoint::<BIG_ENDIAN, F>::new(vec![
+                <F as JoltField>::Challenge::from(
+                    0u128
+                );
+                log_t
+            ]),
+        };
+
+        let expected = raf_claim.mul_pow_2(log_t - p1);
+        assert_eq!(params.input_claim(&acc), expected);
     }
 }

@@ -17,7 +17,7 @@ use crate::{
     },
     transcripts::Transcript,
     utils::math::Math,
-    zkvm::{ram::remap_address, witness::VirtualPolynomial},
+    zkvm::{config::ReadWriteConfig, ram::remap_address, witness::VirtualPolynomial},
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -36,13 +36,6 @@ use tracer::JoltDevice;
 //   - io_mask is the MLE of the I/O-region indicator (1 on matching {0,1}-points).
 //   - Val_final(k) is the final memory value at address k.
 //   - Val_io(k) is the publicly claimed output value at address k.
-//
-// ValFinalSumcheck:
-//   Proves the relation
-//     Val_final(r_address) − Val_init(r_address) = Σ_j inc(r_address, j) ⋅ wa(r_address, j),
-//   where:
-//   - Val_init(r_address) is the initial memory value at r_address.
-//   - inc is the MLE of the per-cycle increment; wa is the MLE of the write indicator.
 
 /// Degree bonud of the sumcheck round polynomials in [`OutputSumcheckVerifier`].
 const OUTPUT_SUMCHECK_DEGREE_BOUND: usize = 3;
@@ -50,18 +43,47 @@ const OUTPUT_SUMCHECK_DEGREE_BOUND: usize = 3;
 #[derive(Allocative, Clone)]
 pub struct OutputSumcheckParams<F: JoltField> {
     pub K: usize,
+    pub log_T: usize,
+    pub phase1_num_rounds: usize,
+    pub phase2_num_rounds: usize,
     pub r_address: Vec<F::Challenge>,
     pub program_io: JoltDevice,
 }
 
 impl<F: JoltField> OutputSumcheckParams<F> {
-    pub fn new(ram_K: usize, program_io: &JoltDevice, transcript: &mut impl Transcript) -> Self {
+    pub fn new(
+        ram_K: usize,
+        program_io: &JoltDevice,
+        transcript: &mut impl Transcript,
+        trace_len: usize,
+        rw_config: &ReadWriteConfig,
+    ) -> Self {
         let r_address = transcript.challenge_vector_optimized::<F>(ram_K.log_2());
         Self {
             K: ram_K,
+            log_T: trace_len.log_2(),
+            phase1_num_rounds: rw_config.ram_rw_phase1_num_rounds as usize,
+            phase2_num_rounds: rw_config.ram_rw_phase2_num_rounds as usize,
             r_address,
             program_io: program_io.clone(),
         }
+    }
+
+    #[inline]
+    fn log_K(&self) -> usize {
+        self.K.log_2()
+    }
+
+    #[inline]
+    fn phase3_cycle_rounds(&self) -> usize {
+        self.log_T - self.phase1_num_rounds
+    }
+
+    #[inline]
+    fn is_internal_cycle_gap_round(&self, round: usize) -> bool {
+        let start = self.phase2_num_rounds;
+        let end = start + self.phase3_cycle_rounds();
+        round >= start && round < end
     }
 }
 
@@ -71,7 +93,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OutputSumcheckParams<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        self.K.log_2()
+        self.log_T + self.log_K() - self.phase1_num_rounds
     }
 
     fn input_claim(&self, _: &dyn OpeningAccumulator<F>) -> F {
@@ -82,14 +104,22 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OutputSumcheckParams<F> {
         &self,
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+        // Extract the address challenges, skipping RW Phase 3's internal cycle gap.
+        let phase2_addr = self.phase2_num_rounds;
+        let gap = self.phase3_cycle_rounds();
+        let phase3_addr_start = phase2_addr + gap;
+        let addr_challenges = [
+            challenges[..phase2_addr].to_vec(),
+            challenges[phase3_addr_start..].to_vec(),
+        ]
+        .concat();
+        debug_assert_eq!(addr_challenges.len(), self.log_K());
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(addr_challenges).match_endianness()
     }
 }
 
 #[derive(Allocative)]
 pub struct OutputSumcheckProver<F: JoltField> {
-    /// Val(k, 0)
-    val_init: MultilinearPolynomial<F>,
     /// The MLE of the final RAM state
     val_final: MultilinearPolynomial<F>,
     /// Val_io(k) = Val_final(k) if k is in the "IO" region of memory,
@@ -140,7 +170,6 @@ impl<F: JoltField> OutputSumcheckProver<F> {
         let eq_r_address = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
 
         Self {
-            val_init: initial_ram_state.to_vec().into(),
             val_final: final_ram_state.to_vec().into(),
             val_io: val_io.into(),
             eq_r_address,
@@ -156,7 +185,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
     }
 
     #[tracing::instrument(skip_all, name = "OutputSumcheckProver::compute_message")]
-    fn compute_message(&mut self, _: usize, previous_claim: F) -> UniPoly<F> {
+    fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
+        if self.params.is_internal_cycle_gap_round(round) {
+            let two_inv = F::from_u64(2).inverse().unwrap();
+            return UniPoly::from_coeff(vec![previous_claim * two_inv]);
+        }
+
         let Self {
             eq_r_address,
             io_mask,
@@ -188,10 +222,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
     }
 
     #[tracing::instrument(skip_all, name = "OutputSumcheckProver::ingest_challenge")]
-    fn ingest_challenge(&mut self, r_j: F::Challenge, _: usize) {
+    fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
+        if self.params.is_internal_cycle_gap_round(round) {
+            return;
+        }
         // Bind address variable
         let Self {
-            val_init,
             val_final,
             val_io,
             eq_r_address,
@@ -199,13 +235,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
             ..
         } = self;
 
-        // We bind Val_init here despite the fact that it is not used in `compute_message`
-        // because we'll need Val_init(r) in `ValFinalSumcheck`
-        val_init.bind_parallel(r_j, BindingOrder::LowToHigh);
         val_final.bind_parallel(r_j, BindingOrder::LowToHigh);
         val_io.bind_parallel(r_j, BindingOrder::LowToHigh);
         eq_r_address.bind(r_j);
         io_mask.bind_parallel(r_j, BindingOrder::LowToHigh);
+    }
+
+    fn round_offset(&self, max_num_rounds: usize) -> usize {
+        let stage2_rounds = self.params.log_T + self.params.log_K();
+        let stage2_offset = max_num_rounds - stage2_rounds;
+        stage2_offset + self.params.phase1_num_rounds
     }
 
     fn cache_openings(
@@ -214,11 +253,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
         transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let Self {
-            val_final,
-            val_init,
-            ..
-        } = self;
+        let Self { val_final, .. } = self;
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             transcript,
@@ -226,13 +261,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
             SumcheckId::RamOutputCheck,
             opening_point.clone(),
             val_final.final_sumcheck_claim(),
-        );
-        accumulator.append_virtual(
-            transcript,
-            VirtualPolynomial::RamValInit,
-            SumcheckId::RamOutputCheck,
-            opening_point,
-            val_init.final_sumcheck_claim(),
         );
     }
 
@@ -247,8 +275,14 @@ pub struct OutputSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> OutputSumcheckVerifier<F> {
-    pub fn new(ram_K: usize, program_io: &JoltDevice, transcript: &mut impl Transcript) -> Self {
-        let params = OutputSumcheckParams::new(ram_K, program_io, transcript);
+    pub fn new(
+        ram_K: usize,
+        program_io: &JoltDevice,
+        transcript: &mut impl Transcript,
+        trace_len: usize,
+        rw_config: &ReadWriteConfig,
+    ) -> Self {
+        let params = OutputSumcheckParams::new(ram_K, program_io, transcript, trace_len, rw_config);
         Self { params }
     }
 }
@@ -305,11 +339,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
             SumcheckId::RamOutputCheck,
             opening_point.clone(),
         );
-        accumulator.append_virtual(
-            transcript,
-            VirtualPolynomial::RamValInit,
-            SumcheckId::RamOutputCheck,
-            opening_point,
-        );
+    }
+
+    fn round_offset(&self, max_num_rounds: usize) -> usize {
+        let stage2_rounds = self.params.log_T + self.params.log_K();
+        let stage2_offset = max_num_rounds - stage2_rounds;
+        stage2_offset + self.params.phase1_num_rounds
     }
 }
