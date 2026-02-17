@@ -144,6 +144,11 @@ async function ensureProgramLoaded(name) {
 
 async function main() {
     try {
+        if (!crossOriginIsolated) {
+            setStatus('This page requires a browser with SharedArrayBuffer support. Please open in Chrome or Safari (not an in-app browser).', 'error');
+            return;
+        }
+
         setStatus('Initializing WASM...', 'loading');
 
         worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
@@ -196,10 +201,10 @@ async function main() {
                 st.programIoBytes = msg.programIo;
 
                 log(p, `Proof generated in ${(msg.elapsed / 1000).toFixed(2)}s`);
-                log(p, `RISC-V cycles: ${msg.numCycles.toLocaleString()}`);
+                if (msg.numCycles != null) log(p, `RISC-V cycles: ${msg.numCycles.toLocaleString()}`);
                 log(p, `Proof size: ${(msg.proofSize / 1024).toFixed(2)} KB`);
                 log(p, `Proof size (compressed): ${(msg.compressedProofSize / 1024).toFixed(2)} KB`);
-                log(p, `Peak WASM memory: ${(msg.peakMemory / 1024 / 1024).toFixed(0)} MB`);
+                if (msg.peakMemory != null) log(p, `Peak WASM memory: ${(msg.peakMemory / 1024 / 1024).toFixed(0)} MB`);
 
                 setStatus('Proof generated!', 'ready');
                 setButtonsEnabled(p, true, true);
