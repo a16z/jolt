@@ -19,7 +19,7 @@ use jolt_core::{
 use regex::{NoExpand, Regex};
 use strum::IntoEnumIterator as _;
 
-use crate::{
+use zklean_extractor::{
     modules::{AsModule, Module},
     util::indent,
 };
