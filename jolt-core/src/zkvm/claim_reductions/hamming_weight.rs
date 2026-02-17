@@ -88,8 +88,8 @@ use crate::poly::{
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     opening_proof::{
-        OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-        VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+        OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+        LITTLE_ENDIAN,
     },
     shared_ra_polys::compute_all_G,
     unipoly::UniPoly,
@@ -572,9 +572,12 @@ pub struct HammingWeightClaimReductionVerifier<F: JoltField> {
 
 impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     /// Create verifier. r_cycle and r_addr_bool are extracted from Booleanity opening.
+    ///
+    /// Takes a generic `OpeningAccumulator` to support both real verification
+    /// (`VerifierOpeningAccumulator`) and symbolic transpilation (`MleOpeningAccumulator`).
     pub fn new(
         one_hot_params: &OneHotParams,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params =

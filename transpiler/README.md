@@ -1,6 +1,6 @@
 # Transpiler
 
-Transpiles Jolt verifier stages 1-6 (sumcheck verification) into circuit code for various proving backends.
+Transpiles Jolt verifier stages 1-7 (all sumcheck verification) into circuit code for various proving backends.
 
 ## Overview
 
@@ -17,12 +17,15 @@ This tool performs symbolic execution of the Jolt verifier to generate circuit c
 
 | Stage | Description | Included |
 |-------|-------------|----------|
-| 1-6 | Sumcheck verification | Yes |
-| 7+ | PCS verification (Dory/Hyrax) | No |
+| 1-6 | Standard sumcheck verification | Yes |
+| 7 | HammingWeight claim reduction | Yes |
+| 8 | PCS verification (Hyrax) | No |
 
-PCS verification is **not transpiled** because:
-- Dory uses pairings, which would add ~100M constraints if emulated inside BN254
+Stage 8 (PCS verification) is **not transpiled** because:
+- Hyrax requires native elliptic curve operations (MSM on Grumpkin)
 - For a complete recursive verifier, PCS must be implemented natively in Gnark (see `quangvdao/quang-jolt` for Hyrax approach)
+
+**Note**: Stage 7 does not include `AdviceClaimReduction` verifiers. They require state management across stages 6-7. See `.claude/tasks/006-add-advice-verifiers-stage7.md` for planned implementation.
 
 ## Quick Start
 
@@ -142,7 +145,7 @@ Groth16 Proof (164 bytes)
 Generated Gnark circuit with:
 - `JoltStagesCircuit` struct containing all witness fields
 - `Define()` method with constraint logic
-- ~2M constraints for stages 1-6
+- ~3M constraints for stages 1-7
 
 ### `stages_witness.json`
 

@@ -7,10 +7,26 @@
 //!
 //! The verification logic is identical to `verifier.rs`, ensuring that the
 //! transpiled circuit matches the real verifier exactly.
+//!
+//! ## Stages Implemented
+//!
+//! This verifier implements stages 1-7 (all sumcheck stages):
+//! - Stages 1-6: Standard sumcheck verifications
+//! - Stage 7: HammingWeight claim reduction sumcheck
+//!
+//! Stage 8 (Hyrax PCS) is NOT transpilable - it requires native Gnark pairing operations.
+//!
+//! ## Advice Verifiers
+//!
+//! Note: `AdviceClaimReduction` verifiers are NOT included in stage 7. They require
+//! state management across stages 6-7 (phase transitions). For proofs with advice,
+//! see task 006 for planned implementation.
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
-use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
+use crate::zkvm::claim_reductions::{
+    HammingWeightClaimReductionVerifier, RegistersClaimReductionSumcheckVerifier,
+};
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
 use crate::zkvm::{
@@ -201,11 +217,11 @@ impl<
         }
     }
 
-    /// Verify the Jolt proof (stages 1-6).
+    /// Verify the Jolt proof (stages 1-7).
     ///
-    /// Note: Stages 7-8 (batch opening and Dory verification) are not included
-    /// because they use VerifierOpeningAccumulator-specific methods. For Gnark
-    /// transpilation, these would be replaced by native Gnark pairing checks.
+    /// Note: Stage 8 (Hyrax PCS verification) is not included because it uses
+    /// VerifierOpeningAccumulator-specific methods. For Gnark transpilation,
+    /// this is replaced by native Gnark pairing checks.
     #[tracing::instrument(skip_all)]
     pub fn verify(mut self) -> Result<(), anyhow::Error> {
         let _pprof_verify = pprof_scope!("verify");
@@ -239,9 +255,9 @@ impl<
         self.verify_stage4()?;
         self.verify_stage5()?;
         self.verify_stage6()?;
-        // Stages 7-8 are NOT transpilable - they use VerifierOpeningAccumulator-specific
-        // methods for PCS (Dory) verification. For Gnark, these are replaced by
-        // native pairing checks.
+        self.verify_stage7()?;
+        // Stage 8 (Hyrax PCS) is NOT transpilable - it uses native pairing operations.
+        // For Gnark, this is replaced by native Gnark pairing checks.
 
         Ok(())
     }
@@ -524,6 +540,33 @@ impl<
             &mut self.transcript,
         )
         .context("Stage 6")?;
+
+        Ok(())
+    }
+
+    fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
+        // Create verifier for HammingWeight claim reduction.
+        // This sumcheck fuses HammingWeight + Address Reduction into a single degree-2 sumcheck.
+        let hw_verifier = HammingWeightClaimReductionVerifier::new(
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+
+        // Note: AdviceClaimReduction verifiers are not included here.
+        // They require state management across stages 6-7 (phase transitions).
+        // For proofs with advice, this would need to be extended.
+        // See .claude/tasks/006-add-advice-verifiers-stage7.md for planned implementation.
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> =
+            vec![&hw_verifier];
+
+        let _r_stage7 = BatchedSumcheck::verify(
+            &self.proof.stage7_sumcheck_proof,
+            instances,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )
+        .context("Stage 7")?;
 
         Ok(())
     }

@@ -1,4 +1,4 @@
-//! Transpile Jolt verifier stages 1-6 to circuit code for various proving backends.
+//! Transpile Jolt verifier stages 1-7 (all sumchecks) to circuit code for various proving backends.
 //!
 //! # Overview
 //!
@@ -12,15 +12,19 @@
 //! - **gnark** (default): Go/Groth16 circuit generation
 //! - **ast-bundle**: Output only the AstBundle JSON (no code generation)
 //!
-//! # Scope: Stages 1-6 Only (Sumcheck Verification)
+//! # Scope: Stages 1-7 (All Sumcheck Verification)
 //!
-//! This transpiler covers stages 1-6, which verify all sumcheck proofs. The PCS (Polynomial
-//! Commitment Scheme) verification in stage 7+ is NOT transpiled because:
+//! This transpiler covers stages 1-7, which verify all sumcheck proofs:
+//! - Stages 1-6: Standard sumcheck verifications
+//! - Stage 7: HammingWeight claim reduction sumcheck
 //!
-//! - **Dory PCS uses pairings**: Emulating BN254 pairings inside a BN254 circuit would add
-//!   hundreds of millions of constraints, making the circuit infeasible.
+//! Stage 8 (PCS/Hyrax verification) is NOT transpiled because:
+//! - **Hyrax requires native curve operations**: MSM on Grumpkin must use native implementations.
 //! - **Native implementation needed**: PCS verification must be implemented directly in the
 //!   target framework using native curve operations.
+//!
+//! Note: Stage 7 does not include AdviceClaimReduction verifiers (they require state management
+//! across stages 6-7). For proofs without advice, this is complete.
 //!
 //! # Pipeline
 //!
@@ -97,7 +101,7 @@ fn main() {
     let args = Args::parse();
 
     println!(
-        "=== Transpiling Jolt Verifier Stages 1-6 to {:?} ===\n",
+        "=== Transpiling Jolt Verifier Stages 1-7 to {:?} ===\n",
         args.target
     );
 
@@ -211,9 +215,9 @@ fn main() {
     // - Poseidon hashes for Fiat-Shamir challenges are computed symbolically
     // - Equality assertions are recorded as constraints
     //
-    // Stages 1-6 cover all sumcheck verifications. Stage 7+ (PCS verification)
+    // Stages 1-7 cover all sumcheck verifications. Stage 8 (PCS/Hyrax verification)
     // is not transpiled, it requires native curve operations in Gnark.
-    println!("\n=== Running Symbolic Verification (Stages 1-6) ===");
+    println!("\n=== Running Symbolic Verification (Stages 1-7) ===");
     match verifier.verify() {
         Ok(()) => println!("  Verification completed successfully"),
         Err(e) => {
@@ -317,7 +321,7 @@ fn main() {
 
             println!("\n=== SUCCESS ===");
             println!(
-                "Stages 1-6 transpiled to Gnark. Run 'go test' in {:?} to verify.",
+                "Stages 1-7 transpiled to Gnark. Run 'go test' in {:?} to verify.",
                 output_dir
             );
         }
