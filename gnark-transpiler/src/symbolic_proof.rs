@@ -28,17 +28,18 @@
 //! of 32 bytes each (to fit in BN254 field elements). The serialization uses:
 //! - `serialize_uncompressed` (not compressed)
 //! - Byte reversal for big-endian/EVM compatibility
+//! Dory will probably be replaced in future iterations,
+//! the transpilation code will need to be updated in that case.
 //!
 //! This must match exactly how the Poseidon transcript hashes commitments.
 
 use crate::ast_commitment_scheme::{AstCommitmentScheme, AstProof};
 use crate::MleOpeningAccumulator;
-use crate::PoseidonAstTranscript;
-use jolt_core::transcripts::Transcript;
 use jolt_core::poly::opening_proof::OpeningPoint;
 use jolt_core::poly::unipoly::CompressedUniPoly;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::subprotocols::univariate_skip::UniSkipFirstRoundProof;
+use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::proof_serialization::{Claims, JoltProof};
 use jolt_core::zkvm::RV64IMACProof;
 use std::collections::BTreeMap;
@@ -58,18 +59,13 @@ pub struct VarAllocator {
 }
 
 impl VarAllocator {
+    // Public methods
+
     pub fn new() -> Self {
         Self {
             next_idx: 0,
             descriptions: Vec::new(),
         }
-    }
-
-    pub fn alloc(&mut self, description: &str) -> MleAst {
-        let idx = self.next_idx;
-        self.descriptions.push((idx, description.to_string()));
-        self.next_idx += 1;
-        MleAst::from_var(idx)
     }
 
     pub fn alloc_n(&mut self, n: usize, prefix: &str) -> Vec<MleAst> {
@@ -84,6 +80,15 @@ impl VarAllocator {
 
     pub fn descriptions(&self) -> &[(u16, String)] {
         &self.descriptions
+    }
+
+    // Private methods
+
+    fn alloc(&mut self, description: &str) -> MleAst {
+        let idx = self.next_idx;
+        self.descriptions.push((idx, description.to_string()));
+        self.next_idx += 1;
+        MleAst::from_var(idx)
     }
 }
 
@@ -114,21 +119,15 @@ const CHUNKS_PER_COMMITMENT: usize = 12;
 /// - `stageX_sumcheck_rY_Z`: Stage X, round Y, coefficient Z
 /// - `stageX_uni_skip_coeff_Y`: Univariate skip polynomial coefficient
 /// - `claim_KEY`: Opening claim for polynomial KEY
-pub fn symbolize_proof(
+///
+/// # Type Parameter
+///
+/// `OutputTranscript` specifies the transcript type for the symbolic proof.
+/// Use `PoseidonAstTranscript` for Poseidon-based proofs (current default).
+pub fn symbolize_proof<OutputTranscript: Transcript>(
     real_proof: &RV64IMACProof,
 ) -> (
-    JoltProof<MleAst, AstCommitmentScheme, PoseidonAstTranscript>,
-    MleOpeningAccumulator,
-    VarAllocator,
-) {
-    symbolize_proof_generic::<PoseidonAstTranscript>(real_proof)
-}
-
-/// Generic proof symbolization over any Transcript type
-fn symbolize_proof_generic<ProofTranscript: Transcript>(
-    real_proof: &RV64IMACProof,
-) -> (
-    JoltProof<MleAst, AstCommitmentScheme, ProofTranscript>,
+    JoltProof<MleAst, AstCommitmentScheme, OutputTranscript>,
     MleOpeningAccumulator,
     VarAllocator,
 ) {
@@ -150,63 +149,63 @@ fn symbolize_proof_generic<ProofTranscript: Transcript>(
     }
 
     // === Symbolize stage 1 uni-skip proof ===
-    let stage1_uni_skip = symbolize_uni_skip_proof::<_, ProofTranscript>(
+    let stage1_uni_skip = symbolize_uni_skip_proof::<_, OutputTranscript>(
         &real_proof.stage1_uni_skip_first_round_proof,
         &mut alloc,
         "stage1_uni_skip",
     );
 
     // === Symbolize stage 1 sumcheck proof ===
-    let stage1_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
+    let stage1_sumcheck = symbolize_sumcheck_proof::<_, OutputTranscript>(
         &real_proof.stage1_sumcheck_proof,
         &mut alloc,
         "stage1_sumcheck",
     );
 
     // === Symbolize stage 2 uni-skip proof ===
-    let stage2_uni_skip = symbolize_uni_skip_proof::<_, ProofTranscript>(
+    let stage2_uni_skip = symbolize_uni_skip_proof::<_, OutputTranscript>(
         &real_proof.stage2_uni_skip_first_round_proof,
         &mut alloc,
         "stage2_uni_skip",
     );
 
     // === Symbolize stage 2 sumcheck proof ===
-    let stage2_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
+    let stage2_sumcheck = symbolize_sumcheck_proof::<_, OutputTranscript>(
         &real_proof.stage2_sumcheck_proof,
         &mut alloc,
         "stage2_sumcheck",
     );
 
     // === Symbolize stage 3 sumcheck proof ===
-    let stage3_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
+    let stage3_sumcheck = symbolize_sumcheck_proof::<_, OutputTranscript>(
         &real_proof.stage3_sumcheck_proof,
         &mut alloc,
         "stage3_sumcheck",
     );
 
     // === Symbolize stage 4 sumcheck proof ===
-    let stage4_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
+    let stage4_sumcheck = symbolize_sumcheck_proof::<_, OutputTranscript>(
         &real_proof.stage4_sumcheck_proof,
         &mut alloc,
         "stage4_sumcheck",
     );
 
     // === Symbolize stage 5 sumcheck proof ===
-    let stage5_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
+    let stage5_sumcheck = symbolize_sumcheck_proof::<_, OutputTranscript>(
         &real_proof.stage5_sumcheck_proof,
         &mut alloc,
         "stage5_sumcheck",
     );
 
     // === Symbolize stage 6 sumcheck proof ===
-    let stage6_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
+    let stage6_sumcheck = symbolize_sumcheck_proof::<_, OutputTranscript>(
         &real_proof.stage6_sumcheck_proof,
         &mut alloc,
         "stage6_sumcheck",
     );
 
     // === Symbolize stage 7 sumcheck proof ===
-    let stage7_sumcheck = symbolize_sumcheck_proof::<_, ProofTranscript>(
+    let stage7_sumcheck = symbolize_sumcheck_proof::<_, OutputTranscript>(
         &real_proof.stage7_sumcheck_proof,
         &mut alloc,
         "stage7_sumcheck",
@@ -244,9 +243,7 @@ fn symbolize_proof_generic<ProofTranscript: Transcript>(
     // Build the opening accumulator with the symbolic claims we created
     let mut accumulator = MleOpeningAccumulator::new();
     for (key, (_, claim)) in &symbolic_proof.opening_claims.0 {
-        accumulator
-            .openings
-            .insert(*key, (vec![], *claim));
+        accumulator.openings.insert(*key, (vec![], *claim));
     }
 
     (symbolic_proof, accumulator, alloc)
@@ -307,7 +304,9 @@ fn symbolize_sumcheck_proof<T: Transcript, OutT: Transcript>(
 /// 6. Untrusted advice commitment (if present)
 ///
 /// Any mismatch will cause witness values to be assigned to wrong variables.
-pub fn extract_witness_values(real_proof: &RV64IMACProof) -> std::collections::HashMap<usize, String> {
+pub fn extract_witness_values(
+    real_proof: &RV64IMACProof,
+) -> std::collections::HashMap<usize, String> {
     use ark_ff::PrimeField;
     use ark_serialize::CanonicalSerialize;
     let mut values: std::collections::HashMap<usize, String> = std::collections::HashMap::new();

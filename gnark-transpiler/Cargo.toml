@@ -14,7 +14,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 
-jolt-core = { path = "../jolt-core", features = ["transcript-poseidon"] }
+jolt-core = { path = "../jolt-core" }
 zklean-extractor = { path = "../zklean-extractor" }
 common = { path = "../common" }
 light-poseidon = "0.4.0"
@@ -23,6 +23,11 @@ num-bigint = "0.4"
 [features]
 default = []
 debug-expected-output = ["jolt-core/debug-expected-output"]
+# Transcript features - must match proof generation
+# Only one can be enabled at a time (enforced by jolt-core)
+transcript-poseidon = ["jolt-core/transcript-poseidon"]
+transcript-keccak = ["jolt-core/transcript-keccak"]
+transcript-blake2b = ["jolt-core/transcript-blake2b"]
 
 [[bin]]
 name = "gnark-transpiler"
