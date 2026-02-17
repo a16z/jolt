@@ -29,7 +29,22 @@ Stage 8 (PCS verification) is **not transpiled** because:
 
 ## Quick Start
 
-### 1. Generate a Proof
+### Full E2E Pipeline (3 commands)
+
+```bash
+# 1. Generate a Jolt proof (MUST use Poseidon transcript)
+cargo run -p fibonacci --release --features transcript-poseidon -- --save 50
+
+# 2. Transpile to Gnark circuit
+cargo run -p transpiler --release --features transcript-poseidon
+
+# 3. Run Groth16 prove/verify
+cd transpiler/go && go test -v -run TestStagesCircuitProveVerify
+```
+
+### Step-by-Step Details
+
+#### 1. Generate a Proof
 
 First, generate a Jolt proof with the Poseidon transcript (required for SNARK-friendly verification):
 
@@ -38,23 +53,25 @@ cd /path/to/jolt
 cargo run -p fibonacci --release --features transcript-poseidon -- --save 50
 ```
 
+**Important**: The `--features transcript-poseidon` flag is **required**. Without it, the proof uses Blake2b which cannot be efficiently verified in-circuit.
+
 This saves:
 - `/tmp/fib_proof.bin` - The JoltProof
 - `/tmp/fib_io_device.bin` - Program inputs/outputs
 - `/tmp/jolt_verifier_preprocessing.dat` - Verifier setup data
 
-### 2. Transpile to Gnark
+#### 2. Transpile to Gnark
 
 ```bash
 cargo run -p transpiler --release --features transcript-poseidon
 ```
 
 This generates in `transpiler/go/`:
-- `stages_circuit.go` - The Gnark circuit (~2M constraints)
+- `stages_circuit.go` - The Gnark circuit (~2.9M constraints)
 - `stages_witness.json` - Witness values for proving
 - `stages_bundle.json` - Serialized AST (for debugging)
 
-### 3. Run Go Tests
+#### 3. Run Go Tests
 
 ```bash
 cd transpiler/go
@@ -62,9 +79,19 @@ cd transpiler/go
 # Quick solver test (~1s)
 go test -v -run TestStagesCircuitSolver
 
-# Full Groth16 prove/verify (~6s)
+# Full Groth16 prove/verify (~100s)
 go test -v -run TestStagesCircuitProveVerify
 ```
+
+### Expected Results (fib(50), Stages 1-7)
+
+| Metric | Value |
+|--------|-------|
+| Constraints | 2,895,024 |
+| Assertions | 16 |
+| Proof size | 164 bytes |
+| Prove time | ~8s |
+| Verify time | ~2ms |
 
 ## Transcript Feature Flags
 
