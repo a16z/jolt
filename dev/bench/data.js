@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771204553561,
+  "lastUpdate": 1771366164571,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -52666,6 +52666,222 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 793156,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "432d1c38e94444c3dea8e729c01cfbaa93ad4d45",
+          "message": "refactor(ram): batch ValEvaluation and ValFinal into RamValCheck (#1203)\n\n* docs(ram): move ValFinal sumcheck docstring\n\n* feat(ram): fuse ValEvaluation and ValFinal in stage4\n\n* refactor(ram): remove legacy val sumchecks\n\n* fix(zkvm): qualify ram module path in verifier\n\nStage 4 verifier referenced `ram::gen_ram_initial_memory_state` without importing the module.\nUse the fully qualified `crate::zkvm::ram::...` path so the workspace builds in CI.\n\n* refactor(zkvm): align RAM rounds and consolidate RamValCheck\n\nAlign Stage 2 RAM sumchecks with RW address-binding rounds via internal dummy rounds, and simplify downstream value/RA reductions by unifying on a single aligned r_address.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): drop unused RamValInit opening from OutputCheck\n\nOutputCheck no longer needs to cache RamValInit now that Stage 4 is consolidated under RamValCheck. Avoid emitting an unused virtual opening (which trips release test assertions that all cached virtual openings are consumed).\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* chore(fmt): rustfmt after RAM refactor\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* chore(ram): remove unused Val_init binding from OutputCheck\n\nOutputCheck only checks IO consistency via Val_final - Val_io, so it does not need to bind or cache Val_init. After consolidating Stage 4 into RamValCheck, Val_init is derived from public initial RAM (plus advice) rather than being plumbed through OutputCheck openings.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n---------\n\nCo-authored-by: Cursor <cursoragent@cursor.com>",
+          "timestamp": "2026-02-17T16:16:22-05:00",
+          "tree_id": "77cac7acb402a0a05ba8ecbd220dcbdb34911949",
+          "url": "https://github.com/a16z/jolt/commit/432d1c38e94444c3dea8e729c01cfbaa93ad4d45"
+        },
+        "date": 1771366163172,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.3832,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 791340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4804,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 459832,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 463452,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0526,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 470632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.0347,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 470796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8424,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 472080,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.747,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 792260,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 1.0068,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 470804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.9715,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 472180,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7858,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 472940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.6933,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1013576,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.1271,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 608888,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 81.4934,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2112944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.6319,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 468592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6543,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 461844,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.3484,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 792188,
             "unit": "KB",
             "extra": ""
           }
