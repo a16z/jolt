@@ -1,42 +1,51 @@
-//! Symbolic Commitment Scheme for MleAst transpilation.
+//! Stub `CommitmentScheme` for symbolic transpilation (stages 1-7).
 //!
-//! # Overview
+//! # Purpose
 //!
-//! This module provides a stub `CommitmentScheme` implementation that works with `MleAst`
-//! symbolic values. It allows `TranspilableVerifier` to be instantiated with symbolic
-//! types for transpilation to Gnark circuits.
+//! Jolt's verifier is generic over `PCS: CommitmentScheme`. To run the verifier with
+//! symbolic types (`MleAst` instead of `Fr`), we need a `CommitmentScheme` that works
+//! with `MleAst`. This module provides that stub.
 //!
-//! # Why a Stub?
+//! # Current Usage (Stages 1-7)
 //!
-//! The real Jolt verifier uses Dory (or Hyrax) for polynomial commitments. These schemes
-//! involve elliptic curve operations (pairings, MSMs) that are too expensive to emulate
-//! inside a SNARK circuit:
-//!
-//! - **Dory pairings in BN254 circuit**: ~100-200M constraints (infeasible)
-//! - **Hyrax MSM in BN254 circuit**: ~5M constraints (feasible with GLV)
-//!
-//! For stages 1-6 transpilation, we skip PCS verification entirely. The stub implements
-//! the `CommitmentScheme` trait with no-ops, allowing the verifier to run while the
-//! actual cryptographic operations are elided.
-//!
-//! # Associated Types
-//!
-//! The types (`AstProof`, `AstBatchedProof`, etc.) use `Vec<MleAst>` internally rather
-//! than unit types. This is for future extensibility: if we later transpile PCS
-//! verification (e.g., for Hyrax over Grumpkin), these types can hold actual symbolic data.
-//!
-//! # Usage
+//! The transpiler runs the Jolt verifier symbolically to record all field operations:
 //!
 //! ```ignore
-//! type MyVerifier = TranspilableVerifier<
-//!     MleAst,                    // Field type
-//!     AstCommitmentScheme,       // PCS (stub)
-//!     PoseidonAstTranscript,     // Transcript
-//!     MleOpeningAccumulator,     // Accumulator
-//! >;
+//! // In main.rs - the verifier is instantiated with symbolic types
+//! let verifier = TranspilableVerifier::<
+//!     MleAst,                    // Symbolic field (records operations)
+//!     AstCommitmentScheme,       // This stub (satisfies trait bounds)
+//!     PoseidonAstTranscript,     // Symbolic transcript
+//!     MleOpeningAccumulator,     // Collects opening claims
+//! >::new(...);
+//!
+//! verifier.verify(&proof, ...);  // Runs stages 1-7, records AST
 //! ```
+//!
+//! Stages 1-7 are **sumcheck-based** and don't call PCS methods. This stub satisfies
+//! the `CommitmentScheme` trait bound without doing any work. Methods that would be
+//! called during proving (`commit`, `prove`) panic since we only run verification.
+//!
+//! # Future: Stage 8 (PCS Verification)
+//!
+//! Stage 8 verifies polynomial commitment openings. Currently NOT transpiled because:
+//! - **Dory**: Uses pairings (very expensive in-circuit, not practical)
+//! - **Hyrax**: Technically transpilable (MSM becomes sumchecks + scalar muls), but
+//!   the current `TranspilableVerifier` uses Dory, not Hyrax with recursion support
+//!
+//! With proper recursion setup (Hyrax over Grumpkin, sumcheck-based MSM verification),
+//! stage 8 could be transpiled.
+//! The `todo!()` methods (`combine_commitments`, `verify`) mark where this would plug in.
+//!
+//! # Why Vec<MleAst> Instead of Unit Types?
+//!
+//! Types like `AstProof(Vec<MleAst>)` use vectors instead of `()` for future
+//! extensibility. If Hyrax-over-Grumpkin is ever transpiled, these types could
+//! hold symbolic curve points.
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Read, SerializationError, Valid, Write};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Read, SerializationError, Valid, Write,
+};
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -45,6 +54,10 @@ use jolt_core::utils::errors::ProofVerifyError;
 use std::borrow::Borrow;
 use zklean_extractor::mle_ast::MleAst;
 use zklean_extractor::AstCommitment;
+
+// =============================================================================
+// Type Definitions
+// =============================================================================
 
 /// Symbolic commitment scheme for MleAst transpilation.
 ///
@@ -61,11 +74,11 @@ pub struct AstVerifierSetup;
 #[derive(Clone, Debug, Default)]
 pub struct AstProverSetup;
 
-/// Opening proof - vector of MleAst for stage 7/8 extensibility
+/// Opening proof - vector of MleAst for future PCS extensibility
 #[derive(Clone, Debug, Default)]
 pub struct AstProof(pub Vec<MleAst>);
 
-/// Batched opening proof - vector of MleAst for stage 7/8 extensibility
+/// Batched opening proof - vector of MleAst for future PCS extensibility
 #[derive(Clone, Debug, Default)]
 pub struct AstBatchedProof(pub Vec<MleAst>);
 
@@ -73,7 +86,88 @@ pub struct AstBatchedProof(pub Vec<MleAst>);
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AstOpeningHint;
 
-// === Serialization implementations (required by trait bounds) ===
+// =============================================================================
+// CommitmentScheme Implementation
+// =============================================================================
+
+impl CommitmentScheme for AstCommitmentScheme {
+    type Field = MleAst;
+    type ProverSetup = AstProverSetup;
+    type VerifierSetup = AstVerifierSetup;
+    type Commitment = AstCommitment;
+    type Proof = AstProof;
+    type BatchedProof = AstBatchedProof;
+    type OpeningProofHint = AstOpeningHint;
+
+    fn setup_prover(_max_num_vars: usize) -> Self::ProverSetup {
+        panic!("AstCommitmentScheme::setup_prover should never be called during verification")
+    }
+
+    fn setup_verifier(_setup: &Self::ProverSetup) -> Self::VerifierSetup {
+        AstVerifierSetup
+    }
+
+    fn commit(
+        _poly: &MultilinearPolynomial<Self::Field>,
+        _setup: &Self::ProverSetup,
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
+        panic!("AstCommitmentScheme::commit should never be called during verification")
+    }
+
+    fn batch_commit<U>(
+        _polys: &[U],
+        _gens: &Self::ProverSetup,
+    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
+    where
+        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
+    {
+        panic!("AstCommitmentScheme::batch_commit should never be called during verification")
+    }
+
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        _commitments: &[C],
+        _coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        // TODO: Implement for stage 8 PCS verification
+        // This should combine AstCommitments symbolically
+        todo!("AstCommitmentScheme::combine_commitments - implement for stage 8")
+    }
+
+    fn prove<ProofTranscript: Transcript>(
+        _setup: &Self::ProverSetup,
+        _poly: &MultilinearPolynomial<Self::Field>,
+        _opening_point: &[<Self::Field as JoltField>::Challenge],
+        _hint: Option<Self::OpeningProofHint>,
+        _transcript: &mut ProofTranscript,
+    ) -> Self::Proof {
+        panic!("AstCommitmentScheme::prove should never be called during verification")
+    }
+
+    fn verify<ProofTranscript: Transcript>(
+        _proof: &Self::Proof,
+        _setup: &Self::VerifierSetup,
+        _transcript: &mut ProofTranscript,
+        _opening_point: &[<Self::Field as JoltField>::Challenge],
+        _opening: &Self::Field,
+        _commitment: &Self::Commitment,
+    ) -> Result<(), ProofVerifyError> {
+        // TODO: Implement for stage 8 PCS verification
+        // This should generate symbolic constraints for the opening check
+        todo!("AstCommitmentScheme::verify - implement for stage 8")
+    }
+
+    fn protocol_name() -> &'static [u8] {
+        b"AstCommitmentScheme"
+    }
+}
+
+// =============================================================================
+// Serialization Implementations (required by trait bounds)
+// =============================================================================
+//
+// These are boilerplate implementations required by CommitmentScheme trait bounds.
+// They perform no actual serialization since these types are only used during
+// symbolic execution, never serialized to disk.
 
 impl Valid for AstVerifierSetup {
     fn check(&self) -> Result<(), SerializationError> {
@@ -222,78 +316,5 @@ impl CanonicalDeserialize for AstOpeningHint {
         _validate: ark_serialize::Validate,
     ) -> Result<Self, SerializationError> {
         Ok(Self)
-    }
-}
-
-// === CommitmentScheme implementation ===
-
-impl CommitmentScheme for AstCommitmentScheme {
-    type Field = MleAst;
-    type ProverSetup = AstProverSetup;
-    type VerifierSetup = AstVerifierSetup;
-    type Commitment = AstCommitment;
-    type Proof = AstProof;
-    type BatchedProof = AstBatchedProof;
-    type OpeningProofHint = AstOpeningHint;
-
-    fn setup_prover(_max_num_vars: usize) -> Self::ProverSetup {
-        panic!("AstCommitmentScheme::setup_prover should never be called during verification")
-    }
-
-    fn setup_verifier(_setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        AstVerifierSetup
-    }
-
-    fn commit(
-        _poly: &MultilinearPolynomial<Self::Field>,
-        _setup: &Self::ProverSetup,
-    ) -> (Self::Commitment, Self::OpeningProofHint) {
-        panic!("AstCommitmentScheme::commit should never be called during verification")
-    }
-
-    fn batch_commit<U>(
-        _polys: &[U],
-        _gens: &Self::ProverSetup,
-    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
-    where
-        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
-    {
-        panic!("AstCommitmentScheme::batch_commit should never be called during verification")
-    }
-
-    fn combine_commitments<C: Borrow<Self::Commitment>>(
-        _commitments: &[C],
-        _coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        // TODO: Implement for stage 7/8
-        // This should combine AstCommitments symbolically
-        todo!("AstCommitmentScheme::combine_commitments - implement for stage 7/8")
-    }
-
-    fn prove<ProofTranscript: Transcript>(
-        _setup: &Self::ProverSetup,
-        _poly: &MultilinearPolynomial<Self::Field>,
-        _opening_point: &[<Self::Field as JoltField>::Challenge],
-        _hint: Option<Self::OpeningProofHint>,
-        _transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        panic!("AstCommitmentScheme::prove should never be called during verification")
-    }
-
-    fn verify<ProofTranscript: Transcript>(
-        _proof: &Self::Proof,
-        _setup: &Self::VerifierSetup,
-        _transcript: &mut ProofTranscript,
-        _opening_point: &[<Self::Field as JoltField>::Challenge],
-        _opening: &Self::Field,
-        _commitment: &Self::Commitment,
-    ) -> Result<(), ProofVerifyError> {
-        // TODO: Implement for stage 7/8
-        // This should generate symbolic constraints for the pairing check
-        todo!("AstCommitmentScheme::verify - implement for stage 7/8")
-    }
-
-    fn protocol_name() -> &'static [u8] {
-        b"AstCommitmentScheme"
     }
 }
