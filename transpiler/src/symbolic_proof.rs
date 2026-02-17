@@ -170,6 +170,18 @@ fn commitment_to_field_chunks<T: CanonicalSerialize>(commitment: &T) -> Vec<ark_
 /// This is the main entry point for proof symbolization. It creates symbolic
 /// variables for every field element in the proof structure.
 ///
+/// # Variable Naming Convention
+///
+/// Variables are named by their semantic role in the proof:
+/// - `commitment_{n}_{chunk}` - Chunk (0-11) of commitment n
+/// - `claim_{key:?}` - Opening claim for polynomial key
+/// - `stage{n}_uni_skip_coeff_{i}` - Uni-skip polynomial coefficient i
+/// - `stage{n}_sumcheck_r{round}_{coeff}` - Sumcheck round polynomial coefficient
+/// - `untrusted_advice_commitment_{chunk}` - Advice commitment chunk (if present)
+///
+/// These names appear in the witness JSON and are transformed by `sanitize_go_name`
+/// for Go struct field names.
+///
 /// # Returns
 ///
 /// - `JoltProof<MleAst>`: The symbolic proof with variables instead of concrete values
