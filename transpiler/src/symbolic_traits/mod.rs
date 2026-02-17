@@ -7,7 +7,7 @@
 //! # Modules
 //!
 //! - [`commitment_scheme`]: `CommitmentScheme` implementation (`AstCommitmentScheme`)
-//! - [`opening_accumulator`]: `OpeningAccumulator` implementation (`MleOpeningAccumulator`)
+//! - [`opening_accumulator`]: `OpeningAccumulator` implementation (`AstOpeningAccumulator`)
 //! - [`transcript`]: `Transcript` implementation (`PoseidonAstTranscript`)
 //!
 //! # Usage
@@ -16,7 +16,7 @@
 //!
 //! ```ignore
 //! use transpiler::symbolic_traits::{
-//!     AstCommitmentScheme, MleOpeningAccumulator, PoseidonAstTranscript
+//!     AstCommitmentScheme, AstOpeningAccumulator, PoseidonAstTranscript
 //! };
 //! use jolt_core::zkvm::transpilable_verifier::TranspilableVerifier;
 //!
@@ -24,16 +24,16 @@
 //!     MleAst,                    // Symbolic field (records operations)
 //!     AstCommitmentScheme,       // Stub commitment scheme
 //!     PoseidonAstTranscript,     // Symbolic Poseidon transcript
-//!     MleOpeningAccumulator,     // Collects opening claims
+//!     AstOpeningAccumulator,     // Collects opening claims
 //! >::new(...);
 //!
 //! verifier.verify(&proof, ...);  // Runs stages 1-7, records AST
 //! ```
 
-pub mod commitment_scheme;
+pub mod ast_commitment_scheme;
 pub mod opening_accumulator;
-pub mod transcript;
+pub mod poseidon;
 
-pub use commitment_scheme::AstCommitmentScheme;
-pub use opening_accumulator::MleOpeningAccumulator;
-pub use transcript::PoseidonAstTranscript;
+pub use ast_commitment_scheme::AstCommitmentScheme;
+pub use opening_accumulator::AstOpeningAccumulator;
+pub use poseidon::PoseidonAstTranscript;

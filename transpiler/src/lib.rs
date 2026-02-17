@@ -68,9 +68,9 @@
 //! - [`gnark_codegen`]: AST → Go/gnark code generation with CSE
 //! - [`symbolic_proof`]: Convert concrete proofs to symbolic form
 //! - [`symbolic_traits`]: Trait implementations for MleAst transpilation
-//!   - [`symbolic_traits::transcript`]: Poseidon transcript for symbolic Fiat-Shamir
+//!   - [`symbolic_traits::poseidon`]: Poseidon transcript for symbolic Fiat-Shamir
 //!   - [`symbolic_traits::opening_accumulator`]: Symbolic opening accumulator
-//!   - [`symbolic_traits::commitment_scheme`]: Stub commitment scheme for transpilation
+//!   - [`symbolic_traits::ast_commitment_scheme`]: Stub commitment scheme for transpilation
 //!
 //! # Usage
 //!
@@ -90,7 +90,7 @@ pub mod symbolic_traits;
 
 pub use gnark_codegen::{generate_circuit_from_bundle, sanitize_go_name};
 pub use symbolic_proof::{symbolize_proof, VarAllocator};
-pub use symbolic_traits::{AstCommitmentScheme, MleOpeningAccumulator, PoseidonAstTranscript};
+pub use symbolic_traits::{AstCommitmentScheme, AstOpeningAccumulator, PoseidonAstTranscript};
 
 // Re-export transcript types based on feature flags (matching jolt-core pattern)
 // This allows main.rs to use the selected transcript without conditional imports

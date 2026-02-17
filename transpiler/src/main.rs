@@ -48,7 +48,7 @@ use jolt_core::zkvm::transpilable_verifier::TranspilableVerifier;
 use jolt_core::zkvm::verifier::JoltVerifierPreprocessing;
 use jolt_core::zkvm::RV64IMACProof;
 use transpiler::{
-    gnark_codegen, symbolize_proof, AstCommitmentScheme, MleOpeningAccumulator,
+    gnark_codegen, symbolize_proof, AstCommitmentScheme, AstOpeningAccumulator,
     SelectedAstTranscript,
 };
 use zklean_extractor::mle_ast::{
@@ -155,7 +155,7 @@ fn main() {
     // operations. PCS verification is skipped in stages 1-6.
     let symbolic_preprocessing: JoltVerifierPreprocessing<MleAst, AstCommitmentScheme> =
         JoltVerifierPreprocessing {
-            generators: transpiler::symbolic_traits::commitment_scheme::AstVerifierSetup,
+            generators: transpiler::symbolic_traits::ast_commitment_scheme::AstVerifierSetup,
             shared: real_preprocessing.shared.clone(),
         };
 
@@ -168,7 +168,7 @@ fn main() {
     //
     // Returns:
     // - symbolic_proof: JoltProof<MleAst> with symbolic variables instead of Fr values
-    // - accumulator: MleOpeningAccumulator to collect polynomial opening claims
+    // - accumulator: AstOpeningAccumulator to collect polynomial opening claims
     // - var_alloc: Tracks variable IDs and names for witness generation
     println!("\n=== Symbolizing Proof ===");
     let (symbolic_proof, accumulator, var_alloc) =
@@ -192,7 +192,7 @@ fn main() {
         MleAst,
         AstCommitmentScheme,
         SelectedAstTranscript,
-        MleOpeningAccumulator,
+        AstOpeningAccumulator,
     >::new_with_accumulator(
         &symbolic_preprocessing,
         symbolic_proof,
