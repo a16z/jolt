@@ -1,10 +1,17 @@
-# Gnark Transpiler
+# Transpiler
 
-Transpiles Jolt verifier stages 1-6 (sumcheck verification) into Gnark circuits for Groth16 proving.
+Transpiles Jolt verifier stages 1-6 (sumcheck verification) into circuit code for various proving backends.
 
 ## Overview
 
-This tool performs symbolic execution of the Jolt verifier to generate a Gnark circuit. Instead of computing with actual field elements, it uses `MleAst`, a symbolic type that records all arithmetic operations as an AST (Abstract Syntax Tree). This AST is then converted to Gnark/Go code.
+This tool performs symbolic execution of the Jolt verifier to generate circuit code. Instead of computing with actual field elements, it uses `MleAst`, a symbolic type that records all arithmetic operations as an AST (Abstract Syntax Tree). This AST is then converted to target-specific code (e.g., Go for gnark).
+
+### Supported Targets
+
+| Target | Language | Proving System |
+|--------|----------|----------------|
+| `gnark` (default) | Go | Groth16 |
+| `ast-bundle` | JSON | None (IR only) |
 
 ### What Gets Transpiled
 
@@ -36,10 +43,10 @@ This saves:
 ### 2. Transpile to Gnark
 
 ```bash
-cargo run -p gnark-transpiler --release --features transcript-poseidon
+cargo run -p transpiler --release --features transcript-poseidon
 ```
 
-This generates in `gnark-transpiler/go/`:
+This generates in `transpiler/go/`:
 - `stages_circuit.go` - The Gnark circuit (~2M constraints)
 - `stages_witness.json` - Witness values for proving
 - `stages_bundle.json` - Serialized AST (for debugging)
@@ -47,7 +54,7 @@ This generates in `gnark-transpiler/go/`:
 ### 3. Run Go Tests
 
 ```bash
-cd gnark-transpiler/go
+cd transpiler/go
 
 # Quick solver test (~1s)
 go test -v -run TestStagesCircuitSolver
@@ -73,7 +80,7 @@ The transpiler must use the **same transcript** as proof generation:
 cargo run -p fibonacci --features transcript-poseidon -- --save 50
 
 # Transpile with matching feature
-cargo run -p gnark-transpiler --features transcript-poseidon
+cargo run -p transpiler --features transcript-poseidon
 ```
 
 If no transcript feature is specified, both default to Blake2b.
@@ -81,15 +88,31 @@ If no transcript feature is specified, both default to Blake2b.
 ## CLI Options
 
 ```
-gnark-transpiler [OPTIONS]
+transpiler [OPTIONS]
 
 Options:
   --proof <PATH>          Path to proof file [default: /tmp/fib_proof.bin]
   --io-device <PATH>      Path to io_device file [default: /tmp/fib_io_device.bin]
   --preprocessing <PATH>  Path to preprocessing file [default: /tmp/jolt_verifier_preprocessing.dat]
-  -o, --output-dir <DIR>  Output directory for Go files [default: go]
+  -t, --target <TARGET>   Transpilation target [default: gnark] [possible values: gnark, ast-bundle]
+  -o, --output-dir <DIR>  Output directory (defaults to target-specific directory)
   -h, --help              Print help
   -V, --version           Print version
+```
+
+## Using `ast-bundle` Target
+
+The `ast-bundle` target outputs only the intermediate representation (AstBundle) without generating target-specific code. This is useful for:
+- Developing new code generation backends
+- Debugging the symbolic execution output
+- Analyzing the constraint structure
+
+```bash
+# Output bundle to current directory
+cargo run -p transpiler --features transcript-poseidon -- -t ast-bundle
+
+# Output bundle to specific directory
+cargo run -p transpiler --features transcript-poseidon -- -t ast-bundle -o /path/to/output
 ```
 
 ## Architecture
@@ -102,6 +125,8 @@ JoltProof<MleAst> (symbolic variables)
     │
     ▼ TranspilableVerifier::verify()
 AST in NODE_ARENA (recorded operations)
+    │
+    ├─► [ast-bundle] stages_bundle.json (stop here)
     │
     ▼ generate_circuit_from_bundle()
 stages_circuit.go (Gnark circuit)
@@ -143,7 +168,7 @@ To output intermediate values during proof generation (for debugging transcript 
 
 ```bash
 cargo run -p fibonacci --features debug-expected-output,transcript-poseidon -- 10
-cargo run -p gnark-transpiler --features debug-expected-output,transcript-poseidon
+cargo run -p transpiler --features debug-expected-output,transcript-poseidon
 ```
 
 ## Common Issues
@@ -169,8 +194,54 @@ cargo run -p fibonacci --features transcript-poseidon -- --save 50
 
 | Module | Description |
 |--------|-------------|
-| `codegen` | AST → Go code generation with CSE |
+| `gnark_codegen` | AST → Go/gnark code generation with CSE |
 | `symbolic_proof` | Convert concrete proofs to symbolic form |
 | `poseidon` | Poseidon transcript for symbolic Fiat-Shamir |
 | `mle_opening_accumulator` | Symbolic opening accumulator |
 | `ast_commitment_scheme` | Stub commitment scheme for transpilation |
+
+## Adding a New Transpilation Target
+
+To add a new target (e.g., Circom, Plonky2):
+
+1. **Create a codegen module** - Add `src/<target>_codegen.rs` with your code generation logic. Use `gnark_codegen.rs` as a reference. Your module should:
+   - Take an `AstBundle` as input
+   - Traverse the AST nodes and emit target-specific code
+   - Handle CSE (Common Subexpression Elimination) appropriately
+
+2. **Add the target variant** - In `src/main.rs`, add to `TranspilationTarget`:
+   ```rust
+   pub enum TranspilationTarget {
+       Gnark,
+       AstBundle,
+       YourTarget,  // Add here
+   }
+   ```
+
+3. **Set the default output directory** - Update the match in Step 6:
+   ```rust
+   let default_output_dir = match args.target {
+       TranspilationTarget::Gnark => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("go"),
+       TranspilationTarget::AstBundle => PathBuf::from("."),
+       TranspilationTarget::YourTarget => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("your_dir"),
+   };
+   ```
+
+4. **Add the codegen match arm** - In Step 7, add your target's code generation:
+   ```rust
+   match args.target {
+       TranspilationTarget::Gnark => { /* ... */ }
+       TranspilationTarget::AstBundle => { /* ... */ }
+       TranspilationTarget::YourTarget => {
+           // Generate circuit code
+           let circuit_code = your_codegen::generate(&bundle);
+           // Write files...
+       }
+   }
+   ```
+
+5. **Export from lib.rs** - Add `pub mod your_codegen;` and any public re-exports.
+
+### Design Note
+
+We use a simple match statement rather than a trait for target dispatch. This avoids premature abstraction - different targets may need different inputs or have different output requirements. If patterns emerge across multiple targets, we can extract a trait later.

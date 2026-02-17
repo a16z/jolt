@@ -1,11 +1,16 @@
-//! Transpile Jolt verifier stages 1-6 to a Gnark circuit for Groth16 proving.
+//! Transpile Jolt verifier stages 1-6 to circuit code for various proving backends.
 //!
 //! # Overview
 //!
-//! This binary performs symbolic execution of the Jolt verifier to generate a Gnark circuit.
+//! This binary performs symbolic execution of the Jolt verifier to generate circuit code.
 //! Instead of computing with actual field elements, we use `MleAst`, a symbolic type that
 //! records all arithmetic operations as an AST (Abstract Syntax Tree). This AST is then
-//! converted to Gnark/Go code.
+//! converted to target-specific code (e.g., Go for gnark).
+//!
+//! # Supported Targets
+//!
+//! - **gnark** (default): Go/Groth16 circuit generation
+//! - **ast-bundle**: Output only the AstBundle JSON (no code generation)
 //!
 //! # Scope: Stages 1-6 Only (Sumcheck Verification)
 //!
@@ -14,11 +19,8 @@
 //!
 //! - **Dory PCS uses pairings**: Emulating BN254 pairings inside a BN254 circuit would add
 //!   hundreds of millions of constraints, making the circuit infeasible.
-//! - **Native implementation needed**: PCS verification must be implemented directly in Gnark
-//!   using native curve operations (see `quangvdao/` fork for Hyrax-based approach).
-//!
-//! The transpiled stages 1-6 circuit produces ~2M constraints and verifies the core sumcheck
-//! logic. A complete recursive verifier would combine this with a native PCS verifier.
+//! - **Native implementation needed**: PCS verification must be implemented directly in the
+//!   target framework using native curve operations.
 //!
 //! # Pipeline
 //!
@@ -26,45 +28,48 @@
 //! 2. Convert proof values to symbolic variables (`MleAst`) with `symbolize_proof`
 //! 3. Run the verifier with symbolic types: this records all operations to the AST
 //! 4. Collect equality assertions (the verifier's `assert_eq!` calls become circuit constraints)
-//! 5. Generate Gnark circuit code from the AST
-//! 6. Extract witness values from the real proof for Groth16 proving
-//!
-//! # Output
-//!
-//! - `stages_circuit.go`: Gnark circuit (~2M constraints for stages 1-6)
-//! - `stages_witness.json`: Witness values for the prover
-//! - `stages_bundle.json`: Serialized AST bundle for debugging
+//! 5. Build AstBundle (target-agnostic intermediate representation)
+//! 6. Generate target-specific circuit code from the AST
+//! 7. Extract witness values from the real proof
 
 use ark_serialize::CanonicalDeserialize;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use common::jolt_device::JoltDevice;
-use gnark_transpiler::{
-    extract_witness_values, generate_circuit_from_bundle, sanitize_go_name, symbolize_proof,
-    AstCommitmentScheme, MleOpeningAccumulator, SelectedAstTranscript,
-};
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::transpilable_verifier::TranspilableVerifier;
 use jolt_core::zkvm::verifier::JoltVerifierPreprocessing;
 use jolt_core::zkvm::RV64IMACProof;
+use transpiler::{
+    extract_witness_values, gnark_codegen, symbolize_proof, AstCommitmentScheme,
+    MleOpeningAccumulator, SelectedAstTranscript,
+};
 use zklean_extractor::mle_ast::{
     enable_constraint_mode, take_constraints as take_assertions, AstBundle, InputKind, MleAst,
 };
 
-// Output file names
-const CIRCUIT_FILENAME: &str = "stages_circuit.go";
-const WITNESS_FILENAME: &str = "stages_witness.json";
+// Output file names (bundle is target-agnostic)
 const BUNDLE_FILENAME: &str = "stages_bundle.json";
 
-/// Transpile Jolt proofs to gnark circuits for Groth16 proving.
+/// Transpilation target backends.
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum TranspilationTarget {
+    /// Go/gnark circuit for Groth16 proving
+    #[default]
+    Gnark,
+    /// Output only the AstBundle (no code generation)
+    AstBundle,
+}
+
+/// Transpile Jolt proofs to circuit code for various proving backends.
 ///
 /// Takes a Jolt proof, io_device, and preprocessing files as input,
-/// and generates gnark circuit code and witness data.
+/// and generates circuit code and witness data for the specified target.
 #[derive(Parser)]
-#[command(name = "gnark-transpiler")]
+#[command(name = "transpiler")]
 #[command(version, about)]
 struct Args {
     /// Path to the proof file (serialized JoltProof)
@@ -79,19 +84,22 @@ struct Args {
     #[arg(long, default_value = "/tmp/jolt_verifier_preprocessing.dat")]
     preprocessing: PathBuf,
 
-    /// Transpilation Target Language
-    #[arg(long, short = 'tt', default_value = "gnark")]
-    transpilation_target: PathBuf,
+    /// Transpilation target language/framework
+    #[arg(long, short = 't', default_value = "gnark", value_enum)]
+    target: TranspilationTarget,
 
-    /// Output directory for generated Go files
-    #[arg(long, short = 'o', default_value = "go")]
-    output_dir: PathBuf,
+    /// Output directory (defaults to target-specific directory, e.g., "go" for gnark)
+    #[arg(long, short = 'o')]
+    output_dir: Option<PathBuf>,
 }
 
 fn main() {
     let args = Args::parse();
 
-    println!("=== Transpiling Jolt Verifier Stages 1-6 to Gnark ===\n");
+    println!(
+        "=== Transpiling Jolt Verifier Stages 1-6 to {:?} ===\n",
+        args.target
+    );
 
     // =========================================================================
     // Step 1: Load input files
@@ -143,7 +151,7 @@ fn main() {
     // operations. PCS verification is skipped in stages 1-6.
     let symbolic_preprocessing: JoltVerifierPreprocessing<MleAst, AstCommitmentScheme> =
         JoltVerifierPreprocessing {
-            generators: gnark_transpiler::ast_commitment_scheme::AstVerifierSetup,
+            generators: transpiler::ast_commitment_scheme::AstVerifierSetup,
             shared: real_preprocessing.shared.clone(),
         };
 
@@ -247,19 +255,16 @@ fn main() {
     }
     println!("  Constraints: {}", bundle.constraints.len());
 
-    // Resolve output directory path.
-    // CARGO_MANIFEST_DIR is set at compile time to the gnark-transpiler/ directory.
-    // With default `--output-dir go`, files are written to gnark-transpiler/go/
-    // regardless of the current working directory when running the binary.
-    let output_dir = if args.output_dir.is_relative() {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        manifest_dir.join(&args.output_dir)
-    } else {
-        args.output_dir.clone()
+    // =========================================================================
+    // Step 6: Resolve output directory and write bundle
+    // =========================================================================
+    let default_output_dir = match args.target {
+        TranspilationTarget::Gnark => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("go"),
+        TranspilationTarget::AstBundle => PathBuf::from("."),
     };
+    let output_dir = args.output_dir.clone().unwrap_or(default_output_dir);
 
-    // Save bundle to JSON for debugging and analysis.
-    // This allows inspecting the AST structure without re-running transpilation.
+    // Save bundle to JSON (common to all targets)
     let bundle_path = output_dir.join(BUNDLE_FILENAME);
     bundle
         .write_json(&bundle_path)
@@ -267,52 +272,60 @@ fn main() {
     println!("  Bundle written to: {bundle_path:?}");
 
     // =========================================================================
-    // Step 6: Generate Gnark circuit code
+    // Step 7: Target-specific code generation
     // =========================================================================
-    // generate_circuit_from_bundle() traverses the AST and emits Go code:
-    // - Each AST node (Add, Mul, Sub, etc.) becomes an api.Add/Mul/Sub call
-    // - Common subexpressions are cached to avoid redundant computation
-    // - The circuit struct contains all witness fields
-    // - The Define() method contains all constraint logic
-    println!("\n=== Generating Gnark Circuit ===");
-    let circuit_code = generate_circuit_from_bundle(&bundle, "JoltStagesCircuit");
+    match args.target {
+        TranspilationTarget::Gnark => {
+            // Generate gnark circuit
+            // generate_circuit_from_bundle() traverses the AST and emits Go code:
+            // - Each AST node (Add, Mul, Sub, etc.) becomes an api.Add/Mul/Sub call
+            // - Common subexpressions are cached to avoid redundant computation
+            // - The circuit struct contains all witness fields
+            // - The Define() method contains all constraint logic
+            println!("\n=== Generating Gnark Circuit ===");
+            let circuit_code =
+                gnark_codegen::generate_circuit_from_bundle(&bundle, "JoltStagesCircuit");
 
-    let circuit_path = output_dir.join(CIRCUIT_FILENAME);
-    std::fs::write(&circuit_path, &circuit_code)
-        .unwrap_or_else(|e| panic!("Failed to write circuit file {circuit_path:?}: {e}"));
-    println!("  Circuit written to: {circuit_path:?}");
-    println!("  Circuit size: {} bytes", circuit_code.len());
+            let circuit_path = output_dir.join("stages_circuit.go");
+            std::fs::write(&circuit_path, &circuit_code)
+                .unwrap_or_else(|e| panic!("Failed to write circuit file {circuit_path:?}: {e}"));
+            println!("  Circuit written to: {circuit_path:?}");
+            println!("  Circuit size: {} bytes", circuit_code.len());
 
-    // =========================================================================
-    // Step 7: Extract witness values from real proof
-    // =========================================================================
-    // The witness maps variable names to their concrete values from the actual proof.
-    // This is what the prover uses when generating a Groth16 proof.
-    // Variable names are sanitized for Go (e.g., "Stage1_Sumcheck_R0_0" stays as-is,
-    // but names with special characters get cleaned up).
-    //
-    // Note: Witness extraction is done in the same pass as circuit generation because
-    // both require loading the proof file. Separating them would duplicate expensive
-    // I/O and deserialization.
-    println!("\n=== Generating Witness Data ===");
-    let witness_values = extract_witness_values(&real_proof);
+            // Extract witness values with Go naming conventions
+            // The witness maps variable names to their concrete values from the actual proof.
+            // Variable names are sanitized for Go (e.g., "Stage1_Sumcheck_R0_0" stays as-is,
+            // but names with special characters get cleaned up).
+            println!("\n=== Generating Witness Data ===");
+            let witness_values = extract_witness_values(&real_proof);
 
-    let mut witness_map: HashMap<String, String> = HashMap::new();
-    for (idx, name) in var_alloc.descriptions() {
-        let sanitized = sanitize_go_name(name);
-        if let Some(value) = witness_values.get(&(*idx as usize)) {
-            witness_map.insert(sanitized, value.clone());
+            let mut witness_map: HashMap<String, String> = HashMap::new();
+            for (idx, name) in var_alloc.descriptions() {
+                let sanitized = gnark_codegen::sanitize_go_name(name);
+                if let Some(value) = witness_values.get(&(*idx as usize)) {
+                    witness_map.insert(sanitized, value.clone());
+                }
+            }
+
+            let witness_json =
+                serde_json::to_string_pretty(&witness_map).expect("Failed to serialize witness");
+            let witness_path = output_dir.join("stages_witness.json");
+            std::fs::write(&witness_path, &witness_json)
+                .unwrap_or_else(|e| panic!("Failed to write witness file {witness_path:?}: {e}"));
+            println!("  Witness written to: {witness_path:?}");
+            println!("  Witness variables: {}", witness_map.len());
+
+            println!("\n=== SUCCESS ===");
+            println!(
+                "Stages 1-6 transpiled to Gnark. Run 'go test' in {:?} to verify.",
+                output_dir
+            );
+        }
+        TranspilationTarget::AstBundle => {
+            println!("\n=== SUCCESS ===");
+            println!("AstBundle written to: {bundle_path:?}");
+            println!("  Inputs: {}", bundle.inputs.len());
+            println!("  Constraints: {}", bundle.constraints.len());
         }
     }
-
-    let witness_json =
-        serde_json::to_string_pretty(&witness_map).expect("Failed to serialize witness");
-    let witness_path = output_dir.join(WITNESS_FILENAME);
-    std::fs::write(&witness_path, &witness_json)
-        .unwrap_or_else(|e| panic!("Failed to write witness file {witness_path:?}: {e}"));
-    println!("  Witness written to: {witness_path:?}");
-    println!("  Witness variables: {}", witness_map.len());
-
-    println!("\n=== SUCCESS ===");
-    println!("Stages 1-6 transpiled to Gnark. Run 'go test' in the output directory to verify.");
 }

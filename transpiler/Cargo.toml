@@ -1,8 +1,8 @@
 [package]
-name = "gnark-transpiler"
+name = "transpiler"
 version = "0.1.0"
 edition = "2021"
-description = "Transpiles Jolt verifier stages to Gnark circuits for Groth16 proving"
+description = "Transpiles Jolt verifier stages to circuit code for various proving backends"
 
 [dependencies]
 ark-std.workspace = true
@@ -30,7 +30,7 @@ transcript-keccak = ["jolt-core/transcript-keccak"]
 transcript-blake2b = ["jolt-core/transcript-blake2b"]
 
 [[bin]]
-name = "gnark-transpiler"
+name = "transpiler"
 path = "src/main.rs"
 
 [[bin]]

@@ -1,6 +1,7 @@
-//! Gnark Transpiler for Jolt Verifier
+//! Transpiler for Jolt Verifier
 //!
-//! This crate transpiles Jolt's verifier (stages 1-6) into Gnark circuits for Groth16 proving.
+//! This crate transpiles Jolt's verifier (stages 1-6) into circuit code for various
+//! proving backends. Currently supported: gnark (Go/Groth16).
 //!
 //! # Architecture
 //!
@@ -10,11 +11,20 @@
 //! JoltProof<MleAst> (symbolic variables)
 //!     ↓ TranspilableVerifier::verify()
 //! AST in NODE_ARENA (recorded operations)
-//!     ↓ generate_circuit_from_bundle()
-//! stages_circuit.go (Gnark circuit code)
-//!     ↓ go test / groth16.Prove()
-//! Groth16 Proof (164 bytes) → EVM (~280k gas)
+//!     ↓ target-specific codegen
+//! Circuit code (e.g., stages_circuit.go for gnark)
+//!     ↓ target prover
+//! Proof (e.g., 164 bytes Groth16)
 //! ```
+//!
+//! # Target Backends
+//!
+//! Currently supported:
+//! - **gnark**: Go/Groth16 circuit generation (~250 constraints per Poseidon hash)
+//!
+//! Future targets (not yet implemented):
+//! - Circom
+//! - Plonky2
 //!
 //! # Key Concepts
 //!
@@ -29,8 +39,7 @@
 //! Each constraint (sumcheck assertion) gets its own isolated expression tree with
 //! independent CSE (Common Subexpression Elimination) namespacing: constraint 0 uses
 //! `cse_0_*`, constraint 1 uses `cse_1_*`, etc. This makes debugging easier - when a
-//! constraint fails, all its `cse_N_*` variables are self-contained, so you can trace
-//! through the expression tree without cross-referencing other sumchecks.
+//! constraint fails, all its `cse_N_*` variables are self-contained.
 //!
 //! ## Stages Covered
 //!
@@ -47,12 +56,10 @@
 //! - `--features transcript-blake2b`: Blake2b hash (default if none specified)
 //!
 //! **Note**: Only Poseidon-generated proofs can be efficiently verified in-circuit.
-//! Keccak/Blake2b are provided for compatibility but the generated circuit would
-//! be infeasibly large (~150k constraints per hash vs ~250 for Poseidon).
 //!
 //! # Module Overview
 //!
-//! - [`codegen`]: AST → Go code generation with CSE
+//! - [`gnark_codegen`]: AST → Go/gnark code generation with CSE
 //! - [`symbolic_proof`]: Convert concrete proofs to symbolic form
 //! - [`poseidon`]: Poseidon transcript for symbolic Fiat-Shamir
 //! - [`mle_opening_accumulator`]: Symbolic opening accumulator
@@ -63,21 +70,21 @@
 //! See `main.rs` for the full transpilation pipeline, or use the library directly:
 //!
 //! ```ignore
-//! use gnark_transpiler::{symbolize_proof, generate_circuit_from_bundle, PoseidonAstTranscript};
+//! use transpiler::{symbolize_proof, gnark_codegen, PoseidonAstTranscript};
 //!
 //! let (symbolic_proof, accumulator, var_alloc) = symbolize_proof::<PoseidonAstTranscript>(&real_proof);
 //! // ... run TranspilableVerifier::verify() ...
-//! let circuit_code = generate_circuit_from_bundle(&bundle, "MyCircuit");
+//! let circuit_code = gnark_codegen::generate_circuit_from_bundle(&bundle, "MyCircuit");
 //! ```
 
 pub mod ast_commitment_scheme;
-pub mod codegen;
+pub mod gnark_codegen;
 pub mod mle_opening_accumulator;
 pub mod poseidon;
 pub mod symbolic_proof;
 
 pub use ast_commitment_scheme::AstCommitmentScheme;
-pub use codegen::{generate_circuit_from_bundle, sanitize_go_name};
+pub use gnark_codegen::{generate_circuit_from_bundle, sanitize_go_name};
 pub use mle_opening_accumulator::MleOpeningAccumulator;
 pub use poseidon::PoseidonAstTranscript;
 pub use symbolic_proof::{extract_witness_values, symbolize_proof, VarAllocator};
