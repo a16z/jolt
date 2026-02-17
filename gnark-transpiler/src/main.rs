@@ -40,17 +40,19 @@ use clap::Parser;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use common::jolt_device::JoltDevice;
 use gnark_transpiler::{
-    symbolize_proof, extract_witness_values, generate_circuit_from_bundle,
-    AstCommitmentScheme, MleOpeningAccumulator, PoseidonAstTranscript, sanitize_go_name,
+    extract_witness_values, generate_circuit_from_bundle, sanitize_go_name, symbolize_proof,
+    AstCommitmentScheme, MleOpeningAccumulator, SelectedAstTranscript,
 };
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::transpilable_verifier::TranspilableVerifier;
 use jolt_core::zkvm::verifier::JoltVerifierPreprocessing;
 use jolt_core::zkvm::RV64IMACProof;
-use common::jolt_device::JoltDevice;
-use zklean_extractor::mle_ast::{enable_constraint_mode, take_constraints as take_assertions, AstBundle, InputKind, MleAst};
+use zklean_extractor::mle_ast::{
+    enable_constraint_mode, take_constraints as take_assertions, AstBundle, InputKind, MleAst,
+};
 
 // Output file names
 const CIRCUIT_FILENAME: &str = "stages_circuit.go";
@@ -77,6 +79,10 @@ struct Args {
     #[arg(long, default_value = "/tmp/jolt_verifier_preprocessing.dat")]
     preprocessing: PathBuf,
 
+    /// Transpilation Target Language
+    #[arg(long, short = 'tt', default_value = "gnark")]
+    transpilation_target: PathBuf,
+
     /// Output directory for generated Go files
     #[arg(long, short = 'o', default_value = "go")]
     output_dir: PathBuf,
@@ -100,9 +106,8 @@ fn main() {
     println!("Loading proof from: {:?}", args.proof);
     let proof_bytes = std::fs::read(&args.proof)
         .unwrap_or_else(|e| panic!("Failed to read proof file {:?}: {}", args.proof, e));
-    let real_proof: RV64IMACProof =
-        CanonicalDeserialize::deserialize_compressed(&proof_bytes[..])
-            .expect("Failed to deserialize proof");
+    let real_proof: RV64IMACProof = CanonicalDeserialize::deserialize_compressed(&proof_bytes[..])
+        .expect("Failed to deserialize proof");
     println!("  trace_length: {}", real_proof.trace_length);
     println!("  commitments: {}", real_proof.commitments.len());
 
@@ -118,12 +123,19 @@ fn main() {
     // We only need the `shared` field (memory layout, bytecode info) for transpilation;
     // the commitment scheme generators are replaced with stubs for symbolic execution.
     println!("\nLoading preprocessing from: {:?}", args.preprocessing);
-    let preprocessing_bytes = std::fs::read(&args.preprocessing)
-        .unwrap_or_else(|e| panic!("Failed to read preprocessing file {:?}: {}", args.preprocessing, e));
+    let preprocessing_bytes = std::fs::read(&args.preprocessing).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read preprocessing file {:?}: {}",
+            args.preprocessing, e
+        )
+    });
     let real_preprocessing: JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> =
         CanonicalDeserialize::deserialize_compressed(&preprocessing_bytes[..])
             .expect("Failed to deserialize preprocessing");
-    println!("  memory_layout: {:?}", real_preprocessing.shared.memory_layout);
+    println!(
+        "  memory_layout: {:?}",
+        real_preprocessing.shared.memory_layout
+    );
 
     // Convert to symbolic preprocessing: replace Dory generators with AstVerifierSetup stub.
     // The `shared` field (memory layout, bytecode info) is reused as-is.
@@ -147,13 +159,14 @@ fn main() {
     // - accumulator: MleOpeningAccumulator to collect polynomial opening claims
     // - var_alloc: Tracks variable IDs and names for witness generation
     println!("\n=== Symbolizing Proof ===");
-    let (symbolic_proof, accumulator, var_alloc) = symbolize_proof(&real_proof);
+    let (symbolic_proof, accumulator, var_alloc) =
+        symbolize_proof::<SelectedAstTranscript>(&real_proof);
     println!("  Total symbolic variables: {}", var_alloc.next_idx());
 
-    // Create Poseidon transcript for Fiat-Shamir challenges.
-    // IMPORTANT: The proof must have been generated with --features transcript-poseidon,
+    // Create transcript for Fiat-Shamir challenges.
+    // IMPORTANT: The proof must have been generated with the same transcript feature,
     // otherwise challenge values will mismatch and verification will fail.
-    let transcript: PoseidonAstTranscript = Transcript::new(b"Jolt");
+    let transcript: SelectedAstTranscript = Transcript::new(b"Jolt");
 
     // =========================================================================
     // Step 3: Set up symbolic verifier
@@ -166,7 +179,7 @@ fn main() {
     let verifier = TranspilableVerifier::<
         MleAst,
         AstCommitmentScheme,
-        PoseidonAstTranscript,
+        SelectedAstTranscript,
         MleOpeningAccumulator,
     >::new_with_accumulator(
         &symbolic_preprocessing,
@@ -292,7 +305,8 @@ fn main() {
         }
     }
 
-    let witness_json = serde_json::to_string_pretty(&witness_map).expect("Failed to serialize witness");
+    let witness_json =
+        serde_json::to_string_pretty(&witness_map).expect("Failed to serialize witness");
     let witness_path = output_dir.join(WITNESS_FILENAME);
     std::fs::write(&witness_path, &witness_json)
         .unwrap_or_else(|e| panic!("Failed to write witness file {witness_path:?}: {e}"));
