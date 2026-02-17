@@ -26,7 +26,7 @@
 //! - `challenge_scalar_128_bits()`: For batching coefficients. Uses `Truncate128`.
 //! - `challenge_scalar_optimized()`: For sumcheck challenges. Uses `Truncate128Reverse`.
 //!
-//! The "Reverse" variant reverses bytes before truncation for EVM compatibility.
+//! The "Reverse" variant reverses bytes before truncation (matching jolt-core's byte order).
 //!
 //! # Critical: Transcript Matching
 //!
@@ -42,21 +42,7 @@ use zklean_extractor::mle_ast::{
     set_pending_challenge, take_pending_append, take_pending_commitment_chunks, MleAst,
 };
 
-/// Convert 32 bytes (little-endian) to a [u64; 4] scalar.
-/// This matches Fr::from_le_bytes_mod_order behavior for the full 256 bits.
-fn bytes_to_scalar(bytes: &[u8; 32]) -> [u64; 4] {
-    let mut limbs = [0u64; 4];
-    for (i, chunk) in bytes.chunks(8).enumerate() {
-        limbs[i] = u64::from_le_bytes(chunk.try_into().unwrap());
-    }
-    limbs
-}
-
-/// Poseidon transcript for symbolic execution.
-/// Mirrors jolt-core's PoseidonTranscript structure exactly:
-/// - 32-byte state (represented as MleAst)
-/// - n_rounds counter for domain separation
-/// - Width-3 Poseidon: hash(state, n_rounds, data)
+/// Symbolic Poseidon transcript for AST-based transpilation.
 #[derive(Clone)]
 pub struct PoseidonAstTranscript {
     /// Current state (symbolic field element)
@@ -65,21 +51,7 @@ pub struct PoseidonAstTranscript {
     n_rounds: u32,
 }
 
-impl Default for PoseidonAstTranscript {
-    fn default() -> Self {
-        Self {
-            state: MleAst::from_u64(0),
-            n_rounds: 0,
-        }
-    }
-}
-
 impl PoseidonAstTranscript {
-    /// Get the current round counter.
-    pub fn n_rounds(&self) -> u32 {
-        self.n_rounds
-    }
-
     /// Convert a label to a field element, matching jolt-core's behavior.
     ///
     /// jolt-core does: label_padded[..label.len()].copy_from_slice(label);
@@ -98,19 +70,6 @@ impl PoseidonAstTranscript {
         MleAst::from(limbs)
     }
 
-    /// Create a new transcript with initial state.
-    ///
-    /// Mirrors jolt-core: initial_state = poseidon(label, 0, 0)
-    pub fn new_mle(label: &'static [u8]) -> Self {
-        let label_field = Self::label_to_field(label);
-        let initial_state =
-            MleAst::poseidon(&label_field, &MleAst::from_u64(0), &MleAst::from_u64(0));
-        Self {
-            state: initial_state,
-            n_rounds: 0,
-        }
-    }
-
     /// Hash a field element with domain separation.
     ///
     /// Mirrors jolt-core: poseidon(state, n_rounds, element)
@@ -120,10 +79,8 @@ impl PoseidonAstTranscript {
         self.n_rounds += 1;
     }
 
-    /// Derive a challenge as MleAst.
-    ///
-    /// Mirrors jolt-core: poseidon(state, n_rounds, 0)
-    pub fn challenge_mle(&mut self) -> MleAst {
+    /// Derive a challenge: `poseidon(state, n_rounds, 0)`, then update state.
+    pub fn challenge_ast(&mut self) -> MleAst {
         let round = MleAst::from_u64(self.n_rounds as u64);
         let zero = MleAst::from_u64(0);
         let challenge = MleAst::poseidon(&self.state, &round, &zero);
@@ -132,15 +89,11 @@ impl PoseidonAstTranscript {
         challenge
     }
 
-    /// Derive multiple challenges as MleAst.
-    pub fn challenge_vector_mle(&mut self, len: usize) -> Vec<MleAst> {
-        (0..len).map(|_| self.challenge_mle()).collect()
-    }
-
-    /// Append symbolic field elements (for commitments/preamble as circuit inputs).
+    /// Append symbolic field elements with Poseidon chaining.
     ///
-    /// This mirrors append_bytes but with symbolic inputs instead of concrete bytes.
-    /// Each field element corresponds to one 32-byte chunk.
+    /// First element: `poseidon(state, n_rounds, elem)` (domain separation).
+    /// Remaining: `poseidon(prev, 0, elem)` (chained).
+    /// Used by `raw_append_bytes` (concrete) and `append_serializable` (commitments).
     pub fn append_field_elements(&mut self, elements: &[MleAst]) {
         let round = MleAst::from_u64(self.n_rounds as u64);
         let zero = MleAst::from_u64(0);
@@ -163,22 +116,10 @@ impl PoseidonAstTranscript {
         self.state = current;
         self.n_rounds += 1;
     }
-
-    /// Append a single symbolic u64 (for preamble values as circuit inputs).
-    ///
-    /// This applies the same transformation as PoseidonTranscript::raw_append_u64:
-    /// bswap64(x) * 2^192
-    ///
-    /// See `Node::AppendU64Transform` for details on the transformation.
-    pub fn append_u64_symbolic(&mut self, value: MleAst) {
-        let transformed = MleAst::append_u64_transform(&value);
-        self.hash_and_update(transformed);
-    }
 }
 
 /// Implement Jolt's Transcript trait for PoseidonAstTranscript.
 ///
-/// This allows using PoseidonAstTranscript with verify_stage1_with_transcript.
 /// The challenge methods return MleAst when F = MleAst.
 impl Transcript for PoseidonAstTranscript {
     fn new(label: &'static [u8]) -> Self {
@@ -198,57 +139,26 @@ impl Transcript for PoseidonAstTranscript {
     // === Internal raw_append_* methods ===
 
     fn raw_append_label(&mut self, label: &'static [u8]) {
-        // Matches jolt-core: hash_bytes32_and_update which does immediate hashing.
-        assert!(label.len() <= 32);
-        let mut padded = [0u8; 32];
-        padded[..label.len()].copy_from_slice(label);
-        let limbs = bytes_to_scalar(&padded);
-        let chunk_field = MleAst::from(limbs);
-        let round = MleAst::from_u64(self.n_rounds as u64);
-        self.state = MleAst::poseidon(&self.state, &round, &chunk_field);
-        self.n_rounds += 1;
+        let field = Self::label_to_field(label);
+        self.hash_and_update(field);
     }
 
     fn raw_append_bytes(&mut self, bytes: &[u8]) {
-        // Hash all bytes using Poseidon with domain separation via n_rounds.
-        // First chunk: hash(state, n_rounds, chunk), includes domain separator.
-        // Subsequent chunks: hash(prev, 0, chunk), chained but without redundant n_rounds.
-        let round = MleAst::from_u64(self.n_rounds as u64);
-        let zero = MleAst::from_u64(0);
-
-        let mut chunks = bytes.chunks(32);
-
-        // First chunk: includes n_rounds for domain separation
-        let mut current = if let Some(first_chunk) = chunks.next() {
-            let mut padded = [0u8; 32];
-            padded[..first_chunk.len()].copy_from_slice(first_chunk);
-            let chunk_field = MleAst::from(bytes_to_scalar(&padded));
-            MleAst::poseidon(&self.state, &round, &chunk_field)
-        } else {
-            // Empty bytes: just hash state with n_rounds and zero
-            MleAst::poseidon(&self.state, &round, &zero)
-        };
-
-        // Remaining chunks: no n_rounds (already accounted for)
-        for chunk in chunks {
-            let mut padded = [0u8; 32];
-            padded[..chunk.len()].copy_from_slice(chunk);
-            let chunk_field = MleAst::from(bytes_to_scalar(&padded));
-            current = MleAst::poseidon(&current, &zero, &chunk_field);
-        }
-
-        self.state = current;
-        self.n_rounds += 1;
+        let elements: Vec<MleAst> = bytes
+            .chunks(32)
+            .map(|chunk| {
+                let mut padded = [0u8; 32];
+                padded[..chunk.len()].copy_from_slice(chunk);
+                MleAst::from(bytes_to_scalar(&padded))
+            })
+            .collect();
+        self.append_field_elements(&elements);
     }
 
     fn raw_append_u64(&mut self, x: u64) {
         // PoseidonTranscript::raw_append_u64 computes bswap64(x) * 2^192
-        // See Node::AppendU64Transform for details.
-        let x_ast = MleAst::from_u64(x);
-        let transformed = MleAst::append_u64_transform(&x_ast);
-        let round = MleAst::from_u64(self.n_rounds as u64);
-        self.state = MleAst::poseidon(&self.state, &round, &transformed);
-        self.n_rounds += 1;
+        let transformed = MleAst::append_u64_transform(&MleAst::from_u64(x));
+        self.hash_and_update(transformed);
     }
 
     fn raw_append_scalar<F: JoltField>(&mut self, scalar: &F) {
@@ -256,18 +166,14 @@ impl Transcript for PoseidonAstTranscript {
         let mut buf = vec![];
         let _ = scalar.serialize_uncompressed(&mut buf);
 
-        // Retrieve the MleAst from thread-local (set by MleAst::serialize_with_mode)
-        let round = MleAst::from_u64(self.n_rounds as u64);
         if let Some(mle_ast) = take_pending_append() {
             // Apply byte-reverse to match PoseidonTranscript::raw_append_scalar behavior:
             // PoseidonTranscript does: serialize(LE) -> reverse -> from_le_bytes_mod_order -> hash
             let byte_reversed = MleAst::byte_reverse(&mle_ast);
-            self.state = MleAst::poseidon(&self.state, &round, &byte_reversed);
-            self.n_rounds += 1;
+            self.hash_and_update(byte_reversed);
         } else {
             // Fallback for non-MleAst types (shouldn't happen in transpilation)
-            self.state = MleAst::poseidon(&self.state, &round, &MleAst::from_u64(0));
-            self.n_rounds += 1;
+            self.hash_and_update(MleAst::from_u64(0));
         }
     }
 
@@ -303,7 +209,6 @@ impl Transcript for PoseidonAstTranscript {
             //    represents the correct hashing order (chunk_11_rev first).
             //    NO reverse or ByteReverse needed - witness already has correct values.
 
-            // Hash all chunks with proper chaining (like raw_append_bytes does)
             self.append_field_elements(&chunks);
             return;
         }
@@ -325,47 +230,28 @@ impl Transcript for PoseidonAstTranscript {
     // === Challenge generation methods ===
 
     fn challenge_u128(&mut self) -> u128 {
-        let _ = self.challenge_mle();
+        let _ = self.challenge_ast();
         0u128
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
-        // Rust PoseidonTranscript::challenge_scalar calls challenge_scalar_128_bits
-        // which truncates to 128 bits (NO mask, NO shift) - just plain truncation
-        let hash = self.challenge_mle();
-        let challenge = MleAst::truncate_128(&hash);
-        set_pending_challenge(challenge);
-        F::from_bytes(&[0u8; 32])
+        self.challenge_scalar_128_bits()
     }
 
     fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F {
-        // Truncate to 128 bits without mask or shift
-        let hash = self.challenge_mle();
+        // Truncate to 128 bits (NO mask, NO shift) - plain truncation
+        let hash = self.challenge_ast();
         let challenge = MleAst::truncate_128(&hash);
         set_pending_challenge(challenge);
         F::from_bytes(&[0u8; 16])
     }
 
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
-        (0..len)
-            .map(|_| {
-                let hash = self.challenge_mle();
-                // challenge_vector uses challenge_scalar internally, so no mask/shift
-                let challenge = MleAst::truncate_128(&hash);
-                set_pending_challenge(challenge);
-                F::from_bytes(&[0u8; 32])
-            })
-            .collect()
+        (0..len).map(|_| self.challenge_scalar::<F>()).collect()
     }
 
     fn challenge_scalar_powers<F: JoltField>(&mut self, len: usize) -> Vec<F> {
-        // Get base challenge - uses challenge_scalar which has no mask/shift
-        let hash = self.challenge_mle();
-        let challenge = MleAst::truncate_128(&hash);
-        set_pending_challenge(challenge);
-        let base: F = F::from_bytes(&[0u8; 32]);
-
-        // Compute powers: 1, base, base^2, ...
+        let base: F = self.challenge_scalar();
         let mut powers = Vec::with_capacity(len);
         let mut current = F::one();
         for _ in 0..len {
@@ -376,38 +262,51 @@ impl Transcript for PoseidonAstTranscript {
     }
 
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
-        // For MleAst: F::Challenge = MleAst, so we need to use the pending challenge mechanism
-        let hash = self.challenge_mle();
+        // Truncate to 128 bits with reverse (optimized challenge format)
+        let hash = self.challenge_ast();
         let challenge = MleAst::truncate_128_reverse(&hash);
         set_pending_challenge(challenge);
         let f_val: F = F::from_bytes(&[0u8; 16]);
-        // Since this is MleAst-specific: use type punning via mem::transmute
-        // This is safe because for MleAst, F = F::Challenge = MleAst
+        // Safe because for MleAst, F = F::Challenge = MleAst
         unsafe { std::mem::transmute_copy::<F, F::Challenge>(&f_val) }
     }
 
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
-        // Use the pending challenge mechanism for each element
         (0..len)
-            .map(|_| {
-                let hash = self.challenge_mle();
-                let challenge = MleAst::truncate_128_reverse(&hash);
-                set_pending_challenge(challenge);
-                let f_val: F = F::from_bytes(&[0u8; 16]);
-                // Same transmute as above - safe for MleAst where F = F::Challenge
-                unsafe { std::mem::transmute_copy::<F, F::Challenge>(&f_val) }
-            })
+            .map(|_| self.challenge_scalar_optimized::<F>())
             .collect()
     }
 
     fn challenge_scalar_powers_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F> {
-        let _ = self.challenge_mle();
-        vec![F::zero(); len]
+        let q: F::Challenge = self.challenge_scalar_optimized::<F>();
+        let mut q_powers = vec![F::one(); len];
+        for i in 1..len {
+            q_powers[i] = q * q_powers[i - 1];
+        }
+        q_powers
     }
 
     fn debug_state(&self, _label: &str) {
         // No-op for symbolic execution - debugging output not needed
     }
+}
+
+impl Default for PoseidonAstTranscript {
+    fn default() -> Self {
+        Self {
+            state: MleAst::from_u64(0),
+            n_rounds: 0,
+        }
+    }
+}
+
+/// Convert 32 little-endian bytes to `[u64; 4]` limbs (no mod reduction).
+fn bytes_to_scalar(bytes: &[u8; 32]) -> [u64; 4] {
+    let mut limbs = [0u64; 4];
+    for (i, chunk) in bytes.chunks(8).enumerate() {
+        limbs[i] = u64::from_le_bytes(chunk.try_into().unwrap());
+    }
+    limbs
 }
 
 #[cfg(test)]
@@ -465,7 +364,7 @@ mod tests {
     fn test_append_and_challenge() {
         let mut transcript: PoseidonAstTranscript = Transcript::new(b"test");
         transcript.hash_and_update(MleAst::from_u64(42));
-        let _challenge = transcript.challenge_mle();
+        let _challenge = transcript.challenge_ast();
         assert_eq!(transcript.n_rounds, 2); // 1 append + 1 challenge
     }
 
