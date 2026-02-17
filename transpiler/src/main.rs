@@ -34,7 +34,7 @@
 //! 4. Collect equality assertions (the verifier's `assert_eq!` calls become circuit constraints)
 //! 5. Build AstBundle (target-agnostic intermediate representation)
 //! 6. Generate target-specific circuit code from the AST
-//! 7. Extract witness values from the real proof
+//! 7. Output witness values (captured during symbolization)
 
 use ark_serialize::CanonicalDeserialize;
 use clap::{Parser, ValueEnum};
@@ -48,8 +48,8 @@ use jolt_core::zkvm::transpilable_verifier::TranspilableVerifier;
 use jolt_core::zkvm::verifier::JoltVerifierPreprocessing;
 use jolt_core::zkvm::RV64IMACProof;
 use transpiler::{
-    extract_witness_values, gnark_codegen, symbolize_proof, AstCommitmentScheme,
-    MleOpeningAccumulator, SelectedAstTranscript,
+    gnark_codegen, symbolize_proof, AstCommitmentScheme, MleOpeningAccumulator,
+    SelectedAstTranscript,
 };
 use zklean_extractor::mle_ast::{
     enable_constraint_mode, take_constraints as take_assertions, AstBundle, InputKind, MleAst,
@@ -296,12 +296,11 @@ fn main() {
             println!("  Circuit written to: {circuit_path:?}");
             println!("  Circuit size: {} bytes", circuit_code.len());
 
-            // Extract witness values with Go naming conventions
-            // The witness maps variable names to their concrete values from the actual proof.
-            // Variable names are sanitized for Go (e.g., "Stage1_Sumcheck_R0_0" stays as-is,
-            // but names with special characters get cleaned up).
+            // Get witness values captured during symbolization.
+            // VarAllocator records both symbolic variables AND concrete values in a single pass,
+            // making mismatch bugs structurally impossible.
             println!("\n=== Generating Witness Data ===");
-            let witness_values = extract_witness_values(&real_proof);
+            let witness_values = var_alloc.witness_values();
 
             let mut witness_map: HashMap<String, String> = HashMap::new();
             for (idx, name) in var_alloc.descriptions() {

@@ -93,7 +93,7 @@ pub use ast_commitment_scheme::AstCommitmentScheme;
 pub use gnark_codegen::{generate_circuit_from_bundle, sanitize_go_name};
 pub use mle_opening_accumulator::MleOpeningAccumulator;
 pub use poseidon::PoseidonAstTranscript;
-pub use symbolic_proof::{extract_witness_values, symbolize_proof, VarAllocator};
+pub use symbolic_proof::{symbolize_proof, VarAllocator};
 
 // Re-export transcript types based on feature flags (matching jolt-core pattern)
 // This allows main.rs to use the selected transcript without conditional imports

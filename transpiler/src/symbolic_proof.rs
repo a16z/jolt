@@ -6,21 +6,18 @@
 //! execution, we need a `JoltProof<MleAst>` where each field element is replaced
 //! with an `MleAst::Var(index)`, a unique symbolic variable.
 //!
-//! # Key Functions
+//! # Key Function
 //!
 //! - [`symbolize_proof`]: Convert a concrete `RV64IMACProof` to symbolic form
-//! - [`extract_witness_values`]: Extract concrete values for witness generation
 //!
 //! # How It Works
 //!
-//! 1. **Symbolization**: Each field in the proof (commitments, sumcheck coefficients,
-//!    opening claims) gets a unique variable index. For example:
-//!    - `commitment_0_0`, `commitment_0_1`, ... (12 chunks per commitment)
-//!    - `stage1_sumcheck_r0_0`, `stage1_sumcheck_r0_1`, ... (coefficients per round)
+//! The `VarAllocator` simultaneously:
+//! 1. Allocates fresh symbolic variables (`MleAst::Var(index)`)
+//! 2. Records the corresponding concrete witness values
 //!
-//! 2. **Witness Extraction**: The same traversal order is used to extract concrete
-//!    values from the real proof. The indices match exactly, so `values[i]` corresponds
-//!    to the variable allocated at position `i`.
+//! This single-pass approach makes witness/symbolization mismatches structurally
+//! impossible - both are recorded in the same function call.
 //!
 //! # Commitment Serialization
 //!
@@ -35,6 +32,8 @@
 
 use crate::ast_commitment_scheme::{AstCommitmentScheme, AstProof};
 use crate::MleOpeningAccumulator;
+use ark_ff::PrimeField;
+use ark_serialize::CanonicalSerialize;
 use jolt_core::poly::opening_proof::OpeningPoint;
 use jolt_core::poly::unipoly::CompressedUniPoly;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
@@ -46,16 +45,21 @@ use std::collections::BTreeMap;
 use zklean_extractor::mle_ast::MleAst;
 use zklean_extractor::AstCommitment;
 
-/// Tracks variable index allocation during symbolization.
+/// Tracks variable index allocation and witness values during symbolization.
 ///
-/// Each call to `alloc()` returns a fresh `MleAst::Var(index)` with a unique index.
-/// The allocator also records a human-readable description for each variable,
-/// which is used for:
-/// - Generating readable Go struct field names (e.g., `Stage1_Sumcheck_R0_0`)
-/// - Mapping witness values back to their semantic meaning
+/// Each call to `alloc_with_value()` returns a fresh `MleAst::Var(index)` with a unique index,
+/// while simultaneously recording the concrete witness value. This ensures witness values
+/// are always in sync with symbolic variable allocation - making mismatch bugs structurally
+/// impossible.
+///
+/// The allocator records:
+/// - Human-readable descriptions for Go struct field names (e.g., `Stage1_Sumcheck_R0_0`)
+/// - Concrete witness values as decimal strings (for JSON serialization to Go)
 pub struct VarAllocator {
     next_idx: u16,
     descriptions: Vec<(u16, String)>,
+    /// Witness values indexed by variable index, stored as decimal strings.
+    witness_values: Vec<String>,
 }
 
 impl VarAllocator {
@@ -65,13 +69,30 @@ impl VarAllocator {
         Self {
             next_idx: 0,
             descriptions: Vec::new(),
+            witness_values: Vec::new(),
         }
     }
 
-    pub fn alloc_n(&mut self, n: usize, prefix: &str) -> Vec<MleAst> {
-        (0..n)
-            .map(|i| self.alloc(&format!("{prefix}_{i}")))
+    /// Allocate N variables with their concrete values.
+    ///
+    /// Both symbolic variables and witness values are recorded in the same call,
+    /// guaranteeing they stay in sync.
+    pub fn alloc_n_with_values(&mut self, values: &[ark_bn254::Fr], prefix: &str) -> Vec<MleAst> {
+        values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| self.alloc_with_value(&format!("{prefix}_{i}"), v))
             .collect()
+    }
+
+    /// Allocate a single variable with its concrete value.
+    pub fn alloc_with_value(&mut self, description: &str, value: &ark_bn254::Fr) -> MleAst {
+        use ark_ff::PrimeField;
+        let idx = self.next_idx;
+        self.descriptions.push((idx, description.to_string()));
+        self.witness_values.push(format!("{}", value.into_bigint()));
+        self.next_idx += 1;
+        MleAst::from_var(idx)
     }
 
     pub fn next_idx(&self) -> u16 {
@@ -82,13 +103,26 @@ impl VarAllocator {
         &self.descriptions
     }
 
-    // Private methods
+    /// Get witness values as a HashMap for JSON serialization.
+    pub fn witness_values(&self) -> std::collections::HashMap<usize, String> {
+        self.witness_values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (i, v.clone()))
+            .collect()
+    }
 
-    fn alloc(&mut self, description: &str) -> MleAst {
-        let idx = self.next_idx;
-        self.descriptions.push((idx, description.to_string()));
-        self.next_idx += 1;
-        MleAst::from_var(idx)
+    /// Allocate variables for a commitment's 12 chunks and record witness values.
+    ///
+    /// Commitments are serialized as uncompressed bytes, reversed for BE format,
+    /// then split into 12 × 32-byte chunks (each fits in a BN254 field element).
+    pub fn alloc_commitment<T: CanonicalSerialize>(
+        &mut self,
+        commitment: &T,
+        prefix: &str,
+    ) -> Vec<MleAst> {
+        let chunks = commitment_to_field_chunks(commitment);
+        self.alloc_n_with_values(&chunks, prefix)
     }
 }
 
@@ -100,6 +134,36 @@ impl Default for VarAllocator {
 
 /// Number of 32-byte chunks per commitment (384 bytes / 32 = 12)
 const CHUNKS_PER_COMMITMENT: usize = 12;
+
+/// Serialize a commitment to bytes in the format used by Poseidon transcript.
+/// MUST match the Poseidon transcript serialization exactly:
+/// 1. Use serialize_uncompressed (not compressed)
+/// 2. Reverse bytes for BE/EVM format
+fn commitment_to_bytes<T: CanonicalSerialize>(commitment: &T) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    commitment
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialization failed");
+    // Reverse bytes to match Poseidon transcript format (BE for EVM compatibility)
+    bytes.reverse();
+    bytes
+}
+
+/// Convert commitment bytes to 12 field element chunks.
+fn commitment_to_field_chunks<T: CanonicalSerialize>(commitment: &T) -> Vec<ark_bn254::Fr> {
+    let bytes = commitment_to_bytes(commitment);
+    (0..CHUNKS_PER_COMMITMENT)
+        .map(|i| {
+            let start = i * 32;
+            let end = std::cmp::min(start + 32, bytes.len());
+            if start >= bytes.len() {
+                ark_bn254::Fr::from(0u64)
+            } else {
+                ark_bn254::Fr::from_le_bytes_mod_order(&bytes[start..end])
+            }
+        })
+        .collect()
+}
 
 /// Convert a real proof to a symbolic proof for transpilation.
 ///
@@ -133,18 +197,21 @@ pub fn symbolize_proof<OutputTranscript: Transcript>(
 ) {
     let mut alloc = VarAllocator::new();
 
-    // === Symbolize commitments ===
-    let commitments: Vec<AstCommitment> = (0..real_proof.commitments.len())
-        .map(|c| {
-            let chunks = alloc.alloc_n(CHUNKS_PER_COMMITMENT, &format!("commitment_{c}"));
+    // === Symbolize commitments (with witness values) ===
+    let commitments: Vec<AstCommitment> = real_proof
+        .commitments
+        .iter()
+        .enumerate()
+        .map(|(c, commitment)| {
+            let chunks = alloc.alloc_commitment(commitment, &format!("commitment_{c}"));
             AstCommitment::new(chunks)
         })
         .collect();
 
-    // === Symbolize opening claims ===
+    // === Symbolize opening claims (with witness values) ===
     let mut symbolic_claims = BTreeMap::new();
-    for (key, (_point, _claim)) in &real_proof.opening_claims.0 {
-        let symbolic_claim = alloc.alloc(&format!("claim_{key:?}"));
+    for (key, (_point, claim)) in &real_proof.opening_claims.0 {
+        let symbolic_claim = alloc.alloc_with_value(&format!("claim_{key:?}"), claim);
         symbolic_claims.insert(*key, (OpeningPoint::default(), symbolic_claim));
     }
 
@@ -211,11 +278,15 @@ pub fn symbolize_proof<OutputTranscript: Transcript>(
         "stage7_sumcheck",
     );
 
-    // === Symbolize advice commitment (if present) ===
-    let untrusted_advice_commitment = real_proof.untrusted_advice_commitment.as_ref().map(|_| {
-        let chunks = alloc.alloc_n(CHUNKS_PER_COMMITMENT, "untrusted_advice_commitment");
-        AstCommitment::new(chunks)
-    });
+    // === Symbolize advice commitment (if present, with witness values) ===
+    let untrusted_advice_commitment =
+        real_proof
+            .untrusted_advice_commitment
+            .as_ref()
+            .map(|commitment| {
+                let chunks = alloc.alloc_commitment(commitment, "untrusted_advice_commitment");
+                AstCommitment::new(chunks)
+            });
 
     // Build the symbolic proof
     let symbolic_proof = JoltProof {
@@ -249,12 +320,19 @@ pub fn symbolize_proof<OutputTranscript: Transcript>(
     (symbolic_proof, accumulator, alloc)
 }
 
+// =============================================================================
+// Symbolization Helpers
+// =============================================================================
+//
+// These functions convert concrete proof components (Fr values) to symbolic form
+// (MleAst variables) while simultaneously recording witness values in VarAllocator.
+
 fn symbolize_uni_skip_proof<T: Transcript, OutT: Transcript>(
     real: &UniSkipFirstRoundProof<ark_bn254::Fr, T>,
     alloc: &mut VarAllocator,
     prefix: &str,
 ) -> UniSkipFirstRoundProof<MleAst, OutT> {
-    let coeffs = alloc.alloc_n(real.uni_poly.coeffs.len(), &format!("{prefix}_coeff"));
+    let coeffs = alloc.alloc_n_with_values(&real.uni_poly.coeffs, &format!("{prefix}_coeff"));
     UniSkipFirstRoundProof::new(jolt_core::poly::unipoly::UniPoly::from_coeff(coeffs))
 }
 
@@ -268,8 +346,8 @@ fn symbolize_sumcheck_proof<T: Transcript, OutT: Transcript>(
         .iter()
         .enumerate()
         .map(|(round, poly)| {
-            let coeffs = alloc.alloc_n(
-                poly.coeffs_except_linear_term.len(),
+            let coeffs = alloc.alloc_n_with_values(
+                &poly.coeffs_except_linear_term,
                 &format!("{prefix}_r{round}"),
             );
             CompressedUniPoly {
@@ -279,143 +357,4 @@ fn symbolize_sumcheck_proof<T: Transcript, OutT: Transcript>(
         .collect();
 
     SumcheckInstanceProof::new(compressed_polys)
-}
-
-/// Extract concrete witness values from a real proof.
-///
-/// This function traverses the proof in exactly the same order as `symbolize_proof`,
-/// extracting the concrete field element values. The indices in the returned HashMap
-/// correspond directly to the variable indices allocated during symbolization.
-///
-/// # Returns
-///
-/// A `HashMap<variable_index, decimal_string>` where:
-/// - Key: Variable index (matches `VarAllocator` allocation order)
-/// - Value: Field element as decimal string (for JSON serialization to Go)
-///
-/// # Important: Traversal Order
-///
-/// The traversal order MUST match `symbolize_proof` exactly:
-/// 1. Commitments (12 chunks each)
-/// 2. Opening claims
-/// 3. Stage 1 uni-skip coefficients
-/// 4. Stage 1 sumcheck coefficients (by round)
-/// 5. ... repeat for stages 2-7 ...
-/// 6. Untrusted advice commitment (if present)
-///
-/// Any mismatch will cause witness values to be assigned to wrong variables.
-pub fn extract_witness_values(
-    real_proof: &RV64IMACProof,
-) -> std::collections::HashMap<usize, String> {
-    use ark_ff::PrimeField;
-    use ark_serialize::CanonicalSerialize;
-    let mut values: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
-    let mut idx: usize = 0;
-
-    // Helper to convert bytes to field element chunks
-    fn bytes_to_chunks(bytes: &[u8]) -> Vec<ark_bn254::Fr> {
-        let num_chunks = 12; // Always 12 chunks per commitment
-        (0..num_chunks)
-            .map(|i| {
-                let start = i * 32;
-                let end = std::cmp::min(start + 32, bytes.len());
-                if start >= bytes.len() {
-                    ark_bn254::Fr::from(0u64)
-                } else {
-                    ark_bn254::Fr::from_le_bytes_mod_order(&bytes[start..end])
-                }
-            })
-            .collect()
-    }
-
-    // Helper to serialize a commitment to bytes
-    // MUST match the Poseidon transcript serialization:
-    // 1. Use serialize_uncompressed (not compressed)
-    // 2. Reverse bytes for BE/EVM format
-    fn commitment_to_bytes<T: CanonicalSerialize>(commitment: &T) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        commitment
-            .serialize_uncompressed(&mut bytes)
-            .expect("serialization failed");
-        // Reverse bytes to match Poseidon transcript format (BE for EVM compatibility)
-        bytes.reverse();
-        bytes
-    }
-
-    // Helper to extract sumcheck proof coefficients
-    fn extract_sumcheck_coeffs(
-        sumcheck: &SumcheckInstanceProof<ark_bn254::Fr, impl Transcript>,
-        values: &mut std::collections::HashMap<usize, String>,
-        idx: &mut usize,
-    ) {
-        use ark_ff::PrimeField;
-        for poly in &sumcheck.compressed_polys {
-            for coeff in &poly.coeffs_except_linear_term {
-                values.insert(*idx, format!("{}", coeff.into_bigint()));
-                *idx += 1;
-            }
-        }
-    }
-
-    // Helper to extract uni-skip proof coefficients
-    fn extract_uni_skip_coeffs(
-        uni_skip: &UniSkipFirstRoundProof<ark_bn254::Fr, impl Transcript>,
-        values: &mut std::collections::HashMap<usize, String>,
-        idx: &mut usize,
-    ) {
-        use ark_ff::PrimeField;
-        for coeff in &uni_skip.uni_poly.coeffs {
-            values.insert(*idx, format!("{}", coeff.into_bigint()));
-            *idx += 1;
-        }
-    }
-
-    // === Commitments (N commitments × 12 chunks each) ===
-    for commitment in &real_proof.commitments {
-        let chunks = bytes_to_chunks(&commitment_to_bytes(commitment));
-        for chunk in chunks {
-            values.insert(idx, format!("{}", chunk.into_bigint()));
-            idx += 1;
-        }
-    }
-
-    // === Opening claims ===
-    for (_point, claim) in real_proof.opening_claims.0.values() {
-        values.insert(idx, format!("{}", claim.into_bigint()));
-        idx += 1;
-    }
-
-    // === Stage 1: uni-skip + sumcheck ===
-    extract_uni_skip_coeffs(
-        &real_proof.stage1_uni_skip_first_round_proof,
-        &mut values,
-        &mut idx,
-    );
-    extract_sumcheck_coeffs(&real_proof.stage1_sumcheck_proof, &mut values, &mut idx);
-
-    // === Stage 2: uni-skip + sumcheck ===
-    extract_uni_skip_coeffs(
-        &real_proof.stage2_uni_skip_first_round_proof,
-        &mut values,
-        &mut idx,
-    );
-    extract_sumcheck_coeffs(&real_proof.stage2_sumcheck_proof, &mut values, &mut idx);
-
-    // === Stages 3-7: sumcheck only ===
-    extract_sumcheck_coeffs(&real_proof.stage3_sumcheck_proof, &mut values, &mut idx);
-    extract_sumcheck_coeffs(&real_proof.stage4_sumcheck_proof, &mut values, &mut idx);
-    extract_sumcheck_coeffs(&real_proof.stage5_sumcheck_proof, &mut values, &mut idx);
-    extract_sumcheck_coeffs(&real_proof.stage6_sumcheck_proof, &mut values, &mut idx);
-    extract_sumcheck_coeffs(&real_proof.stage7_sumcheck_proof, &mut values, &mut idx);
-
-    // === Untrusted advice commitment (if present) ===
-    if let Some(ref commitment) = real_proof.untrusted_advice_commitment {
-        let chunks = bytes_to_chunks(&commitment_to_bytes(commitment));
-        for chunk in chunks {
-            values.insert(idx, format!("{}", chunk.into_bigint()));
-            idx += 1;
-        }
-    }
-
-    values
 }
