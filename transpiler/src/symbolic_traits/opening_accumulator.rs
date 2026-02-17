@@ -44,6 +44,10 @@ use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use std::collections::BTreeMap;
 use zklean_extractor::mle_ast::MleAst;
 
+// =============================================================================
+// Type Definition
+// =============================================================================
+
 /// Opening accumulator for MleAst symbolic execution.
 ///
 /// Stores polynomial opening claims as MleAst symbolic values,
@@ -55,6 +59,10 @@ pub struct MleOpeningAccumulator {
     /// - claim: MleAst representing the claimed evaluation
     pub openings: BTreeMap<OpeningId, (Vec<MleAst>, MleAst)>,
 }
+
+// =============================================================================
+// Inherent Methods
+// =============================================================================
 
 impl MleOpeningAccumulator {
     /// Create a new accumulator with no claims.
@@ -153,7 +161,26 @@ impl MleOpeningAccumulator {
         self.openings.insert(key, (vec![], claim));
     }
 
-    /// Update the opening point for a virtual polynomial (internal helper).
+    /// Get all opening IDs in this accumulator.
+    pub fn opening_ids(&self) -> impl Iterator<Item = &OpeningId> {
+        self.openings.keys()
+    }
+
+    /// Get the number of openings.
+    pub fn len(&self) -> usize {
+        self.openings.len()
+    }
+
+    /// Check if empty.
+    pub fn is_empty(&self) -> bool {
+        self.openings.is_empty()
+    }
+
+    // -------------------------------------------------------------------------
+    // Test-only helpers
+    // -------------------------------------------------------------------------
+
+    /// Update the opening point for a virtual polynomial (test helper).
     #[cfg(test)]
     fn set_virtual_point(
         &mut self,
@@ -170,22 +197,11 @@ impl MleOpeningAccumulator {
             );
         }
     }
-
-    /// Get all opening IDs in this accumulator.
-    pub fn opening_ids(&self) -> impl Iterator<Item = &OpeningId> {
-        self.openings.keys()
-    }
-
-    /// Get the number of openings.
-    pub fn len(&self) -> usize {
-        self.openings.len()
-    }
-
-    /// Check if empty.
-    pub fn is_empty(&self) -> bool {
-        self.openings.is_empty()
-    }
 }
+
+// =============================================================================
+// Trait Implementations
+// =============================================================================
 
 impl Default for MleOpeningAccumulator {
     fn default() -> Self {
@@ -337,6 +353,10 @@ impl OpeningAccumulator<MleAst> for MleOpeningAccumulator {
         Some((opening_point, *claim))
     }
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
