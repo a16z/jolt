@@ -16,7 +16,7 @@
 //!     MleAst,                    // Symbolic field (records operations)
 //!     AstCommitmentScheme,       // This stub (satisfies trait bounds)
 //!     PoseidonAstTranscript,     // Symbolic transcript
-//!     MleOpeningAccumulator,     // Collects opening claims
+//!     AstOpeningAccumulator,     // Collects opening claims
 //! >::new(...);
 //!
 //! verifier.verify(&proof, ...);  // Runs stages 1-7, records AST

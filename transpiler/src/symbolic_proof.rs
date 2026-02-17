@@ -30,8 +30,8 @@
 //!
 //! This must match exactly how the Poseidon transcript hashes commitments.
 
-use crate::symbolic_traits::commitment_scheme::{AstCommitmentScheme, AstProof};
-use crate::symbolic_traits::opening_accumulator::MleOpeningAccumulator;
+use crate::symbolic_traits::ast_commitment_scheme::{AstCommitmentScheme, AstProof};
+use crate::symbolic_traits::opening_accumulator::AstOpeningAccumulator;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 use jolt_core::poly::opening_proof::OpeningPoint;
@@ -185,7 +185,7 @@ fn commitment_to_field_chunks<T: CanonicalSerialize>(commitment: &T) -> Vec<ark_
 /// # Returns
 ///
 /// - `JoltProof<MleAst>`: The symbolic proof with variables instead of concrete values
-/// - `MleOpeningAccumulator`: Accumulator pre-populated with symbolic opening claims
+/// - `AstOpeningAccumulator`: Accumulator pre-populated with symbolic opening claims
 /// - `VarAllocator`: Tracks all allocated variables and their descriptions
 ///
 /// # Variable Naming Convention
@@ -204,7 +204,7 @@ pub fn symbolize_proof<OutputTranscript: Transcript>(
     real_proof: &RV64IMACProof,
 ) -> (
     JoltProof<MleAst, AstCommitmentScheme, OutputTranscript>,
-    MleOpeningAccumulator,
+    AstOpeningAccumulator,
     VarAllocator,
 ) {
     let mut alloc = VarAllocator::new();
@@ -324,7 +324,9 @@ pub fn symbolize_proof<OutputTranscript: Transcript>(
     };
 
     // Build the opening accumulator with the symbolic claims we created
-    let mut accumulator = MleOpeningAccumulator::new();
+    #[allow(non_snake_case)] // Match VerifierOpeningAccumulator naming
+    let log_T = (real_proof.trace_length as f64).log2().ceil() as usize;
+    let mut accumulator = AstOpeningAccumulator::new(log_T);
     for (key, (_, claim)) in &symbolic_proof.opening_claims.0 {
         accumulator.openings.insert(*key, (vec![], *claim));
     }
