@@ -2221,25 +2221,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
-name = "gnark-transpiler"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
- "clap",
- "common",
- "jolt-core",
- "light-poseidon",
- "num-bigint",
- "serde",
- "serde_json",
- "zklean-extractor",
-]
-
-[[package]]
 name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5922,6 +5903,25 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "transpiler"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "clap",
+ "common",
+ "jolt-core",
+ "light-poseidon",
+ "num-bigint",
+ "serde",
+ "serde_json",
+ "zklean-extractor",
 ]
 
 [[package]]

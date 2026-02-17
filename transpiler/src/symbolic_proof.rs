@@ -342,6 +342,34 @@ pub fn extract_witness_values(
         bytes
     }
 
+    // Helper to extract sumcheck proof coefficients
+    fn extract_sumcheck_coeffs(
+        sumcheck: &SumcheckInstanceProof<ark_bn254::Fr, impl Transcript>,
+        values: &mut std::collections::HashMap<usize, String>,
+        idx: &mut usize,
+    ) {
+        use ark_ff::PrimeField;
+        for poly in &sumcheck.compressed_polys {
+            for coeff in &poly.coeffs_except_linear_term {
+                values.insert(*idx, format!("{}", coeff.into_bigint()));
+                *idx += 1;
+            }
+        }
+    }
+
+    // Helper to extract uni-skip proof coefficients
+    fn extract_uni_skip_coeffs(
+        uni_skip: &UniSkipFirstRoundProof<ark_bn254::Fr, impl Transcript>,
+        values: &mut std::collections::HashMap<usize, String>,
+        idx: &mut usize,
+    ) {
+        use ark_ff::PrimeField;
+        for coeff in &uni_skip.uni_poly.coeffs {
+            values.insert(*idx, format!("{}", coeff.into_bigint()));
+            *idx += 1;
+        }
+    }
+
     // === Commitments (N commitments × 12 chunks each) ===
     for commitment in &real_proof.commitments {
         let chunks = bytes_to_chunks(&commitment_to_bytes(commitment));
@@ -357,73 +385,28 @@ pub fn extract_witness_values(
         idx += 1;
     }
 
-    // === Stage 1 uni-skip proof ===
-    for coeff in &real_proof.stage1_uni_skip_first_round_proof.uni_poly.coeffs {
-        values.insert(idx, format!("{}", coeff.into_bigint()));
-        idx += 1;
-    }
+    // === Stage 1: uni-skip + sumcheck ===
+    extract_uni_skip_coeffs(
+        &real_proof.stage1_uni_skip_first_round_proof,
+        &mut values,
+        &mut idx,
+    );
+    extract_sumcheck_coeffs(&real_proof.stage1_sumcheck_proof, &mut values, &mut idx);
 
-    // === Stage 1 sumcheck proof ===
-    for poly in &real_proof.stage1_sumcheck_proof.compressed_polys {
-        for coeff in &poly.coeffs_except_linear_term {
-            values.insert(idx, format!("{}", coeff.into_bigint()));
-            idx += 1;
-        }
-    }
+    // === Stage 2: uni-skip + sumcheck ===
+    extract_uni_skip_coeffs(
+        &real_proof.stage2_uni_skip_first_round_proof,
+        &mut values,
+        &mut idx,
+    );
+    extract_sumcheck_coeffs(&real_proof.stage2_sumcheck_proof, &mut values, &mut idx);
 
-    // === Stage 2 uni-skip proof ===
-    for coeff in &real_proof.stage2_uni_skip_first_round_proof.uni_poly.coeffs {
-        values.insert(idx, format!("{}", coeff.into_bigint()));
-        idx += 1;
-    }
-
-    // === Stage 2 sumcheck proof ===
-    for poly in &real_proof.stage2_sumcheck_proof.compressed_polys {
-        for coeff in &poly.coeffs_except_linear_term {
-            values.insert(idx, format!("{}", coeff.into_bigint()));
-            idx += 1;
-        }
-    }
-
-    // === Stage 3 sumcheck proof ===
-    for poly in &real_proof.stage3_sumcheck_proof.compressed_polys {
-        for coeff in &poly.coeffs_except_linear_term {
-            values.insert(idx, format!("{}", coeff.into_bigint()));
-            idx += 1;
-        }
-    }
-
-    // === Stage 4 sumcheck proof ===
-    for poly in &real_proof.stage4_sumcheck_proof.compressed_polys {
-        for coeff in &poly.coeffs_except_linear_term {
-            values.insert(idx, format!("{}", coeff.into_bigint()));
-            idx += 1;
-        }
-    }
-
-    // === Stage 5 sumcheck proof ===
-    for poly in &real_proof.stage5_sumcheck_proof.compressed_polys {
-        for coeff in &poly.coeffs_except_linear_term {
-            values.insert(idx, format!("{}", coeff.into_bigint()));
-            idx += 1;
-        }
-    }
-
-    // === Stage 6 sumcheck proof ===
-    for poly in &real_proof.stage6_sumcheck_proof.compressed_polys {
-        for coeff in &poly.coeffs_except_linear_term {
-            values.insert(idx, format!("{}", coeff.into_bigint()));
-            idx += 1;
-        }
-    }
-
-    // === Stage 7 sumcheck proof ===
-    for poly in &real_proof.stage7_sumcheck_proof.compressed_polys {
-        for coeff in &poly.coeffs_except_linear_term {
-            values.insert(idx, format!("{}", coeff.into_bigint()));
-            idx += 1;
-        }
-    }
+    // === Stages 3-7: sumcheck only ===
+    extract_sumcheck_coeffs(&real_proof.stage3_sumcheck_proof, &mut values, &mut idx);
+    extract_sumcheck_coeffs(&real_proof.stage4_sumcheck_proof, &mut values, &mut idx);
+    extract_sumcheck_coeffs(&real_proof.stage5_sumcheck_proof, &mut values, &mut idx);
+    extract_sumcheck_coeffs(&real_proof.stage6_sumcheck_proof, &mut values, &mut idx);
+    extract_sumcheck_coeffs(&real_proof.stage7_sumcheck_proof, &mut values, &mut idx);
 
     // === Untrusted advice commitment (if present) ===
     if let Some(ref commitment) = real_proof.untrusted_advice_commitment {
