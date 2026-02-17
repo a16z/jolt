@@ -694,12 +694,18 @@ pub fn generate_circuit_from_bundle_with_stats(
     (output, stats)
 }
 
-/// Sanitize a name for use as a Go identifier (PascalCase).
+/// Sanitize a name for use as a Go identifier (PascalCase with underscores).
 ///
-/// Converts any input string to idiomatic Go PascalCase:
-/// - `"foo_bar_baz"` → `"FooBarBaz"`
-/// - `"stage1.sumcheck[0]"` → `"Stage1Sumcheck0"`
-/// - `"UPPER_CASE"` → `"UpperCase"`
+/// Converts any input string to Go-compatible identifier:
+/// - `"foo_bar_baz"` → `"Foo_Bar_Baz"` (underscores preserved)
+/// - `"stage1.sumcheck[0]"` → `"Stage1_Sumcheck_0"`
+/// - `"UPPER_CASE"` → `"UPPER_CASE"` (case preserved)
+/// - `"JoltStagesCircuit"` → `"JoltStagesCircuit"` (preserved)
+///
+/// IMPORTANT: Underscores are preserved to maintain consistency between:
+/// - VarAllocator descriptions (e.g., "stage1_sumcheck_r0_0")
+/// - Circuit struct field names (e.g., "Stage1_Sumcheck_R0_0")
+/// - Witness JSON keys (e.g., "Stage1_Sumcheck_R0_0")
 pub fn sanitize_go_name(name: &str) -> String {
     // Replace any non-alphanumeric character with underscore
     let cleaned: String = name
@@ -707,7 +713,7 @@ pub fn sanitize_go_name(name: &str) -> String {
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .collect();
 
-    // Split by underscores and PascalCase each segment
+    // Split by underscores and PascalCase each segment, preserving underscores between parts
     cleaned
         .split('_')
         .filter(|s| !s.is_empty())
@@ -716,15 +722,13 @@ pub fn sanitize_go_name(name: &str) -> String {
             match chars.next() {
                 None => String::new(),
                 Some(first) => {
-                    // Capitalize first char, lowercase the rest
-                    first
-                        .to_uppercase()
-                        .chain(chars.flat_map(|c| c.to_lowercase()))
-                        .collect()
+                    // Capitalize first char, preserve the rest (for CamelCase names)
+                    first.to_uppercase().chain(chars).collect()
                 }
             }
         })
-        .collect()
+        .collect::<Vec<_>>()
+        .join("_")
 }
 
 // =============================================================================

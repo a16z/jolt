@@ -1,7 +1,7 @@
 //! Transpiler for Jolt Verifier
 //!
-//! This crate transpiles Jolt's verifier (stages 1-6) into circuit code for various
-//! proving backends. Currently supported: gnark (Go/Groth16).
+//! This crate transpiles Jolt's verifier (stages 1-7, all sumchecks) into circuit code
+//! for various proving backends. Currently supported: gnark (Go/Groth16).
 //!
 //! # Architecture
 //!
@@ -43,10 +43,16 @@
 //!
 //! ## Stages Covered
 //!
-//! This crate transpiles stages 1-6 (all sumcheck verifications). The PCS stage
-//! is NOT transpiled because Dory uses pairings, which would add ~100M constraints
-//! if emulated. For a complete recursive verifier, see `quangvdao/quang-jolt` which
+//! This crate transpiles stages 1-7 (all sumcheck verifications):
+//! - Stages 1-6: Standard sumcheck verifications
+//! - Stage 7: HammingWeight claim reduction sumcheck
+//!
+//! Stage 8 (PCS/Hyrax) is NOT transpiled because it requires native elliptic curve
+//! operations. For a complete recursive verifier, see `quangvdao/quang-jolt` which
 //! uses Hyrax over Grumpkin with native curve operations.
+//!
+//! **Note**: Stage 7 does not include `AdviceClaimReduction` verifiers (they require
+//! state management across stages 6-7). For proofs without advice, this is complete.
 //!
 //! # Transcript Feature Flags
 //!

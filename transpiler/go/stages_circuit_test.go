@@ -66,7 +66,7 @@ func LoadStagesAssignment(witnessPath string) (*JoltStagesCircuit, error) {
 }
 
 func TestStagesCircuitCompile(t *testing.T) {
-	t.Log("Jolt Stages 1-6 Verifier - Gnark Circuit Compilation Test")
+	t.Log("Jolt Stages 1-7 Verifier - Gnark Circuit Compilation Test")
 	t.Log("")
 
 	// Compile
@@ -91,7 +91,7 @@ func TestStagesCircuitCompile(t *testing.T) {
 }
 
 func TestStagesCircuitSolver(t *testing.T) {
-	t.Log("Jolt Stages 1-6 Verifier - Gnark Solver Debug Test")
+	t.Log("Jolt Stages 1-7 Verifier - Gnark Solver Debug Test")
 	t.Log("")
 
 	// Load witness
@@ -208,7 +208,7 @@ func TestStagesCircuitSolver(t *testing.T) {
 
 
 func TestStagesCircuitProveVerify(t *testing.T) {
-	t.Log("Jolt Stages 1-6 Verifier - Full Groth16 Prove/Verify Test")
+	t.Log("Jolt Stages 1-7 Verifier - Full Groth16 Prove/Verify Test")
 	t.Log("")
 
 	// Load witness
@@ -299,7 +299,7 @@ func TestStagesCircuitProveVerify(t *testing.T) {
 	t.Logf("Prove time:  %v", proveTime)
 	t.Logf("Verify time: %v", verifyTime)
 	t.Log("")
-	t.Log("✓ Stages 1-6 circuit verification passed!")
+	t.Log("✓ Stages 1-7 circuit verification passed!")
 }
 
 // =============================================================================
