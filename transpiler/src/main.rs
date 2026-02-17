@@ -155,7 +155,7 @@ fn main() {
     // operations. PCS verification is skipped in stages 1-6.
     let symbolic_preprocessing: JoltVerifierPreprocessing<MleAst, AstCommitmentScheme> =
         JoltVerifierPreprocessing {
-            generators: transpiler::ast_commitment_scheme::AstVerifierSetup,
+            generators: transpiler::symbolic_traits::commitment_scheme::AstVerifierSetup,
             shared: real_preprocessing.shared.clone(),
         };
 

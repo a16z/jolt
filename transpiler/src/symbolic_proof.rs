@@ -30,8 +30,8 @@
 //!
 //! This must match exactly how the Poseidon transcript hashes commitments.
 
-use crate::ast_commitment_scheme::{AstCommitmentScheme, AstProof};
-use crate::MleOpeningAccumulator;
+use crate::symbolic_traits::commitment_scheme::{AstCommitmentScheme, AstProof};
+use crate::symbolic_traits::opening_accumulator::MleOpeningAccumulator;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 use jolt_core::poly::opening_proof::OpeningPoint;
