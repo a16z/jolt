@@ -1,3 +1,75 @@
+//! # InstructionClaimReduction
+//!
+//! Source: `jolt-core/src/zkvm/claim_reductions/instruction_lookups.rs`
+//!
+//!
+//! ## Schwartz–Zippel randomness
+//!
+//! - Re-uses `r^(1)_cycle ∈ F^{log₂ T}` from Stage 1 (SpartanOuter)
+//!
+//!
+//! ## Batching randomness
+//!
+//! - `γ ∈ F`: fresh batching challenge (powers γ, γ², γ³, γ⁴ used)
+//!
+//!
+//! ## Sumcheck
+//!
+//! `eq(r^(1)_cycle, X_j)` is the [multilinear Lagrange basis polynomial][ml].
+//!
+//! [ml]: https://en.wikipedia.org/wiki/Multilinear_polynomial
+//!
+//! ```text
+//! LHS := Σ_{X_j}  eq(r^(1)_cycle, X_j)
+//!                · (LookupOutput(X_j)
+//!                  + γ   · LeftLookupOperand(X_j)
+//!                  + γ²  · RightLookupOperand(X_j)
+//!                  + γ³  · LeftInstructionInput(X_j)
+//!                  + γ⁴  · RightInstructionInput(X_j))
+//!
+//! RHS := LookupOutput(r^(1)_cycle)
+//!      + γ   · LeftLookupOperand(r^(1)_cycle)
+//!      + γ²  · RightLookupOperand(r^(1)_cycle)
+//!      + γ³  · LeftInstructionInput(r^(1)_cycle)
+//!      + γ⁴  · RightInstructionInput(r^(1)_cycle)
+//!
+//! where  X_j ∈ {0,1}^{log₂ T}
+//! ```
+//!
+//! Dimensions: `log₂ T` rounds (cycle only).
+//!
+//! The RHS is known: all five polynomials were opened at
+//! `r^(1)_cycle` in Stage 1.
+//!
+//!
+//! ## Opening point
+//!
+//! After sumcheck: `r^(2)_cycle ∈ F^{log₂ T}`.
+//!
+//!
+//! ## Verifier opening claim
+//!
+//! The verifier checks that the final sumcheck message equals:
+//!
+//! ```text
+//! eq(r^(1)_cycle, r^(2)_cycle)
+//!   · (LookupOutput(r^(2)_cycle)
+//!     + γ   · LeftLookupOperand(r^(2)_cycle)
+//!     + γ²  · RightLookupOperand(r^(2)_cycle)
+//!     + γ³  · LeftInstructionInput(r^(2)_cycle)
+//!     + γ⁴  · RightInstructionInput(r^(2)_cycle))
+//! ```
+//!
+//! The `eq` term is computable by the verifier. The prover supplies
+//! openings for all five VPs below.
+//!
+//!
+//! ## VirtualPolynomials opened at `r^(2)_cycle`
+//!
+//! ```text
+//! LookupOutput, LeftLookupOperand, RightLookupOperand,
+//! LeftInstructionInput, RightInstructionInput
+//! ```
 use std::array;
 use std::sync::Arc;
 
