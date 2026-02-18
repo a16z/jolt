@@ -1,4 +1,4 @@
-//! # RamReadWriteChecking
+//! # RamReadWriteChecking (Stage 2)
 //!
 //! Source: `jolt-core/src/zkvm/ram/read_write_checking.rs`
 //!

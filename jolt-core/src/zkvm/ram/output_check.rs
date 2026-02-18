@@ -1,4 +1,4 @@
-//! # OutputCheck
+//! # OutputCheck (Stage 2)
 //!
 //! Source: `jolt-core/src/zkvm/ram/output_check.rs`
 //!

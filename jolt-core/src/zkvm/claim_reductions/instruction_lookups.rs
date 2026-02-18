@@ -1,4 +1,4 @@
-//! # InstructionClaimReduction
+//! # InstructionClaimReduction (Stage 2)
 //!
 //! Source: `jolt-core/src/zkvm/claim_reductions/instruction_lookups.rs`
 //!
