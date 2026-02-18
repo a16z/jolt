@@ -1,4 +1,4 @@
-//! # RegistersClaimReduction
+//! # RegistersClaimReduction (Stage 3)
 //!
 //! Source: `jolt-core/src/zkvm/claim_reductions/registers.rs`
 //!
