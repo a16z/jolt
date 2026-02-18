@@ -40,7 +40,6 @@ guest-std = [
     "jolt-sdk-macros/guest-std",
     "serde/std",
     "zeroos-std",
-    "debug",
 ]
 
 guest-verifier = [
