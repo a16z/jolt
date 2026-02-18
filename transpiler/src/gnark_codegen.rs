@@ -60,7 +60,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use zklean_extractor::mle_ast::{
-    Atom, Edge, Node, Scalar, scalar_add_mod, scalar_mul_mod, scalar_neg_mod, scalar_sub_mod,
+    Atom, Edge, Node, Scalar, TranscriptHashData, scalar_add_mod, scalar_mul_mod, scalar_neg_mod, scalar_sub_mod,
 };
 
 // =============================================================================
@@ -94,10 +94,14 @@ fn node_children(node: Node) -> Vec<usize> {
                 .flatten()
                 .collect()
         }
-        Node::Poseidon(e1, e2, e3) => [edge_to_child(e1), edge_to_child(e2), edge_to_child(e3)]
-            .into_iter()
-            .flatten()
-            .collect(),
+        Node::TranscriptHash(ref hash_data, e1, e2) => {
+            let mut v: Vec<usize> = [edge_to_child(e1), edge_to_child(e2)]
+                .into_iter()
+                .flatten()
+                .collect();
+            v.extend(hash_data.as_slice().iter().filter_map(|e| edge_to_child(*e)));
+            v
+        }
     }
 }
 
@@ -233,7 +237,7 @@ impl<'a> MemoizedCodeGen<'a> {
 
             // Only traverse children on first visit (ref_count was just set to 1)
             if self.ref_counts[&node_id] == 1 {
-                stack.extend(node_children(self.nodes[node_id]));
+                stack.extend(node_children(self.nodes[node_id].clone()));
             }
         }
     }
@@ -273,7 +277,7 @@ impl<'a> MemoizedCodeGen<'a> {
             stack.push((node_id, true));
 
             // Push unvisited children (reversed so left-to-right processing due to LIFO)
-            for child_id in node_children(self.nodes[node_id]).into_iter().rev() {
+            for child_id in node_children(self.nodes[node_id].clone()).into_iter().rev() {
                 if !visited.contains(&child_id) {
                     stack.push((child_id, false));
                 }
@@ -287,7 +291,7 @@ impl<'a> MemoizedCodeGen<'a> {
                 continue;
             }
 
-            let node = self.nodes[node_id];
+            let node = self.nodes[node_id].clone();
 
             // For atoms, just generate directly without hoisting
             if matches!(node, Node::Atom(_)) {
@@ -324,13 +328,20 @@ impl<'a> MemoizedCodeGen<'a> {
                     self.unary_op("poseidon.AppendU64Transform", e)
                 }
 
-                // Ternary: Poseidon hash
-                Node::Poseidon(state, n_rounds, data) => {
-                    self.uses_poseidon = true;
+                // Transcript hash (dispatched by hash_data variant)
+                Node::TranscriptHash(ref hash_data, state, n_rounds) => {
                     let s = self.edge_to_gnark_iterative(state);
                     let r = self.edge_to_gnark_iterative(n_rounds);
-                    let d = self.edge_to_gnark_iterative(data);
-                    format!("poseidon.Hash(api, {s}, {r}, {d})")
+                    match hash_data {
+                        TranscriptHashData::Poseidon(data_edge) => {
+                            self.uses_poseidon = true;
+                            let d = self.edge_to_gnark_iterative(*data_edge);
+                            format!("poseidon.Hash(api, {s}, {r}, {d})")
+                        }
+                        TranscriptHashData::Blake2b(_data_edges) => {
+                            todo!("Blake2b Go codegen will be implemented in Phase 4")
+                        }
+                    }
                 }
 
                 // zklean base nodes - Jolt transpiler doesn't generate these
@@ -357,7 +368,7 @@ impl<'a> MemoizedCodeGen<'a> {
             expr.clone()
         } else {
             // Root was an atom
-            let node = self.nodes[root_node_id];
+            let node = self.nodes[root_node_id].clone();
             if let Node::Atom(atom) = node {
                 self.atom_to_gnark(atom)
             } else {
@@ -778,10 +789,10 @@ fn is_node_constant_in(nodes: &[Node], node_id: usize) -> bool {
         Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
             is_edge_constant_in(nodes, e1) && is_edge_constant_in(nodes, e2)
         }
-        Node::Poseidon(e1, e2, e3) => {
+        Node::TranscriptHash(ref hash_data, e1, e2) => {
             is_edge_constant_in(nodes, e1)
                 && is_edge_constant_in(nodes, e2)
-                && is_edge_constant_in(nodes, e3)
+                && hash_data.as_slice().iter().all(|e| is_edge_constant_in(nodes, *e))
         }
     }
 }
@@ -818,7 +829,7 @@ fn evaluate_constant_node_in(nodes: &[Node], node_id: usize) -> Scalar {
         Node::Inv(_) | Node::Div(_, _) => {
             panic!("Modular inverse not implemented for constant evaluation")
         }
-        Node::Poseidon(_, _, _)
+        Node::TranscriptHash(_, _, _)
         | Node::ByteReverse(_)
         | Node::Truncate128Reverse(_)
         | Node::Truncate128(_)

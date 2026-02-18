@@ -102,7 +102,7 @@ pub fn insert_node(node: Node) -> NodeId {
 pub fn get_node(id: NodeId) -> Node {
     let arena = node_arena();
     let guard = arena.read().expect("node arena poisoned");
-    guard.get(id).copied().expect("invalid node reference")
+    guard.get(id).cloned().expect("invalid node reference")
 }
 
 fn edge_for_root(root: NodeId) -> Edge {
@@ -283,8 +283,37 @@ pub enum Edge {
     NodeRef(NodeId),
 }
 
-/// A node for a polynomial AST. Children are represented by node IDs into the global arena.
+/// Which hash function backs a transcript hash node.
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+pub enum TranscriptBackend {
+    /// Width-3 Poseidon: hash(state, n_rounds, data) → ~250 constraints.
+    Poseidon,
+    /// Blake2b-256: blake2b(state || pad(n_rounds) || data_bytes).
+    Blake2b,
+}
+
+/// Data payload for a transcript hash node.
+/// The variant determines both the hash backend and the data shape (arity).
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub enum TranscriptHashData {
+    /// Poseidon: exactly 1 data element. Arity enforced by type.
+    Poseidon(Edge),
+    /// Blake2b: variable arity (0..N data elements in a single hash call).
+    Blake2b(Vec<Edge>),
+}
+
+impl TranscriptHashData {
+    /// View data elements as a slice (generic traversal).
+    pub fn as_slice(&self) -> &[Edge] {
+        match self {
+            Self::Poseidon(e) => std::slice::from_ref(e),
+            Self::Blake2b(v) => v.as_slice(),
+        }
+    }
+}
+
+/// A node for a polynomial AST. Children are represented by node IDs into the global arena.
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum Node {
     /// An atomic (var or const) AST element. This should only be used for MLE's with a single
     /// node.
@@ -302,12 +331,12 @@ pub enum Node {
     /// The quotient between the first and second nodes (from zklean base, unused by Jolt transpiler)
     /// NOTE: No div-by-zero checks are performed here
     Div(Edge, Edge),
-    /// Poseidon hash with 3 inputs (state, n_rounds, data).
-    /// Matches jolt-core PoseidonTranscript which uses width-3 Poseidon.
-    Poseidon(Edge, Edge, Edge),
+    /// Transcript hash: hash(state, n_rounds, data).
+    /// The `TranscriptHashData` variant determines which hash function and arity.
+    TranscriptHash(TranscriptHashData, Edge, Edge),
     /// Byte-reverse a field element.
     /// Transforms: serialize(x) as LE bytes -> reverse -> from_le_bytes_mod_order.
-    /// This matches PoseidonTranscript::append_scalar which reverses bytes for EVM compatibility.
+    /// Used by transcript append_scalar which reverses bytes for EVM compatibility.
     ByteReverse(Edge),
     /// Truncate to 128 bits and byte-reverse, then shift by 2^128.
     /// Used for challenge_scalar_optimized which produces F::Challenge (MontU128Challenge).
@@ -318,13 +347,12 @@ pub enum Node {
     /// Used for challenge_scalar which produces F (raw field element).
     /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes.
     Truncate128(Edge),
-    /// Transform for PoseidonTranscript::append_u64.
+    /// Transform for transcript append_u64.
     ///
     /// Computes: bswap64(x) * 2^192
     ///
-    /// This matches PoseidonTranscript::raw_append_u64 which:
-    /// 1. Packs u64 x into bytes 24-31 of a 32-byte array using x.to_be_bytes()
-    /// 2. Interprets the 32 bytes as a little-endian field element
+    /// Packs u64 x into bytes 24-31 of a 32-byte array using x.to_be_bytes(),
+    /// then interprets the 32 bytes as a little-endian field element.
     ///
     /// The result is bswap64(x) * 2^192, not just x * 2^192.
     AppendU64Transform(Edge),
@@ -409,15 +437,32 @@ impl MleAst {
     }
 
     /// Poseidon hash with 3 inputs (state, n_rounds, data).
-    /// Matches jolt-core PoseidonTranscript structure.
     pub fn poseidon(state: &Self, n_rounds: &Self, data: &Self) -> Self {
         let state_edge = edge_for_root(state.root);
         let rounds_edge = edge_for_root(n_rounds.root);
         let data_edge = edge_for_root(data.root);
-        let root = insert_node(Node::Poseidon(state_edge, rounds_edge, data_edge));
+        let root = insert_node(Node::TranscriptHash(
+            TranscriptHashData::Poseidon(data_edge),
+            state_edge,
+            rounds_edge,
+        ));
         Self {
             root,
             reg_name: state.reg_name.or(n_rounds.reg_name).or(data.reg_name),
+        }
+    }
+
+    /// Blake2b hash with variable-arity data.
+    pub fn blake2b(state: &Self, n_rounds: &Self, data: &[Self]) -> Self {
+        let data_edges: Vec<Edge> = data.iter().map(|d| edge_for_root(d.root)).collect();
+        let root = insert_node(Node::TranscriptHash(
+            TranscriptHashData::Blake2b(data_edges),
+            edge_for_root(state.root),
+            edge_for_root(n_rounds.root),
+        ));
+        Self {
+            root,
+            reg_name: state.reg_name.or(n_rounds.reg_name),
         }
     }
 
@@ -661,8 +706,8 @@ fn is_node_constant(node_id: NodeId) -> bool {
         Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
             is_edge_constant(e1) && is_edge_constant(e2)
         }
-        Node::Poseidon(e1, e2, e3) => {
-            is_edge_constant(e1) && is_edge_constant(e2) && is_edge_constant(e3)
+        Node::TranscriptHash(ref hash_data, e1, e2) => {
+            is_edge_constant(e1) && is_edge_constant(e2) && hash_data.as_slice().iter().all(|e| is_edge_constant(*e))
         }
     }
 }
@@ -692,7 +737,7 @@ fn evaluate_constant_node(node_id: NodeId) -> Scalar {
         Node::Inv(_) | Node::Div(_, _) => {
             panic!("Modular inverse not implemented for constant evaluation")
         }
-        Node::Poseidon(_, _, _)
+        Node::TranscriptHash(_, _, _)
         | Node::ByteReverse(_)
         | Node::Truncate128Reverse(_)
         | Node::Truncate128(_)
@@ -724,7 +769,7 @@ fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
         Node::Mul(e1, e2) => evaluate_edge(e1, env) * evaluate_edge(e2, env),
         Node::Sub(e1, e2) => evaluate_edge(e1, env) - evaluate_edge(e2, env),
         Node::Div(e1, e2) => evaluate_edge(e1, env) / evaluate_edge(e2, env),
-        Node::Poseidon(_, _, _)
+        Node::TranscriptHash(_, _, _)
         | Node::ByteReverse(_)
         | Node::Truncate128Reverse(_)
         | Node::Truncate128(_)
@@ -821,14 +866,23 @@ fn fmt_node(
             write!(f, " / ")?;
             fmt_edge(f, fmt_data, e2, true)
         }
-        Node::Poseidon(e1, e2, e3) => {
-            write!(f, "poseidon(")?;
+        Node::TranscriptHash(ref hash_data, e1, e2) => {
+            let backend_name = match hash_data {
+                TranscriptHashData::Poseidon(_) => "Poseidon",
+                TranscriptHashData::Blake2b(_) => "Blake2b",
+            };
+            write!(f, "transcript_hash({backend_name}, ")?;
             fmt_edge(f, fmt_data, e1, false)?;
             write!(f, ", ")?;
             fmt_edge(f, fmt_data, e2, false)?;
-            write!(f, ", ")?;
-            fmt_edge(f, fmt_data, e3, false)?;
-            write!(f, ")")
+            write!(f, ", [")?;
+            for (i, d) in hash_data.as_slice().iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                fmt_edge(f, fmt_data, *d, false)?;
+            }
+            write!(f, "])")
         }
         Node::ByteReverse(edge) => {
             write!(f, "byte_reverse(")?;
@@ -863,11 +917,11 @@ pub fn compute_hash<T: Hash>(value: &T) -> u64 {
     h.finish()
 }
 
-fn node_depth(node: Node) -> usize {
+fn node_depth(node: &Node) -> usize {
     fn edge_depth(edge: Edge) -> usize {
         match edge {
             Edge::Atom(_) => 0,
-            Edge::NodeRef(n) => node_depth(get_node(n)),
+            Edge::NodeRef(n) => node_depth(&get_node(n)),
         }
     }
     match node {
@@ -877,11 +931,14 @@ fn node_depth(node: Node) -> usize {
         | Node::ByteReverse(e)
         | Node::Truncate128Reverse(e)
         | Node::Truncate128(e)
-        | Node::AppendU64Transform(e) => 1 + edge_depth(e),
+        | Node::AppendU64Transform(e) => 1 + edge_depth(*e),
         Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
-            1 + max(edge_depth(e1), edge_depth(e2))
+            1 + max(edge_depth(*e1), edge_depth(*e2))
         }
-        Node::Poseidon(e1, e2, e3) => 1 + max(edge_depth(e1), max(edge_depth(e2), edge_depth(e3))),
+        Node::TranscriptHash(ref hash_data, e1, e2) => {
+            let data_max = hash_data.as_slice().iter().map(|e| edge_depth(*e)).max().unwrap_or(0);
+            1 + max(edge_depth(*e1), max(edge_depth(*e2), data_max))
+        }
     }
 }
 
@@ -897,7 +954,7 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
     /// Assumption: the sub-nodes have already been CSE-d
     fn register(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
         let node_hash = compute_hash(&node);
-        let depth = node_depth(node);
+        let depth = node_depth(&node);
 
         if let Some(v) = bindings.get(&node_hash) {
             if let Some((_, i)) = v.iter().find(|(n, _)| n == &node) {
@@ -909,13 +966,13 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
         }
         // Registering a new node
         let index = nodes.len();
+        nodes.push(node.clone());
         bindings
             .entry(node_hash)
             .and_modify(|v| {
-                v.push((node, index));
+                v.push((node.clone(), index));
             })
             .or_insert(vec![(node, index)]);
-        nodes.push(node);
         Node::Atom(Atom::NamedVar(index))
     }
 
@@ -950,11 +1007,24 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
                 let cse_e2 = aux_edge(bindings, nodes, e2);
                 register(bindings, nodes, Node::Div(cse_e1, cse_e2))
             }
-            Node::Poseidon(e1, e2, e3) => {
+            Node::TranscriptHash(hash_data, e1, e2) => {
                 let cse_e1 = aux_edge(bindings, nodes, e1);
                 let cse_e2 = aux_edge(bindings, nodes, e2);
-                let cse_e3 = aux_edge(bindings, nodes, e3);
-                register(bindings, nodes, Node::Poseidon(cse_e1, cse_e2, cse_e3))
+                let cse_hash_data = match hash_data {
+                    TranscriptHashData::Poseidon(d) => {
+                        TranscriptHashData::Poseidon(aux_edge(bindings, nodes, d))
+                    }
+                    TranscriptHashData::Blake2b(data) => {
+                        TranscriptHashData::Blake2b(
+                            data.into_iter().map(|e| aux_edge(bindings, nodes, e)).collect(),
+                        )
+                    }
+                };
+                register(
+                    bindings,
+                    nodes,
+                    Node::TranscriptHash(cse_hash_data, cse_e1, cse_e2),
+                )
             }
             Node::ByteReverse(e) => {
                 let cse_e = aux_edge(bindings, nodes, e);
@@ -1033,7 +1103,7 @@ impl crate::util::ZkLeanReprField for MleAst {
                 "def {}{index} [Field f] (x : Vector f {num_variables}) : f := ",
                 fmt_data.prefix,
             )?;
-            fmt_node(f, &fmt_data, insert_node(*binding), false)?;
+            fmt_node(f, &fmt_data, insert_node(binding.clone()), false)?;
             writeln!(f)?;
         }
         write!(

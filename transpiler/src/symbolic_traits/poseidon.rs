@@ -353,10 +353,10 @@ mod tests {
         let root = transcript.state.root();
         let node = zklean_extractor::mle_ast::get_node(root);
         match node {
-            zklean_extractor::mle_ast::Node::Poseidon(_, _, _) => {
+            zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _) => {
                 // Expected: poseidon(label, 0, 0)
             }
-            _ => panic!("Expected Poseidon node for initial state, got {node:?}"),
+            _ => panic!("Expected TranscriptHash node for initial state, got {node:?}"),
         }
     }
 
@@ -386,9 +386,11 @@ mod tests {
         let node = zklean_extractor::mle_ast::get_node(root);
 
         match node {
-            zklean_extractor::mle_ast::Node::Poseidon(_, _, e3) => {
-                // The third argument should be a ByteReverse node containing the variable
-                match e3 {
+            zklean_extractor::mle_ast::Node::TranscriptHash(
+                zklean_extractor::mle_ast::TranscriptHashData::Poseidon(data_edge), _, _
+            ) => {
+                // Poseidon: exactly 1 data element (enforced by type)
+                match data_edge {
                     zklean_extractor::mle_ast::Edge::NodeRef(byte_rev_id) => {
                         let byte_rev_node = zklean_extractor::mle_ast::get_node(byte_rev_id);
                         match byte_rev_node {
