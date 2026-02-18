@@ -257,19 +257,17 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
     }
 
     fn raw_append_u64(&mut self, x: u64) {
-        // Allocate into a 32 byte region (BE-padded to match EVM word format)
+        // Pack as native LE: from_le_bytes_mod_order(packed) = x directly
         let mut packed = [0u8; 32];
-        packed[24..].copy_from_slice(&x.to_be_bytes());
+        packed[..8].copy_from_slice(&x.to_le_bytes());
         self.hash_bytes32_and_update(&packed);
     }
 
     fn raw_append_scalar<JF: JoltField>(&mut self, scalar: &JF) {
         let mut buf = vec![];
         scalar.serialize_uncompressed(&mut buf).unwrap();
-        // Serialize uncompressed gives the scalar in LE byte order which is not
-        // a natural representation in the EVM for scalar math so we reverse
-        // to get an EVM compatible version.
-        buf = buf.into_iter().rev().collect();
+        // LE bytes of scalar → from_le_bytes_mod_order = scalar itself.
+        // No byte reversal needed (Groth16 circuit, not EVM).
         self.raw_append_bytes(&buf);
     }
 
@@ -287,10 +285,9 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
         // can lead to errors so we extract the affine coordinates and the encode them be before writing
         let x = aff.x().unwrap();
         x.serialize_compressed(&mut x_bytes).unwrap();
-        x_bytes = x_bytes.into_iter().rev().collect();
+        // LE bytes directly, no byte reversal (Groth16 circuit, not EVM)
         let y = aff.y().unwrap();
         y.serialize_compressed(&mut y_bytes).unwrap();
-        y_bytes = y_bytes.into_iter().rev().collect();
 
         // Concatenate x and y (64 bytes total), then hash using raw_append_bytes.
         let mut combined = x_bytes;
@@ -298,9 +295,14 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
         self.raw_append_bytes(&combined);
     }
 
-    // Note: append_u64, append_scalar, etc. use the trait's default implementations
-    // which call raw_append_label + raw_append_*, resulting in two separate hashes.
-    // This matches Blake2b's behavior.
+    // Override: skip buf.reverse() from the trait default (EVM compat not needed for Groth16)
+    fn append_serializable<T: CanonicalSerialize>(&mut self, label: &'static [u8], data: &T) {
+        let mut buf = vec![];
+        data.serialize_uncompressed(&mut buf).unwrap();
+        self.raw_append_label_with_len(label, buf.len() as u64);
+        // LE bytes directly, no byte reversal
+        self.raw_append_bytes(&buf);
+    }
 
     fn challenge_u128(&mut self) -> u128 {
         let mut buf = vec![0u8; 16];

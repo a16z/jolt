@@ -158,9 +158,9 @@ impl Transcript for PoseidonAstTranscript {
     }
 
     fn raw_append_u64(&mut self, x: u64) {
-        // PoseidonTranscript::raw_append_u64 computes bswap64(x) * 2^192
-        let transformed = MleAst::append_u64_transform(&MleAst::from_u64(x));
-        self.hash_and_update(transformed);
+        // PoseidonTranscript::raw_append_u64 packs x as LE in first 8 bytes of 32-byte word.
+        // from_le_bytes_mod_order gives x directly — no transform needed.
+        self.hash_and_update(MleAst::from_u64(x));
     }
 
     fn raw_append_scalar<F: JoltField>(&mut self, scalar: &F) {
@@ -169,10 +169,9 @@ impl Transcript for PoseidonAstTranscript {
         let _ = scalar.serialize_uncompressed(&mut buf);
 
         if let Some(mle_ast) = take_pending_append() {
-            // Apply byte-reverse to match PoseidonTranscript::raw_append_scalar behavior:
-            // PoseidonTranscript does: serialize(LE) -> reverse -> from_le_bytes_mod_order -> hash
-            let byte_reversed = MleAst::byte_reverse(&mle_ast);
-            self.hash_and_update(byte_reversed);
+            // PoseidonTranscript hashes LE bytes directly (no byte-reversal).
+            // from_le_bytes_mod_order(LE serialization) = the scalar itself.
+            self.hash_and_update(mle_ast);
         } else {
             // Fallback for non-MleAst types (shouldn't happen in transpilation)
             self.hash_and_update(MleAst::from_u64(0));
@@ -223,16 +222,9 @@ impl Transcript for PoseidonAstTranscript {
             let commitment_byte_len = chunks.len() * 32; // 12 * 32 = 384
             self.raw_append_label_with_len(label, commitment_byte_len as u64);
 
-            // 2. The witness values (extract_witness_values) apply buf.reverse() BEFORE
-            //    chunking, so:
-            //    - Var(0) contains chunk_11_reversed
-            //    - Var(1) contains chunk_10_reversed
-            //    - ...
-            //    - Var(11) contains chunk_0_reversed
-            //
-            //    The chunks array is [Var(0), Var(1), ..., Var(11)], which already
-            //    represents the correct hashing order (chunk_11_rev first).
-            //    NO reverse or ByteReverse needed - witness already has correct values.
+            // 2. Commitment bytes are LE (no reversal). Chunked into 12 × 32-byte pieces.
+            //    Var(0)=chunk_0, Var(1)=chunk_1, ..., Var(11)=chunk_11.
+            //    Hashed in order — no ByteReverse needed.
 
             self.append_field_elements(&chunks);
             return;
@@ -241,13 +233,12 @@ impl Transcript for PoseidonAstTranscript {
         // Fallback: single MleAst (existing behavior for non-commitment types)
         if let Some(mle_ast) = take_pending_append() {
             self.raw_append_label_with_len(label, buf.len() as u64);
-            // Apply byte-reverse to match PoseidonTranscript::append_serializable behavior
-            let byte_reversed = MleAst::byte_reverse(&mle_ast);
-            self.hash_and_update(byte_reversed);
+            // LE bytes directly — no byte-reversal needed.
+            self.hash_and_update(mle_ast);
         } else {
             // Fallback: use default implementation for concrete types
             self.raw_append_label_with_len(label, buf.len() as u64);
-            buf.reverse();
+            // LE bytes directly, no byte reversal (Groth16 circuit, not EVM)
             self.raw_append_bytes(&buf);
         }
     }
@@ -405,8 +396,8 @@ mod tests {
         // Append it to transcript
         transcript.append_scalar(b"test_scalar", &var);
 
-        // Check that the state now contains a Poseidon node with ByteReverse(variable)
-        // append_scalar does: byte_reverse(var) -> hash
+        // Check that the state now contains a Poseidon node with Var(42) directly
+        // append_scalar does: hash(var) — no byte-reversal
         let root = transcript.state.root();
         let node = zklean_extractor::mle_ast::get_node(root);
 
@@ -414,26 +405,15 @@ mod tests {
             zklean_extractor::mle_ast::Node::TranscriptHash(
                 zklean_extractor::mle_ast::TranscriptHashData::Poseidon(data_edge), _, _
             ) => {
-                // Poseidon: exactly 1 data element (enforced by type)
+                // Poseidon data element should be Var(42) directly (no ByteReverse)
                 match data_edge {
-                    zklean_extractor::mle_ast::Edge::NodeRef(byte_rev_id) => {
-                        let byte_rev_node = zklean_extractor::mle_ast::get_node(byte_rev_id);
-                        match byte_rev_node {
-                            zklean_extractor::mle_ast::Node::ByteReverse(inner) => match inner {
-                                zklean_extractor::mle_ast::Edge::Atom(
-                                    zklean_extractor::mle_ast::Atom::Var(idx),
-                                ) => {
-                                    assert_eq!(idx, 42, "Expected Var(42), got Var({idx})");
-                                }
-                                other => {
-                                    panic!("Expected Var(42) inside ByteReverse, got {other:?}")
-                                }
-                            },
-                            other => panic!("Expected ByteReverse node, got {other:?}"),
-                        }
+                    zklean_extractor::mle_ast::Edge::Atom(
+                        zklean_extractor::mle_ast::Atom::Var(idx),
+                    ) => {
+                        assert_eq!(idx, 42, "Expected Var(42), got Var({idx})");
                     }
                     other => panic!(
-                        "Expected NodeRef to ByteReverse as third Poseidon arg, got {other:?}"
+                        "Expected Atom(Var(42)) as Poseidon data arg, got {other:?}"
                     ),
                 }
             }
