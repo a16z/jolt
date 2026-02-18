@@ -244,11 +244,10 @@ impl Transcript for PoseidonAstTranscript {
     }
 
     fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F {
-        // Truncate to 128 bits (NO mask, NO shift) - plain truncation
+        // Full Fr challenge — hash output directly, no truncation.
         let hash = self.challenge_ast();
-        let challenge = MleAst::truncate_128(&hash);
-        set_pending_challenge(challenge);
-        F::from_bytes(&[0u8; 16])
+        set_pending_challenge(hash);
+        F::from_bytes(&[0u8; 32])
     }
 
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
@@ -267,11 +266,10 @@ impl Transcript for PoseidonAstTranscript {
     }
 
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
-        // Truncate to 128 bits with reverse (optimized challenge format)
+        // Full Fr challenge — hash output directly, no truncation.
         let hash = self.challenge_ast();
-        let challenge = MleAst::truncate_128_reverse(&hash);
-        set_pending_challenge(challenge);
-        let f_val: F = F::from_bytes(&[0u8; 16]);
+        set_pending_challenge(hash);
+        let f_val: F = F::from_bytes(&[0u8; 32]);
         // Safe because for MleAst, F = F::Challenge = MleAst
         unsafe { std::mem::transmute_copy::<F, F::Challenge>(&f_val) }
     }

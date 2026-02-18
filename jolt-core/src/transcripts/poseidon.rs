@@ -319,27 +319,11 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
     }
 
     fn challenge_scalar_128_bits<JF: JoltField>(&mut self) -> JF {
-        let mut buf = vec![0u8; 16];
+        // Full 32-byte hash output = full Fr challenge (no truncation).
+        // challenge_bytes(32) → challenge_bytes32 → one hash invocation.
+        // from_le_bytes_mod_order(serialize_le(Fr)) = Fr (identity).
+        let mut buf = vec![0u8; 32];
         self.challenge_bytes(&mut buf);
-
-        #[cfg(feature = "debug-expected-output")]
-        {
-            // Print the 16 bytes before reversal
-            eprintln!("=== CHALLENGE_SCALAR_128_BITS DEBUG ===");
-            eprintln!("16 bytes before reverse (LE from hash) = {:?}", &buf);
-        }
-
-        buf = buf.into_iter().rev().collect();
-
-        #[cfg(feature = "debug-expected-output")]
-        {
-            eprintln!("16 bytes after reverse = {:?}", &buf);
-            // Convert to u128 for display
-            let val = u128::from_be_bytes(buf.clone().try_into().unwrap());
-            eprintln!("result as u128 = {}", val);
-            eprintln!("=== END CHALLENGE_SCALAR_128_BITS ===");
-        }
-
         JF::from_bytes(&buf)
     }
 
@@ -362,10 +346,10 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
     }
 
     fn challenge_scalar_optimized<JF: JoltField>(&mut self) -> JF::Challenge {
-        // The smaller challenge which is then converted into a
-        // MontU128Challenge
-        let challenge_scalar: u128 = self.challenge_u128();
-        JF::Challenge::from(challenge_scalar)
+        // Full Fr challenge via challenge_scalar_128_bits, then wrap in Challenge type.
+        // Mont254BitChallenge<F> is a newtype of F → same memory layout → transmute is safe.
+        let scalar: JF = self.challenge_scalar_128_bits();
+        unsafe { std::mem::transmute_copy::<JF, JF::Challenge>(&scalar) }
     }
 
     fn challenge_vector_optimized<JF: JoltField>(&mut self, len: usize) -> Vec<JF::Challenge> {
