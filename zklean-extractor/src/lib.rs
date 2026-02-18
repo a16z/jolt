@@ -18,6 +18,7 @@ pub use mle_ast::{MleAst, DefaultMleAst};
 // Re-export commitment types and their thread-local accessors
 pub use mle_ast::{
     AstCommitment, set_pending_commitment_chunks, take_pending_commitment_chunks,
+    set_pending_point_elements, take_pending_point_elements,
 };
 
 
