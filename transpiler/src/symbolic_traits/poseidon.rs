@@ -34,12 +34,13 @@
 //! with Blake2b (the default), all challenge values will differ and verification
 //! will fail silently (assertions won't be zero).
 
-use ark_ec::CurveGroup;
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_serialize::CanonicalSerialize;
 use jolt_core::field::JoltField;
 use jolt_core::transcripts::Transcript;
 use zklean_extractor::mle_ast::{
-    set_pending_challenge, take_pending_append, take_pending_commitment_chunks, MleAst,
+    set_pending_challenge, take_pending_append, take_pending_commitment_chunks,
+    take_pending_point_elements, MleAst,
 };
 
 /// Symbolic Poseidon transcript for AST-based transpilation.
@@ -139,6 +140,7 @@ impl Transcript for PoseidonAstTranscript {
     // === Internal raw_append_* methods ===
 
     fn raw_append_label(&mut self, label: &'static [u8]) {
+        assert!(label.len() <= 32);
         let field = Self::label_to_field(label);
         self.hash_and_update(field);
     }
@@ -177,9 +179,32 @@ impl Transcript for PoseidonAstTranscript {
         }
     }
 
-    fn raw_append_point<G: CurveGroup>(&mut self, _point: &G) {
-        // For symbolic execution, we just hash a placeholder
-        self.hash_and_update(MleAst::from_u64(0));
+    fn raw_append_point<G: CurveGroup>(&mut self, point: &G) {
+        // Symbolic path: check for pending point elements set via set_pending_point_elements()
+        if let Some(elements) = take_pending_point_elements() {
+            self.append_field_elements(&elements);
+            return;
+        }
+
+        // Concrete fallback: extract affine (x, y), serialize BE, concatenate, hash
+        if point.is_zero() {
+            self.raw_append_bytes(&[0u8; 64]);
+            return;
+        }
+
+        let aff = point.into_affine();
+        let mut x_bytes = vec![];
+        let mut y_bytes = vec![];
+        let x = aff.x().unwrap();
+        x.serialize_compressed(&mut x_bytes).unwrap();
+        x_bytes = x_bytes.into_iter().rev().collect();
+        let y = aff.y().unwrap();
+        y.serialize_compressed(&mut y_bytes).unwrap();
+        y_bytes = y_bytes.into_iter().rev().collect();
+
+        let mut combined = x_bytes;
+        combined.extend_from_slice(&y_bytes);
+        self.raw_append_bytes(&combined);
     }
 
     // === Override append_serializable to handle AstCommitment chunks ===

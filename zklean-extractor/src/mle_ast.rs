@@ -182,6 +182,25 @@ pub fn take_pending_commitment_chunks() -> Option<Vec<MleAst>> {
     PENDING_COMMITMENT_CHUNKS.with(|cell| cell.borrow_mut().take())
 }
 
+thread_local! {
+    static PENDING_POINT_ELEMENTS: RefCell<Option<Vec<MleAst>>> = const { RefCell::new(None) };
+}
+
+/// Set pending point elements for PoseidonAstTranscript::raw_append_point.
+/// `elements` must have exactly 2 entries: [x_field_element, y_field_element].
+pub fn set_pending_point_elements(elements: Vec<MleAst>) {
+    assert_eq!(elements.len(), 2, "Point must have exactly 2 elements (x, y)");
+    PENDING_POINT_ELEMENTS.with(|cell| {
+        *cell.borrow_mut() = Some(elements);
+    });
+}
+
+/// Take the pending point elements (if any).
+/// Called by PoseidonAstTranscript::raw_append_point to get the 2 MleAst elements.
+pub fn take_pending_point_elements() -> Option<Vec<MleAst>> {
+    PENDING_POINT_ELEMENTS.with(|cell| cell.borrow_mut().take())
+}
+
 // =============================================================================
 // Symbolic constraint accumulation for transpilation
 // =============================================================================
