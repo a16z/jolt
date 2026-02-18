@@ -24,7 +24,7 @@
 //! Dory commitments are 384-byte elliptic curve points. They're split into 12 chunks
 //! of 32 bytes each (to fit in BN254 field elements). The serialization uses:
 //! - `serialize_uncompressed` (not compressed)
-//! - Byte reversal for big-endian/EVM compatibility
+//! - LE byte order (no reversal — Groth16 circuit, not EVM)
 //! Dory will probably be replaced in future iterations,
 //! the transpilation code will need to be updated in that case.
 //!
@@ -114,7 +114,7 @@ impl VarAllocator {
 
     /// Allocate variables for a commitment's 12 chunks and record witness values.
     ///
-    /// Commitments are serialized as uncompressed bytes, reversed for BE format,
+    /// Commitments are serialized as uncompressed LE bytes,
     /// then split into 12 × 32-byte chunks (each fits in a BN254 field element).
     pub fn alloc_commitment<T: CanonicalSerialize>(
         &mut self,
@@ -138,14 +138,12 @@ const CHUNKS_PER_COMMITMENT: usize = 12;
 /// Serialize a commitment to bytes in the format used by Poseidon transcript.
 /// MUST match the Poseidon transcript serialization exactly:
 /// 1. Use serialize_uncompressed (not compressed)
-/// 2. Reverse bytes for BE/EVM format
+/// 2. LE bytes directly (no byte reversal — Groth16 circuit, not EVM)
 fn commitment_to_bytes<T: CanonicalSerialize>(commitment: &T) -> Vec<u8> {
     let mut bytes = Vec::new();
     commitment
         .serialize_uncompressed(&mut bytes)
         .expect("serialization failed");
-    // Reverse bytes to match Poseidon transcript format (BE for EVM compatibility)
-    bytes.reverse();
     bytes
 }
 
