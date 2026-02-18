@@ -3,9 +3,10 @@
 //! Source: `jolt-core/src/zkvm/spartan/shift.rs`
 //!
 //!
+//! - `γ ∈ F`: fresh batching challenge (powers γ, γ², γ³, γ⁴ used)
+//!
 //! ## Schwartz–Zippel randomness
 //!
-//! - `γ ∈ F`: fresh batching challenge (powers γ, γ², γ³, γ⁴ used)
 //! - Re-uses `r^(1)_cycle ∈ F^{log₂ T}` from Stage 1 (SpartanOuter)
 //! - Re-uses `r^(2)_cycle ∈ F^{log₂ T}` from Stage 2 (ProductVirtualization)
 //!
