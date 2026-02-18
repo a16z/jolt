@@ -3,9 +3,10 @@
 //! Source: `jolt-core/src/zkvm/ram/read_write_checking.rs`
 //!
 //!
+//! - `γ ∈ F`: Batching randomness
+//!
 //! ## Schwartz–Zippel randomness
 //!
-//! - `γ ∈ F`: fresh batching challenge
 //! - Re-uses `r^(1)_cycle ∈ F^{log₂ T}` from Stage 1 (SpartanOuter)
 //!
 //!
