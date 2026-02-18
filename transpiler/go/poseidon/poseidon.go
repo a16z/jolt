@@ -148,15 +148,23 @@ func (c *BN254Chip) mix(state_ BN254State, constantMatrix [][]*big.Int) BN254Sta
 // 8*i+j gets weight 2^(8*(31-i)+j). Recomposition is free in R1CS
 // (linear combinations).
 func ByteReverse(api frontend.API, x frontend.Variable) frontend.Variable {
-	bits := api.ToBinary(x, 254)
+	const (
+		fieldBits  = 254 // BN254 Fr field size
+		bitsInByte = 8
+		totalBytes = 32 // 256-bit representation
+	)
+
+	bits := api.ToBinary(x, fieldBits)
 	result := frontend.Variable(0)
-	for i := 0; i < 32; i++ {
-		for j := 0; j < 8; j++ {
-			srcBit := i*8 + j
-			if srcBit >= 254 {
-				continue
+
+	// Process bytes 0-30 fully (bits 0-247), byte 31 partially (bits 248-253)
+	for byteIdx := 0; byteIdx < totalBytes; byteIdx++ {
+		for bitInByte := 0; bitInByte < bitsInByte; bitInByte++ {
+			srcBit := byteIdx*bitsInByte + bitInByte
+			if srcBit >= fieldBits {
+				break // Remaining bits exceed field size
 			}
-			dstPos := (31-i)*8 + j
+			dstPos := (totalBytes-1-byteIdx)*bitsInByte + bitInByte
 			result = api.Add(result, api.Mul(bits[srcBit], pow2[dstPos]))
 		}
 	}
@@ -171,13 +179,27 @@ func ByteReverse(api frontend.API, x frontend.Variable) frontend.Variable {
 //   - Multiply by R^-1 mod p
 //
 // In bits: each bit_i (i=0..124) gets weight 2^(128+i), then * R^-1.
+//
+// Note: We decompose 254 bits even though we only use 125, because the input x
+// can be any field element. The 125-bit masking happens implicitly by only
+// reading bits 0..124 during recomposition.
 func Truncate128Reverse(api frontend.API, x frontend.Variable) frontend.Variable {
-	bits := api.ToBinary(x, 254)
-	// Take bits 0..124 (125-bit mask), place at offset 128
+	const (
+		fieldBits       = 254 // Full field element decomposition
+		maskBits        = 125 // Jolt uses 125-bit mask for challenges
+		montgomeryShift = 128 // Position in Montgomery limb layout
+	)
+
+	// Decompose full field element - input can have any bits set
+	bits := api.ToBinary(x, fieldBits)
+
+	// Recompose with shifted weights: bit_i gets weight 2^(128+i)
+	// Only use bits 0..124 (implicit 125-bit mask)
 	shifted := frontend.Variable(0)
-	for i := 0; i < 125; i++ {
-		shifted = api.Add(shifted, api.Mul(bits[i], pow2[128+i]))
+	for i := 0; i < maskBits; i++ {
+		shifted = api.Add(shifted, api.Mul(bits[i], pow2[montgomeryShift+i]))
 	}
+
 	// Montgomery de-conversion: multiply by R^-1 mod p
 	return api.Mul(shifted, bn254RInv)
 }
@@ -185,8 +207,12 @@ func Truncate128Reverse(api frontend.API, x frontend.Variable) frontend.Variable
 // bn254RInv is R^-1 mod p for BN254 Fr Montgomery arithmetic.
 // R = 2^256 mod p, so R^-1 is the modular inverse of R.
 // Used by Truncate128Reverse for Montgomery de-conversion.
+// Computed by: cargo run -p transpiler --bin compute_r_inv --release
 var bn254RInv = func() *big.Int {
-	rInv, _ := new(big.Int).SetString("9915499612839321149637521777990102151350674507940716049588462388200839649614", 10)
+	rInv, ok := new(big.Int).SetString("9915499612839321149637521777990102151350674507940716049588462388200839649614", 10)
+	if !ok {
+		panic("failed to parse bn254RInv constant")
+	}
 	return rInv
 }()
 
