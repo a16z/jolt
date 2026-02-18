@@ -63,5 +63,23 @@ fn inline_asm() -> (i32, u32, i32, u32) {
 ```
 
 
+## Null Pointer Write / "Unknown memory mapping: 0x0"
+If you see `Null pointer write detected (store to 0x0)` or `Illegal device store: Unknown memory mapping: 0x0`, it means your guest program crashed. This happens when musl's `abort()` cannot deliver a signal and falls back to writing to a null pointer.
+
+The most common cause is a missing jolt-sdk feature. If your guest uses:
+- **rayon or threading** — add `"thread"` to your jolt-sdk features
+- **randomness (getrandom)** — add `"random"` to your jolt-sdk features
+
+```toml
+[dependencies]
+jolt = { package = "jolt-sdk", features = ["guest-std", "thread", "random"] }
+```
+
+To diagnose which syscall is failing, add the `"debug"` feature to enable syscall logging:
+```toml
+jolt = { package = "jolt-sdk", features = ["guest-std", "debug"] }
+```
+This prints every syscall the guest makes (e.g. `[syscall] SYS_clone`), which helps identify which capability is missing.
+
 ## Getting Help
 If none of the above solve the problem, please create a Github issue with a detailed bug report including the Jolt commit hash, the hardware or container configuration used, and a minimal guest program to reproduce the bug.
