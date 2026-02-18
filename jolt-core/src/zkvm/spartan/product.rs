@@ -4,10 +4,9 @@
 //! Inputs: `jolt-core/src/zkvm/r1cs/inputs.rs` (`ProductCycleInputs`, `PRODUCT_UNIQUE_FACTOR_VIRTUALS`)
 //!
 //!
-//! - `τ_c ∈ F`: fresh constraint-index challenge
-//!
 //! ## Schwartz–Zippel randomness
 //!
+//! - `τ_c ∈ F`: fresh constraint-index challenge
 //! - Re-uses `r^(1)_cycle ∈ F^{log₂ T}` from Stage 1 (SpartanOuter)
 //!
 //!
