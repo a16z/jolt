@@ -9,15 +9,16 @@ package poseidon
 import (
 	"math/big"
 
-	"github.com/consensys/gnark/constraint/solver"
 	"github.com/consensys/gnark/frontend"
 )
 
+// pow2 contains precomputed powers of 2 for bit recomposition.
+var pow2 [256]*big.Int
+
 func init() {
-	solver.RegisterHint(byteReverseHint)
-	solver.RegisterHint(truncate128ReverseHint)
-	solver.RegisterHint(truncate128Hint)
-	solver.RegisterHint(appendU64TransformHint)
+	for i := 0; i < 256; i++ {
+		pow2[i] = new(big.Int).Lsh(big.NewInt(1), uint(i))
+	}
 }
 
 const BN254_FULL_ROUNDS int = 8
@@ -139,250 +140,89 @@ func (c *BN254Chip) mix(state_ BN254State, constantMatrix [][]*big.Int) BN254Sta
 	return result
 }
 
-// ByteReverse performs byte-reversal of a field element.
-// This matches Rust PoseidonTranscript::append_scalar behavior:
+// ByteReverse performs byte-reversal of a field element using pure constraints.
+// Matches Rust: serialize(LE) -> reverse bytes -> from_le_bytes_mod_order.
 //
-//	serialize(LE) -> reverse bytes -> from_le_bytes_mod_order
-//
-// For a 256-bit field element stored as 32 bytes [b0, b1, ..., b31] (LE),
-// the byte-reversed value interprets [b31, b30, ..., b0] as LE.
+// Decomposes x into 254 bits, then recomposes with reversed byte order.
+// Byte i of x (LE) moves to position (31-i). In bits: bit at position
+// 8*i+j gets weight 2^(8*(31-i)+j). Recomposition is free in R1CS
+// (linear combinations).
 func ByteReverse(api frontend.API, x frontend.Variable) frontend.Variable {
-	result, err := api.Compiler().NewHint(byteReverseHint, 1, x)
-	if err != nil {
-		panic(err)
+	bits := api.ToBinary(x, 254)
+	result := frontend.Variable(0)
+	for i := 0; i < 32; i++ {
+		for j := 0; j < 8; j++ {
+			srcBit := i*8 + j
+			if srcBit >= 254 {
+				continue
+			}
+			dstPos := (31-i)*8 + j
+			result = api.Add(result, api.Mul(bits[srcBit], pow2[dstPos]))
+		}
 	}
-	return result[0]
+	return result
 }
 
-// byteReverseHint computes byte-reverse of a field element.
-// Matches Rust: serialize_uncompressed(LE) -> reverse -> from_le_bytes_mod_order
-func byteReverseHint(_ *big.Int, inputs []*big.Int, outputs []*big.Int) error {
-	if len(inputs) != 1 || len(outputs) != 1 {
-		return nil
-	}
-
-	// Convert to 32-byte LE representation (like Rust serialize_uncompressed)
-	// big.Int stores in big-endian internally, so we need to convert
-	inputBytes := inputs[0].Bytes() // This is big-endian
-
-	// Create 32-byte LE array from the BE bytes
-	le := make([]byte, 32)
-	for i := 0; i < len(inputBytes) && i < 32; i++ {
-		le[i] = inputBytes[len(inputBytes)-1-i]
-	}
-
-	// Reverse the LE bytes (like Rust buf.reverse())
-	reversed := make([]byte, 32)
-	for i := 0; i < 32; i++ {
-		reversed[i] = le[31-i]
-	}
-
-	// Interpret reversed bytes as LE (like Rust from_le_bytes_mod_order)
-	// Convert LE to big.Int
-	be := make([]byte, 32)
-	for i := 0; i < 32; i++ {
-		be[i] = reversed[31-i]
-	}
-	outputs[0] = new(big.Int).SetBytes(be)
-	return nil
-}
-
-// Truncate128Reverse truncates to 128 bits and byte-reverses.
-// This matches Rust PoseidonTranscript::challenge_scalar_128_bits behavior:
+// Truncate128Reverse truncates to 128 bits with Montgomery de-conversion.
+// Matches Rust MontU128Challenge::into() for ark_bn254::Fr:
+//   - Take low 128 bits of x (bits 0..127)
+//   - Apply 125-bit mask (clear bits 125, 126, 127)
+//   - Place masked value at Montgomery position: value * 2^128
+//   - Multiply by R^-1 mod p
 //
-//	take low 16 bytes (LE) -> reverse -> from_bytes
+// In bits: each bit_i (i=0..124) gets weight 2^(128+i), then * R^-1.
 func Truncate128Reverse(api frontend.API, x frontend.Variable) frontend.Variable {
-	result, err := api.Compiler().NewHint(truncate128ReverseHint, 1, x)
-	if err != nil {
-		panic(err)
+	bits := api.ToBinary(x, 254)
+	// Take bits 0..124 (125-bit mask), place at offset 128
+	shifted := frontend.Variable(0)
+	for i := 0; i < 125; i++ {
+		shifted = api.Add(shifted, api.Mul(bits[i], pow2[128+i]))
 	}
-	return result[0]
+	// Montgomery de-conversion: multiply by R^-1 mod p
+	return api.Mul(shifted, bn254RInv)
 }
 
-// twoPow128 is 2^128 as a big.Int constant
-var twoPow128 = func() *big.Int {
-	result := new(big.Int).Lsh(big.NewInt(1), 128)
-	return result
-}()
-
-// twoPow192 is 2^192 as a big.Int constant
-var twoPow192Mont = func() *big.Int {
-	result := new(big.Int).Lsh(big.NewInt(1), 192)
-	return result
-}()
-
-// bn254FrModulus is the BN254 Fr field modulus
-var bn254FrModulus = func() *big.Int {
-	modulus, _ := new(big.Int).SetString("21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
-	return modulus
-}()
-
-// bn254RInv is R^-1 mod p for BN254 Fr Montgomery arithmetic
-// R = 2^256 mod p, so R^-1 is the modular inverse of R
+// bn254RInv is R^-1 mod p for BN254 Fr Montgomery arithmetic.
+// R = 2^256 mod p, so R^-1 is the modular inverse of R.
+// Used by Truncate128Reverse for Montgomery de-conversion.
 var bn254RInv = func() *big.Int {
 	rInv, _ := new(big.Int).SetString("9915499612839321149637521777990102151350674507940716049588462388200839649614", 10)
 	return rInv
 }()
 
-// truncate128ReverseHint computes the MontU128Challenge to Fr conversion.
-// This matches Rust's MontU128Challenge::into() for ark_bn254::Fr.
+// Truncate128 truncates to 128 bits WITHOUT shifting using pure constraints.
+// Matches Rust challenge_scalar_128_bits: take low 16 LE bytes, reverse, interpret as LE.
 //
-// Rust MontU128Challenge behavior:
-// 1. challenge_u128() gets 16 bytes from hash, reverses, interprets as BE u128
-// 2. MontU128Challenge::new(value) applies 125-bit mask and stores [0, 0, low, high]
-// 3. Into<Fr> calls Fr::from_bigint_unchecked(BigInt::new([0, 0, low, high]))
-// 4. from_bigint_unchecked treats input as Montgomery form and multiplies by R^-1
-//
-// So the final value is: (low * 2^128 + high * 2^192) * R^-1 mod p
-func truncate128ReverseHint(_ *big.Int, inputs []*big.Int, outputs []*big.Int) error {
-	if len(inputs) != 1 || len(outputs) != 1 {
-		return nil
-	}
-
-	// Convert to 32-byte LE representation (like Rust serialize_uncompressed)
-	inputBytes := inputs[0].Bytes() // big-endian from big.Int
-	le := make([]byte, 32)
-	for i := 0; i < len(inputBytes) && i < 32; i++ {
-		le[i] = inputBytes[len(inputBytes)-1-i]
-	}
-
-	// Take first 16 bytes (low 128 bits in LE format)
-	le16 := le[:16]
-
-	// Reverse 16 bytes (like Rust buf.reverse())
-	for i := 0; i < 8; i++ {
-		le16[i], le16[15-i] = le16[15-i], le16[i]
-	}
-
-	// Interpret as BE to get u128 value (like Rust u128::from_be_bytes)
-	value128 := new(big.Int).SetBytes(le16)
-
-	// Apply 125-bit mask for MontU128Challenge
-	mask125 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 125), big.NewInt(1))
-	valueMasked := new(big.Int).And(value128, mask125)
-
-	// Compute BigInt representation [0, 0, low, high]
-	// This equals: low * 2^128 + high * 2^192
-	low := new(big.Int).And(valueMasked, new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(1)))
-	high := new(big.Int).Rsh(valueMasked, 64)
-
-	bigintValue := new(big.Int).Add(
-		new(big.Int).Mul(low, twoPow128),
-		new(big.Int).Mul(high, twoPow192Mont),
-	)
-
-	// Multiply by R^-1 mod p (what from_bigint_unchecked does)
-	result := new(big.Int).Mul(bigintValue, bn254RInv)
-	result.Mod(result, bn254FrModulus)
-
-	outputs[0] = result
-	return nil
-}
-
-// Truncate128 truncates to 128 bits WITHOUT shifting.
-// This matches Rust PoseidonTranscript::challenge_scalar behavior which returns Fr directly.
-//
-// Used for: r0 (univariate-skip), batching_coeff, sumcheck challenges
-//
-// Transforms: take low 16 bytes (LE) -> interpret as u128 -> return as Fr (no mask, no shift)
+// Decomposes x into 254 bits, takes bits 0..127, recomposes with reversed byte order.
+// Bit at position 8*i+j (i=0..15) gets weight 2^(8*(15-i)+j).
 func Truncate128(api frontend.API, x frontend.Variable) frontend.Variable {
-	result, err := api.Compiler().NewHint(truncate128Hint, 1, x)
-	if err != nil {
-		panic(err)
-	}
-	return result[0]
-}
-
-// truncate128Hint computes truncate-to-128-bits WITHOUT shifting.
-// This matches Rust challenge_scalar behavior which truncates to 128 bits and returns Fr.
-//
-// Rust challenge_scalar_128_bits does:
-// 1. challenge_bytes(&mut buf) - fills 16 bytes from hash
-// 2. buf.reverse() - reverse the 16 bytes
-// 3. JF::from_bytes(&buf) = Fr::from_le_bytes_mod_order(&buf) - interpret as LE
-//
-// Note: Unlike challenge_scalar_optimized (MontU128Challenge), this does NOT:
-// - Apply 125-bit mask
-// - Shift by 2^128
-func truncate128Hint(_ *big.Int, inputs []*big.Int, outputs []*big.Int) error {
-	if len(inputs) != 1 || len(outputs) != 1 {
-		return nil
-	}
-
-	// Convert to 32-byte LE representation (like Rust serialize_uncompressed)
-	inputBytes := inputs[0].Bytes() // big-endian from big.Int
-	le := make([]byte, 32)
-	for i := 0; i < len(inputBytes) && i < 32; i++ {
-		le[i] = inputBytes[len(inputBytes)-1-i]
-	}
-
-	// Step 1: Take first 16 bytes (low 128 bits in LE format)
-	le16 := make([]byte, 16)
-	copy(le16, le[:16])
-
-	// Step 2: Reverse the 16 bytes (like Rust buf.reverse())
-	for i := 0; i < 8; i++ {
-		le16[i], le16[15-i] = le16[15-i], le16[i]
-	}
-
-	// Step 3: Interpret the reversed bytes as LE (like Rust from_le_bytes_mod_order)
-	// To convert LE to big.Int, we reverse to get BE
-	be := make([]byte, 16)
+	bits := api.ToBinary(x, 254)
+	result := frontend.Variable(0)
 	for i := 0; i < 16; i++ {
-		be[i] = le16[15-i]
+		for j := 0; j < 8; j++ {
+			srcBit := i*8 + j
+			dstPos := (15-i)*8 + j
+			result = api.Add(result, api.Mul(bits[srcBit], pow2[dstPos]))
+		}
 	}
-	outputs[0] = new(big.Int).SetBytes(be)
-	return nil
+	return result
 }
 
-// AppendU64Transform computes the field element for append_u64(x).
+// AppendU64Transform computes bswap64(x) * 2^192 using pure constraints.
+// Matches Rust PoseidonTranscript::append_u64: pack x.to_be_bytes() into
+// bytes 24-31 of a 32-byte array, interpret as LE field element.
 //
-// PoseidonTranscript::append_u64 does:
-// 1. Pack u64 x into bytes 24-31 of a 32-byte array using x.to_be_bytes()
-// 2. Interpret the 32 bytes as a little-endian field element
-//
-// For x with BE bytes [b7,b6,b5,b4,b3,b2,b1,b0] (where b7 is MSB):
-// - packed[24..32] = [b7,b6,b5,b4,b3,b2,b1,b0]
-// - LE interpretation = b7*2^192 + b6*2^200 + ... + b0*2^248
-//
-// This is equivalent to: bswap64(x) * 2^192
-// where bswap64 reverses the byte order of the u64.
-//
-// NOTE: This uses a hint because the transformation involves byte manipulation
-// that can't be expressed efficiently with field arithmetic.
+// Byte i of x (LE, i=0..7) goes to packed position (31-i).
+// Bit at position 8*i+j gets weight 2^(8*(31-i)+j).
 func AppendU64Transform(api frontend.API, x frontend.Variable) frontend.Variable {
-	result, err := api.Compiler().NewHint(appendU64TransformHint, 1, x)
-	if err != nil {
-		panic(err)
+	bits := api.ToBinary(x, 64)
+	result := frontend.Variable(0)
+	for i := 0; i < 8; i++ {
+		for j := 0; j < 8; j++ {
+			srcBit := i*8 + j
+			dstPos := (31-i)*8 + j
+			result = api.Add(result, api.Mul(bits[srcBit], pow2[dstPos]))
+		}
 	}
-	return result[0]
-}
-
-// appendU64TransformHint computes the append_u64 field element transformation.
-func appendU64TransformHint(_ *big.Int, inputs []*big.Int, outputs []*big.Int) error {
-	if len(inputs) != 1 || len(outputs) != 1 {
-		return nil
-	}
-
-	x := inputs[0].Uint64()
-
-	// Pack into 32-byte array with BE padding (like Rust does)
-	packed := make([]byte, 32)
-	// x.to_be_bytes() puts MSB first
-	packed[24] = byte(x >> 56)
-	packed[25] = byte(x >> 48)
-	packed[26] = byte(x >> 40)
-	packed[27] = byte(x >> 32)
-	packed[28] = byte(x >> 24)
-	packed[29] = byte(x >> 16)
-	packed[30] = byte(x >> 8)
-	packed[31] = byte(x)
-
-	// Interpret as LE: convert to big.Int by reversing to BE
-	be := make([]byte, 32)
-	for i := 0; i < 32; i++ {
-		be[i] = packed[31-i]
-	}
-	outputs[0] = new(big.Int).SetBytes(be)
-	return nil
+	return result
 }
