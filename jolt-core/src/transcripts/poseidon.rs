@@ -1,13 +1,10 @@
-use super::poseidon_fq_params::{
-    hex_to_bytes, FQ_ALPHA, FQ_FULL_ROUNDS, FQ_MDS, FQ_PARTIAL_ROUNDS, FQ_ROUND_CONSTANTS, FQ_WIDTH,
-};
 use super::transcript::Transcript;
 use crate::field::JoltField;
-use ark_bn254::{Fq, Fr};
+use ark_bn254::Fr;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
-use light_poseidon::{Poseidon, PoseidonHasher, PoseidonParameters};
+use light_poseidon::{Poseidon, PoseidonHasher};
 use std::marker::PhantomData;
 
 /// Poseidon hash width: 3 field elements (state, n_rounds, data).
@@ -32,42 +29,8 @@ impl PoseidonParams<Fr> for FrParams {
     }
 }
 
-/// Poseidon parameters for BN254 Fq (base field).
-/// Uses parameters generated with poseidon-paramgen v0.4.0 (audited by NCC Group).
-#[derive(Clone, Copy)]
-pub struct FqParams;
-
-impl PoseidonParams<Fq> for FqParams {
-    fn poseidon() -> Poseidon<Fq> {
-        // Parse MDS matrix from hex strings
-        let mut mds: Vec<Vec<Fq>> = Vec::with_capacity(FQ_WIDTH);
-        for row in FQ_MDS.iter() {
-            let mut mds_row: Vec<Fq> = Vec::with_capacity(FQ_WIDTH);
-            for elem_str in row.iter() {
-                let elem = Fq::from_be_bytes_mod_order(&hex_to_bytes(elem_str));
-                mds_row.push(elem);
-            }
-            mds.push(mds_row);
-        }
-
-        // Parse round constants from hex strings
-        let mut ark: Vec<Fq> = Vec::with_capacity(FQ_ROUND_CONSTANTS.len());
-        for c_str in FQ_ROUND_CONSTANTS.iter() {
-            let c = Fq::from_be_bytes_mod_order(&hex_to_bytes(c_str));
-            ark.push(c);
-        }
-
-        let params =
-            PoseidonParameters::new(ark, mds, FQ_FULL_ROUNDS, FQ_PARTIAL_ROUNDS, FQ_WIDTH, FQ_ALPHA);
-        Poseidon::new(params)
-    }
-}
-
-/// Type alias for the original Fr-based transcript (backwards compatible)
+/// Type alias for the Fr-based transcript
 pub type PoseidonTranscriptFr = PoseidonTranscript<Fr, FrParams>;
-
-/// Type alias for Fq-based transcript (for SNARK composition / Grumpkin Fr)
-pub type PoseidonTranscriptFq = PoseidonTranscript<Fq, FqParams>;
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript using Poseidon.
 ///
@@ -78,8 +41,7 @@ pub type PoseidonTranscriptFq = PoseidonTranscript<Fq, FqParams>;
 /// into every hash invocation.
 ///
 /// The type parameter `F` specifies the field, and `P` provides the Poseidon parameters.
-/// For BN254 Fr (scalar field), use `PoseidonTranscript<Fr, FrParams>`.
-/// For BN254 Fq (base field), use `PoseidonTranscript<Fq, FqParams>`.
+/// For BN254 Fr (scalar field), use `PoseidonTranscriptFr`.
 #[derive(Clone)]
 pub struct PoseidonTranscript<F: PrimeField, P: PoseidonParams<F>> {
     /// 256-bit running state
@@ -468,7 +430,6 @@ impl<F: PrimeField, P: PoseidonParams<F>> Transcript for PoseidonTranscript<F, P
 mod tests {
     use super::*;
     use ark_bn254::Fr;
-    use ark_std::Zero;
     use std::collections::HashSet;
 
     // Use the Fr variant for backwards-compatible tests
@@ -723,33 +684,5 @@ mod tests {
 
         assert_eq!(powers.len(), 5);
         assert_eq!(powers[0], Fr::from(1u64));
-    }
-
-    #[test]
-    fn test_fq_transcript_works() {
-        // Test that Fq transcript can be created and used
-        let mut transcript: PoseidonTranscriptFq = Transcript::new(b"fq_test");
-        transcript.append_u64(b"num", 12345);
-        transcript.append_bytes(b"data", b"test data");
-
-        // Should produce valid challenges
-        let challenge: Fq = Fq::from_le_bytes_mod_order(&{
-            let mut buf = [0u8; 32];
-            transcript.challenge_bytes(&mut buf);
-            buf
-        });
-
-        assert!(!challenge.is_zero());
-    }
-
-    #[test]
-    fn test_fr_and_fq_produce_different_results() {
-        // Fr and Fq transcripts should produce different results
-        // (different MDS matrices and round constants)
-        let fr_transcript: PoseidonTranscriptFr = Transcript::new(b"test");
-        let fq_transcript: PoseidonTranscriptFq = Transcript::new(b"test");
-
-        // Initial states should differ due to different Poseidon parameters
-        assert_ne!(fr_transcript.state, fq_transcript.state);
     }
 }
