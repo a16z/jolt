@@ -1310,7 +1310,7 @@ dependencies = [
  "derive_more 2.1.1",
  "serde",
  "serde_json",
- "strum 0.26.3",
+ "strum 0.27.2",
  "strum_macros 0.26.4",
  "syn 1.0.109",
  "tracing",
@@ -2886,7 +2886,7 @@ dependencies = [
  "serde",
  "serial_test",
  "sha3",
- "strum 0.26.3",
+ "strum 0.27.2",
  "strum_macros 0.26.4",
  "sysinfo 0.37.2",
  "thiserror 1.0.69",
@@ -5499,9 +5499,9 @@ dependencies = [
 
 [[package]]
 name = "strum"
-version = "0.26.3"
+version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 
 [[package]]
 name = "strum_macros"
@@ -5931,7 +5931,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
- "strum 0.26.3",
+ "strum 0.27.2",
  "strum_macros 0.26.4",
  "tracing",
  "tracing-subscriber",
@@ -6797,7 +6797,7 @@ dependencies = [
  "proptest",
  "rand_core 0.6.4",
  "regex",
- "strum 0.26.3",
+ "strum 0.27.2",
  "tracer",
  "z3",
 ]
@@ -7061,7 +7061,7 @@ dependencies = [
  "proptest",
  "rand_core 0.6.4",
  "regex",
- "strum 0.26.3",
+ "strum 0.27.2",
  "tracer",
 ]
 
