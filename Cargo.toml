@@ -168,7 +168,7 @@ dory = { package = "dory-pcs", version = "0.2.0", features = ["backends", "cache
 clap = { version = "4.5.4", features = ["derive"] }
 eyre = "0.6.12"
 anyhow = "1.0.97"
-thiserror = "1.0.58"
+thiserror = "2.0.18"
 derive_more = { version = "2.0.1", features = [
     "from",
 ], default-features = false }
