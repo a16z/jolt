@@ -234,7 +234,7 @@ getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = 
 getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false }
 
 # Build and Development
-ctor = { version = "0.2" }
+ctor = { version = "0.6" }
 hex-literal = "0.4.1"
 hex = "0.4.3"
 spinners = { version = "4.1.1", default-features = false }
