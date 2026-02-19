@@ -300,6 +300,23 @@ func TestStagesCircuitProveVerify(t *testing.T) {
 	t.Logf("Verify time: %v", verifyTime)
 	t.Log("")
 	t.Log("✓ Stages 1-7 circuit verification passed!")
+
+	// Write results JSON for e2e test
+	results := map[string]interface{}{
+		"constraints": r1cs.GetNbConstraints(),
+		"proof_bytes": proofBuf.Len(),
+		"compile_ms":  compileTime.Milliseconds(),
+		"setup_ms":    setupTime.Milliseconds(),
+		"prove_ms":    proveTime.Milliseconds(),
+		"verify_ms":   verifyTime.Milliseconds(),
+	}
+	if data, err := json.Marshal(results); err == nil {
+		_, f, _, _ := runtime.Caller(0)
+		resultsPath := filepath.Join(filepath.Dir(f), "groth16_results.json")
+		if werr := os.WriteFile(resultsPath, data, 0644); werr != nil {
+			t.Logf("Warning: failed to write results JSON: %v", werr)
+		}
+	}
 }
 
 // =============================================================================
