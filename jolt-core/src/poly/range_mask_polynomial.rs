@@ -10,6 +10,7 @@ pub struct RangeMaskPolynomial<F: JoltField> {
 
 impl<F: JoltField> RangeMaskPolynomial<F> {
     pub fn new(range_start: u128, range_end: u128) -> Self {
+        assert!(range_start < range_end, "Invalid range");
         Self {
             range_start,
             range_end,
@@ -22,6 +23,7 @@ impl<F: JoltField> RangeMaskPolynomial<F> {
     /// In other words, LT(r, range_end) - LT(r, range_start)
     pub fn evaluate_mle(&self, r: &[F::Challenge]) -> F {
         // Compute LT(r, range_end)
+        assert!(self.range_end < (1 << r.len()), "Invalid range_end");
         let mut range_end = LookupBits::new(self.range_end, r.len());
         let mut lt_range_end = F::zero();
         let mut eq_range_end = F::one();
