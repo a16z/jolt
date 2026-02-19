@@ -1,22 +1,36 @@
 //! Compute R and R^-1 for BN254 Fr Montgomery arithmetic.
 //!
-//! In ark-ff, Fr elements are stored in Montgomery form internally.
-//! R = 2^256 mod p for BN254.
+//! # Purpose
 //!
-//! This utility verifies the hardcoded `bn254RInv` constant in poseidon.go
-//! and documents how it was derived.
+//! One-time utility to derive the `bn254RInv` constant used in `poseidon.go`.
+//! The constant is now hardcoded; this binary documents how it was computed.
+//!
+//! # What is R?
+//!
+//! R is the Montgomery constant: R = 2^256 mod p (for 4×64-bit limb representation).
+//! In ark-ff, field elements are stored as `a * R mod p` internally.
+//! R^-1 is needed to convert from Montgomery form back to standard form.
+//!
+//! # Why we need R^-1
+//!
+//! Jolt's `from_bigint_unchecked` interprets input as already in Montgomery form
+//! and multiplies by R^-1. The Go circuit's `Truncate128Reverse` must apply the
+//! same R^-1 multiplication to match Rust's challenge derivation.
+//!
+//! # Scope
+//!
+//! This utility is **BN254 Fr specific**:
+//! - Hardcodes R = 2^256 (4 limbs × 64 bits)
+//! - Uses `ark_bn254::Fr` directly
+//!
+//! For other fields, you'd need to adjust the limb count and import the
+//! appropriate field type. Each field has its own R value.
 //!
 //! # Usage
 //!
 //! ```bash
-//! cargo run -p gnark-transpiler --bin compute_r_inv --release
+//! cargo run -p transpiler --bin compute_r_inv --release
 //! ```
-//!
-//! # Background
-//!
-//! Jolt's `from_bigint_unchecked` interprets input as Montgomery form and
-//! multiplies by R^-1 to convert to standard form. The Go circuit hints
-//! must apply the same transformation to match challenge values.
 
 use ark_bn254::Fr;
 use ark_ff::{BigInt, PrimeField};
