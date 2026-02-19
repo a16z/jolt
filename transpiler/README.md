@@ -29,7 +29,22 @@ Stage 8 (PCS verification) is **not transpiled** because:
 
 ## Quick Start
 
-### Full E2E Pipeline (3 commands)
+### Full E2E Pipeline (single command)
+
+The easiest way to run the complete pipeline is with the E2E test:
+
+```bash
+cd transpiler/go && go test -v -run TestEndToEndPipeline -timeout 30m
+```
+
+This automatically:
+1. Builds the Rust binaries (fibonacci, transpiler)
+2. Generates a Jolt proof with Poseidon transcript
+3. Transpiles to Gnark circuit
+4. Runs Groth16 setup, prove, and verify
+5. Reports detailed timing breakdown for each step
+
+### Manual Pipeline (3 commands)
 
 ```bash
 # 1. Generate a Jolt proof (MUST use Poseidon transcript)
