@@ -2889,7 +2889,7 @@ dependencies = [
  "strum 0.26.3",
  "strum_macros 0.26.4",
  "sysinfo 0.37.2",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tracer",
  "tracing",
  "tracing-chrome",
