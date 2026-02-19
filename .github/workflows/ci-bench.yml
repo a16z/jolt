@@ -19,7 +19,7 @@ jobs:
     name: Performance benchmarks
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install RISC-V cross-compiler
         run: sudo apt-get install -y gcc-riscv64-unknown-elf
       - uses: actions-rust-lang/setup-rust-toolchain@v1
