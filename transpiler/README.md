@@ -67,7 +67,7 @@ cargo run -p transpiler --release --features transcript-poseidon
 ```
 
 This generates in `transpiler/go/`:
-- `stages_circuit.go` - The Gnark circuit (~2.9M constraints)
+- `stages_circuit.go` - The Gnark circuit (~2.86M constraints)
 - `stages_witness.json` - Witness values for proving
 - `stages_bundle.json` - Serialized AST (for debugging)
 
@@ -87,11 +87,25 @@ go test -v -run TestStagesCircuitProveVerify
 
 | Metric | Value |
 |--------|-------|
-| Constraints | 2,895,024 |
+| Constraints | ~2.86M |
 | Assertions | 16 |
 | Proof size | 164 bytes |
-| Prove time | ~8s |
-| Verify time | ~2ms |
+| Prove time | ~11s |
+| Verify time | ~3ms |
+
+#### Optimization History
+
+The transpilation pipeline has undergone significant optimizations:
+
+| Metric | Baseline | Phase 1 (byte-reverse removal) | Phase 1+2 (+ truncation) |
+|--------|----------|--------------------------------|--------------------------|
+| **Constraints** | **5,113,331** | **3,234,881 (-36.7%)** | **2,862,236 (-44.0%)** |
+| Circuit compile | 16.6s | 11.4s | 8.0s |
+| Groth16 setup | 3m35s | 2m19s | 2m18s |
+| Groth16 prove | 15.9s | 11.1s | 11.0s |
+| PK size | 835 MB | 520 MB | 483 MB |
+
+The optimizations removed unnecessary EVM-compatible byte operations from the Poseidon transcript. See the [Poseidon Optimization](#poseidon-optimization) section for details.
 
 ## Transcript Feature Flags
 
@@ -172,7 +186,7 @@ Groth16 Proof (164 bytes)
 Generated Gnark circuit with:
 - `JoltStagesCircuit` struct containing all witness fields
 - `Define()` method with constraint logic
-- ~3M constraints for stages 1-7
+- ~2.86M constraints for stages 1-7
 
 ### `stages_witness.json`
 
@@ -201,6 +215,36 @@ cargo run -p fibonacci --features debug-expected-output,transcript-poseidon -- 1
 cargo run -p transpiler --features debug-expected-output,transcript-poseidon
 ```
 
+## Poseidon Optimization
+
+The current implementation uses a **native field-arithmetic Poseidon transcript** that operates directly on BN254 field elements. This is a significant optimization over the original EVM-compatible encoding.
+
+### Background
+
+The original Poseidon transcript inherited byte-level serialization from Blake2b/Keccak transcripts, which were designed for direct Solidity verification. This included:
+- `ByteReverse`: Reverse bytes of field elements for EVM compatibility (~255 constraints each)
+- `AppendU64Transform`: Byte-swap and shift u64 values (~65 constraints each)
+- `Truncate128`/`Truncate128Reverse`: Extract 128-bit challenges with byte manipulation (~255 constraints each)
+
+These operations were meaningful for Blake2b/Keccak (which operate on bytes) but wasteful for Poseidon (which operates on field elements natively).
+
+### Why EVM Encoding Was Unnecessary
+
+1. **Poseidon's input domain is field elements**, not bytes. Byte manipulations require expensive bit decomposition in R1CS.
+2. **The Groth16 Solidity verifier never sees the transcript**. It only checks the pairing equation `e(A,B) = e(alpha,beta) * ...`. All Fiat-Shamir operations are private witness computations.
+3. **The encoding served no cryptographic purpose**. Any deterministic, injective encoding is equally valid for Fiat-Shamir security.
+
+### Current Implementation
+
+The optimized transcript:
+- Appends scalars directly as field elements (no byte reversal)
+- Appends u64 values as `Fr::from(x)` (no byte-swap + shift)
+- Uses native 128-bit truncation (no byte reversal in challenge derivation)
+
+This achieved a **44% constraint reduction** (5.1M → 2.86M) with corresponding improvements in proving time and memory usage.
+
+For the full analysis, see `.claude/theory/evm-byte-ops-constraint-analysis.md`.
+
 ## Common Issues
 
 ### Transcript Mismatch
@@ -226,9 +270,9 @@ cargo run -p fibonacci --features transcript-poseidon -- --save 50
 |--------|-------------|
 | `gnark_codegen` | AST → Go/gnark code generation with CSE |
 | `symbolic_proof` | Convert concrete proofs to symbolic form |
-| `poseidon` | Poseidon transcript for symbolic Fiat-Shamir |
-| `mle_opening_accumulator` | Symbolic opening accumulator |
-| `ast_commitment_scheme` | Stub commitment scheme for transpilation |
+| `symbolic_traits/poseidon` | `PoseidonAstTranscript` - Poseidon transcript for symbolic Fiat-Shamir |
+| `symbolic_traits/opening_accumulator` | `AstOpeningAccumulator` - Symbolic opening accumulator |
+| `symbolic_traits/ast_commitment_scheme` | `AstCommitmentScheme` - Stub commitment scheme for transpilation |
 
 ## Adding a New Transpilation Target
 
