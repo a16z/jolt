@@ -34,7 +34,7 @@
 //! with Blake2b (the default), all challenge values will differ and verification
 //! will fail silently (assertions won't be zero).
 
-use ark_ec::{AffineRepr, CurveGroup};
+use ark_ec::CurveGroup;
 use ark_serialize::CanonicalSerialize;
 use jolt_core::field::JoltField;
 use jolt_core::transcripts::Transcript;
@@ -178,32 +178,21 @@ impl Transcript for PoseidonAstTranscript {
         }
     }
 
-    fn raw_append_point<G: CurveGroup>(&mut self, point: &G) {
+    fn raw_append_point<G: CurveGroup>(&mut self, _point: &G) {
         // Symbolic path: check for pending point elements set via set_pending_point_elements()
         if let Some(elements) = take_pending_point_elements() {
             self.append_field_elements(&elements);
             return;
         }
 
-        // Concrete fallback: extract affine (x, y), serialize BE, concatenate, hash
-        if point.is_zero() {
-            self.raw_append_bytes(&[0u8; 64]);
-            return;
-        }
-
-        let aff = point.into_affine();
-        let mut x_bytes = vec![];
-        let mut y_bytes = vec![];
-        let x = aff.x().unwrap();
-        x.serialize_compressed(&mut x_bytes).unwrap();
-        x_bytes = x_bytes.into_iter().rev().collect();
-        let y = aff.y().unwrap();
-        y.serialize_compressed(&mut y_bytes).unwrap();
-        y_bytes = y_bytes.into_iter().rev().collect();
-
-        let mut combined = x_bytes;
-        combined.extend_from_slice(&y_bytes);
-        self.raw_append_bytes(&combined);
+        // No pending point elements — set_pending_point_elements() was never called.
+        // The concrete fallback was removed because it contained byte-reversal (.rev())
+        // that mismatches the concrete PoseidonTranscript (which no longer reverses).
+        // If point support is needed, wire up set_pending_point_elements() properly.
+        panic!(
+            "PoseidonAstTranscript::raw_append_point: no pending point elements. \
+             Call set_pending_point_elements() before raw_append_point() during symbolic execution."
+        );
     }
 
     // === Override append_serializable to handle AstCommitment chunks ===
