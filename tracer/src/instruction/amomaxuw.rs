@@ -81,6 +81,11 @@ impl RISCVTrace for AMOMAXUW {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
+        let effective_rd = if self.operands.rd == 0 {
+            *allocator.allocate()
+        } else {
+            self.operands.rd
+        };
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         match xlen {
@@ -94,7 +99,7 @@ impl RISCVTrace for AMOMAXUW {
                 asm.emit_r::<SUB>(*v1, self.operands.rs2, *v_rd);
                 asm.emit_r::<MUL>(*v1, *v1, *v0);
                 asm.emit_r::<ADD>(*v_rs2, *v1, *v_rd);
-                amo_post32(&mut asm, *v_rs2, self.operands.rs1, self.operands.rd, *v_rd);
+                amo_post32(&mut asm, *v_rs2, self.operands.rs1, effective_rd, *v_rd);
             }
             Xlen::Bit64 => {
                 let v_rd = allocator.allocate();
@@ -105,16 +110,12 @@ impl RISCVTrace for AMOMAXUW {
 
                 let v_rs2 = allocator.allocate();
                 let v0 = allocator.allocate();
-                // Zero-extend rs2 into v_rs2
                 asm.emit_i::<VirtualZeroExtendWord>(*v_rs2, self.operands.rs2, 0);
-                // Zero-extend v_rd into v0
                 asm.emit_i::<VirtualZeroExtendWord>(*v0, *v_rd, 0);
-                // Put max in v_rs2
                 asm.emit_r::<SLTU>(*v0, *v0, *v_rs2);
                 asm.emit_r::<SUB>(*v_rs2, self.operands.rs2, *v_rd);
                 asm.emit_r::<MUL>(*v_rs2, *v_rs2, *v0);
                 asm.emit_r::<ADD>(*v_rs2, *v_rs2, *v_rd);
-                // post processing, use v0 as v_mask in amo_post64
                 amo_post64(
                     &mut asm,
                     self.operands.rs1,
@@ -122,7 +123,7 @@ impl RISCVTrace for AMOMAXUW {
                     *v_dword,
                     *v_shift,
                     *v0,
-                    self.operands.rd,
+                    effective_rd,
                     *v_rd,
                 );
             }

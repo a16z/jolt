@@ -73,25 +73,35 @@ impl RISCVTrace for LRW {
 
 impl LRW {
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
+        let effective_rd = if self.operands.rd == 0 {
+            *allocator.allocate()
+        } else {
+            self.operands.rd
+        };
         let v_reservation_w = allocator.reservation_w_register();
         let v_reservation_d = allocator.reservation_d_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
 
         asm.emit_i::<ADDI>(v_reservation_w, self.operands.rs1, 0);
         asm.emit_i::<ADDI>(v_reservation_d, 0, 0); // clear D reservation
-        asm.emit_i::<VirtualLW>(self.operands.rd, self.operands.rs1, 0);
+        asm.emit_i::<VirtualLW>(effective_rd, self.operands.rs1, 0);
 
         asm.finalize()
     }
 
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
+        let effective_rd = if self.operands.rd == 0 {
+            *allocator.allocate()
+        } else {
+            self.operands.rd
+        };
         let v_reservation_w = allocator.reservation_w_register();
         let v_reservation_d = allocator.reservation_d_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
 
         asm.emit_i::<ADDI>(v_reservation_w, self.operands.rs1, 0);
         asm.emit_i::<ADDI>(v_reservation_d, 0, 0); // clear D reservation
-        asm.emit_ld::<LW>(self.operands.rd, self.operands.rs1, 0);
+        asm.emit_ld::<LW>(effective_rd, self.operands.rs1, 0);
 
         asm.finalize()
     }

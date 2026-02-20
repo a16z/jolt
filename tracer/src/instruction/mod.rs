@@ -550,8 +550,20 @@ macro_rules! define_rv32im_enums {
                 // constraint system never sees rd=x0.  INLINE is excluded because
                 // its trace() injects advice into sub-instructions and now handles
                 // rd=0 remapping internally.
-                if normalized.operands.rd == Some(0) && !matches!(self, Instruction::INLINE(_))
-                {
+                if normalized.operands.rd == Some(0) && !matches!(self,
+                    Instruction::INLINE(_)
+                    | Instruction::AMOADDW(_) | Instruction::AMOADDD(_)
+                    | Instruction::AMOXORW(_) | Instruction::AMOXORD(_)
+                    | Instruction::AMOANDW(_) | Instruction::AMOANDD(_)
+                    | Instruction::AMOORW(_) | Instruction::AMOORD(_)
+                    | Instruction::AMOMAXW(_) | Instruction::AMOMAXD(_)
+                    | Instruction::AMOMINW(_) | Instruction::AMOMIND(_)
+                    | Instruction::AMOMAXUW(_) | Instruction::AMOMAXUD(_)
+                    | Instruction::AMOMINUW(_) | Instruction::AMOMINUD(_)
+                    | Instruction::AMOSWAPW(_) | Instruction::AMOSWAPD(_)
+                    | Instruction::LRW(_) | Instruction::LRD(_)
+                    | Instruction::SCW(_) | Instruction::SCD(_)
+                ) {
                     let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
                     let mut trace = trace;
                     for instr in inline_sequence {
@@ -656,6 +668,30 @@ macro_rules! define_rv32im_enums {
                             new_instr.operands.rs3 = *vr;
                             return new_instr.inline_sequence(allocator, xlen);
                         }
+                        // AMO/LR/SC instructions have side effects; their
+                        // inline_sequence handles rd=0 internally
+                        Instruction::AMOADDW(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOADDD(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOXORW(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOXORD(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOANDW(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOANDD(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOORW(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOORD(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOMAXW(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOMAXD(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOMINW(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOMIND(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOMAXUW(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOMAXUD(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOMINUW(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOMINUD(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOSWAPW(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::AMOSWAPD(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::LRW(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::LRD(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::SCW(instr) => return instr.inline_sequence(allocator, xlen),
+                        Instruction::SCD(instr) => return instr.inline_sequence(allocator, xlen),
                         // All other instructions with rd=x0: replace with ADDI x0, x0, 0
                         _ => {
                             let addi = ADDI::from(NormalizedInstruction {

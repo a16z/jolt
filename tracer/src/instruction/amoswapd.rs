@@ -82,12 +82,17 @@ impl RISCVTrace for AMOSWAPD {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
+        let effective_rd = if self.operands.rd == 0 {
+            *allocator.allocate()
+        } else {
+            self.operands.rd
+        };
         let v_rd = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
         asm.emit_s::<SD>(self.operands.rs1, self.operands.rs2, 0);
-        asm.emit_i::<ADDI>(self.operands.rd, *v_rd, 0);
+        asm.emit_i::<ADDI>(effective_rd, *v_rd, 0);
         asm.finalize()
     }
 }

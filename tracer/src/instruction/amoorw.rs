@@ -82,6 +82,11 @@ impl RISCVTrace for AMOORW {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
+        let effective_rd = if self.operands.rd == 0 {
+            *allocator.allocate()
+        } else {
+            self.operands.rd
+        };
         let v_rd = allocator.allocate();
         let v_rs2 = allocator.allocate();
 
@@ -91,7 +96,7 @@ impl RISCVTrace for AMOORW {
             Xlen::Bit32 => {
                 amo_pre32(&mut asm, self.operands.rs1, *v_rd);
                 asm.emit_r::<OR>(*v_rs2, *v_rd, self.operands.rs2);
-                amo_post32(&mut asm, *v_rs2, self.operands.rs1, self.operands.rd, *v_rd);
+                amo_post32(&mut asm, *v_rs2, self.operands.rs1, effective_rd, *v_rd);
             }
             Xlen::Bit64 => {
                 let v_mask = allocator.allocate();
@@ -107,7 +112,7 @@ impl RISCVTrace for AMOORW {
                     *v_dword,
                     *v_shift,
                     *v_mask,
-                    self.operands.rd,
+                    effective_rd,
                     *v_rd,
                 );
             }
