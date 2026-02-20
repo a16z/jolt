@@ -87,7 +87,7 @@ This structure:
 ## Gruen's optimization: recover one evaluation from the previous round's claim
 
 Even after the above, a degree-$d$ round polynomial typically requires $d+1$ evaluations $s_i(X)$ at chosen points.
-Jolt uses an optimiztaion introduced in Section 3.2 of [\[Gruen, 2024\]](https://eprint.iacr.org/2024/108.pdf): recover one needed evaluation from the round-sum constraint, so the expensive inner-sum machinery only runs for the remaining points.
+Jolt uses an optimization introduced in Section 3.2 of [\[Gruen, 2024\]](https://eprint.iacr.org/2024/108.pdf): recover one needed evaluation from the round-sum constraint, so the expensive inner-sum machinery only runs for the remaining points.
 
 Note that this optimization (as implemented in Jolt) **does not change what is sent to the verifier**.
 
