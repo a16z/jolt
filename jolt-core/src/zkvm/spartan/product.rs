@@ -76,8 +76,8 @@ pub struct ProductVirtualUniSkipParams<F: JoltField> {
     /// - τ_high: the univariate-skip binding point sampled for the size-5 domain (length = 1)
     ///   Ordering matches outer: variables are MSB→LSB with τ_high last
     pub tau: Vec<F::Challenge>,
-    /// Base evaluations (claims) for the five product terms at the base domain
-    /// Order: [Product, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
+    /// Base evaluations (claims) for the three product terms at the base domain
+    /// Order: [Instruction, ShouldBranch, ShouldJump]
     pub base_evals: [F; NUM_PRODUCT_VIRTUAL],
 }
 
@@ -183,8 +183,6 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
     ///
     /// Small-value lifting rules for integer accumulation before converting to the field:
     /// - Instruction: LeftInstructionInput is u64 → lift to i128; RightInstructionInput is S64 → i128.
-    /// - WriteLookupOutputToRD: (1 − IsRdZero) is bool/u8 → i32; flag is bool/u8 → i32.
-    /// - WritePCtoRD: (1 − IsRdZero) is bool/u8 → i32; Jump flag is bool/u8 → i32.
     /// - ShouldBranch: LookupOutput is u64 → i128; Branch flag is bool/u8 → i32.
     /// - ShouldJump: Jump flag (left) is bool/u8 → i32; Right^eff = (1 − NextIsNoop) is bool/u8 → i32.
     fn compute_univariate_skip_extended_evals(
@@ -405,9 +403,9 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
 /// bound by this instance (low-to-high from the prover's perspective; the verifier uses the
 /// reversed vector `r_tail^rev` when evaluating Eq_τ over τ_low).
 ///
-/// Define Lagrange weights over the size-5 domain at r₀:
-///   w_i := L_i(r₀) for i ∈ {0..4} corresponding to
-///          [Instruction, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump].
+/// Define Lagrange weights over the size-3 domain at r₀:
+///   w_i := L_i(r₀) for i ∈ {0..2} corresponding to
+///          [Instruction, ShouldBranch, ShouldJump].
 ///
 /// Define fused left/right evaluations at the cycle point r_tail:
 ///   left_eval  := Σ_i w_i · eval(Left_i,  r_tail)
@@ -687,18 +685,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 SumcheckId::SpartanProductVirtualization,
             )
             .1;
-        let is_rd_zero = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::OpFlags(CircuitFlags::IsRdZero),
-                SumcheckId::SpartanProductVirtualization,
-            )
-            .1;
-        let wl_flag = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-                SumcheckId::SpartanProductVirtualization,
-            )
-            .1;
         let j_flag = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::OpFlags(CircuitFlags::Jump),
@@ -724,17 +710,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             )
             .1;
 
-        let rd_nonzero = F::one() - is_rd_zero;
-        let fused_left = w[0] * l_inst
-            + w[1] * rd_nonzero
-            + w[2] * rd_nonzero
-            + w[3] * lookup_out
-            + w[4] * j_flag;
-        let fused_right = w[0] * r_inst
-            + w[1] * wl_flag
-            + w[2] * j_flag
-            + w[3] * branch_flag
-            + w[4] * (F::one() - next_is_noop);
+        // 3 products: Instruction, ShouldBranch, ShouldJump
+        let fused_left = w[0] * l_inst + w[1] * lookup_out + w[2] * j_flag;
+        let fused_right = w[0] * r_inst + w[1] * branch_flag + w[2] * (F::one() - next_is_noop);
 
         // Multiply by L(τ_high, r0) and Eq(τ_low, r_tail^rev)
         let tau_high = &self.params.tau[self.params.tau.len() - 1];

@@ -80,8 +80,9 @@ impl RISCVTrace for MRET {
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // Index 0: Jump to mepc (read directly from virtual register)
-        asm.emit_i::<JALR>(0, mepc_vr, 0);
+        // Use virtual register for rd to discard write value
+        let jalr_rd = allocator.allocate();
+        asm.emit_i::<JALR>(*jalr_rd, mepc_vr, 0);
 
         asm.finalize()
     }

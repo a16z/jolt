@@ -244,8 +244,6 @@ pub enum VirtualPolynomial {
     Product,
     ShouldJump,
     ShouldBranch,
-    WritePCtoRD,
-    WriteLookupOutputToRD,
     Rd,
     Imm,
     Rs1Value,

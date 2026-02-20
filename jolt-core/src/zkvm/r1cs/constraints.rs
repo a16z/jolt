@@ -172,7 +172,6 @@ pub enum R1CSConstraintLabel {
     NextUnexpPCUpdateOtherwise,
     NextPCEqPCPlusOneIfInline,
     MustStartSequenceFromBeginning,
-    RdWriteZeroIfRdIsX0,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -324,24 +323,29 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Assert) } }
         => ( { JoltR1CSInputs::LookupOutput } ) == ( { 1i128 } )
     ),
-    // if Rd != 0 && WriteLookupOutputToRD {
+    // if WriteLookupOutputToRD {
     //     assert!(RdWriteValue == LookupOutput)
     // }
+    // No longer guarded by IsRdZero: trace rewriting at preprocessing
+    // ensures rd=x0 instructions are replaced with ADDI x0,x0,0 (where
+    // LookupOutput == 0 == RdWriteValue) so the constraint is trivially satisfied.
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::RdWriteEqLookupIfWriteLookupToRd,
-        if { { JoltR1CSInputs::WriteLookupOutputToRD } }
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) } }
         => ( { JoltR1CSInputs::RdWriteValue } ) == ( { JoltR1CSInputs::LookupOutput } )
     ),
-    // if Rd != 0 && Jump {
+    // if Jump {
     //     if !isCompressed {
     //          assert!(RdWriteValue == UnexpandedPC + 4)
     //     } else {
     //          assert!(RdWriteValue == UnexpandedPC + 2)
     //     }
     // }
+    // No longer guarded by IsRdZero: trace rewriting remaps jumps with
+    // rd=x0 to use a virtual register, so Jump implies rd != x0.
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::RdWriteEqPCPlusConstIfWritePCtoRD,
-        if { { JoltR1CSInputs::WritePCtoRD } }
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::Jump) } }
         => ( { JoltR1CSInputs::RdWriteValue } ) == ( { JoltR1CSInputs::UnexpandedPC } + { 4i128 } - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } )
     ),
     // if Jump && !NextIsNoop {
@@ -399,14 +403,6 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
         label: R1CSConstraintLabel::MustStartSequenceFromBeginning,
         if { { JoltR1CSInputs::NextIsVirtual } - { JoltR1CSInputs::NextIsFirstInSequence } }
         => ( { 1i128 } ) == ( { JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) } )
-    ),
-    // if IsRdZero {
-    //     assert!(RdWriteValue == 0)
-    // }
-    r1cs_eq_conditional!(
-        label: R1CSConstraintLabel::RdWriteZeroIfRdIsX0,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::IsRdZero) } }
-        => ( { JoltR1CSInputs::RdWriteValue } ) == ( { 0i128 } )
     ),
 ];
 
@@ -530,7 +526,7 @@ pub static R1CS_CONSTRAINTS_SECOND_GROUP: [NamedR1CSConstraint; NUM_REMAINING_R1
     filter_r1cs_constraints(&R1CS_CONSTRAINTS_SECOND_GROUP_LABELS);
 
 /// Domain sizing for product-virtualization univariate-skip (size-5 window)
-pub const NUM_PRODUCT_VIRTUAL: usize = 5;
+pub const NUM_PRODUCT_VIRTUAL: usize = 3;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE: usize = NUM_PRODUCT_VIRTUAL - 1;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
@@ -544,8 +540,6 @@ pub const PRODUCT_VIRTUAL_FIRST_ROUND_POLY_DEGREE_BOUND: usize =
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumCount, EnumIter)]
 pub enum ProductConstraintLabel {
     Instruction,
-    WriteLookupOutputToRD,
-    WritePCtoRD,
     ShouldBranch,
     ShouldJump,
 }
@@ -581,23 +575,7 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
         right: ProductFactorExpr::Var(VirtualPolynomial::RightInstructionInput),
         output: VirtualPolynomial::Product,
     },
-    // 1: WriteLookupOutputToRD = (1 − IsRdZero) · OpFlags(WriteLookupOutputToRD)
-    ProductConstraint {
-        label: ProductConstraintLabel::WriteLookupOutputToRD,
-        left: ProductFactorExpr::OneMinus(VirtualPolynomial::OpFlags(CircuitFlags::IsRdZero)),
-        right: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(
-            CircuitFlags::WriteLookupOutputToRD,
-        )),
-        output: VirtualPolynomial::WriteLookupOutputToRD,
-    },
-    // 2: WritePCtoRD = (1 − IsRdZero) · OpFlags(Jump)
-    ProductConstraint {
-        label: ProductConstraintLabel::WritePCtoRD,
-        left: ProductFactorExpr::OneMinus(VirtualPolynomial::OpFlags(CircuitFlags::IsRdZero)),
-        right: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
-        output: VirtualPolynomial::WritePCtoRD,
-    },
-    // 3: ShouldBranch = LookupOutput · InstructionFlags(Branch)
+    // 1: ShouldBranch = LookupOutput · InstructionFlags(Branch)
     ProductConstraint {
         label: ProductConstraintLabel::ShouldBranch,
         left: ProductFactorExpr::Var(VirtualPolynomial::LookupOutput),
@@ -606,7 +584,7 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
         )),
         output: VirtualPolynomial::ShouldBranch,
     },
-    // 4: ShouldJump = OpFlags(Jump) · (1 − NextIsNoop)
+    // 2: ShouldJump = OpFlags(Jump) · (1 − NextIsNoop)
     ProductConstraint {
         label: ProductConstraintLabel::ShouldJump,
         left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
