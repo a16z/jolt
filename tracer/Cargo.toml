@@ -55,5 +55,8 @@ common = { workspace = true, default-features = false }
 postcard.workspace = true
 addr2line.workspace = true
 
+[package.metadata.cargo-machete]
+ignored = ["strum"]
+
 [dev-dependencies]
 rand.workspace = true

@@ -750,23 +750,12 @@ name = "ark-serialize"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
- "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-serialize-derive",
  "ark-std 0.5.0",
  "arrayvec",
  "digest 0.10.7",
  "num-bigint",
  "rayon",
-]
-
-[[package]]
-name = "ark-serialize-derive"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "213888f660fddcca0d257e88e54ac05bca01885f258ccdf695bafd77031bb69d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
 ]
 
 [[package]]
@@ -1316,13 +1305,8 @@ version = "0.2.0"
 dependencies = [
  "allocative",
  "ark-serialize 0.5.0",
- "derive_more 2.1.1",
  "serde",
- "serde_json",
- "strum 0.27.2",
- "strum_macros 0.26.4",
  "syn 1.0.109",
- "tracing",
 ]
 
 [[package]]
@@ -2266,7 +2250,6 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-sdk",
- "tracing",
  "tracing-subscriber",
 ]
 
@@ -2872,14 +2855,10 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
- "ark-grumpkin",
  "ark-serialize 0.5.0",
- "ark-serialize-derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-std 0.5.0",
  "bincode",
  "blake2",
- "bytemuck",
- "bytemuck_derive",
  "chrono",
  "clap",
  "common",
@@ -2894,20 +2873,16 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
- "jolt-platform",
  "memory-stats",
  "num",
  "num-derive",
- "num-integer",
  "num-traits",
- "paste",
  "postcard",
  "pprof",
  "prost 0.14.3",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
- "rand_distr",
  "rayon",
  "serde",
  "serial_test",
@@ -2927,9 +2902,7 @@ name = "jolt-inlines-bigint"
 version = "0.1.0"
 dependencies = [
  "ark-ff 0.5.0",
- "common",
  "ctor 0.6.3",
- "hex-literal",
  "rand 0.8.5",
  "tracer",
  "tracing",
@@ -2953,7 +2926,6 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "ctor 0.6.3",
- "hex-literal",
  "rand 0.8.5",
  "tracer",
  "tracing",
@@ -2966,11 +2938,7 @@ dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",
  "ark-grumpkin",
- "ark-serialize 0.5.0",
  "ctor 0.6.3",
- "hex-literal",
- "num-bigint",
- "num-integer",
  "serde",
  "tracer",
  "tracing",
@@ -2991,12 +2959,9 @@ dependencies = [
 name = "jolt-inlines-secp256k1"
 version = "0.1.0"
 dependencies = [
- "ark-ec",
  "ark-ff 0.5.0",
  "ark-secp256k1",
- "ark-serialize 0.5.0",
  "ctor 0.6.3",
- "hex-literal",
  "num-bigint",
  "num-integer",
  "serde",
@@ -3009,7 +2974,6 @@ name = "jolt-inlines-sha2"
 version = "0.1.0"
 dependencies = [
  "ctor 0.6.3",
- "hex-literal",
  "sha2",
  "tracer",
  "tracing",
@@ -3046,22 +3010,15 @@ dependencies = [
 name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
  "bytemuck",
- "bytemuck_derive",
  "cfg-if",
  "common",
- "embedded-io 0.6.1",
- "hex-literal",
  "jolt-core",
  "jolt-platform",
  "jolt-sdk-macros",
  "postcard",
- "rand 0.8.5",
  "riscv 0.12.1",
  "serde",
- "tracer",
  "zeroos",
 ]
 
@@ -3290,7 +3247,6 @@ dependencies = [
 name = "memory-ops"
 version = "0.1.0"
 dependencies = [
- "hex",
  "jolt-sdk",
  "memory-ops-guest",
  "tracing",
@@ -3302,7 +3258,6 @@ name = "memory-ops-guest"
 version = "0.1.0"
 dependencies = [
  "jolt-sdk",
- "sha3",
 ]
 
 [[package]]
@@ -4366,16 +4321,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rand_distr"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
-dependencies = [
- "num-traits",
- "rand 0.8.5",
-]
-
-[[package]]
 name = "rand_xorshift"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4469,7 +4414,6 @@ version = "0.1.0"
 dependencies = [
  "ark-serialize 0.5.0",
  "jolt-sdk",
- "postcard",
 ]
 
 [[package]]
@@ -5362,15 +5306,12 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
- "ark-ff 0.5.0",
  "hex",
  "jolt-sdk",
  "postcard",
  "rand 0.8.5",
- "rayon",
  "reth-ethereum-primitives",
  "secp256k1",
- "serde",
  "sig-recovery-guest",
  "tracing",
  "tracing-subscriber",
@@ -5381,7 +5322,6 @@ name = "sig-recovery-guest"
 version = "0.1.0"
 dependencies = [
  "alloy-eips",
- "ark-ff 0.5.0",
  "jolt-sdk",
  "postcard",
  "reth-ethereum-primitives",
@@ -6819,20 +6759,9 @@ dependencies = [
 name = "z3-verifier"
 version = "0.0.0"
 dependencies = [
- "allocative",
- "ark-bn254",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
- "build-fs-tree",
- "clap",
  "common",
  "jolt-core",
  "paste",
- "proptest",
- "rand_core 0.6.4",
- "regex",
- "strum 0.27.2",
  "tracer",
  "z3",
 ]
