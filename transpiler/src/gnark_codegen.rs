@@ -58,9 +58,10 @@
 //! deduplication), there's no aliasing risk between constraints. The isolation is purely
 //! for debugging convenience.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use zklean_extractor::mle_ast::{
-    Atom, Edge, Node, Scalar, TranscriptHashData, scalar_add_mod, scalar_mul_mod, scalar_neg_mod, scalar_sub_mod,
+    Atom, Edge, Node, Scalar, TargetField, TranscriptHashData, scalar_add_mod, scalar_mul_mod,
+    scalar_neg_mod, scalar_sub_mod,
 };
 
 // =============================================================================
@@ -452,10 +453,36 @@ impl<'a> MemoizedCodeGen<'a> {
 /// # Panics
 ///
 /// Panics if any constant assertion evaluates to non-zero (static verification failure).
+///
+/// # Panics
+///
+/// Also panics if the bundle contains any Fq variables, as Fq codegen is not yet implemented.
 pub fn generate_circuit_from_bundle(
     bundle: &zklean_extractor::mle_ast::AstBundle,
     circuit_name: &str,
 ) -> String {
+    // Early check for unsupported emulated arithmetic
+    if bundle.requires_emulated_arithmetic() {
+        let emulated_vars: Vec<_> = bundle
+            .inputs
+            .iter()
+            .filter(|i| i.target_field.requires_emulation())
+            .map(|i| (&i.name, i.target_field))
+            .take(10) // Limit output
+            .collect();
+        panic!(
+            "Emulated arithmetic codegen not yet implemented.\n\
+             Bundle contains {} emulated-field variable(s), first 10: {:?}\n\
+             For emulated field support design, see: guides/fq-aware-transpilation-design.md",
+            bundle
+                .inputs
+                .iter()
+                .filter(|i| i.target_field.requires_emulation())
+                .count(),
+            emulated_vars
+        );
+    }
+
     let (code, stats) = generate_circuit_from_bundle_with_stats(bundle, circuit_name);
 
     // Log statistics
@@ -578,17 +605,21 @@ pub fn generate_circuit_from_bundle_with_stats(
 
     stats.total_constraints = processed_constraints.len();
 
-    // Collect all struct field names into a single set to avoid duplicates
-    let mut struct_fields: BTreeSet<String> = BTreeSet::new();
+    // Collect all struct field names with their target field types
+    // Using BTreeMap to deduplicate by name while preserving field type
+    let mut struct_fields: BTreeMap<String, TargetField> = BTreeMap::new();
 
     for input in &bundle.inputs {
         if input.kind == InputKind::ProofData || input.kind == InputKind::PublicStatement {
-            struct_fields.insert(sanitize_go_name(&input.name));
+            struct_fields.insert(sanitize_go_name(&input.name), input.target_field);
         }
     }
     for constraint in &bundle.constraints {
         if let Assertion::EqualPublicInput { name } = &constraint.assertion {
-            struct_fields.insert(sanitize_go_name(name));
+            // Public inputs from constraints default to Fr (native field)
+            struct_fields
+                .entry(sanitize_go_name(name))
+                .or_insert(TargetField::Fr);
         }
     }
 
@@ -618,11 +649,21 @@ pub fn generate_circuit_from_bundle_with_stats(
     output.push_str("\treturn n\n");
     output.push_str("}\n\n");
 
-    // Circuit struct - deduplicated fields
+    // Circuit struct - deduplicated fields with correct types based on TargetField
     output.push_str(&format!("type {circuit_name} struct {{\n"));
-    for field_name in &struct_fields {
+    for (field_name, target_field) in &struct_fields {
+        let go_type = match target_field {
+            TargetField::Fr => "frontend.Variable",
+            TargetField::Fq => {
+                // Fq would use emulated arithmetic: emulated.Element[emulated.BN254Fp]
+                // But Fq codegen is not implemented, so this is unreachable due to the
+                // early panic in generate_circuit_from_bundle(). We include this branch
+                // for completeness and future reference.
+                "emulated.Element[emulated.BN254Fp]"
+            }
+        };
         output.push_str(&format!(
-            "\t{field_name} frontend.Variable `gnark:\",public\"`\n"
+            "\t{field_name} {go_type} `gnark:\",public\"`\n"
         ));
     }
     output.push_str("}\n\n");
@@ -846,5 +887,93 @@ fn evaluate_constant_edge_in(nodes: &[Node], edge: Edge) -> Scalar {
             panic!("Cannot evaluate non-constant edge")
         }
         Edge::NodeRef(id) => evaluate_constant_node_in(nodes, id),
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zklean_extractor::mle_ast::{AstBundle, InputKind, TargetField};
+
+    /// Verifies that codegen panics with a clear error when Fq variables are present.
+    ///
+    /// This test ensures `target_field` is actually being read and interpreted by codegen,
+    /// not just stored and ignored.
+    #[test]
+    #[should_panic(expected = "Emulated arithmetic codegen not yet implemented")]
+    fn test_fq_variable_panics_in_codegen() {
+        let mut bundle = AstBundle::new();
+
+        // Add an Fr variable (should be fine)
+        bundle.add_input_with_field(0, "fr_var", InputKind::ProofData, TargetField::Fr);
+
+        // Add an Fq variable (should cause panic)
+        bundle.add_input_with_field(1, "fq_var", InputKind::ProofData, TargetField::Fq);
+
+        // This should panic because Fq codegen is not implemented
+        let _ = generate_circuit_from_bundle(&bundle, "TestCircuit");
+    }
+
+    /// Verifies that Fr-only bundles proceed without panic.
+    #[test]
+    fn test_fr_only_bundle_does_not_panic() {
+        let mut bundle = AstBundle::new();
+
+        // Add only Fr variables
+        bundle.add_input_with_field(0, "stage1_r0", InputKind::ProofData, TargetField::Fr);
+        bundle.add_input_with_field(1, "stage1_r1", InputKind::ProofData, TargetField::Fr);
+
+        // This should NOT panic (no Fq variables)
+        // Note: Will still fail later because no assertions, but won't hit the Fq panic
+        let result = std::panic::catch_unwind(|| {
+            generate_circuit_from_bundle(&bundle, "TestCircuit")
+        });
+
+        // Should not panic with "Emulated arithmetic" message
+        match result {
+            Ok(_) => (), // Success, no panic
+            Err(e) => {
+                let msg = e
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+                    .or_else(|| e.downcast_ref::<&str>().copied())
+                    .unwrap_or("");
+                // Acceptable: any panic that's NOT about emulated arithmetic
+                assert!(
+                    !msg.contains("Emulated arithmetic"),
+                    "Should not panic about emulated arithmetic for Fr-only bundle"
+                );
+            }
+        }
+    }
+
+    /// Verifies the panic message includes the Fq variable name.
+    #[test]
+    fn test_fq_panic_message_includes_variable_name() {
+        let mut bundle = AstBundle::new();
+        bundle.add_input_with_field(0, "my_fq_test_variable", InputKind::ProofData, TargetField::Fq);
+
+        let result = std::panic::catch_unwind(|| {
+            generate_circuit_from_bundle(&bundle, "TestCircuit")
+        });
+
+        let panic_msg = result
+            .expect_err("Expected panic for Fq variable")
+            .downcast_ref::<String>()
+            .cloned()
+            .unwrap_or_default();
+
+        assert!(
+            panic_msg.contains("my_fq_test_variable"),
+            "Panic message should include the Fq variable name, got: {panic_msg}"
+        );
+        assert!(
+            panic_msg.contains("Fq"),
+            "Panic message should mention Fq field type, got: {panic_msg}"
+        );
     }
 }
