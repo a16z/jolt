@@ -207,9 +207,14 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
             }
         };
 
+    let panic_flag = match std::env::var("JOLT_GUEST_PANIC") {
+        Ok(v) if v.eq_ignore_ascii_case("unwind") => "-Cpanic=unwind",
+        _ => "-Cpanic=abort",
+    };
+
     let mut jolt_rustflags: Vec<&str> = vec![
         "-Cpasses=lower-atomic",
-        "-Cpanic=abort",
+        panic_flag,
         &opt_flag,
         // Disable MachineOutliner: generates broken call patterns on RISC-V (infinite loops).
         "-Cllvm-args=-enable-machine-outliner=never",

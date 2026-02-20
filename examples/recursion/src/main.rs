@@ -1,8 +1,14 @@
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use clap::{Parser, Subcommand};
+use jolt_sdk::transport;
+use jolt_sdk::transport::{
+    BUNDLE_SIGNATURE, BUNDLE_TAG_PREPROCESSING, BUNDLE_TAG_RECORD, RECORD_TAG_DEVICE,
+    RECORD_TAG_PROOF,
+};
 use jolt_sdk::{JoltDevice, MemoryConfig, RV64IMACProof, Serializable};
 use std::cmp::PartialEq;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{error, info};
@@ -117,7 +123,7 @@ impl GuestProgram {
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        heap_size: 134217728,
+                        heap_size: 536870912,
                         stack_size: 33554432,
                         program_size: None,
                     }
@@ -163,7 +169,7 @@ impl GuestProgram {
         match self {
             GuestProgram::Fibonacci => {
                 if use_embed {
-                    67108864
+                    300000000
                 } else {
                     5000000
                 }
@@ -228,29 +234,88 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
 
     let mut cursor = std::io::Cursor::new(all_groups_data);
 
-    let verifier_preprocessing =
-        jolt_sdk::JoltVerifierPreprocessing::<jolt_sdk::F, jolt_sdk::PCS>::deserialize_compressed(
-            &mut cursor,
-        )
-        .unwrap();
-    let verifier_bytes = verifier_preprocessing.serialize_to_bytes().unwrap();
-    info!(
-        "✓ Verifier preprocessing deserialized successfully ({} bytes)",
-        verifier_bytes.len()
-    );
+    transport::signature_check(&mut cursor, BUNDLE_SIGNATURE).unwrap();
 
-    let n = u32::deserialize_compressed(&mut cursor).unwrap();
-    info!("✓ Number of proofs deserialized: {n}");
+    let mut saw_preprocessing = false;
+    let mut n_records: u32 = 0;
 
-    for i in 0..n {
-        match RV64IMACProof::deserialize_compressed(&mut cursor) {
-            Ok(_) => info!("✓ Proof {i} deserialized"),
-            Err(e) => error!("✗ Failed to deserialize proof {i}: {e:?}"),
+    while let Some((tag, len)) = transport::read_frame_header(&mut cursor, 1_u64 << 32).unwrap() {
+        let mut limited = (&mut cursor).take(len);
+        match tag {
+            BUNDLE_TAG_PREPROCESSING => {
+                if saw_preprocessing {
+                    panic!("duplicate preprocessing section");
+                }
+                let verifier_preprocessing = jolt_sdk::JoltVerifierPreprocessing::<
+                    jolt_sdk::F,
+                    jolt_sdk::PCS,
+                >::deserialize_compressed(&mut limited)
+                .unwrap();
+                let verifier_bytes = verifier_preprocessing.serialize_to_bytes().unwrap();
+                info!(
+                    "✓ Verifier preprocessing deserialized successfully ({} bytes)",
+                    verifier_bytes.len()
+                );
+                if limited.limit() != 0 {
+                    panic!("trailing bytes in preprocessing section");
+                }
+                saw_preprocessing = true;
+            }
+            BUNDLE_TAG_RECORD => {
+                let mut saw_device = false;
+                let mut saw_proof = false;
+                while let Some((rtag, rlen)) =
+                    transport::read_frame_header(&mut limited, 1_u64 << 32).unwrap()
+                {
+                    let mut rlimited = (&mut limited).take(rlen);
+                    match rtag {
+                        RECORD_TAG_PROOF => {
+                            if saw_proof {
+                                panic!("duplicate proof in record");
+                            }
+                            match RV64IMACProof::deserialize_compressed(&mut rlimited) {
+                                Ok(_) => info!("✓ Record {n_records} proof deserialized"),
+                                Err(e) => error!(
+                                    "✗ Failed to deserialize record {n_records} proof: {e:?}"
+                                ),
+                            }
+                            if rlimited.limit() != 0 {
+                                panic!("trailing bytes in proof subframe");
+                            }
+                            saw_proof = true;
+                        }
+                        RECORD_TAG_DEVICE => {
+                            if saw_device {
+                                panic!("duplicate device in record");
+                            }
+                            match JoltDevice::deserialize_compressed(&mut rlimited) {
+                                Ok(_) => info!("✓ Record {n_records} device deserialized"),
+                                Err(e) => error!(
+                                    "✗ Failed to deserialize record {n_records} device: {e:?}"
+                                ),
+                            }
+                            if rlimited.limit() != 0 {
+                                panic!("trailing bytes in device subframe");
+                            }
+                            saw_device = true;
+                        }
+                        _ => panic!("unknown record tag {rtag}"),
+                    }
+                }
+                if !(saw_device && saw_proof) {
+                    panic!("record missing device/proof");
+                }
+                n_records += 1;
+            }
+            _ => panic!("unknown bundle tag {tag}"),
         }
-        match JoltDevice::deserialize_compressed(&mut cursor) {
-            Ok(_) => info!("✓ Device {i} deserialized"),
-            Err(e) => error!("✗ Failed to deserialize device {i}: {e:?}"),
+        if limited.limit() != 0 {
+            panic!("trailing bytes in bundle frame");
         }
+    }
+
+    if !saw_preprocessing {
+        panic!("missing preprocessing section");
     }
 
     let position = cursor.position() as usize;
@@ -264,7 +329,7 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
         "Not all data was consumed during deserialization"
     );
 
-    (n, remaining_data.len() as u32)
+    (n_records, remaining_data.len() as u32)
 }
 
 fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) -> Vec<u8> {
@@ -304,14 +369,17 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     let mut cursor = std::io::Cursor::new(&mut all_groups_data);
     let mut total_prove_time = 0.0;
 
+    transport::signature_write(&mut cursor, BUNDLE_SIGNATURE).unwrap();
+
+    // Preprocessing frame.
+    let prep_len =
+        guest_verifier_preprocessing.serialized_size(ark_serialize::Compress::Yes) as u64;
+    transport::write_frame_header(&mut cursor, BUNDLE_TAG_PREPROCESSING, prep_len).unwrap();
     guest_verifier_preprocessing
         .serialize_compressed(&mut cursor)
         .unwrap();
 
-    let n = inputs.len() as u32;
-    u32::serialize_compressed(&n, &mut cursor).unwrap();
-
-    info!("Starting {} recursion with {}", guest.name(), n);
+    info!("Starting {} recursion with {}", guest.name(), inputs.len());
 
     for (i, input_bytes) in inputs.into_iter().enumerate() {
         info!("Processing input {i}: {:#?}", &input_bytes);
@@ -349,7 +417,19 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
             &input_bytes, prove_time
         );
 
+        // Record frame: contains (proof, device) as subframes.
+        let proof_len = proof.serialized_size(ark_serialize::Compress::Yes) as u64;
+        let device_len = io_device.serialized_size(ark_serialize::Compress::Yes) as u64;
+        let proof_hdr = 1u64 + transport::varint_u64_len(proof_len) as u64;
+        let device_hdr = 1u64 + transport::varint_u64_len(device_len) as u64;
+        let record_len = proof_hdr + proof_len + device_hdr + device_len;
+
+        transport::write_frame_header(&mut cursor, BUNDLE_TAG_RECORD, record_len).unwrap();
+
+        transport::write_frame_header(&mut cursor, RECORD_TAG_PROOF, proof_len).unwrap();
         proof.serialize_compressed(&mut cursor).unwrap();
+
+        transport::write_frame_header(&mut cursor, RECORD_TAG_DEVICE, device_len).unwrap();
         io_device.serialize_compressed(&mut cursor).unwrap();
 
         info!("  Verifying...");
@@ -531,6 +611,8 @@ fn run_recursion_proof(
         RunConfig::Trace => {
             info!("  Trace-only mode: Skipping proof generation and verification.");
             let (_, _, _, io_device) = recursion.trace(&input_bytes, &[], &[]);
+            info!("  Recursion panic bit: {}", io_device.panic);
+            info!("  Recursion outputs len: {}", io_device.outputs.len());
             let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
             info!("  Recursion output (trace-only): {rv}");
         }
@@ -542,6 +624,8 @@ fn run_recursion_proof(
                 &[],
                 &format!("/tmp/{}.trace", guest.name()).into(),
             );
+            info!("  Recursion panic bit: {}", io_device.panic);
+            info!("  Recursion outputs len: {}", io_device.outputs.len());
             let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
             info!("  Recursion output (trace-only): {rv}");
         }
@@ -593,7 +677,7 @@ fn verify_proofs(
         check_data_integrity(&all_groups_data);
 
         let mut input_bytes = vec![];
-        input_bytes.append(&mut postcard::to_stdvec(&all_groups_data.as_slice()).unwrap());
+        input_bytes.append(&mut postcard::to_stdvec(&all_groups_data).unwrap());
 
         info!("Serialized input size: {} bytes", input_bytes.len());
         let memory_config = guest.get_memory_config(use_embed);

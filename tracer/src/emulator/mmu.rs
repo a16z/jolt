@@ -185,6 +185,7 @@ impl Mmu {
                 jolt_device.is_output(ea)
                     || jolt_device.is_panic(ea)
                     || jolt_device.is_termination(ea)
+                    || ea <= RAM_START_ADDRESS - 8
             } else {
                 // loads from input/advice/output/panic/termination OR zero-padding range
                 jolt_device.is_input(ea)
@@ -585,6 +586,14 @@ impl Mmu {
             u64::from_le_bytes(pre_value_bytes)
         };
 
+        if effective_address <= RAM_START_ADDRESS - 8 {
+            return RAMWrite {
+                address: word_address,
+                pre_value,
+                post_value: pre_value,
+            };
+        }
+
         // Mask the value into the word
         let post_value = match effective_address % 4 {
             0 => value | (pre_value & 0xffffff00),
@@ -629,6 +638,14 @@ impl Mmu {
             }
             u64::from_le_bytes(pre_value_bytes)
         };
+
+        if effective_address <= RAM_START_ADDRESS - 8 {
+            return RAMWrite {
+                address: word_address,
+                pre_value,
+                post_value: pre_value,
+            };
+        }
 
         // Mask the value into the word
         let post_value = if effective_address % 4 == 2 {
@@ -780,11 +797,26 @@ impl Mmu {
                 0x10000000..=0x100000ff => panic!("store_raw:UART is unsupported."),
                 0x10001000..=0x10001FFF => panic!("store_raw:disk is unsupported."),
                 _ => {
-                    self.assert_effective_store_address(effective_address);
                     if let Some(jolt_device) = self.jolt_device.as_mut() {
-                        return jolt_device.store(effective_address, value);
+                        // Only forward stores that target the IO/output region. Writes to other
+                        // low addresses (e.g. null pointers) should be treated as no-ops to avoid
+                        // underflowing the device's internal addressing.
+                        if effective_address >= jolt_device.memory_layout.output_start
+                            && effective_address < jolt_device.memory_layout.io_end
+                        {
+                            jolt_device.store(effective_address, value);
+                            return;
+                        }
                     };
 
+                    // Treat stores into the "zero-padding" region as no-ops (loads from this range
+                    // already return 0). This avoids panics/underflows when std-mode guest runtimes
+                    // pass optional null pointers through syscall paths.
+                    if effective_address <= RAM_START_ADDRESS - 8 {
+                        return;
+                    }
+
+                    self.assert_effective_store_address(effective_address);
                     panic!("Store Failed: Unknown memory mapping {effective_address:X}.");
                 }
             },
@@ -1251,8 +1283,7 @@ mod test_mmu {
     }
 
     #[test]
-    #[should_panic(expected = "Unknown memory mapping")]
-    fn test_io_underflow() {
+    fn test_io_underflow_is_noop() {
         let mut mmu = setup_mmu();
         let trusted_advice_size = mmu
             .jolt_device
@@ -1266,23 +1297,22 @@ mod test_mmu {
             .unwrap()
             .memory_layout
             .max_untrusted_advice_size;
-        let invalid_addr = mmu.jolt_device.as_ref().unwrap().memory_layout.input_start
+        let addr = mmu.jolt_device.as_ref().unwrap().memory_layout.input_start
             - 1
             - trusted_advice_size
             - untrusted_advice_size;
-        // Write to address below I/O region - rejected as unknown mapping
-        // (Note: address is in "zero-padding" range so passes underflow check,
-        // but fails device I/O check since it's not a valid write target)
-        mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
+        // Address falls in the zero-padding region (below RAM_START_ADDRESS),
+        // so the store is silently dropped as a no-op.
+        mmu.store_bytes(addr, 0xc50513, 2).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "I/O overflow")]
-    fn test_io_overflow() {
+    fn test_io_overflow_is_noop() {
         let mut mmu = setup_mmu();
-        let invalid_addr = mmu.jolt_device.as_ref().unwrap().memory_layout.io_end + 1;
-        // illegal write to inputs
-        mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
+        let addr = mmu.jolt_device.as_ref().unwrap().memory_layout.io_end + 1;
+        // Address falls in the zero-padding region (below RAM_START_ADDRESS),
+        // so the store is silently dropped as a no-op.
+        mmu.store_bytes(addr, 0xc50513, 2).unwrap();
     }
 
     #[test]

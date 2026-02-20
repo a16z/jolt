@@ -1,8 +1,10 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
+
+use jolt_platform::{end_cycle_tracking, start_cycle_tracking};
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::{DoryContext, DoryGlobals};
@@ -66,7 +68,6 @@ use crate::{
 use anyhow::Context;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use itertools::Itertools;
 use tracer::instruction::Instruction;
 use tracer::JoltDevice;
 
@@ -111,6 +112,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
         if program_io.outputs.len() > preprocessing.shared.memory_layout.max_output_size as usize {
             return Err(ProofVerifyError::OutputTooLarge);
+        }
+        if proof.trace_length > preprocessing.shared.max_padded_trace_length {
+            return Err(ProofVerifyError::TraceLengthTooLarge(
+                proof.trace_length,
+                preprocessing.shared.max_padded_trace_length,
+            ));
         }
 
         // truncate trailing zeros on device outputs
@@ -201,14 +208,37 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 .append_serializable(b"trusted_advice", trusted_advice_commitment);
         }
 
+        start_cycle_tracking("verifier_stage1");
         self.verify_stage1()?;
+        end_cycle_tracking("verifier_stage1");
+
+        start_cycle_tracking("verifier_stage2");
         self.verify_stage2()?;
+        end_cycle_tracking("verifier_stage2");
+
+        start_cycle_tracking("verifier_stage3");
         self.verify_stage3()?;
+        end_cycle_tracking("verifier_stage3");
+
+        start_cycle_tracking("verifier_stage4");
         self.verify_stage4()?;
+        end_cycle_tracking("verifier_stage4");
+
+        start_cycle_tracking("verifier_stage5");
         self.verify_stage5()?;
+        end_cycle_tracking("verifier_stage5");
+
+        start_cycle_tracking("verifier_stage6");
         self.verify_stage6()?;
+        end_cycle_tracking("verifier_stage6");
+
+        start_cycle_tracking("verifier_stage7");
         self.verify_stage7()?;
+        end_cycle_tracking("verifier_stage7");
+
+        start_cycle_tracking("verifier_stage8");
         self.verify_stage8()?;
+        end_cycle_tracking("verifier_stage8");
 
         Ok(())
     }
@@ -537,17 +567,17 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
 
     /// Stage 8: Dory batch opening verification.
     fn verify_stage8(&mut self) -> Result<(), anyhow::Error> {
-        // Initialize DoryGlobals with the layout from the proof
-        // This ensures the verifier uses the same layout as the prover
+        start_cycle_tracking("verifier_stage8_init_context");
+        // Initialize DoryGlobals with the layout from the proof.
+        // This ensures the verifier uses the same layout as the prover.
         let _guard = DoryGlobals::initialize_context(
             1 << self.one_hot_params.log_k_chunk,
             self.proof.trace_length.next_power_of_two(),
             DoryContext::Main,
             Some(self.proof.dory_layout),
         );
+        end_cycle_tracking("verifier_stage8_init_context");
 
-        // Get the unified opening point from HammingWeightClaimReduction
-        // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
         let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::InstructionRa(0),
             SumcheckId::HammingWeightClaimReduction,
@@ -556,6 +586,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let r_address_stage7 = &opening_point.r[..log_k_chunk];
 
         // 1. Collect all (polynomial, claim) pairs
+        start_cycle_tracking("verifier_stage8_collect_claims");
         let mut polynomial_claims = Vec::new();
 
         // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
@@ -624,29 +655,42 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
                 advice_claim * lagrange_factor,
             ));
         }
+        end_cycle_tracking("verifier_stage8_collect_claims");
 
         // 2. Sample gamma and compute powers for RLC
+        start_cycle_tracking("verifier_stage8_sample_gamma");
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         self.transcript.append_scalars(b"rlc_claims", &claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+        end_cycle_tracking("verifier_stage8_sample_gamma");
 
-        // Build state for computing joint commitment/claim
         let state = DoryOpeningState {
             opening_point: opening_point.r.clone(),
             gamma_powers: gamma_powers.clone(),
             polynomial_claims,
         };
 
-        // Build commitments map
-        let mut commitments_map = HashMap::new();
-        for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
+        // Build commitments map.
+        //
+        // Note: `itertools::zip_eq` panics on length mismatch. In guest-verifier contexts panics
+        // are fatal (guest builds use `-Cpanic=abort`), so keep this path panic-free.
+        let mut commitments_map = BTreeMap::new();
+        let expected_polys = all_committed_polynomials(&self.one_hot_params);
+        if expected_polys.len() != self.proof.commitments.len() {
+            return Err(anyhow::anyhow!(
+                "commitment vector length mismatch: expected {}, got {}",
+                expected_polys.len(),
+                self.proof.commitments.len()
+            ))
+            .context("Stage 8");
+        }
+        for (polynomial, commitment) in expected_polys
             .into_iter()
-            .zip_eq(&self.proof.commitments)
+            .zip(self.proof.commitments.iter())
         {
             commitments_map.insert(polynomial, commitment.clone());
         }
 
-        // Add advice commitments if they're part of the batch
         if let Some(ref commitment) = self.trusted_advice_commitment {
             if state
                 .polynomial_claims
@@ -667,17 +711,24 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         }
 
         // Compute joint commitment: Σ γ_i · C_i
-        let joint_commitment = self.compute_joint_commitment(&mut commitments_map, &state);
+        start_cycle_tracking("verifier_stage8_joint_commitment");
+        let joint_commitment = self
+            .compute_joint_commitment(&mut commitments_map, &state)
+            .context("Stage 8")?;
+        end_cycle_tracking("verifier_stage8_joint_commitment");
 
         // Compute joint claim: Σ γ_i · claim_i
+        start_cycle_tracking("verifier_stage8_joint_claim");
         let joint_claim: F = gamma_powers
             .iter()
             .zip(claims.iter())
             .map(|(gamma, claim)| *gamma * claim)
             .sum();
+        end_cycle_tracking("verifier_stage8_joint_claim");
 
         // Verify opening
-        PCS::verify(
+        start_cycle_tracking("verifier_stage8_pcs_verify");
+        let res = PCS::verify(
             &self.proof.joint_opening_proof,
             &self.preprocessing.generators,
             &mut self.transcript,
@@ -685,17 +736,19 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             &joint_claim,
             &joint_commitment,
         )
-        .context("Stage 8")
+        .context("Stage 8");
+        end_cycle_tracking("verifier_stage8_pcs_verify");
+        res
     }
 
     /// Compute joint commitment for the batch opening.
     fn compute_joint_commitment(
         &self,
-        commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
+        commitment_map: &mut BTreeMap<CommittedPolynomial, PCS::Commitment>,
         state: &DoryOpeningState<F>,
-    ) -> PCS::Commitment {
+    ) -> Result<PCS::Commitment, anyhow::Error> {
         // Accumulate gamma coefficients per polynomial
-        let mut rlc_map = HashMap::new();
+        let mut rlc_map = BTreeMap::new();
         for (gamma, (poly, _claim)) in state
             .gamma_powers
             .iter()
@@ -704,12 +757,17 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
         }
 
-        let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
-            .into_iter()
-            .map(|(k, v)| (v, commitment_map.remove(&k).unwrap()))
-            .unzip();
+        let mut coeffs = Vec::with_capacity(rlc_map.len());
+        let mut commitments = Vec::with_capacity(rlc_map.len());
+        for (poly, coeff) in rlc_map {
+            let commitment = commitment_map
+                .remove(&poly)
+                .ok_or_else(|| anyhow::anyhow!("missing commitment for polynomial {poly:?}"))?;
+            coeffs.push(coeff);
+            commitments.push(commitment);
+        }
 
-        PCS::combine_commitments(&commitments, &coeffs)
+        Ok(PCS::combine_commitments(&commitments, &coeffs))
     }
 }
 

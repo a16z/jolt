@@ -28,6 +28,8 @@ pub enum ProofVerifyError {
     InvalidReadWriteConfig(String),
     #[error("Invalid one-hot configuration: {0}")]
     InvalidOneHotConfig(String),
+    #[error("Trace length too large: {0} (max {1})")]
+    TraceLengthTooLarge(usize, usize),
     #[error("Dory proof verification failed: {0}")]
     DoryError(String),
     #[error("Sumcheck verification failed")]

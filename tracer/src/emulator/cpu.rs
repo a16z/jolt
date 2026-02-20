@@ -1166,9 +1166,13 @@ impl Drop for Cpu {
                 self.active_markers.len()
             );
             for (ptr, marker) in &self.active_markers {
+                let real = self.executed_instrs - marker.start_instrs;
+                let total = self.trace_len - marker.start_trace_len;
+                let virtual_instrs = total.saturating_sub(real as usize);
                 warn!(
-                    "  - '{}' (at ptr: 0x{:x}), started at {} RV64IMAC cycles",
-                    marker.label, ptr, marker.start_instrs
+                    "  - \"{}\": {} RV64IMAC cycles + {} virtual instructions = {} total cycles \
+                    (unclosed; ptr: 0x{:x})",
+                    marker.label, real, virtual_instrs, total, ptr
                 );
             }
         }
