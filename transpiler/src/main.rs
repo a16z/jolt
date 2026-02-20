@@ -53,6 +53,7 @@ use transpiler::{
 };
 use zklean_extractor::mle_ast::{
     enable_constraint_mode, take_constraints as take_assertions, AstBundle, InputKind, MleAst,
+    TargetField,
 };
 
 // Output file names (bundle is target-agnostic)
@@ -247,8 +248,20 @@ fn main() {
 
     // Register all symbolic variables as circuit inputs (witness values).
     // These will become struct fields in the generated Gnark circuit.
-    for (idx, name) in var_alloc.descriptions() {
-        bundle.add_input(*idx, name.clone(), InputKind::ProofData);
+    // Use descriptions_with_fields() to include target field metadata.
+    for (idx, name, target_field) in var_alloc.descriptions_with_fields() {
+        bundle.add_input_with_field(*idx, name.clone(), InputKind::ProofData, *target_field);
+    }
+
+    // Early warning if emulated arithmetic is needed (not yet implemented)
+    if bundle.requires_emulated_arithmetic() {
+        let fr_count = bundle.count_inputs_for_field(TargetField::Fr);
+        let fq_count = bundle.count_inputs_for_field(TargetField::Fq);
+        eprintln!(
+            "⚠️  Bundle contains {} emulated-field variables (and {} native Fr variables).",
+            fq_count, fr_count
+        );
+        eprintln!("    Emulated arithmetic codegen is not yet implemented — codegen will panic.");
     }
     println!("  Inputs: {}", bundle.inputs.len());
 
@@ -303,7 +316,7 @@ fn main() {
             let witness_values = var_alloc.witness_values();
 
             let mut witness_map: HashMap<String, String> = HashMap::new();
-            for (idx, name) in var_alloc.descriptions() {
+            for (idx, name, _target_field) in var_alloc.descriptions_with_fields() {
                 let sanitized = gnark_codegen::sanitize_go_name(name);
                 if let Some(value) = witness_values.get(&(*idx as usize)) {
                     witness_map.insert(sanitized, value.clone());

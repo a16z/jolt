@@ -42,29 +42,35 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::proof_serialization::{Claims, JoltProof};
 use jolt_core::zkvm::RV64IMACProof;
 use std::collections::BTreeMap;
-use zklean_extractor::mle_ast::MleAst;
+use zklean_extractor::mle_ast::{MleAst, TargetField};
 use zklean_extractor::AstCommitment;
 
 /// Tracks variable index allocation and witness values during symbolization.
 ///
 /// Each call to `alloc_with_value()` returns a fresh `MleAst::Var(index)` with a unique index,
 /// while simultaneously recording the concrete witness value. This ensures witness values
-/// are always in sync with symbolic variable allocation - making mismatch bugs structurally
+/// are always in sync with symbolic variable allocation — making mismatch bugs structurally
 /// impossible.
+///
+/// # Field Kind Tracking
+///
+/// Variables can be allocated for different target fields (Fr or Fq). The allocator
+/// tracks field kind per variable to enable correct codegen. Currently only Fr is
+/// supported at codegen time; Fq variables will panic with a clear error.
 ///
 /// The allocator records:
 /// - Human-readable descriptions for Go struct field names (e.g., `Stage1_Sumcheck_R0_0`)
 /// - Concrete witness values as decimal strings (for JSON serialization to Go)
+/// - Field kind per variable (Fr for native, Fq for emulated arithmetic)
 pub struct VarAllocator {
     next_idx: u16,
-    descriptions: Vec<(u16, String)>,
+    /// (index, name, target_field) tuples for each allocated variable.
+    descriptions: Vec<(u16, String, TargetField)>,
     /// Witness values indexed by variable index, stored as decimal strings.
     witness_values: Vec<String>,
 }
 
 impl VarAllocator {
-    // Public methods
-
     pub fn new() -> Self {
         Self {
             next_idx: 0,
@@ -73,34 +79,76 @@ impl VarAllocator {
         }
     }
 
-    /// Allocate N variables with their concrete values.
+    /// Allocate a single variable with its concrete value (Fr field, default).
+    ///
+    /// This is the primary allocation method for stages 1-7.
+    pub fn alloc_with_value(&mut self, description: &str, value: &ark_bn254::Fr) -> MleAst {
+        self.alloc_with_value_and_field(description, value, TargetField::Fr)
+    }
+
+    /// Allocate a single variable with explicit target field.
+    ///
+    /// # Arguments
+    /// * `description` — Human-readable name for codegen
+    /// * `value` — Concrete witness value (as Fr, converted to decimal string)
+    /// * `target_field` — Target field (Fr for native, Fq for emulated)
+    ///
+    /// # Note
+    /// The value is stored as a decimal string regardless of field.
+    /// For Fq values, ensure the value fits in the Fq modulus.
+    pub fn alloc_with_value_and_field(
+        &mut self,
+        description: &str,
+        value: &ark_bn254::Fr,
+        target_field: TargetField,
+    ) -> MleAst {
+        use ark_ff::PrimeField;
+        let idx = self.next_idx;
+        self.descriptions
+            .push((idx, description.to_string(), target_field));
+        self.witness_values.push(format!("{}", value.into_bigint()));
+        self.next_idx += 1;
+        MleAst::from_var(idx)
+    }
+
+    /// Allocate N variables with their concrete values (Fr field, default).
     ///
     /// Both symbolic variables and witness values are recorded in the same call,
     /// guaranteeing they stay in sync.
     pub fn alloc_n_with_values(&mut self, values: &[ark_bn254::Fr], prefix: &str) -> Vec<MleAst> {
+        self.alloc_n_with_values_and_field(values, prefix, TargetField::Fr)
+    }
+
+    /// Allocate N variables with explicit field kind.
+    pub fn alloc_n_with_values_and_field(
+        &mut self,
+        values: &[ark_bn254::Fr],
+        prefix: &str,
+        target_field: TargetField,
+    ) -> Vec<MleAst> {
         values
             .iter()
             .enumerate()
-            .map(|(i, v)| self.alloc_with_value(&format!("{prefix}_{i}"), v))
+            .map(|(i, v)| {
+                self.alloc_with_value_and_field(&format!("{prefix}_{i}"), v, target_field)
+            })
             .collect()
-    }
-
-    /// Allocate a single variable with its concrete value.
-    pub fn alloc_with_value(&mut self, description: &str, value: &ark_bn254::Fr) -> MleAst {
-        use ark_ff::PrimeField;
-        let idx = self.next_idx;
-        self.descriptions.push((idx, description.to_string()));
-        self.witness_values.push(format!("{}", value.into_bigint()));
-        self.next_idx += 1;
-        MleAst::from_var(idx)
     }
 
     pub fn next_idx(&self) -> u16 {
         self.next_idx
     }
 
-    pub fn descriptions(&self) -> &[(u16, String)] {
+    /// Get descriptions with target fields for AstBundle population.
+    pub fn descriptions_with_fields(&self) -> &[(u16, String, TargetField)] {
         &self.descriptions
+    }
+
+    /// Get descriptions without field kinds (backward compatible iterator).
+    pub fn descriptions(&self) -> impl Iterator<Item = (u16, &str)> + '_ {
+        self.descriptions
+            .iter()
+            .map(|(idx, name, _)| (*idx, name.as_str()))
     }
 
     /// Get witness values as a HashMap for JSON serialization.
@@ -112,7 +160,21 @@ impl VarAllocator {
             .collect()
     }
 
-    /// Allocate variables for a commitment's 12 chunks and record witness values.
+    /// Check if any variables with the specified field kind were allocated.
+    pub fn has_variables_for_field(&self, field: TargetField) -> bool {
+        self.descriptions
+            .iter()
+            .any(|(_, _, tf)| *tf == field)
+    }
+
+    /// Check if any variables require emulated arithmetic (non-native field).
+    pub fn requires_emulated_arithmetic(&self) -> bool {
+        self.descriptions
+            .iter()
+            .any(|(_, _, tf)| tf.requires_emulation())
+    }
+
+    /// Allocate variables for a commitment's 12 chunks and record witness values (Fr field).
     ///
     /// Commitments are serialized as uncompressed LE bytes,
     /// then split into 12 × 32-byte chunks (each fits in a BN254 field element).

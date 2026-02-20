@@ -1809,6 +1809,57 @@ pub enum InputKind {
     ProofData,
 }
 
+/// The target field for code generation.
+///
+/// This discriminator tells the transpilation pipeline which field a variable
+/// belongs to, so codegen can emit the appropriate code (native vs emulated).
+///
+/// # Background
+///
+/// In the BN254/Grumpkin 2-cycle:
+/// - Fr (BN254 scalar) = Fq (Grumpkin base) — native in Groth16 circuit
+/// - Fq (BN254 base) = Fr (Grumpkin scalar) — requires emulated arithmetic
+///
+/// Jolt stages 1-7 use Fr (native). Recursion stages 9-13 use Fq (emulated).
+/// Stage 8 (Hyrax PCS) uses native Grumpkin operations, not transpiled.
+///
+/// # Extensibility
+///
+/// Currently only BN254 Fr/Fq are supported. Future variants could include
+/// other curves (BLS12-381, Goldilocks, etc.) or extension fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TargetField {
+    /// BN254 scalar field (Fr) — native in Groth16 circuit.
+    /// Modulus: 21888242871839275222246405745257275088548364400416034343698204186575808495617
+    #[default]
+    Fr,
+
+    /// BN254 base field (Fq) — requires emulated arithmetic in circuit.
+    /// Modulus: 21888242871839275222246405745257275088696311157297823662689037894645226208583
+    ///
+    /// NOTE: Fq codegen is not yet implemented. This variant exists for
+    /// infrastructure readiness. Using Fq variables will panic at codegen
+    /// time with a clear error message.
+    Fq,
+}
+
+impl TargetField {
+    /// Human-readable name for error messages and debugging.
+    #[inline]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Fr => "Fr (BN254 scalar)",
+            Self::Fq => "Fq (BN254 base)",
+        }
+    }
+
+    /// Whether this field requires emulated arithmetic in a BN254 Groth16 circuit.
+    #[inline]
+    pub const fn requires_emulation(&self) -> bool {
+        matches!(self, Self::Fq)
+    }
+}
+
 /// Describes an input variable in the AST.
 /// Maps `Var(i)` to its semantic meaning.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1819,6 +1870,10 @@ pub struct InputVar {
     pub name: String,
     /// Whether this is a public statement or proof data.
     pub kind: InputKind,
+    /// The target field for this variable (Fr or Fq).
+    /// Defaults to Fr for backward compatibility with existing serialized bundles.
+    #[serde(default)]
+    pub target_field: TargetField,
 }
 
 /// What assertion a constraint represents.
@@ -1878,13 +1933,61 @@ impl AstBundle {
         }
     }
 
-    /// Add an input variable description.
+    /// Add an input variable description with default field kind (Fr).
+    ///
+    /// This is the primary method for stages 1-7 which use native Fr arithmetic.
     pub fn add_input(&mut self, index: u16, name: impl Into<String>, kind: InputKind) {
+        self.add_input_with_field(index, name, kind, TargetField::default())
+    }
+
+    /// Add an input variable description with explicit field kind.
+    ///
+    /// Use this when adding Fq variables for recursion stages.
+    ///
+    /// # Arguments
+    /// * `index` — Variable index matching `Atom::Var(index)`
+    /// * `name` — Human-readable name for codegen (will be sanitized to Go identifier)
+    /// * `kind` — Public statement or proof data
+    /// * `target_field` — Target field (Fr for native, Fq for emulated)
+    pub fn add_input_with_field(
+        &mut self,
+        index: u16,
+        name: impl Into<String>,
+        kind: InputKind,
+        target_field: TargetField,
+    ) {
         self.inputs.push(InputVar {
             index,
             name: name.into(),
             kind,
+            target_field,
         });
+    }
+
+    /// Iterate over inputs for a specific target field.
+    ///
+    /// Useful for codegen to separate native vs emulated variables.
+    pub fn inputs_for_field(&self, target_field: TargetField) -> impl Iterator<Item = &InputVar> {
+        self.inputs.iter().filter(move |i| i.target_field == target_field)
+    }
+
+    /// Check if any inputs use the specified field kind.
+    pub fn has_inputs_for_field(&self, field: TargetField) -> bool {
+        self.inputs.iter().any(|i| i.target_field == field)
+    }
+
+    /// Count inputs for a specific field kind.
+    pub fn count_inputs_for_field(&self, field: TargetField) -> usize {
+        self.inputs.iter().filter(|i| i.target_field == field).count()
+    }
+
+    /// Check if any inputs require emulated arithmetic (non-native field).
+    ///
+    /// Returns `true` if the bundle contains any variables that are not in the
+    /// native field (Fr). This is useful for codegen to know if emulated
+    /// arithmetic support is needed.
+    pub fn requires_emulated_arithmetic(&self) -> bool {
+        self.inputs.iter().any(|i| i.target_field.requires_emulation())
     }
 
     /// Add a constraint that asserts an expression equals zero.
