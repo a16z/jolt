@@ -335,7 +335,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         if padded_trace_len > max_padded_trace_length {
             panic!(
                 "Execution trace length ({unpadded_trace_len} cycles, padded to {padded_trace_len}) \
-                exceeds max_trace_length ({max_padded_trace_length}) configured in #[jolt::provable]. \
+                exceeds max_trace_length ({max_padded_trace_length}) configured in MemoryConfig. \
                 Increase max_trace_length to at least {padded_trace_len}."
             );
         }
