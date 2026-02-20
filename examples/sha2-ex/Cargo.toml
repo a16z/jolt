@@ -10,3 +10,6 @@ tracing.workspace = true
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 guest = { package = "sha2-guest", path = "./guest" }
 hex.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["jolt-inlines-sha2"]

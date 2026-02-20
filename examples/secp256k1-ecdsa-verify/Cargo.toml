@@ -9,3 +9,6 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 guest = { package = "secp256k1-ecdsa-verify-guest", path = "./guest" }
+
+[package.metadata.cargo-machete]
+ignored = ["jolt-inlines-secp256k1"]

@@ -11,3 +11,6 @@ compute_advice = []
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["guest-std"] }
 bytemuck = "1.23.2"
 bytemuck_derive = "1.10.1"
+
+[package.metadata.cargo-machete]
+ignored = ["bytemuck"]

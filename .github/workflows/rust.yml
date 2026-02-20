@@ -40,6 +40,7 @@ jobs:
   machete:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
       - uses: bnjbvr/cargo-machete@main
       - name: cargo machete
         run: cargo machete --with-metadata
