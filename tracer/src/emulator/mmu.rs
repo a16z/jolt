@@ -1246,7 +1246,7 @@ mod test_mmu {
     }
 
     #[test]
-    #[should_panic(expected = "Stack Canary")]
+    #[should_panic(expected = "Stack overflow")]
     fn test_stack_overflow() {
         let mut mmu = setup_mmu();
 
