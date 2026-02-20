@@ -30,6 +30,7 @@ std = [
     "object/std",
     "tracing/std",
     "postcard/use-std",
+    "serde_json/std",
 ]
 test-utils = ["dep:rand"]
 
