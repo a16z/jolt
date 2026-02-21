@@ -548,6 +548,16 @@ pub fn eval_io_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challe
     hi_scale * acc
 }
 
+fn check_memory_fits(label: &str, index: usize, data_len: usize, state_len: usize) {
+    let words_needed = data_len.div_ceil(8);
+    assert!(
+        index + words_needed <= state_len,
+        "{label} exceeds allocated memory: needs {words_needed} words at index {index}, \
+        but memory state only has {state_len} entries. \
+        Increase the corresponding size in MemoryConfig.",
+    );
+}
+
 /// Returns `(initial_memory_state, final_memory_state)`
 pub fn gen_ram_memory_states<F: JoltField>(
     ram_K: usize,
@@ -591,6 +601,7 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits("Trusted advice", index, program_io.trusted_advice.len(), K);
     populate_memory_states(
         index,
         &program_io.trusted_advice,
@@ -603,6 +614,12 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits(
+        "Untrusted advice",
+        index,
+        program_io.untrusted_advice.len(),
+        K,
+    );
     populate_memory_states(
         index,
         &program_io.untrusted_advice,
@@ -615,6 +632,7 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits("Input", index, program_io.inputs.len(), K);
     populate_memory_states(
         index,
         &program_io.inputs,
@@ -629,6 +647,7 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits("Output", index, program_io.outputs.len(), K);
     populate_memory_states(
         index,
         &program_io.outputs,
@@ -698,6 +717,18 @@ mod tests {
     use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::MemoryConfig;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
+
+    #[test]
+    #[should_panic(expected = "exceeds allocated memory")]
+    fn check_memory_fits_panics_on_overflow() {
+        check_memory_fits("Test region", 10, 24, 12);
+    }
+
+    #[test]
+    fn check_memory_fits_passes_when_within_bounds() {
+        check_memory_fits("Test region", 0, 16, 4);
+        check_memory_fits("Test region", 2, 8, 4);
+    }
 
     #[test]
     fn public_initial_ram_eval_matches_dense_mle() {

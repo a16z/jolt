@@ -275,6 +275,12 @@ fn setup_emulator_with_backtraces(
         untrusted_advice.len(),
         memory_config.max_untrusted_advice_size,
     );
+    assert!(
+        inputs.len() as u64 <= memory_config.max_input_size,
+        "Input too long: got {} bytes, max is {} bytes (set by MemoryConfig.max_input_size).",
+        inputs.len(),
+        memory_config.max_input_size,
+    );
 
     let mut jolt_device = JoltDevice::new(memory_config);
     jolt_device.inputs = inputs.to_vec();
@@ -799,6 +805,18 @@ mod tests {
             ..Default::default()
         };
         let _ = setup_emulator(&elf, b"[]", &[], &[0u8; 4096], &memory_config);
+    }
+
+    #[test]
+    #[should_panic(expected = "Input too long")]
+    fn panics_when_input_exceeds_max() {
+        let elf = minimal_elf();
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            max_input_size: 64,
+            ..Default::default()
+        };
+        let _ = setup_emulator(&elf, &[0u8; 128], &[], &[], &memory_config);
     }
 
     #[test]

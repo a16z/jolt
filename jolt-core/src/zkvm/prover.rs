@@ -331,6 +331,15 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         } else {
             (trace.len() + 1).next_power_of_two()
         };
+        let max_padded_trace_length = preprocessing.shared.max_padded_trace_length;
+        if padded_trace_len > max_padded_trace_length {
+            panic!(
+                "Execution trace length ({unpadded_trace_len} cycles, padded to {padded_trace_len}) \
+                exceeds max_trace_length ({max_padded_trace_length}) configured in MemoryConfig. \
+                Increase max_trace_length to at least {padded_trace_len}."
+            );
+        }
+
         // We may need extra padding so the main Dory matrix has enough (row, col) variables
         // to embed advice commitments committed in their own preprocessing-only contexts.
         let has_trusted_advice = !program_io.trusted_advice.is_empty();

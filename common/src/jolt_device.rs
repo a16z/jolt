@@ -98,6 +98,14 @@ impl JoltDevice {
         }
 
         let internal_address = self.convert_write_address(address);
+        let max_output_size =
+            (self.memory_layout.output_end - self.memory_layout.output_start) as usize;
+        assert!(
+            internal_address < max_output_size,
+            "Output too long: guest wrote {} bytes, max is {} bytes (set by MemoryConfig.max_output_size).",
+            internal_address + 1,
+            max_output_size,
+        );
         if self.outputs.len() <= internal_address {
             self.outputs.resize(internal_address + 1, 0);
         }
@@ -403,5 +411,25 @@ impl MemoryLayout {
     /// Returns the total emulator memory (program + canary + stack + heap).
     pub fn get_total_memory_size(&self) -> u64 {
         self.heap_end - RAM_START_ADDRESS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "Output too long")]
+    fn panics_when_output_exceeds_max() {
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            max_output_size: 8,
+            ..Default::default()
+        };
+        let mut device = JoltDevice::new(&memory_config);
+        // Use io_end which bypasses panic/termination early returns
+        // but still lands past the output region in convert_write_address
+        let overflow_address = device.memory_layout.io_end;
+        device.store(overflow_address, 0x42);
     }
 }
