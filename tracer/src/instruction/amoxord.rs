@@ -87,11 +87,6 @@ impl RISCVTrace for AMOXORD {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let effective_rd = if self.operands.rd == 0 {
-            *allocator.allocate()
-        } else {
-            self.operands.rd
-        };
         let v_rs2 = allocator.allocate();
         let v_rd = allocator.allocate();
 
@@ -99,7 +94,7 @@ impl RISCVTrace for AMOXORD {
         asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
         asm.emit_r::<XOR>(*v_rs2, *v_rd, self.operands.rs2);
         asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);
-        asm.emit_i::<ADDI>(effective_rd, *v_rd, 0);
+        asm.emit_i::<ADDI>(self.operands.rd, *v_rd, 0);
         asm.finalize()
     }
 }

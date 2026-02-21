@@ -81,11 +81,6 @@ impl RISCVTrace for AMOMAXUW {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let effective_rd = if self.operands.rd == 0 {
-            *allocator.allocate()
-        } else {
-            self.operands.rd
-        };
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         match xlen {
@@ -99,7 +94,7 @@ impl RISCVTrace for AMOMAXUW {
                 asm.emit_r::<SUB>(*v1, self.operands.rs2, *v_rd);
                 asm.emit_r::<MUL>(*v1, *v1, *v0);
                 asm.emit_r::<ADD>(*v_rs2, *v1, *v_rd);
-                amo_post32(&mut asm, *v_rs2, self.operands.rs1, effective_rd, *v_rd);
+                amo_post32(&mut asm, *v_rs2, self.operands.rs1, self.operands.rd, *v_rd);
             }
             Xlen::Bit64 => {
                 let v_rd = allocator.allocate();
@@ -123,7 +118,7 @@ impl RISCVTrace for AMOMAXUW {
                     *v_dword,
                     *v_shift,
                     *v0,
-                    effective_rd,
+                    self.operands.rd,
                     *v_rd,
                 );
             }

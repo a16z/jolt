@@ -83,11 +83,6 @@ impl RISCVTrace for SCD {
     ) -> Vec<Instruction> {
         assert_eq!(xlen, Xlen::Bit64, "SC.D is only available in RV64");
 
-        let effective_rd = if self.operands.rd == 0 {
-            *allocator.allocate()
-        } else {
-            self.operands.rd
-        };
         let v_reservation = allocator.reservation_d_register();
         let v_reservation_w = allocator.reservation_w_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
@@ -120,7 +115,7 @@ impl RISCVTrace for SCD {
 
         asm.emit_i::<ADDI>(v_reservation, 0, 0);
         asm.emit_i::<ADDI>(v_reservation_w, 0, 0);
-        asm.emit_i::<XORI>(effective_rd, *v_success, 1);
+        asm.emit_i::<XORI>(self.operands.rd, *v_success, 1);
         drop(v_success);
 
         asm.finalize()

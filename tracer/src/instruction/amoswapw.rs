@@ -97,11 +97,6 @@ impl RISCVTrace for AMOSWAPW {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let effective_rd = if self.operands.rd == 0 {
-            *allocator.allocate()
-        } else {
-            self.operands.rd
-        };
         match xlen {
             Xlen::Bit32 => {
                 let v_rd = allocator.allocate();
@@ -113,7 +108,7 @@ impl RISCVTrace for AMOSWAPW {
                 );
                 asm.emit_i::<VirtualLW>(*v_rd, self.operands.rs1, 0);
                 asm.emit_s::<VirtualSW>(self.operands.rs1, self.operands.rs2, 0);
-                asm.emit_i::<ADDI>(effective_rd, *v_rd, 0);
+                asm.emit_i::<ADDI>(self.operands.rd, *v_rd, 0);
                 asm.finalize()
             }
             Xlen::Bit64 => {
@@ -137,7 +132,7 @@ impl RISCVTrace for AMOSWAPW {
                 asm.emit_r::<XOR>(*v_dword, *v_dword, *v_shift);
                 asm.emit_i::<ANDI>(*v_mask, self.operands.rs1, -8i64 as u64);
                 asm.emit_s::<SD>(*v_mask, *v_dword, 0);
-                asm.emit_i::<VirtualSignExtendWord>(effective_rd, *v_rd, 0);
+                asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *v_rd, 0);
                 asm.finalize()
             }
         }

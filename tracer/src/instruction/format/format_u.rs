@@ -65,6 +65,10 @@ impl InstructionFormat for FormatU {
             imm: rng.next_u64(),
         }
     }
+
+    fn set_rd(&mut self, rd: u8) {
+        self.rd = rd;
+    }
 }
 
 impl From<NormalizedOperands> for FormatU {

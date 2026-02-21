@@ -99,6 +99,11 @@ impl InstructionFormat for FormatInline {
             rs3: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
         }
     }
+
+    /// FormatInline maps rd ↔ rs3.
+    fn set_rd(&mut self, rd: u8) {
+        self.rs3 = rd;
+    }
 }
 
 impl From<NormalizedOperands> for FormatInline {

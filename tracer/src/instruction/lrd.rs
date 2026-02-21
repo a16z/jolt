@@ -65,18 +65,13 @@ impl RISCVTrace for LRD {
         // LR.D is only available in RV64A, so we only implement the 64-bit path
         assert_eq!(xlen, Xlen::Bit64, "LR.D is only available in RV64");
 
-        let effective_rd = if self.operands.rd == 0 {
-            *allocator.allocate()
-        } else {
-            self.operands.rd
-        };
         let v_reservation_d = allocator.reservation_d_register();
         let v_reservation_w = allocator.reservation_w_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         asm.emit_i::<ADDI>(v_reservation_d, self.operands.rs1, 0);
         asm.emit_i::<ADDI>(v_reservation_w, 0, 0); // clear W reservation
-        asm.emit_ld::<LD>(effective_rd, self.operands.rs1, 0);
+        asm.emit_ld::<LD>(self.operands.rd, self.operands.rs1, 0);
 
         asm.finalize()
     }

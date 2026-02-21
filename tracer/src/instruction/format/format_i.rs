@@ -88,6 +88,10 @@ impl InstructionFormat for FormatI {
             rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
         }
     }
+
+    fn set_rd(&mut self, rd: u8) {
+        self.rd = rd;
+    }
 }
 
 impl From<NormalizedOperands> for FormatI {

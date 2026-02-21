@@ -118,6 +118,10 @@ impl InstructionFormat for FormatVirtualRightShiftR {
 
         Self { rd, rs1, rs2 }
     }
+
+    fn set_rd(&mut self, rd: u8) {
+        self.rd = rd;
+    }
 }
 
 impl From<NormalizedOperands> for FormatVirtualRightShiftR {

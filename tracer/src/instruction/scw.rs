@@ -92,11 +92,6 @@ impl RISCVTrace for SCW {
 
 impl SCW {
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        let effective_rd = if self.operands.rd == 0 {
-            *allocator.allocate()
-        } else {
-            self.operands.rd
-        };
         let v_reservation = allocator.reservation_w_register();
         let v_reservation_d = allocator.reservation_d_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
@@ -129,18 +124,13 @@ impl SCW {
 
         asm.emit_i::<ADDI>(v_reservation, 0, 0);
         asm.emit_i::<ADDI>(v_reservation_d, 0, 0);
-        asm.emit_i::<XORI>(effective_rd, *v_success, 1);
+        asm.emit_i::<XORI>(self.operands.rd, *v_success, 1);
         drop(v_success);
 
         asm.finalize()
     }
 
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
-        let effective_rd = if self.operands.rd == 0 {
-            *allocator.allocate()
-        } else {
-            self.operands.rd
-        };
         let v_reservation = allocator.reservation_w_register();
         let v_reservation_d = allocator.reservation_d_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
@@ -176,7 +166,7 @@ impl SCW {
 
         asm.emit_s::<SW>(self.operands.rs1, v_reservation_d, 0);
 
-        asm.emit_i::<XORI>(effective_rd, v_reservation, 1);
+        asm.emit_i::<XORI>(self.operands.rd, v_reservation, 1);
         asm.emit_i::<ADDI>(v_reservation, 0, 0);
         asm.emit_i::<ADDI>(v_reservation_d, 0, 0);
 

@@ -35,6 +35,10 @@ pub trait InstructionFormat:
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self;
+
+    /// Overwrite the destination register. Default is a no-op for formats
+    /// without a destination register (branches, stores).
+    fn set_rd(&mut self, _rd: u8) {}
 }
 
 pub trait InstructionRegisterState:

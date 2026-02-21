@@ -82,11 +82,6 @@ impl RISCVTrace for AMOMIND {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let effective_rd = if self.operands.rd == 0 {
-            *allocator.allocate()
-        } else {
-            self.operands.rd
-        };
         let v0 = allocator.allocate();
         let v1 = allocator.allocate();
         let v2 = allocator.allocate();
@@ -99,7 +94,7 @@ impl RISCVTrace for AMOMIND {
         asm.emit_r::<MUL>(*v2, *v2, *v1);
         asm.emit_r::<ADD>(*v1, *v0, *v2);
         asm.emit_s::<SD>(self.operands.rs1, *v1, 0);
-        asm.emit_i::<ADDI>(effective_rd, *v0, 0);
+        asm.emit_i::<ADDI>(self.operands.rd, *v0, 0);
 
         asm.finalize()
     }
