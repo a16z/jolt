@@ -71,8 +71,8 @@ impl InstructionFormat for FormatB {
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu.x[self.rs1 as usize], &cpu.xlen);
-        state.rs2 = normalize_register_value(cpu.x[self.rs2 as usize], &cpu.xlen);
+        state.rs1 = normalize_register_value(cpu, self.rs1 as usize);
+        state.rs2 = normalize_register_value(cpu, self.rs2 as usize);
     }
 
     fn capture_post_execution_state(&self, _: &mut Self::RegisterState, _: &mut Cpu) {

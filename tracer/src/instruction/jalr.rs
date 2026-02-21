@@ -25,7 +25,7 @@ impl JALR {
             if self.operands.rd == 1 {
                 cpu.track_call(self.address, NormalizedOperands::from(self.operands));
             }
-            cpu.x[self.operands.rd as usize] = tmp;
+            cpu.write_register(self.operands.rd as usize, tmp);
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
+use crate::zkvm::instruction::NUM_INSTRUCTION_FLAGS;
 use tracer::instruction::{virtual_advice::VirtualAdvice, RISCVCycle};
 
 use crate::zkvm::lookup_table::{range_check::RangeCheckTable, LookupTables};
@@ -25,9 +25,7 @@ impl Flags for VirtualAdvice {
     }
 
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
-        let mut flags = [false; NUM_INSTRUCTION_FLAGS];
-        flags[InstructionFlags::IsRdNotZero] = self.operands.rd != 0;
-        flags
+        [false; NUM_INSTRUCTION_FLAGS]
     }
 }
 

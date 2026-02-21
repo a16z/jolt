@@ -18,13 +18,16 @@ impl LD {
         let address = (cpu.x[self.operands.rs1 as usize] as u64)
             .wrapping_add(self.operands.imm as i32 as u64);
         let value = cpu.get_mut_mmu().load_doubleword(address);
-        cpu.x[self.operands.rd as usize] = match value {
-            Ok((value, memory_read)) => {
-                *ram_access = memory_read;
-                value as i64
-            }
-            Err(_) => panic!("MMU load error"),
-        };
+        cpu.write_register(
+            self.operands.rd as usize,
+            match value {
+                Ok((value, memory_read)) => {
+                    *ram_access = memory_read;
+                    value as i64
+                }
+                Err(_) => panic!("MMU load error"),
+            },
+        );
     }
 }
 impl RISCVTrace for LD {}

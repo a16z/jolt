@@ -36,13 +36,16 @@ impl REMW {
         // including on a divide by zero.
         let dividend = cpu.x[self.operands.rs1 as usize] as i32;
         let divisor = cpu.x[self.operands.rs2 as usize] as i32;
-        cpu.x[self.operands.rd as usize] = (if divisor == 0 {
-            dividend
-        } else if dividend == i32::MIN && divisor == -1 {
-            0
-        } else {
-            dividend.wrapping_rem(divisor)
-        }) as i64;
+        cpu.write_register(
+            self.operands.rd as usize,
+            (if divisor == 0 {
+                dividend
+            } else if dividend == i32::MIN && divisor == -1 {
+                0
+            } else {
+                dividend.wrapping_rem(divisor)
+            }) as i64,
+        );
     }
 }
 

@@ -20,8 +20,10 @@ impl VirtualPow2W {
         match cpu.xlen {
             Xlen::Bit32 => panic!("VirtualPow2W is invalid in 32b mode"),
             Xlen::Bit64 => {
-                cpu.x[self.operands.rd as usize] =
-                    1 << (cpu.x[self.operands.rs1 as usize] as u64 % 32)
+                cpu.write_register(
+                    self.operands.rd as usize,
+                    1 << (cpu.x[self.operands.rs1 as usize] as u64 % 32),
+                );
             }
         }
     }

@@ -73,12 +73,12 @@ impl InstructionFormat for FormatLoad {
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu.x[self.rs1 as usize], &cpu.xlen);
-        state.rd.0 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
+        state.rs1 = normalize_register_value(cpu, self.rs1 as usize);
+        state.rd.0 = normalize_register_value(cpu, self.rd as usize);
     }
 
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
+        state.rd.1 = normalize_register_value(cpu, self.rd as usize);
     }
 
     #[cfg(any(feature = "test-utils", test))]
@@ -92,6 +92,10 @@ impl InstructionFormat for FormatLoad {
             // rs1 should never be 0 for memory operations (x0 is hardwired to 0)
             rs1: 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1)),
         }
+    }
+
+    fn set_rd(&mut self, rd: u8) {
+        self.rd = rd;
     }
 }
 

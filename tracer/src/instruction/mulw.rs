@@ -27,7 +27,7 @@ impl MULW {
         // register.
         let a = cpu.x[self.operands.rs1 as usize] as i32;
         let b = cpu.x[self.operands.rs2 as usize] as i32;
-        cpu.x[self.operands.rd as usize] = a.wrapping_mul(b) as i64;
+        cpu.write_register(self.operands.rd as usize, a.wrapping_mul(b) as i64);
     }
 }
 

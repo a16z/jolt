@@ -545,6 +545,28 @@ macro_rules! define_rv32im_enums {
 
         impl Instruction {
             pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+                let normalized = self.normalize();
+                // Rewrite instructions with rd=x0 via inline_sequence so the
+                // constraint system never sees rd=x0.
+                if normalized.operands.rd == Some(0) {
+                    let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+                    let mut trace = trace;
+                    for instr in inline_sequence {
+                        instr.trace_raw(cpu, trace.as_deref_mut());
+                    }
+                    return;
+                }
+                match self {
+                    Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
+                    Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
+                    $(
+                        Instruction::$instr(instr) => instr.trace(cpu, trace),
+                    )*
+                    Instruction::INLINE(instr) => instr.trace(cpu, trace),
+                }
+            }
+
+            fn trace_raw(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
                 match self {
                     Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
                     Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
@@ -584,7 +606,75 @@ macro_rules! define_rv32im_enums {
                 self.into()
             }
 
+            /// Copy this instruction with rd overwritten.  Uses
+            /// `InstructionFormat::set_rd` so the correct field is updated
+            /// for each format (e.g. FormatInline writes rs3).
+            fn with_rd(&self, new_rd: u8) -> Instruction {
+                match self {
+                    Instruction::NoOp => Instruction::NoOp,
+                    Instruction::UNIMPL => Instruction::UNIMPL,
+                    $(Instruction::$instr(instr) => {
+                        let mut copy = *instr;
+                        copy.operands.set_rd(new_rd);
+                        copy.into()
+                    },)*
+                    Instruction::INLINE(instr) => {
+                        let mut copy = *instr;
+                        copy.operands.set_rd(new_rd);
+                        copy.into()
+                    }
+                }
+            }
+
             pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
+                let normalized = self.normalize();
+                if normalized.operands.rd == Some(0) {
+                    match self {
+                        // Remap rd to a virtual register
+                        Instruction::JAL(_) | Instruction::JALR(_)
+                        | Instruction::VirtualAdviceLoad(_) | Instruction::VirtualHostIO(_)
+                        | Instruction::INLINE(_)
+                        | Instruction::AMOADDW(_) | Instruction::AMOADDD(_)
+                        | Instruction::AMOXORW(_) | Instruction::AMOXORD(_)
+                        | Instruction::AMOANDW(_) | Instruction::AMOANDD(_)
+                        | Instruction::AMOORW(_) | Instruction::AMOORD(_)
+                        | Instruction::AMOMAXW(_) | Instruction::AMOMAXD(_)
+                        | Instruction::AMOMINW(_) | Instruction::AMOMIND(_)
+                        | Instruction::AMOMAXUW(_) | Instruction::AMOMAXUD(_)
+                        | Instruction::AMOMINUW(_) | Instruction::AMOMINUD(_)
+                        | Instruction::AMOSWAPW(_) | Instruction::AMOSWAPD(_)
+                        | Instruction::LRW(_) | Instruction::LRD(_)
+                        | Instruction::SCW(_) | Instruction::SCD(_) => {
+                            let vr = allocator.allocate();
+                            return self.with_rd(*vr).inline_sequence(allocator, xlen);
+                        }
+                        // Delegate: these handle rd=0 internally
+                        Instruction::ECALL(_) | Instruction::MRET(_)
+                        | Instruction::EBREAK(_) | Instruction::CSRRW(_) => {
+                            return self.dispatch_inline_sequence(allocator, xlen);
+                        }
+                        // All other instructions with rd=x0: replace with NOP
+                        _ => {
+                            let addi = ADDI::from(NormalizedInstruction {
+                                address: normalized.address,
+                                operands: NormalizedOperands {
+                                    rd: Some(0),
+                                    rs1: Some(0),
+                                    rs2: None,
+                                    imm: 0,
+                                },
+                                virtual_sequence_remaining: None,
+                                is_first_in_sequence: false,
+                                is_compressed: normalized.is_compressed,
+                            });
+                            return vec![addi.into()];
+                        }
+                    }
+                }
+                self.dispatch_inline_sequence(allocator, xlen)
+            }
+
+            fn dispatch_inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
                 match self {
                     Instruction::NoOp => vec![],
                     Instruction::UNIMPL => vec![],

@@ -50,7 +50,7 @@ impl RISCVInstruction for VirtualAdvice {
     }
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
-        cpu.x[self.operands.rd as usize] = self.advice as i64;
+        cpu.write_register(self.operands.rd as usize, self.advice as i64);
     }
 }
 

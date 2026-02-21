@@ -39,7 +39,7 @@ impl AMOANDW {
             .expect("MMU store error");
 
         // Return the original value
-        cpu.x[self.operands.rd as usize] = original_value;
+        cpu.write_register(self.operands.rd as usize, original_value);
     }
 }
 

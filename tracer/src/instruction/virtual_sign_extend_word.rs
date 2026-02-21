@@ -20,7 +20,10 @@ impl VirtualSignExtendWord {
         match cpu.xlen {
             Xlen::Bit32 => panic!("VirtualSignExtend is not supported for 32-bit mode"),
             Xlen::Bit64 => {
-                cpu.x[self.operands.rd as usize] = (cpu.x[self.operands.rs1 as usize] << 32) >> 32
+                cpu.write_register(
+                    self.operands.rd as usize,
+                    (cpu.x[self.operands.rs1 as usize] << 32) >> 32,
+                );
             }
         }
     }

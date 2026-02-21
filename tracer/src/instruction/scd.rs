@@ -39,12 +39,12 @@ impl SCD {
             match result {
                 Ok(memory_write) => {
                     *ram_access = memory_write;
-                    cpu.x[self.operands.rd as usize] = 0;
+                    cpu.write_register(self.operands.rd as usize, 0);
                 }
                 Err(_) => panic!("MMU store error"),
             }
         } else {
-            cpu.x[self.operands.rd as usize] = 1;
+            cpu.write_register(self.operands.rd as usize, 1);
         }
         // RISC-V spec: SC always invalidates the reservation regardless of success/failure
         cpu.clear_reservation();

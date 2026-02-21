@@ -31,7 +31,7 @@ impl VirtualROTRIW {
             }
         };
 
-        cpu.x[self.operands.rd as usize] = rotated as i64;
+        cpu.write_register(self.operands.rd as usize, rotated as i64);
     }
 }
 
