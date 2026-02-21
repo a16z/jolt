@@ -104,6 +104,16 @@ The verifier searches for non-deterministic transitions. We verify that the tran
 
 When the test suite runs (`cargo test -p z3-verifier -- --nocapture`), it outputs `SAT` or `UNSAT`. A `SAT` result indicates a failure in verification.
 
+## Bit-Width Scaling (Virtual Sequences)
+
+Some virtual sequences (notably those involving division/remainder or high-half multiplication) can be very slow at full 64-bit bitvector width. The `virtual_sequences` harness supports running the same checks at a scaled-down BitVec width to keep solver runtime manageable while preserving "boundary-condition" structure (e.g., `63 → n-1`, `32 → n/2`, all-ones masks, signed mins).
+
+Set `Z3_VERIFIER_BV_BITS` to a power of two in `[8, 64]` (default: `64`):
+
+```bash
+Z3_VERIFIER_BV_BITS=8 cargo test -p z3-verifier virtual_sequences -- --nocapture
+```
+
 ### 1. Correctness Failures (Logic Bugs)
 **Symptom:** `test_..._correctness` fails.
 **Meaning:** The verifier found a concrete set of inputs where Jolt's output disagrees with the Spec.
