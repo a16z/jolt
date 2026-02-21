@@ -2898,6 +2898,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-field"
+version = "0.1.0"
+dependencies = [
+ "allocative",
+ "ark-bn254",
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+]
+
+[[package]]
 name = "jolt-inlines-bigint"
 version = "0.1.0"
 dependencies = [
@@ -3030,6 +3045,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "jolt-transcript"
+version = "0.1.0"
+dependencies = [
+ "blake2",
+ "digest",
+ "hex",
+ "sha3",
 ]
 
 [[package]]
