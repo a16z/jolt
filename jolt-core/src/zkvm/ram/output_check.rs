@@ -1,3 +1,62 @@
+//! # OutputCheck (Stage 2)
+//!
+//! Source: `jolt-core/src/zkvm/ram/output_check.rs`
+//!
+//!
+//! ## Schwartz–Zippel randomness
+//!
+//! - `r_address ∈ F^{log₂ K_RAM}`: fresh address challenge vector
+//!
+//!
+//! ## Sumcheck
+//!
+//! `eq(r_address, X_k)` is the [multilinear Lagrange basis polynomial][ml].
+//!
+//! [ml]: https://en.wikipedia.org/wiki/Multilinear_polynomial
+//!
+//! ```text
+//! LHS := Σ_{X_k}  eq(r_address, X_k) · io_mask(X_k)
+//!                · (RamValFinal(X_k) - ValIO(X_k))
+//!
+//! RHS := 0   (zero-check)
+//!
+//! where  X_k ∈ {0,1}^{log₂ K_RAM}
+//! ```
+//!
+//! Dimensions: `log₂ K_RAM` rounds (address only).
+//!
+//! - `io_mask(X_k)`: 1 if address `X_k` is in the I/O region,
+//!   0 otherwise. Verifier-computable.
+//! - `ValIO(X_k)`: publicly claimed output value at address `X_k`.
+//!   Verifier-computable (public input).
+//! - `RamValFinal(X_k)`: final RAM state at address `X_k` after
+//!   all cycles (virtual).
+//!
+//!
+//! ## Opening point
+//!
+//! After sumcheck: `r^(2)_{K_RAM} ∈ F^{log₂ K_RAM}`.
+//!
+//!
+//! ## Verifier opening claim
+//!
+//! The verifier checks that the final sumcheck message equals:
+//!
+//! ```text
+//! eq(r_address, r^(2)_{K_RAM}) · io_mask(r^(2)_{K_RAM})
+//!   · (RamValFinal(r^(2)_{K_RAM}) - ValIO(r^(2)_{K_RAM}))
+//! ```
+//!
+//! `eq`, `io_mask`, and `ValIO` are computable by the verifier.
+//! The prover supplies the opening for `RamValFinal`.
+//!
+//!
+//! ## VirtualPolynomials opened at `r^(2)_{K_RAM}`
+//!
+//! ```text
+//! RamValFinal
+//! ```
+//!
 use crate::{
     field::JoltField,
     poly::{
@@ -25,17 +84,6 @@ use allocative::FlameGraphBuilder;
 use common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
 use rayon::prelude::*;
 use tracer::JoltDevice;
-
-// RAM output sumchecks
-//
-// OutputSumcheck:
-//   Proves the zero-check
-//     Σ_k eq(r_address, k) ⋅ io_mask(k) ⋅ (Val_final(k) − Val_io(k)) = 0,
-//   where:
-//   - r_address is a random address challenge vector.
-//   - io_mask is the MLE of the I/O-region indicator (1 on matching {0,1}-points).
-//   - Val_final(k) is the final memory value at address k.
-//   - Val_io(k) is the publicly claimed output value at address k.
 
 /// Degree bonud of the sumcheck round polynomials in [`OutputSumcheckVerifier`].
 const OUTPUT_SUMCHECK_DEGREE_BOUND: usize = 3;

@@ -1,3 +1,91 @@
+//! # ShiftSumcheck
+//!
+//! Source: `jolt-core/src/zkvm/spartan/shift.rs`
+//!
+//!
+//! ## Schwartz–Zippel randomness
+//!
+//! - Re-uses `r^(1)_cycle ∈ F^{log₂ T}` from Stage 1 (SpartanOuter)
+//! - Re-uses `r^(2)_cycle ∈ F^{log₂ T}` from Stage 2 (ProductVirtualization)
+//!
+//!
+//! ## Batching randomness
+//!
+//! - `γ ∈ F`: fresh batching challenge (powers γ, γ², γ³, γ⁴ used)
+//!
+//!
+//! ## Sumcheck
+//!
+//! `EqPlusOne(X, Y)` for `X, Y ∈ {0,1}^ℓ` is the MLE of the Boolean
+//! function that returns 1 iff the integer `Y = X + 1`, and 0 when
+//! `X = 2^ℓ - 1` (no wrap-around). In other words, it "shifts" by
+//! one timestep: `f(j+1)` is accessed via `EqPlusOne` at index `j`.
+//! Definition: `jolt-core/src/poly/eq_plus_one_poly.rs`.
+//!
+//! ```text
+//! LHS := Σ_{X_j}  EqPlusOne(r^(1)_cycle, X_j)
+//!                · (UnexpandedPC(X_j)
+//!                  + γ   · PC(X_j)
+//!                  + γ²  · IsVirtual(X_j)
+//!                  + γ³  · IsFirstInSeq(X_j))
+//!
+//!      + γ⁴ · Σ_{X_j}  EqPlusOne(r^(2)_cycle, X_j)
+//!                      · (1 - IsNoop(X_j))
+//!
+//! RHS := NextUnexpandedPC(r^(1)_cycle)
+//!      + γ   · NextPC(r^(1)_cycle)
+//!      + γ²  · NextIsVirtual(r^(1)_cycle)
+//!      + γ³  · NextIsFirstInSeq(r^(1)_cycle)
+//!      + γ⁴  · (1 - NextIsNoop(r^(2)_cycle))
+//!
+//! where  X_j ∈ {0,1}^{log₂ T}
+//! ```
+//!
+//! Dimensions: `log₂ T` rounds (cycle only).
+//!
+//! The RHS is known: the first four `Next*` values were opened at
+//! `r^(1)_cycle` in Stage 1, and `NextIsNoop` was opened at
+//! `r^(2)_cycle` in Stage 2 (ProductVirtualization).
+//!
+//! **Shorthand mapping:**
+//! - `IsVirtual` = `OpFlags(CircuitFlags::VirtualInstruction)`
+//! - `IsFirstInSeq` = `OpFlags(CircuitFlags::IsFirstInSequence)`
+//! - `IsNoop` = `InstructionFlags(InstructionFlags::IsNoop)`
+//!
+//!
+//! ## Opening point
+//!
+//! After sumcheck: `r^(3)_cycle ∈ F^{log₂ T}`.
+//!
+//!
+//! ## Verifier opening claim
+//!
+//! The verifier checks that the final sumcheck message equals:
+//!
+//! ```text
+//! EqPlusOne(r^(1)_cycle, r^(3)_cycle)
+//!   · (UnexpandedPC(r^(3)_cycle)
+//!     + γ   · PC(r^(3)_cycle)
+//!     + γ²  · IsVirtual(r^(3)_cycle)
+//!     + γ³  · IsFirstInSeq(r^(3)_cycle))
+//!
+//! + γ⁴ · EqPlusOne(r^(2)_cycle, r^(3)_cycle)
+//!       · (1 - IsNoop(r^(3)_cycle))
+//! ```
+//!
+//! Both `EqPlusOne` terms are computable by the verifier.
+//! The prover supplies openings for the 5 VPs below.
+//!
+//!
+//! ## VirtualPolynomials opened at `r^(3)_cycle`
+//!
+//! ```text
+//! UnexpandedPC,
+//! PC,
+//! OpFlags(VirtualInstruction),
+//! OpFlags(IsFirstInSequence),
+//! InstructionFlags(IsNoop)
+//! ```
 use std::array;
 use std::sync::Arc;
 
@@ -29,21 +117,6 @@ use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::r1cs::inputs::ShiftSumcheckCycleState;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
-
-// Spartan PC sumcheck
-//
-// Proves the batched identity over cycles j:
-//   Σ_j EqPlusOne(r_outer, j) ⋅ (UnexpandedPC_shift(j) + γ·PC_shift(j) + γ²·IsNoop_shift(j))
-//   = NextUnexpandedPC(r_outer) + γ·NextPC(r_outer) + γ²·NextIsNoop(r_outer),
-//
-// where:
-// - EqPlusOne(r_outer, j): MLE of the function that,
-//     on (i,j) returns 1 iff i = j + 1; no wrap-around at j = 2^{log T} − 1
-// - UnexpandedPC_shift(j), PC_shift(j), IsNoop_shift(j):
-//     SpartanShift MLEs encoding f(j+1) aligned at cycle j
-// - NextUnexpandedPC(r_outer), NextPC(r_outer), NextIsNoop(r_outer)
-//     are claims from Spartan outer sumcheck
-// - γ: batching scalar drawn from the transcript
 
 /// Degree bound of the sumcheck round polynomials in [`ShiftSumcheckVerifier`].
 const DEGREE_BOUND: usize = 2;

@@ -1,3 +1,67 @@
+//! # RegistersClaimReduction (Stage 3)
+//!
+//! Source: `jolt-core/src/zkvm/claim_reductions/registers.rs`
+//!
+//!
+//! ## Schwartz–Zippel randomness
+//!
+//! - Re-uses `r^(1)_cycle ∈ F^{log₂ T}` from Stage 1 (SpartanOuter)
+//!
+//!
+//! ## Batching randomness
+//!
+//! - `γ ∈ F`: fresh batching challenge (powers γ, γ² used)
+//!
+//!
+//! ## Sumcheck
+//!
+//! ```text
+//! LHS := Σ_{X_j}  eq(r^(1)_cycle, X_j)
+//!                · (RdWriteValue(X_j)
+//!                  + γ   · Rs1Value(X_j)
+//!                  + γ²  · Rs2Value(X_j))
+//!
+//! RHS := RdWriteValue(r^(1)_cycle)
+//!      + γ   · Rs1Value(r^(1)_cycle)
+//!      + γ²  · Rs2Value(r^(1)_cycle)
+//!
+//! where  X_j ∈ {0,1}^{log₂ T}
+//! ```
+//!
+//! Dimensions: `log₂ T` rounds (cycle only).
+//!
+//! The RHS is known: `RdWriteValue`, `Rs1Value`, and `Rs2Value`
+//! were opened at `r^(1)_cycle` in Stage 1 (SpartanOuter).
+//!
+//!
+//! ## Opening point
+//!
+//! After sumcheck: `r^(3)_cycle ∈ F^{log₂ T}` (shared with Shift
+//! and InstructionInput via Stage 3 batching).
+//!
+//!
+//! ## Verifier opening claim
+//!
+//! The verifier checks that the final sumcheck message equals:
+//!
+//! ```text
+//! eq(r^(1)_cycle, r^(3)_cycle)
+//!   · (RdWriteValue(r^(3)_cycle)
+//!     + γ   · Rs1Value(r^(3)_cycle)
+//!     + γ²  · Rs2Value(r^(3)_cycle))
+//! ```
+//!
+//! `eq` is computable by the verifier.
+//! The prover supplies openings for the 3 VPs below.
+//!
+//!
+//! ## VirtualPolynomials opened at `r^(3)_cycle`
+//!
+//! ```text
+//! RdWriteValue,
+//! Rs1Value,
+//! Rs2Value
+//! ```
 use std::array;
 use std::sync::Arc;
 

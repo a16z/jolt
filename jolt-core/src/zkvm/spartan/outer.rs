@@ -1,3 +1,141 @@
+//! # SpartanOuter (Stage 1)
+//!
+//! Source: `jolt-core/src/zkvm/spartan/outer.rs`
+//!
+//!
+//! ## Schwartz–Zippel randomness
+//!
+//! - `τ_t ∈ F^{log₂ T}` — random timestep challenge
+//! - `τ_b ∈ F` — random group challenge
+//! - `τ_c ∈ F` — random constraint index challenge
+//!
+//!
+//! ## Sumcheck
+//!
+//! `eq((τ_t, τ_b), (X_t, X_b))` is the [multilinear Lagrange basis polynomial][ml].
+//! `L_{τ_c}(X_c)` is the [univariate Lagrange interpolation polynomial][ul]
+//! over the domain `{-5, -4, …, 4}`.
+//!
+//! [ml]: https://en.wikipedia.org/wiki/Multilinear_polynomial
+//! [ul]: https://en.wikipedia.org/wiki/Lagrange_polynomial
+//!
+//! ```text
+//! LHS := Σ_{X_t, X_b, X_c}  eq((τ_t, τ_b), (X_t, X_b))
+//!                           · L_{τ_c}(X_c)
+//!                           · A[X_t, X_b, X_c]
+//!                           · B[X_t, X_b, X_c]
+//!
+//! RHS := 0
+//!
+//! where  X_t ∈ {0,1}^{log₂ T},  X_b ∈ {0,1},  X_c ∈ {-5, …, 4}
+//! ```
+//!
+//! `A[X_t, X_b, X_c]` and `B[X_t, X_b, X_c]` are the R1CS constraint matrices.
+//! `X_b ∈ {0,1}` selects the constraint group.
+//! `X_c ∈ {-5, …, 4}` selects the constraint within the group.
+//! For each `(b, c)`, `A[·, b, c]` and `B[·, b, c]` are specific
+//! `VirtualPolynomial` expressions evaluated at `X_t`.
+//!
+//!
+//! ### First group (`X_b = 0`): boolean A, ~64-bit B
+//!
+//! Grouping sourced from `R1CS_CONSTRAINTS_FIRST_GROUP_LABELS` in
+//! `jolt-core/src/zkvm/r1cs/constraints.rs`.
+//! A/B definitions sourced from `AzFirstGroup` / `BzFirstGroup` in
+//! `jolt-core/src/zkvm/r1cs/evaluation.rs`.
+//!
+//! ```text
+//! c  | A (guard)                                          | B (equality to enforce)
+//! ---+----------------------------------------------------+--------------------------------------
+//! -5 | 1 - OpFlags(Load) - OpFlags(Store)                 | RamAddress
+//! -4 | OpFlags(Load)                                      | RamReadValue - RamWriteValue
+//! -3 | OpFlags(Load)                                      | RamReadValue - RdWriteValue
+//! -2 | OpFlags(Store)                                     | Rs2Value - RamWriteValue
+//! -1 | OpFlags(Add) + OpFlags(Sub) + OpFlags(Mul)         | LeftLookupOperand
+//!  0 | 1 - OpFlags(Add) - OpFlags(Sub) - OpFlags(Mul)     | LeftLookupOperand - LeftInstructionInput
+//!  1 | OpFlags(Assert)                                    | LookupOutput - 1
+//!  2 | ShouldJump                                         | NextUnexpandedPC - LookupOutput
+//!  3 | OpFlags(VirtualInstruction) - OpFlags(LastInSeq)   | NextPC - PC - 1
+//!  4 | NextIsVirtual - NextIsFirstInSequence              | 1 - OpFlags(DoNotUpdateUnexpandedPC)
+//! ```
+//!
+//!
+//! ### Second group (`X_b = 1`): wider B (~128 bits), 9 constraints + 1 zero-padded
+//!
+//! Grouping sourced from `R1CS_CONSTRAINTS_SECOND_GROUP_LABELS` in
+//! `jolt-core/src/zkvm/r1cs/constraints.rs`.
+//! A/B definitions sourced from `AzSecondGroup` / `BzSecondGroup` in
+//! `jolt-core/src/zkvm/r1cs/evaluation.rs`.
+//!
+//! ```text
+//! c  | A (guard)                                          | B (equality to enforce)
+//! ---+----------------------------------------------------+--------------------------------------
+//! -5 | OpFlags(Load) + OpFlags(Store)                     | RamAddress - Rs1Value - Imm
+//! -4 | OpFlags(Add)                                       | RightLookupOp - LeftInput - RightInput
+//! -3 | OpFlags(Sub)                                       | RightLookupOp - LeftInput + RightInput - 2^64
+//! -2 | OpFlags(Mul)                                       | RightLookupOp - Product
+//! -1 | 1 - OpFlags(Add) - OpFlags(Sub)                    | RightLookupOp - RightInput
+//!    |   - OpFlags(Mul) - OpFlags(Advice)                 |
+//!  0 | WriteLookupOutputToRD                              | RdWriteValue - LookupOutput
+//!  1 | WritePCtoRD                                        | RdWriteValue - UnexpandedPC - 4
+//!    |                                                    |   + 2·OpFlags(IsCompressed)
+//!  2 | ShouldBranch                                       | NextUnexpandedPC - UnexpandedPC - Imm
+//!  3 | 1 - ShouldBranch - OpFlags(Jump)                   | NextUnexpandedPC - UnexpandedPC - 4
+//!    |                                                    |   + 4·OpFlags(DoNotUpdateUnexpandedPC)
+//!    |                                                    |   + 2·OpFlags(IsCompressed)
+//!  4 | 0                                                  | 0  (zero-padded)
+//! ```
+//!
+//! **Note:** `OpFlags(Add)` is shorthand for `OpFlags(CircuitFlags::AddOperands)`,
+//! `OpFlags(Sub)` for `SubtractOperands`, `OpFlags(Mul)` for `MultiplyOperands`,
+//! `OpFlags(LastInSeq)` for `IsLastInSequence`.
+//! `RightLookupOp` = `RightLookupOperand`, `LeftInput` = `LeftInstructionInput`,
+//! `RightInput` = `RightInstructionInput`.
+//!
+//!
+//! ## Opening point
+//!
+//! After sumcheck: `r^(1)_cycle ∈ F^{log₂ T}`, `r^(1)_b ∈ F`, `r^(1)_c ∈ F`.
+//! Only `r^(1)_cycle` is used downstream; `r^(1)_b` and `r^(1)_c` are absorbed.
+//!
+//!
+//! ## Verifier opening claim
+//!
+//! The verifier checks that the final sumcheck message equals:
+//!
+//! ```text
+//! eq((τ_t, τ_b), (r^(1)_cycle, r^(1)_b))
+//!   · L_{τ_c}(r^(1)_c)
+//!   · A(r^(1)_cycle, r^(1)_b, r^(1)_c)
+//!   · B(r^(1)_cycle, r^(1)_b, r^(1)_c)
+//! ```
+//!
+//! The `eq` and `L` terms are computable by the verifier.
+//! The `A` and `B` terms are not committed — the prover supplies them
+//! as openings of the constituent `VirtualPolynomial`s at `r^(1)_cycle`.
+//!
+//!
+//! ## VirtualPolynomials opened at `r^(1)_cycle`
+//!
+//! All 37 `JoltR1CSInputs` from `ALL_R1CS_INPUTS` in
+//! `jolt-core/src/zkvm/r1cs/inputs.rs`, each mapping 1:1 to a `VirtualPolynomial`:
+//!
+//! ```text
+//! LeftInstructionInput, RightInstructionInput, Product,
+//! WriteLookupOutputToRD, WritePCtoRD, ShouldBranch,
+//! PC, UnexpandedPC, Imm,
+//! RamAddress, Rs1Value, Rs2Value, RdWriteValue,
+//! RamReadValue, RamWriteValue,
+//! LeftLookupOperand, RightLookupOperand,
+//! NextUnexpandedPC, NextPC, NextIsVirtual, NextIsFirstInSequence,
+//! LookupOutput, ShouldJump,
+//! OpFlags(AddOperands), OpFlags(SubtractOperands), OpFlags(MultiplyOperands),
+//! OpFlags(Load), OpFlags(Store), OpFlags(Jump),
+//! OpFlags(WriteLookupOutputToRD), OpFlags(VirtualInstruction),
+//! OpFlags(Assert), OpFlags(DoNotUpdateUnexpandedPC),
+//! OpFlags(Advice), OpFlags(IsCompressed),
+//! OpFlags(IsFirstInSequence), OpFlags(IsLastInSequence)
+//! ```
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -51,34 +189,6 @@ const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
 // This should actually be d where degree is the degree of the streaming data structure
 // For example : MultiQuadratic has d=2; for cubic this would be 3 etc.
 const INFINITY: usize = 2;
-
-// Spartan Outer sumcheck
-// (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)
-//
-// We define a univariate in Z first-round polynomial
-//   s1(Y) := L(τ_high, Y) · Σ_{x_out ∈ {0,1}^{m_out}} Σ_{x_in ∈ {0,1}^{m_in}}
-//              E_out(r_out, x_out) · E_in(r_in, x_in) ·
-//              [ Az(x_out, x_in, Y) · Bz(x_out, x_in, Y) ],
-// where L(τ_high, Y) is the Lagrange basis polynomial over the univariate-skip
-// base domain evaluated at τ_high, and Az(·,·,Y), Bz(·,·,Y) are the
-// per-row univariate polynomials in Y induced by the R1CS row (split into two
-// internal groups in code, but algebraically composing to Az·Bz at Y).
-// The prover sends s1(Y) via univariate-skip by evaluating t1(Y) := Σ Σ E_out·E_in·(Az·Bz)
-// on an extended grid Y ∈ {−D..D} outside the base window, interpolating t1,
-// multiplying by L(τ_high, Y) to obtain s1, and the verifier samples r0.
-//
-// Subsequent outer rounds bind the cycle variables r_tail = (r1, r2, …) using
-// a streaming first cycle-bit round followed by linear-time rounds:
-//   • Streaming round (after r0): compute
-//       t(0)  = Σ_{x_out} E_out · Σ_{x_in} E_in · (Az(0)·Bz(0))
-//       t(∞)  = Σ_{x_out} E_out · Σ_{x_in} E_in · ((Az(1)−Az(0))·(Bz(1)−Bz(0)))
-//     send a cubic built from these endpoints, and bind cached coefficients by r1.
-//   • Remaining rounds: reuse bound coefficients to compute the same endpoints
-//     in linear time for each subsequent bit and bind by r_i.
-//
-// Final check (verifier): with r = [r0 || r_tail] and outer binding order from
-// the top, evaluate Eq_τ(τ, r) and verify
-//  L(τ_high, r_high) · Eq_τ(τ, r) · (Az(r) · Bz(r)).
 
 #[derive(Allocative, Clone)]
 pub struct OuterUniSkipParams<F: JoltField> {

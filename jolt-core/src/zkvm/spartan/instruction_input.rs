@@ -1,3 +1,101 @@
+//! # InstructionInputVirtualization
+//!
+//! Source: `jolt-core/src/zkvm/spartan/instruction_input.rs`
+//!
+//!
+//! ## Schwartz–Zippel randomness
+//!
+//! - Re-uses `r^(2)_cycle ∈ F^{log₂ T}` from Stage 2 (ProductVirtualization)
+//!
+//!   Both `ProductVirtualization` and `InstructionClaimReduction`
+//!   open `LeftInstructionInput` and `RightInstructionInput` at
+//!   the same point. The code asserts consistency:
+//!
+//!   ```text
+//!   assert_eq!(r_left_claim_instruction,  r_left_claim_stage_2);
+//!   assert_eq!(left_claim_instruction,    left_claim_stage_2);
+//!   assert_eq!(r_right_claim_instruction, r_right_claim_stage_2);
+//!   assert_eq!(right_claim_instruction,   right_claim_stage_2);
+//!   ```
+//!
+//!
+//! ## Batching randomness
+//!
+//! - `γ ∈ F`: fresh batching challenge (power γ used)
+//!
+//!
+//! ## Sumcheck
+//!
+//! Decomposes `LeftInstructionInput` and `RightInstructionInput` into
+//! flag-selected components:
+//!
+//! ```text
+//! LeftInstructionInput(j)  = IsRs1(j) · Rs1Value(j)
+//!                          + IsPC(j)  · UnexpandedPC(j)
+//!
+//! RightInstructionInput(j) = IsRs2(j) · Rs2Value(j)
+//!                          + IsImm(j) · Imm(j)
+//! ```
+//!
+//! ```text
+//! LHS := Σ_{X_j}  eq(r^(2)_cycle, X_j)
+//!                · (IsRs2(X_j) · Rs2Value(X_j)
+//!                  + IsImm(X_j) · Imm(X_j)
+//!                  + γ · (IsRs1(X_j) · Rs1Value(X_j)
+//!                        + IsPC(X_j) · UnexpandedPC(X_j)))
+//!
+//! RHS := RightInstructionInput(r^(2)_cycle)
+//!      + γ · LeftInstructionInput(r^(2)_cycle)
+//!
+//! where  X_j ∈ {0,1}^{log₂ T}
+//! ```
+//!
+//! Dimensions: `log₂ T` rounds (cycle only).
+//!
+//! The RHS is known: `LeftInstructionInput` and `RightInstructionInput`
+//! were opened at `r^(2)_cycle` in Stage 2 (ProductVirtualization).
+//!
+//! **Shorthand mapping:**
+//! - `IsRs1` = `InstructionFlags(LeftOperandIsRs1Value)`
+//! - `IsPC` = `InstructionFlags(LeftOperandIsPC)`
+//! - `IsRs2` = `InstructionFlags(RightOperandIsRs2Value)`
+//! - `IsImm` = `InstructionFlags(RightOperandIsImm)`
+//!
+//!
+//! ## Opening point
+//!
+//! After sumcheck: `r^(3)_cycle ∈ F^{log₂ T}` (shared with Shift
+//! and RegistersClaimReduction via Stage 3 batching).
+//!
+//!
+//! ## Verifier opening claim
+//!
+//! The verifier checks that the final sumcheck message equals:
+//!
+//! ```text
+//! eq(r^(2)_cycle, r^(3)_cycle)
+//!   · (IsRs2(r^(3)_cycle) · Rs2Value(r^(3)_cycle)
+//!     + IsImm(r^(3)_cycle) · Imm(r^(3)_cycle)
+//!     + γ · (IsRs1(r^(3)_cycle) · Rs1Value(r^(3)_cycle)
+//!           + IsPC(r^(3)_cycle) · UnexpandedPC(r^(3)_cycle)))
+//! ```
+//!
+//! `eq` is computable by the verifier.
+//! The prover supplies openings for the 8 VPs below.
+//!
+//!
+//! ## VirtualPolynomials opened at `r^(3)_cycle`
+//!
+//! ```text
+//! InstructionFlags(LeftOperandIsRs1Value),
+//! Rs1Value,
+//! InstructionFlags(LeftOperandIsPC),
+//! UnexpandedPC,
+//! InstructionFlags(RightOperandIsRs2Value),
+//! Rs2Value,
+//! InstructionFlags(RightOperandIsImm),
+//! Imm
+//! ```
 use ark_ff::Zero;
 
 use allocative::Allocative;
