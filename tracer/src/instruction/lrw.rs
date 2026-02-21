@@ -35,6 +35,7 @@ impl LRW {
         let write_value = match value {
             Ok((word, _memory_read)) => {
                 cpu.set_reservation(address, ReservationWidth::Word);
+                // Sign extend the 32-bit value
                 word as i32 as i64
             }
             Err(_) => panic!("MMU load error"),

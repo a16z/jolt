@@ -87,20 +87,26 @@ impl RISCVTrace for SCD {
         let v_reservation_w = allocator.reservation_w_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
+        // 0: Prover supplies success flag (1=success, 0=failure)
         let v_success = allocator.allocate();
         asm.emit_j::<VirtualAdvice>(*v_success, 0);
 
+        // 1-2: Constrain v_success ∈ {0, 1}
         let v_one = allocator.allocate();
         asm.emit_i::<ADDI>(*v_one, 0, 1);
         asm.emit_b::<VirtualAssertLTE>(*v_success, *v_one, 0);
         drop(v_one);
 
+        // 4-6: Constrain: success → reservation must match address
+        //   v_success * (v_reservation - rs1) == 0
         let v_addr_diff = allocator.allocate();
         asm.emit_r::<SUB>(*v_addr_diff, v_reservation, self.operands.rs1);
         asm.emit_r::<MUL>(*v_addr_diff, *v_success, *v_addr_diff);
         asm.emit_b::<VirtualAssertEQ>(*v_addr_diff, 0, 0);
         drop(v_addr_diff);
 
+        // 7-11: Conditional store (no-op on failure)
+        //   store_val = mem_current + (rs2 - mem_current) * v_success
         let v_mem = allocator.allocate();
         asm.emit_ld::<LD>(*v_mem, self.operands.rs1, 0);
 
@@ -113,6 +119,7 @@ impl RISCVTrace for SCD {
         asm.emit_s::<SD>(self.operands.rs1, *v_diff, 0);
         drop(v_diff);
 
+        // 11-13: Clear both reservation registers, set rd = !v_success
         asm.emit_i::<ADDI>(v_reservation, 0, 0);
         asm.emit_i::<ADDI>(v_reservation_w, 0, 0);
         asm.emit_i::<XORI>(self.operands.rd, *v_success, 1);

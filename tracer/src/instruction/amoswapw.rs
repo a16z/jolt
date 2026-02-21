@@ -119,17 +119,21 @@ impl RISCVTrace for AMOSWAPW {
                 let mut asm =
                     InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
                 asm.emit_align::<VirtualAssertWordAlignment>(self.operands.rs1, 0);
+                // Use v_shift temporarily to hold aligned address
                 asm.emit_i::<ANDI>(*v_shift, self.operands.rs1, -8i64 as u64);
                 asm.emit_ld::<LD>(*v_dword, *v_shift, 0);
+                // Now compute actual shift value
                 asm.emit_i::<SLLI>(*v_shift, self.operands.rs1, 3);
                 asm.emit_r::<SRL>(*v_rd, *v_dword, *v_shift);
                 asm.emit_i::<ORI>(*v_mask, 0, -1i64 as u64);
                 asm.emit_i::<SRLI>(*v_mask, *v_mask, 32);
                 asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
+                // Reuse v_shift as temporary for shifted rs2
                 asm.emit_r::<SLL>(*v_shift, self.operands.rs2, *v_shift);
                 asm.emit_r::<XOR>(*v_shift, *v_dword, *v_shift);
                 asm.emit_r::<AND>(*v_shift, *v_shift, *v_mask);
                 asm.emit_r::<XOR>(*v_dword, *v_dword, *v_shift);
+                // Recompute aligned address for store
                 asm.emit_i::<ANDI>(*v_mask, self.operands.rs1, -8i64 as u64);
                 asm.emit_s::<SD>(*v_mask, *v_dword, 0);
                 asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *v_rd, 0);

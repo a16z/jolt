@@ -96,20 +96,24 @@ impl SCW {
         let v_reservation_d = allocator.reservation_d_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
 
+        // 0: Prover supplies success flag (1=success, 0=failure)
         let v_success = allocator.allocate();
         asm.emit_j::<VirtualAdvice>(*v_success, 0);
 
+        // 1-2: Constrain v_success ∈ {0, 1}
         let v_one = allocator.allocate();
         asm.emit_i::<ADDI>(*v_one, 0, 1);
         asm.emit_b::<VirtualAssertLTE>(*v_success, *v_one, 0);
         drop(v_one);
 
+        // 3-5: success → reservation must match
         let v_addr_diff = allocator.allocate();
         asm.emit_r::<SUB>(*v_addr_diff, v_reservation, self.operands.rs1);
         asm.emit_r::<MUL>(*v_addr_diff, *v_success, *v_addr_diff);
         asm.emit_b::<VirtualAssertEQ>(*v_addr_diff, 0, 0);
         drop(v_addr_diff);
 
+        // 6-10: Conditional store (VirtualLW/VirtualSW for 32-bit mode)
         let v_mem = allocator.allocate();
         asm.emit_i::<VirtualLW>(*v_mem, self.operands.rs1, 0);
 
@@ -122,6 +126,7 @@ impl SCW {
         asm.emit_s::<VirtualSW>(self.operands.rs1, *v_diff, 0);
         drop(v_diff);
 
+        // 11-13: Clear both reservation registers, set rd = !v_success
         asm.emit_i::<ADDI>(v_reservation, 0, 0);
         asm.emit_i::<ADDI>(v_reservation_d, 0, 0);
         asm.emit_i::<XORI>(self.operands.rd, *v_success, 1);
@@ -135,23 +140,32 @@ impl SCW {
         let v_reservation_d = allocator.reservation_d_register();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
 
+        // 0: Prover supplies success flag (1=success, 0=failure)
         let v_success = allocator.allocate();
         asm.emit_j::<VirtualAdvice>(*v_success, 0);
 
+        // 1-2: Constrain v_success ∈ {0, 1}
         let v_one = allocator.allocate();
         asm.emit_i::<ADDI>(*v_one, 0, 1);
         asm.emit_b::<VirtualAssertLTE>(*v_success, *v_one, 0);
         drop(v_one);
 
+        // 3-5: success → reservation must match
         let v_addr_diff = allocator.allocate();
         asm.emit_r::<SUB>(*v_addr_diff, v_reservation, self.operands.rs1);
         asm.emit_r::<MUL>(*v_addr_diff, *v_success, *v_addr_diff);
         asm.emit_b::<VirtualAssertEQ>(*v_addr_diff, 0, 0);
         drop(v_addr_diff);
 
+        // 6: Spill v_success to a reservation register. In 64-bit mode, LW/SW
+        // expand into sub-instructions that allocate up to 7 instruction registers
+        // each, so we must have 0 instruction registers live during those expansions.
         asm.emit_i::<ADDI>(v_reservation, *v_success, 0);
         drop(v_success);
 
+        // 7-11: Conditional store
+        //   store_val = mem + (rs2 - mem) * v_success
+        //   → stores rs2 on success, stores mem back (no-op) on failure
         let v_mem = allocator.allocate();
         asm.emit_ld::<LW>(*v_mem, self.operands.rs1, 0);
 
@@ -161,11 +175,15 @@ impl SCW {
         asm.emit_r::<ADD>(*v_diff, *v_mem, *v_diff);
         drop(v_mem);
 
+        // Spill store value to v_reservation_d
         asm.emit_i::<ADDI>(v_reservation_d, *v_diff, 0);
         drop(v_diff);
 
+        // 12: Store word
+        // Peak: 0 instr regs + SW expansion (7 temps) = 7 of 7
         asm.emit_s::<SW>(self.operands.rs1, v_reservation_d, 0);
 
+        // 13-15: Set rd = !v_success, then clear both reservation registers
         asm.emit_i::<XORI>(self.operands.rd, v_reservation, 1);
         asm.emit_i::<ADDI>(v_reservation, 0, 0);
         asm.emit_i::<ADDI>(v_reservation_d, 0, 0);

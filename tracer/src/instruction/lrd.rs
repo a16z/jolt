@@ -34,6 +34,7 @@ impl LRD {
         let write_value = match value {
             Ok((doubleword, _memory_read)) => {
                 cpu.set_reservation(address, ReservationWidth::Doubleword);
+                // Return the 64-bit value
                 doubleword as i64
             }
             Err(_) => panic!("MMU load error"),
