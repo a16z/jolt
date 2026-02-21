@@ -547,10 +547,8 @@ macro_rules! define_rv32im_enums {
             pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
                 let normalized = self.normalize();
                 // Rewrite instructions with rd=x0 via inline_sequence so the
-                // constraint system never sees rd=x0.  INLINE is excluded because
-                // its trace() injects advice into sub-instructions and handles
-                // rd=0 remapping internally.
-                if normalized.operands.rd == Some(0) && !matches!(self, Instruction::INLINE(_)) {
+                // constraint system never sees rd=x0.
+                if normalized.operands.rd == Some(0) {
                     let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
                     let mut trace = trace;
                     for instr in inline_sequence {
