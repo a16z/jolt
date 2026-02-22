@@ -17,6 +17,7 @@ use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::zkvm::config::ReadWriteConfig;
+use crate::zkvm::ram::remap_address;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
 
@@ -360,7 +361,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let ram_K = trace
             .par_iter()
             .filter_map(|cycle| {
-                crate::zkvm::ram::remap_address(
+                remap_address(
                     cycle.ram_access().address() as u64,
                     &preprocessing.shared.memory_layout,
                 )
@@ -368,7 +369,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             .max()
             .unwrap_or(0)
             .max(
-                crate::zkvm::ram::remap_address(
+                remap_address(
                     preprocessing.shared.ram.min_bytecode_address,
                     &preprocessing.shared.memory_layout,
                 )
@@ -468,14 +469,17 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
 
         #[cfg(test)]
-        assert!(
-            self.opening_accumulator
-                .appended_virtual_openings
-                .borrow()
-                .is_empty(),
-            "Not all virtual openings have been proven, missing: {:?}",
-            self.opening_accumulator.appended_virtual_openings.borrow()
-        );
+        {
+            let missing_virtual = self.opening_accumulator.appended_virtual_openings.borrow();
+            let missing_committed = self
+                .opening_accumulator
+                .appended_committed_openings
+                .borrow();
+            assert!(
+                missing_virtual.is_empty() && missing_committed.is_empty(),
+                "Not all openings have been proven. Missing virtual: {missing_virtual:?}. Missing committed: {missing_committed:?}",
+            );
+        }
 
         #[cfg(test)]
         let debug_info = Some(ProverDebugInfo {
