@@ -7,6 +7,5 @@ edition = "2021"
 guest = []
 
 [dependencies]
-jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["guest-verifier"] }
-postcard.workspace = true
+jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["guest-verifier", "thread", "random"] }
 ark-serialize.workspace = true

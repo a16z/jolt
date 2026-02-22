@@ -9,15 +9,12 @@ path = "src/main.rs"
 
 [dependencies]
 jolt-sdk = { path = "../../../jolt-sdk", features = ["host"] }
-ark-ff = { workspace = true }
 guest = { package = "sig-recovery-guest", path = "../guest" }
 alloy-primitives = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-eips = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
-serde = { workspace = true }
 postcard = { workspace = true }
-rayon = { workspace = true }
 secp256k1 = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }

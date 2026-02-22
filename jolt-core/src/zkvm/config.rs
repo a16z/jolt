@@ -94,8 +94,8 @@ impl ReadWriteConfig {
 
     /// Returns true if all cycle variables are bound in phase 1.
     ///
-    /// When this returns true, the advice opening points for `RamValEvaluation` and
-    /// `RamValFinalEvaluation` are identical, so we only need one advice opening.
+    /// When this returns true, the advice opening points for `RamValCheck` and
+    /// `RamValCheck` are identical, so we only need one advice opening.
     #[inline]
     pub fn needs_single_advice_opening(&self, log_T: usize) -> bool {
         self.ram_rw_phase1_num_rounds as usize == log_T

@@ -8,11 +8,20 @@ version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b5d307320b3181d6d7954e663bd7c774a838b8220fe0593c86d9fb09f498b4b"
 dependencies = [
- "cpp_demangle 0.4.5",
+ "gimli 0.32.3",
+]
+
+[[package]]
+name = "addr2line"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9698bf0769c641b18618039fe2ebd41eb3541f98433000f64e663fab7cea2c87"
+dependencies = [
+ "cpp_demangle",
  "fallible-iterator",
- "gimli",
+ "gimli 0.33.0",
  "memmap2",
- "object 0.37.3",
+ "object 0.38.1",
  "rustc-demangle",
  "smallvec",
  "typed-arena",
@@ -741,23 +750,12 @@ name = "ark-serialize"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
- "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-serialize-derive",
  "ark-std 0.5.0",
  "arrayvec",
  "digest 0.10.7",
  "num-bigint",
  "rayon",
-]
-
-[[package]]
-name = "ark-serialize-derive"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "213888f660fddcca0d257e88e54ac05bca01885f258ccdf695bafd77031bb69d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
 ]
 
 [[package]]
@@ -845,7 +843,7 @@ version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb531853791a215d7c62a30daf0dde835f381ab5de4589cfe7c649d2cbe92bd6"
 dependencies = [
- "addr2line",
+ "addr2line 0.25.1",
  "cfg-if",
  "libc",
  "miniz_oxide",
@@ -1307,13 +1305,8 @@ version = "0.2.0"
 dependencies = [
  "allocative",
  "ark-serialize 0.5.0",
- "derive_more 2.1.1",
  "serde",
- "serde_json",
- "strum 0.26.3",
- "strum_macros 0.26.4",
  "syn 1.0.109",
- "tracing",
 ]
 
 [[package]]
@@ -1374,15 +1367,6 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
-
-[[package]]
-name = "cpp_demangle"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2bb79cb74d735044c972aae58ed0aaa9a837e85b01106a54c39e42e97f62253"
-dependencies = [
- "cfg-if",
-]
 
 [[package]]
 name = "cpp_demangle"
@@ -1542,13 +1526,19 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.2.9"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
+checksum = "424e0138278faeb2b401f174ad17e715c829512d74f3d1e81eb43365c2e0590e"
 dependencies = [
- "quote",
- "syn 2.0.114",
+ "ctor-proc-macro",
+ "dtor",
 ]
+
+[[package]]
+name = "ctor-proc-macro"
+version = "0.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52560adf09603e58c9a7ee1fe1dcb95a16927b17c127f0ac02d6e768a0e25bc1"
 
 [[package]]
 name = "darling"
@@ -1770,6 +1760,21 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
 ]
+
+[[package]]
+name = "dtor"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "404d02eeb088a82cfd873006cb713fe411306c7d182c344905e101fb1167d301"
+dependencies = [
+ "dtor-proc-macro",
+]
+
+[[package]]
+name = "dtor-proc-macro"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f678cf4a922c215c63e0de95eb1ff08a958a81d47e485cf9da1e27bf6305cfa5"
 
 [[package]]
 name = "dunce"
@@ -2196,8 +2201,13 @@ name = "gimli"
 version = "0.32.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
+
+[[package]]
+name = "gimli"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bf7f043f89559805f8c7cacc432749b2fa0d0a0a9ee46ce47164ed5ba7f126c"
 dependencies = [
- "fallible-iterator",
  "stable_deref_trait",
 ]
 
@@ -2240,7 +2250,6 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-sdk",
- "tracing",
  "tracing-subscriber",
 ]
 
@@ -2846,14 +2855,10 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
- "ark-grumpkin",
  "ark-serialize 0.5.0",
- "ark-serialize-derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-std 0.5.0",
  "bincode",
  "blake2",
- "bytemuck",
- "bytemuck_derive",
  "chrono",
  "clap",
  "common",
@@ -2868,28 +2873,24 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
- "jolt-platform",
  "memory-stats",
  "num",
  "num-derive",
- "num-integer",
  "num-traits",
- "paste",
  "postcard",
  "pprof",
  "prost 0.14.3",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
- "rand_distr",
  "rayon",
  "serde",
  "serial_test",
  "sha3",
- "strum 0.26.3",
+ "strum 0.27.2",
  "strum_macros 0.26.4",
  "sysinfo 0.37.2",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tracer",
  "tracing",
  "tracing-chrome",
@@ -2916,9 +2917,7 @@ name = "jolt-inlines-bigint"
 version = "0.1.0"
 dependencies = [
  "ark-ff 0.5.0",
- "common",
- "ctor 0.2.9",
- "hex-literal",
+ "ctor 0.6.3",
  "rand 0.8.5",
  "tracer",
  "tracing",
@@ -2929,7 +2928,7 @@ name = "jolt-inlines-blake2"
 version = "0.1.0"
 dependencies = [
  "blake2",
- "ctor 0.2.9",
+ "ctor 0.6.3",
  "hex-literal",
  "rand 0.8.5",
  "tracer",
@@ -2941,8 +2940,7 @@ name = "jolt-inlines-blake3"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "ctor 0.2.9",
- "hex-literal",
+ "ctor 0.6.3",
  "rand 0.8.5",
  "tracer",
  "tracing",
@@ -2955,11 +2953,7 @@ dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",
  "ark-grumpkin",
- "ark-serialize 0.5.0",
- "ctor 0.2.9",
- "hex-literal",
- "num-bigint",
- "num-integer",
+ "ctor 0.6.3",
  "serde",
  "tracer",
  "tracing",
@@ -2969,7 +2963,7 @@ dependencies = [
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
 dependencies = [
- "ctor 0.2.9",
+ "ctor 0.6.3",
  "hex-literal",
  "sha3",
  "tracer",
@@ -2980,12 +2974,9 @@ dependencies = [
 name = "jolt-inlines-secp256k1"
 version = "0.1.0"
 dependencies = [
- "ark-ec",
  "ark-ff 0.5.0",
  "ark-secp256k1",
- "ark-serialize 0.5.0",
- "ctor 0.2.9",
- "hex-literal",
+ "ctor 0.6.3",
  "num-bigint",
  "num-integer",
  "serde",
@@ -2997,8 +2988,7 @@ dependencies = [
 name = "jolt-inlines-sha2"
 version = "0.1.0"
 dependencies = [
- "ctor 0.2.9",
- "hex-literal",
+ "ctor 0.6.3",
  "sha2",
  "tracer",
  "tracing",
@@ -3035,22 +3025,15 @@ dependencies = [
 name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
  "bytemuck",
- "bytemuck_derive",
  "cfg-if",
  "common",
- "embedded-io 0.6.1",
- "hex-literal",
  "jolt-core",
  "jolt-platform",
  "jolt-sdk-macros",
  "postcard",
- "rand 0.8.5",
  "riscv 0.12.1",
  "serde",
- "tracer",
  "zeroos",
 ]
 
@@ -3289,7 +3272,6 @@ dependencies = [
 name = "memory-ops"
 version = "0.1.0"
 dependencies = [
- "hex",
  "jolt-sdk",
  "memory-ops-guest",
  "tracing",
@@ -3301,7 +3283,6 @@ name = "memory-ops-guest"
 version = "0.1.0"
 dependencies = [
  "jolt-sdk",
- "sha3",
 ]
 
 [[package]]
@@ -3346,7 +3327,7 @@ dependencies = [
 [[package]]
 name = "mini-template"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 
 [[package]]
 name = "minimal-lexical"
@@ -3675,6 +3656,15 @@ name = "object"
 version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "object"
+version = "0.38.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "271638cd5fa9cca89c4c304675ca658efc4e64a66c716b7cfe1afb4b9611dbbc"
 dependencies = [
  "flate2",
  "memchr",
@@ -4356,16 +4346,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rand_distr"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
-dependencies = [
- "num-traits",
- "rand 0.8.5",
-]
-
-[[package]]
 name = "rand_xorshift"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4459,7 +4439,6 @@ version = "0.1.0"
 dependencies = [
  "ark-serialize 0.5.0",
  "jolt-sdk",
- "postcard",
 ]
 
 [[package]]
@@ -5352,15 +5331,12 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
- "ark-ff 0.5.0",
  "hex",
  "jolt-sdk",
  "postcard",
  "rand 0.8.5",
- "rayon",
  "reth-ethereum-primitives",
  "secp256k1",
- "serde",
  "sig-recovery-guest",
  "tracing",
  "tracing-subscriber",
@@ -5371,7 +5347,6 @@ name = "sig-recovery-guest"
 version = "0.1.0"
 dependencies = [
  "alloy-eips",
- "ark-ff 0.5.0",
  "jolt-sdk",
  "postcard",
  "reth-ethereum-primitives",
@@ -5524,9 +5499,9 @@ dependencies = [
 
 [[package]]
 name = "strum"
-version = "0.26.3"
+version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 
 [[package]]
 name = "strum_macros"
@@ -5578,7 +5553,7 @@ version = "12.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79b237cfbe320601dd24b4ac817a5b68bb28f5508e33f08d42be0682cadc8ac9"
 dependencies = [
- "cpp_demangle 0.5.1",
+ "cpp_demangle",
  "rustc-demangle",
  "symbolic-common",
 ]
@@ -5942,7 +5917,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "tracer"
 version = "0.2.0"
 dependencies = [
- "addr2line",
+ "addr2line 0.26.0",
  "ark-serialize 0.5.0",
  "clap",
  "common",
@@ -5956,7 +5931,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
- "strum 0.26.3",
+ "strum 0.27.2",
  "strum_macros 0.26.4",
  "tracing",
  "tracing-subscriber",
@@ -6809,20 +6784,9 @@ dependencies = [
 name = "z3-verifier"
 version = "0.0.0"
 dependencies = [
- "allocative",
- "ark-bn254",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
- "build-fs-tree",
- "clap",
  "common",
  "jolt-core",
  "paste",
- "proptest",
- "rand_core 0.6.4",
- "regex",
- "strum 0.26.3",
  "tracer",
  "z3",
 ]
@@ -6891,7 +6855,7 @@ dependencies = [
 [[package]]
 name = "zeroos"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "zeroos-allocator-linked-list",
  "zeroos-arch-riscv",
@@ -6910,7 +6874,7 @@ dependencies = [
 [[package]]
 name = "zeroos-allocator-linked-list"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "linked_list_allocator",
  "zeroos-foundation",
@@ -6919,7 +6883,7 @@ dependencies = [
 [[package]]
 name = "zeroos-arch-riscv"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "cfg-if",
  "memoffset",
@@ -6933,7 +6897,7 @@ dependencies = [
 [[package]]
 name = "zeroos-build"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "anyhow",
  "clap",
@@ -6951,7 +6915,7 @@ dependencies = [
 [[package]]
 name = "zeroos-debug"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "cfg-if",
 ]
@@ -6959,7 +6923,7 @@ dependencies = [
 [[package]]
 name = "zeroos-device-console"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "libc",
  "zeroos-vfs-core",
@@ -6968,7 +6932,7 @@ dependencies = [
 [[package]]
 name = "zeroos-foundation"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "cfg-if",
  "libc",
@@ -6978,12 +6942,12 @@ dependencies = [
 [[package]]
 name = "zeroos-macros"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 
 [[package]]
 name = "zeroos-os-linux"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "cfg-if",
  "libc",
@@ -6993,7 +6957,7 @@ dependencies = [
 [[package]]
 name = "zeroos-rng"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "spin 0.9.8",
  "zeroos-foundation",
@@ -7002,7 +6966,7 @@ dependencies = [
 [[package]]
 name = "zeroos-runtime-musl"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "zeroos-debug",
  "zeroos-foundation",
@@ -7011,7 +6975,7 @@ dependencies = [
 [[package]]
 name = "zeroos-runtime-nostd"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "cfg-if",
  "zeroos-foundation",
@@ -7020,7 +6984,7 @@ dependencies = [
 [[package]]
 name = "zeroos-scheduler-cooperative"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "cfg-if",
  "libc",
@@ -7031,7 +6995,7 @@ dependencies = [
 [[package]]
 name = "zeroos-vfs-core"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=aaf6e261cbf3e935ecd748de406bf5359c1ebb55#aaf6e261cbf3e935ecd748de406bf5359c1ebb55"
 dependencies = [
  "libc",
  "zeroos-foundation",
@@ -7086,7 +7050,7 @@ dependencies = [
  "proptest",
  "rand_core 0.6.4",
  "regex",
- "strum 0.26.3",
+ "strum 0.27.2",
  "tracer",
 ]
 

@@ -7,7 +7,7 @@ use super::ld::LD;
 use super::mul::MUL;
 use super::sd::SD;
 use super::slt::SLT;
-use super::xori::XORI;
+use super::sub::SUB;
 use super::Instruction;
 use crate::{
     declare_riscv_instr,
@@ -67,14 +67,13 @@ impl RISCVTrace for AMOMAXD {
     /// to memory, and returns the original value in rd.
     ///
     /// The implementation uses a branchless maximum computation:
-    /// 1. Load the current value from memory
-    /// 2. Compare current value < rs2 to get selector bit (1 if rs2 is larger)
-    /// 3. Invert selector to get bit for current value (1 if current is larger/equal)
-    /// 4. Multiply rs2 by its selector bit (rs2 if larger, 0 otherwise)
-    /// 5. Multiply current by its selector bit (current if larger/equal, 0 otherwise)
-    /// 6. Add the two products to get the maximum
-    /// 7. Store the maximum back to memory
-    /// 8. Return the original value in rd
+    /// 1. Load the current value from memory into v0
+    /// 2. v1 = (v0 < rs2 ? 1 : 0)
+    /// 3. v0 + (rs2 - v0) * v1
+    ///    - If v0 < rs2, then v1 = 1, and the result is v0 + (rs2 - v0) * 1 = rs2
+    ///    - If v0 >= rs2, then v1 = 0, and the result is v0 + (rs2 - v0) * 0 = v0
+    /// 4. Store the maximum back to memory
+    /// 5. Return the original value in rd
     ///
     /// This branchless approach avoids conditional execution, making it compatible
     /// with zkVM's constraint system while correctly handling signed comparison.
@@ -83,20 +82,20 @@ impl RISCVTrace for AMOMAXD {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let v_rs2 = allocator.allocate();
-        let v_rd = allocator.allocate();
-        let v_sel_rs2 = allocator.allocate();
-        let v_sel_rd = allocator.allocate();
+        let v0 = allocator.allocate();
+        let v1 = allocator.allocate();
+        let v2 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-        asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
-        asm.emit_r::<SLT>(*v_sel_rs2, *v_rd, self.operands.rs2);
-        asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
-        asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);
-        asm.emit_r::<MUL>(*v_sel_rd, *v_sel_rd, *v_rd);
-        asm.emit_r::<ADD>(*v_rs2, *v_sel_rd, *v_rs2);
-        asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);
-        asm.emit_i::<ADDI>(self.operands.rd, *v_rd, 0);
+
+        asm.emit_ld::<LD>(*v0, self.operands.rs1, 0);
+        asm.emit_r::<SLT>(*v1, *v0, self.operands.rs2);
+        asm.emit_r::<SUB>(*v2, self.operands.rs2, *v0);
+        asm.emit_r::<MUL>(*v2, *v2, *v1);
+        asm.emit_r::<ADD>(*v1, *v0, *v2);
+        asm.emit_s::<SD>(self.operands.rs1, *v1, 0);
+        asm.emit_i::<ADDI>(self.operands.rd, *v0, 0);
+
         asm.finalize()
     }
 }

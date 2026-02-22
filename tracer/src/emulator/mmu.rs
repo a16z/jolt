@@ -207,11 +207,15 @@ impl Mmu {
                 // attempt to write to the stack vs heap, but they're trying their best
                 assert!(
                     ea <= layout.stack_end || ea > layout.stack_end + STACK_CANARY_SIZE,
-                    "Stack overflow: Triggered Stack Canary. Attempted to {verb} 0x{ea:X}.\n{layout:#?}",
+                    "Stack overflow: attempted to {verb} 0x{ea:X}, which is in the stack canary region. \
+                    Increase stack_size in MemoryConfig (currently {} bytes).",
+                    layout.stack_size,
                 );
                 assert!(
                     ea < layout.heap_end,
-                    "Heap overflow: Attempted to {verb} 0x{ea:X}. Heap too small.\n{layout:#?}",
+                    "Heap overflow: attempted to {verb} 0x{ea:X}, which is beyond the heap. \
+                    Increase heap_size in MemoryConfig (currently {} bytes).",
+                    layout.heap_size,
                 );
             } else {
                 // allow reads across the whole designated memory region as long as the address is valid
@@ -1242,7 +1246,7 @@ mod test_mmu {
     }
 
     #[test]
-    #[should_panic(expected = "Stack Canary")]
+    #[should_panic(expected = "Stack overflow")]
     fn test_stack_overflow() {
         let mut mmu = setup_mmu();
 
