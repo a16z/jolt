@@ -125,6 +125,24 @@ impl RAMPreprocessing {
     }
 }
 
+/// Computes the minimum valid `ram_K` from preprocessing and memory layout.
+///
+/// `ram_K` must be at least large enough to index all statically-known memory
+/// regions (bytecode image and I/O region). Runtime execution can only increase
+/// `ram_K` further (heap/stack accesses), never decrease it.
+pub fn compute_min_ram_K(
+    ram_preprocessing: &RAMPreprocessing,
+    memory_layout: &MemoryLayout,
+) -> usize {
+    let bytecode_end = remap_address(ram_preprocessing.min_bytecode_address, memory_layout)
+        .unwrap_or(0) as usize
+        + ram_preprocessing.bytecode_words.len();
+
+    let io_end = remap_address(RAM_START_ADDRESS, memory_layout).unwrap_or(0) as usize;
+
+    bytecode_end.max(io_end).next_power_of_two()
+}
+
 /// Returns Some(address) if there was read/write
 /// Returns None if there was no read/write
 #[inline(always)]
