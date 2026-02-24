@@ -258,7 +258,8 @@ pub fn enable_constraint_mode() {
 }
 
 /// Disable constraint accumulation mode.
-/// After this, `MleAst == MleAst` will panic instead of registering constraints.
+/// After this, `MleAst == MleAst` returns `false` for different expressions
+/// instead of registering constraints.
 pub fn disable_constraint_mode() {
     CONSTRAINT_MODE.with(|cell| {
         *cell.borrow_mut() = false;
@@ -759,9 +760,26 @@ fn node_depth(node: &Node) -> usize {
     }
 }
 
-/// Perform common subexpression elimination on an AST.
+/// Perform common subexpression elimination on an AST (Lean4 extraction only).
 ///
-/// Returns a tuple of (bindings, new_root) where:
+/// # Note: Two CSE Implementations Exist
+///
+/// This CSE is specifically for **Lean4 extraction** (`format_for_lean()` in lookups.rs).
+/// The transpilation pipeline uses a separate CSE in `ast_bundle.rs` (`run_cse()`).
+///
+/// The two implementations have different requirements:
+///
+/// | Aspect | Lean4 CSE (this) | Transpiler CSE (ast_bundle.rs) |
+/// |--------|------------------|--------------------------------|
+/// | Goal | Reduce Lean type-checker load | Minimize circuit constraints |
+/// | Method | Hash-based structural dedup | Reference counting |
+/// | Threshold | Depth >= 3 only | All multi-ref nodes |
+/// | Output | Transforms AST (NamedVar nodes) | Records NodeIds to hoist |
+/// | Scope | Single expression tree | Per-constraint isolation |
+///
+/// # Returns
+///
+/// A tuple of (bindings, new_root) where:
 /// - bindings: Vec of nodes that should be hoisted as named variables (cse_0, cse_1, ...)
 /// - new_root: The transformed root node with common subexpressions replaced by NamedVar references
 ///
@@ -824,40 +842,17 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
                 let cse_e2 = aux_edge(bindings, nodes, e2);
                 register(bindings, nodes, Node::Div(cse_e1, cse_e2))
             }
-            Node::TranscriptHash(hash_data, e1, e2) => {
-                let cse_e1 = aux_edge(bindings, nodes, e1);
-                let cse_e2 = aux_edge(bindings, nodes, e2);
-                let cse_hash_data = match hash_data {
-                    TranscriptHashData::Poseidon(d) => {
-                        TranscriptHashData::Poseidon(aux_edge(bindings, nodes, d))
-                    }
-                    TranscriptHashData::Blake2b(data) => TranscriptHashData::Blake2b(
-                        data.into_iter()
-                            .map(|e| aux_edge(bindings, nodes, e))
-                            .collect(),
-                    ),
-                };
-                register(
-                    bindings,
-                    nodes,
-                    Node::TranscriptHash(cse_hash_data, cse_e1, cse_e2),
+            // Transpilation-only nodes: used by challenge derivation and Blake/Keccak transcripts.
+            // Lean4 extraction never encounters them.
+            Node::TranscriptHash(..)
+            | Node::ByteReverse(..)
+            | Node::Truncate128Reverse(..)
+            | Node::Truncate128(..)
+            | Node::AppendU64Transform(..) => {
+                unreachable!(
+                    "Transpilation-only node {:?} should never appear in Lean4 CSE",
+                    node
                 )
-            }
-            Node::ByteReverse(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::ByteReverse(cse_e))
-            }
-            Node::Truncate128Reverse(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::Truncate128Reverse(cse_e))
-            }
-            Node::Truncate128(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::Truncate128(cse_e))
-            }
-            Node::AppendU64Transform(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::AppendU64Transform(cse_e))
             }
         }
     }
@@ -934,33 +929,52 @@ impl crate::util::ZkLeanReprField for MleAst {
     }
 }
 
+/// Equality comparison for symbolic field elements.
+///
+/// This implementation has two modes controlled by `enable_constraint_mode()`:
+///
+/// - **Constraint mode** (during symbolic verification): Registers `(self - other) == 0`
+///   as a constraint and returns `true`, allowing verification to continue. This captures
+///   the verifier's `assert_eq!` calls as circuit constraints.
+///
+/// - **Normal mode**: Returns `true` only if both values reference the same AST node,
+///   `false` otherwise. Different symbolic expressions are considered not equal.
+///
+/// # Note on `is_one()` and `is_zero()`
+///
+/// The `One::is_one()` and `Zero::is_zero()` implementations check node structure directly
+/// to avoid triggering constraint registration. See their docstrings for details.
 impl PartialEq for MleAst {
     fn eq(&self, other: &Self) -> bool {
-        // If both are the same node, they're trivially equal
+        // Same node reference: trivially equal in both modes
         if self.root == other.root {
             return true;
         }
 
-        // In constraint mode, register constraint and return true
+        // Constraint mode: register (self - other) == 0 and return true
         if is_constraint_mode() {
-            // Constraint: (self - other) == 0
             let diff = *self - *other;
             add_constraint(diff);
             return true;
         }
 
-        // Normal mode: compare NodeIds (original behavior)
+        // Normal mode: different symbolic expressions are not equal
         false
     }
 }
 
 impl Eq for MleAst {}
 
+/// `Scalar` is `[u64; 4]` (BN254 field element), so we use typed constants.
 impl Zero for MleAst {
     fn zero() -> Self {
         Self::new_scalar(SCALAR_ZERO)
     }
 
+    /// Check if this MleAst represents the constant 0.
+    ///
+    /// Checks node structure directly to avoid triggering `PartialEq::eq`,
+    /// which would register a spurious constraint in constraint mode.
     fn is_zero(&self) -> bool {
         matches!(
             get_node(self.root),
@@ -976,12 +990,8 @@ impl One for MleAst {
 
     /// Check if this MleAst represents the constant 1.
     ///
-    /// IMPORTANT: This implementation checks the node structure directly
-    /// instead of using `*self == Self::one()`. The default `is_one()`
-    /// would trigger `PartialEq::eq`, which in constraint mode registers
-    /// a constraint `(self - 1) = 0`. This caused spurious constraints
-    /// involving io values (10, 55) when optimized multiplication checked
-    /// if coefficients were 1.
+    /// Checks node structure directly to avoid triggering `PartialEq::eq`,
+    /// which would register a spurious constraint in constraint mode.
     fn is_one(&self) -> bool {
         matches!(
             get_node(self.root),
@@ -993,9 +1003,9 @@ impl One for MleAst {
 impl std::ops::Neg for MleAst {
     type Output = Self;
 
-    fn neg(self) -> Self::Output {
-        // Negation is 0 - x (Jolt transpiler doesn't use Node::Neg)
-        Self::zero() - self
+    fn neg(mut self) -> Self::Output {
+        self.unop(Node::Neg);
+        self
     }
 }
 
@@ -1257,10 +1267,13 @@ impl From<ark_ff::biginteger::signed_hi_32::SignedBigIntHi32<3>> for MleAst {
     }
 }
 
-// Required for JoltField::Unreduced<N> - handles conversion from [u64; N] arrays
+/// Required for `JoltField::Unreduced<N>` which is `Self` for MleAst.
+///
+/// Converts `[u64; N]` to a scalar constant. For N > 4, only the first 4 limbs
+/// are used (higher limbs are truncated). This is acceptable for symbolic execution
+/// since we're just creating a constant node. Actual arithmetic is tracked in the AST.
 impl<const N: usize> From<[u64; N]> for MleAst {
     fn from(value: [u64; N]) -> Self {
-        // Convert [u64; N] to [u64; 4] by copying available limbs and padding with zeros
         let mut limbs = [0u64; 4];
         let copy_len = N.min(4);
         limbs[..copy_len].copy_from_slice(&value[..copy_len]);
@@ -1455,41 +1468,42 @@ impl JoltField for MleAst {
     }
 }
 
-/**********************************************************************
- * NOTE: We probably never need to serialize MleAst, so these are stubs
- */
-
+/// Serialization for MleAst uses thread-local tunneling to pass symbolic values
+/// through the generic `Transcript` trait (which expects `CanonicalSerialize`).
+///
+/// `serialize_with_mode` stores `self` in a thread-local via `set_pending_append`,
+/// which `PoseidonAstTranscript::raw_append_scalar` retrieves via `take_pending_append`.
 impl CanonicalSerialize for MleAst {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
         _writer: W,
         _compress: ark_serialize::Compress,
     ) -> Result<(), SerializationError> {
-        // Store self in thread-local so PoseidonAstTranscript::append_scalar can retrieve it.
-        // This is how we pass the MleAst through the generic Transcript trait.
         set_pending_append(*self);
         Ok(())
     }
 
     fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        // Return 32 bytes (standard field element size) so append_scalar works
+        // Return 32 bytes (standard field element size) for append_scalar length calculations
         32
     }
 }
 
+/// Required by `JoltField` trait bound but not called during symbolic execution.
 impl CanonicalDeserialize for MleAst {
     fn deserialize_with_mode<R: std::io::Read>(
         _reader: R,
         _compress: ark_serialize::Compress,
         _validate: ark_serialize::Validate,
     ) -> Result<Self, SerializationError> {
-        unimplemented!("Not needed for constructing ASTs")
+        unimplemented!("MleAst deserialization not needed. We build ASTs, not read them")
     }
 }
 
+/// Required by `CanonicalDeserialize` but not called during symbolic execution.
 impl Valid for MleAst {
     fn check(&self) -> Result<(), SerializationError> {
-        unimplemented!("Not needed for constructing ASTs")
+        unimplemented!("MleAst validation not needed")
     }
 }
 
@@ -1591,7 +1605,4 @@ impl Valid for Node {
 // Re-exports from ast_bundle module for backward compatibility
 // =============================================================================
 
-pub use crate::ast_bundle::{
-    Assertion, AstBundle, AstCommitment, Constraint, ConstraintCse, InputKind, InputVar,
-    TargetField,
-};
+pub use crate::ast_bundle::{Assertion, AstBundle, AstCommitment, InputKind, TargetField};
