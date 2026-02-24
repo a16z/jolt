@@ -22,7 +22,7 @@
 //!
 //! # Key Components
 //!
-//! - [`MemoizedCodeGen`]: The main code generator with CSE (Common Subexpression Elimination)
+//! - [`GnarkCodeGen`]: The main code generator with CSE (Common Subexpression Elimination)
 //! - [`generate_circuit_from_bundle`]: Entry point that generates a complete circuit file
 //! - [`sanitize_go_name`]: Converts Rust identifiers to valid Go identifiers
 //!
@@ -68,19 +68,15 @@ use zklean_extractor::mle_ast::{
 // Helper Functions
 // =============================================================================
 
-/// Extract child node IDs from an Edge, if it's a NodeRef.
-fn edge_to_child(edge: Edge) -> Option<usize> {
-    match edge {
-        Edge::NodeRef(id) => Some(id),
-        Edge::Atom(_) => None,
+/// Extract child node IDs from a Node (used by generate_expr for traversal).
+fn node_children(node: &Node) -> Vec<usize> {
+    fn edge_to_child(edge: &Edge) -> Option<usize> {
+        match edge {
+            Edge::NodeRef(id) => Some(*id),
+            Edge::Atom(_) => None,
+        }
     }
-}
 
-/// Extract all child node IDs from a Node.
-///
-/// Returns children in left-to-right order (e1, e2, e3 for ternary nodes).
-/// Used by both `count_refs` and `generate_expr` for consistent traversal.
-fn node_children(node: Node) -> Vec<usize> {
     match node {
         Node::Atom(_) => vec![],
         Node::Neg(e)
@@ -95,12 +91,12 @@ fn node_children(node: Node) -> Vec<usize> {
                 .flatten()
                 .collect()
         }
-        Node::TranscriptHash(ref hash_data, e1, e2) => {
+        Node::TranscriptHash(hash_data, e1, e2) => {
             let mut v: Vec<usize> = [edge_to_child(e1), edge_to_child(e2)]
                 .into_iter()
                 .flatten()
                 .collect();
-            v.extend(hash_data.as_slice().iter().filter_map(|e| edge_to_child(*e)));
+            v.extend(hash_data.as_slice().iter().filter_map(edge_to_child));
             v
         }
     }
@@ -159,7 +155,7 @@ enum ConstraintAssertion {
 /// # Usage
 ///
 /// ```ignore
-/// let mut codegen = MemoizedCodeGen::new(&bundle.nodes, var_names, constraint_idx);
+/// let mut codegen = GnarkCodeGen::new(&bundle.nodes, var_names, constraint_idx);
 /// codegen.count_refs(root_node_id);  // First pass: count references
 /// let expr = codegen.generate_expr(root_node_id);  // Second pass: generate code
 /// let bindings = codegen.bindings_code();  // Get CSE variable definitions
@@ -167,11 +163,11 @@ enum ConstraintAssertion {
 ///
 /// # Per-Constraint Isolation
 ///
-/// Create a fresh `MemoizedCodeGen` for each constraint. This gives each sumcheck
+/// Create a fresh `GnarkCodeGen` for each constraint. This gives each sumcheck
 /// its own expression tree with isolated CSE variables (`cse_N_*` for constraint N),
 /// making debugging easier: when a constraint fails, all `cse_N_*` variables
 /// belong to that constraint.
-pub(crate) struct MemoizedCodeGen<'a> {
+pub(crate) struct GnarkCodeGen<'a> {
     /// Reference to the node arena (from AstBundle.nodes)
     nodes: &'a [Node],
     /// Reference counts for each NodeId (computed in first pass)
@@ -190,19 +186,34 @@ pub(crate) struct MemoizedCodeGen<'a> {
     uses_poseidon: bool,
 }
 
-impl<'a> MemoizedCodeGen<'a> {
-    /// Create a new MemoizedCodeGen for a specific constraint.
+impl<'a> GnarkCodeGen<'a> {
+    /// Create a GnarkCodeGen with pre-computed CSE bindings from AstBundle.
     ///
-    /// CSE variable names are prefixed with the constraint index (e.g., "cse_3_0" for constraint 3).
-    /// This keeps each constraint's expression tree isolated for easier debugging.
+    /// CSE is computed at the AST level (via `AstBundle::run_cse()`) for:
+    /// - Single CSE pass shared across all targets
+    /// - Consistent CSE decisions for gnark, Lean4, etc.
+    /// - Simpler codegen (just emit, no analysis)
+    ///
+    /// The `cse_bindings` slice contains NodeIds that should be hoisted, in order.
+    /// They become `cse_{constraint_idx}_{i}` for element `i`.
     pub(crate) fn new(
         nodes: &'a [Node],
         var_names: &'a HashMap<u16, String>,
         constraint_idx: usize,
+        cse_bindings: &[usize],
     ) -> Self {
+        let mut ref_counts = HashMap::new();
+
+        // Mark ref_counts > 1 for all CSE nodes so they get hoisted.
+        // The hoisting order is determined by post-order traversal in generate_expr,
+        // which matches the order CSE bindings were computed.
+        for &node_id in cse_bindings {
+            ref_counts.insert(node_id, 2);
+        }
+
         Self {
             nodes,
-            ref_counts: HashMap::new(),
+            ref_counts,
             generated: HashMap::new(),
             bindings: Vec::new(),
             cse_counter: 0,
@@ -220,27 +231,6 @@ impl<'a> MemoizedCodeGen<'a> {
     /// Get all CSE bindings as Go code
     pub(crate) fn bindings_code(&self) -> String {
         self.bindings.join("")
-    }
-
-    /// First pass: count how many times each node is referenced.
-    ///
-    /// This determines which nodes should be hoisted to CSE variables.
-    /// Nodes with ref_count > 1 will become named variables to avoid
-    /// redundant computation in the circuit.
-    ///
-    /// Uses iterative traversal to avoid stack overflow on deep ASTs
-    /// (the Jolt verifier AST can be very deep due to sumcheck chains).
-    pub(crate) fn count_refs(&mut self, root_node_id: usize) {
-        let mut stack = vec![root_node_id];
-
-        while let Some(node_id) = stack.pop() {
-            *self.ref_counts.entry(node_id).or_insert(0) += 1;
-
-            // Only traverse children on first visit (ref_count was just set to 1)
-            if self.ref_counts[&node_id] == 1 {
-                stack.extend(node_children(self.nodes[node_id].clone()));
-            }
-        }
     }
 
     /// Generate Gnark expression for a node, with memoization based on ref count.
@@ -278,7 +268,7 @@ impl<'a> MemoizedCodeGen<'a> {
             stack.push((node_id, true));
 
             // Push unvisited children (reversed so left-to-right processing due to LIFO)
-            for child_id in node_children(self.nodes[node_id].clone()).into_iter().rev() {
+            for child_id in node_children(&self.nodes[node_id]).into_iter().rev() {
                 if !visited.contains(&child_id) {
                     stack.push((child_id, false));
                 }
@@ -546,14 +536,22 @@ pub fn generate_circuit_from_bundle_with_stats(
     // This makes debugging easier: each constraint's cse_N_* variables are isolated.
     let mut processed_constraints: Vec<ProcessedConstraint> = Vec::new();
 
-    for (constraint_idx, c) in bundle.constraints.iter().enumerate() {
-        let mut codegen = MemoizedCodeGen::new(&bundle.nodes, &var_names, constraint_idx);
+    // Require pre-computed CSE bindings
+    if !bundle.has_cse() {
+        panic!(
+            "AstBundle must have pre-computed CSE bindings. Call bundle.run_cse() before codegen."
+        );
+    }
 
-        // Count references within this constraint only
-        codegen.count_refs(c.root);
-        if let Assertion::EqualNode(other_id) = &c.assertion {
-            codegen.count_refs(*other_id);
-        }
+    for (constraint_idx, c) in bundle.constraints.iter().enumerate() {
+        // Use pre-computed CSE bindings from AstBundle
+        let cse_bindings = bundle.get_cse_bindings(constraint_idx).unwrap_or(&[]);
+        let mut codegen = GnarkCodeGen::new(
+            &bundle.nodes,
+            &var_names,
+            constraint_idx,
+            cse_bindings,
+        );
 
         // Generate expression for this constraint
         let expr = codegen.generate_expr(c.root);
