@@ -14,28 +14,27 @@ use ark_std::{One, Zero};
 use serde::{Deserialize, Serialize};
 
 use jolt_core::field::{FieldOps, JoltField};
-use jolt_core::transcripts::AppendToTranscript;
 
 #[cfg(test)]
 use crate::util::Environment;
 use crate::util::LetBinderIndex;
 
-// =============================================================================
-// Constants
-// =============================================================================
+// Import scalar constants for internal use (pub use handles function re-exports)
+use crate::scalar_ops::{SCALAR_ONE, SCALAR_ZERO};
 
-/// BN254 scalar field modulus: 21888242871839275222246405745257275088548364400416034343698204186575808495617
-const BN254_MODULUS: [u64; 4] = [
-    0x43E1F593F0000001,
-    0x2833E84879B97091,
-    0xB85045B68181585D,
-    0x30644E72E131A029,
-];
+// Re-export scalar_ops for external use
+pub use crate::scalar_ops::{
+    scalar_add_mod, scalar_mul_mod, scalar_neg_mod, scalar_sub_mod, scalar_to_decimal_string,
+};
+// Short aliases for backward compatibility
+pub use crate::scalar_ops::{
+    scalar_add_mod as scalar_add, scalar_mul_mod as scalar_mul, scalar_neg_mod as scalar_neg,
+    scalar_sub_mod as scalar_sub,
+};
 
-/// Zero scalar: [0, 0, 0, 0]
-const SCALAR_ZERO: Scalar = [0, 0, 0, 0];
-/// One scalar: [1, 0, 0, 0]
-const SCALAR_ONE: Scalar = [1, 0, 0, 0];
+// =============================================================================
+// Constants (CSE only - scalar constants moved to scalar_ops.rs)
+// =============================================================================
 
 const CSE_PREFIX: &str = "cse";
 
@@ -65,11 +64,22 @@ const CSE_DEPTH_THRESHOLD: usize = 4;
 
 /// A 256-bit scalar value represented as 4 u64 limbs in little-endian order.
 /// Value = limb0 + limb1*2^64 + limb2*2^128 + limb3*2^192
+///
+/// # Change from upstream zklean
+///
+/// Upstream used `type Scalar = i128`, which works well for Lean4 extraction where
+/// constants are typically small (-1, 0, 1, etc.) and the output uses abstract `[Field f]`.
+///
+/// We changed to `[u64; 4]` to support full BN254 scalar field elements (~254 bits),
+/// which is required for gnark circuit generation where constants must be exact.
+///
+/// This is backward compatible with Lean output: `scalar_to_decimal_string()` converts
+/// `[u64; 4]` to decimal strings, preserving the same output format.
 pub type Scalar = [u64; 4];
 
 type Index = u16;
 
-type NodeId = usize;
+pub type NodeId = usize;
 
 pub type DefaultMleAst = MleAst;
 
@@ -84,10 +94,14 @@ pub type Bindings = HashMap<u64, Vec<(Node, LetBinderIndex)>>;
 // =============================================================================
 // Global arena
 // =============================================================================
+//
+// Note: These functions were private (`fn`) in upstream zklean. We made them
+// `pub fn` so that `AstBundle::snapshot_arena()` can clone the arena for
+// serialization, and so codegen can read nodes during code generation.
 
 static NODE_ARENA: OnceLock<RwLock<Vec<Node>>> = OnceLock::new();
 
-fn node_arena() -> &'static RwLock<Vec<Node>> {
+pub fn node_arena() -> &'static RwLock<Vec<Node>> {
     NODE_ARENA.get_or_init(|| RwLock::new(Vec::new()))
 }
 
@@ -125,8 +139,13 @@ fn edge_for_root(root: NodeId) -> Edge {
 // for ASTs, we use thread-local storage to tunnel the actual MleAst values through
 // these trait boundaries.
 //
-// This will be used by PoseidonAstTranscript (in gnark-transpiler) to build symbolic
+// This will be used by PoseidonAstTranscript (in transpiler) to build symbolic
 // AST nodes for Poseidon hash operations during verifier transpilation.
+//
+// Note: These are kept here (rather than a separate module) because they're used by
+// MleAst's own trait impls (from_bytes, serialize_with_mode) and form part of MleAst's
+// JoltField implementation machinery. Unlike scalar_ops/ast_bundle, they can't be
+// cleanly decoupled from MleAst without introducing circular dependencies.
 // =============================================================================
 
 thread_local! {
@@ -189,7 +208,11 @@ thread_local! {
 /// Set pending point elements for PoseidonAstTranscript::raw_append_point.
 /// `elements` must have exactly 2 entries: [x_field_element, y_field_element].
 pub fn set_pending_point_elements(elements: Vec<MleAst>) {
-    assert_eq!(elements.len(), 2, "Point must have exactly 2 elements (x, y)");
+    assert_eq!(
+        elements.len(),
+        2,
+        "Point must have exactly 2 elements (x, y)"
+    );
     PENDING_POINT_ELEMENTS.with(|cell| {
         *cell.borrow_mut() = Some(elements);
     });
@@ -204,6 +227,16 @@ pub fn take_pending_point_elements() -> Option<Vec<MleAst>> {
 // =============================================================================
 // Symbolic constraint accumulation for transpilation
 // =============================================================================
+//
+// Note: This section is specific to circuit transpilation and not used by Lean4 extraction.
+//
+// When Jolt's verifier runs `assert_eq!(computed, expected)`, we need to capture
+// that assertion as a circuit constraint `(computed - expected) == 0` rather than
+// actually comparing values (which would fail since MleAst holds symbolic AST nodes,
+// not concrete field elements).
+//
+// Constraint mode makes PartialEq record `(lhs - rhs)` as a constraint and return
+// `true`, allowing symbolic execution to continue through all verification steps.
 
 thread_local! {
     /// Accumulated constraints during symbolic execution.
@@ -244,7 +277,7 @@ pub fn num_constraints() -> usize {
 
 /// Take all accumulated constraints, clearing the list.
 pub fn take_constraints() -> Vec<MleAst> {
-    SYMBOLIC_CONSTRAINTS.with(|cell| cell.borrow_mut().drain(..).collect())
+    SYMBOLIC_CONSTRAINTS.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
 }
 
 /// Add a constraint that should equal zero.
@@ -302,15 +335,6 @@ pub enum Edge {
     NodeRef(NodeId),
 }
 
-/// Which hash function backs a transcript hash node.
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
-pub enum TranscriptBackend {
-    /// Width-3 Poseidon: hash(state, n_rounds, data) → ~250 constraints.
-    Poseidon,
-    /// Blake2b-256: blake2b(state || pad(n_rounds) || data_bytes).
-    Blake2b,
-}
-
 /// Data payload for a transcript hash node.
 /// The variant determines both the hash backend and the data shape (arity).
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -353,6 +377,13 @@ pub enum Node {
     /// Transcript hash: hash(state, n_rounds, data).
     /// The `TranscriptHashData` variant determines which hash function and arity.
     TranscriptHash(TranscriptHashData, Edge, Edge),
+    // -------------------------------------------------------------------------
+    // Byte-level transcript transforms
+    // -------------------------------------------------------------------------
+    // Note: These are NOT used by Poseidon (which operates on field elements natively).
+    // They are used by Blake2b/Keccak transcripts, which use byte-level serialization
+    // inherited from the original Jolt transcript design (for EVM compatibility).
+    // -------------------------------------------------------------------------
     /// Byte-reverse a field element.
     /// Transforms: serialize(x) as LE bytes -> reverse -> from_le_bytes_mod_order.
     /// Used by transcript append_scalar which reverses bytes for EVM compatibility.
@@ -437,17 +468,6 @@ impl MleAst {
     /// Create a variable from an index (for symbolic execution).
     pub fn from_var(index: u16) -> Self {
         Self::new_var('v', index)
-    }
-
-    /// Create an MleAst from an existing node ID.
-    ///
-    /// This is useful for codegen when you have a node ID but need to use
-    /// MleAst methods like `is_constant()` or `try_evaluate_constant()`.
-    pub fn from_node_id(node_id: NodeId) -> Self {
-        Self {
-            root: node_id,
-            reg_name: None,
-        }
     }
 
     /// Get the root node ID for this AST.
@@ -535,233 +555,6 @@ impl MleAst {
         Self {
             root,
             reg_name: input.reg_name,
-        }
-    }
-
-    /// Returns true if this AST represents a constant value (no variables).
-    ///
-    /// An expression is constant if it contains only scalars and operations on scalars,
-    /// with no `Var` or `NamedVar` atoms anywhere in the tree.
-    pub fn is_constant(&self) -> bool {
-        is_node_constant(self.root)
-    }
-
-    /// If this AST is constant, evaluate it and return the scalar value.
-    ///
-    /// Returns `None` if the AST contains any variables.
-    /// Returns `Some([u64; 4])` with the computed constant value.
-    ///
-    /// Note: This uses modular arithmetic with the BN254 scalar field modulus.
-    pub fn try_evaluate_constant(&self) -> Option<Scalar> {
-        if !self.is_constant() {
-            return None;
-        }
-        Some(evaluate_constant_node(self.root))
-    }
-}
-
-// =============================================================================
-// Scalar arithmetic helpers
-// =============================================================================
-
-/// Convert a Scalar to a decimal string.
-fn scalar_to_decimal_string(limbs: &Scalar) -> String {
-    // Handle zero case
-    if *limbs == [0, 0, 0, 0] {
-        return "0".to_string();
-    }
-
-    // Convert [u64; 4] to BigUint for decimal formatting
-    // Value = limb0 + limb1*2^64 + limb2*2^128 + limb3*2^192
-    use num_bigint::BigUint;
-
-    let mut value = BigUint::from(limbs[3]);
-    value = (value << 64) + limbs[2];
-    value = (value << 64) + limbs[1];
-    value = (value << 64) + limbs[0];
-
-    value.to_string()
-}
-
-/// Add two 256-bit numbers with modular reduction
-pub fn scalar_add_mod(a: Scalar, b: Scalar) -> Scalar {
-    let mut result = [0u64; 4];
-    let mut carry = 0u128;
-
-    for i in 0..4 {
-        let sum = a[i] as u128 + b[i] as u128 + carry;
-        result[i] = sum as u64;
-        carry = sum >> 64;
-    }
-
-    // Reduce mod p if needed
-    if carry > 0 || scalar_ge(&result, &BN254_MODULUS) {
-        scalar_sub_no_borrow(&result, &BN254_MODULUS)
-    } else {
-        result
-    }
-}
-
-/// Subtract two 256-bit numbers with modular reduction
-pub fn scalar_sub_mod(a: Scalar, b: Scalar) -> Scalar {
-    // a - b mod p = a + (p - b) mod p
-    let neg_b = scalar_neg_mod(b);
-    scalar_add_mod(a, neg_b)
-}
-
-/// Negate a scalar: -a mod p = p - a
-pub fn scalar_neg_mod(a: Scalar) -> Scalar {
-    if a == SCALAR_ZERO {
-        return SCALAR_ZERO;
-    }
-    scalar_sub_no_borrow(&BN254_MODULUS, &a)
-}
-
-/// Multiply two 256-bit numbers with modular reduction (simplified)
-pub fn scalar_mul_mod(a: Scalar, b: Scalar) -> Scalar {
-    // For full correctness, we'd need Montgomery multiplication
-    // For now, use a simple approach via BigUint
-    use num_bigint::BigUint;
-
-    let a_big = BigUint::from_slice(&[
-        a[0] as u32,
-        (a[0] >> 32) as u32,
-        a[1] as u32,
-        (a[1] >> 32) as u32,
-        a[2] as u32,
-        (a[2] >> 32) as u32,
-        a[3] as u32,
-        (a[3] >> 32) as u32,
-    ]);
-    let b_big = BigUint::from_slice(&[
-        b[0] as u32,
-        (b[0] >> 32) as u32,
-        b[1] as u32,
-        (b[1] >> 32) as u32,
-        b[2] as u32,
-        (b[2] >> 32) as u32,
-        b[3] as u32,
-        (b[3] >> 32) as u32,
-    ]);
-    let p_big = BigUint::from_slice(&[
-        BN254_MODULUS[0] as u32,
-        (BN254_MODULUS[0] >> 32) as u32,
-        BN254_MODULUS[1] as u32,
-        (BN254_MODULUS[1] >> 32) as u32,
-        BN254_MODULUS[2] as u32,
-        (BN254_MODULUS[2] >> 32) as u32,
-        BN254_MODULUS[3] as u32,
-        (BN254_MODULUS[3] >> 32) as u32,
-    ]);
-
-    let result = (a_big * b_big) % p_big;
-    let digits = result.to_u64_digits();
-
-    let mut out = [0u64; 4];
-    for (i, &d) in digits.iter().take(4).enumerate() {
-        out[i] = d;
-    }
-    out
-}
-
-/// Compare two 256-bit numbers: returns true if a >= b
-fn scalar_ge(a: &Scalar, b: &Scalar) -> bool {
-    for i in (0..4).rev() {
-        if a[i] > b[i] {
-            return true;
-        }
-        if a[i] < b[i] {
-            return false;
-        }
-    }
-    true // equal
-}
-
-/// Subtract b from a, assuming a >= b (no modular reduction)
-fn scalar_sub_no_borrow(a: &Scalar, b: &Scalar) -> Scalar {
-    let mut result = [0u64; 4];
-    let mut borrow = 0i128;
-
-    for i in 0..4 {
-        let diff = a[i] as i128 - b[i] as i128 - borrow;
-        if diff < 0 {
-            result[i] = (diff + (1i128 << 64)) as u64;
-            borrow = 1;
-        } else {
-            result[i] = diff as u64;
-            borrow = 0;
-        }
-    }
-
-    result
-}
-
-// =============================================================================
-// Constant evaluation helpers
-// =============================================================================
-
-/// Check if an edge is constant (contains no variables)
-fn is_edge_constant(edge: Edge) -> bool {
-    match edge {
-        Edge::Atom(Atom::Scalar(_)) => true,
-        Edge::Atom(Atom::Var(_)) => false,
-        Edge::Atom(Atom::NamedVar(_)) => false, // Named vars could be constants, but we can't know statically
-        Edge::NodeRef(id) => is_node_constant(id),
-    }
-}
-
-/// Check if a node is constant (contains no variables)
-fn is_node_constant(node_id: NodeId) -> bool {
-    match get_node(node_id) {
-        Node::Atom(Atom::Scalar(_)) => true,
-        Node::Atom(Atom::Var(_)) => false,
-        Node::Atom(Atom::NamedVar(_)) => false,
-        Node::Neg(e)
-        | Node::Inv(e)
-        | Node::ByteReverse(e)
-        | Node::Truncate128Reverse(e)
-        | Node::Truncate128(e)
-        | Node::AppendU64Transform(e) => is_edge_constant(e),
-        Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
-            is_edge_constant(e1) && is_edge_constant(e2)
-        }
-        Node::TranscriptHash(ref hash_data, e1, e2) => {
-            is_edge_constant(e1) && is_edge_constant(e2) && hash_data.as_slice().iter().all(|e| is_edge_constant(*e))
-        }
-    }
-}
-
-/// Evaluate a constant edge to its scalar value
-fn evaluate_constant_edge(edge: Edge) -> Scalar {
-    match edge {
-        Edge::Atom(Atom::Scalar(s)) => s,
-        Edge::Atom(Atom::Var(_)) | Edge::Atom(Atom::NamedVar(_)) => {
-            panic!("Cannot evaluate non-constant edge")
-        }
-        Edge::NodeRef(id) => evaluate_constant_node(id),
-    }
-}
-
-/// Evaluate a constant node to its scalar value
-fn evaluate_constant_node(node_id: NodeId) -> Scalar {
-    match get_node(node_id) {
-        Node::Atom(Atom::Scalar(s)) => s,
-        Node::Atom(Atom::Var(_)) | Node::Atom(Atom::NamedVar(_)) => {
-            panic!("Cannot evaluate non-constant node")
-        }
-        Node::Neg(e) => scalar_neg_mod(evaluate_constant_edge(e)),
-        Node::Add(e1, e2) => scalar_add_mod(evaluate_constant_edge(e1), evaluate_constant_edge(e2)),
-        Node::Sub(e1, e2) => scalar_sub_mod(evaluate_constant_edge(e1), evaluate_constant_edge(e2)),
-        Node::Mul(e1, e2) => scalar_mul_mod(evaluate_constant_edge(e1), evaluate_constant_edge(e2)),
-        Node::Inv(_) | Node::Div(_, _) => {
-            panic!("Modular inverse not implemented for constant evaluation")
-        }
-        Node::TranscriptHash(_, _, _)
-        | Node::ByteReverse(_)
-        | Node::Truncate128Reverse(_)
-        | Node::Truncate128(_)
-        | Node::AppendU64Transform(_) => {
-            panic!("Hash/transform operations cannot be evaluated as constants")
         }
     }
 }
@@ -955,7 +748,12 @@ fn node_depth(node: &Node) -> usize {
             1 + max(edge_depth(*e1), edge_depth(*e2))
         }
         Node::TranscriptHash(ref hash_data, e1, e2) => {
-            let data_max = hash_data.as_slice().iter().map(|e| edge_depth(*e)).max().unwrap_or(0);
+            let data_max = hash_data
+                .as_slice()
+                .iter()
+                .map(|e| edge_depth(*e))
+                .max()
+                .unwrap_or(0);
             1 + max(edge_depth(*e1), max(edge_depth(*e2), data_max))
         }
     }
@@ -1033,11 +831,11 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
                     TranscriptHashData::Poseidon(d) => {
                         TranscriptHashData::Poseidon(aux_edge(bindings, nodes, d))
                     }
-                    TranscriptHashData::Blake2b(data) => {
-                        TranscriptHashData::Blake2b(
-                            data.into_iter().map(|e| aux_edge(bindings, nodes, e)).collect(),
-                        )
-                    }
+                    TranscriptHashData::Blake2b(data) => TranscriptHashData::Blake2b(
+                        data.into_iter()
+                            .map(|e| aux_edge(bindings, nodes, e))
+                            .collect(),
+                    ),
                 };
                 register(
                     bindings,
@@ -1789,400 +1587,10 @@ impl Valid for Node {
     }
 }
 
-/**********************************************************************/
-
 // =============================================================================
-// AstBundle: Serializable IR for transpilation and recursion
+// Re-exports from ast_bundle module for backward compatibility
 // =============================================================================
 
-/// The kind of input variable - determines how it's treated in circuit generation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum InputKind {
-    /// Public statement data (constant in the circuit).
-    /// This includes things like: program bytecode hash, memory layout params,
-    /// input/output hashes, etc. These are absorbed into the transcript during
-    /// fiat_shamir_preamble but are fixed for a given program.
-    PublicStatement,
-    /// Proof data (variable in the circuit).
-    /// This includes everything that comes from the proof: commitments,
-    /// sumcheck coefficients, opening claims, etc. These vary per proof.
-    ProofData,
-}
-
-/// The target field for code generation.
-///
-/// This discriminator tells the transpilation pipeline which field a variable
-/// belongs to, so codegen can emit the appropriate code (native vs emulated).
-///
-/// # Background
-///
-/// In the BN254/Grumpkin 2-cycle:
-/// - Fr (BN254 scalar) = Fq (Grumpkin base) — native in Groth16 circuit
-/// - Fq (BN254 base) = Fr (Grumpkin scalar) — requires emulated arithmetic
-///
-/// Jolt stages 1-7 use Fr (native). Recursion stages 9-13 use Fq (emulated).
-/// Stage 8 (Hyrax PCS) uses native Grumpkin operations, not transpiled.
-///
-/// # Extensibility
-///
-/// Currently only BN254 Fr/Fq are supported. Future variants could include
-/// other curves (BLS12-381, Goldilocks, etc.) or extension fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum TargetField {
-    /// BN254 scalar field (Fr) — native in Groth16 circuit.
-    /// Modulus: 21888242871839275222246405745257275088548364400416034343698204186575808495617
-    #[default]
-    Fr,
-
-    /// BN254 base field (Fq) — requires emulated arithmetic in circuit.
-    /// Modulus: 21888242871839275222246405745257275088696311157297823662689037894645226208583
-    ///
-    /// NOTE: Fq codegen is not yet implemented. This variant exists for
-    /// infrastructure readiness. Using Fq variables will panic at codegen
-    /// time with a clear error message.
-    Fq,
-}
-
-impl TargetField {
-    /// Human-readable name for error messages and debugging.
-    #[inline]
-    pub const fn name(&self) -> &'static str {
-        match self {
-            Self::Fr => "Fr (BN254 scalar)",
-            Self::Fq => "Fq (BN254 base)",
-        }
-    }
-
-    /// Whether this field requires emulated arithmetic in a BN254 Groth16 circuit.
-    #[inline]
-    pub const fn requires_emulation(&self) -> bool {
-        matches!(self, Self::Fq)
-    }
-}
-
-/// Describes an input variable in the AST.
-/// Maps `Var(i)` to its semantic meaning.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InputVar {
-    /// The index into the vars register (matches `Atom::Var(index)`).
-    pub index: u16,
-    /// Human-readable name for debugging and codegen (e.g., "r_sumcheck_0", "claimed_output").
-    pub name: String,
-    /// Whether this is a public statement or proof data.
-    pub kind: InputKind,
-    /// The target field for this variable (Fr or Fq).
-    /// Defaults to Fr for backward compatibility with existing serialized bundles.
-    #[serde(default)]
-    pub target_field: TargetField,
-}
-
-/// What assertion a constraint represents.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Assertion {
-    /// The expression must equal zero: `expr == 0`
-    EqualZero,
-    /// The expression must equal a public input by name: `expr == public_input[name]`
-    EqualPublicInput { name: String },
-    /// The expression must equal another node in the AST: `expr == other_node`
-    EqualNode(NodeId),
-}
-
-/// A named constraint with its root expression and assertion type.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Constraint {
-    /// Human-readable name for the constraint (e.g., "stage1_sumcheck_final").
-    pub name: String,
-    /// The root node of the expression.
-    pub root: NodeId,
-    /// What assertion this constraint represents.
-    pub assertion: Assertion,
-}
-
-/// Complete bundle of AST data for transpilation and recursion.
-///
-/// This structure contains everything needed to:
-/// 1. Generate gnark circuits
-/// 2. Generate other SNARK circuits for recursion
-/// 3. Serialize/deserialize the AST (via JSON)
-///
-/// The `nodes` vec is the arena - all nodes are stored here and referenced by index.
-/// The `bindings` vec contains NodeIds of hoisted subexpressions from CSE.
-/// The `constraints` vec contains the actual assertions to be verified.
-/// The `inputs` vec describes what each `Var(i)` means semantically.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AstBundle {
-    /// The node arena - all nodes in the AST(s).
-    pub nodes: Vec<Node>,
-    /// CSE bindings - NodeIds of hoisted common subexpressions.
-    /// These map to `NamedVar(i)` references in the nodes.
-    pub bindings: Vec<NodeId>,
-    /// The constraints to be verified.
-    pub constraints: Vec<Constraint>,
-    /// Input variable descriptions.
-    pub inputs: Vec<InputVar>,
-}
-
-impl AstBundle {
-    /// Create a new empty bundle.
-    pub fn new() -> Self {
-        Self {
-            nodes: Vec::new(),
-            bindings: Vec::new(),
-            constraints: Vec::new(),
-            inputs: Vec::new(),
-        }
-    }
-
-    /// Add an input variable description with default field kind (Fr).
-    ///
-    /// This is the primary method for stages 1-7 which use native Fr arithmetic.
-    pub fn add_input(&mut self, index: u16, name: impl Into<String>, kind: InputKind) {
-        self.add_input_with_field(index, name, kind, TargetField::default())
-    }
-
-    /// Add an input variable description with explicit field kind.
-    ///
-    /// Use this when adding Fq variables for recursion stages.
-    ///
-    /// # Arguments
-    /// * `index` — Variable index matching `Atom::Var(index)`
-    /// * `name` — Human-readable name for codegen (will be sanitized to Go identifier)
-    /// * `kind` — Public statement or proof data
-    /// * `target_field` — Target field (Fr for native, Fq for emulated)
-    pub fn add_input_with_field(
-        &mut self,
-        index: u16,
-        name: impl Into<String>,
-        kind: InputKind,
-        target_field: TargetField,
-    ) {
-        self.inputs.push(InputVar {
-            index,
-            name: name.into(),
-            kind,
-            target_field,
-        });
-    }
-
-    /// Iterate over inputs for a specific target field.
-    ///
-    /// Useful for codegen to separate native vs emulated variables.
-    pub fn inputs_for_field(&self, target_field: TargetField) -> impl Iterator<Item = &InputVar> {
-        self.inputs.iter().filter(move |i| i.target_field == target_field)
-    }
-
-    /// Check if any inputs use the specified field kind.
-    pub fn has_inputs_for_field(&self, field: TargetField) -> bool {
-        self.inputs.iter().any(|i| i.target_field == field)
-    }
-
-    /// Count inputs for a specific field kind.
-    pub fn count_inputs_for_field(&self, field: TargetField) -> usize {
-        self.inputs.iter().filter(|i| i.target_field == field).count()
-    }
-
-    /// Check if any inputs require emulated arithmetic (non-native field).
-    ///
-    /// Returns `true` if the bundle contains any variables that are not in the
-    /// native field (Fr). This is useful for codegen to know if emulated
-    /// arithmetic support is needed.
-    pub fn requires_emulated_arithmetic(&self) -> bool {
-        self.inputs.iter().any(|i| i.target_field.requires_emulation())
-    }
-
-    /// Add a constraint that asserts an expression equals zero.
-    pub fn add_constraint_eq_zero(&mut self, name: impl Into<String>, root: NodeId) {
-        self.constraints.push(Constraint {
-            name: name.into(),
-            root,
-            assertion: Assertion::EqualZero,
-        });
-    }
-
-    /// Add a constraint that asserts an expression equals a public input.
-    pub fn add_constraint_eq_public(
-        &mut self,
-        name: impl Into<String>,
-        root: NodeId,
-        public_input_name: impl Into<String>,
-    ) {
-        self.constraints.push(Constraint {
-            name: name.into(),
-            root,
-            assertion: Assertion::EqualPublicInput {
-                name: public_input_name.into(),
-            },
-        });
-    }
-
-    /// Add a constraint that asserts two expressions are equal.
-    pub fn add_constraint_eq_node(&mut self, name: impl Into<String>, root: NodeId, other: NodeId) {
-        self.constraints.push(Constraint {
-            name: name.into(),
-            root,
-            assertion: Assertion::EqualNode(other),
-        });
-    }
-
-    /// Snapshot the current global arena into this bundle's nodes vec.
-    /// Call this after all AST construction is complete.
-    pub fn snapshot_arena(&mut self) {
-        let arena = node_arena();
-        let guard = arena.read().expect("node arena poisoned");
-        self.nodes = guard.clone();
-    }
-
-    /// Get the number of public statement inputs.
-    pub fn num_public_inputs(&self) -> usize {
-        self.inputs
-            .iter()
-            .filter(|i| i.kind == InputKind::PublicStatement)
-            .count()
-    }
-
-    /// Get the number of proof data inputs.
-    pub fn num_proof_inputs(&self) -> usize {
-        self.inputs
-            .iter()
-            .filter(|i| i.kind == InputKind::ProofData)
-            .count()
-    }
-
-    /// Serialize to JSON string.
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(self)
-    }
-
-    /// Serialize to pretty-printed JSON string.
-    pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
-
-    /// Deserialize from JSON string.
-    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
-    }
-
-    /// Write to a JSON file.
-    pub fn write_json(&self, path: &std::path::Path) -> std::io::Result<()> {
-        let json = self
-            .to_json_pretty()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-        std::fs::write(path, json)
-    }
-
-    /// Read from a JSON file.
-    pub fn read_json(path: &std::path::Path) -> std::io::Result<Self> {
-        let json = std::fs::read_to_string(path)?;
-        Self::from_json(&json)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
-    }
-}
-
-impl Default for AstBundle {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// =============================================================================
-// AstCommitment: Wrapper for commitments in symbolic execution
-// =============================================================================
-
-/// Wrapper type for a commitment represented as 12 MleAst chunks.
-///
-/// In the real verifier, commitments are `PCS::Commitment` (e.g., G1Affine, 384 bytes).
-/// When `append_serializable` is called, it serializes to 384 bytes, reverses them,
-/// and calls `append_bytes` which chunks into 12 × 32-byte pieces and hashes them
-/// with proper chaining.
-///
-/// For symbolic execution, we represent each chunk as an MleAst variable.
-/// When `AstCommitment` is serialized, it stores the 12 chunks in the
-/// `PENDING_COMMITMENT_CHUNKS` thread-local. `PoseidonAstTranscript::append_serializable`
-/// then retrieves them and performs the same 12-hash chaining operation symbolically.
-#[derive(Clone, Debug)]
-pub struct AstCommitment {
-    /// The 12 MleAst chunks representing this commitment
-    pub chunks: Vec<MleAst>,
-}
-
-impl AstCommitment {
-    /// Create a new AstCommitment from 12 chunks.
-    ///
-    /// # Panics
-    /// Panics if `chunks.len() != 12`.
-    pub fn new(chunks: Vec<MleAst>) -> Self {
-        assert_eq!(
-            chunks.len(),
-            12,
-            "AstCommitment must have exactly 12 chunks"
-        );
-        Self { chunks }
-    }
-}
-
-impl CanonicalSerialize for AstCommitment {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        _writer: W,
-        _compress: ark_serialize::Compress,
-    ) -> Result<(), SerializationError> {
-        // Store chunks in thread-local for PoseidonAstTranscript::append_serializable to retrieve
-        set_pending_commitment_chunks(self.chunks.clone());
-        Ok(())
-    }
-
-    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        384 // 12 chunks × 32 bytes = 384 bytes (same as G1Affine)
-    }
-}
-
-impl CanonicalDeserialize for AstCommitment {
-    fn deserialize_with_mode<R: std::io::Read>(
-        _reader: R,
-        _compress: ark_serialize::Compress,
-        _validate: ark_serialize::Validate,
-    ) -> Result<Self, SerializationError> {
-        unimplemented!("AstCommitment deserialization not needed for transpilation")
-    }
-}
-
-impl Valid for AstCommitment {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl Default for AstCommitment {
-    fn default() -> Self {
-        // Create 12 zero chunks
-        Self {
-            chunks: vec![MleAst::zero(); 12],
-        }
-    }
-}
-
-impl PartialEq for AstCommitment {
-    fn eq(&self, other: &Self) -> bool {
-        // Compare by root indices - this is sufficient for symbolic equality
-        self.chunks.len() == other.chunks.len()
-            && self
-                .chunks
-                .iter()
-                .zip(other.chunks.iter())
-                .all(|(a, b)| a.root() == b.root())
-    }
-}
-
-impl AppendToTranscript for AstCommitment {
-    fn append_to_transcript<T: jolt_core::transcripts::Transcript>(
-        &self,
-        label: &'static [u8],
-        transcript: &mut T,
-    ) {
-        // Store chunks in thread-local for transcript to retrieve
-        set_pending_commitment_chunks(self.chunks.clone());
-        // The transcript's append_serializable will handle the actual hashing
-        transcript.append_serializable(label, self);
-    }
-}
+pub use crate::ast_bundle::{
+    Assertion, AstBundle, AstCommitment, Constraint, InputKind, InputVar, TargetField,
+};

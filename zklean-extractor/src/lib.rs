@@ -2,7 +2,14 @@
 //!
 //! Provides the MleAst symbolic field type and utilities for extracting
 //! Lean4 representations of Jolt components.
+//!
+//! ## Module Structure
+//!
+//! - `mle_ast`: Core AST types (MleAst, Node, Atom, Edge) and JoltField implementation
+//! - `scalar_ops`: Modular arithmetic for BN254 scalar field elements
+//! - `ast_bundle`: Serializable IR types for transpilation (AstBundle, AstCommitment)
 
+// Core modules (upstream zklean + our modifications)
 pub mod constants;
 pub mod mle_ast;
 pub mod util;
@@ -12,13 +19,28 @@ pub mod r1cs;
 pub mod lean_tests;
 pub mod modules;
 
-// Re-export commonly used types
-pub use mle_ast::{MleAst, DefaultMleAst};
+// New modules (100% our code for transpilation)
+pub mod scalar_ops;
+pub mod ast_bundle;
 
-// Re-export commitment types and their thread-local accessors
+// Re-export commonly used types from mle_ast
+pub use mle_ast::{DefaultMleAst, MleAst};
+
+// Re-export thread-local accessors from mle_ast
 pub use mle_ast::{
-    AstCommitment, set_pending_commitment_chunks, take_pending_commitment_chunks,
-    set_pending_point_elements, take_pending_point_elements,
+    set_pending_commitment_chunks, set_pending_point_elements, take_pending_commitment_chunks,
+    take_pending_point_elements,
+};
+
+// Re-export bundle types (also available via mle_ast for backward compat)
+pub use ast_bundle::{
+    Assertion, AstBundle, AstCommitment, Constraint, InputKind, InputVar, TargetField,
+};
+
+// Re-export scalar ops
+pub use scalar_ops::{
+    scalar_add_mod, scalar_mul_mod, scalar_neg_mod, scalar_sub_mod, scalar_to_decimal_string,
+    BN254_MODULUS, SCALAR_ONE, SCALAR_ZERO,
 };
 
 
