@@ -502,7 +502,6 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             joint_opening_proof,
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
-            bytecode_K: self.one_hot_params.bytecode_k,
             rw_config: self.rw_config.clone(),
             one_hot_config: self.one_hot_params.to_config(),
             dory_layout: DoryGlobals::get_layout(),

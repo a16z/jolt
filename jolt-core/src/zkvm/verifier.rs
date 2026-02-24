@@ -156,9 +156,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .validate(proof.trace_length.log_2(), proof.ram_K.log_2())
             .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
 
-        // Construct full params from the validated config
+        // Construct full params from the validated config.
+        let bytecode_K = preprocessing.shared.bytecode.code_size;
         let one_hot_params =
-            OneHotParams::from_config(&proof.one_hot_config, proof.bytecode_K, proof.ram_K);
+            OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
 
         Ok(Self {
             trusted_advice_commitment,

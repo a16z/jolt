@@ -44,7 +44,6 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,
-    pub bytecode_K: usize,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
     pub dory_layout: DoryLayout,
