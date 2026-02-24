@@ -335,9 +335,15 @@ impl<'a> GnarkCodeGen<'a> {
                     }
                 }
 
-                // zklean base nodes - Jolt transpiler doesn't generate these
-                Node::Neg(_) | Node::Div(_, _) => {
-                    unreachable!("Neg/Div nodes not used by Jolt transpiler")
+                // zklean base nodes: Neg and Div are part of upstream zklean's Node enum.
+                // Jolt's transpiler doesn't currently generate these (uses Sub(0,x) and Mul(a,Inv(b))),
+                // but we support them for compatibility with Lean4 extraction paths.
+                Node::Neg(e) => self.unary_op("api.Neg", e),
+                Node::Div(e1, e2) => {
+                    // gnark has no api.Div; implement as Mul(a, Inverse(b))
+                    let a = self.edge_to_gnark_iterative(e1);
+                    let b_inv = self.edge_to_gnark_iterative(e2);
+                    format!("api.Mul({a}, api.Inverse({b_inv}))")
                 }
             };
 

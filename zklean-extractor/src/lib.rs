@@ -33,10 +33,7 @@ pub use mle_ast::{
 };
 
 // Re-export bundle types (also available via mle_ast for backward compat)
-pub use ast_bundle::{
-    Assertion, AstBundle, AstCommitment, Constraint, ConstraintCse, InputKind, InputVar,
-    TargetField,
-};
+pub use ast_bundle::{Assertion, AstBundle, AstCommitment, InputKind, TargetField};
 
 // Re-export scalar ops
 pub use scalar_ops::{
