@@ -272,6 +272,16 @@ fn main() {
     }
     println!("  Constraints: {}", bundle.constraints.len());
 
+    // Run CSE (Common Subexpression Elimination) at the AST level.
+    // This pre-computes which nodes should be hoisted to named variables,
+    // making codegen simpler (just reads pre-computed decisions).
+    bundle.run_cse();
+    println!(
+        "  CSE bindings: {} total across {} constraints",
+        bundle.constraint_cse.iter().map(|c| c.bindings.len()).sum::<usize>(),
+        bundle.constraint_cse.len()
+    );
+
     // =========================================================================
     // Step 6: Resolve output directory and write bundle
     // =========================================================================
