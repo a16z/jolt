@@ -29,10 +29,10 @@ use crate::{
 
 use crate::zkvm::transport;
 
-/// Stream signature for `JoltProof` bytes (clean rewrite).
+/// Stream signature for `JoltProof` bytes.
 ///
-/// This is a short fixed header to fail fast on wrong-format inputs.
-const PROOF_SIGNATURE: &[u8; 8] = b"JOLTPRF\0";
+/// Last byte is the format version (bump when the wire format changes).
+const PROOF_SIGNATURE: &[u8; 8] = b"JOLTPRF\x01";
 
 // Frame tags for proof sections. Decoding is strict: unknown tags are rejected.
 const TAG_PARAMS: u8 = 1;
@@ -47,7 +47,11 @@ const TAG_STAGE6: u8 = 15;
 const TAG_STAGE7: u8 = 16;
 const TAG_JOINT_OPENING: u8 = 20;
 
-const MAX_SECTION_LEN: u64 = 512 * 1024 * 1024;
+const MAX_PARAMS_LEN: u64 = 16 * 1024;
+const MAX_COMMITMENTS_LEN: u64 = 1024 * 1024;
+const MAX_OPENING_CLAIMS_LEN: u64 = 1024 * 1024;
+const MAX_STAGE_LEN: u64 = 1024 * 1024;
+const MAX_JOINT_OPENING_LEN: u64 = 1024 * 1024;
 
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
@@ -94,7 +98,10 @@ macro_rules! framed_section_size {
 macro_rules! read_singleton {
     ($r:expr, $c:expr, $v:expr, $field:expr) => {{
         if $field.is_some() {
-            return Err(SerializationError::InvalidData);
+            return Err(io_err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                concat!("duplicate field: ", stringify!($field)),
+            )));
         }
         $field = Some(CanonicalDeserialize::deserialize_with_mode($r, $c, $v)?);
     }};
@@ -326,14 +333,37 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let mut joint_opening_proof: Option<PCS::Proof> = None;
 
         while let Some((tag, len)) =
-            transport::read_frame_header(&mut reader, MAX_SECTION_LEN).map_err(io_err)?
+            transport::read_frame_header(&mut reader, MAX_STAGE_LEN).map_err(io_err)?
         {
+            let cap = match tag {
+                TAG_PARAMS => MAX_PARAMS_LEN,
+                TAG_COMMITMENTS => MAX_COMMITMENTS_LEN,
+                TAG_OPENING_CLAIMS => MAX_OPENING_CLAIMS_LEN,
+                TAG_STAGE1 | TAG_STAGE2 | TAG_STAGE3 | TAG_STAGE4 | TAG_STAGE5 | TAG_STAGE6
+                | TAG_STAGE7 => MAX_STAGE_LEN,
+                TAG_JOINT_OPENING => MAX_JOINT_OPENING_LEN,
+                _ => {
+                    return Err(io_err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("unknown proof section tag {tag}"),
+                    )));
+                }
+            };
+            if len > cap {
+                return Err(io_err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("section tag {tag} payload {len} exceeds cap {cap}"),
+                )));
+            }
             let mut limited = (&mut reader).take(len);
 
             match tag {
                 TAG_PARAMS => {
                     if trace_length.is_some() {
-                        return Err(SerializationError::InvalidData);
+                        return Err(io_err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "duplicate params section",
+                        )));
                     }
                     let t = transport::read_varint_u64(&mut limited).map_err(io_err)?;
                     let r = transport::read_varint_u64(&mut limited).map_err(io_err)?;
@@ -361,7 +391,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                 }
                 TAG_COMMITMENTS => {
                     if commitments.is_some() {
-                        return Err(SerializationError::InvalidData);
+                        return Err(io_err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "duplicate commitments section",
+                        )));
                     }
                     let n = transport::read_varint_u64(&mut limited).map_err(io_err)?;
                     let n_usize =
@@ -392,7 +425,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                 }
                 TAG_OPENING_CLAIMS => {
                     if opening_claims.is_some() {
-                        return Err(SerializationError::InvalidData);
+                        return Err(io_err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "duplicate opening claims section",
+                        )));
                     }
                     let n = transport::read_varint_u64(&mut limited).map_err(io_err)?;
                     let n_usize =
@@ -425,35 +461,54 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                 TAG_JOINT_OPENING => {
                     read_singleton!(&mut limited, compress, validate, joint_opening_proof)
                 }
-                _ => return Err(SerializationError::InvalidData),
+                _ => unreachable!("unknown tags rejected above"),
             }
 
             if limited.limit() != 0 {
-                return Err(SerializationError::InvalidData);
+                return Err(io_err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "frame tag {tag}: {} trailing bytes not consumed",
+                        limited.limit()
+                    ),
+                )));
             }
         }
 
+        macro_rules! require {
+            ($opt:expr, $name:expr) => {
+                $opt.ok_or_else(|| {
+                    io_err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        concat!("missing required section: ", $name),
+                    ))
+                })?
+            };
+        }
+
         Ok(Self {
-            opening_claims: opening_claims.ok_or(SerializationError::InvalidData)?,
-            commitments: commitments.ok_or(SerializationError::InvalidData)?,
-            stage1_uni_skip_first_round_proof: stage1_uni.ok_or(SerializationError::InvalidData)?,
-            stage1_sumcheck_proof: stage1_sumcheck.ok_or(SerializationError::InvalidData)?,
-            stage2_uni_skip_first_round_proof: stage2_uni.ok_or(SerializationError::InvalidData)?,
-            stage2_sumcheck_proof: stage2_sumcheck.ok_or(SerializationError::InvalidData)?,
-            stage3_sumcheck_proof: stage3_sumcheck.ok_or(SerializationError::InvalidData)?,
-            stage4_sumcheck_proof: stage4_sumcheck.ok_or(SerializationError::InvalidData)?,
-            stage5_sumcheck_proof: stage5_sumcheck.ok_or(SerializationError::InvalidData)?,
-            stage6_sumcheck_proof: stage6_sumcheck.ok_or(SerializationError::InvalidData)?,
-            stage7_sumcheck_proof: stage7_sumcheck.ok_or(SerializationError::InvalidData)?,
-            joint_opening_proof: joint_opening_proof.ok_or(SerializationError::InvalidData)?,
-            untrusted_advice_commitment: untrusted_advice_commitment
-                .ok_or(SerializationError::InvalidData)?,
-            trace_length: trace_length.ok_or(SerializationError::InvalidData)?,
-            ram_K: ram_K.ok_or(SerializationError::InvalidData)?,
-            bytecode_K: bytecode_K.ok_or(SerializationError::InvalidData)?,
-            rw_config: rw_config.ok_or(SerializationError::InvalidData)?,
-            one_hot_config: one_hot_config.ok_or(SerializationError::InvalidData)?,
-            dory_layout: dory_layout.ok_or(SerializationError::InvalidData)?,
+            opening_claims: require!(opening_claims, "opening_claims"),
+            commitments: require!(commitments, "commitments"),
+            stage1_uni_skip_first_round_proof: require!(stage1_uni, "stage1_uni"),
+            stage1_sumcheck_proof: require!(stage1_sumcheck, "stage1_sumcheck"),
+            stage2_uni_skip_first_round_proof: require!(stage2_uni, "stage2_uni"),
+            stage2_sumcheck_proof: require!(stage2_sumcheck, "stage2_sumcheck"),
+            stage3_sumcheck_proof: require!(stage3_sumcheck, "stage3_sumcheck"),
+            stage4_sumcheck_proof: require!(stage4_sumcheck, "stage4_sumcheck"),
+            stage5_sumcheck_proof: require!(stage5_sumcheck, "stage5_sumcheck"),
+            stage6_sumcheck_proof: require!(stage6_sumcheck, "stage6_sumcheck"),
+            stage7_sumcheck_proof: require!(stage7_sumcheck, "stage7_sumcheck"),
+            joint_opening_proof: require!(joint_opening_proof, "joint_opening"),
+            untrusted_advice_commitment: require!(
+                untrusted_advice_commitment,
+                "untrusted_advice_commitment"
+            ),
+            trace_length: require!(trace_length, "params"),
+            ram_K: require!(ram_K, "params"),
+            bytecode_K: require!(bytecode_K, "params"),
+            rw_config: require!(rw_config, "params"),
+            one_hot_config: require!(one_hot_config, "params"),
+            dory_layout: require!(dory_layout, "params"),
         })
     }
 }
@@ -971,8 +1026,12 @@ mod tests {
     }
 
     #[test]
+    fn proof_signature_version_byte() {
+        assert_eq!(PROOF_SIGNATURE[7], 1, "format version should be 1");
+    }
+
+    #[test]
     fn proof_signature_is_required_and_unknown_tags_reject() {
-        // Missing sections should reject cleanly (after signature).
         let mut just_sig = Vec::new();
         just_sig.extend_from_slice(PROOF_SIGNATURE);
         let res = crate::zkvm::RV64IMACProof::deserialize_with_mode(
