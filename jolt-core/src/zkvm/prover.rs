@@ -4,13 +4,14 @@ use crate::{
     subprotocols::streaming_schedule::LinearOnlySchedule,
     zkvm::{claim_reductions::advice::ReductionPhase, config::OneHotConfig},
 };
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 use std::{
     collections::HashMap,
     fs::File,
     io::{Read, Write},
     path::Path,
     sync::Arc,
-    time::Instant,
 };
 
 use crate::poly::commitment::dory::DoryContext;
@@ -432,6 +433,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
     ) {
         let _pprof_prove = pprof_scope!("prove");
 
+        #[cfg(not(target_arch = "wasm32"))]
         let start = Instant::now();
         fiat_shamir_preamble(
             &self.program_io,
@@ -507,14 +509,16 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
             dory_layout: DoryGlobals::get_layout(),
         };
 
-        let prove_duration = start.elapsed();
-
-        tracing::info!(
-            "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
-            prove_duration.as_secs_f64(),
-            self.unpadded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
-            self.padded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
-        );
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let prove_duration = start.elapsed();
+            tracing::info!(
+                "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
+                prove_duration.as_secs_f64(),
+                self.unpadded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
+                self.padded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
+            );
+        }
 
         (proof, debug_info)
     }

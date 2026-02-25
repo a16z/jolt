@@ -911,7 +911,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "regex",
@@ -1731,8 +1731,7 @@ dependencies = [
 [[package]]
 name = "dory-derive"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c16f2dd35390487818e07efb4459ee0a5c2c65761081ee632d531442a980c97b"
+source = "git+https://github.com/a16z/dory#4b37c1c0d35e0c0b7283c18890bbee7011976e75"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1742,8 +1741,7 @@ dependencies = [
 [[package]]
 name = "dory-pcs"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccf838baede4d71cdbfeb618e36b98ead4c37b1e4b29fa266abd854f0a496732"
+source = "git+https://github.com/a16z/dory#4b37c1c0d35e0c0b7283c18890bbee7011976e75"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2828,6 +2826,7 @@ name = "jolt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ark-bn254",
  "clap",
  "common",
  "env_logger",
@@ -2837,7 +2836,6 @@ dependencies = [
  "log",
  "mimalloc",
  "rand 0.8.5",
- "rmp-serde",
  "serde",
  "syn 1.0.109",
  "sysinfo 0.30.13",
@@ -4714,25 +4712,6 @@ checksum = "bb919243f34364b6bd2fc10ef797edbfa75f33c252e7998527479c6d6b47e1ec"
 dependencies = [
  "bytes",
  "rustc-hex",
-]
-
-[[package]]
-name = "rmp"
-version = "0.8.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "rmp-serde"
-version = "1.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72f81bee8c8ef9b577d1681a70ebbc962c232461e397b22c208c43c04b67a155"
-dependencies = [
- "rmp",
- "serde",
 ]
 
 [[package]]
