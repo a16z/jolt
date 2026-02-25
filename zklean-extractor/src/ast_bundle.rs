@@ -1,11 +1,9 @@
 //! AST Bundle and Commitment types for transpilation.
 //!
-//! This module contains the serializable IR types used for transpilation:
+//! This module contains the serializable Intermediate Representation types used for transpilation:
 //! - `AstBundle`: Complete AST data for code generation
 //! - `AstCommitment`: Symbolic representation of PCS commitments
 //!
-//! These types are 100% our additions for the transpilation pipeline and
-//! do not exist in the upstream zklean-extractor.
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
 use ark_std::Zero;
@@ -15,17 +13,19 @@ use jolt_core::transcripts::AppendToTranscript;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::mle_ast::{
-    node_arena, set_pending_commitment_chunks, Edge, MleAst, Node, NodeId,
-};
+use crate::mle_ast::{node_arena, set_pending_commitment_chunks, Edge, MleAst, Node, NodeId};
 
 // =============================================================================
 // Input and Constraint Types
 // =============================================================================
 
-/// The kind of input variable - determines how it's treated in circuit generation.
+/// The witness type for an input variable.
+///
+/// Determines how it's treated in circuit generation:
+/// - `PublicStatement`: Fixed for a given program (constant in circuit)
+/// - `ProofData`: Varies per proof (variable witness in circuit)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum InputKind {
+pub enum WitnessType {
     /// Public statement data (constant in the circuit).
     /// This includes things like: program bytecode hash, memory layout params,
     /// input/output hashes, etc. These are absorbed into the transcript during
@@ -45,8 +45,8 @@ pub enum InputKind {
 /// # Background
 ///
 /// In the BN254/Grumpkin 2-cycle:
-/// - Fr (BN254 scalar) = Fq (Grumpkin base) — native in Groth16 circuit
-/// - Fq (BN254 base) = Fr (Grumpkin scalar) — requires emulated arithmetic
+/// - Fr (BN254 scalar) = Fq (Grumpkin base). Native in Groth16 circuit
+/// - Fq (BN254 base) = Fr (Grumpkin scalar). Requires emulated arithmetic
 ///
 /// Jolt stages 1-7 use Fr (native). Recursion stages 9-13 use Fq (emulated).
 /// Stage 8 (Hyrax PCS) uses native Grumpkin operations, not transpiled.
@@ -97,7 +97,7 @@ pub struct InputVar {
     /// Human-readable name for debugging and codegen (e.g., "r_sumcheck_0", "claimed_output").
     pub name: String,
     /// Whether this is a public statement or proof data.
-    pub kind: InputKind,
+    pub witness_type: WitnessType,
     /// The target field for this variable (Fr or Fq).
     /// Defaults to Fr for backward compatibility with existing serialized bundles.
     #[serde(default)]
@@ -190,8 +190,8 @@ impl AstBundle {
     /// Add an input variable description with default field kind (Fr).
     ///
     /// This is the primary method for stages 1-7 which use native Fr arithmetic.
-    pub fn add_input(&mut self, index: u16, name: impl Into<String>, kind: InputKind) {
-        self.add_input_with_field(index, name, kind, TargetField::default())
+    pub fn add_input(&mut self, index: u16, name: impl Into<String>, witness_type: WitnessType) {
+        self.add_input_with_field(index, name, witness_type, TargetField::default())
     }
 
     /// Add an input variable description with explicit field kind.
@@ -201,19 +201,19 @@ impl AstBundle {
     /// # Arguments
     /// * `index` — Variable index matching `Atom::Var(index)`
     /// * `name` — Human-readable name for codegen (will be sanitized to Go identifier)
-    /// * `kind` — Public statement or proof data
+    /// * `witness_type` — Public statement or proof data
     /// * `target_field` — Target field (Fr for native, Fq for emulated)
     pub fn add_input_with_field(
         &mut self,
         index: u16,
         name: impl Into<String>,
-        kind: InputKind,
+        witness_type: WitnessType,
         target_field: TargetField,
     ) {
         self.inputs.push(InputVar {
             index,
             name: name.into(),
-            kind,
+            witness_type,
             target_field,
         });
     }
@@ -277,12 +277,7 @@ impl AstBundle {
     }
 
     /// Add a constraint that asserts two expressions are equal.
-    pub fn add_constraint_eq_node(
-        &mut self,
-        name: impl Into<String>,
-        root: NodeId,
-        other: NodeId,
-    ) {
+    pub fn add_constraint_eq_node(&mut self, name: impl Into<String>, root: NodeId, other: NodeId) {
         self.constraints.push(Constraint {
             name: name.into(),
             root,
@@ -455,7 +450,7 @@ impl AstBundle {
     pub fn num_public_inputs(&self) -> usize {
         self.inputs
             .iter()
-            .filter(|i| i.kind == InputKind::PublicStatement)
+            .filter(|i| i.witness_type == WitnessType::PublicStatement)
             .count()
     }
 
@@ -463,7 +458,7 @@ impl AstBundle {
     pub fn num_proof_inputs(&self) -> usize {
         self.inputs
             .iter()
-            .filter(|i| i.kind == InputKind::ProofData)
+            .filter(|i| i.witness_type == WitnessType::ProofData)
             .count()
     }
 

@@ -52,8 +52,8 @@ use transpiler::{
     SelectedAstTranscript,
 };
 use zklean_extractor::mle_ast::{
-    enable_constraint_mode, take_constraints as take_assertions, AstBundle, InputKind, MleAst,
-    TargetField,
+    enable_constraint_mode, take_constraints as take_assertions, AstBundle, MleAst, TargetField,
+    WitnessType,
 };
 
 // Output file names (bundle is target-agnostic)
@@ -250,7 +250,7 @@ fn main() {
     // These will become struct fields in the generated Gnark circuit.
     // Use descriptions_with_fields() to include target field metadata.
     for (idx, name, target_field) in var_alloc.descriptions_with_fields() {
-        bundle.add_input_with_field(*idx, name.clone(), InputKind::ProofData, *target_field);
+        bundle.add_input_with_field(*idx, name.clone(), WitnessType::ProofData, *target_field);
     }
 
     // Early warning if emulated arithmetic is needed (not yet implemented)
