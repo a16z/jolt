@@ -650,7 +650,7 @@ macro_rules! define_rv32im_enums {
                         }
                         // Delegate: these handle rd=0 internally
                         Instruction::ECALL(_) | Instruction::MRET(_)
-                        | Instruction::EBREAK(_) | Instruction::CSRRW(_) => {
+                        | Instruction::EBREAK(_) | Instruction::CSRRW(_) | Instruction::CSRRS(_) => {
                             return self.dispatch_inline_sequence(allocator, xlen);
                         }
                         // All other instructions with rd=x0: replace with NOP
