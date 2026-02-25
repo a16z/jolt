@@ -102,20 +102,9 @@ impl Program {
     pub fn build_with_features(&mut self, target_dir: &str, extra_features: &[&str]) {
         if self.elf.is_none() {
             // Use jolt CLI to build the guest program
-            // Fallback order: JOLT_PATH → 'jolt' → 'cargo jolt'
-            let (jolt_cmd, mut args) = if let Ok(path) = std::env::var("JOLT_PATH") {
-                // Use explicit JOLT_PATH
-                (path, vec!["build".to_string()])
-            } else if which::which("jolt").is_ok() {
-                // Use installed jolt without executing it
-                ("jolt".to_string(), vec!["build".to_string()])
-            } else {
-                // Use cargo alias (with local patches)
-                (
-                    "cargo".to_string(),
-                    vec!["jolt".to_string(), "build".to_string()],
-                )
-            };
+            // JOLT_PATH can be set to override the jolt binary path
+            let jolt_cmd = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
+            let mut args = vec!["build".to_string()];
 
             // Add package argument
             args.push("-p".to_string());
