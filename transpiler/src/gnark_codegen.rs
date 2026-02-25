@@ -458,7 +458,7 @@ pub fn generate_circuit_from_bundle(
     circuit_name: &str,
 ) -> String {
     // Early check for unsupported non-native field arithmetic
-    if bundle.has_non_native_fields() {
+    if bundle.has_inputs_for_field(TargetField::Fq) {
         let non_native_vars: Vec<_> = bundle
             .inputs
             .iter()
