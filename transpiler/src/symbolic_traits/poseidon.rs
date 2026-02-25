@@ -159,7 +159,7 @@ impl Transcript for PoseidonAstTranscript {
 
     fn raw_append_u64(&mut self, x: u64) {
         // PoseidonTranscript::raw_append_u64 packs x as LE in first 8 bytes of 32-byte word.
-        // from_le_bytes_mod_order gives x directly — no transform needed.
+        // from_le_bytes_mod_order gives x directly. No transform needed.
         self.hash_and_update(MleAst::from_u64(x));
     }
 
@@ -185,7 +185,7 @@ impl Transcript for PoseidonAstTranscript {
             return;
         }
 
-        // No pending point elements — set_pending_point_elements() was never called.
+        // No pending point elements. set_pending_point_elements() was never called.
         // The concrete fallback was removed because it contained byte-reversal (.rev())
         // that mismatches the concrete PoseidonTranscript (which no longer reverses).
         // If point support is needed, wire up set_pending_point_elements() properly.
@@ -213,7 +213,7 @@ impl Transcript for PoseidonAstTranscript {
 
             // 2. Commitment bytes are LE (no reversal). Chunked into 12 × 32-byte pieces.
             //    Var(0)=chunk_0, Var(1)=chunk_1, ..., Var(11)=chunk_11.
-            //    Hashed in order — no ByteReverse needed.
+            //    Hashed in order. No ByteReverse needed.
 
             self.append_field_elements(&chunks);
             return;
@@ -222,7 +222,7 @@ impl Transcript for PoseidonAstTranscript {
         // Fallback: single MleAst (existing behavior for non-commitment types)
         if let Some(mle_ast) = take_pending_append() {
             self.raw_append_label_with_len(label, buf.len() as u64);
-            // LE bytes directly — no byte-reversal needed.
+            // LE bytes directly. No byte-reversal needed.
             self.hash_and_update(mle_ast);
         } else {
             // Fallback: use default implementation for concrete types
@@ -244,7 +244,7 @@ impl Transcript for PoseidonAstTranscript {
     }
 
     fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F {
-        // Full Fr challenge — hash output directly, no truncation.
+        // Full Fr challenge. Hash output directly, no truncation.
         let hash = self.challenge_ast();
         set_pending_challenge(hash);
         F::from_bytes(&[0u8; 32])
@@ -266,7 +266,7 @@ impl Transcript for PoseidonAstTranscript {
     }
 
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
-        // Full Fr challenge — hash output directly, no truncation.
+        // Full Fr challenge. Hash output directly, no truncation.
         let hash = self.challenge_ast();
         set_pending_challenge(hash);
         let f_val: F = F::from_bytes(&[0u8; 32]);
@@ -384,7 +384,7 @@ mod tests {
         transcript.append_scalar(b"test_scalar", &var);
 
         // Check that the state now contains a Poseidon node with Var(42) directly
-        // append_scalar does: hash(var) — no byte-reversal
+        // append_scalar does: hash(var). No byte-reversal.
         let root = transcript.state.root();
         let node = zklean_extractor::mle_ast::get_node(root);
 

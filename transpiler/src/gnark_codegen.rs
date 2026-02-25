@@ -457,25 +457,25 @@ pub fn generate_circuit_from_bundle(
     bundle: &zklean_extractor::mle_ast::AstBundle,
     circuit_name: &str,
 ) -> String {
-    // Early check for unsupported emulated arithmetic
-    if bundle.requires_emulated_arithmetic() {
-        let emulated_vars: Vec<_> = bundle
+    // Early check for unsupported non-native field arithmetic
+    if bundle.has_non_native_fields() {
+        let non_native_vars: Vec<_> = bundle
             .inputs
             .iter()
-            .filter(|i| i.target_field.requires_emulation())
+            .filter(|i| i.target_field.is_non_native())
             .map(|i| (&i.name, i.target_field))
             .take(10) // Limit output
             .collect();
         panic!(
-            "Emulated arithmetic codegen not yet implemented.\n\
-             Bundle contains {} emulated-field variable(s), first 10: {:?}\n\
-             For emulated field support design, see: guides/fq-aware-transpilation-design.md",
+            "Non-native field codegen not yet implemented.\n\
+             Bundle contains {} non-native variable(s), first 10: {:?}\n\
+             For non-native field support design, see: guides/fq-aware-transpilation-design.md",
             bundle
                 .inputs
                 .iter()
-                .filter(|i| i.target_field.requires_emulation())
+                .filter(|i| i.target_field.is_non_native())
                 .count(),
-            emulated_vars
+            non_native_vars
         );
     }
 

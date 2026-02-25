@@ -24,7 +24,7 @@
 //! Dory commitments are 384-byte elliptic curve points. They're split into 12 chunks
 //! of 32 bytes each (to fit in BN254 field elements). The serialization uses:
 //! - `serialize_uncompressed` (not compressed)
-//! - LE byte order (no reversal — Groth16 circuit, not EVM)
+//! - LE byte order (no reversal needed for circuit)
 //! Dory will probably be replaced in future iterations,
 //! the transpilation code will need to be updated in that case.
 //!
@@ -49,7 +49,7 @@ use zklean_extractor::AstCommitment;
 ///
 /// Each call to `alloc_with_value()` returns a fresh `MleAst::Var(index)` with a unique index,
 /// while simultaneously recording the concrete witness value. This ensures witness values
-/// are always in sync with symbolic variable allocation — making mismatch bugs structurally
+/// are always in sync with symbolic variable allocation, making mismatch bugs structurally
 /// impossible.
 ///
 /// # Field Kind Tracking
@@ -89,9 +89,9 @@ impl VarAllocator {
     /// Allocate a single variable with explicit target field.
     ///
     /// # Arguments
-    /// * `description` — Human-readable name for codegen
-    /// * `value` — Concrete witness value (as Fr, converted to decimal string)
-    /// * `target_field` — Target field (Fr for native, Fq for emulated)
+    /// * `description`: Human-readable name for codegen
+    /// * `value`: Concrete witness value (as Fr, converted to decimal string)
+    /// * `target_field`: Target field (Fr for native, Fq for emulated)
     ///
     /// # Note
     /// The value is stored as a decimal string regardless of field.
@@ -167,11 +167,11 @@ impl VarAllocator {
             .any(|(_, _, tf)| *tf == field)
     }
 
-    /// Check if any variables require emulated arithmetic (non-native field).
-    pub fn requires_emulated_arithmetic(&self) -> bool {
+    /// Check if any variables use non-native field arithmetic.
+    pub fn has_non_native_fields(&self) -> bool {
         self.descriptions
             .iter()
-            .any(|(_, _, tf)| tf.requires_emulation())
+            .any(|(_, _, tf)| tf.is_non_native())
     }
 
     /// Allocate variables for a commitment's 12 chunks and record witness values (Fr field).
@@ -200,7 +200,7 @@ const CHUNKS_PER_COMMITMENT: usize = 12;
 /// Serialize a commitment to bytes in the format used by Poseidon transcript.
 /// MUST match the Poseidon transcript serialization exactly:
 /// 1. Use serialize_uncompressed (not compressed)
-/// 2. LE bytes directly (no byte reversal — Groth16 circuit, not EVM)
+/// 2. LE bytes directly (no byte reversal needed for circuit)
 fn commitment_to_bytes<T: CanonicalSerialize>(commitment: &T) -> Vec<u8> {
     let mut bytes = Vec::new();
     commitment
