@@ -486,35 +486,55 @@ impl Default for AstBundle {
 // AstCommitment
 // =============================================================================
 
-/// Wrapper type for a commitment represented as 12 MleAst chunks.
+/// Wrapper type for a commitment represented as MleAst chunks.
 ///
-/// In the real verifier, commitments are `PCS::Commitment` (e.g., G1Affine, 384 bytes).
-/// When `append_serializable` is called, it serializes to 384 bytes, reverses them,
-/// and calls `append_bytes` which chunks into 12 × 32-byte pieces and hashes them
-/// with proper chaining.
+/// In the real verifier, commitments are `PCS::Commitment` (e.g., G1Affine for Dory).
+/// When `append_serializable` is called, it serializes to bytes and calls `append_bytes`
+/// which chunks into 32-byte pieces and hashes them with proper chaining.
 ///
 /// For symbolic execution, we represent each chunk as an MleAst variable.
-/// When `AstCommitment` is serialized, it stores the 12 chunks in the
+/// When `AstCommitment` is serialized, it stores the chunks in the
 /// `PENDING_COMMITMENT_CHUNKS` thread-local. `PoseidonAstTranscript::append_serializable`
-/// then retrieves them and performs the same 12-hash chaining operation symbolically.
+/// then retrieves them and performs the same hash chaining operation symbolically.
+///
+/// # Commitment Size
+///
+/// The number of chunks depends on the PCS commitment type:
+/// - **Dory**: 384 bytes → 12 chunks (G1Affine on BN254)
+/// - **HyperKZG**: Variable size depending on configuration
+/// - **Other PCS**: Determined at symbolization time from `serialized_size()`
+///
+/// This type is PCS-agnostic: chunk count is derived from the concrete commitment's
+/// serialized size during `symbolize_proof()`, not hardcoded here.
 #[derive(Clone, Debug)]
 pub struct AstCommitment {
-    /// The 12 MleAst chunks representing this commitment
+    /// The MleAst chunks representing this commitment (one per 32 bytes of serialized form)
     pub chunks: Vec<MleAst>,
 }
 
+/// Number of bytes per chunk (one BN254 field element)
+const BYTES_PER_CHUNK: usize = 32;
+
 impl AstCommitment {
-    /// Create a new AstCommitment from 12 chunks.
+    /// Create a new AstCommitment from chunks.
+    ///
+    /// The number of chunks should match `ceil(serialized_size / 32)` of the
+    /// concrete commitment being symbolized.
     ///
     /// # Panics
-    /// Panics if `chunks.len() != 12`.
+    /// Panics if `chunks` is empty.
     pub fn new(chunks: Vec<MleAst>) -> Self {
-        assert_eq!(
-            chunks.len(),
-            12,
-            "AstCommitment must have exactly 12 chunks"
+        assert!(
+            !chunks.is_empty(),
+            "AstCommitment must have at least one chunk"
         );
         Self { chunks }
+    }
+
+    /// Returns the serialized size in bytes (chunks × 32).
+    #[inline]
+    pub fn serialized_byte_len(&self) -> usize {
+        self.chunks.len() * BYTES_PER_CHUNK
     }
 }
 
@@ -530,7 +550,7 @@ impl CanonicalSerialize for AstCommitment {
     }
 
     fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        384 // 12 chunks × 32 bytes = 384 bytes (same as G1Affine)
+        self.serialized_byte_len()
     }
 }
 
@@ -552,16 +572,17 @@ impl Valid for AstCommitment {
 
 impl Default for AstCommitment {
     fn default() -> Self {
-        // Create 12 zero chunks
+        // Create a single zero chunk (minimal valid commitment).
+        // Real commitments will have chunk count derived from serialized_size().
         Self {
-            chunks: vec![MleAst::zero(); 12],
+            chunks: vec![MleAst::zero()],
         }
     }
 }
 
 impl PartialEq for AstCommitment {
     fn eq(&self, other: &Self) -> bool {
-        // Compare by root indices - this is sufficient for symbolic equality
+        // Compare arena indices directly to avoid MleAst::eq which may register constraints
         self.chunks.len() == other.chunks.len()
             && self
                 .chunks

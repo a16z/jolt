@@ -167,13 +167,6 @@ impl VarAllocator {
             .any(|(_, _, tf)| *tf == field)
     }
 
-    /// Check if any variables use non-native field arithmetic.
-    pub fn has_non_native_fields(&self) -> bool {
-        self.descriptions
-            .iter()
-            .any(|(_, _, tf)| tf.is_non_native())
-    }
-
     /// Allocate variables for a commitment's 12 chunks and record witness values (Fr field).
     ///
     /// Commitments are serialized as uncompressed LE bytes,
@@ -194,8 +187,8 @@ impl Default for VarAllocator {
     }
 }
 
-/// Number of 32-byte chunks per commitment (384 bytes / 32 = 12)
-const CHUNKS_PER_COMMITMENT: usize = 12;
+/// Number of bytes per chunk (one BN254 field element)
+const BYTES_PER_CHUNK: usize = 32;
 
 /// Serialize a commitment to bytes in the format used by Poseidon transcript.
 /// MUST match the Poseidon transcript serialization exactly:
@@ -209,18 +202,22 @@ fn commitment_to_bytes<T: CanonicalSerialize>(commitment: &T) -> Vec<u8> {
     bytes
 }
 
-/// Convert commitment bytes to 12 field element chunks.
+/// Convert commitment bytes to field element chunks.
+///
+/// The number of chunks is derived from the serialized size:
+/// `num_chunks = ceil(serialized_size / 32)`
+///
+/// This is PCS-agnostic: Dory (384 bytes) produces 12 chunks,
+/// other PCS types produce different chunk counts based on their commitment size.
 fn commitment_to_field_chunks<T: CanonicalSerialize>(commitment: &T) -> Vec<ark_bn254::Fr> {
     let bytes = commitment_to_bytes(commitment);
-    (0..CHUNKS_PER_COMMITMENT)
+    let num_chunks = (bytes.len() + BYTES_PER_CHUNK - 1) / BYTES_PER_CHUNK; // ceil division
+
+    (0..num_chunks)
         .map(|i| {
-            let start = i * 32;
-            let end = std::cmp::min(start + 32, bytes.len());
-            if start >= bytes.len() {
-                ark_bn254::Fr::from(0u64)
-            } else {
-                ark_bn254::Fr::from_le_bytes_mod_order(&bytes[start..end])
-            }
+            let start = i * BYTES_PER_CHUNK;
+            let end = std::cmp::min(start + BYTES_PER_CHUNK, bytes.len());
+            ark_bn254::Fr::from_le_bytes_mod_order(&bytes[start..end])
         })
         .collect()
 }
