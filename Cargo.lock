@@ -2920,7 +2920,6 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
- "which",
 ]
 
 [[package]]
