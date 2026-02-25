@@ -31,7 +31,7 @@ use crate::zkvm::{
     proof_serialization::JoltProof,
     r1cs::key::UniformSpartanKey,
     ram::{
-        hamming_booleanity::HammingBooleanitySumcheckVerifier,
+        compute_min_ram_K, hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
         read_write_checking::RamReadWriteCheckingVerifier, val_check::RamValCheckSumcheckVerifier,
@@ -150,6 +150,14 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .one_hot_config
             .validate()
             .map_err(ProofVerifyError::InvalidOneHotConfig)?;
+
+        let min_ram_K = compute_min_ram_K(
+            &preprocessing.shared.ram,
+            &preprocessing.shared.memory_layout,
+        );
+        if !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_K {
+            return Err(ProofVerifyError::InvalidRamK(proof.ram_K, min_ram_K));
+        }
 
         proof
             .rw_config
