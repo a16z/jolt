@@ -202,19 +202,18 @@ impl Transcript for PoseidonAstTranscript {
         let mut buf = vec![];
         let _ = data.serialize_uncompressed(&mut buf);
 
-        // Check for commitment chunks first (12 MleAst for commitment hashing)
-        // AstCommitment::serialize stores 12 chunks in PENDING_COMMITMENT_CHUNKS
+        // Check for commitment chunks first (MleAst chunks for commitment hashing).
+        // AstCommitment::serialize stores chunks in PENDING_COMMITMENT_CHUNKS.
+        // Chunk count is PCS-dependent (e.g., Dory: 12 chunks for 384-byte G1Affine).
         if let Some(chunks) = take_pending_commitment_chunks() {
             // CRITICAL: Match Transcript::append_serializable behavior:
-            // 1. Use 384 bytes (12 chunks × 32 bytes) for the label length.
+            // 1. Compute byte length from chunk count (each chunk = 32 bytes).
             //    Note: buf.len() is 0 because AstCommitment::serialize doesn't write bytes.
-            let commitment_byte_len = chunks.len() * 32; // 12 * 32 = 384
+            let commitment_byte_len = chunks.len() * 32;
             self.raw_append_label_with_len(label, commitment_byte_len as u64);
 
-            // 2. Commitment bytes are LE (no reversal). Chunked into 12 × 32-byte pieces.
-            //    Var(0)=chunk_0, Var(1)=chunk_1, ..., Var(11)=chunk_11.
+            // 2. Commitment bytes are LE (no reversal). Chunked into N × 32-byte pieces.
             //    Hashed in order. No ByteReverse needed.
-
             self.append_field_elements(&chunks);
             return;
         }
