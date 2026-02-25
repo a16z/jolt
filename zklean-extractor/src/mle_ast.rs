@@ -1602,4 +1602,4 @@ impl Valid for Node {
 // Re-exports from ast_bundle module for backward compatibility
 // =============================================================================
 
-pub use crate::ast_bundle::{Assertion, AstBundle, AstCommitment, InputKind, TargetField};
+pub use crate::ast_bundle::{Assertion, AstBundle, AstCommitment, TargetField, WitnessType};

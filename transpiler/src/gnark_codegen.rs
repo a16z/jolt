@@ -524,7 +524,7 @@ pub fn generate_circuit_from_bundle_with_stats(
     bundle: &zklean_extractor::mle_ast::AstBundle,
     circuit_name: &str,
 ) -> (String, ConstantAssertionStats) {
-    use zklean_extractor::mle_ast::{Assertion, InputKind};
+    use zklean_extractor::mle_ast::{Assertion, WitnessType};
 
     let mut stats = ConstantAssertionStats::default();
 
@@ -614,7 +614,9 @@ pub fn generate_circuit_from_bundle_with_stats(
     let mut struct_fields: BTreeMap<String, TargetField> = BTreeMap::new();
 
     for input in &bundle.inputs {
-        if input.kind == InputKind::ProofData || input.kind == InputKind::PublicStatement {
+        if input.witness_type == WitnessType::ProofData
+            || input.witness_type == WitnessType::PublicStatement
+        {
             struct_fields.insert(sanitize_go_name(&input.name), input.target_field);
         }
     }
@@ -901,7 +903,7 @@ fn evaluate_constant_edge_in(nodes: &[Node], edge: Edge) -> Scalar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zklean_extractor::mle_ast::{AstBundle, InputKind, TargetField};
+    use zklean_extractor::mle_ast::{AstBundle, TargetField, WitnessType};
 
     /// Verifies that codegen panics with a clear error when Fq variables are present.
     ///
@@ -913,10 +915,10 @@ mod tests {
         let mut bundle = AstBundle::new();
 
         // Add an Fr variable (should be fine)
-        bundle.add_input_with_field(0, "fr_var", InputKind::ProofData, TargetField::Fr);
+        bundle.add_input_with_field(0, "fr_var", WitnessType::ProofData, TargetField::Fr);
 
         // Add an Fq variable (should cause panic)
-        bundle.add_input_with_field(1, "fq_var", InputKind::ProofData, TargetField::Fq);
+        bundle.add_input_with_field(1, "fq_var", WitnessType::ProofData, TargetField::Fq);
 
         // This should panic because Fq codegen is not implemented
         let _ = generate_circuit_from_bundle(&bundle, "TestCircuit");
@@ -928,8 +930,8 @@ mod tests {
         let mut bundle = AstBundle::new();
 
         // Add only Fr variables
-        bundle.add_input_with_field(0, "stage1_r0", InputKind::ProofData, TargetField::Fr);
-        bundle.add_input_with_field(1, "stage1_r1", InputKind::ProofData, TargetField::Fr);
+        bundle.add_input_with_field(0, "stage1_r0", WitnessType::ProofData, TargetField::Fr);
+        bundle.add_input_with_field(1, "stage1_r1", WitnessType::ProofData, TargetField::Fr);
 
         // This should NOT panic (no Fq variables)
         // Note: Will still fail later because no assertions, but won't hit the Fq panic
@@ -959,7 +961,7 @@ mod tests {
     #[test]
     fn test_fq_panic_message_includes_variable_name() {
         let mut bundle = AstBundle::new();
-        bundle.add_input_with_field(0, "my_fq_test_variable", InputKind::ProofData, TargetField::Fq);
+        bundle.add_input_with_field(0, "my_fq_test_variable", WitnessType::ProofData, TargetField::Fq);
 
         let result = std::panic::catch_unwind(|| {
             generate_circuit_from_bundle(&bundle, "TestCircuit")
