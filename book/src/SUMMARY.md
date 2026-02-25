@@ -45,6 +45,5 @@
 - [Roadmap](./roadmap/roadmap.md)
     - [Streaming](./roadmap/streaming.md)
     - [Recursion](./roadmap/recursion.md)
-    - [Zero Knowledge](./roadmap/zk.md)
     - [On-chain verifier](./roadmap/on-chain-verifier.md)
     - [Precompiles](./roadmap/precompiles.md)

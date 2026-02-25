@@ -1,6 +1,6 @@
 # Zero Knowledge: BlindFold
 
-Jolt achieves zero-knowledge natively via the **BlindFold** protocol — a folding-based scheme that makes all sumcheck proofs ZK without SNARK composition. Unlike most zkVMs that wrap their IOP in Groth16 or Plonk to get ZK, BlindFold operates at the same algebraic level as Jolt's existing sumcheck machinery, avoiding composition overhead entirely.
+Jolt achieves zero-knowledge natively via the **[BlindFold](https://eprint.iacr.org/2025/2094)** protocol — a folding-based scheme that makes all sumcheck proofs ZK without SNARK composition. Unlike most zkVMs that wrap their IOP in Groth16 or Plonk to get ZK, BlindFold operates at the same algebraic level as Jolt's existing sumcheck machinery, avoiding composition overhead entirely.
 
 The core idea: instead of the prover sending sumcheck round polynomial coefficients in the clear, it sends **Pedersen commitments** to them. The sumcheck verifier's algebraic consistency checks are encoded into a small **verifier R1CS** circuit, and a single Nova fold + Spartan proof over this R1CS proves all rounds were executed correctly without revealing the witness.
 
@@ -171,3 +171,5 @@ The verifier never sees polynomial coefficients, intermediate claims, or evaluat
 - [Nova](https://eprint.iacr.org/2021/370) — Recursive SNARKs via folding (Kothapalli, Setty, Tzialla, 2022)
 - [Spartan](https://eprint.iacr.org/2019/550) — Sumcheck-based R1CS proving (Setty, 2020)
 - [Proofs, Arguments, and Zero-Knowledge](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.html), Section 13.2 — ZK sumcheck via Pedersen commitments (Thaler, 2022)
+- [Vega](https://eprint.iacr.org/2025/2094) — Low-latency zero-knowledge proofs over existing credentials (Kaviani, Setty, 2025)
+- [BlindFold interactive explainer](https://blindfoldzkp.github.io/)
