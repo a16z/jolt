@@ -34,19 +34,10 @@ pub const SCALAR_ONE: Scalar = [1, 0, 0, 0];
 
 /// Convert a Scalar to a decimal string.
 pub fn scalar_to_decimal_string(limbs: &Scalar) -> String {
-    // Handle zero case
-    if *limbs == [0, 0, 0, 0] {
+    if *limbs == SCALAR_ZERO {
         return "0".to_string();
     }
-
-    // Convert [u64; 4] to BigUint for decimal formatting
-    // Value = limb0 + limb1*2^64 + limb2*2^128 + limb3*2^192
-    let mut value = BigUint::from(limbs[3]);
-    value = (value << 64) + limbs[2];
-    value = (value << 64) + limbs[1];
-    value = (value << 64) + limbs[0];
-
-    value.to_string()
+    scalar_to_biguint(limbs).to_string()
 }
 
 /// Add two 256-bit numbers with modular reduction.
@@ -64,7 +55,7 @@ pub fn scalar_add_mod(a: Scalar, b: Scalar) -> Scalar {
 
     // Reduce mod p if needed
     if carry > 0 || scalar_ge(&result, &BN254_MODULUS) {
-        scalar_sub_no_borrow(&result, &BN254_MODULUS)
+        scalar_sub_assuming_ge(&result, &BN254_MODULUS)
     } else {
         result
     }
@@ -84,7 +75,7 @@ pub fn scalar_neg_mod(a: Scalar) -> Scalar {
     if a == SCALAR_ZERO {
         return SCALAR_ZERO;
     }
-    scalar_sub_no_borrow(&BN254_MODULUS, &a)
+    scalar_sub_assuming_ge(&BN254_MODULUS, &a)
 }
 
 /// Multiply two 256-bit numbers with modular reduction.
@@ -94,50 +85,37 @@ pub fn scalar_neg_mod(a: Scalar) -> Scalar {
 /// Note: This uses BigUint for simplicity. For performance-critical code,
 /// Montgomery multiplication would be more efficient.
 pub fn scalar_mul_mod(a: Scalar, b: Scalar) -> Scalar {
-    let a_big = BigUint::from_slice(&[
-        a[0] as u32,
-        (a[0] >> 32) as u32,
-        a[1] as u32,
-        (a[1] >> 32) as u32,
-        a[2] as u32,
-        (a[2] >> 32) as u32,
-        a[3] as u32,
-        (a[3] >> 32) as u32,
-    ]);
-    let b_big = BigUint::from_slice(&[
-        b[0] as u32,
-        (b[0] >> 32) as u32,
-        b[1] as u32,
-        (b[1] >> 32) as u32,
-        b[2] as u32,
-        (b[2] >> 32) as u32,
-        b[3] as u32,
-        (b[3] >> 32) as u32,
-    ]);
-    let p_big = BigUint::from_slice(&[
-        BN254_MODULUS[0] as u32,
-        (BN254_MODULUS[0] >> 32) as u32,
-        BN254_MODULUS[1] as u32,
-        (BN254_MODULUS[1] >> 32) as u32,
-        BN254_MODULUS[2] as u32,
-        (BN254_MODULUS[2] >> 32) as u32,
-        BN254_MODULUS[3] as u32,
-        (BN254_MODULUS[3] >> 32) as u32,
-    ]);
+    let result = (scalar_to_biguint(&a) * scalar_to_biguint(&b)) % scalar_to_biguint(&BN254_MODULUS);
+    biguint_to_scalar(result)
+}
 
-    let result = (a_big * b_big) % p_big;
-    let digits = result.to_u64_digits();
+// =============================================================================
+// Internal helper functions
+// =============================================================================
 
+/// Convert a `[u64; 4]` scalar to BigUint (little-endian limb order).
+fn scalar_to_biguint(s: &Scalar) -> BigUint {
+    BigUint::from_slice(&[
+        s[0] as u32,
+        (s[0] >> 32) as u32,
+        s[1] as u32,
+        (s[1] >> 32) as u32,
+        s[2] as u32,
+        (s[2] >> 32) as u32,
+        s[3] as u32,
+        (s[3] >> 32) as u32,
+    ])
+}
+
+/// Convert a BigUint to `[u64; 4]` scalar (little-endian limb order).
+fn biguint_to_scalar(n: BigUint) -> Scalar {
+    let digits = n.to_u64_digits();
     let mut out = [0u64; 4];
     for (i, &d) in digits.iter().take(4).enumerate() {
         out[i] = d;
     }
     out
 }
-
-// =============================================================================
-// Internal helper functions
-// =============================================================================
 
 /// Compare two 256-bit numbers: returns true if a >= b.
 pub(crate) fn scalar_ge(a: &Scalar, b: &Scalar) -> bool {
@@ -152,8 +130,8 @@ pub(crate) fn scalar_ge(a: &Scalar, b: &Scalar) -> bool {
     true // equal
 }
 
-/// Subtract b from a, assuming a >= b (no modular reduction).
-pub(crate) fn scalar_sub_no_borrow(a: &Scalar, b: &Scalar) -> Scalar {
+/// Subtract b from a, assuming a >= b (no modular wrap).
+pub(crate) fn scalar_sub_assuming_ge(a: &Scalar, b: &Scalar) -> Scalar {
     let mut result = [0u64; 4];
     let mut borrow = 0i128;
 
@@ -194,7 +172,7 @@ mod tests {
         let a = [1, 0, 0, 0];
         let neg_a = scalar_neg_mod(a);
         // -1 mod p = p - 1
-        let expected = scalar_sub_no_borrow(&BN254_MODULUS, &a);
+        let expected = scalar_sub_assuming_ge(&BN254_MODULUS, &a);
         assert_eq!(neg_a, expected);
 
         // a + (-a) = 0
@@ -207,5 +185,78 @@ mod tests {
         assert_eq!(scalar_to_decimal_string(&SCALAR_ZERO), "0");
         assert_eq!(scalar_to_decimal_string(&SCALAR_ONE), "1");
         assert_eq!(scalar_to_decimal_string(&[42, 0, 0, 0]), "42");
+    }
+
+    #[test]
+    fn test_scalar_sub_mod() {
+        // 3 - 1 = 2
+        let result = scalar_sub_mod([3, 0, 0, 0], SCALAR_ONE);
+        assert_eq!(result, [2, 0, 0, 0]);
+
+        // 0 - 1 = p - 1 (wraps around)
+        let result = scalar_sub_mod(SCALAR_ZERO, SCALAR_ONE);
+        let expected = scalar_sub_assuming_ge(&BN254_MODULUS, &SCALAR_ONE);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_scalar_mul_mod() {
+        // 2 * 3 = 6
+        let result = scalar_mul_mod([2, 0, 0, 0], [3, 0, 0, 0]);
+        assert_eq!(result, [6, 0, 0, 0]);
+
+        // 1 * x = x
+        let x = [42, 0, 0, 0];
+        assert_eq!(scalar_mul_mod(SCALAR_ONE, x), x);
+
+        // 0 * x = 0
+        assert_eq!(scalar_mul_mod(SCALAR_ZERO, x), SCALAR_ZERO);
+    }
+
+    #[test]
+    fn test_add_overflow_reduces_mod_p() {
+        // (p - 1) + 1 = 0 mod p
+        let p_minus_1 = scalar_sub_assuming_ge(&BN254_MODULUS, &SCALAR_ONE);
+        let result = scalar_add_mod(p_minus_1, SCALAR_ONE);
+        assert_eq!(result, SCALAR_ZERO);
+
+        // (p - 1) + 2 = 1 mod p
+        let result = scalar_add_mod(p_minus_1, [2, 0, 0, 0]);
+        assert_eq!(result, SCALAR_ONE);
+    }
+
+    #[test]
+    fn test_mul_large_values() {
+        // (p - 1) * (p - 1) mod p
+        // Using Fermat: (p-1)^2 = p^2 - 2p + 1 ≡ 1 mod p
+        let p_minus_1 = scalar_sub_assuming_ge(&BN254_MODULUS, &SCALAR_ONE);
+        let result = scalar_mul_mod(p_minus_1, p_minus_1);
+        assert_eq!(result, SCALAR_ONE);
+
+        // 2 * (p - 1) = 2p - 2 ≡ -2 ≡ p - 2 mod p
+        let result = scalar_mul_mod([2, 0, 0, 0], p_minus_1);
+        let expected = scalar_sub_assuming_ge(&BN254_MODULUS, &[2, 0, 0, 0]);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_modulus_decimal_string() {
+        // Verify modulus converts to the expected decimal string
+        let p_str = scalar_to_decimal_string(&BN254_MODULUS);
+        assert_eq!(
+            p_str,
+            "21888242871839275222246405745257275088548364400416034343698204186575808495617"
+        );
+    }
+
+    #[test]
+    fn test_large_value_decimal_string() {
+        // p - 1 should be p - 1
+        let p_minus_1 = scalar_sub_assuming_ge(&BN254_MODULUS, &SCALAR_ONE);
+        let s = scalar_to_decimal_string(&p_minus_1);
+        assert_eq!(
+            s,
+            "21888242871839275222246405745257275088548364400416034343698204186575808495616"
+        );
     }
 }

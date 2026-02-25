@@ -65,16 +65,13 @@ const CSE_DEPTH_THRESHOLD: usize = 4;
 /// A 256-bit scalar value represented as 4 u64 limbs in little-endian order.
 /// Value = limb0 + limb1*2^64 + limb2*2^128 + limb3*2^192
 ///
-/// # Change from upstream zklean
+/// # Design Note
 ///
-/// Upstream used `type Scalar = i128`, which works well for Lean4 extraction where
-/// constants are typically small (-1, 0, 1, etc.) and the output uses abstract `[Field f]`.
+/// Using `[u64; 4]` supports full BN254 scalar field elements (~254 bits), which is
+/// required for gnark circuit generation where constants must be exact field values.
 ///
-/// We changed to `[u64; 4]` to support full BN254 scalar field elements (~254 bits),
-/// which is required for gnark circuit generation where constants must be exact.
-///
-/// This is backward compatible with Lean output: `scalar_to_decimal_string()` converts
-/// `[u64; 4]` to decimal strings, preserving the same output format.
+/// Lean4 extraction still works: `scalar_to_decimal_string()` converts `[u64; 4]`
+/// to decimal strings for Lean output.
 pub type Scalar = [u64; 4];
 
 type Index = u16;
