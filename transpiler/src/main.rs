@@ -254,7 +254,7 @@ fn main() {
     }
 
     // Early warning if non-native field arithmetic is needed (not yet implemented)
-    if bundle.has_non_native_fields() {
+    if bundle.has_inputs_for_field(TargetField::Fq) {
         let fr_count = bundle.count_inputs_for_field(TargetField::Fr);
         let fq_count = bundle.count_inputs_for_field(TargetField::Fq);
         eprintln!(
