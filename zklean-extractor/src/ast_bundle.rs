@@ -45,11 +45,8 @@ pub enum WitnessType {
 /// # Background
 ///
 /// In the BN254/Grumpkin 2-cycle:
-/// - Fr (BN254 scalar) = Fq (Grumpkin base). Native in Groth16 circuit
-/// - Fq (BN254 base) = Fr (Grumpkin scalar). Requires emulated arithmetic
-///
-/// Jolt stages 1-7 use Fr (native). Recursion stages 9-13 use Fq (emulated).
-/// Stage 8 (Hyrax PCS) uses native Grumpkin operations, not transpiled.
+/// - Fr (BN254 scalar) = Fq (Grumpkin base): native in circuit
+/// - Fq (BN254 base) = Fr (Grumpkin scalar): requires emulated arithmetic
 ///
 /// # Extensibility
 ///
@@ -57,17 +54,16 @@ pub enum WitnessType {
 /// other curves (BLS12-381, Goldilocks, etc.) or extension fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TargetField {
-    /// BN254 scalar field (Fr) — native in Groth16 circuit.
+    /// BN254 scalar field (Fr). Native in circuit.
     /// Modulus: 21888242871839275222246405745257275088548364400416034343698204186575808495617
     #[default]
     Fr,
 
-    /// BN254 base field (Fq) — requires emulated arithmetic in circuit.
+    /// BN254 base field (Fq). Requires emulated arithmetic in circuit.
     /// Modulus: 21888242871839275222246405745257275088696311157297823662689037894645226208583
     ///
-    /// NOTE: Fq codegen is not yet implemented. This variant exists for
-    /// infrastructure readiness. Using Fq variables will panic at codegen
-    /// time with a clear error message.
+    /// NOTE: Fq codegen is not yet implemented. Using Fq variables will
+    /// panic at codegen time with a clear error message.
     Fq,
 }
 
@@ -81,9 +77,12 @@ impl TargetField {
         }
     }
 
-    /// Whether this field requires emulated arithmetic in a BN254 Groth16 circuit.
+    /// Whether this field requires non-native (emulated) arithmetic.
+    ///
+    /// Returns true for fields that are not the native scalar field of the
+    /// target circuit. Currently: Fr is native, Fq requires emulation.
     #[inline]
-    pub const fn requires_emulation(&self) -> bool {
+    pub const fn is_non_native(&self) -> bool {
         matches!(self, Self::Fq)
     }
 }
@@ -141,14 +140,13 @@ pub struct ConstraintCse {
     pub bindings: Vec<NodeId>,
 }
 
-/// Complete bundle of AST data for transpilation and recursion.
+/// Complete bundle of AST data for transpilation.
 ///
 /// This structure contains everything needed to:
-/// 1. Generate gnark circuits
-/// 2. Generate other SNARK circuits for recursion
-/// 3. Serialize/deserialize the AST (via JSON)
+/// 1. Generate code for target backends
+/// 2. Serialize/deserialize the AST (via JSON)
 ///
-/// The `nodes` vec is the arena - all nodes are stored here and referenced by index.
+/// The `nodes` vec is the arena: all nodes are stored here and referenced by index.
 /// The `constraint_cse` vec contains per-constraint CSE bindings (computed during `run_cse()`).
 /// The `constraints` vec contains the actual assertions to be verified.
 /// The `inputs` vec describes what each `Var(i)` means semantically.
@@ -159,7 +157,7 @@ pub struct ConstraintCse {
 /// 1. **Single pass**: CSE runs once, shared across all codegen targets
 /// 2. **Per-constraint isolation**: Each constraint has isolated CSE to prevent aliasing bugs
 /// 3. **Simpler codegen**: Target code generators just read pre-computed bindings
-/// 4. **Consistent results**: Same CSE decisions for gnark, Lean4, or future targets
+/// 4. **Consistent results**: Same CSE decisions across all target backends
 ///
 /// Call `run_cse()` after `snapshot_arena()` to compute CSE bindings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,22 +185,20 @@ impl AstBundle {
         }
     }
 
-    /// Add an input variable description with default field kind (Fr).
-    ///
-    /// This is the primary method for stages 1-7 which use native Fr arithmetic.
+    /// Add an input variable description with default target field (Fr).
     pub fn add_input(&mut self, index: u16, name: impl Into<String>, witness_type: WitnessType) {
         self.add_input_with_field(index, name, witness_type, TargetField::default())
     }
 
-    /// Add an input variable description with explicit field kind.
+    /// Add an input variable description with explicit target field.
     ///
-    /// Use this when adding Fq variables for recursion stages.
+    /// Use this when the variable's field differs from the default (native) field.
     ///
     /// # Arguments
-    /// * `index` — Variable index matching `Atom::Var(index)`
-    /// * `name` — Human-readable name for codegen (will be sanitized to Go identifier)
-    /// * `witness_type` — Public statement or proof data
-    /// * `target_field` — Target field (Fr for native, Fq for emulated)
+    /// * `index`: Variable index matching `Atom::Var(index)`
+    /// * `name`: Human-readable name for codegen
+    /// * `witness_type`: Public statement or proof data
+    /// * `target_field`: Which field this variable belongs to
     pub fn add_input_with_field(
         &mut self,
         index: u16,
@@ -220,35 +216,27 @@ impl AstBundle {
 
     /// Iterate over inputs for a specific target field.
     ///
-    /// Useful for codegen to separate native vs emulated variables.
+    /// Useful for codegen to separate native vs non-native variables.
     pub fn inputs_for_field(&self, target_field: TargetField) -> impl Iterator<Item = &InputVar> {
         self.inputs
             .iter()
             .filter(move |i| i.target_field == target_field)
     }
 
-    /// Check if any inputs use the specified field kind.
+    /// Check if any inputs use the specified target field.
+    ///
+    /// Use `has_inputs_for_field(TargetField::Fq)` to check if non-native
+    /// arithmetic support is needed.
     pub fn has_inputs_for_field(&self, field: TargetField) -> bool {
         self.inputs.iter().any(|i| i.target_field == field)
     }
 
-    /// Count inputs for a specific field kind.
+    /// Count inputs for a specific target field.
     pub fn count_inputs_for_field(&self, field: TargetField) -> usize {
         self.inputs
             .iter()
             .filter(|i| i.target_field == field)
             .count()
-    }
-
-    /// Check if any inputs require emulated arithmetic (non-native field).
-    ///
-    /// Returns `true` if the bundle contains any variables that are not in the
-    /// native field (Fr). This is useful for codegen to know if emulated
-    /// arithmetic support is needed.
-    pub fn requires_emulated_arithmetic(&self) -> bool {
-        self.inputs
-            .iter()
-            .any(|i| i.target_field.requires_emulation())
     }
 
     /// Add a constraint that asserts an expression equals zero.
@@ -308,7 +296,7 @@ impl AstBundle {
     /// ```ignore
     /// bundle.snapshot_arena();
     /// bundle.run_cse();
-    /// // Now generate code - CSE bindings are pre-computed
+    /// // Now generate code. CSE bindings are pre-computed
     /// ```
     pub fn run_cse(&mut self) {
         self.constraint_cse = self
@@ -330,20 +318,18 @@ impl AstBundle {
 
         // Phase 3: Collect nodes that should be hoisted (ref_count > 1, not atoms)
         let mut bindings = Vec::new();
-        let mut hoisted: HashSet<NodeId> = HashSet::new();
 
         for node_id in post_order {
             let ref_count = ref_counts.get(&node_id).copied().unwrap_or(1);
 
-            // Skip atoms - they're always inlined
+            // Skip atoms, since they're always inlined
             if matches!(self.nodes[node_id], Node::Atom(_)) {
                 continue;
             }
 
             // Hoist if referenced more than once
-            if ref_count > 1 && !hoisted.contains(&node_id) {
+            if ref_count > 1 {
                 bindings.push(node_id);
-                hoisted.insert(node_id);
             }
         }
 
@@ -433,8 +419,10 @@ impl AstBundle {
     }
 
     /// Check if CSE has been computed for this bundle.
+    ///
+    /// Returns true if CSE bindings exist for all constraints.
     pub fn has_cse(&self) -> bool {
-        !self.constraint_cse.is_empty()
+        !self.constraint_cse.is_empty() && self.constraint_cse.len() == self.constraints.len()
     }
 
     /// Get CSE bindings for a specific constraint.
@@ -462,18 +450,13 @@ impl AstBundle {
             .count()
     }
 
-    /// Serialize to JSON string.
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(self)
-    }
-
-    /// Serialize to pretty-printed JSON string.
-    pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
+    /// Serialize to pretty-printed JSON string (used by write_json).
+    fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
 
-    /// Deserialize from JSON string.
-    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+    /// Deserialize from JSON string (used by read_json).
+    fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
 

@@ -253,15 +253,15 @@ fn main() {
         bundle.add_input_with_field(*idx, name.clone(), WitnessType::ProofData, *target_field);
     }
 
-    // Early warning if emulated arithmetic is needed (not yet implemented)
-    if bundle.requires_emulated_arithmetic() {
+    // Early warning if non-native field arithmetic is needed (not yet implemented)
+    if bundle.has_non_native_fields() {
         let fr_count = bundle.count_inputs_for_field(TargetField::Fr);
         let fq_count = bundle.count_inputs_for_field(TargetField::Fq);
         eprintln!(
-            "⚠️  Bundle contains {} emulated-field variables (and {} native Fr variables).",
+            "⚠️  Bundle contains {} non-native field variables (and {} native Fr variables).",
             fq_count, fr_count
         );
-        eprintln!("    Emulated arithmetic codegen is not yet implemented — codegen will panic.");
+        eprintln!("    Non-native field codegen is not yet implemented. Codegen will panic.");
     }
     println!("  Inputs: {}", bundle.inputs.len());
 
