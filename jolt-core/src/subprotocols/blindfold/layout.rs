@@ -4,16 +4,27 @@ use crate::poly::opening_proof::OpeningId;
 
 use super::{OutputClaimConstraint, StageConfig};
 
+/// Describes how witness variables are laid out in the Hyrax grid.
+///
+/// The grid has two regions: coefficient rows (one per sumcheck round, placed in the
+/// main grid body) and non-coefficient variables (initial claims, constraint vars,
+/// next-round claims, final outputs — packed into the leading rows).
+/// `compute_witness_layout` produces a sequence of these steps; consumers
+/// (`BlindFoldWitness`, `VerifierR1CS`) iterate in order to assign variables and
+/// emit constraints.
+///
+/// Stages are grouped into **chains**: a chain is a run of consecutive stages where
+/// each stage's output claim feeds as the next stage's input claim. A stage with
+/// `starts_new_chain: true` breaks this link and begins an independent sequence
+/// with its own initial claim. `chain_idx` is the zero-based index of the chain.
 #[derive(Debug)]
 pub enum LayoutStep<'a> {
     /// Chain start where the initial claim is a witness variable
-    InitialClaimVar {
-        chain_idx: usize,
-    },
+    InitialClaimVar { chain_idx: usize },
     /// Chain start where the initial claim is a baked constant (no variable allocated)
-    ConstantInitialClaim {
-        chain_idx: usize,
-    },
+    ConstantInitialClaim { chain_idx: usize },
+    /// Variables for an input or output constraint: opening values (deduplicated),
+    /// the constraint output, auxiliary products, and a blinding scalar.
     ConstraintVars {
         constraint: &'a OutputClaimConstraint,
         new_opening_count: usize,
@@ -21,23 +32,29 @@ pub enum LayoutStep<'a> {
         kind: ConstraintKind,
         stage_idx: usize,
     },
+    /// One row of sumcheck round-polynomial coefficients, placed in the coefficient
+    /// region of the Hyrax grid (one row per round across all stages).
     CoeffRow {
         round_idx: usize,
         num_coeffs: usize,
         stage_idx: usize,
         round_in_stage: usize,
     },
+    /// Derived claim for the next sumcheck round, computed from the round polynomial
+    /// evaluated at the verifier challenge. Placed in the non-coefficient region.
     NextClaim {
         stage_idx: usize,
         round_in_stage: usize,
     },
+    /// Final output of a stage whose output claim is a linear combination of
+    /// polynomial evaluations (no constraint needed). One variable per evaluation.
     LinearFinalOutput {
         num_evaluations: usize,
         stage_idx: usize,
     },
-    PlaceholderVars {
-        num_vars: usize,
-    },
+    /// Raw variable slots when a stage specifies an exact witness variable count
+    /// (e.g. for custom witness layout). No constraint is generated.
+    PlaceholderVars { num_vars: usize },
     /// Extra constraint: openings(new_opening_count) + output(1) + aux(aux_var_count) + blinding(1)
     ExtraConstraintVars {
         constraint: &'a OutputClaimConstraint,
