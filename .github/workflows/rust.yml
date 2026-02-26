@@ -106,15 +106,6 @@ jobs:
         working-directory: ./sample_project
         run: cargo run --release
 
-      - name: Install wasm-pack and wasm32 target
-        run: |
-          curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | sh
-          rustup target add wasm32-unknown-unknown
-
-      - name: Run jolt build-wasm
-        working-directory: ./sample_project
-        run: jolt build-wasm
-
   test-wasm-verify:
     name: WASM Verifier E2E
     runs-on: ubuntu-latest
