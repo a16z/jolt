@@ -224,7 +224,7 @@ proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.36.7", features = [
+object = { version = "0.38.1", features = [
     "build_core",
     "elf",
 ], default-features = false }
