@@ -457,8 +457,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         }
         let e_r = hyrax::evaluate(&proof.e_opening.combined_row, rx_col);
 
-        let eq_tau_r = spartan_verifier.eq_tau_at_r(&challenges);
-        let expected_outer = eq_tau_r * (az_r * bz_r - folded_instance.u * cz_r - e_r);
+        let expected_outer = spartan_verifier.expected_claim(&challenges, az_r, bz_r, cz_r, e_r);
         if claim != expected_outer {
             return Err(BlindFoldVerifyError::OuterClaimMismatch);
         }

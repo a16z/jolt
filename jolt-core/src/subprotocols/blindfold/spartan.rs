@@ -376,30 +376,16 @@ impl<'a, F: JoltField> BlindFoldSpartanVerifier<'a, F> {
         EqPolynomial::mle(&tau, &r)
     }
 
-    /// Verify the final sumcheck claim given witness and error contributions
-    ///
-    /// The final claim should be:
-    /// final_claim = eq(τ, r) · [Az(r)·Bz(r) - u·Cz(r) - E(r)]
-    ///
-    /// Where:
-    /// - Az(r) = pub_az + w_az
-    /// - Bz(r) = pub_bz + w_bz
-    /// - Cz(r) = pub_cz + w_cz
+    /// Expected outer sumcheck claim: eq(τ, r) · [Az(r)·Bz(r) - u·Cz(r) - E(r)]
     pub fn expected_claim(
         &self,
         sumcheck_challenges: &[F::Challenge],
-        w_az: F,
-        w_bz: F,
-        w_cz: F,
+        az_r: F,
+        bz_r: F,
+        cz_r: F,
         e_r: F,
     ) -> F {
         let eq_tau_r = self.eq_tau_at_r(sumcheck_challenges);
-        let (pub_az, pub_bz, pub_cz) = self.public_contributions(sumcheck_challenges);
-
-        let az_r = pub_az + w_az;
-        let bz_r = pub_bz + w_bz;
-        let cz_r = pub_cz + w_cz;
-
         eq_tau_r * (az_r * bz_r - self.params.u * cz_r - e_r)
     }
 }
@@ -675,8 +661,13 @@ mod tests {
         assert_eq!(final_claims.bz_r, pub_bz + w_bz, "Bz(r) mismatch");
         assert_eq!(final_claims.cz_r, pub_cz + w_cz, "Cz(r) mismatch");
 
-        let verifier_expected =
-            verifier.expected_claim(&challenges, w_az, w_bz, w_cz, final_claims.e_r);
+        let verifier_expected = verifier.expected_claim(
+            &challenges,
+            final_claims.az_r,
+            final_claims.bz_r,
+            final_claims.cz_r,
+            final_claims.e_r,
+        );
         assert_eq!(claim, verifier_expected, "Verifier expected claim mismatch");
     }
 
