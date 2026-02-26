@@ -18,7 +18,9 @@ use crate::subprotocols::blindfold::{
     BlindFoldVerifierInput, ClaimBindingConfig, InputClaimConstraint, OutputClaimConstraint,
     StageConfig, ValueSource, VerifierR1CSBuilder,
 };
-use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstanceProof};
+use crate::subprotocols::sumcheck::BatchedSumcheck;
+#[cfg(feature = "zk")]
+use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 #[cfg(feature = "zk")]
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 #[cfg(feature = "zk")]
@@ -475,21 +477,7 @@ impl<
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
             vec![&spartan_outer_remaining];
 
-        let batching_coefficients: Vec<F> = {
-            let mut transcript_clone = self.transcript.clone();
-            if !matches!(
-                self.proof.stage1_sumcheck_proof,
-                SumcheckInstanceProof::Zk(_)
-            ) {
-                for instance in &instances {
-                    let input_claim = instance.input_claim(&self.opening_accumulator);
-                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
-                }
-            }
-            transcript_clone.challenge_vector(instances.len())
-        };
-
-        let r_stage1 = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage1) = BatchedSumcheck::verify(
             &self.proof.stage1_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -600,21 +588,7 @@ impl<
             &ram_output_check,
         ];
 
-        let batching_coefficients: Vec<F> = {
-            let mut transcript_clone = self.transcript.clone();
-            if !matches!(
-                self.proof.stage2_sumcheck_proof,
-                SumcheckInstanceProof::Zk(_)
-            ) {
-                for instance in &instances {
-                    let input_claim = instance.input_claim(&self.opening_accumulator);
-                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
-                }
-            }
-            transcript_clone.challenge_vector(instances.len())
-        };
-
-        let r_stage2 = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage2) = BatchedSumcheck::verify(
             &self.proof.stage2_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -692,21 +666,7 @@ impl<
             &spartan_registers_claim_reduction,
         ];
 
-        let batching_coefficients: Vec<F> = {
-            let mut transcript_clone = self.transcript.clone();
-            if !matches!(
-                self.proof.stage3_sumcheck_proof,
-                SumcheckInstanceProof::Zk(_)
-            ) {
-                for instance in &instances {
-                    let input_claim = instance.input_claim(&self.opening_accumulator);
-                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
-                }
-            }
-            transcript_clone.challenge_vector(instances.len())
-        };
-
-        let r_stage3 = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage3) = BatchedSumcheck::verify(
             &self.proof.stage3_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -790,21 +750,7 @@ impl<
             &ram_val_final,
         ];
 
-        let batching_coefficients: Vec<F> = {
-            let mut transcript_clone = self.transcript.clone();
-            if !matches!(
-                self.proof.stage4_sumcheck_proof,
-                SumcheckInstanceProof::Zk(_)
-            ) {
-                for instance in &instances {
-                    let input_claim = instance.input_claim(&self.opening_accumulator);
-                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
-                }
-            }
-            transcript_clone.challenge_vector(instances.len())
-        };
-
-        let r_stage4 = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage4) = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -873,21 +819,7 @@ impl<
             &registers_val_evaluation,
         ];
 
-        let batching_coefficients: Vec<F> = {
-            let mut transcript_clone = self.transcript.clone();
-            if !matches!(
-                self.proof.stage5_sumcheck_proof,
-                SumcheckInstanceProof::Zk(_)
-            ) {
-                for instance in &instances {
-                    let input_claim = instance.input_claim(&self.opening_accumulator);
-                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
-                }
-            }
-            transcript_clone.challenge_vector(instances.len())
-        };
-
-        let r_stage5 = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage5) = BatchedSumcheck::verify(
             &self.proof.stage5_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -1010,21 +942,7 @@ impl<
             instances.push(advice);
         }
 
-        let batching_coefficients: Vec<F> = {
-            let mut transcript_clone = self.transcript.clone();
-            if !matches!(
-                self.proof.stage6_sumcheck_proof,
-                SumcheckInstanceProof::Zk(_)
-            ) {
-                for instance in &instances {
-                    let input_claim = instance.input_claim(&self.opening_accumulator);
-                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
-                }
-            }
-            transcript_clone.challenge_vector(instances.len())
-        };
-
-        let r_stage6 = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage6) = BatchedSumcheck::verify(
             &self.proof.stage6_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
@@ -1351,21 +1269,7 @@ impl<
             }
         }
 
-        let batching_coefficients: Vec<F> = {
-            let mut transcript_clone = self.transcript.clone();
-            if !matches!(
-                self.proof.stage7_sumcheck_proof,
-                SumcheckInstanceProof::Zk(_)
-            ) {
-                for instance in &instances {
-                    let input_claim = instance.input_claim(&self.opening_accumulator);
-                    transcript_clone.append_scalar(b"sumcheck_claim", &input_claim);
-                }
-            }
-            transcript_clone.challenge_vector(instances.len())
-        };
-
-        let r_stage7 = BatchedSumcheck::verify(
+        let (batching_coefficients, r_stage7) = BatchedSumcheck::verify(
             &self.proof.stage7_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,

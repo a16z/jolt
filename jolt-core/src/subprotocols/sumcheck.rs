@@ -426,7 +426,7 @@ impl BatchedSumcheck {
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
-    ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
+    ) -> Result<(Vec<F>, Vec<F::Challenge>), ProofVerifyError> {
         let max_degree = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.degree())
@@ -500,7 +500,7 @@ impl BatchedSumcheck {
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
-        Ok(r_sumcheck)
+        Ok((batching_coeffs, r_sumcheck))
     }
 
     /// Verify a standard (non-ZK) sumcheck proof without requiring a curve type.
