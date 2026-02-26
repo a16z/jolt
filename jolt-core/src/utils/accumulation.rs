@@ -2,6 +2,11 @@ use crate::field::{BarrettReduce, FMAdd, JoltField};
 use ark_ff::biginteger::{S128, S160, S192, S64};
 use ark_std::{ops::Add, Zero};
 
+/// Unsigned accumulator at the "small" tier (field × u64 width).
+/// Stores a single `UnreducedMulU64` word. Supports FMA with u8, u64, and bool scalars.
+/// Finishes with Barrett reduction.
+///
+/// Used in: bytecode/register/RAM read-write checking, instruction lookup sumchecks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmallAccumU<F: JoltField> {
     pub word: F::UnreducedMulU64,
@@ -76,6 +81,11 @@ impl<F: JoltField> FMAdd<F, u64> for SmallAccumU<F> {
     }
 }
 
+/// Signed accumulator at the "small" tier (field × u64 width).
+/// Stores separate pos/neg `UnreducedMulU64` words. Supports FMA with i64, u64, u8,
+/// and bool scalars. Finishes with Barrett reduction (pos - neg).
+///
+/// Used in: Hamming booleanity checks, increment sumchecks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmallAccumS<F: JoltField> {
     pub pos: F::UnreducedMulU64,
@@ -181,6 +191,11 @@ impl<F: JoltField> BarrettReduce<F> for SmallAccumS<F> {
     }
 }
 
+/// Unsigned accumulator at the "medium" tier (field × u128 width).
+/// Stores a single `UnreducedMulU128` word. Supports FMA with u64, u8, and bool scalars.
+/// Finishes with Barrett reduction.
+///
+/// Used in: register/RAM value evaluation sumchecks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MedAccumU<F: JoltField> {
     pub word: F::UnreducedMulU128,
@@ -255,6 +270,11 @@ impl<F: JoltField> BarrettReduce<F> for MedAccumU<F> {
     }
 }
 
+/// Signed accumulator at the "medium" tier (field × u128 width).
+/// Stores separate pos/neg `UnreducedMulU128` words. Supports FMA with i128, S64,
+/// u64, u8, and bool scalars. Finishes with Barrett reduction (pos - neg).
+///
+/// Used in: Spartan outer/shift extended evaluations, R1CS claim reductions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MedAccumS<F: JoltField> {
     pub pos: F::UnreducedMulU128,
@@ -376,6 +396,11 @@ impl<F: JoltField> BarrettReduce<F> for MedAccumS<F> {
     }
 }
 
+/// Unsigned accumulator at the "wide" tier (mul-u128-accum width).
+/// Stores a single `UnreducedMulU128Accum` word. Supports FMA with u128 scalars.
+/// Finishes with Barrett reduction.
+///
+/// Used in: instruction lookup read-RAF checking (prefix-suffix accumulation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WideAccumU<F: JoltField> {
     pub word: F::UnreducedMulU128Accum,

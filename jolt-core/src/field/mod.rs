@@ -145,7 +145,7 @@ pub trait JoltField:
     /// For non-Montgomery fields, R^2 = 1.
     const MONTGOMERY_R_SQUARE: Self;
 
-    // ---- Unreduced types (ladder from narrowest to widest) ----
+    // Unreduced types (ladder from narrowest to widest)
     //
     // Each level is both:
     //   (a) the result type of a specific widening operation, AND
@@ -306,8 +306,6 @@ pub trait JoltField:
         res.mul_u64(1 << pow)
     }
 
-    // ---- Widening operations (produce unreduced values) ----
-
     /// Reinterpret field element as its unreduced integer representation.
     fn to_unreduced(&self) -> Self::UnreducedElem;
 
@@ -332,8 +330,6 @@ pub trait JoltField:
         a: &Self::UnreducedElem,
         b: &Self::UnreducedElem,
     ) -> Self::UnreducedProductAccum;
-
-    // ---- Reduction operations (unreduced → field element) ----
 
     fn reduce_mul_u64(x: Self::UnreducedMulU64) -> Self;
     fn reduce_mul_u128(x: Self::UnreducedMulU128) -> Self;

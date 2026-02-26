@@ -299,13 +299,16 @@ impl JoltField for ark_bn254::Fr {
     }
 }
 
-// ---- BN254-specific signed accumulators ----
-//
-// These use BigInt<7>/BigInt<8> storage and mul_trunc internally for
-// efficient unreduced accumulation of field × large-scalar products.
-
 type Fr = ark_bn254::Fr;
 
+/// BN254 implementation of `JoltField::WideAccumS`.
+///
+/// Accumulates field × {i128, S64, S128, S160, S192} products using
+/// 7-limb (448-bit) pos/neg BigInts with `mul_trunc` for deferred reduction.
+/// Finishes with Barrett reduction (pos - neg).
+///
+/// This width is sufficient because BN254 field elements are 4 limbs,
+/// and the widest scalar (S192) is 3 limbs: 4 + 3 = 7 limbs for the truncated product.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WideAccumSBn254 {
     pos: BigInt<7>,
@@ -450,6 +453,15 @@ impl BarrettReduce<Fr> for WideAccumSBn254 {
     }
 }
 
+/// BN254 implementation of `JoltField::FullAccumS`.
+///
+/// Accumulates field × {S128, S192, S256} products using
+/// 8-limb (512-bit) pos/neg BigInts with `mul_trunc` for deferred reduction.
+/// Finishes with Montgomery reduction (pos - neg), since this tier
+/// accumulates full field × field products from Spartan's Az*Bz.
+///
+/// 8 limbs = 4 (field) + 4 (widest scalar S256), with truncation keeping
+/// the top 2*NUM_LIMBS limbs of each product.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FullAccumSBn254 {
     pos: BigInt<8>,
