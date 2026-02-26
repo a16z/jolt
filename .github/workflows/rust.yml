@@ -134,41 +134,10 @@ jobs:
           sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
           sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
 
-      - name: Write prover that saves artifacts
+      - name: Set up prover and verifier scripts
         run: |
-          cat > sample_project/src/main.rs << 'EOF'
-          use jolt_sdk::Serializable;
-          use tracing::info;
-
-          pub fn main() {
-              tracing_subscriber::fmt::init();
-
-              let target_dir = "/tmp/jolt-guest-targets";
-              let mut program = guest::compile_fib(target_dir);
-
-              let shared_preprocessing = guest::preprocess_shared_fib(&mut program);
-              let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
-              let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
-              let verifier_preprocessing =
-                  guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup);
-
-              let pp_bytes = verifier_preprocessing.serialize_to_bytes().expect("serialize pp");
-              std::fs::write("pp.bin", &pp_bytes).expect("write pp");
-              info!("preprocessing: {} bytes", pp_bytes.len());
-
-              let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
-              let (output, proof, io_device) = prove_fib(50);
-              info!("output: {output}");
-
-              let proof_bytes = proof.serialize_to_bytes().expect("serialize proof");
-              std::fs::write("proof.bin", &proof_bytes).expect("write proof");
-              info!("proof: {} bytes", proof_bytes.len());
-
-              let io_bytes = io_device.serialize_to_bytes().expect("serialize io");
-              std::fs::write("io.bin", &io_bytes).expect("write io");
-              info!("io: {} bytes", io_bytes.len());
-          }
-          EOF
+          cp scripts/ci/wasm-e2e/prove_and_save.rs sample_project/src/main.rs
+          cp scripts/ci/wasm-e2e/verify.mjs sample_project/verify.mjs
 
       - name: Prove natively and save artifacts
         working-directory: ./sample_project
@@ -180,31 +149,7 @@ jobs:
 
       - name: Verify proof in WASM
         working-directory: ./sample_project
-        run: |
-          cat > verify.mjs << 'EOF'
-          import { readFileSync } from 'fs';
-          import { initSync, verify_fib } from './pkg/sample_project.js';
-
-          const wasmBytes = readFileSync('./pkg/sample_project_bg.wasm');
-          initSync(wasmBytes);
-
-          const pp = new Uint8Array(readFileSync('pp.bin'));
-          const proof = new Uint8Array(readFileSync('proof.bin'));
-          const io = new Uint8Array(readFileSync('io.bin'));
-
-          console.log(`preprocessing: ${pp.length} bytes`);
-          console.log(`proof: ${proof.length} bytes`);
-          console.log(`io: ${io.length} bytes`);
-
-          const result = verify_fib(pp, proof, io);
-          console.log(`verification result: ${result}`);
-
-          if (!result) {
-              console.error('WASM verification failed');
-              process.exit(1);
-          }
-          EOF
-          node verify.mjs
+        run: node verify.mjs
 
   test-inlines:
     name: Test inlines
