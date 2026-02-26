@@ -32,8 +32,8 @@ pub use protocol::{
 pub use r1cs::{SparseR1CSMatrix, VerifierR1CS, VerifierR1CSBuilder};
 pub use relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 pub use spartan::{
-    compute_L_w_at_ry, hyrax_combined_row, hyrax_evaluate, BlindFoldInnerSumcheckProver,
-    BlindFoldSpartanParams, BlindFoldSpartanProver, BlindFoldSpartanVerifier, SpartanFinalClaims,
+    compute_L_w_at_ry, BlindFoldInnerSumcheckProver, BlindFoldSpartanParams,
+    BlindFoldSpartanProver, BlindFoldSpartanVerifier, SpartanFinalClaims,
 };
 pub use witness::{
     BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, RoundWitness, StageWitness,

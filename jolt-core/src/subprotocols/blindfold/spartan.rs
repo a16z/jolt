@@ -8,7 +8,6 @@
 //! - Witness contributions to Az, Bz, Cz at the derived point
 //! - E at the sumcheck challenge point
 
-use super::HyraxParams;
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -551,18 +550,6 @@ pub fn compute_L_w_at_ry<F: JoltField>(
     let c_val = r1cs.c.bilinear_eval(&eq_rx, &eq_ry, 1, w_len, padded);
 
     ra * a_val + rb * b_val + rc * c_val
-}
-
-pub fn hyrax_combined_row<F: JoltField>(flat: &[F], hyrax_C: usize, ry_row: &[F]) -> Vec<F> {
-    HyraxParams::combined_row_static(flat, hyrax_C, ry_row)
-}
-
-pub fn hyrax_evaluate<F: JoltField>(combined_row: &[F], ry_col: &[F]) -> F {
-    HyraxParams::evaluate(combined_row, ry_col)
-}
-
-pub fn hyrax_combined_blinding<F: JoltField>(row_blindings: &[F], ry_row: &[F]) -> F {
-    HyraxParams::combined_blinding(row_blindings, ry_row)
 }
 
 #[cfg(test)]

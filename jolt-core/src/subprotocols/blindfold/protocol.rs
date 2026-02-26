@@ -19,10 +19,8 @@ use crate::utils::math::Math;
 use super::folding::{commit_cross_term_rows, compute_cross_term, sample_random_satisfying_pair};
 use super::r1cs::VerifierR1CS;
 use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
-use super::spartan::{
-    hyrax_combined_blinding, hyrax_combined_row, hyrax_evaluate, INNER_SUMCHECK_DEGREE_BOUND,
-    SPARTAN_DEGREE_BOUND,
-};
+use super::spartan::{INNER_SUMCHECK_DEGREE_BOUND, SPARTAN_DEGREE_BOUND};
+use super::HyraxParams;
 
 /// Information about final_output variables at specific stages.
 #[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -239,14 +237,16 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         // E opening at rx
         let log_R_E = R_E.log_2();
         let rx: Vec<F> = spartan_challenges.iter().map(|c| (*c).into()).collect();
-        let e_combined_row = hyrax_combined_row(&e_for_hyrax, C_E, &rx[..log_R_E]);
-        let e_combined_blinding = hyrax_combined_blinding(&e_row_blindings, &rx[..log_R_E]);
+        let e_combined_row = HyraxParams::combined_row_static(&e_for_hyrax, C_E, &rx[..log_R_E]);
+        let e_combined_blinding = HyraxParams::combined_blinding(&e_row_blindings, &rx[..log_R_E]);
 
         // W opening at ry_w
         let log_R_prime = hyrax.log_R_prime();
         let ry_w: Vec<F> = inner_challenges.iter().map(|c| (*c).into()).collect();
-        let w_combined_row = hyrax_combined_row(&folded_W, hyrax.C, &ry_w[..log_R_prime]);
-        let w_combined_blinding = hyrax_combined_blinding(&w_row_blindings, &ry_w[..log_R_prime]);
+        let w_combined_row =
+            HyraxParams::combined_row_static(&folded_W, hyrax.C, &ry_w[..log_R_prime]);
+        let w_combined_blinding =
+            HyraxParams::combined_blinding(&w_row_blindings, &ry_w[..log_R_prime]);
 
         let final_output_info = collect_final_output_info(&self.r1cs.stage_configs);
 
@@ -507,7 +507,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         if c_combined_e != expected_e_com {
             return Err(BlindFoldVerifyError::EOpeningFailed);
         }
-        let e_r = hyrax_evaluate(&proof.e_combined_row, rx_col);
+        let e_r = HyraxParams::evaluate(&proof.e_combined_row, rx_col);
 
         let eq_tau_r = spartan_verifier.eq_tau_at_r(&challenges);
         let expected_outer = eq_tau_r * (az_r * bz_r - folded_instance.u * cz_r - e_r);
@@ -531,7 +531,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         if c_combined_w != expected_w_com {
             return Err(BlindFoldVerifyError::WOpeningFailed);
         }
-        let w_ry = hyrax_evaluate(&proof.w_combined_row, ry_col);
+        let w_ry = HyraxParams::evaluate(&proof.w_combined_row, ry_col);
 
         let l_w_at_ry = compute_L_w_at_ry(self.r1cs, &challenges, &inner_challenges, ra, rb, rc);
         let expected_inner_final = l_w_at_ry * w_ry;
