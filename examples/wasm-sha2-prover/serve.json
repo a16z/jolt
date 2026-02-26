@@ -1,0 +1,16 @@
+{
+  "public": ".",
+  "rewrites": [
+    { "source": "/", "destination": "/www/index.html" },
+    { "source": "!/pkg/**", "destination": "/www$uri" }
+  ],
+  "headers": [
+    {
+      "source": "**/*",
+      "headers": [
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" }
+      ]
+    }
+  ]
+}

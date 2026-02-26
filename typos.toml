@@ -1,5 +1,5 @@
 [files]
-extend-exclude = ["patches/*.patch"]
+extend-exclude = ["patches/*.patch", "examples/wasm-sha2-prover/www/"]
 
 [default.extend-words]
 "groth" = "groth"

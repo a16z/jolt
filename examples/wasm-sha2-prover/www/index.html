@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Jolt WASM Prover</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin">
+    <meta http-equiv="Cross-Origin-Embedder-Policy" content="require-corp">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 1.5rem 1rem;
+            background: #0d1117;
+            color: #c9d1d9;
+        }
+        h1 {
+            color: #e6edf3;
+            font-size: 1.5rem;
+            margin: 0 0 1rem 0;
+        }
+        h3 {
+            color: #e6edf3;
+            margin: 0 0 0.75rem 0;
+            font-size: 1.1rem;
+        }
+        h4 {
+            color: #8b949e;
+            margin: 0.75rem 0 0.5rem 0;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        p { color: #c9d1d9; }
+        .tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 0;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .tab-btn {
+            padding: 0.6rem 1.2rem;
+            border: 1px solid #30363d;
+            border-bottom: none;
+            background: #161b22;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            border-radius: 8px 8px 0 0;
+            margin-right: -1px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .tab-btn.active {
+            background: #1c2128;
+            color: #58a6ff;
+            border-color: #30363d;
+            position: relative;
+            z-index: 1;
+        }
+        .tab-btn:hover:not(.active) {
+            background: #1c2128;
+            color: #c9d1d9;
+        }
+        .card {
+            background: #1c2128;
+            border-radius: 0 8px 8px 8px;
+            padding: 1.25rem;
+            margin: 0 0 1rem 0;
+            border: 1px solid #30363d;
+        }
+        .card.status-card {
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            padding: 0.75rem 1rem;
+        }
+        #status {
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        #status.loading { background: #3b2e00; color: #e3b341; }
+        #status.ready { background: #0d2818; color: #3fb950; }
+        #status.error { background: #3d1114; color: #f85149; }
+        #status.proving { background: #0c2d6b; color: #58a6ff; }
+        button {
+            color: #fff;
+            border: 1px solid rgba(240,246,252,0.1);
+            padding: 0.6rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            background: #30363d;
+        }
+        button:disabled {
+            background: #21262d;
+            color: #c9d1d9;
+            border-color: #30363d;
+            cursor: not-allowed;
+        }
+        button:hover:not(:disabled) {
+            background: #3c444d;
+        }
+        button.prove-btn {
+            background: #238636;
+        }
+        button.prove-btn:hover:not(:disabled) {
+            background: #2ea043;
+        }
+        button.verify-btn {
+            background: #1f6feb;
+        }
+        button.verify-btn:hover:not(:disabled) {
+            background: #388bfd;
+        }
+        button.trace-btn {
+            background: #30363d;
+            color: #c9d1d9;
+        }
+        button.trace-btn:hover:not(:disabled) {
+            background: #3c444d;
+        }
+        pre {
+            background: #0d1117;
+            color: #a5d6ff;
+            padding: 0.75rem;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .input-group {
+            margin: 0.75rem 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.25rem;
+            font-weight: 500;
+            color: #8b949e;
+            font-size: 0.85rem;
+        }
+        input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            background: #0d1117;
+            color: #c9d1d9;
+        }
+        input:focus {
+            outline: none;
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 3px rgba(88,166,255,0.15);
+        }
+        .hidden { display: none; }
+        .btn-row {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.75rem;
+        }
+        .test-vector {
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: #7d8590;
+            word-break: break-all;
+            margin: 0.2rem 0;
+            line-height: 1.4;
+        }
+        .test-vector-label {
+            font-weight: 600;
+            color: #8b949e;
+            font-size: 0.8rem;
+        }
+
+        @media (max-width: 600px) {
+            body { padding: 0.75rem; }
+            h1 { font-size: 1.25rem; }
+            .card { padding: 1rem; }
+            .btn-row { flex-direction: column; }
+            .btn-row button { width: 100%; }
+            .tab-btn { padding: 0.5rem 0.8rem; font-size: 0.8rem; }
+            pre { font-size: 0.7rem; max-height: 300px; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Jolt WASM Prover</h1>
+
+    <div class="card status-card">
+        <div id="status" class="loading">Loading...</div>
+    </div>
+
+    <div class="tabs">
+        <button class="tab-btn active" data-program="sha2">SHA-2</button>
+        <button class="tab-btn" data-program="ecdsa">ECDSA</button>
+        <button class="tab-btn" data-program="keccak">Keccak Chain</button>
+    </div>
+
+    <div id="page-sha2" class="tab-page card">
+        <h3>SHA-256</h3>
+        <div class="input-group">
+            <label>Message:</label>
+            <input type="text" id="sha2-message" value="hello world">
+        </div>
+        <div class="btn-row">
+            <button class="prove-btn" disabled>Generate Proof</button>
+            <button class="verify-btn" disabled>Verify Proof</button>
+            <button class="trace-btn" disabled>Download Trace</button>
+        </div>
+        <h4>Output</h4>
+        <pre class="output">Click "Generate Proof" to start...</pre>
+    </div>
+
+    <div id="page-ecdsa" class="tab-page card hidden">
+        <h3>Secp256k1 ECDSA Verify</h3>
+        <p style="margin-top: 0;">Verifies an ECDSA signature over the message "hello world" (hardcoded test vector).</p>
+        <div class="input-group">
+            <span class="test-vector-label">Message hash (z):</span>
+            <div class="test-vector">b94d27b9934d3e08 a52e52d7da7dabfa c484efe37a5380ee 9088f7ace2efcde9</div>
+        </div>
+        <div class="input-group">
+            <span class="test-vector-label">Signature r:</span>
+            <div class="test-vector">3a5d6a386e6cf7c0 587f69296af3cd88 248d4b0b2829ab00 b8fc413b4b967ed8</div>
+        </div>
+        <div class="input-group">
+            <span class="test-vector-label">Signature s:</span>
+            <div class="test-vector">9d452f63cf91018d 6212d714118f617e 299a02486be40321 66a82f274e3dcafc</div>
+        </div>
+        <div class="input-group">
+            <span class="test-vector-label">Public key Q:</span>
+            <div class="test-vector">eeb6be8b9e68868b 91fc70e34e00e6c8 ee00716af6a73670 0012563f32ed0216<br>dc7b004d3bb2800d dc7f31262e4ba2b7 cb1b42d72491e47f 4780de3d5fda972d</div>
+        </div>
+        <div class="btn-row">
+            <button class="prove-btn" disabled>Generate Proof</button>
+            <button class="verify-btn" disabled>Verify Proof</button>
+            <button class="trace-btn" disabled>Download Trace</button>
+        </div>
+        <h4>Output</h4>
+        <pre class="output">Click "Generate Proof" to start...</pre>
+    </div>
+
+    <div id="page-keccak" class="tab-page card hidden">
+        <h3>Keccak-256 Chain</h3>
+        <p style="margin-top: 0;">Hashes the message with SHA-256 to get a 32-byte input, then applies Keccak-256 repeatedly.</p>
+        <div class="input-group">
+            <label>Message (hashed to 32 bytes via SHA-256):</label>
+            <input type="text" id="keccak-message" value="hello world">
+        </div>
+        <div class="input-group">
+            <label>Iterations (1-100):</label>
+            <input type="number" id="keccak-iters" value="1" min="1" max="100">
+        </div>
+        <div class="btn-row">
+            <button class="prove-btn" disabled>Generate Proof</button>
+            <button class="verify-btn" disabled>Verify Proof</button>
+            <button class="trace-btn" disabled>Download Trace</button>
+        </div>
+        <h4>Output</h4>
+        <pre class="output">Click "Generate Proof" to start...</pre>
+    </div>
+
+    <script type="module" src="./index.js"></script>
+</body>
+</html>
