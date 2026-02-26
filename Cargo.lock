@@ -2839,7 +2839,6 @@ dependencies = [
  "syn 1.0.109",
  "sysinfo 0.30.13",
  "toml_edit 0.22.27",
- "tracer",
  "zeroos-build",
 ]
 
