@@ -664,61 +664,6 @@ impl<const N: usize> From<[u64; N]> for MleAst {
 
 impl jolt_core::field::UnreducedInteger for MleAst {}
 
-/// Stub accumulator for MleAst's JoltField. Never instantiated at runtime.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct MleAstAccumS;
-
-impl Zero for MleAstAccumS {
-    fn zero() -> Self {
-        Self
-    }
-    fn is_zero(&self) -> bool {
-        true
-    }
-}
-
-impl std::ops::Add for MleAstAccumS {
-    type Output = Self;
-    fn add(self, _rhs: Self) -> Self {
-        Self
-    }
-}
-
-impl std::fmt::Display for MleAstAccumS {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MleAstAccumS")
-    }
-}
-
-macro_rules! impl_fmadd_stub {
-    ($scalar:ty) => {
-        impl jolt_core::field::FMAdd<MleAst, $scalar> for MleAstAccumS {
-            fn fmadd(&mut self, _left: &MleAst, _right: &$scalar) {
-                unimplemented!("Not needed for constructing ASTs");
-            }
-        }
-    };
-}
-
-impl_fmadd_stub!(i128);
-impl_fmadd_stub!(ark_ff::biginteger::S64);
-impl_fmadd_stub!(ark_ff::biginteger::S128);
-impl_fmadd_stub!(ark_ff::biginteger::S160);
-impl_fmadd_stub!(ark_ff::biginteger::S192);
-impl_fmadd_stub!(ark_ff::biginteger::S256);
-
-impl jolt_core::field::BarrettReduce<MleAst> for MleAstAccumS {
-    fn barrett_reduce(&self) -> MleAst {
-        unimplemented!("Not needed for constructing ASTs");
-    }
-}
-
-impl jolt_core::field::MontgomeryReduce<MleAst> for MleAstAccumS {
-    fn montgomery_reduce(&self) -> MleAst {
-        unimplemented!("Not needed for constructing ASTs");
-    }
-}
-
 impl JoltField for MleAst {
     const NUM_BYTES: usize = 0;
     const NUM_LIMBS: usize = 0;
@@ -732,9 +677,6 @@ impl JoltField for MleAst {
     type UnreducedMulU128Accum = Self;
     type UnreducedProduct = Self;
     type UnreducedProductAccum = Self;
-
-    type WideAccumS = MleAstAccumS;
-    type FullAccumS = MleAstAccumS;
 
     type Challenge = Self;
     type SmallValueLookupTables = ();
@@ -822,6 +764,20 @@ impl JoltField for MleAst {
         b: &Self::UnreducedElem,
     ) -> Self::UnreducedProductAccum {
         *a * b
+    }
+
+    fn mul_to_accum_mag<const M: usize>(
+        &self,
+        _mag: &ark_ff::BigInt<M>,
+    ) -> Self::UnreducedMulU128Accum {
+        unimplemented!("Not needed for constructing ASTs")
+    }
+
+    fn mul_to_product_mag<const M: usize>(
+        &self,
+        _mag: &ark_ff::BigInt<M>,
+    ) -> Self::UnreducedProduct {
+        unimplemented!("Not needed for constructing ASTs")
     }
 
     fn reduce_mul_u64(x: Self::UnreducedMulU64) -> Self {

@@ -1,15 +1,11 @@
-use super::{BarrettReduce, FMAdd, FieldOps, JoltField, MontgomeryReduce, UnreducedInteger};
+use super::{FieldOps, JoltField, UnreducedInteger};
 #[cfg(feature = "challenge-254-bit")]
 use crate::field::challenge::Mont254BitChallenge;
 #[cfg(not(feature = "challenge-254-bit"))]
 use crate::field::challenge::MontU128Challenge;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use ark_ff::biginteger::{S128, S160, S192, S256, S64};
 use ark_ff::{prelude::*, BigInt, BigInteger, PrimeField, UniformRand};
-use ark_std::ops::Add;
-use num_traits::Zero;
 use rayon::prelude::*;
-use std::fmt;
 
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
@@ -38,9 +34,6 @@ impl JoltField for ark_bn254::Fr {
     type UnreducedMulU128Accum = BigInt<7>;
     type UnreducedProduct = BigInt<8>;
     type UnreducedProductAccum = BigInt<9>;
-
-    type WideAccumS = WideAccumSBn254;
-    type FullAccumS = FullAccumSBn254;
 
     type SmallValueLookupTables = [Vec<Self>; 2];
 
@@ -274,6 +267,16 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline]
+    fn mul_to_accum_mag<const M: usize>(&self, mag: &BigInt<M>) -> BigInt<7> {
+        self.0.mul_trunc::<M, 7>(mag)
+    }
+
+    #[inline]
+    fn mul_to_product_mag<const M: usize>(&self, mag: &BigInt<M>) -> BigInt<8> {
+        self.0.mul_trunc::<M, 8>(mag)
+    }
+
+    #[inline]
     fn reduce_mul_u64(x: BigInt<5>) -> Self {
         ark_bn254::Fr::from_barrett_reduce::<5, 5>(x)
     }
@@ -296,281 +299,6 @@ impl JoltField for ark_bn254::Fr {
     #[inline]
     fn reduce_product_accum(x: BigInt<9>) -> Self {
         ark_bn254::Fr::from_montgomery_reduce::<9, 5>(x)
-    }
-}
-
-type Fr = ark_bn254::Fr;
-
-/// BN254 implementation of `JoltField::WideAccumS`.
-///
-/// Accumulates field × {i128, S64, S128, S160, S192} products using
-/// 7-limb (448-bit) pos/neg BigInts with `mul_trunc` for deferred reduction.
-/// Finishes with Barrett reduction (pos - neg).
-///
-/// This width is sufficient because BN254 field elements are 4 limbs,
-/// and the widest scalar (S192) is 3 limbs: 4 + 3 = 7 limbs for the truncated product.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WideAccumSBn254 {
-    pos: BigInt<7>,
-    neg: BigInt<7>,
-}
-
-impl Default for WideAccumSBn254 {
-    #[inline(always)]
-    fn default() -> Self {
-        Self::zero()
-    }
-}
-
-impl Zero for WideAccumSBn254 {
-    #[inline(always)]
-    fn zero() -> Self {
-        Self {
-            pos: BigInt::new([0u64; 7]),
-            neg: BigInt::new([0u64; 7]),
-        }
-    }
-
-    #[inline(always)]
-    fn is_zero(&self) -> bool {
-        self.pos == BigInt::new([0u64; 7]) && self.neg == BigInt::new([0u64; 7])
-    }
-}
-
-impl Add for WideAccumSBn254 {
-    type Output = Self;
-
-    #[inline(always)]
-    fn add(self, rhs: Self) -> Self::Output {
-        let mut out = self;
-        out.pos += rhs.pos;
-        out.neg += rhs.neg;
-        out
-    }
-}
-
-impl fmt::Display for WideAccumSBn254 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "WideAccumS(pos={}, neg={})", self.pos, self.neg)
-    }
-}
-
-impl FMAdd<Fr, i128> for WideAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &Fr, other: &i128) {
-        let v = *other;
-        if v == 0 {
-            return;
-        }
-        let abs = v.unsigned_abs();
-        if v > 0 {
-            self.pos += field.mul_u128_unreduced(abs);
-        } else {
-            self.neg += field.mul_u128_unreduced(abs);
-        }
-    }
-}
-
-impl FMAdd<Fr, S128> for WideAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &Fr, other: &S128) {
-        if other.is_zero() {
-            return;
-        }
-        let limbs = other.magnitude_as_u128();
-        let result = field.mul_u128_unreduced(limbs);
-        if other.is_positive {
-            self.pos += result;
-        } else {
-            self.neg += result;
-        }
-    }
-}
-
-impl FMAdd<Fr, S160> for WideAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &Fr, other: &S160) {
-        if other.is_zero() {
-            return;
-        }
-        let mag = other.magnitude_as_bigint_nplus1();
-        let field_bigint = &field.0;
-        if other.is_positive() {
-            self.pos += field_bigint.mul_trunc::<3, 7>(&mag);
-        } else {
-            self.neg += field_bigint.mul_trunc::<3, 7>(&mag);
-        }
-    }
-}
-
-impl FMAdd<Fr, S192> for WideAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &Fr, other: &S192) {
-        if other.magnitude_limbs() == [0u64; 3] {
-            return;
-        }
-        let mag = other.magnitude;
-        let field_bigint = &field.0;
-        if other.sign() {
-            self.pos += field_bigint.mul_trunc::<3, 7>(&mag);
-        } else {
-            self.neg += field_bigint.mul_trunc::<3, 7>(&mag);
-        }
-    }
-}
-
-impl FMAdd<Fr, S64> for WideAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &Fr, other: &S64) {
-        if other.is_zero() {
-            return;
-        }
-        let limbs = other.magnitude_as_u64();
-        let result = field.mul_u64_unreduced(limbs);
-        if other.is_positive {
-            self.pos += result;
-        } else {
-            self.neg += result;
-        }
-    }
-}
-
-impl BarrettReduce<Fr> for WideAccumSBn254 {
-    #[inline(always)]
-    fn barrett_reduce(&self) -> Fr {
-        let result = if self.pos >= self.neg {
-            Fr::from_barrett_reduce::<7, 5>(self.pos - self.neg)
-        } else {
-            -Fr::from_barrett_reduce::<7, 5>(self.neg - self.pos)
-        };
-        #[cfg(test)]
-        {
-            let pos = Fr::from_barrett_reduce::<7, 5>(self.pos);
-            let neg = Fr::from_barrett_reduce::<7, 5>(self.neg);
-            debug_assert_eq!(result, pos - neg);
-        }
-        result
-    }
-}
-
-/// BN254 implementation of `JoltField::FullAccumS`.
-///
-/// Accumulates field × {S128, S192, S256} products using
-/// 8-limb (512-bit) pos/neg BigInts with `mul_trunc` for deferred reduction.
-/// Finishes with Montgomery reduction (pos - neg), since this tier
-/// accumulates full field × field products from Spartan's Az*Bz.
-///
-/// 8 limbs = 4 (field) + 4 (widest scalar S256), with truncation keeping
-/// the top 2*NUM_LIMBS limbs of each product.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FullAccumSBn254 {
-    pos: BigInt<8>,
-    neg: BigInt<8>,
-}
-
-impl Default for FullAccumSBn254 {
-    #[inline(always)]
-    fn default() -> Self {
-        Self::zero()
-    }
-}
-
-impl Zero for FullAccumSBn254 {
-    #[inline(always)]
-    fn zero() -> Self {
-        Self {
-            pos: BigInt::new([0u64; 8]),
-            neg: BigInt::new([0u64; 8]),
-        }
-    }
-
-    #[inline(always)]
-    fn is_zero(&self) -> bool {
-        self.pos == BigInt::new([0u64; 8]) && self.neg == BigInt::new([0u64; 8])
-    }
-}
-
-impl Add for FullAccumSBn254 {
-    type Output = Self;
-
-    #[inline(always)]
-    fn add(self, rhs: Self) -> Self::Output {
-        let mut out = self;
-        out.pos += rhs.pos;
-        out.neg += rhs.neg;
-        out
-    }
-}
-
-impl fmt::Display for FullAccumSBn254 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FullAccumS(pos={}, neg={})", self.pos, self.neg)
-    }
-}
-
-impl FMAdd<Fr, S128> for FullAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &Fr, other: &S128) {
-        if other.is_zero() {
-            return;
-        }
-        let limbs = other.magnitude_as_u128();
-        let term = field.mul_u128_unreduced(limbs);
-        if other.is_positive {
-            self.pos += term;
-        } else {
-            self.neg += term;
-        }
-    }
-}
-
-impl FMAdd<Fr, S192> for FullAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &Fr, other: &S192) {
-        if other.magnitude_limbs() == [0u64; 3] {
-            return;
-        }
-        let mag = other.magnitude;
-        let field_bigint = &field.0;
-        if other.sign() {
-            self.pos += field_bigint.mul_trunc::<3, 8>(&mag);
-        } else {
-            self.neg += field_bigint.mul_trunc::<3, 8>(&mag);
-        }
-    }
-}
-
-impl FMAdd<Fr, S256> for FullAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &Fr, other: &S256) {
-        if other.magnitude_limbs() == [0u64; 4] {
-            return;
-        }
-        let mag = other.magnitude;
-        let field_bigint = &field.0;
-        if other.sign() {
-            self.pos += field_bigint.mul_trunc::<4, 8>(&mag);
-        } else {
-            self.neg += field_bigint.mul_trunc::<4, 8>(&mag);
-        }
-    }
-}
-
-impl MontgomeryReduce<Fr> for FullAccumSBn254 {
-    #[inline(always)]
-    fn montgomery_reduce(&self) -> Fr {
-        let result = if self.pos >= self.neg {
-            Fr::from_montgomery_reduce::<8, 5>(self.pos - self.neg)
-        } else {
-            -Fr::from_montgomery_reduce::<8, 5>(self.neg - self.pos)
-        };
-        #[cfg(test)]
-        {
-            let pos = Fr::from_montgomery_reduce::<8, 5>(self.pos);
-            let neg = Fr::from_montgomery_reduce::<8, 5>(self.neg);
-            debug_assert_eq!(result, pos - neg);
-        }
-        result
     }
 }
 

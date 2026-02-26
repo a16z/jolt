@@ -21,6 +21,7 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
 use crate::transcripts::Transcript;
+use crate::utils::accumulation::FullAccumS;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -202,7 +203,7 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
         // Fold-out-in across (x_out, x_in) using signed Montgomery accumulators, mirroring outer.rs
         split_eq
             .par_fold_out_in(
-                || [F::FullAccumS::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
+                || [FullAccumS::<F>::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
                 |inner, g, _x_in, e_in| {
                     // Materialize product-cycle row with raw types for this group index
                     let row = ProductCycleInputs::from_trace::<F>(trace, g);

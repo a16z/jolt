@@ -1,5 +1,5 @@
 use allocative::Allocative;
-use ark_ff::biginteger::{S128, S160, S192, S256, S64};
+use ark_ff::BigInt;
 use ark_ff::UniformRand;
 use num_traits::{One, Zero};
 use std::fmt::{Debug, Display};
@@ -189,50 +189,6 @@ pub trait JoltField:
         + AddAssign<Self::UnreducedElem>
         + AddAssign<Self::UnreducedProduct>;
 
-    // ---- Signed accumulators for wide-scalar FMA ----
-    //
-    // These are associated types so each field can provide its own implementation.
-    // BN254: unreduced mul_trunc accumulation (BigInt<7>/BigInt<8>).
-    // Fp128 (future): eager reduction to field elements.
-
-    /// Signed accumulator handling field × {i128, S64, S128, S160, S192} products.
-    /// Used in Spartan outer (Bz second group) and R1CS opening proofs.
-    type WideAccumS: 'static
-        + Zero
-        + Copy
-        + Clone
-        + Debug
-        + Default
-        + Send
-        + Sync
-        + Eq
-        + PartialEq
-        + Add<Output = Self::WideAccumS>
-        + FMAdd<Self, i128>
-        + FMAdd<Self, S64>
-        + FMAdd<Self, S128>
-        + FMAdd<Self, S160>
-        + FMAdd<Self, S192>
-        + BarrettReduce<Self>;
-
-    /// Signed accumulator handling field × {S128, S192, S256} products.
-    /// Used in Spartan outer (Az*Bz product) and product virtual sumcheck.
-    type FullAccumS: 'static
-        + Zero
-        + Copy
-        + Clone
-        + Debug
-        + Default
-        + Send
-        + Sync
-        + Eq
-        + PartialEq
-        + Add<Output = Self::FullAccumS>
-        + FMAdd<Self, S128>
-        + FMAdd<Self, S192>
-        + FMAdd<Self, S256>
-        + MontgomeryReduce<Self>;
-
     type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize;
     type Challenge: 'static
         + Sized
@@ -330,6 +286,16 @@ pub trait JoltField:
         a: &Self::UnreducedElem,
         b: &Self::UnreducedElem,
     ) -> Self::UnreducedProductAccum;
+
+    /// Truncated multiply: field × M-limb magnitude → UnreducedMulU128Accum.
+    /// Used by `WideAccumS` for accumulating field × {S160, S192} products.
+    /// For BN254 this calls `mul_trunc`; for smaller fields this may eagerly reduce.
+    fn mul_to_accum_mag<const M: usize>(&self, mag: &BigInt<M>) -> Self::UnreducedMulU128Accum;
+
+    /// Truncated multiply: field × M-limb magnitude → UnreducedProduct.
+    /// Used by `FullAccumS` for accumulating field × {S192, S256} products.
+    /// For BN254 this calls `mul_trunc`; for smaller fields this may eagerly reduce.
+    fn mul_to_product_mag<const M: usize>(&self, mag: &BigInt<M>) -> Self::UnreducedProduct;
 
     fn reduce_mul_u64(x: Self::UnreducedMulU64) -> Self;
     fn reduce_mul_u128(x: Self::UnreducedMulU128) -> Self;

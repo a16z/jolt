@@ -328,9 +328,6 @@ impl JoltField for TrackedFr {
     type UnreducedProduct = <ark_bn254::Fr as JoltField>::UnreducedProduct;
     type UnreducedProductAccum = <ark_bn254::Fr as JoltField>::UnreducedProductAccum;
 
-    type WideAccumS = <ark_bn254::Fr as JoltField>::WideAccumS;
-    type FullAccumS = <ark_bn254::Fr as JoltField>::FullAccumS;
-
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
 
     // Default: Use optimized 125-bit MontChallenge
@@ -466,6 +463,22 @@ impl JoltField for TrackedFr {
         <Fr as JoltField>::unreduced_mul_to_product_accum(a, b)
     }
 
+    #[inline]
+    fn mul_to_accum_mag<const M: usize>(
+        &self,
+        mag: &ark_ff::BigInt<M>,
+    ) -> Self::UnreducedMulU128Accum {
+        self.0.mul_to_accum_mag(mag)
+    }
+
+    #[inline]
+    fn mul_to_product_mag<const M: usize>(
+        &self,
+        mag: &ark_ff::BigInt<M>,
+    ) -> Self::UnreducedProduct {
+        self.0.mul_to_product_mag(mag)
+    }
+
     fn reduce_mul_u64(x: Self::UnreducedMulU64) -> Self {
         BARRETT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<Fr as JoltField>::reduce_mul_u64(x))
@@ -497,75 +510,6 @@ impl TrackedFr {
     pub fn mul_by_hi_2limbs(&self, limb_lo: u64, limb_hi: u64) -> Self {
         MUL_U128_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0.mul_by_hi_2limbs(limb_lo, limb_hi))
-    }
-}
-
-// FMAdd/BarrettReduce/MontgomeryReduce delegation for TrackedFr.
-// WideAccumSBn254/FullAccumSBn254 are concrete BN254 types; these impls
-// unwrap TrackedFr to Fr and delegate.
-use crate::field::ark::{FullAccumSBn254, WideAccumSBn254};
-use crate::field::{BarrettReduce, FMAdd, MontgomeryReduce};
-use ark_ff::biginteger::{S128, S160, S192, S256, S64};
-
-impl FMAdd<TrackedFr, i128> for WideAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &TrackedFr, other: &i128) {
-        FMAdd::<ark_bn254::Fr, i128>::fmadd(self, &field.0, other);
-    }
-}
-impl FMAdd<TrackedFr, S64> for WideAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &TrackedFr, other: &S64) {
-        FMAdd::<ark_bn254::Fr, S64>::fmadd(self, &field.0, other);
-    }
-}
-impl FMAdd<TrackedFr, S128> for WideAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &TrackedFr, other: &S128) {
-        FMAdd::<ark_bn254::Fr, S128>::fmadd(self, &field.0, other);
-    }
-}
-impl FMAdd<TrackedFr, S160> for WideAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &TrackedFr, other: &S160) {
-        FMAdd::<ark_bn254::Fr, S160>::fmadd(self, &field.0, other);
-    }
-}
-impl FMAdd<TrackedFr, S192> for WideAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &TrackedFr, other: &S192) {
-        FMAdd::<ark_bn254::Fr, S192>::fmadd(self, &field.0, other);
-    }
-}
-impl BarrettReduce<TrackedFr> for WideAccumSBn254 {
-    #[inline(always)]
-    fn barrett_reduce(&self) -> TrackedFr {
-        TrackedFr(BarrettReduce::<ark_bn254::Fr>::barrett_reduce(self))
-    }
-}
-
-impl FMAdd<TrackedFr, S128> for FullAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &TrackedFr, other: &S128) {
-        FMAdd::<ark_bn254::Fr, S128>::fmadd(self, &field.0, other);
-    }
-}
-impl FMAdd<TrackedFr, S192> for FullAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &TrackedFr, other: &S192) {
-        FMAdd::<ark_bn254::Fr, S192>::fmadd(self, &field.0, other);
-    }
-}
-impl FMAdd<TrackedFr, S256> for FullAccumSBn254 {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &TrackedFr, other: &S256) {
-        FMAdd::<ark_bn254::Fr, S256>::fmadd(self, &field.0, other);
-    }
-}
-impl MontgomeryReduce<TrackedFr> for FullAccumSBn254 {
-    #[inline(always)]
-    fn montgomery_reduce(&self) -> TrackedFr {
-        TrackedFr(MontgomeryReduce::<ark_bn254::Fr>::montgomery_reduce(self))
     }
 }
 

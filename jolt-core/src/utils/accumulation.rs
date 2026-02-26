@@ -1,5 +1,5 @@
-use crate::field::{BarrettReduce, FMAdd, JoltField};
-use ark_ff::biginteger::{S128, S160, S192, S64};
+use crate::field::{BarrettReduce, FMAdd, JoltField, MontgomeryReduce};
+use ark_ff::biginteger::{S128, S160, S192, S256, S64};
 use ark_std::{ops::Add, Zero};
 
 /// Unsigned accumulator at the "small" tier (field × u64 width).
@@ -452,6 +452,266 @@ impl<F: JoltField> BarrettReduce<F> for WideAccumU<F> {
     #[inline(always)]
     fn barrett_reduce(&self) -> F {
         F::reduce_mul_u128_accum(self.word)
+    }
+}
+
+/// Signed accumulator at the "wide" tier (mul-u128-accum width, i.e. 2*NUM_LIMBS - 1).
+/// Stores separate pos/neg `UnreducedMulU128Accum` words. Supports FMA with i128, S64,
+/// S128, S160, and S192 scalars. Finishes with Barrett reduction (pos - neg).
+///
+/// This is the widest signed accumulator that uses Barrett reduction.
+/// For BN254 (NUM_LIMBS=4) the internal words are `BigInt<7>` (448 bits);
+/// the field × S192 product (4 + 3 = 7 limbs) fits exactly.
+///
+/// Used in: Spartan outer (Bz second group), R1CS opening proofs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WideAccumS<F: JoltField> {
+    pub pos: F::UnreducedMulU128Accum,
+    pub neg: F::UnreducedMulU128Accum,
+}
+
+impl<F: JoltField> Default for WideAccumS<F> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
+impl<F: JoltField> Zero for WideAccumS<F> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self {
+            pos: F::UnreducedMulU128Accum::zero(),
+            neg: F::UnreducedMulU128Accum::zero(),
+        }
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.pos.is_zero() && self.neg.is_zero()
+    }
+}
+
+impl<F: JoltField> Add for WideAccumS<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut out = self;
+        out.pos += rhs.pos;
+        out.neg += rhs.neg;
+        out
+    }
+}
+
+impl<F: JoltField> FMAdd<F, i128> for WideAccumS<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &i128) {
+        let v = *other;
+        if v == 0 {
+            return;
+        }
+        let abs = v.unsigned_abs();
+        if v > 0 {
+            self.pos += field.mul_u128_unreduced(abs);
+        } else {
+            self.neg += field.mul_u128_unreduced(abs);
+        }
+    }
+}
+
+impl<F: JoltField> FMAdd<F, S64> for WideAccumS<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &S64) {
+        if other.is_zero() {
+            return;
+        }
+        let limbs = other.magnitude_as_u64();
+        let result = (*field).mul_u64_unreduced(limbs);
+        if other.is_positive {
+            self.pos += result;
+        } else {
+            self.neg += result;
+        }
+    }
+}
+
+impl<F: JoltField> FMAdd<F, S128> for WideAccumS<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &S128) {
+        if other.is_zero() {
+            return;
+        }
+        let limbs = other.magnitude_as_u128();
+        let result = field.mul_u128_unreduced(limbs);
+        if other.is_positive {
+            self.pos += result;
+        } else {
+            self.neg += result;
+        }
+    }
+}
+
+impl<F: JoltField> FMAdd<F, S160> for WideAccumS<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &S160) {
+        if other.is_zero() {
+            return;
+        }
+        let mag: ark_ff::BigInt<3> = other.magnitude_as_bigint_nplus1();
+        let product = field.mul_to_accum_mag(&mag);
+        if other.is_positive() {
+            self.pos += product;
+        } else {
+            self.neg += product;
+        }
+    }
+}
+
+impl<F: JoltField> FMAdd<F, S192> for WideAccumS<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &S192) {
+        if other.magnitude_limbs() == [0u64; 3] {
+            return;
+        }
+        let product = field.mul_to_accum_mag(&other.magnitude);
+        if other.sign() {
+            self.pos += product;
+        } else {
+            self.neg += product;
+        }
+    }
+}
+
+impl<F: JoltField> BarrettReduce<F> for WideAccumS<F> {
+    #[inline(always)]
+    fn barrett_reduce(&self) -> F {
+        let result = if self.pos >= self.neg {
+            F::reduce_mul_u128_accum(self.pos - self.neg)
+        } else {
+            -F::reduce_mul_u128_accum(self.neg - self.pos)
+        };
+        #[cfg(test)]
+        {
+            let pos = F::reduce_mul_u128_accum(self.pos);
+            let neg = F::reduce_mul_u128_accum(self.neg);
+            debug_assert_eq!(result, pos - neg);
+        }
+        result
+    }
+}
+
+/// Signed accumulator at the "full" tier (product width, i.e. 2*NUM_LIMBS).
+/// Stores separate pos/neg `UnreducedProduct` words. Supports FMA with S128, S192,
+/// and S256 scalars. Finishes with Montgomery reduction (pos - neg).
+///
+/// This is the widest signed accumulator, used where full field × field products
+/// must be tracked (e.g. Az*Bz in Spartan).
+/// For BN254 (NUM_LIMBS=4) the internal words are `BigInt<8>` (512 bits);
+/// the field × S256 product (4 + 4 = 8 limbs) fits exactly.
+///
+/// Used in: Spartan outer (Az*Bz product), product virtual sumcheck.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FullAccumS<F: JoltField> {
+    pub pos: F::UnreducedProduct,
+    pub neg: F::UnreducedProduct,
+}
+
+impl<F: JoltField> Default for FullAccumS<F> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
+impl<F: JoltField> Zero for FullAccumS<F> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self {
+            pos: F::UnreducedProduct::zero(),
+            neg: F::UnreducedProduct::zero(),
+        }
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.pos.is_zero() && self.neg.is_zero()
+    }
+}
+
+impl<F: JoltField> Add for FullAccumS<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut out = self;
+        out.pos += rhs.pos;
+        out.neg += rhs.neg;
+        out
+    }
+}
+
+impl<F: JoltField> FMAdd<F, S128> for FullAccumS<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &S128) {
+        if other.is_zero() {
+            return;
+        }
+        let limbs = other.magnitude_as_u128();
+        let term = field.mul_u128_unreduced(limbs);
+        if other.is_positive {
+            self.pos += term;
+        } else {
+            self.neg += term;
+        }
+    }
+}
+
+impl<F: JoltField> FMAdd<F, S192> for FullAccumS<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &S192) {
+        if other.magnitude_limbs() == [0u64; 3] {
+            return;
+        }
+        let product = field.mul_to_product_mag(&other.magnitude);
+        if other.sign() {
+            self.pos += product;
+        } else {
+            self.neg += product;
+        }
+    }
+}
+
+impl<F: JoltField> FMAdd<F, S256> for FullAccumS<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &S256) {
+        if other.magnitude_limbs() == [0u64; 4] {
+            return;
+        }
+        let product = field.mul_to_product_mag(&other.magnitude);
+        if other.sign() {
+            self.pos += product;
+        } else {
+            self.neg += product;
+        }
+    }
+}
+
+impl<F: JoltField> MontgomeryReduce<F> for FullAccumS<F> {
+    #[inline(always)]
+    fn montgomery_reduce(&self) -> F {
+        let result = if self.pos >= self.neg {
+            F::reduce_product(self.pos - self.neg)
+        } else {
+            -F::reduce_product(self.neg - self.pos)
+        };
+        #[cfg(test)]
+        {
+            let pos = F::reduce_product(self.pos);
+            let neg = F::reduce_product(self.neg);
+            debug_assert_eq!(result, pos - neg);
+        }
+        result
     }
 }
 

@@ -49,7 +49,7 @@ use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::univariate_skip::uniskip_targets;
 use crate::utils::{
-    accumulation::{MedAccumS, MedAccumU, S128Sum, S192Sum, SmallAccumU, WideAccumU},
+    accumulation::{MedAccumS, MedAccumU, S128Sum, S192Sum, SmallAccumU, WideAccumS, WideAccumU},
     math::s64_from_diff_u64s,
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
@@ -259,7 +259,7 @@ impl BzSecondGroup {
     pub fn fmadd_at_r<F: JoltField>(
         &self,
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-        acc: &mut F::WideAccumS,
+        acc: &mut WideAccumS<F>,
     ) {
         acc.fmadd(&w[0], &self.ram_addr_minus_rs1_plus_imm);
         acc.fmadd(&w[1], &self.right_lookup_minus_add_result);
@@ -652,7 +652,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     pub fn bz_at_r_second_group(&self, _w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let w = _w;
         let bz = self.eval_bz_second_group();
-        let mut acc: F::WideAccumS = F::WideAccumS::zero();
+        let mut acc = WideAccumS::<F>::zero();
         acc.fmadd(&w[0], &bz.ram_addr_minus_rs1_plus_imm);
         acc.fmadd(&w[1], &bz.right_lookup_minus_add_result);
         acc.fmadd(&w[2], &bz.right_lookup_minus_sub_result);
@@ -673,7 +673,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         &self,
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
         acc_az: &mut SmallAccumU<F>,
-        acc_bz: &mut F::WideAccumS,
+        acc_bz: &mut WideAccumS<F>,
     ) {
         let az = self.eval_az_second_group();
         az.fmadd_at_r(w, acc_az);
@@ -837,7 +837,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                 // If S128 => 7 limbs signed
                 let mut acc_left_input: MedAccumU<F> = MedAccumU::zero();
                 let mut acc_right_input: MedAccumS<F> = MedAccumS::zero();
-                let mut acc_product: F::WideAccumS = F::WideAccumS::zero();
+                let mut acc_product = WideAccumS::<F>::zero();
                 let mut acc_wl_left: SmallAccumU<F> = SmallAccumU::zero();
                 let mut acc_wp_left: SmallAccumU<F> = SmallAccumU::zero();
                 let mut acc_sb_right: SmallAccumU<F> = SmallAccumU::zero();

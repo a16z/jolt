@@ -26,7 +26,7 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::{MedAccumS, SmallAccumU};
+use crate::utils::accumulation::{FullAccumS, MedAccumS, SmallAccumU, WideAccumS};
 use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
@@ -184,7 +184,7 @@ impl<F: JoltField> OuterUniSkipProver<F> {
 
         split_eq
             .par_fold_out_in(
-                || [F::FullAccumS::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
+                || [FullAccumS::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
                 |inner, g, x_in, e_in| {
                     // Decode (x_out, x_in') from g and choose group by the last x_in bit
                     let x_out = g >> num_x_in_bits;
@@ -564,7 +564,7 @@ impl<F: JoltField> OuterSharedState<F> {
         &self,
         acc_az: &mut [SmallAccumU<F>],
         acc_bz_first: &mut [MedAccumS<F>],
-        acc_bz_second: &mut [F::WideAccumS],
+        acc_bz_second: &mut [WideAccumS<F>],
         grid_az: &mut [F],
         grid_bz: &mut [F],
         jlen: usize,
@@ -588,7 +588,7 @@ impl<F: JoltField> OuterSharedState<F> {
             .for_each(|((a, b), c)| {
                 *a = SmallAccumU::zero();
                 *b = MedAccumS::zero();
-                *c = F::WideAccumS::zero();
+                *c = WideAccumS::zero();
             });
 
         acc_az
@@ -682,7 +682,7 @@ impl<F: JoltField> OuterSharedState<F> {
                 let mut grid_b = vec![F::zero(); jlen];
                 let mut acc_az = vec![SmallAccumU::<F>::zero(); jlen];
                 let mut acc_bz_first = vec![MedAccumS::<F>::zero(); jlen];
-                let mut acc_bz_second = vec![F::WideAccumS::zero(); jlen];
+                let mut acc_bz_second = vec![WideAccumS::<F>::zero(); jlen];
 
                 for (in_idx, in_val) in e_in.iter().enumerate() {
                     let i = out_idx * e_in_len + in_idx;
@@ -894,8 +894,7 @@ impl<F: JoltField> OuterLinearStage<F> {
 
                     let mut acc_az: Vec<SmallAccumU<F>> = vec![SmallAccumU::zero(); grid_size];
                     let mut acc_bz_first: Vec<MedAccumS<F>> = vec![MedAccumS::zero(); grid_size];
-                    let mut acc_bz_second: Vec<F::WideAccumS> =
-                        vec![F::WideAccumS::zero(); grid_size];
+                    let mut acc_bz_second: Vec<WideAccumS<F>> = vec![WideAccumS::zero(); grid_size];
 
                     let mut inner_sum: Vec<F::UnreducedProductAccum> =
                         vec![F::UnreducedProductAccum::zero(); three_pow_dim];
@@ -917,7 +916,7 @@ impl<F: JoltField> OuterLinearStage<F> {
                         for x_val in 0..grid_size {
                             acc_az[x_val] = SmallAccumU::zero();
                             acc_bz_first[x_val] = MedAccumS::zero();
-                            acc_bz_second[x_val] = F::WideAccumS::zero();
+                            acc_bz_second[x_val] = WideAccumS::zero();
                         }
 
                         let base_idx = (x_out_val << (num_x_in_bits + window_size + num_r_bits))
