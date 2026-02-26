@@ -233,9 +233,9 @@ impl<F: JoltField> RegistersPhase1State<F> {
         Q.par_chunks_mut(BLOCK_SIZE)
             .enumerate()
             .for_each(|(chunk_i, q_chunk)| {
-                let mut q_rd_write_value = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
-                let mut q_rs1_read_value = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
-                let mut q_rs2_read_value = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
+                let mut q_rd_write_value = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
+                let mut q_rs1_read_value = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
+                let mut q_rs2_read_value = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
 
                 for x_hi in 0..(1 << suffix_n_vars) {
                     for i in 0..q_chunk.len() {
@@ -256,9 +256,9 @@ impl<F: JoltField> RegistersPhase1State<F> {
                 }
 
                 for (i, q) in q_chunk.iter_mut().enumerate() {
-                    *q = F::from_barrett_reduce(q_rd_write_value[i])
-                        + gamma * F::from_barrett_reduce(q_rs1_read_value[i])
-                        + gamma_sqr * F::from_barrett_reduce(q_rs2_read_value[i]);
+                    *q = F::reduce_mul_u128(q_rd_write_value[i])
+                        + gamma * F::reduce_mul_u128(q_rs1_read_value[i])
+                        + gamma_sqr * F::reduce_mul_u128(q_rs2_read_value[i]);
                 }
             });
 
@@ -330,9 +330,9 @@ impl<F: JoltField> RegistersPhase2State<F> {
             .into_par_iter()
             .for_each(
                 |(rd_write_value_eval, rs1_read_value_eval, rs2_read_value_eval, trace_chunk)| {
-                    let mut rd_write_value_eval_unreduced = F::Unreduced::<6>::zero();
-                    let mut rs1_read_value_eval_unreduced = F::Unreduced::<6>::zero();
-                    let mut rs2_read_value_eval_unreduced = F::Unreduced::<6>::zero();
+                    let mut rd_write_value_eval_unreduced = F::UnreducedMulU128::zero();
+                    let mut rs1_read_value_eval_unreduced = F::UnreducedMulU128::zero();
+                    let mut rs2_read_value_eval_unreduced = F::UnreducedMulU128::zero();
 
                     for (i, cycle) in trace_chunk.iter().enumerate() {
                         let rd_write_value = cycle.rd_write().unwrap_or_default().2;
@@ -346,9 +346,9 @@ impl<F: JoltField> RegistersPhase2State<F> {
                             eq_evals[i].mul_u64_unreduced(rs2_value_eval);
                     }
 
-                    *rd_write_value_eval = F::from_barrett_reduce(rd_write_value_eval_unreduced);
-                    *rs1_read_value_eval = F::from_barrett_reduce(rs1_read_value_eval_unreduced);
-                    *rs2_read_value_eval = F::from_barrett_reduce(rs2_read_value_eval_unreduced);
+                    *rd_write_value_eval = F::reduce_mul_u128(rd_write_value_eval_unreduced);
+                    *rs1_read_value_eval = F::reduce_mul_u128(rs1_read_value_eval_unreduced);
+                    *rs2_read_value_eval = F::reduce_mul_u128(rs2_read_value_eval_unreduced);
                 },
             );
 

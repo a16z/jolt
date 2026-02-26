@@ -650,24 +650,6 @@ impl ark_std::rand::prelude::Distribution<MleAst> for ark_std::rand::distributio
     }
 }
 
-impl jolt_core::field::MulTrunc for MleAst {
-    type Other<const M: usize> = Self;
-
-    type Output<const P: usize> = Self;
-
-    fn mul_trunc<const M: usize, const P: usize>(&self, other: &Self::Other<M>) -> Self::Output<P> {
-        *self * other
-    }
-}
-
-impl jolt_core::field::MulU64WithCarry for MleAst {
-    type Output<const NPLUS1: usize> = Self;
-
-    fn mul_u64_w_carry<const NPLUS1: usize>(&self, _other: u64) -> Self::Output<NPLUS1> {
-        unimplemented!("Not needed for constructing ASTs");
-    }
-}
-
 impl From<ark_ff::biginteger::signed_hi_32::SignedBigIntHi32<3>> for MleAst {
     fn from(_value: ark_ff::biginteger::signed_hi_32::SignedBigIntHi32<3>) -> Self {
         unimplemented!("Not needed for constructing ASTs");
@@ -680,17 +662,81 @@ impl<const N: usize> From<[u64; N]> for MleAst {
     }
 }
 
+impl jolt_core::field::UnreducedInteger for MleAst {}
+
+/// Stub accumulator for MleAst's JoltField. Never instantiated at runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct MleAstAccumS;
+
+impl Zero for MleAstAccumS {
+    fn zero() -> Self {
+        Self
+    }
+    fn is_zero(&self) -> bool {
+        true
+    }
+}
+
+impl std::ops::Add for MleAstAccumS {
+    type Output = Self;
+    fn add(self, _rhs: Self) -> Self {
+        Self
+    }
+}
+
+impl std::fmt::Display for MleAstAccumS {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MleAstAccumS")
+    }
+}
+
+macro_rules! impl_fmadd_stub {
+    ($scalar:ty) => {
+        impl jolt_core::field::FMAdd<MleAst, $scalar> for MleAstAccumS {
+            fn fmadd(&mut self, _left: &MleAst, _right: &$scalar) {
+                unimplemented!("Not needed for constructing ASTs");
+            }
+        }
+    };
+}
+
+impl_fmadd_stub!(i128);
+impl_fmadd_stub!(ark_ff::biginteger::S64);
+impl_fmadd_stub!(ark_ff::biginteger::S128);
+impl_fmadd_stub!(ark_ff::biginteger::S160);
+impl_fmadd_stub!(ark_ff::biginteger::S192);
+impl_fmadd_stub!(ark_ff::biginteger::S256);
+
+impl jolt_core::field::BarrettReduce<MleAst> for MleAstAccumS {
+    fn barrett_reduce(&self) -> MleAst {
+        unimplemented!("Not needed for constructing ASTs");
+    }
+}
+
+impl jolt_core::field::MontgomeryReduce<MleAst> for MleAstAccumS {
+    fn montgomery_reduce(&self) -> MleAst {
+        unimplemented!("Not needed for constructing ASTs");
+    }
+}
+
 impl JoltField for MleAst {
     const NUM_BYTES: usize = 0;
+    const NUM_LIMBS: usize = 0;
 
     const MONTGOMERY_R: Self = todo!();
-
     const MONTGOMERY_R_SQUARE: Self = todo!();
 
-    type Unreduced<const N: usize> = Self;
+    type UnreducedElem = Self;
+    type UnreducedMulU64 = Self;
+    type UnreducedMulU128 = Self;
+    type UnreducedMulU128Accum = Self;
+    type UnreducedProduct = Self;
+    type UnreducedProductAccum = Self;
+
+    type WideAccumS = MleAstAccumS;
+    type FullAccumS = MleAstAccumS;
 
     type Challenge = Self;
-
     type SmallValueLookupTables = ();
 
     fn random<R: rand_core::RngCore>(_rng: &mut R) -> Self {
@@ -747,28 +793,51 @@ impl JoltField for MleAst {
         }
     }
 
-    fn as_unreduced_ref(&self) -> &Self::Unreduced<4> {
-        self
+    fn to_unreduced(&self) -> Self::UnreducedElem {
+        *self
     }
 
-    fn mul_unreduced<const N: usize>(self, other: Self) -> Self::Unreduced<N> {
-        self * other
-    }
-
-    fn mul_u64_unreduced(self, other: u64) -> Self::Unreduced<5> {
+    fn mul_u64_unreduced(self, other: u64) -> Self::UnreducedMulU64 {
         self * Self::from_u64(other)
     }
 
-    fn mul_u128_unreduced(self, other: u128) -> Self::Unreduced<6> {
+    fn mul_u128_unreduced(self, other: u128) -> Self::UnreducedMulU128 {
         self * Self::from_u128(other)
     }
 
-    fn from_montgomery_reduce<const N: usize>(unreduced: Self::Unreduced<N>) -> Self {
-        unreduced
+    fn mul_to_product(self, other: Self) -> Self::UnreducedProduct {
+        self * other
     }
 
-    fn from_barrett_reduce<const N: usize>(unreduced: Self::Unreduced<N>) -> Self {
-        unreduced
+    fn mul_to_product_accum(self, other: Self) -> Self::UnreducedProductAccum {
+        self * other
+    }
+
+    fn unreduced_mul_u64(a: &Self::UnreducedElem, b: u64) -> Self::UnreducedMulU64 {
+        *a * Self::from_u64(b)
+    }
+
+    fn unreduced_mul_to_product_accum(
+        a: &Self::UnreducedElem,
+        b: &Self::UnreducedElem,
+    ) -> Self::UnreducedProductAccum {
+        *a * b
+    }
+
+    fn reduce_mul_u64(x: Self::UnreducedMulU64) -> Self {
+        x
+    }
+    fn reduce_mul_u128(x: Self::UnreducedMulU128) -> Self {
+        x
+    }
+    fn reduce_mul_u128_accum(x: Self::UnreducedMulU128Accum) -> Self {
+        x
+    }
+    fn reduce_product(x: Self::UnreducedProduct) -> Self {
+        x
+    }
+    fn reduce_product_accum(x: Self::UnreducedProductAccum) -> Self {
+        x
     }
 }
 

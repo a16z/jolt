@@ -290,25 +290,25 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamValCheckSu
                 let lt_at_j_2 = lt_at_j_1 + lt_at_j_inf;
 
                 // Term (1): inc * wa * lt (degree 3).
-                let t1_at_1 = (inc_at_j_1 * wa_at_j_1).mul_unreduced::<9>(lt_at_j_1);
-                let t1_at_2 = (inc_at_j_2 * wa_at_j_2).mul_unreduced::<9>(lt_at_j_2);
-                let t1_at_inf = (inc_at_j_inf * wa_at_j_inf).mul_unreduced::<9>(lt_at_j_inf);
+                let t1_at_1 = (inc_at_j_1 * wa_at_j_1).mul_to_product_accum(lt_at_j_1);
+                let t1_at_2 = (inc_at_j_2 * wa_at_j_2).mul_to_product_accum(lt_at_j_2);
+                let t1_at_inf = (inc_at_j_inf * wa_at_j_inf).mul_to_product_accum(lt_at_j_inf);
 
                 // Term (2): γ * inc * wa (degree 2).
                 //
                 // IMPORTANT: In the cubic Toom reconstruction, the "∞ evaluation" corresponds to
                 // the coefficient of X^3. The quadratic term contributes nothing to that
                 // coefficient, so it must NOT be included in eval_at_inf.
-                let t2_at_1 = (inc_at_j_1 * wa_at_j_1).mul_unreduced::<9>(gamma);
-                let t2_at_2 = (inc_at_j_2 * wa_at_j_2).mul_unreduced::<9>(gamma);
+                let t2_at_1 = (inc_at_j_1 * wa_at_j_1).mul_to_product_accum(gamma);
+                let t2_at_2 = (inc_at_j_2 * wa_at_j_2).mul_to_product_accum(gamma);
 
                 [t1_at_1 + t2_at_1, t1_at_2 + t2_at_2, t1_at_inf]
             })
             .reduce(
-                || [F::Unreduced::zero(); DEGREE_BOUND],
+                || [F::UnreducedProductAccum::zero(); DEGREE_BOUND],
                 |a, b| array::from_fn(|i| a[i] + b[i]),
             )
-            .map(F::from_montgomery_reduce);
+            .map(F::reduce_product_accum);
 
         let eval_at_0 = previous_claim - eval_at_1;
         UniPoly::from_evals_toom(&[eval_at_0, eval_at_1, eval_at_2, eval_at_inf])

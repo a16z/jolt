@@ -280,12 +280,12 @@ impl<F: JoltField> InstructionLookupsPhase1State<F> {
         Q.par_chunks_mut(BLOCK_SIZE)
             .enumerate()
             .for_each(|(chunk_i, q_chunk)| {
-                let mut q_lookup_output = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
-                let mut q_left_lookup_operand = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
-                let mut q_right_lookup_operand = [F::Unreduced::<7>::zero(); BLOCK_SIZE];
-                let mut q_left_instruction_input = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
-                let mut q_right_instruction_input_pos = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
-                let mut q_right_instruction_input_neg = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
+                let mut q_lookup_output = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
+                let mut q_left_lookup_operand = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
+                let mut q_right_lookup_operand = [F::UnreducedMulU128Accum::zero(); BLOCK_SIZE];
+                let mut q_left_instruction_input = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
+                let mut q_right_instruction_input_pos = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
+                let mut q_right_instruction_input_neg = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
 
                 for x_hi in 0..(1 << suffix_n_vars) {
                     for i in 0..q_chunk.len() {
@@ -320,12 +320,12 @@ impl<F: JoltField> InstructionLookupsPhase1State<F> {
 
                 for (i, q) in q_chunk.iter_mut().enumerate() {
                     let right_instruction_input =
-                        F::from_barrett_reduce(q_right_instruction_input_pos[i])
-                            - F::from_barrett_reduce(q_right_instruction_input_neg[i]);
-                    *q = F::from_barrett_reduce(q_lookup_output[i])
-                        + gamma * F::from_barrett_reduce(q_left_lookup_operand[i])
-                        + gamma_sqr * F::from_barrett_reduce(q_right_lookup_operand[i]);
-                    *q += gamma_cub * F::from_barrett_reduce(q_left_instruction_input[i])
+                        F::reduce_mul_u128(q_right_instruction_input_pos[i])
+                            - F::reduce_mul_u128(q_right_instruction_input_neg[i]);
+                    *q = F::reduce_mul_u128(q_lookup_output[i])
+                        + gamma * F::reduce_mul_u128(q_left_lookup_operand[i])
+                        + gamma_sqr * F::reduce_mul_u128_accum(q_right_lookup_operand[i]);
+                    *q += gamma_cub * F::reduce_mul_u128(q_left_instruction_input[i])
                         + gamma_quart * right_instruction_input;
                 }
             });
@@ -411,12 +411,12 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
                     right_instruction_input_eval,
                     trace_chunk,
                 )| {
-                    let mut lookup_output_eval_unreduced = F::Unreduced::<6>::zero();
-                    let mut left_lookup_operand_eval_unreduced = F::Unreduced::<6>::zero();
-                    let mut right_lookup_operand_eval_unreduced = F::Unreduced::<7>::zero();
-                    let mut left_instruction_input_eval_unreduced = F::Unreduced::<6>::zero();
-                    let mut right_instruction_input_pos_unreduced = F::Unreduced::<6>::zero();
-                    let mut right_instruction_input_neg_unreduced = F::Unreduced::<6>::zero();
+                    let mut lookup_output_eval_unreduced = F::UnreducedMulU128::zero();
+                    let mut left_lookup_operand_eval_unreduced = F::UnreducedMulU128::zero();
+                    let mut right_lookup_operand_eval_unreduced = F::UnreducedMulU128Accum::zero();
+                    let mut left_instruction_input_eval_unreduced = F::UnreducedMulU128::zero();
+                    let mut right_instruction_input_pos_unreduced = F::UnreducedMulU128::zero();
+                    let mut right_instruction_input_neg_unreduced = F::UnreducedMulU128::zero();
 
                     for (i, cycle) in trace_chunk.iter().enumerate() {
                         let (left_instruction_input, right_instruction_input) =
@@ -444,16 +444,16 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
                         }
                     }
 
-                    *lookup_output_eval = F::from_barrett_reduce(lookup_output_eval_unreduced);
+                    *lookup_output_eval = F::reduce_mul_u128(lookup_output_eval_unreduced);
                     *left_lookup_operand_eval =
-                        F::from_barrett_reduce(left_lookup_operand_eval_unreduced);
+                        F::reduce_mul_u128(left_lookup_operand_eval_unreduced);
                     *right_lookup_operand_eval =
-                        F::from_barrett_reduce(right_lookup_operand_eval_unreduced);
+                        F::reduce_mul_u128_accum(right_lookup_operand_eval_unreduced);
                     *left_instruction_input_eval =
-                        F::from_barrett_reduce(left_instruction_input_eval_unreduced);
+                        F::reduce_mul_u128(left_instruction_input_eval_unreduced);
                     *right_instruction_input_eval =
-                        F::from_barrett_reduce(right_instruction_input_pos_unreduced)
-                            - F::from_barrett_reduce(right_instruction_input_neg_unreduced);
+                        F::reduce_mul_u128(right_instruction_input_pos_unreduced)
+                            - F::reduce_mul_u128(right_instruction_input_neg_unreduced);
                 },
             );
 

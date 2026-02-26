@@ -1,7 +1,7 @@
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::utils::accumulation::Acc6S;
+use crate::utils::accumulation::MedAccumS;
 use crate::utils::math::{s64_from_diff_u64s, Math};
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::config::OneHotParams;
@@ -786,8 +786,8 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         scaled_rd_inc: F,
         scaled_ram_inc: F,
         row_factor: F,
-        dense_acc: &mut Acc6S<F>,
-        onehot_acc: &mut F::Unreduced<9>,
+        dense_acc: &mut MedAccumS<F>,
+        onehot_acc: &mut F::UnreducedProductAccum,
     ) {
         // Dense polynomials: accumulate scaled_coeff * (post - pre)
         let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
@@ -800,20 +800,20 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         }
 
         // One-hot polynomials: accumulate using pre-folded K tables (unreduced)
-        let mut inner_sum = F::Unreduced::<5>::default();
+        let mut inner_sum = F::UnreducedMulU64::default();
 
         // Instruction RA chunks
         let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
         for (i, table) in self.folded_tables.instruction.iter().enumerate() {
             let k = self.one_hot_params.lookup_index_chunk(lookup_index, i) as usize;
-            inner_sum += *table[k].as_unreduced_ref();
+            inner_sum += table[k].to_unreduced();
         }
 
         // Bytecode RA chunks
         let pc = self.bytecode.get_pc(cycle);
         for (i, table) in self.folded_tables.bytecode.iter().enumerate() {
             let k = self.one_hot_params.bytecode_pc_chunk(pc, i) as usize;
-            inner_sum += *table[k].as_unreduced_ref();
+            inner_sum += table[k].to_unreduced();
         }
 
         // RAM RA chunks
@@ -821,17 +821,19 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         if let Some(remapped) = remap_address(address, self.memory_layout) {
             for (i, table) in self.folded_tables.ram.iter().enumerate() {
                 let k = self.one_hot_params.ram_address_chunk(remapped, i) as usize;
-                inner_sum += *table[k].as_unreduced_ref();
+                inner_sum += table[k].to_unreduced();
             }
         }
 
         // Reduce inner_sum before multiplying with row_factor
-        let inner_sum_reduced = F::from_barrett_reduce::<5>(inner_sum);
-        *onehot_acc += row_factor.mul_unreduced::<9>(inner_sum_reduced);
+        let inner_sum_reduced = F::reduce_mul_u64(inner_sum);
+        *onehot_acc += row_factor.mul_to_product_accum(inner_sum_reduced);
     }
 
     #[inline]
-    fn create_accumulators(num_columns: usize) -> (Vec<Acc6S<F>>, Vec<F::Unreduced<9>>) {
+    fn create_accumulators(
+        num_columns: usize,
+    ) -> (Vec<MedAccumS<F>>, Vec<F::UnreducedProductAccum>) {
         (
             unsafe_allocate_zero_vec(num_columns),
             unsafe_allocate_zero_vec(num_columns),
@@ -840,9 +842,9 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
 
     #[inline]
     fn merge_accumulators(
-        (mut dense_a, mut onehot_a): (Vec<Acc6S<F>>, Vec<F::Unreduced<9>>),
-        (dense_b, onehot_b): (Vec<Acc6S<F>>, Vec<F::Unreduced<9>>),
-    ) -> (Vec<Acc6S<F>>, Vec<F::Unreduced<9>>) {
+        (mut dense_a, mut onehot_a): (Vec<MedAccumS<F>>, Vec<F::UnreducedProductAccum>),
+        (dense_b, onehot_b): (Vec<MedAccumS<F>>, Vec<F::UnreducedProductAccum>),
+    ) -> (Vec<MedAccumS<F>>, Vec<F::UnreducedProductAccum>) {
         for (a, b) in dense_a.iter_mut().zip(dense_b.iter()) {
             *a = *a + *b;
         }
@@ -853,15 +855,14 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
     }
 
     fn finalize(
-        dense_accs: Vec<Acc6S<F>>,
-        onehot_accs: Vec<F::Unreduced<9>>,
+        dense_accs: Vec<MedAccumS<F>>,
+        onehot_accs: Vec<F::UnreducedProductAccum>,
         num_columns: usize,
     ) -> Vec<F> {
         (0..num_columns)
             .into_par_iter()
             .map(|col_idx| {
-                dense_accs[col_idx].barrett_reduce()
-                    + F::from_montgomery_reduce::<9>(onehot_accs[col_idx])
+                dense_accs[col_idx].barrett_reduce() + F::reduce_product_accum(onehot_accs[col_idx])
             })
             .collect()
     }

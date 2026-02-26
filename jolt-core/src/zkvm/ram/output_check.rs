@@ -203,7 +203,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
         // q is quadratic in the current variable. Compute:
         //   c0 = q(0) = io0 * (vf0 - vio0)
         //   e  = coeff of X^2 in q(X) = (io1 - io0) * ((vf1 - vio1) - (vf0 - vio0))
-        let [q_constant, q_quadratic] = eq_r_address.par_fold_out_in_unreduced::<9, 2>(&|g| {
+        let [q_constant, q_quadratic] = eq_r_address.par_fold_out_in_unreduced::<2>(&|g| {
             let io0 = io_mask.get_bound_coeff(2 * g);
             let io1 = io_mask.get_bound_coeff(2 * g + 1);
             let vf0 = val_final.get_bound_coeff(2 * g);
