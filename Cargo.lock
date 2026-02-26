@@ -2836,7 +2836,6 @@ dependencies = [
  "log",
  "mimalloc",
  "rand 0.8.5",
- "serde",
  "syn 1.0.109",
  "sysinfo 0.30.13",
  "toml_edit 0.22.27",

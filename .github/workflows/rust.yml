@@ -111,13 +111,6 @@ jobs:
           curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | sh
           rustup target add wasm32-unknown-unknown
 
-      - name: Pre-pin WASM verify deps to current commit
-        run: |
-          COMMIT_HASH=$(git rev-parse HEAD)
-          cd sample_project
-          sed -i '/^\[dependencies\]/a jolt-core = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }' Cargo.toml
-          sed -i '/^\[dependencies\]/a tracer = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }' Cargo.toml
-
       - name: Run jolt build-wasm
         working-directory: ./sample_project
         run: jolt build-wasm

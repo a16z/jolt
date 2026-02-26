@@ -19,7 +19,7 @@ use jolt_core::{
     },
 };
 use syn::{Attribute, ItemFn, Meta, PathSegment};
-use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table, Value};
+use toml_edit::{value, Array, DocumentMut, Item, Table};
 
 struct FunctionAttributes {
     pub func_name: String,
@@ -221,20 +221,11 @@ fn generate_wasm_verify_rs(func_names: &[String]) -> Result<()> {
     let mut code = String::new();
     code.push_str(
         r#"use wasm_bindgen::prelude::*;
-use ark_bn254::Fr;
-use jolt_core::{
-    poly::commitment::dory::DoryCommitmentScheme,
-    transcripts::Blake2bTranscript,
-    zkvm::{
-        verifier::JoltVerifierPreprocessing,
-        Serializable,
-    },
+use jolt_sdk::{
+    F, PCS, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, Serializable,
 };
-use tracer::JoltDevice;
 
-type VerifierPreprocessing = JoltVerifierPreprocessing<Fr, DoryCommitmentScheme>;
-type Proof = jolt_core::zkvm::proof_serialization::JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
-type Verifier<'a> = jolt_core::zkvm::verifier::JoltVerifier<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
+type VerifierPreprocessing = JoltVerifierPreprocessing<F, PCS>;
 "#,
     );
 
@@ -247,7 +238,7 @@ pub fn verify_{func_name}(preprocessing_data: &[u8], proof_data: &[u8], io_data:
         Ok(p) => p,
         Err(_) => return false,
     }};
-    let proof = match Proof::deserialize_from_bytes(proof_data) {{
+    let proof = match RV64IMACProof::deserialize_from_bytes(proof_data) {{
         Ok(p) => p,
         Err(_) => return false,
     }};
@@ -255,7 +246,7 @@ pub fn verify_{func_name}(preprocessing_data: &[u8], proof_data: &[u8], io_data:
         Ok(d) => d,
         Err(_) => return false,
     }};
-    let verifier = match Verifier::new(&preprocessing, proof, program_io, None, None) {{
+    let verifier = match RV64IMACVerifier::new(&preprocessing, proof, program_io, None, None) {{
         Ok(v) => v,
         Err(_) => return false,
     }};
@@ -282,32 +273,6 @@ pub fn modify_cargo_toml(name: &str) -> Result<()> {
         insert_if_absent(dependencies, "wasm-bindgen", toml_edit::value("0.2.73"));
     }
 
-    fn add_wasm_verify_dependencies(dependencies: &mut Table) {
-        add_wasm_dependencies(dependencies);
-
-        let jolt_git = "https://github.com/a16z/jolt";
-        for (name, package) in [("jolt-core", Some("jolt-core")), ("tracer", Some("tracer"))] {
-            let mut table = InlineTable::new();
-            table.insert("git", Value::from(jolt_git));
-            if let Some(pkg) = package {
-                table.insert("package", Value::from(pkg));
-            }
-            insert_if_absent(dependencies, name, Item::Value(Value::InlineTable(table)));
-        }
-
-        let mut ark_table = InlineTable::new();
-        ark_table.insert(
-            "git",
-            Value::from("https://github.com/a16z/arkworks-algebra"),
-        );
-        ark_table.insert("branch", Value::from("dev/twist-shout"));
-        insert_if_absent(
-            dependencies,
-            "ark-bn254",
-            Item::Value(Value::InlineTable(ark_table)),
-        );
-    }
-
     {
         let cargo_toml_path = format!("{name}/Cargo.toml");
         let content = fs::read_to_string(&cargo_toml_path)?;
@@ -323,7 +288,7 @@ pub fn modify_cargo_toml(name: &str) -> Result<()> {
         lib_section["crate-type"] = Item::Value(toml_edit::Value::Array(array));
         lib_section["path"] = value("src/wasm_verify.rs");
         let dependencies = doc["dependencies"].as_table_mut().unwrap();
-        add_wasm_verify_dependencies(dependencies);
+        add_wasm_dependencies(dependencies);
 
         fs::write(cargo_toml_path, doc.to_string())?;
     }

@@ -437,6 +437,9 @@ fn create_guest_files(name: &str) -> eyre::Result<()> {
 }
 
 fn display_welcome() {
+    if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        return;
+    }
     display_greeting();
     println!("{}", "-".repeat(80));
     display_sysinfo();
