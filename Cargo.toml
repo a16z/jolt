@@ -224,7 +224,7 @@ proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.36.7", features = [
+object = { version = "0.38.1", features = [
     "build_core",
     "elf",
 ], default-features = false }
@@ -242,7 +242,7 @@ spinners = { version = "4.1.1", default-features = false }
 # Testing
 criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.16.1"
-serial_test = "3.2.0"
+serial_test = "3.4.0"
 
 # Logging
 log = { version = "0.4" }
