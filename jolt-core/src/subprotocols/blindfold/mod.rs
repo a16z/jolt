@@ -39,9 +39,112 @@ pub use witness::{
     BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, RoundWitness, StageWitness,
 };
 
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::opening_proof::OpeningId;
 use crate::utils::math::Math;
+
+/// ZK data collected during `prove_zk` for a single batched sumcheck stage.
+///
+/// Stores polynomial coefficients, blinding factors, and Pedersen commitments
+/// needed to construct the BlindFold witness. Commitments are stored as native
+/// curve points (no serialization overhead).
+#[derive(Clone, Debug)]
+pub struct ZkStageData<F: JoltField, C: JoltCurve> {
+    pub initial_claim: F,
+    pub round_commitments: Vec<C::G1>,
+    pub poly_coeffs: Vec<Vec<F>>,
+    pub blinding_factors: Vec<F>,
+    pub challenges: Vec<F::Challenge>,
+    pub batching_coefficients: Vec<F>,
+    pub expected_evaluations: Vec<F>,
+    pub output_constraints: Vec<Option<OutputClaimConstraint>>,
+    pub constraint_challenge_values: Vec<Vec<F>>,
+    pub input_constraints: Vec<InputClaimConstraint>,
+    pub input_constraint_challenge_values: Vec<Vec<F>>,
+    pub input_claim_scaling_exponents: Vec<usize>,
+    pub output_claims_blinding: F,
+    pub output_claims_commitment: C::G1,
+}
+
+/// ZK data for a uni-skip first round.
+///
+/// Unlike regular sumcheck, uni-skip uses the full polynomial (not compressed).
+/// Commitments are stored as native curve points.
+#[derive(Clone, Debug)]
+pub struct UniSkipStageData<F: JoltField, C: JoltCurve> {
+    pub input_claim: F,
+    pub poly_coeffs: Vec<F>,
+    pub blinding_factor: F,
+    pub challenge: F::Challenge,
+    pub poly_degree: usize,
+    pub commitment: C::G1,
+    pub input_constraint: InputClaimConstraint,
+    pub input_constraint_challenge_values: Vec<F>,
+    pub output_claims: Vec<F>,
+    pub output_claims_blinding: F,
+    pub output_claims_commitment: C::G1,
+}
+
+/// ZK data from the PCS opening proof stage (stage 8).
+///
+/// Stores the opening IDs, batching coefficients, joint claim, and blinding
+/// factor needed by BlindFold's extra constraint.
+#[derive(Clone, Debug)]
+pub struct OpeningProofData<F: JoltField> {
+    pub opening_ids: Vec<OpeningId>,
+    pub constraint_coeffs: Vec<F>,
+    pub joint_claim: F,
+    pub y_blinding: F,
+}
+
+/// Accumulates BlindFold-specific data during ZK proving.
+///
+/// Separates ZK concerns (Pedersen commitments, blinding factors) from the
+/// general-purpose `ProverOpeningAccumulator`.
+#[derive(Clone, Debug)]
+pub struct BlindFoldAccumulator<F: JoltField, C: JoltCurve> {
+    stage_data: Vec<ZkStageData<F, C>>,
+    uniskip_data: Vec<UniSkipStageData<F, C>>,
+    opening_proof_data: Option<OpeningProofData<F>>,
+}
+
+impl<F: JoltField, C: JoltCurve> BlindFoldAccumulator<F, C> {
+    pub fn new() -> Self {
+        Self {
+            stage_data: Vec::new(),
+            uniskip_data: Vec::new(),
+            opening_proof_data: None,
+        }
+    }
+
+    pub fn push_stage_data(&mut self, data: ZkStageData<F, C>) {
+        self.stage_data.push(data);
+    }
+
+    pub fn take_stage_data(&mut self) -> Vec<ZkStageData<F, C>> {
+        std::mem::take(&mut self.stage_data)
+    }
+
+    pub fn push_uniskip_data(&mut self, data: UniSkipStageData<F, C>) {
+        self.uniskip_data.push(data);
+    }
+
+    pub fn take_uniskip_data(&mut self) -> Vec<UniSkipStageData<F, C>> {
+        std::mem::take(&mut self.uniskip_data)
+    }
+
+    pub fn set_opening_proof_data(&mut self, data: OpeningProofData<F>) {
+        self.opening_proof_data = Some(data);
+    }
+
+    pub fn take_opening_proof_data(&mut self) -> OpeningProofData<F> {
+        self.opening_proof_data
+            .take()
+            .expect("opening_proof_data must be set before prove_blindfold")
+    }
+}
 
 /// Values baked into R1CS matrix coefficients instead of being public inputs in Z.
 ///

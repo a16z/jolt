@@ -1,6 +1,4 @@
 #[cfg(feature = "zk")]
-use crate::poly::opening_proof::OpeningId;
-#[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
 use crate::zkvm::{claim_reductions::advice::ReductionPhase, config::OneHotConfig};
 use std::{
@@ -191,16 +189,7 @@ pub struct JoltCpuProver<
     pub pedersen_generators: PedersenGenerators<C>,
     pub rw_config: ReadWriteConfig,
     #[cfg(feature = "zk")]
-    stage8_zk_data: Option<Stage8ZkData<F>>,
-}
-
-#[cfg(feature = "zk")]
-#[derive(Clone, Debug)]
-struct Stage8ZkData<F: JoltField> {
-    opening_ids: Vec<OpeningId>,
-    constraint_coeffs: Vec<F>,
-    joint_claim: F,
-    y_blinding: F,
+    blindfold_accumulator: crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
 }
 
 impl<
@@ -465,7 +454,7 @@ impl<
             rw_config,
             pedersen_generators,
             #[cfg(feature = "zk")]
-            stage8_zk_data: None,
+            blindfold_accumulator: crate::subprotocols::blindfold::BlindFoldAccumulator::new(),
         }
     }
 
@@ -596,6 +585,7 @@ impl<
             BatchedSumcheck::prove_zk::<F, C, _, _>(
                 instances,
                 &mut self.opening_accumulator,
+                &mut self.blindfold_accumulator,
                 &mut self.transcript,
                 &self.pedersen_generators,
                 &mut rng,
@@ -622,6 +612,7 @@ impl<
             let zk_proof = prove_uniskip_round_zk::<F, C, _, _, _>(
                 instance,
                 &mut self.opening_accumulator,
+                &mut self.blindfold_accumulator,
                 &mut self.transcript,
                 &self.pedersen_generators,
                 &mut rng,
@@ -1381,25 +1372,15 @@ impl<
         (sumcheck_proof, r_stage6)
     }
 
-    /// Prove BlindFold protocol to make sumcheck proofs zero-knowledge.
-    ///
-    /// This method retrieves ZK stage data (coefficients, challenges, initial claims)
-    /// from the opening accumulator where it was stored during prove_zk calls.
-    /// The coefficients and blinding factors are hidden from the verifier (who only
-    /// sees commitments), while BlindFold proves the R1CS constraints are satisfied.
     #[tracing::instrument(skip_all)]
     #[cfg(feature = "zk")]
     fn prove_blindfold(&mut self, joint_opening_proof: &PCS::Proof) -> BlindFoldProof<F, C> {
-        let stage8_data = self
-            .stage8_zk_data
-            .as_ref()
-            .expect("stage8_zk_data must be populated before prove_blindfold");
+        let stage8_data = self.blindfold_accumulator.take_opening_proof_data();
         tracing::info!("BlindFold proving");
 
         let mut rng = rand::thread_rng();
 
-        // Retrieve uni-skip stage data (stages 1-2 first rounds)
-        let uniskip_stages = self.opening_accumulator.take_uniskip_stage_data();
+        let uniskip_stages = self.blindfold_accumulator.take_uniskip_data();
         assert_eq!(
             uniskip_stages.len(),
             2,
@@ -1407,8 +1388,7 @@ impl<
             uniskip_stages.len()
         );
 
-        // Retrieve ZK stage data from the accumulator
-        let zk_stages = self.opening_accumulator.take_zk_stage_data();
+        let zk_stages = self.blindfold_accumulator.take_stage_data();
         assert_eq!(
             zk_stages.len(),
             7,
@@ -1698,28 +1678,22 @@ impl<
 
         let witness: Vec<F> = z[1..].to_vec();
 
-        // Collect round commitments and blindings from all stages
         let mut round_commitments: Vec<C::G1> = Vec::new();
         let mut round_blindings: Vec<F> = Vec::new();
 
         for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
-            // For stages 0-1, include uni-skip round first
             if stage_idx < 2 {
                 let uniskip = &uniskip_stages[stage_idx];
-                let commitment =
-                    C::G1::deserialize_compressed(&uniskip.commitment_bytes[..]).unwrap();
-                round_commitments.push(commitment);
+                round_commitments.push(uniskip.commitment);
                 round_blindings.push(uniskip.blinding_factor);
             }
 
-            // Add regular sumcheck rounds
-            for (commitment_bytes, blinding) in zk_data
+            for (commitment, blinding) in zk_data
                 .round_commitments
                 .iter()
                 .zip(&zk_data.blinding_factors)
             {
-                let commitment = C::G1::deserialize_compressed(&commitment_bytes[..]).unwrap();
-                round_commitments.push(commitment);
+                round_commitments.push(*commitment);
                 round_blindings.push(*blinding);
             }
         }
@@ -2038,12 +2012,14 @@ impl<
         {
             let y_com: C::G1 = PCS::eval_commitment(&proof).expect("ZK proof must have y_com");
             bind_opening_inputs_zk::<F, C, _>(&mut self.transcript, &opening_point.r, &y_com);
-            self.stage8_zk_data = Some(Stage8ZkData {
-                opening_ids,
-                constraint_coeffs,
-                joint_claim,
-                y_blinding: _y_blinding.expect("ZK mode requires y_blinding"),
-            });
+            self.blindfold_accumulator.set_opening_proof_data(
+                crate::subprotocols::blindfold::OpeningProofData {
+                    opening_ids,
+                    constraint_coeffs,
+                    joint_claim,
+                    y_blinding: _y_blinding.expect("ZK mode requires y_blinding"),
+                },
+            );
         }
         #[cfg(not(feature = "zk"))]
         {

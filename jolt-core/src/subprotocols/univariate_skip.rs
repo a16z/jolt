@@ -9,8 +9,6 @@ use crate::field::JoltField;
 #[cfg(feature = "zk")]
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangePolynomial;
-#[cfg(feature = "zk")]
-use crate::poly::opening_proof::UniSkipStageData;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
@@ -160,26 +158,21 @@ pub fn prove_uniskip_round_zk<
 >(
     instance: &mut I,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
+    blindfold_accumulator: &mut crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
     transcript: &mut T,
     pedersen_gens: &PedersenGenerators<C>,
     rng: &mut R,
 ) -> ZkUniSkipFirstRoundProof<F, C, T> {
+    use crate::subprotocols::blindfold::UniSkipStageData;
+
     let input_claim = instance.input_claim(opening_accumulator);
     let uni_poly = instance.compute_message(0, input_claim);
     let poly_degree = uni_poly.degree();
 
-    // Generate blinding and compute Pedersen commitment to all coefficients
     let blinding = F::random(rng);
     let commitment = pedersen_gens.commit(&uni_poly.coeffs, &blinding);
 
-    // Append commitment to transcript (NOT raw coefficients)
     transcript.append_point(b"sumcheck_commitment", &commitment);
-
-    // Serialize commitment for BlindFold storage
-    let mut commitment_bytes = Vec::new();
-    commitment
-        .serialize_compressed(&mut commitment_bytes)
-        .expect("Serialization should not fail");
 
     let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
     instance.cache_openings(opening_accumulator, &[r0]);
@@ -190,30 +183,23 @@ pub fn prove_uniskip_round_zk<
 
     transcript.append_point(b"output_claims_commitment", &output_claims_commitment);
 
-    let mut output_claims_commitment_bytes = Vec::new();
-    output_claims_commitment
-        .serialize_compressed(&mut output_claims_commitment_bytes)
-        .expect("Serialization should not fail");
-
-    // Get input constraint from the instance params
     let input_constraint = instance.get_params().input_claim_constraint();
     let input_constraint_challenge_values = instance
         .get_params()
         .input_constraint_challenge_values(opening_accumulator);
 
-    // Store uni-skip data in accumulator for BlindFold
-    opening_accumulator.push_uniskip_stage_data(UniSkipStageData {
+    blindfold_accumulator.push_uniskip_data(UniSkipStageData {
         input_claim,
         poly_coeffs: uni_poly.coeffs.clone(),
         blinding_factor: blinding,
         challenge: r0,
         poly_degree,
-        commitment_bytes,
+        commitment,
         input_constraint,
         input_constraint_challenge_values,
         output_claims,
         output_claims_blinding,
-        output_claims_commitment_bytes,
+        output_claims_commitment,
     });
 
     ZkUniSkipFirstRoundProof::new(commitment, poly_degree, output_claims_commitment)

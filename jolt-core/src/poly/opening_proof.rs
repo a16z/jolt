@@ -193,65 +193,6 @@ impl OpeningId {
 pub type Opening<F> = (OpeningPoint<BIG_ENDIAN, F>, F);
 pub type Openings<F> = BTreeMap<OpeningId, Opening<F>>;
 
-/// ZK data collected during prove_zk for later use by BlindFold.
-///
-/// When ZK sumcheck is used, this stores the polynomial coefficients and
-/// blinding factors that are needed to construct the BlindFold witness.
-/// The commitments are stored as serialized bytes to keep the accumulator
-/// curve-agnostic.
-#[cfg(feature = "zk")]
-#[derive(Clone, Debug)]
-pub struct ZkStageData<F: JoltField> {
-    /// Initial batched claim for this sumcheck stage
-    pub initial_claim: F,
-    /// Pedersen commitments to round polynomials (serialized G1 points)
-    pub round_commitments: Vec<Vec<u8>>,
-    /// Full polynomial coefficients for each round
-    pub poly_coeffs: Vec<Vec<F>>,
-    /// Blinding factors used for Pedersen commitments (one per round)
-    pub blinding_factors: Vec<F>,
-    /// Challenges derived during this sumcheck
-    pub challenges: Vec<F::Challenge>,
-    /// Batching coefficients for this stage (one per batched instance).
-    /// Used in final output constraint: final_claim = Σⱼ αⱼ · yⱼ
-    pub batching_coefficients: Vec<F>,
-    /// Expected output evaluations for each batched instance.
-    /// These are the polynomial evaluations at the random sumcheck point,
-    /// proven correct via ZK-Dory externally.
-    pub expected_evaluations: Vec<F>,
-    pub output_constraints: Vec<Option<crate::subprotocols::blindfold::OutputClaimConstraint>>,
-    pub constraint_challenge_values: Vec<Vec<F>>,
-    pub input_constraints: Vec<crate::subprotocols::blindfold::InputClaimConstraint>,
-    pub input_constraint_challenge_values: Vec<Vec<F>>,
-    pub input_claim_scaling_exponents: Vec<usize>,
-    pub output_claims_blinding: F,
-    pub output_claims_commitment_bytes: Vec<u8>,
-}
-
-/// ZK data for uni-skip first round (Stages 1-2).
-/// Unlike regular sumcheck, uni-skip uses full polynomial (not compressed).
-#[cfg(feature = "zk")]
-#[derive(Clone, Debug)]
-pub struct UniSkipStageData<F: JoltField> {
-    /// Initial claim for this uni-skip round
-    pub input_claim: F,
-    /// Full polynomial coefficients (not compressed)
-    pub poly_coeffs: Vec<F>,
-    /// Blinding factor for Pedersen commitment
-    pub blinding_factor: F,
-    /// Challenge derived after committing
-    pub challenge: F::Challenge,
-    /// Polynomial degree
-    pub poly_degree: usize,
-    /// Serialized commitment bytes
-    pub commitment_bytes: Vec<u8>,
-    pub input_constraint: crate::subprotocols::blindfold::InputClaimConstraint,
-    pub input_constraint_challenge_values: Vec<F>,
-    pub output_claims: Vec<F>,
-    pub output_claims_blinding: F,
-    pub output_claims_commitment_bytes: Vec<u8>,
-}
-
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
 #[derive(Clone, Allocative)]
@@ -263,12 +204,6 @@ where
     #[cfg(test)]
     pub appended_virtual_openings: RefCell<Vec<OpeningId>>,
     log_T: usize,
-    #[cfg(feature = "zk")]
-    #[allocative(skip)]
-    zk_stage_data: Vec<ZkStageData<F>>,
-    #[cfg(feature = "zk")]
-    #[allocative(skip)]
-    uniskip_stage_data: Vec<UniSkipStageData<F>>,
     #[allocative(skip)]
     pending_claims: Vec<F>,
 }
@@ -432,10 +367,6 @@ where
             #[cfg(test)]
             appended_virtual_openings: std::cell::RefCell::new(vec![]),
             log_T,
-            #[cfg(feature = "zk")]
-            zk_stage_data: Vec::new(),
-            #[cfg(feature = "zk")]
-            uniskip_stage_data: Vec::new(),
             pending_claims: Vec::new(),
         }
     }
@@ -538,26 +469,6 @@ where
             (opening_point, claim),
         );
         self.pending_claims.push(claim);
-    }
-
-    #[cfg(feature = "zk")]
-    pub fn push_zk_stage_data(&mut self, data: ZkStageData<F>) {
-        self.zk_stage_data.push(data);
-    }
-
-    #[cfg(feature = "zk")]
-    pub fn take_zk_stage_data(&mut self) -> Vec<ZkStageData<F>> {
-        std::mem::take(&mut self.zk_stage_data)
-    }
-
-    #[cfg(feature = "zk")]
-    pub fn push_uniskip_stage_data(&mut self, data: UniSkipStageData<F>) {
-        self.uniskip_stage_data.push(data);
-    }
-
-    #[cfg(feature = "zk")]
-    pub fn take_uniskip_stage_data(&mut self) -> Vec<UniSkipStageData<F>> {
-        std::mem::take(&mut self.uniskip_stage_data)
     }
 
     pub fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {

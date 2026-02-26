@@ -203,6 +203,7 @@ impl BatchedSumcheck {
     pub fn prove_zk<F: JoltField, C: JoltCurve, ProofTranscript: Transcript, R: CryptoRngCore>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
+        blindfold_accumulator: &mut crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
         transcript: &mut ProofTranscript,
         pedersen_gens: &PedersenGenerators<C>,
         rng: &mut R,
@@ -211,7 +212,7 @@ impl BatchedSumcheck {
         Vec<F::Challenge>,
         F,
     ) {
-        use crate::poly::opening_proof::ZkStageData;
+        use crate::subprotocols::blindfold::ZkStageData;
 
         let max_num_rounds = sumcheck_instances
             .iter()
@@ -241,7 +242,6 @@ impl BatchedSumcheck {
 
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
         let mut round_commitments_g1: Vec<C::G1> = Vec::with_capacity(max_num_rounds);
-        let mut round_commitments_bytes: Vec<Vec<u8>> = Vec::with_capacity(max_num_rounds);
         let mut poly_coeffs: Vec<Vec<F>> = Vec::with_capacity(max_num_rounds);
         let mut blinding_factors: Vec<F> = Vec::with_capacity(max_num_rounds);
         let mut poly_degrees: Vec<usize> = Vec::with_capacity(max_num_rounds);
@@ -283,14 +283,7 @@ impl BatchedSumcheck {
             let blinding = F::random(rng);
             let commitment = pedersen_gens.commit(&batched_univariate_poly.coeffs, &blinding);
 
-            // Append commitment to transcript (instead of raw coefficients)
             transcript.append_point(b"sumcheck_commitment", &commitment);
-
-            // Serialize commitment for BlindFold storage
-            let mut commitment_bytes = Vec::new();
-            commitment
-                .serialize_compressed(&mut commitment_bytes)
-                .expect("Serialization should not fail");
 
             let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
@@ -310,10 +303,7 @@ impl BatchedSumcheck {
                 }
             }
 
-            // Store data for BlindFold
             round_commitments_g1.push(commitment);
-            round_commitments_bytes.push(commitment_bytes);
-            // Polynomial degree = number of coefficients - 1
             poly_degrees.push(batched_univariate_poly.coeffs.len() - 1);
             poly_coeffs.push(batched_univariate_poly.coeffs.clone());
             blinding_factors.push(blinding);
@@ -345,11 +335,6 @@ impl BatchedSumcheck {
             pedersen_gens.commit(&output_claims, &output_claims_blinding);
 
         transcript.append_point(b"output_claims_commitment", &output_claims_commitment);
-
-        let mut output_claims_commitment_bytes = Vec::new();
-        output_claims_commitment
-            .serialize_compressed(&mut output_claims_commitment_bytes)
-            .expect("Serialization should not fail");
 
         // Collect output constraints and challenge values from each sumcheck instance
         let output_constraints: Vec<_> = sumcheck_instances
@@ -391,15 +376,13 @@ impl BatchedSumcheck {
             .map(|sumcheck| max_num_rounds - sumcheck.num_rounds())
             .collect();
 
-        // Store ZK data in accumulator for BlindFold to retrieve later
-        let batching_coefficients_f: Vec<F> = batching_coeffs.to_vec();
-        opening_accumulator.push_zk_stage_data(ZkStageData {
+        blindfold_accumulator.push_stage_data(ZkStageData {
             initial_claim: initial_batched_claim,
-            round_commitments: round_commitments_bytes,
+            round_commitments: round_commitments_g1.clone(),
             poly_coeffs,
             blinding_factors,
             challenges: r_sumcheck.clone(),
-            batching_coefficients: batching_coefficients_f,
+            batching_coefficients: batching_coeffs.to_vec(),
             expected_evaluations: output_claims,
             output_constraints,
             constraint_challenge_values,
@@ -407,7 +390,7 @@ impl BatchedSumcheck {
             input_constraint_challenge_values,
             input_claim_scaling_exponents,
             output_claims_blinding,
-            output_claims_commitment_bytes,
+            output_claims_commitment,
         });
 
         (
