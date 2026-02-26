@@ -289,7 +289,7 @@ mod tests {
         let r1cs = builder.build();
 
         let z = blindfold_witness.assign(&r1cs);
-        assert!(r1cs.is_satisfied(&z));
+        r1cs.check_satisfaction(&z).unwrap();
 
         // witness_start = 1 (no public inputs)
         let witness: Vec<F> = z[1..].to_vec();

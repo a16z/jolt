@@ -303,7 +303,7 @@ mod tests {
             BlindFoldWitness::new(F::from_u64(140), vec![StageWitness::new(vec![round2])]);
         let z2 = blindfold_witness2.assign(&r1cs);
 
-        assert!(r1cs.is_satisfied(&z1));
+        r1cs.check_satisfaction(&z1).unwrap();
 
         let T = compute_cross_term(&r1cs, &z1, F::one(), &z2, F::one());
         assert_eq!(T.len(), r1cs.num_constraints);

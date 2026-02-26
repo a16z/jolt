@@ -296,23 +296,6 @@ pub struct VerifierR1CS<F: JoltField> {
 }
 
 impl<F: JoltField> VerifierR1CS<F> {
-    /// Check if the R1CS is satisfied: Az ∘ Bz = Cz
-    pub fn is_satisfied(&self, z: &[F]) -> bool {
-        assert_eq!(z.len(), self.num_vars);
-        assert_eq!(z[0], F::one(), "Z[0] must be 1");
-
-        let az = self.a.mul_vector(z);
-        let bz = self.b.mul_vector(z);
-        let cz = self.c.mul_vector(z);
-
-        for row in 0..self.num_constraints {
-            if az[row] * bz[row] != cz[row] {
-                return false;
-            }
-        }
-        true
-    }
-
     /// Check satisfaction and return the first failing constraint index if any
     pub fn check_satisfaction(&self, z: &[F]) -> Result<(), usize> {
         assert_eq!(z.len(), self.num_vars);
@@ -739,7 +722,7 @@ mod tests {
         let r1cs = builder.build();
 
         let z = witness.assign(&r1cs);
-        assert!(r1cs.is_satisfied(&z), "R1CS should be satisfied");
+        r1cs.check_satisfaction(&z).unwrap();
     }
 
     #[test]

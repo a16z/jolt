@@ -661,7 +661,7 @@ mod tests {
         let r1cs = builder.build();
 
         let z = blindfold_witness.assign(&r1cs);
-        assert!(r1cs.is_satisfied(&z));
+        r1cs.check_satisfaction(&z).unwrap();
 
         let e = vec![F::zero(); r1cs.num_constraints];
 

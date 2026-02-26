@@ -3238,7 +3238,7 @@ mod tests {
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.hyrax.C + 1);
 
         let z = blindfold_witness.assign(&r1cs);
-        assert!(r1cs.is_satisfied(&z));
+        r1cs.check_satisfaction(&z).unwrap();
 
         let witness: Vec<Fr> = z[1..].to_vec();
 

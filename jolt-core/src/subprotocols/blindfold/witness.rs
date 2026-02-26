@@ -556,7 +556,7 @@ mod tests {
         let r1cs = builder.build();
 
         let z = witness.assign(&r1cs);
-        assert!(r1cs.is_satisfied(&z), "R1CS should be satisfied");
+        r1cs.check_satisfaction(&z).unwrap();
     }
 
     #[test]
@@ -584,6 +584,6 @@ mod tests {
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
         let z = witness.assign(&r1cs);
-        assert!(r1cs.is_satisfied(&z));
+        r1cs.check_satisfaction(&z).unwrap();
     }
 }
