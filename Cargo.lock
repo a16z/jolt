@@ -1731,7 +1731,8 @@ dependencies = [
 [[package]]
 name = "dory-derive"
 version = "0.2.0"
-source = "git+https://github.com/a16z/dory#4b37c1c0d35e0c0b7283c18890bbee7011976e75"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c16f2dd35390487818e07efb4459ee0a5c2c65761081ee632d531442a980c97b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1741,7 +1742,8 @@ dependencies = [
 [[package]]
 name = "dory-pcs"
 version = "0.2.0"
-source = "git+https://github.com/a16z/dory#4b37c1c0d35e0c0b7283c18890bbee7011976e75"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccf838baede4d71cdbfeb618e36b98ead4c37b1e4b29fa266abd854f0a496732"
 dependencies = [
  "ark-bn254",
  "ark-ec",
