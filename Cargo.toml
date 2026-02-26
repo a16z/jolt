@@ -241,7 +241,7 @@ spinners = { version = "4.1.1", default-features = false }
 
 # Testing
 criterion = { version = "0.5.1", features = ["html_reports"] }
-iai-callgrind = "0.10.2"
+iai-callgrind = "0.16.1"
 serial_test = "3.2.0"
 
 # Logging
