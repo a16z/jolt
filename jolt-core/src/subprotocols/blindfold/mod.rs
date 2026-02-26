@@ -41,7 +41,6 @@ pub use witness::{
 
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
-use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::OpeningId;
 use crate::utils::math::Math;
 
@@ -278,51 +277,6 @@ impl HyraxParams {
 
     pub fn noncoeff_rows(&self) -> usize {
         self.noncoeff_count.div_ceil(self.C)
-    }
-
-    /// combined[k] = Σ_i eq(ry_row, i) · flat[i*C + k]
-    pub fn combined_row<F: JoltField>(&self, flat: &[F], ry_row: &[F]) -> Vec<F> {
-        Self::combined_row_static(flat, self.C, ry_row)
-    }
-
-    pub fn combined_row_static<F: JoltField>(flat: &[F], hyrax_C: usize, ry_row: &[F]) -> Vec<F> {
-        let R = 1usize << ry_row.len();
-        let eq_row: Vec<F> = EqPolynomial::evals(ry_row);
-
-        let mut combined = vec![F::zero(); hyrax_C];
-        for i in 0..R {
-            let w: F = eq_row[i];
-            if w.is_zero() {
-                continue;
-            }
-            let base = i * hyrax_C;
-            for k in 0..hyrax_C {
-                if base + k < flat.len() {
-                    combined[k] += w * flat[base + k];
-                }
-            }
-        }
-        combined
-    }
-
-    /// W(ry_w) = Σ_k combined_row[k] · eq(ry_col, k)
-    pub fn evaluate<F: JoltField>(combined_row: &[F], ry_col: &[F]) -> F {
-        let eq_col: Vec<F> = EqPolynomial::evals(ry_col);
-        combined_row
-            .iter()
-            .zip(eq_col.iter())
-            .map(|(c, e)| *c * *e)
-            .sum()
-    }
-
-    /// combined_blinding = Σ_i eq(ry_row, i) · row_blindings[i]
-    pub fn combined_blinding<F: JoltField>(row_blindings: &[F], ry_row: &[F]) -> F {
-        let eq_row: Vec<F> = EqPolynomial::evals(ry_row);
-        row_blindings
-            .iter()
-            .zip(eq_row.iter())
-            .map(|(b, e)| *b * *e)
-            .sum()
     }
 }
 

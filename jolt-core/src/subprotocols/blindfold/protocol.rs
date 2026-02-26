@@ -10,6 +10,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
+use crate::poly::commitment::hyrax::{self as hyrax, HyraxOpeningProof};
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::unipoly::CompressedUniPoly;
@@ -20,7 +21,6 @@ use super::folding::{commit_cross_term_rows, compute_cross_term, sample_random_s
 use super::r1cs::VerifierR1CS;
 use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 use super::spartan::{INNER_SUMCHECK_DEGREE_BOUND, SPARTAN_DEGREE_BOUND};
-use super::HyraxParams;
 
 /// BlindFold proof with Hyrax-style openings for W and E.
 ///
@@ -29,11 +29,7 @@ use super::HyraxParams;
 /// it from the proof and absorbs into transcript, never learning the random witness.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
-    pub random_u: F,
-    pub random_round_commitments: Vec<C::G1>,
-    pub random_noncoeff_row_commitments: Vec<C::G1>,
-    pub random_e_row_commitments: Vec<C::G1>,
-    pub random_eval_commitments: Vec<C::G1>,
+    pub random_instance: RelaxedR1CSInstance<F, C>,
 
     /// Non-coefficient W row commitments from the real instance
     pub noncoeff_row_commitments: Vec<C::G1>,
@@ -44,12 +40,8 @@ pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
     pub bz_r: F,
     pub cz_r: F,
     pub inner_sumcheck_proof: Vec<CompressedUniPoly<F>>,
-    /// Hyrax W opening: combined row (C elements)
-    pub w_combined_row: Vec<F>,
-    pub w_combined_blinding: F,
-    /// Hyrax E opening: combined row (C_E elements)
-    pub e_combined_row: Vec<F>,
-    pub e_combined_blinding: F,
+    pub w_opening: HyraxOpeningProof<F>,
+    pub e_opening: HyraxOpeningProof<F>,
     /// Folded eval output values (one per extra constraint / eval_commitment).
     /// Safe to reveal: folded = real + r*random, where random is a one-time pad.
     pub folded_eval_outputs: Vec<F>,
@@ -229,23 +221,17 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         // E opening at rx
         let log_R_E = R_E.log_2();
         let rx: Vec<F> = spartan_challenges.iter().map(|c| (*c).into()).collect();
-        let e_combined_row = HyraxParams::combined_row_static(&e_for_hyrax, C_E, &rx[..log_R_E]);
-        let e_combined_blinding = HyraxParams::combined_blinding(&e_row_blindings, &rx[..log_R_E]);
+        let e_combined_row = hyrax::combined_row(&e_for_hyrax, C_E, &rx[..log_R_E]);
+        let e_combined_blinding = hyrax::combined_blinding(&e_row_blindings, &rx[..log_R_E]);
 
         // W opening at ry_w
         let log_R_prime = hyrax.log_R_prime();
         let ry_w: Vec<F> = inner_challenges.iter().map(|c| (*c).into()).collect();
-        let w_combined_row =
-            HyraxParams::combined_row_static(&folded_W, hyrax.C, &ry_w[..log_R_prime]);
-        let w_combined_blinding =
-            HyraxParams::combined_blinding(&w_row_blindings, &ry_w[..log_R_prime]);
+        let w_combined_row = hyrax::combined_row(&folded_W, hyrax.C, &ry_w[..log_R_prime]);
+        let w_combined_blinding = hyrax::combined_blinding(&w_row_blindings, &ry_w[..log_R_prime]);
 
         BlindFoldProof {
-            random_u: random_instance.u,
-            random_round_commitments: random_instance.round_commitments,
-            random_noncoeff_row_commitments: random_instance.noncoeff_row_commitments,
-            random_e_row_commitments: random_instance.e_row_commitments,
-            random_eval_commitments: random_instance.eval_commitments,
+            random_instance,
             noncoeff_row_commitments: real_instance.noncoeff_row_commitments.clone(),
             cross_term_row_commitments: t_row_commitments,
             spartan_proof,
@@ -253,10 +239,14 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             bz_r,
             cz_r,
             inner_sumcheck_proof: inner_proof,
-            w_combined_row,
-            w_combined_blinding,
-            e_combined_row,
-            e_combined_blinding,
+            w_opening: HyraxOpeningProof {
+                combined_row: w_combined_row,
+                combined_blinding: w_combined_blinding,
+            },
+            e_opening: HyraxOpeningProof {
+                combined_row: e_combined_row,
+                combined_blinding: e_combined_blinding,
+            },
             folded_eval_outputs,
             folded_eval_blindings,
         }
@@ -315,11 +305,11 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let expected_noncoeff_rows = hyrax.noncoeff_rows();
 
         if proof.noncoeff_row_commitments.len() != expected_noncoeff_rows
-            || proof.random_noncoeff_row_commitments.len() != expected_noncoeff_rows
+            || proof.random_instance.noncoeff_row_commitments.len() != expected_noncoeff_rows
         {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
-        if proof.random_e_row_commitments.len() != R_E {
+        if proof.random_instance.e_row_commitments.len() != R_E {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
 
@@ -334,24 +324,19 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         transcript.append_label(b"BlindFold_real_instance");
         append_instance_to_transcript(&real_instance, transcript);
 
-        let random_instance: RelaxedR1CSInstance<F, C> = RelaxedR1CSInstance {
-            u: proof.random_u,
-            round_commitments: proof.random_round_commitments.clone(),
-            noncoeff_row_commitments: proof.random_noncoeff_row_commitments.clone(),
-            e_row_commitments: proof.random_e_row_commitments.clone(),
-            eval_commitments: proof.random_eval_commitments.clone(),
-        };
-
         transcript.append_label(b"BlindFold_random_instance");
-        append_instance_to_transcript(&random_instance, transcript);
+        append_instance_to_transcript(&proof.random_instance, transcript);
 
         transcript.append_points(b"blindfold_cross_term", &proof.cross_term_row_commitments);
 
         let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let r_field: F = r.into();
 
-        let folded_instance =
-            real_instance.fold(&random_instance, &proof.cross_term_row_commitments, r_field)?;
+        let folded_instance = real_instance.fold(
+            &proof.random_instance,
+            &proof.cross_term_row_commitments,
+            r_field,
+        )?;
 
         if let Some((g1_0, h1)) = self.eval_commitment_gens {
             if proof.folded_eval_outputs.len() != folded_instance.eval_commitments.len()
@@ -463,13 +448,14 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         for (i, com) in folded_instance.e_row_commitments.iter().enumerate() {
             c_combined_e += com.scalar_mul(&eq_rx_row[i]);
         }
-        let expected_e_com = self
-            .gens
-            .commit(&proof.e_combined_row, &proof.e_combined_blinding);
+        let expected_e_com = self.gens.commit(
+            &proof.e_opening.combined_row,
+            &proof.e_opening.combined_blinding,
+        );
         if c_combined_e != expected_e_com {
             return Err(BlindFoldVerifyError::EOpeningFailed);
         }
-        let e_r = HyraxParams::evaluate(&proof.e_combined_row, rx_col);
+        let e_r = hyrax::evaluate(&proof.e_opening.combined_row, rx_col);
 
         let eq_tau_r = spartan_verifier.eq_tau_at_r(&challenges);
         let expected_outer = eq_tau_r * (az_r * bz_r - folded_instance.u * cz_r - e_r);
@@ -487,13 +473,14 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         for (i, com) in all_w_rows.iter().enumerate() {
             c_combined_w += com.scalar_mul(&eq_ry_row[i]);
         }
-        let expected_w_com = self
-            .gens
-            .commit(&proof.w_combined_row, &proof.w_combined_blinding);
+        let expected_w_com = self.gens.commit(
+            &proof.w_opening.combined_row,
+            &proof.w_opening.combined_blinding,
+        );
         if c_combined_w != expected_w_com {
             return Err(BlindFoldVerifyError::WOpeningFailed);
         }
-        let w_ry = HyraxParams::evaluate(&proof.w_combined_row, ry_col);
+        let w_ry = hyrax::evaluate(&proof.w_opening.combined_row, ry_col);
 
         let l_w_at_ry = compute_L_w_at_ry(self.r1cs, &challenges, &inner_challenges, ra, rb, rc);
         let expected_inner_final = l_w_at_ry * w_ry;
@@ -819,8 +806,8 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
 
-        if !proof.w_combined_row.is_empty() {
-            proof.w_combined_row[0] += F::from_u64(1);
+        if !proof.w_opening.combined_row.is_empty() {
+            proof.w_opening.combined_row[0] += F::from_u64(1);
         }
 
         let verifier_input = BlindFoldVerifierInput {
@@ -862,8 +849,8 @@ mod tests {
         let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
         let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
 
-        if !proof.e_combined_row.is_empty() {
-            proof.e_combined_row[0] += F::from_u64(1);
+        if !proof.e_opening.combined_row.is_empty() {
+            proof.e_opening.combined_row[0] += F::from_u64(1);
         }
 
         let verifier_input = BlindFoldVerifierInput {
