@@ -27,7 +27,7 @@ pub use output_constraint::{
 };
 pub use protocol::{
     BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifierInput,
-    BlindFoldVerifyError, FinalOutputInfo,
+    BlindFoldVerifyError,
 };
 pub use r1cs::{SparseR1CSMatrix, VerifierR1CS, VerifierR1CSBuilder};
 pub use relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};

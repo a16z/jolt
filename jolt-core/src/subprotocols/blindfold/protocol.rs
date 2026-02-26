@@ -22,13 +22,6 @@ use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 use super::spartan::{INNER_SUMCHECK_DEGREE_BOUND, SPARTAN_DEGREE_BOUND};
 use super::HyraxParams;
 
-/// Information about final_output variables at specific stages.
-#[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
-pub struct FinalOutputInfo {
-    pub stage_idx: usize,
-    pub num_variables: usize,
-}
-
 /// BlindFold proof with Hyrax-style openings for W and E.
 ///
 /// The real instance is NOT included — verifier reconstructs from round_commitments,
@@ -47,7 +40,6 @@ pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
     /// Cross-term T row commitments (E grid layout)
     pub cross_term_row_commitments: Vec<C::G1>,
     pub spartan_proof: Vec<CompressedUniPoly<F>>,
-    pub final_output_info: Vec<FinalOutputInfo>,
     pub az_r: F,
     pub bz_r: F,
     pub cz_r: F,
@@ -248,8 +240,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         let w_combined_blinding =
             HyraxParams::combined_blinding(&w_row_blindings, &ry_w[..log_R_prime]);
 
-        let final_output_info = collect_final_output_info(&self.r1cs.stage_configs);
-
         BlindFoldProof {
             random_u: random_instance.u,
             random_round_commitments: random_instance.round_commitments,
@@ -259,7 +249,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             noncoeff_row_commitments: real_instance.noncoeff_row_commitments.clone(),
             cross_term_row_commitments: t_row_commitments,
             spartan_proof,
-            final_output_info,
             az_r,
             bz_r,
             cz_r,
@@ -272,33 +261,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             folded_eval_blindings,
         }
     }
-}
-
-fn collect_final_output_info(stage_configs: &[super::StageConfig]) -> Vec<FinalOutputInfo> {
-    stage_configs
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, config)| {
-            config.final_output.as_ref().map(|fout| {
-                let num_variables = if let Some(ref constraint) = fout.constraint {
-                    let num_openings = constraint.required_openings.len();
-                    let num_aux = constraint.estimate_aux_var_count();
-                    num_openings + num_aux
-                } else {
-                    let n = fout.num_evaluations;
-                    if n > 1 {
-                        n + n - 1
-                    } else {
-                        n
-                    }
-                };
-                FinalOutputInfo {
-                    stage_idx: idx,
-                    num_variables,
-                }
-            })
-        })
-        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
