@@ -553,26 +553,6 @@ pub fn compute_L_w_at_ry<F: JoltField>(
     ra * a_val + rb * b_val + rc * c_val
 }
 
-/// Map coefficient positions in the witness vector W (grid layout).
-///
-/// With the Hyrax grid layout, round i's coefficients start at `i * C`
-/// in the witness. Returns `Vec<(start_offset_in_W, num_coefficients)>` for each round.
-pub fn coefficient_positions<F: JoltField>(r1cs: &VerifierR1CS<F>) -> Vec<(usize, usize)> {
-    let hyrax_C = r1cs.hyrax.C;
-    let mut positions = Vec::new();
-    let mut round_idx = 0;
-
-    for config in &r1cs.stage_configs {
-        for _ in 0..config.num_rounds {
-            let num_coeffs = config.poly_degree + 1;
-            positions.push((round_idx * hyrax_C, num_coeffs));
-            round_idx += 1;
-        }
-    }
-
-    positions
-}
-
 pub fn hyrax_combined_row<F: JoltField>(flat: &[F], hyrax_C: usize, ry_row: &[F]) -> Vec<F> {
     HyraxParams::combined_row_static(flat, hyrax_C, ry_row)
 }

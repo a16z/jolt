@@ -155,7 +155,7 @@ fn batch_output_constraints<F: JoltField, T: Transcript>(
         .iter()
         .map(|instance| instance.get_params().output_claim_constraint())
         .collect();
-    OutputClaimConstraint::batch(&constraints, instances.len())
+    OutputClaimConstraint::batch(&constraints)
 }
 
 #[cfg(feature = "zk")]

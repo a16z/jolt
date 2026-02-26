@@ -216,10 +216,7 @@ impl OutputClaimConstraint {
         Self::sum_of_products(terms)
     }
 
-    pub fn batch(
-        constraints: &[Option<OutputClaimConstraint>],
-        _num_batching_coefficients: usize,
-    ) -> Option<Self> {
+    pub fn batch(constraints: &[Option<OutputClaimConstraint>]) -> Option<Self> {
         if constraints.iter().any(|c| c.is_none()) {
             return None;
         }

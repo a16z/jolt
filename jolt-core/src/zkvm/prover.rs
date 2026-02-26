@@ -1550,10 +1550,7 @@ impl<
 
                 // Handle output constraints for last round
                 let (config, final_output_witness) = if is_last_round {
-                    let batched = OutputClaimConstraint::batch(
-                        &zk_data.output_constraints,
-                        zk_data.batching_coefficients.len(),
-                    );
+                    let batched = OutputClaimConstraint::batch(&zk_data.output_constraints);
 
                     if let Some(batched_constraint) = batched {
                         let mut challenge_values: Vec<F> = zk_data.batching_coefficients.clone();
@@ -1642,10 +1639,7 @@ impl<
 
                 // Last round output constraint
                 if round_idx == num_rounds - 1 {
-                    let batched = OutputClaimConstraint::batch(
-                        &zk_data.output_constraints,
-                        zk_data.batching_coefficients.len(),
-                    );
+                    let batched = OutputClaimConstraint::batch(&zk_data.output_constraints);
                     if batched.is_some() {
                         let mut cv: Vec<F> = zk_data.batching_coefficients.clone();
                         for cv_inner in &zk_data.constraint_challenge_values {
