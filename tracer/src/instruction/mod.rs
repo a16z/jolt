@@ -630,15 +630,44 @@ macro_rules! define_rv32im_enums {
                 let normalized = self.normalize();
                 if normalized.operands.rd == Some(0) {
                     match self {
+                        // Remap rd to a virtual register
+                        Instruction::JAL(_) | Instruction::JALR(_)
+                        | Instruction::VirtualAdviceLoad(_) | Instruction::VirtualHostIO(_)
+                        | Instruction::INLINE(_)
+                        | Instruction::AMOADDW(_) | Instruction::AMOADDD(_)
+                        | Instruction::AMOXORW(_) | Instruction::AMOXORD(_)
+                        | Instruction::AMOANDW(_) | Instruction::AMOANDD(_)
+                        | Instruction::AMOORW(_) | Instruction::AMOORD(_)
+                        | Instruction::AMOMAXW(_) | Instruction::AMOMAXD(_)
+                        | Instruction::AMOMINW(_) | Instruction::AMOMIND(_)
+                        | Instruction::AMOMAXUW(_) | Instruction::AMOMAXUD(_)
+                        | Instruction::AMOMINUW(_) | Instruction::AMOMINUD(_)
+                        | Instruction::AMOSWAPW(_) | Instruction::AMOSWAPD(_)
+                        | Instruction::LRW(_) | Instruction::LRD(_)
+                        | Instruction::SCW(_) | Instruction::SCD(_) => {
+                            let vr = allocator.allocate();
+                            return self.with_rd(*vr).inline_sequence(allocator, xlen);
+                        }
                         // Delegate: these handle rd=0 internally
                         Instruction::ECALL(_) | Instruction::MRET(_)
                         | Instruction::EBREAK(_) | Instruction::CSRRW(_) | Instruction::CSRRS(_) => {
                             return self.dispatch_inline_sequence(allocator, xlen);
                         }
-                        // Otherwise, remap rd to a virtual register
+                        // All other instructions with rd=x0: replace with NOP
                         _ => {
-                            let vr = allocator.allocate();
-                            return self.with_rd(*vr).inline_sequence(allocator, xlen);
+                            let addi = ADDI::from(NormalizedInstruction {
+                                address: normalized.address,
+                                operands: NormalizedOperands {
+                                    rd: Some(0),
+                                    rs1: Some(0),
+                                    rs2: None,
+                                    imm: 0,
+                                },
+                                virtual_sequence_remaining: None,
+                                is_first_in_sequence: false,
+                                is_compressed: normalized.is_compressed,
+                            });
+                            return vec![addi.into()];
                         }
                     }
                 }
