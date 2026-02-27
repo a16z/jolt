@@ -502,7 +502,7 @@ impl BatchedSumcheck {
 
         // Debug output for intermediate value comparison testing.
         // When enabled, prints transcript state and derived challenges to verify
-        // the transpiled gnark circuit computes identical Fiat-Shamir values.
+        // transpiled circuits compute identical Fiat-Shamir values.
         #[cfg(feature = "debug-expected-output")]
         {
             transcript.debug_state("before_batching_coeffs");
