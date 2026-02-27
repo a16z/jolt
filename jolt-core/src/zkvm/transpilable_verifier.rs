@@ -1,9 +1,23 @@
-//! Transpilable Verifier - Generic version of JoltVerifier for symbolic execution.
+//! Transpilable Verifier: Generic version of JoltVerifier for symbolic execution.
+//!
+//! # Temporary Module
+//!
+//! **This module is intended to be temporary.** The long-term goal is to make
+//! `verifier.rs` itself generic over the accumulator type, eliminating the need
+//! for this separate file. This would ensure transpilation automatically stays
+//! in sync with verifier changes.
+//!
+//! The current separation exists to:
+//! 1. Minimize changes to core Jolt code
+//! 2. Allow rapid iteration on transpilation without coordination overhead
+//!
+//!
+//! # Overview
 //!
 //! This module provides a verifier that is generic over the OpeningAccumulator,
 //! allowing it to be used with both:
 //! - `VerifierOpeningAccumulator<F>` for real verification
-//! - `MleOpeningAccumulator` for symbolic transpilation to Gnark
+//! - `AstOpeningAccumulator` for symbolic transpilation to circuit code
 //!
 //! The verification logic is identical to `verifier.rs`, ensuring that the
 //! transpiled circuit matches the real verifier exactly.
@@ -14,13 +28,14 @@
 //! - Stages 1-6: Standard sumcheck verifications
 //! - Stage 7: HammingWeight claim reduction sumcheck
 //!
-//! Stage 8 (Hyrax PCS) is NOT transpilable - it requires native Gnark pairing operations.
+//! Stage 8 (PCS verification) is NOT transpiled by this module. It requires
+//! native elliptic curve operations that are handled separately by the target
+//! proving system (e.g., native Gnark Hyrax for BN254/Grumpkin).
 //!
 //! ## Advice Verifiers
 //!
 //! Note: `AdviceClaimReduction` verifiers are NOT included in stage 7. They require
-//! state management across stages 6-7 (phase transitions). For proofs with advice,
-//! see task 006 for planned implementation.
+//! state management across stages 6-7 (phase transitions).
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
@@ -98,17 +113,28 @@ pub struct TranspilableVerifier<
     pub one_hot_params: OneHotParams,
 }
 
-/// Constructor for real verification (with VerifierOpeningAccumulator).
-impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>
-    TranspilableVerifier<'a, F, PCS, ProofTranscript, VerifierOpeningAccumulator<F>>
+impl<
+        'a,
+        F: JoltField,
+        PCS: CommitmentScheme<Field = F>,
+        ProofTranscript: Transcript,
+        A: OpeningAccumulator<F>,
+    > TranspilableVerifier<'a, F, PCS, ProofTranscript, A>
 {
+    /// Create a TranspilableVerifier for real verification.
+    ///
+    /// This constructor creates a new `VerifierOpeningAccumulator` and populates
+    /// it with claims from the proof. Only available when `A = VerifierOpeningAccumulator<F>`.
     pub fn new(
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<F, PCS, ProofTranscript>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
-    ) -> Result<Self, ProofVerifyError> {
+    ) -> Result<
+        TranspilableVerifier<'a, F, PCS, ProofTranscript, VerifierOpeningAccumulator<F>>,
+        ProofVerifyError,
+    > {
         // Memory layout checks
         if program_io.memory_layout != preprocessing.shared.memory_layout {
             return Err(ProofVerifyError::MemoryLayoutMismatch);
@@ -167,7 +193,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let one_hot_params =
             OneHotParams::from_config(&proof.one_hot_config, proof.bytecode_K, proof.ram_K);
 
-        Ok(Self {
+        Ok(TranspilableVerifier {
             trusted_advice_commitment,
             program_io,
             proof,
@@ -178,17 +204,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             one_hot_params,
         })
     }
-}
 
-/// Generic verification methods that work with any OpeningAccumulator.
-impl<
-        'a,
-        F: JoltField,
-        PCS: CommitmentScheme<Field = F>,
-        ProofTranscript: Transcript,
-        A: OpeningAccumulator<F>,
-    > TranspilableVerifier<'a, F, PCS, ProofTranscript, A>
-{
     /// Create a TranspilableVerifier with a pre-configured opening accumulator.
     ///
     /// This constructor is used for symbolic transpilation where the accumulator
@@ -219,7 +235,7 @@ impl<
 
     /// Verify the Jolt proof (stages 1-7).
     ///
-    /// Note: Stage 8 (Hyrax PCS verification) is not included because it uses
+    /// Note: Stage 8 (PCS verification) is not included because it uses
     /// VerifierOpeningAccumulator-specific methods. For Gnark transpilation,
     /// this is replaced by native Gnark pairing checks.
     #[tracing::instrument(skip_all)]
@@ -256,38 +272,9 @@ impl<
         self.verify_stage5()?;
         self.verify_stage6()?;
         self.verify_stage7()?;
-        // Stage 8 (Hyrax PCS) is NOT transpilable - it uses native pairing operations.
-        // For Gnark, this is replaced by native Gnark pairing checks.
+        // Stage 8 (PCS) is not being transpiled in this version.
 
         Ok(())
-    }
-
-    /// Verify Stage 1 only with preamble (for testing Blake2b transpilation).
-    pub fn verify_only_stage1(mut self) -> Result<(), anyhow::Error> {
-        fiat_shamir_preamble(
-            &self.program_io,
-            self.proof.ram_K,
-            self.proof.trace_length,
-            &mut self.transcript,
-        );
-
-        // Append commitments to transcript
-        for commitment in &self.proof.commitments {
-            self.transcript
-                .append_serializable(b"commitment", commitment);
-        }
-        // Append untrusted advice commitment to transcript
-        if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
-            self.transcript
-                .append_serializable(b"untrusted_advice", untrusted_advice_commitment);
-        }
-        // Append trusted advice commitment to transcript
-        if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
-            self.transcript
-                .append_serializable(b"trusted_advice", trusted_advice_commitment);
-        }
-
-        self.verify_stage1()
     }
 
     fn verify_stage1(&mut self) -> Result<(), anyhow::Error> {
@@ -544,6 +531,7 @@ impl<
         Ok(())
     }
 
+    /// Stage 7: HammingWeight claim reduction verification.
     fn verify_stage7(&mut self) -> Result<(), anyhow::Error> {
         // Create verifier for HammingWeight claim reduction.
         // This sumcheck fuses HammingWeight + Address Reduction into a single degree-2 sumcheck.
