@@ -95,7 +95,7 @@ use tracer::JoltDevice;
 ///
 /// The type parameter `A` is the OpeningAccumulator:
 /// - For real verification: `A = VerifierOpeningAccumulator<F>`
-/// - For transpilation: `A = MleOpeningAccumulator` (or similar symbolic accumulator)
+/// - For transpilation: `A = AstOpeningAccumulator` (symbolic accumulator)
 pub struct TranspilableVerifier<
     'a,
     F: JoltField,
