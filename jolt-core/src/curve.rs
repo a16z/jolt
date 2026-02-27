@@ -86,13 +86,6 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
 
     /// Generate a random G1 element
     fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Self::G1;
-
-    /// Hash to a G1 curve point with unknown discrete log.
-    ///
-    /// SECURITY: The returned point must have an unknown discrete log relationship
-    /// to the standard generator and any other points derived from scalar multiplication.
-    /// This is critical for Pedersen commitment security.
-    fn hash_to_g1(domain: &[u8]) -> Self::G1;
 }
 
 use ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
@@ -100,9 +93,6 @@ use ark_ec::{pairing::Pairing, AdditiveGroup, AffineRepr, CurveGroup, VariableBa
 use ark_ff::{PrimeField, Zero};
 use ark_std::UniformRand;
 use dory::backends::arkworks::ArkG1;
-use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
-use sha3::Digest;
 use std::ops::MulAssign;
 
 macro_rules! impl_group_ops {
@@ -271,12 +261,6 @@ impl JoltCurve for Bn254Curve {
 
     fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Self::G1 {
         Bn254G1(G1Projective::rand(rng))
-    }
-
-    fn hash_to_g1(domain: &[u8]) -> Self::G1 {
-        let hash = sha3::Sha3_256::digest(domain);
-        let mut rng = ChaCha20Rng::from_seed(hash.into());
-        Bn254G1(G1Projective::rand(&mut rng))
     }
 }
 

@@ -16,11 +16,13 @@ pub struct PedersenGenerators<C: JoltCurve> {
 }
 
 impl<C: JoltCurve> PedersenGenerators<C> {
-    pub fn new(generators: Vec<C::G1>) -> Self {
-        assert!(!generators.is_empty(), "Need at least one generator");
-        let blinding_generator = C::hash_to_g1(b"jolt_pedersen_blinding_h2c_v1");
+    pub fn new(message_generators: Vec<C::G1>, blinding_generator: C::G1) -> Self {
+        assert!(
+            !message_generators.is_empty(),
+            "Need at least one generator"
+        );
         Self {
-            message_generators: generators,
+            message_generators,
             blinding_generator,
         }
     }
@@ -47,16 +49,33 @@ impl<C: JoltCurve> PedersenGenerators<C> {
         let expected = self.commit(coeffs, blinding);
         *commitment == expected
     }
+}
 
+#[cfg(test)]
+impl PedersenGenerators<crate::curve::Bn254Curve> {
+    /// Test-only: derives generators from hash-to-curve. Production code uses Dory URS.
     pub fn deterministic(count: usize) -> Self {
-        let generators: Vec<C::G1> = (0..count)
+        use ark_bn254::G1Projective;
+        use ark_std::UniformRand;
+        use rand_chacha::ChaCha20Rng;
+        use rand_core::SeedableRng;
+        use sha3::Digest;
+
+        let hash_to_g1 = |domain: &[u8]| -> crate::curve::Bn254G1 {
+            let hash = sha3::Sha3_256::digest(domain);
+            let mut rng = ChaCha20Rng::from_seed(hash.into());
+            crate::curve::Bn254G1(G1Projective::rand(&mut rng))
+        };
+
+        let generators = (0..count)
             .map(|i| {
                 let mut domain = b"jolt_pedersen_msg_gen_v1_".to_vec();
                 domain.extend_from_slice(&(i as u64).to_le_bytes());
-                C::hash_to_g1(&domain)
+                hash_to_g1(&domain)
             })
             .collect();
-        Self::new(generators)
+        let blinding_generator = hash_to_g1(b"jolt_pedersen_blinding_h2c_v1");
+        Self::new(generators, blinding_generator)
     }
 }
 

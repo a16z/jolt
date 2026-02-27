@@ -134,6 +134,7 @@ use tracer::{
 };
 
 use crate::curve::JoltCurve;
+#[cfg(feature = "zk")]
 use crate::poly::commitment::pedersen::PedersenGenerators;
 #[cfg(feature = "zk")]
 use crate::poly::lagrange_poly::LagrangeHelper;
@@ -182,10 +183,13 @@ pub struct JoltCpuProver<
     pub initial_ram_state: Vec<u64>,
     pub final_ram_state: Vec<u64>,
     pub one_hot_params: OneHotParams,
+    #[cfg(feature = "zk")]
     pub pedersen_generators: PedersenGenerators<C>,
     pub rw_config: ReadWriteConfig,
     #[cfg(feature = "zk")]
     blindfold_accumulator: crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
+    #[cfg(not(feature = "zk"))]
+    _curve: std::marker::PhantomData<C>,
 }
 
 impl<
@@ -429,7 +433,11 @@ impl<
         let one_hot_params =
             OneHotParams::new(log_T, preprocessing.shared.bytecode.code_size, ram_K);
 
-        let pedersen_generators = PedersenGenerators::<C>::deterministic(4096);
+        #[cfg(feature = "zk")]
+        let pedersen_generators = PCS::pedersen_generators(
+            &preprocessing.generators,
+            PCS::max_pedersen_generators(&preprocessing.generators),
+        );
 
         Self {
             preprocessing,
@@ -454,9 +462,12 @@ impl<
             final_ram_state,
             one_hot_params,
             rw_config,
+            #[cfg(feature = "zk")]
             pedersen_generators,
             #[cfg(feature = "zk")]
             blindfold_accumulator: crate::subprotocols::blindfold::BlindFoldAccumulator::new(),
+            #[cfg(not(feature = "zk"))]
+            _curve: std::marker::PhantomData,
         }
     }
 
@@ -1679,7 +1690,8 @@ impl<
         }
 
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
-        let pedersen_generators = PedersenGenerators::<C>::deterministic(pedersen_generator_count);
+        let pedersen_generators =
+            PCS::pedersen_generators(&self.preprocessing.generators, pedersen_generator_count);
         let eval_commitments =
             vec![PCS::eval_commitment(joint_opening_proof).expect("missing eval commitment")];
 

@@ -2,6 +2,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::fmt::Debug;
 
+use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::transcripts::Transcript;
 use crate::{
     curve::JoltCurve,
@@ -138,6 +139,18 @@ pub trait ZkEvalCommitment<C: JoltCurve>: CommitmentScheme {
 
     /// Returns the generators used for evaluation commitments in the verifier setup.
     fn eval_commitment_gens_verifier(setup: &Self::VerifierSetup) -> Option<(C::G1, C::G1)>;
+
+    /// Maximum number of Pedersen generators available from the prover setup.
+    fn max_pedersen_generators(setup: &Self::ProverSetup) -> usize;
+
+    /// Constructs Pedersen generators from the PCS prover setup (reuses URS generators).
+    fn pedersen_generators(setup: &Self::ProverSetup, count: usize) -> PedersenGenerators<C>;
+
+    /// Constructs Pedersen generators from the PCS verifier setup (reconstructs from URS seed).
+    fn pedersen_generators_verifier(
+        setup: &Self::VerifierSetup,
+        count: usize,
+    ) -> PedersenGenerators<C>;
 }
 
 pub trait StreamingCommitmentScheme: CommitmentScheme {

@@ -10,8 +10,9 @@ use crate::poly::commitment::dory::DoryContext;
 use crate::{
     curve::JoltCurve,
     field::JoltField,
-    poly::commitment::commitment_scheme::{
-        CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment,
+    poly::commitment::{
+        commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment},
+        pedersen::PedersenGenerators,
     },
     poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::Transcript,
@@ -502,6 +503,42 @@ where
         let g1_0 = C::G1::from(setup.0.g1_0);
         let h1 = C::G1::from(setup.0.h1);
         Some((g1_0, h1))
+    }
+
+    fn max_pedersen_generators(setup: &Self::ProverSetup) -> usize {
+        setup.0.g1_vec.len()
+    }
+
+    fn pedersen_generators(setup: &Self::ProverSetup, count: usize) -> PedersenGenerators<C> {
+        assert!(
+            count <= setup.0.g1_vec.len(),
+            "Requested {count} Pedersen generators but Dory URS only has {}",
+            setup.0.g1_vec.len()
+        );
+        let message_generators = setup.0.g1_vec[..count]
+            .iter()
+            .map(|g| C::G1::from(*g))
+            .collect();
+        let blinding_generator = C::G1::from(setup.0.h1);
+        PedersenGenerators::new(message_generators, blinding_generator)
+    }
+
+    fn pedersen_generators_verifier(
+        _setup: &Self::VerifierSetup,
+        count: usize,
+    ) -> PedersenGenerators<C> {
+        // Reconstruct g1_vec from the deterministic Dory URS seed.
+        // ProverSetup::new generates: g1_vec[0..n], g2_vec[0..n], h1, h2
+        // from ChaCha20Rng seeded with SHA3("Jolt Dory URS seed").
+        use ark_std::UniformRand;
+
+        let seed: [u8; 32] = Sha3_256::digest(b"Jolt Dory URS seed").into();
+        let mut rng = ChaCha20Rng::from_seed(seed);
+        let message_generators: Vec<C::G1> = (0..count)
+            .map(|_| C::G1::from(ArkG1(G1Projective::rand(&mut rng))))
+            .collect();
+        let blinding_generator = C::G1::from(_setup.0.h1);
+        PedersenGenerators::new(message_generators, blinding_generator)
     }
 }
 

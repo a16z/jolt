@@ -9,7 +9,6 @@ use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitm
 #[cfg(feature = "zk")]
 use crate::poly::commitment::dory::bind_opening_inputs_zk;
 use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals, DoryLayout};
-use crate::poly::commitment::pedersen::PedersenGenerators;
 #[cfg(feature = "zk")]
 use crate::poly::lagrange_poly::LagrangeHelper;
 #[cfg(feature = "zk")]
@@ -208,7 +207,6 @@ pub struct JoltVerifier<
     advice_reduction_verifier_untrusted: Option<AdviceClaimReductionVerifier<F>>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
-    pub pedersen_generators: PedersenGenerators<C>,
 }
 
 #[derive(Clone, Debug)]
@@ -313,8 +311,6 @@ impl<
         let one_hot_params =
             OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
 
-        let pedersen_generators = PedersenGenerators::<C>::deterministic(4096);
-
         Ok(Self {
             trusted_advice_commitment,
             program_io,
@@ -326,7 +322,6 @@ impl<
             advice_reduction_verifier_untrusted: None,
             spartan_key,
             one_hot_params,
-            pedersen_generators,
         })
     }
 
@@ -1211,7 +1206,10 @@ impl<
         };
 
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
-        let pedersen_generators = PedersenGenerators::<C>::deterministic(pedersen_generator_count);
+        let pedersen_generators = PCS::pedersen_generators_verifier(
+            &self.preprocessing.generators,
+            pedersen_generator_count,
+        );
         let eval_commitment_gens =
             PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
         let verifier =
