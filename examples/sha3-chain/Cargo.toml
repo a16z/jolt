@@ -12,3 +12,6 @@ jolt-inlines-keccak256 = { path = "../../jolt-inlines/keccak256", features = [
 ] }
 guest = { package = "sha3-chain-guest", path = "./guest" }
 hex.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["jolt-inlines-keccak256"]

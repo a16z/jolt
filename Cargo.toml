@@ -169,11 +169,11 @@ dory = { package = "dory-pcs", git = "https://github.com/a16z/dory", branch = "f
 clap = { version = "4.5.4", features = ["derive"] }
 eyre = "0.6.12"
 anyhow = "1.0.97"
-thiserror = "1.0.58"
+thiserror = "2.0.18"
 derive_more = { version = "2.0.1", features = [
     "from",
 ], default-features = false }
-strum = { version = "0.26.3", default-features = false }
+strum = { version = "0.27.2", default-features = false }
 strum_macros = "0.26.4"
 itertools = "0.10.0"
 paste = "1.0.15"
@@ -225,33 +225,33 @@ proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.36.7", features = [
+object = { version = "0.38.1", features = [
     "build_core",
     "elf",
 ], default-features = false }
-addr2line = "0.25.1"
+addr2line = "0.26.0"
 getrandom = { version = "0.2.16", default-features = false }
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false }
 getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false }
 
 # Build and Development
-ctor = { version = "0.2" }
+ctor = { version = "0.6" }
 hex-literal = "0.4.1"
 hex = "0.4.3"
 spinners = { version = "4.1.1", default-features = false }
 
 # Testing
 criterion = { version = "0.5.1", features = ["html_reports"] }
-iai-callgrind = "0.10.2"
-serial_test = "3.2.0"
+iai-callgrind = "0.16.1"
+serial_test = "3.4.0"
 
 # Logging
 log = { version = "0.4" }
 env_logger = { version = "0.11" }
 
 # ZeroOS build system
-zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git" }
-zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false }
+zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", rev = "aaf6e261cbf3e935ecd748de406bf5359c1ebb55" }
+zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", rev = "aaf6e261cbf3e935ecd748de406bf5359c1ebb55", default-features = false }
 cfg-if = "1.0"
 riscv = { version = "0.12", default-features = false }
 

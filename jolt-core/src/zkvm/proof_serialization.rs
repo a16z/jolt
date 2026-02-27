@@ -52,7 +52,6 @@ pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F
     pub opening_claims: Claims<F>,
     pub trace_length: usize,
     pub ram_K: usize,
-    pub bytecode_K: usize,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
     pub dory_layout: DoryLayout,

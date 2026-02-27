@@ -73,11 +73,7 @@ use crate::{
             ra_virtual::RamRaVirtualParams,
             raf_evaluation::RafEvaluationSumcheckParams,
             read_write_checking::RamReadWriteCheckingParams,
-            val_evaluation::{
-                ValEvaluationSumcheckParams,
-                ValEvaluationSumcheckProver as RamValEvaluationSumcheckProver,
-            },
-            val_final::{ValFinalSumcheckParams, ValFinalSumcheckProver},
+            val_check::{RamValCheckSumcheckParams, RamValCheckSumcheckProver},
         },
         registers::{
             read_write_checking::RegistersReadWriteCheckingParams,
@@ -369,6 +365,15 @@ impl<
         } else {
             (trace.len() + 1).next_power_of_two()
         };
+        let max_padded_trace_length = preprocessing.shared.max_padded_trace_length;
+        if padded_trace_len > max_padded_trace_length {
+            panic!(
+                "Execution trace length ({unpadded_trace_len} cycles, padded to {padded_trace_len}) \
+                exceeds max_trace_length ({max_padded_trace_length}) configured in MemoryConfig. \
+                Increase max_trace_length to at least {padded_trace_len}."
+            );
+        }
+
         // We may need extra padding so the main Dory matrix has enough (row, col) variables
         // to embed advice commitments committed in their own preprocessing-only contexts.
         let has_trusted_advice = !program_io.trusted_advice.is_empty();
@@ -553,7 +558,6 @@ impl<
             opening_claims,
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,
-            bytecode_K: self.one_hot_params.bytecode_k,
             rw_config: self.rw_config.clone(),
             one_hot_config: self.one_hot_params.to_config(),
             dory_layout: DoryGlobals::get_layout(),
@@ -889,11 +893,15 @@ impl<
             &self.program_io.memory_layout,
             &self.one_hot_params,
             &self.opening_accumulator,
+            self.trace.len(),
+            &self.rw_config,
         );
         let ram_output_check_params = OutputSumcheckParams::new(
             self.one_hot_params.ram_k,
             &self.program_io,
             &mut self.transcript,
+            self.trace.len(),
+            &self.rw_config,
         );
         let ram_read_write_checking = RamReadWriteCheckingProver::initialize(
             ram_read_write_checking_params,
@@ -1041,37 +1049,30 @@ impl<
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
-        prover_accumulate_advice(
-            &self.advice.untrusted_advice_polynomial,
-            &self.advice.trusted_advice_polynomial,
-            &self.program_io.memory_layout,
-            &self.one_hot_params,
-            &mut self.opening_accumulator,
-            self.rw_config
-                .needs_single_advice_opening(self.trace.len().log_2()),
-        );
-
         let registers_read_write_checking_params = RegistersReadWriteCheckingParams::new(
             self.trace.len(),
             &self.opening_accumulator,
             &mut self.transcript,
             &self.rw_config,
         );
-        let ram_val_evaluation_params = ValEvaluationSumcheckParams::new_from_prover(
+        prover_accumulate_advice(
+            &self.advice.untrusted_advice_polynomial,
+            &self.advice.trusted_advice_polynomial,
+            &self.program_io.memory_layout,
+            &self.one_hot_params,
+            &mut self.opening_accumulator,
+        );
+        // Domain-separate the batching challenge.
+        self.transcript.append_bytes(b"ram_val_check_gamma", &[]);
+        let ram_val_check_gamma: F = self.transcript.challenge_scalar::<F>();
+        let ram_val_check_params = RamValCheckSumcheckParams::new_from_prover(
             &self.one_hot_params,
             &self.opening_accumulator,
             &self.initial_ram_state,
             self.trace.len(),
+            ram_val_check_gamma,
             &self.preprocessing.shared.ram,
             &self.program_io,
-        );
-        let ram_val_final_params = ValFinalSumcheckParams::new_from_prover(
-            self.trace.len(),
-            &self.opening_accumulator,
-            &self.preprocessing.shared.ram,
-            &self.program_io,
-            self.one_hot_params.ram_k,
-            &self.rw_config,
         );
 
         let registers_read_write_checking = RegistersReadWriteCheckingProver::initialize(
@@ -1080,14 +1081,8 @@ impl<
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
         );
-        let ram_val_evaluation = RamValEvaluationSumcheckProver::initialize(
-            ram_val_evaluation_params,
-            &self.trace,
-            &self.preprocessing.shared.bytecode,
-            &self.program_io.memory_layout,
-        );
-        let ram_val_final = ValFinalSumcheckProver::initialize(
-            ram_val_final_params,
+        let ram_val_check = RamValCheckSumcheckProver::initialize(
+            ram_val_check_params,
             &self.trace,
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
@@ -1099,14 +1094,12 @@ impl<
                 "RegistersReadWriteCheckingProver",
                 &registers_read_write_checking,
             );
-            print_data_structure_heap_usage("RamValEvaluationSumcheckProver", &ram_val_evaluation);
-            print_data_structure_heap_usage("ValFinalSumcheckProver", &ram_val_final);
+            print_data_structure_heap_usage("RamValCheckSumcheckProver", &ram_val_check);
         }
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(registers_read_write_checking),
-            Box::new(ram_val_evaluation),
-            Box::new(ram_val_final),
+            Box::new(ram_val_check),
         ];
 
         #[cfg(feature = "allocative")]
@@ -1244,9 +1237,6 @@ impl<
                 &self.program_io.memory_layout,
                 self.trace.len(),
                 &self.opening_accumulator,
-                &mut self.transcript,
-                self.rw_config
-                    .needs_single_advice_opening(self.trace.len().log_2()),
             );
             // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
             // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.
@@ -1269,9 +1259,6 @@ impl<
                 &self.program_io.memory_layout,
                 self.trace.len(),
                 &self.opening_accumulator,
-                &mut self.transcript,
-                self.rw_config
-                    .needs_single_advice_opening(self.trace.len().log_2()),
             );
             // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
             // A future optimization could use Arc<MultilinearPolynomial> with copy-on-write.

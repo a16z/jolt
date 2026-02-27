@@ -17,6 +17,5 @@ tracer = { workspace = true, optional = true, features = ["std"] }
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
-hex-literal.workspace = true
 sha2.workspace = true
 tracer = { workspace = true, features = ["std", "test-utils"] }

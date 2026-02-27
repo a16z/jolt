@@ -144,8 +144,7 @@ pub enum SumcheckId {
     RamReadWriteChecking,
     RamRafEvaluation,
     RamOutputCheck,
-    RamValEvaluation,
-    RamValFinalEvaluation,
+    RamValCheck,
     RamRaClaimReduction,
     RamHammingBooleanity,
     RamRaVirtualization,
@@ -170,12 +169,8 @@ pub enum PolynomialId {
 pub enum OpeningId {
     Polynomial(PolynomialId, SumcheckId),
     /// Untrusted advice opened at r_address derived from the given sumcheck.
-    /// - `RamReadWriteChecking`: opened at r_address from RamVal (used by ValEvaluation)
-    /// - `RamOutputCheck`: opened at r_address from RamValFinal (used by ValFinal)
     UntrustedAdvice(SumcheckId),
     /// Trusted advice opened at r_address derived from the given sumcheck.
-    /// - `RamReadWriteChecking`: opened at r_address from RamVal (used by ValEvaluation)
-    /// - `RamOutputCheck`: opened at r_address from RamValFinal (used by ValFinal)
     TrustedAdvice(SumcheckId),
 }
 

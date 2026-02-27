@@ -5,40 +5,44 @@
 //!
 //! # Important: Sumcheck Stage Constraints
 //!
-//! The RAM RA reduction sumcheck (`ra_reduction.rs`) consolidates four RA claims
-//! into a single claim. For this to work correctly, certain challenge coincidences
-//! must hold. These coincidences are guaranteed by the following constraints on
-//! how sumchecks are batched:
+//! The RAM RA reduction sumcheck (`ra_reduction.rs`) consolidates multiple RA claims
+//! into a single claim. For this to work correctly, we **purposefully align** the
+//! global sumcheck rounds so that all RAM protocols derive the **same address
+//! challenge vector** `r_address`, independent of `ReadWriteConfig`.
 //!
 //! ## Required Coincidences
 //!
-//! The four RA claims use these opening points:
+//! After Stage 2 address-round alignment, there is exactly **one** RAM address point:
+//! `r_address`.
+//!
+//! The RA claims use these opening points:
 //!
 //! | Sumcheck | Opening Point | Stage |
 //! |----------|---------------|-------|
-//! | RamReadWriteChecking | `ra(r_address_rw, r_cycle_rw)` | Stage 2 |
-//! | RamRafEvaluation | `ra(r_address_raf, r_cycle_raf)` | Stage 2 |
-//! | RamValEvaluation | `ra(r_address_rw, r_cycle_val)` | Stage 4 |
-//! | RamValFinal | `ra(r_address_raf, r_cycle_val)` | Stage 4 |
-//!
-//! The following equalities must hold:
-//! - `r_address_raf = r_address_val_final`
-//! - `r_address_val_eval = r_address_rw`
-//! - `r_cycle_val_eval = r_cycle_val_final`
+//! | RamReadWriteChecking | `ra(r_address, r_cycle_rw)` | Stage 2 |
+//! | RamRafEvaluation | `ra(r_address, r_cycle_raf)` | Stage 2 |
+//! | RamValCheck | `ra(r_address, r_cycle_val)` | Stage 4 |
+//! where the cycle points `r_cycle_rw`, `r_cycle_raf`, and `r_cycle_val` are generally different,
+//! but the **address** point is shared.
 //!
 //! ## Constraints to Ensure Coincidences
 //!
 //! **These constraints MUST be maintained when modifying the prover/verifier:**
 //!
-//! 1. **OutputCheck and RafEvaluation** MUST be in the same batched sumcheck (currently Stage 2),
-//!    and both must use challenges `[0 .. log_K]` for `r_address`.
+//! 1. **Stage 2 alignment**:
+//!    - `RamReadWriteChecking` binds address variables in a config-dependent schedule.
+//!    - `RamRafEvaluation` and `OutputCheck` MUST be padded/aligned so that the challenges they
+//!      interpret as `r_address` come from the **exact same global rounds** where RW-check binds
+//!      address variables (implemented via inflated `num_rounds`, custom `round_offset`, and
+//!      internal dummy rounds).
 //!
-//! 2. **ValEvaluation and ValFinal** MUST be in the same batched sumcheck (currently Stage 4),
-//!    and have the same `num_rounds = log_T`.
+//! 2. **Stage 4** MUST cache `RamValCheck` openings using the same `r_cycle_val` challenge vector
+//!    (length = log_T). This is currently done by the batched RAM value sumcheck (`val_check.rs`).
 //!
-//! 3. **ValEvaluation** MUST read `r_address` from RamReadWriteChecking's opening.
+//! 3. **RamValCheck** MUST derive `r_address` from `RamReadWriteChecking`'s `RamVal` opening, and
+//!    (debug-)assert it matches the `r_address` implied by `OutputCheck`'s `RamValFinal` opening.
 //!
-//! 4. **ValFinal** MUST read `r_address` from OutputCheck's opening.
+//! 4. **RA reduction** MUST treat `r_address` as a single shared point across Stage 2 and Stage 4.
 //!
 //! Violating these constraints will cause the RA reduction sumcheck to fail with
 //! mismatched challenge vectors.
@@ -75,8 +79,7 @@ pub mod output_check;
 pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod read_write_checking;
-pub mod val_evaluation;
-pub mod val_final;
+pub mod val_check;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {
@@ -119,6 +122,24 @@ impl RAMPreprocessing {
             bytecode_words,
         }
     }
+}
+
+/// Computes the minimum valid `ram_K` from preprocessing and memory layout.
+///
+/// `ram_K` must be at least large enough to index all statically-known memory
+/// regions (bytecode image and I/O region). Runtime execution can only increase
+/// `ram_K` further (heap/stack accesses), never decrease it.
+pub fn compute_min_ram_K(
+    ram_preprocessing: &RAMPreprocessing,
+    memory_layout: &MemoryLayout,
+) -> usize {
+    let bytecode_end = remap_address(ram_preprocessing.min_bytecode_address, memory_layout)
+        .unwrap_or(0) as usize
+        + ram_preprocessing.bytecode_words.len();
+
+    let io_end = remap_address(RAM_START_ADDRESS, memory_layout).unwrap_or(0) as usize;
+
+    bytecode_end.max(io_end).next_power_of_two()
 }
 
 /// Returns Some(address) if there was read/write
@@ -169,23 +190,18 @@ pub fn populate_memory_states(
 
 /// Accumulates advice polynomials (trusted and untrusted) into the prover's accumulator.
 ///
-/// When `single_opening` is true (all cycle vars bound in phase 1):
-/// - Only opens at `r_address_rw` (the two points are identical)
-///
-/// Otherwise opens at TWO points:
-/// 1. `r_address_rw` from `RamVal`/`RamReadWriteChecking` - used by `ValEvaluationSumcheck`
-/// 2. `r_address_raf` from `RamValFinal`/`RamOutputCheck` - used by `ValFinalSumcheck`
+/// After Stage 2 address-round alignment, Stage 4 uses a *single* RAM address opening point for
+/// advice polynomials. We cache this opening under `SumcheckId::RamValCheck`.
 pub fn prover_accumulate_advice<F: JoltField>(
     untrusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
     trusted_advice_polynomial: &Option<MultilinearPolynomial<F>>,
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
-    single_opening: bool,
 ) {
     let total_variables = one_hot_params.ram_k.log_2();
 
-    // Get r_address_rw from RamVal/RamReadWriteChecking (used by ValEvaluation)
+    // Get r_address from RamVal/RamReadWriteChecking (unique Stage 4 RAM address point).
     let (r_rw, _) = opening_accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RamVal,
         SumcheckId::RamReadWriteChecking,
@@ -205,75 +221,36 @@ pub fn prover_accumulate_advice<F: JoltField>(
     if let Some(ref untrusted_advice_poly) = untrusted_advice_polynomial {
         let max_size = memory_layout.max_untrusted_advice_size as usize;
 
-        // Opening at r_address_rw (for ValEvaluation)
+        // Single opening at r_address.
         let (point_rw, eval_rw) =
             compute_advice_opening(untrusted_advice_poly, &r_address_rw, max_size);
-        opening_accumulator.append_untrusted_advice(
-            SumcheckId::RamValEvaluation,
-            point_rw,
-            eval_rw,
-        );
-
-        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
-        if !single_opening {
-            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            );
-            let (point_raf, eval_raf) =
-                compute_advice_opening(untrusted_advice_poly, &r_raf, max_size);
-            opening_accumulator.append_untrusted_advice(
-                SumcheckId::RamValFinalEvaluation,
-                point_raf,
-                eval_raf,
-            );
-        }
+        opening_accumulator.append_untrusted_advice(SumcheckId::RamValCheck, point_rw, eval_rw);
     }
 
     if let Some(ref trusted_advice_poly) = trusted_advice_polynomial {
         let max_size = memory_layout.max_trusted_advice_size as usize;
 
-        // Opening at r_address_rw (for ValEvaluation)
+        // Single opening at r_address.
         let (point_rw, eval_rw) =
             compute_advice_opening(trusted_advice_poly, &r_address_rw, max_size);
-        opening_accumulator.append_trusted_advice(SumcheckId::RamValEvaluation, point_rw, eval_rw);
-
-        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
-        if !single_opening {
-            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            );
-            let (point_raf, eval_raf) =
-                compute_advice_opening(trusted_advice_poly, &r_raf, max_size);
-            opening_accumulator.append_trusted_advice(
-                SumcheckId::RamValFinalEvaluation,
-                point_raf,
-                eval_raf,
-            );
-        }
+        opening_accumulator.append_trusted_advice(SumcheckId::RamValCheck, point_rw, eval_rw);
     }
 }
 
 /// Accumulates advice commitments into the verifier's accumulator.
 ///
-/// When `single_opening` is true (all cycle vars bound in phase 1):
-/// - Only opens at `r_address_rw` (the two points are identical)
-///
-/// Otherwise opens at TWO points:
-/// 1. `r_address_rw` from `RamVal`/`RamReadWriteChecking` - used by `ValEvaluationSumcheck`
-/// 2. `r_address_raf` from `RamValFinal`/`RamOutputCheck` - used by `ValFinalSumcheck`
+/// After Stage 2 address-round alignment, Stage 4 uses a *single* RAM address opening point for
+/// advice commitments. We cache this opening under `SumcheckId::RamValCheck`.
 pub fn verifier_accumulate_advice<F: JoltField>(
     ram_K: usize,
     program_io: &JoltDevice,
     has_untrusted_advice_commitment: bool,
     has_trusted_advice_commitment: bool,
     opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-    single_opening: bool,
 ) {
     let total_vars = ram_K.log_2();
 
-    // Get r_address_rw from RamVal/RamReadWriteChecking (used by ValEvaluation)
+    // Get r_address from RamVal/RamReadWriteChecking (unique Stage 4 RAM address point).
     let (r_rw, _) = opening_accumulator.get_virtual_polynomial_opening(
         VirtualPolynomial::RamVal,
         SumcheckId::RamReadWriteChecking,
@@ -290,38 +267,17 @@ pub fn verifier_accumulate_advice<F: JoltField>(
     if has_untrusted_advice_commitment {
         let max_size = program_io.memory_layout.max_untrusted_advice_size as usize;
 
-        // Opening at r_address_rw (for ValEvaluation)
+        // Single opening at r_address.
         let point_rw = compute_advice_point(&r_address_rw, max_size);
-        opening_accumulator.append_untrusted_advice(SumcheckId::RamValEvaluation, point_rw);
-
-        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
-        if !single_opening {
-            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            );
-            let point_raf = compute_advice_point(&r_raf, max_size);
-            opening_accumulator
-                .append_untrusted_advice(SumcheckId::RamValFinalEvaluation, point_raf);
-        }
+        opening_accumulator.append_untrusted_advice(SumcheckId::RamValCheck, point_rw);
     }
 
     if has_trusted_advice_commitment {
         let max_size = program_io.memory_layout.max_trusted_advice_size as usize;
 
-        // Opening at r_address_rw (for ValEvaluation)
+        // Single opening at r_address.
         let point_rw = compute_advice_point(&r_address_rw, max_size);
-        opening_accumulator.append_trusted_advice(SumcheckId::RamValEvaluation, point_rw);
-
-        // Opening at r_address_raf (for ValFinalEvaluation) - only if points differ
-        if !single_opening {
-            let (r_raf, _) = opening_accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            );
-            let point_raf = compute_advice_point(&r_raf, max_size);
-            opening_accumulator.append_trusted_advice(SumcheckId::RamValFinalEvaluation, point_raf);
-        }
+        opening_accumulator.append_trusted_advice(SumcheckId::RamValCheck, point_rw);
     }
 }
 
@@ -659,6 +615,16 @@ pub fn eval_io_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challe
     hi_scale * acc
 }
 
+fn check_memory_fits(label: &str, index: usize, data_len: usize, state_len: usize) {
+    let words_needed = data_len.div_ceil(8);
+    assert!(
+        index + words_needed <= state_len,
+        "{label} exceeds allocated memory: needs {words_needed} words at index {index}, \
+        but memory state only has {state_len} entries. \
+        Increase the corresponding size in MemoryConfig.",
+    );
+}
+
 /// Returns `(initial_memory_state, final_memory_state)`
 pub fn gen_ram_memory_states<F: JoltField>(
     ram_K: usize,
@@ -702,6 +668,7 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits("Trusted advice", index, program_io.trusted_advice.len(), K);
     populate_memory_states(
         index,
         &program_io.trusted_advice,
@@ -714,6 +681,12 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits(
+        "Untrusted advice",
+        index,
+        program_io.untrusted_advice.len(),
+        K,
+    );
     populate_memory_states(
         index,
         &program_io.untrusted_advice,
@@ -726,6 +699,7 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits("Input", index, program_io.inputs.len(), K);
     populate_memory_states(
         index,
         &program_io.inputs,
@@ -740,6 +714,7 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits("Output", index, program_io.outputs.len(), K);
     populate_memory_states(
         index,
         &program_io.outputs,
@@ -809,6 +784,18 @@ mod tests {
     use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::MemoryConfig;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
+
+    #[test]
+    #[should_panic(expected = "exceeds allocated memory")]
+    fn check_memory_fits_panics_on_overflow() {
+        check_memory_fits("Test region", 10, 24, 12);
+    }
+
+    #[test]
+    fn check_memory_fits_passes_when_within_bounds() {
+        check_memory_fits("Test region", 0, 16, 4);
+        check_memory_fits("Test region", 2, 8, 4);
+    }
 
     #[test]
     fn public_initial_ram_eval_matches_dense_mle() {

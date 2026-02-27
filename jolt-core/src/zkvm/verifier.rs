@@ -36,7 +36,6 @@ use crate::zkvm::r1cs::constraints::{
     OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
     PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
-use crate::zkvm::ram::val_final::ValFinalSumcheckVerifier;
 use crate::zkvm::ram::RAMPreprocessing;
 use crate::zkvm::witness::all_committed_polynomials;
 use crate::zkvm::Serializable;
@@ -55,11 +54,10 @@ use crate::zkvm::{
     proof_serialization::JoltProof,
     r1cs::key::UniformSpartanKey,
     ram::{
-        hamming_booleanity::HammingBooleanitySumcheckVerifier,
+        compute_min_ram_K, hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
-        read_write_checking::RamReadWriteCheckingVerifier,
-        val_evaluation::ValEvaluationSumcheckVerifier as RamValEvaluationSumcheckVerifier,
+        read_write_checking::RamReadWriteCheckingVerifier, val_check::RamValCheckSumcheckVerifier,
         verifier_accumulate_advice,
     },
     registers::{
@@ -297,14 +295,23 @@ impl<
             .validate()
             .map_err(ProofVerifyError::InvalidOneHotConfig)?;
 
+        let min_ram_K = compute_min_ram_K(
+            &preprocessing.shared.ram,
+            &preprocessing.shared.memory_layout,
+        );
+        if !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_K {
+            return Err(ProofVerifyError::InvalidRamK(proof.ram_K, min_ram_K));
+        }
+
         proof
             .rw_config
             .validate(proof.trace_length.log_2(), proof.ram_K.log_2())
             .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
 
-        // Construct full params from the validated config
+        // Construct full params from the validated config.
+        let bytecode_K = preprocessing.shared.bytecode.code_size;
         let one_hot_params =
-            OneHotParams::from_config(&proof.one_hot_config, proof.bytecode_K, proof.ram_K);
+            OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
 
         // Use deterministic Pedersen generators for BlindFold verification
         // This ensures prover and verifier use the same generators
@@ -574,11 +581,18 @@ impl<
         let ram_raf_evaluation = RamRafEvaluationSumcheckVerifier::new(
             &self.program_io.memory_layout,
             &self.one_hot_params,
+            self.proof.trace_length,
+            &self.proof.rw_config,
             &self.opening_accumulator,
         );
 
-        let ram_output_check =
-            OutputSumcheckVerifier::new(self.proof.ram_K, &self.program_io, &mut self.transcript);
+        let ram_output_check = OutputSumcheckVerifier::new(
+            self.proof.ram_K,
+            &self.program_io,
+            &mut self.transcript,
+            self.proof.trace_length,
+            &self.proof.rw_config,
+        );
 
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![
             &ram_read_write_checking,
@@ -712,43 +726,40 @@ impl<
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
     fn verify_stage4(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
-        verifier_accumulate_advice::<F>(
-            self.proof.ram_K,
-            &self.program_io,
-            self.proof.untrusted_advice_commitment.is_some(),
-            self.trusted_advice_commitment.is_some(),
-            &mut self.opening_accumulator,
-            self.proof
-                .rw_config
-                .needs_single_advice_opening(self.proof.trace_length.log_2()),
-        );
         let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
             &mut self.transcript,
             &self.proof.rw_config,
         );
-        let ram_val_evaluation = RamValEvaluationSumcheckVerifier::new(
-            &self.preprocessing.shared.ram,
-            &self.program_io,
-            self.proof.trace_length,
+        verifier_accumulate_advice::<F>(
             self.proof.ram_K,
-            &self.opening_accumulator,
+            &self.program_io,
+            self.proof.untrusted_advice_commitment.is_some(),
+            self.trusted_advice_commitment.is_some(),
+            &mut self.opening_accumulator,
         );
-        let ram_val_final = ValFinalSumcheckVerifier::new(
+        // Domain-separate the batching challenge.
+        self.transcript.append_bytes(b"ram_val_check_gamma", &[]);
+        let ram_val_check_gamma: F = self.transcript.challenge_scalar::<F>();
+        let initial_ram_state = crate::zkvm::ram::gen_ram_initial_memory_state::<F>(
+            self.proof.ram_K,
             &self.preprocessing.shared.ram,
             &self.program_io,
+        );
+        let ram_val_check = RamValCheckSumcheckVerifier::new(
+            &initial_ram_state,
+            &self.program_io,
+            &self.preprocessing.shared.ram,
             self.proof.trace_length,
             self.proof.ram_K,
-            &self.opening_accumulator,
             &self.proof.rw_config,
+            ram_val_check_gamma,
+            &self.opening_accumulator,
         );
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> = vec![
-            &registers_read_write_checking,
-            &ram_val_evaluation,
-            &ram_val_final,
-        ];
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
+            vec![&registers_read_write_checking, &ram_val_check];
 
         let (batching_coefficients, r_stage4) = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
@@ -908,10 +919,6 @@ impl<
                 &self.program_io.memory_layout,
                 self.proof.trace_length,
                 &self.opening_accumulator,
-                &mut self.transcript,
-                self.proof
-                    .rw_config
-                    .needs_single_advice_opening(self.proof.trace_length.log_2()),
             ));
         }
         if self.proof.untrusted_advice_commitment.is_some() {
@@ -920,10 +927,6 @@ impl<
                 &self.program_io.memory_layout,
                 self.proof.trace_length,
                 &self.opening_accumulator,
-                &mut self.transcript,
-                self.proof
-                    .rw_config
-                    .needs_single_advice_opening(self.proof.trace_length.log_2()),
             ));
         }
 
