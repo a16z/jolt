@@ -574,7 +574,7 @@ impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     /// Create verifier. r_cycle and r_addr_bool are extracted from Booleanity opening.
     ///
     /// Takes a generic `OpeningAccumulator` to support both real verification
-    /// (`VerifierOpeningAccumulator`) and symbolic transpilation (`MleOpeningAccumulator`).
+    /// (`VerifierOpeningAccumulator`) and symbolic transpilation (`AstOpeningAccumulator`).
     pub fn new(
         one_hot_params: &OneHotParams,
         accumulator: &dyn OpeningAccumulator<F>,
