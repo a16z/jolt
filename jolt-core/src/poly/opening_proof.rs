@@ -174,6 +174,12 @@ pub enum OpeningId {
     TrustedAdvice(SumcheckId),
 }
 
+/// Convenience constructors for `OpeningId`.
+///
+/// Each `OpeningId` uniquely identifies an opening claim by combining a polynomial
+/// with the sumcheck stage where it's opened. This distinction matters because the
+/// same polynomial can be opened at different stages with different evaluation points
+/// (e.g., a committed poly opened in both `SpartanOuter` and `RamValEvaluation`).
 impl OpeningId {
     pub fn virt(poly: VirtualPolynomial, sc: SumcheckId) -> Self {
         Self::Polynomial(PolynomialId::Virtual(poly), sc)
