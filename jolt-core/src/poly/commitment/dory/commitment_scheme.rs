@@ -110,7 +110,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let hash_result = hasher.finalize();
         let seed: [u8; 32] = hash_result.into();
         let mut rng = ChaCha20Rng::from_seed(seed);
+        #[cfg(not(target_arch = "wasm32"))]
         let setup = ArkworksProverSetup::new_from_urs(&mut rng, max_num_vars);
+        #[cfg(target_arch = "wasm32")]
+        let setup = ArkworksProverSetup::new(&mut rng, max_num_vars);
 
         // The prepared-point cache in dory-pcs is global and can only be initialized once.
         // In unit tests, multiple setups with different sizes are created, so initializing the
