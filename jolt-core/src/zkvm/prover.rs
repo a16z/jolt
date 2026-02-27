@@ -1947,8 +1947,11 @@ impl<
         }
 
         // 2. Sample gamma and compute powers for RLC
-        // Claims NOT absorbed — binding comes from polynomial commitments already in transcript.
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
+        // In non-ZK mode, absorb claims before sampling gamma for Fiat-Shamir binding.
+        // In ZK mode, claims are secret; binding comes from BlindFold constraints instead.
+        #[cfg(not(feature = "zk"))]
+        self.transcript.append_scalars(b"rlc_claims", &claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
         #[cfg(feature = "zk")]
         let constraint_coeffs: Vec<F> = gamma_powers
