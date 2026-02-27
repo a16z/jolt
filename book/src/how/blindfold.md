@@ -1,6 +1,6 @@
 # Zero Knowledge: BlindFold
 
-Jolt achieves zero-knowledge natively via the **[BlindFold](https://eprint.iacr.org/2025/2094)** protocol — a folding-based scheme that makes all sumcheck proofs ZK without SNARK composition. Unlike most zkVMs that wrap their IOP in Groth16 or Plonk to get ZK, BlindFold operates at the same algebraic level as Jolt's existing sumcheck machinery, avoiding composition overhead entirely.
+Jolt achieves zero-knowledge natively via the **[BlindFold](https://eprint.iacr.org/2025/2094)** protocol — a folding-based scheme that makes all sumcheck proofs ZK without SNARK composition. Unlike approaches that require per-round sigma protocols or expensive homomorphic operations on commitments, BlindFold defers all verification to a single small R1CS instance proved via Nova folding + Spartan, keeping most of the work in the field arithmetic layer.
 
 The core idea: instead of the prover sending sumcheck round polynomial coefficients in the clear, it sends **Pedersen commitments** to them. The sumcheck verifier's algebraic consistency checks are encoded into a small **verifier R1CS** circuit, and a single Nova fold + Spartan proof over this R1CS proves all rounds were executed correctly without revealing the witness.
 
@@ -29,7 +29,7 @@ During each of the 7 sumcheck stages, `prove_zk` replaces the standard sumcheck 
 2. Commits to all coefficients via Pedersen: $C_j = \sum_i c_{j,i} \cdot G_i + \rho_j \cdot H$
 3. Appends $C_j$ (not the coefficients) to the Fiat-Shamir transcript
 4. Derives the challenge $r_j$ from the transcript
-5. Caches coefficients $c_{j,i}$, blinding $\rho_j$, and commitment $C_j$
+5. Saves coefficients $c_{j,i}$, blinding $\rho_j$, and commitment $C_j$ for later R1CS witness construction
 
 The verifier receives only commitments. It derives the same challenges (since it hashes the same commitments) but cannot check round consistency without knowing the coefficients. That verification is deferred to BlindFold.
 

@@ -60,17 +60,6 @@ impl<C: JoltCurve> PedersenGenerators<C> {
     }
 }
 
-use crate::curve::{Bn254Curve, Bn254G1};
-use crate::poly::commitment::dory::ArkG1;
-
-impl PedersenGenerators<Bn254Curve> {
-    pub fn from_dory_generators(dory_g1: &[ArkG1], count: usize) -> Self {
-        assert!(count <= dory_g1.len(), "Not enough Dory generators");
-        let generators: Vec<Bn254G1> = dory_g1[..count].iter().map(|g| Bn254G1(g.0)).collect();
-        Self::new(generators)
-    }
-}
-
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BlindedScalar<F: JoltField> {
     pub value: F,

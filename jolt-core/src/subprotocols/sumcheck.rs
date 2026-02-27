@@ -19,7 +19,6 @@ use ark_serialize::*;
 use rand_core::CryptoRngCore;
 use std::marker::PhantomData;
 
-// Re-export UniSkipFirstRoundProof from univariate_skip to avoid type duplication
 pub use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
@@ -125,7 +124,6 @@ impl BatchedSumcheck {
             let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
 
-            // Cache individual claims for this round
             individual_claims
                 .iter_mut()
                 .zip(univariate_polys.into_iter())
@@ -279,7 +277,6 @@ impl BatchedSumcheck {
                     },
                 );
 
-            // Generate blinding and compute Pedersen commitment to full coefficients
             let blinding = F::random(rng);
             let commitment = pedersen_gens.commit(&batched_univariate_poly.coeffs, &blinding);
 
@@ -288,7 +285,6 @@ impl BatchedSumcheck {
             let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
 
-            // Cache individual claims for this round
             individual_claims
                 .iter_mut()
                 .zip(univariate_polys.into_iter())
@@ -336,7 +332,6 @@ impl BatchedSumcheck {
 
         transcript.append_point(b"output_claims_commitment", &output_claims_commitment);
 
-        // Collect output constraints and challenge values from each sumcheck instance
         let output_constraints: Vec<_> = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.get_params().output_claim_constraint())
@@ -354,7 +349,6 @@ impl BatchedSumcheck {
             })
             .collect();
 
-        // Collect input constraints and challenge values from each sumcheck instance
         let input_constraints: Vec<_> = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.get_params().input_claim_constraint())
@@ -369,8 +363,6 @@ impl BatchedSumcheck {
             })
             .collect();
 
-        // Compute scaling exponents for batched sumcheck claim alignment
-        // Each instance's input claim is scaled by 2^(max_rounds - instance_rounds)
         let input_claim_scaling_exponents: Vec<usize> = sumcheck_instances
             .iter()
             .map(|sumcheck| max_num_rounds - sumcheck.num_rounds())
@@ -727,7 +719,6 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
     }
 }
 
-/// Sumcheck proof enum - replaces old SumcheckInstanceProof throughout codebase.
 #[derive(Debug, Clone)]
 pub enum SumcheckInstanceProof<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> {
     /// Non-ZK: coefficients visible to verifier

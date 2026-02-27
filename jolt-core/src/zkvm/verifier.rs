@@ -313,8 +313,6 @@ impl<
         let one_hot_params =
             OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
 
-        // Use deterministic Pedersen generators for BlindFold verification
-        // This ensures prover and verifier use the same generators
         let pedersen_generators = PedersenGenerators::<C>::deterministic(4096);
 
         Ok(Self {
@@ -1184,7 +1182,6 @@ impl<
             VerifierR1CSBuilder::new_with_extra(&stage_configs, &extra_constraints, &baked);
         let r1cs = builder.build();
 
-        // 6. Build round_commitments from main sumcheck proofs
         let mut round_commitments: Vec<C::G1> = Vec::new();
         for (stage_idx, proof) in stage_proofs.iter().enumerate() {
             // For stages 0-1, include uni-skip commitment first
@@ -1204,7 +1201,6 @@ impl<
             }
         }
 
-        // 7. Build eval_commitments from PCS proof
         let eval_commitment = PCS::eval_commitment(&self.proof.joint_opening_proof)
             .ok_or(ProofVerifyError::InvalidOpeningProof)?;
         let eval_commitments = vec![eval_commitment];
@@ -1214,7 +1210,6 @@ impl<
             eval_commitments,
         };
 
-        // Create BlindFold verifier and verify the proof
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
         let pedersen_generators = PedersenGenerators::<C>::deterministic(pedersen_generator_count);
         let eval_commitment_gens =

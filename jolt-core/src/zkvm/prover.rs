@@ -358,7 +358,6 @@ impl<
                 .map_or(0, |pos| pos + 1),
         );
 
-        // Setup trace length and padding
         let unpadded_trace_len = trace.len();
         let padded_trace_len = if unpadded_trace_len < 256 {
             256 // ensures that T >= k^{1/D}
@@ -430,8 +429,6 @@ impl<
         let one_hot_params =
             OneHotParams::new(log_T, preprocessing.shared.bytecode.code_size, ram_K);
 
-        // Use deterministic Pedersen generators for BlindFold protocol
-        // This ensures prover and verifier use the same generators
         let pedersen_generators = PedersenGenerators::<C>::deterministic(4096);
 
         Self {
@@ -992,7 +989,6 @@ impl<
             &mut self.transcript,
         );
 
-        // Initialize
         let spartan_shift = ShiftSumcheckProver::initialize(
             spartan_shift_params,
             Arc::clone(&self.trace),
@@ -1455,7 +1451,6 @@ impl<
                 initial_claims.push(zk_data.initial_claim);
             }
 
-            // Process regular sumcheck rounds
             let mut current_claim = zk_data.initial_claim;
             let stage_challenges = &zk_data.challenges;
             let num_rounds = zk_data.poly_coeffs.len();
@@ -1571,7 +1566,6 @@ impl<
         let extra_constraint = OutputClaimConstraint::linear(extra_constraint_terms);
         let extra_constraints = vec![extra_constraint];
 
-        // Collect baked public inputs from stage data
         let mut baked_challenges: Vec<F> = Vec::new();
         let mut baked_output_challenges: Vec<F> = Vec::new();
         let mut baked_input_challenges: Vec<F> = Vec::new();
@@ -1650,7 +1644,6 @@ impl<
             vec![extra_witness],
         );
 
-        // Assign witness to get Z vector
         let z = blindfold_witness.assign(&r1cs);
 
         #[cfg(test)]
@@ -1685,7 +1678,6 @@ impl<
             }
         }
 
-        // Create non-relaxed instance and witness with round commitment data
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
         let pedersen_generators = PedersenGenerators::<C>::deterministic(pedersen_generator_count);
         let eval_commitments =
@@ -1697,7 +1689,6 @@ impl<
         let R_prime = hyrax.R_prime;
         let noncoeff_rows = hyrax.noncoeff_rows();
 
-        // Commit non-coefficient rows of the witness grid
         let noncoeff_rows_start = R_coeff * hyrax_C;
         let mut noncoeff_row_commitments = Vec::with_capacity(noncoeff_rows);
         let mut noncoeff_row_blindings = Vec::with_capacity(noncoeff_rows);
@@ -1731,7 +1722,6 @@ impl<
             w_row_blindings,
         );
 
-        // Run BlindFold protocol
         let eval_commitment_gens = PCS::eval_commitment_gens(&self.preprocessing.generators);
         let prover =
             BlindFoldProver::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
