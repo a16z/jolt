@@ -18,6 +18,14 @@ pub struct MockCommitScheme<F: JoltField> {
     _marker: PhantomData<F>,
 }
 
+impl<F: JoltField> Default for MockCommitScheme<F> {
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
 #[derive(Default, Debug, PartialEq, Clone, CanonicalDeserialize, CanonicalSerialize)]
 pub struct MockCommitment<F: JoltField> {
     _field: PhantomData<F>,
@@ -33,6 +41,7 @@ where
     F: JoltField,
 {
     type Field = F;
+    type Config = ();
     type ProverSetup = ();
     type VerifierSetup = ();
     type Commitment = MockCommitment<F>;
@@ -44,7 +53,16 @@ where
 
     fn setup_verifier(_setup: &Self::ProverSetup) -> Self::VerifierSetup {}
 
+    fn from_proof(_proof: &Self::BatchedProof) -> Self {
+        Self::default()
+    }
+
+    fn config(&self) -> &() {
+        &()
+    }
+
     fn commit(
+        &self,
         _poly: &MultilinearPolynomial<Self::Field>,
         _setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint) {
@@ -52,19 +70,21 @@ where
     }
 
     fn batch_commit<P>(
+        &self,
         polys: &[P],
         gens: &Self::ProverSetup,
     ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
     where
-        P: Borrow<MultilinearPolynomial<Self::Field>>,
+        P: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
         polys
             .iter()
-            .map(|poly| (Self::commit(poly.borrow(), gens).0, ()))
+            .map(|poly| (self.commit(poly.borrow(), gens).0, ()))
             .collect()
     }
 
     fn prove<ProofTranscript: Transcript>(
+        &self,
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
@@ -78,6 +98,7 @@ where
     }
 
     fn verify<ProofTranscript: Transcript>(
+        &self,
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,
@@ -90,6 +111,7 @@ where
     }
 
     fn batch_prove<ProofTranscript: Transcript, S: BatchPolynomialSource<Self::Field>>(
+        &self,
         _setup: &Self::ProverSetup,
         _poly_source: &S,
         _hints: Vec<Self::OpeningProofHint>,
@@ -105,6 +127,7 @@ where
     }
 
     fn batch_verify<ProofTranscript: Transcript>(
+        &self,
         proof: &Self::BatchedProof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,
@@ -128,10 +151,15 @@ where
 {
     type ChunkState = ();
 
-    fn process_chunk<T: SmallScalar>(_setup: &Self::ProverSetup, _chunk: &[T]) -> Self::ChunkState {
+    fn process_chunk<T: SmallScalar>(
+        &self,
+        _setup: &Self::ProverSetup,
+        _chunk: &[T],
+    ) -> Self::ChunkState {
     }
 
     fn process_chunk_onehot(
+        &self,
         _setup: &Self::ProverSetup,
         _onehot_k: usize,
         _chunk: &[Option<usize>],
@@ -139,6 +167,7 @@ where
     }
 
     fn aggregate_chunks(
+        &self,
         _setup: &Self::ProverSetup,
         _onehot_k: Option<usize>,
         _tier1_commitments: &[Self::ChunkState],

@@ -276,6 +276,14 @@ pub struct HyperKZG<P: Pairing> {
     _phantom: PhantomData<P>,
 }
 
+impl<P: Pairing> Default for HyperKZG<P> {
+    fn default() -> Self {
+        Self {
+            _phantom: PhantomData,
+        }
+    }
+}
+
 impl<P: Pairing> HyperKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
@@ -416,6 +424,7 @@ where
     <P as Pairing>::ScalarField: JoltField,
 {
     type Field = P::ScalarField;
+    type Config = ();
     type ProverSetup = HyperKZGProverKey<P>;
     type VerifierSetup = HyperKZGVerifierKey<P>;
 
@@ -440,8 +449,17 @@ where
         }
     }
 
+    fn from_proof(_proof: &Self::BatchedProof) -> Self {
+        Self::default()
+    }
+
+    fn config(&self) -> &() {
+        &()
+    }
+
     #[tracing::instrument(skip_all, name = "HyperKZG::commit")]
     fn commit(
+        &self,
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint) {
@@ -458,6 +476,7 @@ where
 
     #[tracing::instrument(skip_all, name = "HyperKZG::batch_commit")]
     fn batch_commit<U>(
+        &self,
         polys: &[U],
         gens: &Self::ProverSetup,
     ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
@@ -472,6 +491,7 @@ where
     }
 
     fn prove<ProofTranscript: Transcript>(
+        &self,
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
@@ -484,6 +504,7 @@ where
     }
 
     fn verify<ProofTranscript: Transcript>(
+        &self,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -495,6 +516,7 @@ where
     }
 
     fn batch_prove<ProofTranscript: Transcript, S: BatchPolynomialSource<Self::Field>>(
+        &self,
         setup: &Self::ProverSetup,
         poly_source: &S,
         _hints: Vec<Self::OpeningProofHint>,
@@ -506,7 +528,7 @@ where
     ) -> Self::BatchedProof {
         let joint_poly = poly_source.build_joint_polynomial(coeffs);
         let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
-        Self::prove(
+        self.prove(
             setup,
             &joint_poly,
             opening_point,
@@ -517,6 +539,7 @@ where
     }
 
     fn batch_verify<ProofTranscript: Transcript>(
+        &self,
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -565,10 +588,15 @@ where
 {
     type ChunkState = ();
 
-    fn process_chunk<T: SmallScalar>(_setup: &Self::ProverSetup, _chunk: &[T]) -> Self::ChunkState {
+    fn process_chunk<T: SmallScalar>(
+        &self,
+        _setup: &Self::ProverSetup,
+        _chunk: &[T],
+    ) -> Self::ChunkState {
     }
 
     fn process_chunk_onehot(
+        &self,
         _setup: &Self::ProverSetup,
         _onehot_k: usize,
         _chunk: &[Option<usize>],
@@ -576,6 +604,7 @@ where
     }
 
     fn aggregate_chunks(
+        &self,
         _setup: &Self::ProverSetup,
         _onehot_k: Option<usize>,
         _tier1_commitments: &[Self::ChunkState],

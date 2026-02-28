@@ -672,7 +672,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .collect();
         let commitment_ref_slice: Vec<&PCS::Commitment> = commitment_refs.iter().collect();
 
-        PCS::batch_verify(
+        PCS::default().batch_verify(
             &self.proof.joint_opening_proof,
             &self.preprocessing.generators,
             &mut self.transcript,

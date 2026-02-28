@@ -10,8 +10,10 @@ use crate::{
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 
-pub trait CommitmentScheme: Clone + Sync + Send + 'static {
+pub trait CommitmentScheme: Clone + Sync + Send + Default + 'static {
     type Field: JoltField + Sized;
+    /// PCS-specific configuration carried by the instance. Opaque to generic code.
+    type Config: Clone + Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     type ProverSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
     type VerifierSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
     type Commitment: Default
@@ -33,12 +35,20 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
+    /// Reconstruct a PCS instance from a batched proof (e.g. for the verifier to
+    /// recover PCS-specific configuration serialized during proving).
+    fn from_proof(proof: &Self::BatchedProof) -> Self;
+
+    fn config(&self) -> &Self::Config;
+
     fn commit(
+        &self,
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint);
 
     fn batch_commit<U>(
+        &self,
         polys: &[U],
         gens: &Self::ProverSetup,
     ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
@@ -46,6 +56,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;
 
     fn prove<ProofTranscript: Transcript>(
+        &self,
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
@@ -55,6 +66,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     ) -> Self::Proof;
 
     fn verify<ProofTranscript: Transcript>(
+        &self,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -65,6 +77,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 
     #[allow(clippy::too_many_arguments)]
     fn batch_prove<ProofTranscript: Transcript, S: BatchPolynomialSource<Self::Field>>(
+        &self,
         setup: &Self::ProverSetup,
         poly_source: &S,
         hints: Vec<Self::OpeningProofHint>,
@@ -75,8 +88,9 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof;
 
-    /// Verifies a batch opening proof for multiple polynomials evaluated at a single point.
+    #[allow(clippy::too_many_arguments)]
     fn batch_verify<ProofTranscript: Transcript>(
+        &self,
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -93,18 +107,21 @@ pub trait StreamingCommitmentScheme: CommitmentScheme {
     /// The type representing chunk state (tier 1 commitments)
     type ChunkState: Send + Sync + Clone + PartialEq + Debug;
 
-    /// Compute tier 1 commitment for a chunk of small scalar values
-    fn process_chunk<T: SmallScalar>(setup: &Self::ProverSetup, chunk: &[T]) -> Self::ChunkState;
+    fn process_chunk<T: SmallScalar>(
+        &self,
+        setup: &Self::ProverSetup,
+        chunk: &[T],
+    ) -> Self::ChunkState;
 
-    /// Compute tier 1 commitment for a chunk of one-hot values
     fn process_chunk_onehot(
+        &self,
         setup: &Self::ProverSetup,
         onehot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::ChunkState;
 
-    /// Compute tier 2 commitment from accumulated tier 1 commitments
     fn aggregate_chunks(
+        &self,
         setup: &Self::ProverSetup,
         onehot_k: Option<usize>,
         tier1_commitments: &[Self::ChunkState],

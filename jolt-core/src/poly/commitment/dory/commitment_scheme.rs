@@ -6,6 +6,7 @@ use super::wrappers::{
     jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
     JoltToDoryTranscript, BN254,
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
@@ -27,16 +28,25 @@ use rayon::prelude::*;
 use sha3::{Digest, Sha3_256};
 use tracing::trace_span;
 
-#[derive(Clone)]
-pub struct DoryCommitmentScheme;
+#[derive(Clone, Default)]
+pub struct DoryCommitmentScheme {
+    pub layout: DoryLayout,
+}
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct DoryBatchedProof {
+    pub proof: ArkDoryProof,
+    pub layout: DoryLayout,
+}
 
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
+    type Config = DoryLayout;
     type ProverSetup = ArkworksProverSetup;
     type VerifierSetup = ArkworksVerifierSetup;
     type Commitment = ArkGT;
     type Proof = ArkDoryProof;
-    type BatchedProof = Vec<ArkDoryProof>;
+    type BatchedProof = DoryBatchedProof;
     type OpeningProofHint = Vec<ArkG1>;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
@@ -63,7 +73,18 @@ impl CommitmentScheme for DoryCommitmentScheme {
         setup.to_verifier_setup()
     }
 
+    fn from_proof(proof: &DoryBatchedProof) -> Self {
+        Self {
+            layout: proof.layout,
+        }
+    }
+
+    fn config(&self) -> &DoryLayout {
+        &self.layout
+    }
+
     fn commit(
+        &self,
         poly: &MultilinearPolynomial<ark_bn254::Fr>,
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint) {
@@ -85,6 +106,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     }
 
     fn batch_commit<U>(
+        &self,
         polys: &[U],
         gens: &Self::ProverSetup,
     ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
@@ -95,11 +117,12 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         polys
             .par_iter()
-            .map(|poly| Self::commit(poly.borrow(), gens))
+            .map(|poly| self.commit(poly.borrow(), gens))
             .collect()
     }
 
     fn prove<ProofTranscript: Transcript>(
+        &self,
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<ark_bn254::Fr>,
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
@@ -110,7 +133,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
 
         let row_commitments = hint.unwrap_or_else(|| {
-            let (_commitment, row_commitments) = Self::commit(poly, setup);
+            let (_commitment, row_commitments) = self.commit(poly, setup);
             row_commitments
         });
 
@@ -146,6 +169,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     }
 
     fn verify<ProofTranscript: Transcript>(
+        &self,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -184,6 +208,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     }
 
     fn batch_prove<ProofTranscript: Transcript, S: BatchPolynomialSource<Self::Field>>(
+        &self,
         setup: &Self::ProverSetup,
         poly_source: &S,
         hints: Vec<Self::OpeningProofHint>,
@@ -196,7 +221,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let joint_poly = poly_source.build_joint_polynomial(coeffs);
         let combined_hint = Self::combine_hints_internal(hints, coeffs);
         let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
-        let proof = Self::prove(
+        let proof = self.prove(
             setup,
             &joint_poly,
             opening_point,
@@ -204,10 +229,14 @@ impl CommitmentScheme for DoryCommitmentScheme {
             transcript,
             &joint_commitment,
         );
-        vec![proof]
+        DoryBatchedProof {
+            proof,
+            layout: DoryGlobals::get_layout(),
+        }
     }
 
     fn batch_verify<ProofTranscript: Transcript>(
+        &self,
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -218,8 +247,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> Result<(), ProofVerifyError> {
         let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
         let joint_claim: ark_bn254::Fr = coeffs.iter().zip(claims).map(|(c, v)| *c * *v).sum();
-        Self::verify(
-            &proof[0],
+        self.verify(
+            &proof.proof,
             setup,
             transcript,
             opening_point,
@@ -291,7 +320,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
     type ChunkState = Vec<ArkG1>; // Tier 1 commitment chunks
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier1_commitment")]
-    fn process_chunk<T: SmallScalar>(setup: &Self::ProverSetup, chunk: &[T]) -> Self::ChunkState {
+    fn process_chunk<T: SmallScalar>(&self, setup: &Self::ProverSetup, chunk: &[T]) -> Self::ChunkState {
         debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
         let row_len = DoryGlobals::get_num_columns();
@@ -313,6 +342,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         name = "DoryCommitmentScheme::compute_tier1_commitment_onehot"
     )]
     fn process_chunk_onehot(
+        &self,
         setup: &Self::ProverSetup,
         onehot_k: usize,
         chunk: &[Option<usize>],
@@ -348,6 +378,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier2_commitment")]
     fn aggregate_chunks(
+        &self,
         setup: &Self::ProverSetup,
         onehot_k: Option<usize>,
         chunks: &[Self::ChunkState],

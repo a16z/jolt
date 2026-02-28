@@ -20,7 +20,7 @@ fn benchmark_dory_dense(c: &mut Criterion, name: &str, k: usize, t: usize) {
     c.bench_function(&format!("{name} Dory commit_rows"), |b| {
         b.iter(|| {
             let _ = globals;
-            DoryCommitmentScheme::commit(&poly, &setup);
+            DoryCommitmentScheme::default().commit(&poly, &setup);
         });
     });
 }
@@ -43,9 +43,9 @@ fn benchmark_dory_one_hot_batch(c: &mut Criterion, name: &str, k: usize, t: usiz
     c.bench_function(&format!("{name} Dory one-hot commit"), |b| {
         b.iter(|| {
             let _ = globals;
-            DoryCommitmentScheme::batch_commit(&polys, &setup);
+            DoryCommitmentScheme::default().batch_commit(&polys, &setup);
             // polys.par_iter().for_each(|poly| {
-            //     DoryCommitmentScheme::commit(&poly, &setup);
+            //     DoryCommitmentScheme::default().commit(&poly, &setup);
             // });
         });
     });
@@ -75,7 +75,7 @@ fn benchmark_dory_mixed_batch(c: &mut Criterion, name: &str, k: usize, t: usize)
     c.bench_function(&format!("{name} Dory mixed batch commit"), |b| {
         b.iter(|| {
             let _ = globals;
-            DoryCommitmentScheme::batch_commit(&polys, &setup);
+            DoryCommitmentScheme::default().batch_commit(&polys, &setup);
         });
     });
 }

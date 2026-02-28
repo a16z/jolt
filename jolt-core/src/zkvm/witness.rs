@@ -71,6 +71,7 @@ impl CommittedPolynomial {
         F: JoltField,
         PCS: StreamingCommitmentScheme<Field = F>,
     {
+        let pcs = PCS::default();
         match self {
             CommittedPolynomial::RdInc => {
                 let row: Vec<i128> = row_cycles
@@ -80,7 +81,7 @@ impl CommittedPolynomial {
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
-                PCS::process_chunk(setup, &row)
+                pcs.process_chunk(setup, &row)
             }
             CommittedPolynomial::RamInc => {
                 let row: Vec<i128> = row_cycles
@@ -92,7 +93,7 @@ impl CommittedPolynomial {
                         _ => 0,
                     })
                     .collect();
-                PCS::process_chunk(setup, &row)
+                pcs.process_chunk(setup, &row)
             }
             CommittedPolynomial::InstructionRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -102,7 +103,7 @@ impl CommittedPolynomial {
                         Some(one_hot_params.lookup_index_chunk(lookup_index, *idx) as usize)
                     })
                     .collect();
-                PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
+                pcs.process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
             CommittedPolynomial::BytecodeRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -112,7 +113,7 @@ impl CommittedPolynomial {
                         Some(one_hot_params.bytecode_pc_chunk(pc, *idx) as usize)
                     })
                     .collect();
-                PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
+                pcs.process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
             CommittedPolynomial::RamRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -125,7 +126,7 @@ impl CommittedPolynomial {
                         .map(|address| one_hot_params.ram_address_chunk(address, *idx) as usize)
                     })
                     .collect();
-                PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
+                pcs.process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
             CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
                 panic!("Advice polynomials should not use streaming witness generation")
