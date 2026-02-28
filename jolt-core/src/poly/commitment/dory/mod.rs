@@ -11,7 +11,7 @@ mod wrappers;
 #[cfg(test)]
 mod tests;
 
-pub use commitment_scheme::{DoryBatchedProof, DoryCommitmentScheme};
+pub use commitment_scheme::{balanced_sigma_nu, DoryBatchedProof, DoryCommitmentScheme};
 pub use dory_globals::{DoryContext, DoryGlobals, DoryLayout};
 pub use jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 pub use wrappers::{

@@ -486,7 +486,9 @@ mod tests {
         let commitment_refs: Vec<&ArkGT> = commitments.iter().collect();
         let combined_commitment =
             DoryCommitmentScheme::combine_commitments_internal(&commitment_refs, &coeffs);
-        let combined_hint = DoryCommitmentScheme::combine_hints_internal(hints, &coeffs);
+        let (_, nu) = balanced_sigma_nu(num_vars);
+        let combined_hint =
+            DoryCommitmentScheme::combine_hints_internal(hints, &coeffs, 1 << nu);
 
         let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
@@ -561,7 +563,9 @@ mod tests {
         let commitment_refs: Vec<&ArkGT> = commitments.iter().collect();
         let combined_commitment =
             DoryCommitmentScheme::combine_commitments_internal(&commitment_refs, &coeffs);
-        let combined_hint = DoryCommitmentScheme::combine_hints_internal(hints, &coeffs);
+        let (_, nu) = balanced_sigma_nu(num_vars);
+        let combined_hint =
+            DoryCommitmentScheme::combine_hints_internal(hints, &coeffs, 1 << nu);
 
         let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))

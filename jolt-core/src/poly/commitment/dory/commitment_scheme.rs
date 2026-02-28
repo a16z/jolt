@@ -39,6 +39,16 @@ pub struct DoryBatchedProof {
     pub layout: DoryLayout,
 }
 
+/// Split `total_vars` into balanced `(sigma, nu)` where sigma = ceil(total_vars / 2)
+/// and nu = total_vars - sigma. sigma is the number of column variables,
+/// nu is the number of row variables.
+#[inline]
+pub fn balanced_sigma_nu(total_vars: usize) -> (usize, usize) {
+    let sigma = total_vars.div_ceil(2);
+    let nu = total_vars - sigma;
+    (sigma, nu)
+}
+
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
     type Config = DoryLayout;
@@ -90,10 +100,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         let _span = trace_span!("DoryCommitmentScheme::commit").entered();
 
-        let num_cols = DoryGlobals::get_num_columns();
-        let num_rows = DoryGlobals::get_max_num_rows();
-        let sigma = num_cols.log_2();
-        let nu = num_rows.log_2();
+        let total_vars = poly.len().log_2();
+        let (sigma, nu) = balanced_sigma_nu(total_vars);
 
         let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
             ArkFr,
@@ -137,17 +145,16 @@ impl CommitmentScheme for DoryCommitmentScheme {
             row_commitments
         });
 
-        let num_cols = DoryGlobals::get_num_columns();
-        let num_rows = DoryGlobals::get_max_num_rows();
-        let sigma = num_cols.log_2();
-        let nu = num_rows.log_2();
+        let total_vars = poly.len().log_2();
+        let (sigma, nu) = balanced_sigma_nu(total_vars);
 
-        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
+        let reordered_point =
+            reorder_opening_point_for_layout::<ark_bn254::Fr>(self.layout, opening_point);
 
         // Dory uses the opposite endian-ness as Jolt
         let ark_point: Vec<ArkFr> = reordered_point
             .iter()
-            .rev() // Reverse the order for Dory
+            .rev()
             .map(|p| {
                 let f_val: ark_bn254::Fr = (*p).into();
                 jolt_to_ark(&f_val)
@@ -179,7 +186,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> Result<(), ProofVerifyError> {
         let _span = trace_span!("DoryCommitmentScheme::verify").entered();
 
-        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
+        let reordered_point =
+            reorder_opening_point_for_layout::<ark_bn254::Fr>(self.layout, opening_point);
 
         // Dory uses the opposite endian-ness as Jolt
         let ark_point: Vec<ArkFr> = reordered_point
@@ -219,7 +227,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
         let joint_poly = poly_source.build_joint_polynomial(coeffs);
-        let combined_hint = Self::combine_hints_internal(hints, coeffs);
+        let total_vars = joint_poly.len().log_2();
+        let (_sigma, nu) = balanced_sigma_nu(total_vars);
+        let max_num_rows = 1 << nu;
+        let combined_hint = Self::combine_hints_internal(hints, coeffs, max_num_rows);
         let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
         let proof = self.prove(
             setup,
@@ -231,7 +242,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         );
         DoryBatchedProof {
             proof,
-            layout: DoryGlobals::get_layout(),
+            layout: self.layout,
         }
     }
 
@@ -268,12 +279,11 @@ impl DoryCommitmentScheme {
     pub(crate) fn combine_hints_internal(
         hints: Vec<Vec<ArkG1>>,
         coeffs: &[ark_bn254::Fr],
+        max_num_rows: usize,
     ) -> Vec<ArkG1> {
-        let num_rows = DoryGlobals::get_max_num_rows();
-
-        let mut rlc_hint = vec![ArkG1(G1Projective::zero()); num_rows];
+        let mut rlc_hint = vec![ArkG1(G1Projective::zero()); max_num_rows];
         for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
-            hint.resize(num_rows, ArkG1(G1Projective::zero()));
+            hint.resize(max_num_rows, ArkG1(G1Projective::zero()));
 
             // SAFETY: ArkG1 is repr(transparent) over G1Projective
             let row_commitments: &mut [G1Projective] = unsafe {
@@ -317,13 +327,11 @@ impl DoryCommitmentScheme {
 }
 
 impl StreamingCommitmentScheme for DoryCommitmentScheme {
-    type ChunkState = Vec<ArkG1>; // Tier 1 commitment chunks
+    type ChunkState = Vec<ArkG1>;
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier1_commitment")]
     fn process_chunk<T: SmallScalar>(&self, setup: &Self::ProverSetup, chunk: &[T]) -> Self::ChunkState {
-        debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
-
-        let row_len = DoryGlobals::get_num_columns();
+        let row_len = chunk.len();
         let g1_slice =
             unsafe { std::slice::from_raw_parts(setup.g1_vec.as_ptr(), setup.g1_vec.len()) };
 
@@ -348,8 +356,8 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         chunk: &[Option<usize>],
     ) -> Self::ChunkState {
         let K = onehot_k;
+        let row_len = chunk.len();
 
-        let row_len = DoryGlobals::get_num_columns();
         let g1_slice =
             unsafe { std::slice::from_raw_parts(setup.g1_vec.as_ptr(), setup.g1_vec.len()) };
 
@@ -384,10 +392,8 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         if let Some(K) = onehot_k {
-            let row_len = DoryGlobals::get_num_columns();
-            let T = DoryGlobals::get_T();
-            let rows_per_k = T / row_len;
-            let num_rows = K * T / row_len;
+            let rows_per_k = chunks.len();
+            let num_rows = K * rows_per_k;
 
             let mut row_commitments = vec![ArkG1(G1Projective::zero()); num_rows];
             for (chunk_index, commitments) in chunks.iter().enumerate() {
@@ -424,9 +430,12 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 ///
 /// For CycleMajor layout, returns the point unchanged.
 fn reorder_opening_point_for_layout<F: JoltField>(
+    layout: DoryLayout,
     opening_point: &[F::Challenge],
 ) -> Vec<F::Challenge> {
-    if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+    if layout == DoryLayout::AddressMajor {
+        // For AddressMajor, T is needed to split the point.
+        // Fall back to DoryGlobals for now; will be eliminated in Phase 2d.
         let log_T = DoryGlobals::get_T().log_2();
         let log_K = opening_point.len().saturating_sub(log_T);
         let (r_address, r_cycle) = opening_point.split_at(log_K);
