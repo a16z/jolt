@@ -6,6 +6,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
+    poly::opening_proof::BatchPolynomialSource,
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
@@ -63,25 +64,13 @@ where
             .collect()
     }
 
-    fn combine_commitments<C: Borrow<Self::Commitment>>(
-        _commitments: &[C],
-        _coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        MockCommitment::default()
-    }
-
-    fn combine_hints(
-        _hints: Vec<Self::OpeningProofHint>,
-        _coeffs: &[Self::Field],
-    ) -> Self::OpeningProofHint {
-    }
-
     fn prove<ProofTranscript: Transcript>(
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
         _hint: Option<Self::OpeningProofHint>,
         _transcript: &mut ProofTranscript,
+        _commitment: &Self::Commitment,
     ) -> Self::Proof {
         MockProof {
             opening_point: opening_point.to_owned(),
@@ -95,6 +84,34 @@ where
         opening_point: &[<Self::Field as JoltField>::Challenge],
         _opening: &Self::Field,
         _commitment: &Self::Commitment,
+    ) -> Result<(), ProofVerifyError> {
+        assert_eq!(proof.opening_point, opening_point);
+        Ok(())
+    }
+
+    fn batch_prove<ProofTranscript: Transcript, S: BatchPolynomialSource<Self::Field>>(
+        _setup: &Self::ProverSetup,
+        _poly_source: &S,
+        _hints: Vec<Self::OpeningProofHint>,
+        _commitments: &[&Self::Commitment],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        _claims: &[Self::Field],
+        _coeffs: &[Self::Field],
+        _transcript: &mut ProofTranscript,
+    ) -> Self::BatchedProof {
+        MockProof {
+            opening_point: opening_point.to_owned(),
+        }
+    }
+
+    fn batch_verify<ProofTranscript: Transcript>(
+        proof: &Self::BatchedProof,
+        _setup: &Self::VerifierSetup,
+        _transcript: &mut ProofTranscript,
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        _commitments: &[&Self::Commitment],
+        _claims: &[Self::Field],
+        _coeffs: &[Self::Field],
     ) -> Result<(), ProofVerifyError> {
         assert_eq!(proof.opening_point, opening_point);
         Ok(())

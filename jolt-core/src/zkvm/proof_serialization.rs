@@ -40,7 +40,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub joint_opening_proof: PCS::Proof,
+    pub joint_opening_proof: PCS::BatchedProof,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,

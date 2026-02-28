@@ -14,6 +14,7 @@ use super::{
 };
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+use crate::poly::opening_proof::BatchPolynomialSource;
 use crate::poly::rlc_polynomial::RLCPolynomial;
 use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
@@ -470,24 +471,13 @@ where
             .collect()
     }
 
-    fn combine_commitments<C: Borrow<Self::Commitment>>(
-        commitments: &[C],
-        coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        let combined_commitment: P::G1 = commitments
-            .iter()
-            .zip(coeffs.iter())
-            .map(|(commitment, coeff)| commitment.borrow().0 * coeff)
-            .sum();
-        HyperKZGCommitment(combined_commitment.into_affine())
-    }
-
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[<Self::Field as JoltField>::Challenge], // point at which the polynomial is evaluated
+        opening_point: &[<Self::Field as JoltField>::Challenge],
         _hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
+        _commitment: &Self::Commitment,
     ) -> Self::Proof {
         let eval = poly.evaluate(opening_point);
         HyperKZG::<P>::open(setup, poly, opening_point, &eval, transcript).unwrap()
@@ -497,15 +487,75 @@ where
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
-        opening_point: &[<Self::Field as JoltField>::Challenge], // point at which the polynomial is evaluated
-        opening: &Self::Field,                                   // evaluation \widetilde{Z}(r)
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
         HyperKZG::<P>::verify(setup, commitment, opening_point, opening, proof, transcript)
     }
 
+    fn batch_prove<ProofTranscript: Transcript, S: BatchPolynomialSource<Self::Field>>(
+        setup: &Self::ProverSetup,
+        poly_source: &S,
+        _hints: Vec<Self::OpeningProofHint>,
+        commitments: &[&Self::Commitment],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        _claims: &[Self::Field],
+        coeffs: &[Self::Field],
+        transcript: &mut ProofTranscript,
+    ) -> Self::BatchedProof {
+        let joint_poly = poly_source.build_joint_polynomial(coeffs);
+        let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
+        Self::prove(
+            setup,
+            &joint_poly,
+            opening_point,
+            None,
+            transcript,
+            &joint_commitment,
+        )
+    }
+
+    fn batch_verify<ProofTranscript: Transcript>(
+        proof: &Self::BatchedProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut ProofTranscript,
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        commitments: &[&Self::Commitment],
+        claims: &[Self::Field],
+        coeffs: &[Self::Field],
+    ) -> Result<(), ProofVerifyError> {
+        let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
+        let joint_claim: Self::Field = coeffs.iter().zip(claims).map(|(c, v)| *c * *v).sum();
+        HyperKZG::<P>::verify(
+            setup,
+            &joint_commitment,
+            opening_point,
+            &joint_claim,
+            proof,
+            transcript,
+        )
+    }
+
     fn protocol_name() -> &'static [u8] {
         b"hyperkzg"
+    }
+}
+
+impl<P: Pairing> HyperKZG<P>
+where
+    <P as Pairing>::ScalarField: JoltField,
+{
+    fn combine_commitments_internal(
+        commitments: &[&HyperKZGCommitment<P>],
+        coeffs: &[P::ScalarField],
+    ) -> HyperKZGCommitment<P> {
+        let combined: P::G1 = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| commitment.0 * coeff)
+            .sum();
+        HyperKZGCommitment(combined.into_affine())
     }
 }
 

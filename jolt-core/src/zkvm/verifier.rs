@@ -51,8 +51,8 @@ use crate::zkvm::{
 use crate::{
     field::JoltField,
     poly::opening_proof::{
-        compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningPoint,
-        SumcheckId, VerifierOpeningAccumulator,
+        compute_advice_lagrange_factor, OpeningAccumulator, OpeningPoint, SumcheckId,
+        VerifierOpeningAccumulator,
     },
     pprof_scope,
     subprotocols::{
@@ -639,86 +639,49 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         self.transcript.append_scalars(b"rlc_claims", &claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
 
-        // Build state for computing joint commitment/claim
-        let state = DoryOpeningState {
-            opening_point: opening_point.r.clone(),
-            gamma_powers: gamma_powers.clone(),
-            polynomial_claims,
-        };
+        // Accumulate gamma coefficients per unique polynomial (BTreeMap for deterministic ordering)
+        let mut rlc_map = std::collections::BTreeMap::new();
+        for (gamma, (poly, claim)) in gamma_powers.iter().zip(polynomial_claims.iter()) {
+            let entry = rlc_map.entry(*poly).or_insert((F::zero(), F::zero()));
+            entry.0 += *gamma;
+            entry.1 = *claim;
+        }
 
-        // Build commitments map
-        let mut commitments_map = HashMap::new();
+        let (poly_ids, coeffs_and_claims): (Vec<CommittedPolynomial>, Vec<(F, F)>) =
+            rlc_map.into_iter().collect();
+        let (coeffs, sorted_claims): (Vec<F>, Vec<F>) = coeffs_and_claims.into_iter().unzip();
+
+        // Build commitments map and collect in same order as poly_ids
+        let mut commitments_map: HashMap<CommittedPolynomial, PCS::Commitment> = HashMap::new();
         for (polynomial, commitment) in all_committed_polynomials(&self.one_hot_params)
             .into_iter()
             .zip_eq(&self.proof.commitments)
         {
             commitments_map.insert(polynomial, commitment.clone());
         }
-
-        // Add advice commitments if they're part of the batch
         if let Some(ref commitment) = self.trusted_advice_commitment {
-            if state
-                .polynomial_claims
-                .iter()
-                .any(|(p, _)| *p == CommittedPolynomial::TrustedAdvice)
-            {
-                commitments_map.insert(CommittedPolynomial::TrustedAdvice, commitment.clone());
-            }
+            commitments_map.insert(CommittedPolynomial::TrustedAdvice, commitment.clone());
         }
         if let Some(ref commitment) = self.proof.untrusted_advice_commitment {
-            if state
-                .polynomial_claims
-                .iter()
-                .any(|(p, _)| *p == CommittedPolynomial::UntrustedAdvice)
-            {
-                commitments_map.insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
-            }
+            commitments_map.insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
         }
 
-        // Compute joint commitment: Σ γ_i · C_i
-        let joint_commitment = self.compute_joint_commitment(&mut commitments_map, &state);
-
-        // Compute joint claim: Σ γ_i · claim_i
-        let joint_claim: F = gamma_powers
+        let commitment_refs: Vec<PCS::Commitment> = poly_ids
             .iter()
-            .zip(claims.iter())
-            .map(|(gamma, claim)| *gamma * claim)
-            .sum();
+            .map(|id| commitments_map.remove(id).unwrap())
+            .collect();
+        let commitment_ref_slice: Vec<&PCS::Commitment> = commitment_refs.iter().collect();
 
-        // Verify opening
-        PCS::verify(
+        PCS::batch_verify(
             &self.proof.joint_opening_proof,
             &self.preprocessing.generators,
             &mut self.transcript,
             &opening_point.r,
-            &joint_claim,
-            &joint_commitment,
+            &commitment_ref_slice,
+            &sorted_claims,
+            &coeffs,
         )
         .context("Stage 8")
-    }
-
-    /// Compute joint commitment for the batch opening.
-    fn compute_joint_commitment(
-        &self,
-        commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
-        state: &DoryOpeningState<F>,
-    ) -> PCS::Commitment {
-        // Accumulate gamma coefficients per polynomial
-        let mut rlc_map = HashMap::new();
-        for (gamma, (poly, _claim)) in state
-            .gamma_powers
-            .iter()
-            .zip(state.polynomial_claims.iter())
-        {
-            *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
-        }
-
-        let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
-            .into_iter()
-            .map(|(k, v)| (v, commitment_map.remove(&k).unwrap()))
-            .unzip();
-
-        PCS::combine_commitments(&commitments, &coeffs)
     }
 }
 

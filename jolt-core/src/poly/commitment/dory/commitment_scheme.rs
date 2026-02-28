@@ -10,6 +10,7 @@ use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
     poly::multilinear_polynomial::MultilinearPolynomial,
+    poly::opening_proof::BatchPolynomialSource,
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
@@ -24,7 +25,6 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use rayon::prelude::*;
 use sha3::{Digest, Sha3_256};
-use std::borrow::Borrow;
 use tracing::trace_span;
 
 #[derive(Clone)]
@@ -105,6 +105,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
+        _commitment: &Self::Commitment,
     ) -> Self::Proof {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
 
@@ -182,26 +183,70 @@ impl CommitmentScheme for DoryCommitmentScheme {
         Ok(())
     }
 
+    fn batch_prove<ProofTranscript: Transcript, S: BatchPolynomialSource<Self::Field>>(
+        setup: &Self::ProverSetup,
+        poly_source: &S,
+        hints: Vec<Self::OpeningProofHint>,
+        commitments: &[&Self::Commitment],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        _claims: &[Self::Field],
+        coeffs: &[Self::Field],
+        transcript: &mut ProofTranscript,
+    ) -> Self::BatchedProof {
+        let joint_poly = poly_source.build_joint_polynomial(coeffs);
+        let combined_hint = Self::combine_hints_internal(hints, coeffs);
+        let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
+        let proof = Self::prove(
+            setup,
+            &joint_poly,
+            opening_point,
+            Some(combined_hint),
+            transcript,
+            &joint_commitment,
+        );
+        vec![proof]
+    }
+
+    fn batch_verify<ProofTranscript: Transcript>(
+        proof: &Self::BatchedProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut ProofTranscript,
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        commitments: &[&Self::Commitment],
+        claims: &[Self::Field],
+        coeffs: &[Self::Field],
+    ) -> Result<(), ProofVerifyError> {
+        let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
+        let joint_claim: ark_bn254::Fr = coeffs.iter().zip(claims).map(|(c, v)| *c * *v).sum();
+        Self::verify(
+            &proof[0],
+            setup,
+            transcript,
+            opening_point,
+            &joint_claim,
+            &joint_commitment,
+        )
+    }
+
     fn protocol_name() -> &'static [u8] {
         b"Dory"
     }
+}
 
-    /// In Dory, the opening proof hint consists of the Pedersen commitments to the rows
-    /// of the polynomial coefficient matrix. In the context of a batch opening proof, we
-    /// can homomorphically combine the row commitments for multiple polynomials into the
-    /// row commitments for the RLC of those polynomials. This is more efficient than computing
-    /// the row commitments for the RLC from scratch.
-    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_hints")]
-    fn combine_hints(
-        hints: Vec<Self::OpeningProofHint>,
-        coeffs: &[Self::Field],
-    ) -> Self::OpeningProofHint {
+impl DoryCommitmentScheme {
+    /// Homomorphically combines row commitment hints using a random linear combination.
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_hints_internal")]
+    pub(crate) fn combine_hints_internal(
+        hints: Vec<Vec<ArkG1>>,
+        coeffs: &[ark_bn254::Fr],
+    ) -> Vec<ArkG1> {
         let num_rows = DoryGlobals::get_max_num_rows();
 
         let mut rlc_hint = vec![ArkG1(G1Projective::zero()); num_rows];
         for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
             hint.resize(num_rows, ArkG1(G1Projective::zero()));
 
+            // SAFETY: ArkG1 is repr(transparent) over G1Projective
             let row_commitments: &mut [G1Projective] = unsafe {
                 std::slice::from_raw_parts_mut(hint.as_mut_ptr() as *mut G1Projective, hint.len())
             };
@@ -213,8 +258,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
             let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
             let _enter = _span.enter();
 
-            // Scales the row commitments for the current polynomial by
-            // its coefficient
             jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
                 row_commitments,
                 *coeff,
@@ -227,20 +270,15 @@ impl CommitmentScheme for DoryCommitmentScheme {
         rlc_hint
     }
 
-    /// Homomorphically combines multiple commitments using a random linear combination.
-    /// Computes: sum_i(coeff_i * commitment_i) for the GT elements.
-    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_commitments")]
-    fn combine_commitments<C: Borrow<Self::Commitment>>(
-        commitments: &[C],
-        coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        let _span = trace_span!("DoryCommitmentScheme::combine_commitments").entered();
-
-        // Combine GT elements using parallel RLC
-        let commitments_vec: Vec<&ArkGT> = commitments.iter().map(|c| c.borrow()).collect();
+    /// Homomorphically combines multiple GT commitments using a random linear combination.
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_commitments_internal")]
+    pub(crate) fn combine_commitments_internal(
+        commitments: &[&ArkGT],
+        coeffs: &[ark_bn254::Fr],
+    ) -> ArkGT {
         coeffs
             .par_iter()
-            .zip(commitments_vec.par_iter())
+            .zip(commitments.par_iter())
             .map(|(coeff, commitment)| {
                 let ark_coeff = jolt_to_ark(coeff);
                 ark_coeff * **commitment

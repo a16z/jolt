@@ -41,6 +41,7 @@ mod tests {
             &opening_point,
             Some(row_commitments),
             &mut prove_transcript,
+            &commitment,
         );
 
         let mut verify_transcript = Blake2bTranscript::new(b"dory_test");
@@ -267,6 +268,7 @@ mod tests {
             &opening_point,
             Some(row_commitments),
             &mut prove_transcript,
+            &commitment,
         );
 
         // Test 1: Tamper with the evaluation
@@ -426,6 +428,7 @@ mod tests {
             &opening_point,
             Some(row_commitments),
             &mut prove_transcript,
+            &commitment,
         );
 
         let mut verify_transcript = Blake2bTranscript::new(b"dory_test");
@@ -480,28 +483,25 @@ mod tests {
         // Step 3: Generate 5 random coefficients
         let coeffs: Vec<Fr> = (0..num_polys).map(|_| Fr::rand(&mut rng)).collect();
 
-        // Step 4: Homomorphically combine commitments and hints
-        let combined_commitment = DoryCommitmentScheme::combine_commitments(&commitments, &coeffs);
-        let combined_hint = DoryCommitmentScheme::combine_hints(hints, &coeffs);
+        let commitment_refs: Vec<&ArkGT> = commitments.iter().collect();
+        let combined_commitment =
+            DoryCommitmentScheme::combine_commitments_internal(&commitment_refs, &coeffs);
+        let combined_hint = DoryCommitmentScheme::combine_hints_internal(hints, &coeffs);
 
-        // Step 5: Generate evaluation point first
         let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
             .collect();
 
-        // Step 6: Compute expected evaluation as linear combination: eval = coeff[0]*P0(r) + ... + coeff[4]*P4(r)
         let mut evaluation = Fr::zero();
         for (poly, coeff) in polys.iter().zip(coeffs.iter()) {
             let poly_eval = poly.evaluate(&opening_point);
             evaluation += *coeff * poly_eval;
         }
 
-        // Step 7: Compute combined polynomial: P = coeff[0]*P0 + coeff[1]*P1 + ... + coeff[4]*P4
         let poly_refs: Vec<&MultilinearPolynomial<Fr>> = polys.iter().collect();
         let combined_poly = DensePolynomial::linear_combination(&poly_refs, &coeffs);
         let combined_poly = MultilinearPolynomial::from(combined_poly.Z);
 
-        // Step 8: Create evaluation proof using combined commitment and hint
         let mut prove_transcript = Blake2bTranscript::new(b"dory_homomorphic_test");
         let proof = DoryCommitmentScheme::prove(
             &prover_setup,
@@ -509,9 +509,9 @@ mod tests {
             &opening_point,
             Some(combined_hint),
             &mut prove_transcript,
+            &combined_commitment,
         );
 
-        // Step 9: Verify the proof
         let mut verify_transcript = Blake2bTranscript::new(b"dory_homomorphic_test");
         let result = DoryCommitmentScheme::verify(
             &proof,
@@ -541,7 +541,6 @@ mod tests {
 
         let mut rng = thread_rng();
 
-        // Step 1: Generate 5 random polynomials
         let polys: Vec<MultilinearPolynomial<Fr>> = (0..num_polys)
             .map(|_| {
                 let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
@@ -552,48 +551,40 @@ mod tests {
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
-        // Step 2: Use batch_commit
         let commitments_and_hints = DoryCommitmentScheme::batch_commit(&polys, &prover_setup);
 
         let commitments: Vec<_> = commitments_and_hints.iter().map(|(c, _)| *c).collect();
         let hints: Vec<_> = commitments_and_hints.into_iter().map(|(_, h)| h).collect();
 
-        // Step 3: Generate random coefficients (like gamma powers in opening_proof.rs)
         let coeffs: Vec<Fr> = (0..num_polys).map(|_| Fr::rand(&mut rng)).collect();
 
-        // Step 4: Homomorphically combine commitments and hints
-        let combined_commitment = DoryCommitmentScheme::combine_commitments(&commitments, &coeffs);
-        let combined_hint = DoryCommitmentScheme::combine_hints(hints, &coeffs);
+        let commitment_refs: Vec<&ArkGT> = commitments.iter().collect();
+        let combined_commitment =
+            DoryCommitmentScheme::combine_commitments_internal(&commitment_refs, &coeffs);
+        let combined_hint = DoryCommitmentScheme::combine_hints_internal(hints, &coeffs);
 
-        // Step 5: Generate evaluation point
         let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
             .collect();
 
-        // Step 6: Compute expected evaluation as linear combination
         let mut evaluation = Fr::zero();
         for (poly, coeff) in polys.iter().zip(coeffs.iter()) {
             let poly_eval = poly.evaluate(&opening_point);
             evaluation += *coeff * poly_eval;
         }
 
-        // Step 7: Create combined polynomial
         let poly_refs: Vec<&MultilinearPolynomial<Fr>> = polys.iter().collect();
         let combined_poly = DensePolynomial::linear_combination(&poly_refs, &coeffs);
         let combined_poly = MultilinearPolynomial::from(combined_poly.Z);
 
-        // Step 8: Verify that directly committing to the combined polynomial gives the same result
-        // as homomorphically combining the individual commitments
         let (direct_commitment, direct_hint) =
             DoryCommitmentScheme::commit(&combined_poly, &prover_setup);
 
-        // The commitments should match
         assert_eq!(
             combined_commitment, direct_commitment,
             "Homomorphically combined commitment should match direct commitment to RLC"
         );
 
-        // Step 9: Create evaluation proof using combined hint
         let mut prove_transcript = Blake2bTranscript::new(b"dory_batch_commit_e2e_test");
         let proof = DoryCommitmentScheme::prove(
             &prover_setup,
@@ -601,9 +592,9 @@ mod tests {
             &opening_point,
             Some(combined_hint),
             &mut prove_transcript,
+            &combined_commitment,
         );
 
-        // Step 10: Verify the proof
         let mut verify_transcript = Blake2bTranscript::new(b"dory_batch_commit_e2e_test");
         let result = DoryCommitmentScheme::verify(
             &proof,
@@ -619,7 +610,6 @@ mod tests {
             "Verification should succeed with batch_commit flow: {result:?}"
         );
 
-        // Step 11: Also verify that proving with the direct hint works
         let mut prove_transcript2 = Blake2bTranscript::new(b"dory_batch_commit_e2e_test");
         let proof2 = DoryCommitmentScheme::prove(
             &prover_setup,
@@ -627,6 +617,7 @@ mod tests {
             &opening_point,
             Some(direct_hint),
             &mut prove_transcript2,
+            &direct_commitment,
         );
 
         let mut verify_transcript2 = Blake2bTranscript::new(b"dory_batch_commit_e2e_test");
@@ -830,6 +821,7 @@ mod tests {
             &opening_point,
             Some(row_commitments),
             &mut prove_transcript,
+            &commitment,
         );
 
         let mut verify_transcript = Blake2bTranscript::new(b"dory_test");
