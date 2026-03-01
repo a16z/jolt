@@ -3,6 +3,10 @@ use super::{FieldOps, JoltField, UnreducedInteger};
 use crate::field::challenge::Mont254BitChallenge;
 #[cfg(not(feature = "challenge-254-bit"))]
 use crate::field::challenge::MontU128Challenge;
+use crate::field::folded_accum::{
+    Folded256MulU128, Folded256MulU128Accum, Folded256MulU64, Folded256Product,
+    Folded256ProductAccum,
+};
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, BigInteger, PrimeField, UniformRand};
 use rayon::prelude::*;
@@ -29,11 +33,11 @@ impl JoltField for ark_bn254::Fr {
     };
 
     type UnreducedElem = BigInt<4>;
-    type UnreducedMulU64 = BigInt<5>;
-    type UnreducedMulU128 = BigInt<6>;
-    type UnreducedMulU128Accum = BigInt<7>;
-    type UnreducedProduct = BigInt<8>;
-    type UnreducedProductAccum = BigInt<9>;
+    type UnreducedMulU64 = Folded256MulU64;
+    type UnreducedMulU128 = Folded256MulU128;
+    type UnreducedMulU128Accum = Folded256MulU128Accum;
+    type UnreducedProduct = Folded256Product;
+    type UnreducedProductAccum = Folded256ProductAccum;
 
     type SmallValueLookupTables = [Vec<Self>; 2];
 
@@ -236,69 +240,71 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline]
-    fn mul_u64_unreduced(self, other: u64) -> BigInt<5> {
-        self.0.mul_trunc::<1, 5>(&BigInt::new([other]))
+    fn mul_u64_unreduced(self, other: u64) -> Folded256MulU64 {
+        Folded256MulU64::from_bigint(self.0.mul_trunc::<1, 5>(&BigInt::new([other])))
     }
 
     #[inline]
-    fn mul_u128_unreduced(self, other: u128) -> BigInt<6> {
-        self.0
-            .mul_trunc::<2, 6>(&BigInt::new([other as u64, (other >> 64) as u64]))
+    fn mul_u128_unreduced(self, other: u128) -> Folded256MulU128 {
+        Folded256MulU128::from_bigint(
+            self.0
+                .mul_trunc::<2, 6>(&BigInt::new([other as u64, (other >> 64) as u64])),
+        )
     }
 
     #[inline]
-    fn mul_to_product(self, other: Self) -> BigInt<8> {
-        self.0.mul_trunc::<4, 8>(&other.0)
+    fn mul_to_product(self, other: Self) -> Folded256Product {
+        Folded256Product::from_mul(self.0, other.0)
     }
 
     #[inline]
-    fn mul_to_product_accum(self, other: Self) -> BigInt<9> {
-        self.0.mul_trunc::<4, 9>(&other.0)
+    fn mul_to_product_accum(self, other: Self) -> Folded256ProductAccum {
+        Folded256ProductAccum::from_mul(self.0, other.0)
     }
 
     #[inline]
-    fn unreduced_mul_u64(a: &BigInt<4>, b: u64) -> BigInt<5> {
-        a.mul_u64_w_carry(b)
+    fn unreduced_mul_u64(a: &BigInt<4>, b: u64) -> Folded256MulU64 {
+        Folded256MulU64::from_bigint(a.mul_u64_w_carry::<5>(b))
     }
 
     #[inline]
-    fn unreduced_mul_to_product_accum(a: &BigInt<4>, b: &BigInt<4>) -> BigInt<9> {
-        a.mul_trunc::<4, 9>(b)
+    fn unreduced_mul_to_product_accum(a: &BigInt<4>, b: &BigInt<4>) -> Folded256ProductAccum {
+        Folded256ProductAccum::from_mul(*a, *b)
     }
 
     #[inline]
-    fn mul_to_accum_mag<const M: usize>(&self, mag: &BigInt<M>) -> BigInt<7> {
-        self.0.mul_trunc::<M, 7>(mag)
+    fn mul_to_accum_mag<const M: usize>(&self, mag: &BigInt<M>) -> Folded256MulU128Accum {
+        Folded256MulU128Accum::from_bigint(self.0.mul_trunc::<M, 7>(mag))
     }
 
     #[inline]
-    fn mul_to_product_mag<const M: usize>(&self, mag: &BigInt<M>) -> BigInt<8> {
-        self.0.mul_trunc::<M, 8>(mag)
+    fn mul_to_product_mag<const M: usize>(&self, mag: &BigInt<M>) -> Folded256Product {
+        Folded256Product::from_bigint(self.0.mul_trunc::<M, 8>(mag))
     }
 
     #[inline]
-    fn reduce_mul_u64(x: BigInt<5>) -> Self {
-        ark_bn254::Fr::from_barrett_reduce::<5, 5>(x)
+    fn reduce_mul_u64(x: Folded256MulU64) -> Self {
+        ark_bn254::Fr::from_barrett_reduce::<5, 5>(x.normalize())
     }
 
     #[inline]
-    fn reduce_mul_u128(x: BigInt<6>) -> Self {
-        ark_bn254::Fr::from_barrett_reduce::<6, 5>(x)
+    fn reduce_mul_u128(x: Folded256MulU128) -> Self {
+        ark_bn254::Fr::from_barrett_reduce::<6, 5>(x.normalize())
     }
 
     #[inline]
-    fn reduce_mul_u128_accum(x: BigInt<7>) -> Self {
-        ark_bn254::Fr::from_barrett_reduce::<7, 5>(x)
+    fn reduce_mul_u128_accum(x: Folded256MulU128Accum) -> Self {
+        ark_bn254::Fr::from_barrett_reduce::<7, 5>(x.normalize())
     }
 
     #[inline]
-    fn reduce_product(x: BigInt<8>) -> Self {
-        ark_bn254::Fr::from_montgomery_reduce::<8, 5>(x)
+    fn reduce_product(x: Folded256Product) -> Self {
+        ark_bn254::Fr::from_montgomery_reduce::<8, 5>(x.normalize())
     }
 
     #[inline]
-    fn reduce_product_accum(x: BigInt<9>) -> Self {
-        ark_bn254::Fr::from_montgomery_reduce::<9, 5>(x)
+    fn reduce_product_accum(x: Folded256ProductAccum) -> Self {
+        ark_bn254::Fr::from_montgomery_reduce::<9, 5>(x.normalize())
     }
 }
 

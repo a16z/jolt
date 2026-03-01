@@ -371,4 +371,5 @@ where
 
 pub mod ark;
 pub mod challenge;
+pub mod folded_accum;
 pub mod tracked_ark;
