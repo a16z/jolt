@@ -813,9 +813,7 @@ mod tests {
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
             .collect();
 
-        let pcs = DoryCommitmentScheme {
-            layout: DoryLayout::AddressMajor,
-        };
+        let pcs = DoryCommitmentScheme::default();
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);

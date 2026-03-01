@@ -28,9 +28,21 @@ use rayon::prelude::*;
 use sha3::{Digest, Sha3_256};
 use tracing::trace_span;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct DoryCommitmentScheme {
     pub layout: DoryLayout,
+    pub sigma: usize,
+    pub nu: usize,
+}
+
+impl Default for DoryCommitmentScheme {
+    fn default() -> Self {
+        Self {
+            layout: DoryGlobals::get_layout(),
+            sigma: DoryGlobals::get_num_columns().log_2(),
+            nu: DoryGlobals::get_max_num_rows().log_2(),
+        }
+    }
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -86,6 +98,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
     fn from_proof(proof: &DoryBatchedProof) -> Self {
         Self {
             layout: proof.layout,
+            sigma: DoryGlobals::get_num_columns().log_2(),
+            nu: DoryGlobals::get_max_num_rows().log_2(),
         }
     }
 
@@ -100,8 +114,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         let _span = trace_span!("DoryCommitmentScheme::commit").entered();
 
-        let total_vars = poly.len().log_2();
-        let (sigma, nu) = balanced_sigma_nu(total_vars);
+        let sigma = self.sigma;
+        let nu = self.nu;
 
         let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
             ArkFr,
@@ -145,8 +159,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
             row_commitments
         });
 
-        let total_vars = poly.len().log_2();
-        let (sigma, nu) = balanced_sigma_nu(total_vars);
+        let sigma = self.sigma;
+        let nu = self.nu;
 
         let reordered_point =
             reorder_opening_point_for_layout::<ark_bn254::Fr>(self.layout, opening_point);
@@ -227,9 +241,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
         let joint_poly = poly_source.build_joint_polynomial(coeffs);
-        let total_vars = joint_poly.len().log_2();
-        let (_sigma, nu) = balanced_sigma_nu(total_vars);
-        let max_num_rows = 1 << nu;
+        let max_num_rows = 1 << self.nu;
         let combined_hint = Self::combine_hints_internal(hints, coeffs, max_num_rows);
         let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
         let proof = self.prove(
@@ -258,7 +270,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> Result<(), ProofVerifyError> {
         let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
         let joint_claim: ark_bn254::Fr = coeffs.iter().zip(claims).map(|(c, v)| *c * *v).sum();
-        self.verify(
+        let pcs = Self::from_proof(proof);
+        pcs.verify(
             &proof.proof,
             setup,
             transcript,
