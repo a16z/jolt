@@ -27,7 +27,8 @@ mod tests {
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
             .collect();
 
-        let (commitment, row_commitments) = DoryCommitmentScheme::default().commit(&poly, prover_setup);
+        let (commitment, row_commitments) =
+            DoryCommitmentScheme::default().commit(&poly, prover_setup);
 
         let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
             &poly,
@@ -256,7 +257,8 @@ mod tests {
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
-        let (commitment, row_commitments) = DoryCommitmentScheme::default().commit(&poly, &prover_setup);
+        let (commitment, row_commitments) =
+            DoryCommitmentScheme::default().commit(&poly, &prover_setup);
 
         let mut prove_transcript = Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
 
@@ -321,7 +323,8 @@ mod tests {
             let wrong_coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
             let wrong_poly =
                 MultilinearPolynomial::LargeScalars(DensePolynomial::new(wrong_coeffs));
-            let (wrong_commitment, _) = DoryCommitmentScheme::default().commit(&wrong_poly, &prover_setup);
+            let (wrong_commitment, _) =
+                DoryCommitmentScheme::default().commit(&wrong_poly, &prover_setup);
 
             let mut verify_transcript =
                 Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
@@ -414,7 +417,8 @@ mod tests {
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
-        let (commitment, row_commitments) = DoryCommitmentScheme::default().commit(&poly, &prover_setup);
+        let (commitment, row_commitments) =
+            DoryCommitmentScheme::default().commit(&poly, &prover_setup);
 
         let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
             &poly,
@@ -487,8 +491,7 @@ mod tests {
         let combined_commitment =
             DoryCommitmentScheme::combine_commitments_internal(&commitment_refs, &coeffs);
         let (_, nu) = balanced_sigma_nu(num_vars);
-        let combined_hint =
-            DoryCommitmentScheme::combine_hints_internal(hints, &coeffs, 1 << nu);
+        let combined_hint = DoryCommitmentScheme::combine_hints_internal(hints, &coeffs, 1 << nu);
 
         let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
@@ -553,7 +556,8 @@ mod tests {
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
-        let commitments_and_hints = DoryCommitmentScheme::default().batch_commit(&polys, &prover_setup);
+        let commitments_and_hints =
+            DoryCommitmentScheme::default().batch_commit(&polys, &prover_setup);
 
         let commitments: Vec<_> = commitments_and_hints.iter().map(|(c, _)| *c).collect();
         let hints: Vec<_> = commitments_and_hints.into_iter().map(|(_, h)| h).collect();
@@ -564,8 +568,7 @@ mod tests {
         let combined_commitment =
             DoryCommitmentScheme::combine_commitments_internal(&commitment_refs, &coeffs);
         let (_, nu) = balanced_sigma_nu(num_vars);
-        let combined_hint =
-            DoryCommitmentScheme::combine_hints_internal(hints, &coeffs, 1 << nu);
+        let combined_hint = DoryCommitmentScheme::combine_hints_internal(hints, &coeffs, 1 << nu);
 
         let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
@@ -728,11 +731,13 @@ mod tests {
 
         DoryGlobals::set_layout(DoryLayout::CycleMajor);
         let poly1 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
-        let (commitment_cycle_major, _) = DoryCommitmentScheme::default().commit(&poly1, &prover_setup);
+        let (commitment_cycle_major, _) =
+            DoryCommitmentScheme::default().commit(&poly1, &prover_setup);
 
         DoryGlobals::set_layout(DoryLayout::AddressMajor);
         let poly2 = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs));
-        let (commitment_addr_major, _) = DoryCommitmentScheme::default().commit(&poly2, &prover_setup);
+        let (commitment_addr_major, _) =
+            DoryCommitmentScheme::default().commit(&poly2, &prover_setup);
 
         assert_eq!(
             commitment_cycle_major, commitment_addr_major,
@@ -808,10 +813,14 @@ mod tests {
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
             .collect();
 
+        let pcs = DoryCommitmentScheme {
+            layout: DoryLayout::AddressMajor,
+        };
+
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
-        let (commitment, row_commitments) = DoryCommitmentScheme::default().commit(&poly, &prover_setup);
+        let (commitment, row_commitments) = pcs.commit(&poly, &prover_setup);
 
         let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
             &poly,
@@ -819,7 +828,7 @@ mod tests {
         );
 
         let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
-        let proof = DoryCommitmentScheme::default().prove(
+        let proof = pcs.prove(
             &prover_setup,
             &poly,
             &opening_point,
@@ -829,7 +838,7 @@ mod tests {
         );
 
         let mut verify_transcript = Blake2bTranscript::new(b"dory_test");
-        let verification_result = DoryCommitmentScheme::default().verify(
+        let verification_result = pcs.verify(
             &proof,
             &verifier_setup,
             &mut verify_transcript,

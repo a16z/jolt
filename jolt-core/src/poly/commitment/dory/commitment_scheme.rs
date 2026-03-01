@@ -6,7 +6,6 @@ use super::wrappers::{
     jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
     JoltToDoryTranscript, BN254,
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
@@ -18,6 +17,7 @@ use crate::{
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use dory::primitives::{
     arithmetic::{Group, PairingCurve},
     poly::Polynomial,
@@ -330,7 +330,11 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
     type ChunkState = Vec<ArkG1>;
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier1_commitment")]
-    fn process_chunk<T: SmallScalar>(&self, setup: &Self::ProverSetup, chunk: &[T]) -> Self::ChunkState {
+    fn process_chunk<T: SmallScalar>(
+        &self,
+        setup: &Self::ProverSetup,
+        chunk: &[T],
+    ) -> Self::ChunkState {
         let row_len = chunk.len();
         let g1_slice =
             unsafe { std::slice::from_raw_parts(setup.g1_vec.as_ptr(), setup.g1_vec.len()) };

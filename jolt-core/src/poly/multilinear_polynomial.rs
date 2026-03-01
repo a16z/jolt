@@ -90,7 +90,8 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::I128Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::U128Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::S128Scalars(poly) => poly.coeffs.len(),
-            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
+            MultilinearPolynomial::OneHot(poly) => poly.K * poly.nonzero_indices.len(),
+            MultilinearPolynomial::RLC(poly) => poly.len(),
         }
     }
 
@@ -123,7 +124,8 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::I128Scalars(poly) => poly.len(),
             MultilinearPolynomial::U128Scalars(poly) => poly.len(),
             MultilinearPolynomial::S128Scalars(poly) => poly.len(),
-            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
+            MultilinearPolynomial::OneHot(poly) => poly.K * poly.nonzero_indices.len(),
+            MultilinearPolynomial::RLC(poly) => poly.len(),
         }
     }
 

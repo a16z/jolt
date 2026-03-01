@@ -5,7 +5,7 @@ use crate::{
     zkvm::{claim_reductions::advice::ReductionPhase, config::OneHotConfig},
 };
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::File,
     io::{Read, Write},
     path::Path,
@@ -1437,7 +1437,7 @@ impl<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, ProofTranscrip
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
 
         // Accumulate gamma coefficients per unique polynomial (BTreeMap orders by CommittedPolynomial)
-        let mut rlc_map = std::collections::BTreeMap::new();
+        let mut rlc_map = BTreeMap::new();
         for (gamma, (poly, claim)) in gamma_powers.iter().zip(polynomial_claims.iter()) {
             let entry = rlc_map.entry(*poly).or_insert((F::zero(), F::zero()));
             entry.0 += *gamma;

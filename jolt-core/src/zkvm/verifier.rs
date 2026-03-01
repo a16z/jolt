@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -640,7 +640,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
         let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
 
         // Accumulate gamma coefficients per unique polynomial (BTreeMap for deterministic ordering)
-        let mut rlc_map = std::collections::BTreeMap::new();
+        let mut rlc_map = BTreeMap::new();
         for (gamma, (poly, claim)) in gamma_powers.iter().zip(polynomial_claims.iter()) {
             let entry = rlc_map.entry(*poly).or_insert((F::zero(), F::zero()));
             entry.0 += *gamma;
@@ -672,16 +672,17 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transc
             .collect();
         let commitment_ref_slice: Vec<&PCS::Commitment> = commitment_refs.iter().collect();
 
-        PCS::default().batch_verify(
-            &self.proof.joint_opening_proof,
-            &self.preprocessing.generators,
-            &mut self.transcript,
-            &opening_point.r,
-            &commitment_ref_slice,
-            &sorted_claims,
-            &coeffs,
-        )
-        .context("Stage 8")
+        PCS::default()
+            .batch_verify(
+                &self.proof.joint_opening_proof,
+                &self.preprocessing.generators,
+                &mut self.transcript,
+                &opening_point.r,
+                &commitment_ref_slice,
+                &sorted_claims,
+                &coeffs,
+            )
+            .context("Stage 8")
     }
 }
 

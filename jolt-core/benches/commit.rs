@@ -6,7 +6,6 @@ use jolt_core::utils::math::Math;
 use rand::Rng;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
-// use rayon::prelude::*;
 
 fn benchmark_dory_dense(c: &mut Criterion, name: &str, k: usize, t: usize) {
     let globals = DoryGlobals::initialize_context(k, t, DoryContext::Main, None);
@@ -44,9 +43,6 @@ fn benchmark_dory_one_hot_batch(c: &mut Criterion, name: &str, k: usize, t: usiz
         b.iter(|| {
             let _ = globals;
             DoryCommitmentScheme::default().batch_commit(&polys, &setup);
-            // polys.par_iter().for_each(|poly| {
-            //     DoryCommitmentScheme::default().commit(&poly, &setup);
-            // });
         });
     });
 }
