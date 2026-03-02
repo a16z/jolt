@@ -910,7 +910,7 @@ mod tests {
     /// This test ensures `target_field` is actually being read and interpreted by codegen,
     /// not just stored and ignored.
     #[test]
-    #[should_panic(expected = "Emulated arithmetic codegen not yet implemented")]
+    #[should_panic(expected = "Non-native field codegen not yet implemented")]
     fn test_fq_variable_panics_in_codegen() {
         let mut bundle = AstBundle::new();
 
@@ -948,10 +948,10 @@ mod tests {
                     .map(|s| s.as_str())
                     .or_else(|| e.downcast_ref::<&str>().copied())
                     .unwrap_or("");
-                // Acceptable: any panic that's NOT about emulated arithmetic
+                // Acceptable: any panic that's NOT about non-native fields
                 assert!(
-                    !msg.contains("Emulated arithmetic"),
-                    "Should not panic about emulated arithmetic for Fr-only bundle"
+                    !msg.contains("Non-native field"),
+                    "Should not panic about non-native fields for Fr-only bundle"
                 );
             }
         }
@@ -980,6 +980,72 @@ mod tests {
         assert!(
             panic_msg.contains("Fq"),
             "Panic message should mention Fq field type, got: {panic_msg}"
+        );
+    }
+
+    // =========================================================================
+    // sanitize_go_name tests
+    // =========================================================================
+    // These tests are CRITICAL because sanitize_go_name must produce identical
+    // output for circuit struct fields and witness JSON keys. Any mismatch
+    // causes witness loading to fail silently with all-zero values.
+
+    #[test]
+    fn test_sanitize_go_name_underscore_preservation() {
+        // Underscores must be preserved to maintain field structure
+        assert_eq!(sanitize_go_name("stage1_sumcheck_r0"), "Stage1_Sumcheck_R0");
+        assert_eq!(sanitize_go_name("my_var_name"), "My_Var_Name");
+        assert_eq!(sanitize_go_name("a_b_c"), "A_B_C");
+    }
+
+    #[test]
+    fn test_sanitize_go_name_bracket_replacement() {
+        // Brackets and other special chars become underscores
+        assert_eq!(sanitize_go_name("compressed_polys[0]"), "Compressed_Polys_0");
+        assert_eq!(sanitize_go_name("point(x,y)"), "Point_X_Y");
+        assert_eq!(sanitize_go_name("foo-bar"), "Foo_Bar");
+    }
+
+    #[test]
+    fn test_sanitize_go_name_preserves_case_after_first() {
+        // First char of each segment capitalized, rest preserved (CamelCase support)
+        assert_eq!(sanitize_go_name("myVar"), "MyVar");
+        assert_eq!(sanitize_go_name("myVarName"), "MyVarName");
+        assert_eq!(sanitize_go_name("XMLParser"), "XMLParser");
+    }
+
+    #[test]
+    fn test_sanitize_go_name_empty_segments_filtered() {
+        // Multiple consecutive underscores should not create empty segments
+        assert_eq!(sanitize_go_name("a__b"), "A_B");
+        assert_eq!(sanitize_go_name("foo___bar"), "Foo_Bar");
+        assert_eq!(sanitize_go_name("_leading"), "Leading");
+        assert_eq!(sanitize_go_name("trailing_"), "Trailing");
+    }
+
+    #[test]
+    fn test_sanitize_go_name_numeric_suffixes() {
+        // Numbers should work correctly in variable names
+        assert_eq!(sanitize_go_name("r0"), "R0");
+        assert_eq!(sanitize_go_name("stage1"), "Stage1");
+        assert_eq!(sanitize_go_name("var_123"), "Var_123");
+        assert_eq!(sanitize_go_name("123abc"), "123abc");
+    }
+
+    #[test]
+    fn test_sanitize_go_name_verifier_vars() {
+        // Real examples from Jolt verifier to ensure they work
+        assert_eq!(
+            sanitize_go_name("stage5_sumcheck_r84_1"),
+            "Stage5_Sumcheck_R84_1"
+        );
+        assert_eq!(
+            sanitize_go_name("opening_proof_vector_matrix_product[0]"),
+            "Opening_Proof_Vector_Matrix_Product_0"
+        );
+        assert_eq!(
+            sanitize_go_name("bytecode_v_init_final"),
+            "Bytecode_V_Init_Final"
         );
     }
 }
