@@ -36,7 +36,7 @@ const DEGREE_BOUND: usize = 3;
 
 #[derive(Allocative, Clone)]
 pub struct InstructionInputParams<F: JoltField> {
-    pub r_cycle_stage_2: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_spartan: OpeningPoint<BIG_ENDIAN, F>,
     pub gamma: F,
 }
 
@@ -45,15 +45,12 @@ impl<F: JoltField> InstructionInputParams<F> {
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let (r_cycle_stage_2, _) = opening_accumulator.get_virtual_polynomial_opening(
+        let (r_spartan, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftInstructionInput,
-            SumcheckId::SpartanProductVirtualization,
+            SumcheckId::SpartanOuter,
         );
         let gamma = transcript.challenge_scalar();
-        Self {
-            r_cycle_stage_2,
-            gamma,
-        }
+        Self { r_spartan, gamma }
     }
 }
 
@@ -63,40 +60,20 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
     }
 
     fn num_rounds(&self) -> usize {
-        self.r_cycle_stage_2.len()
+        self.r_spartan.len()
     }
 
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let (r_left_claim_instruction, left_claim_instruction) = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::InstructionClaimReduction,
-            );
-        let (r_right_claim_instruction, right_claim_instruction) = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RightInstructionInput,
-                SumcheckId::InstructionClaimReduction,
-            );
+        let (_, left_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::LeftInstructionInput,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, right_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RightInstructionInput,
+            SumcheckId::SpartanOuter,
+        );
 
-        let (r_left_claim_stage_2, left_claim_stage_2) = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::SpartanProductVirtualization,
-            );
-        let (r_right_claim_stage_2, right_claim_stage_2) = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RightInstructionInput,
-                SumcheckId::SpartanProductVirtualization,
-            );
-
-        // Soundness: InstructionClaimReduction and SpartanProductVirtualization must produce
-        // the same claims at the same opening points.
-        assert_eq!(r_left_claim_instruction, r_left_claim_stage_2);
-        assert_eq!(left_claim_instruction, left_claim_stage_2);
-        assert_eq!(r_right_claim_instruction, r_right_claim_stage_2);
-        assert_eq!(right_claim_instruction, right_claim_stage_2);
-
-        right_claim_stage_2 + self.gamma * left_claim_stage_2
+        right_claim + self.gamma * left_claim
     }
 
     fn normalize_opening_point(
@@ -118,7 +95,7 @@ pub struct InstructionInputSumcheckProver<F: JoltField> {
     rs2_value_poly: MultilinearPolynomial<F>,
     imm_poly: MultilinearPolynomial<F>,
     unexpanded_pc_poly: MultilinearPolynomial<F>,
-    eq_r_cycle_stage_2: GruenSplitEqPolynomial<F>,
+    eq_r_spartan: GruenSplitEqPolynomial<F>,
     pub params: InstructionInputParams<F>,
 }
 
@@ -176,8 +153,8 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
                 },
             );
 
-        let eq_r_cycle_stage_2 =
-            GruenSplitEqPolynomial::new(&params.r_cycle_stage_2.r, BindingOrder::LowToHigh);
+        let eq_r_spartan =
+            GruenSplitEqPolynomial::new(&params.r_spartan.r, BindingOrder::LowToHigh);
 
         Self {
             left_is_rs1_poly: left_is_rs1_poly.into(),
@@ -188,7 +165,7 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
             rs2_value_poly: rs2_value_poly.into(),
             imm_poly: imm_poly.into(),
             unexpanded_pc_poly: unexpanded_pc_poly.into(),
-            eq_r_cycle_stage_2,
+            eq_r_spartan,
             params,
         }
     }
@@ -204,7 +181,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     #[tracing::instrument(skip_all, name = "InstructionInputSumcheckProver::compute_message")]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let [eval_at_0, eval_at_inf] = self
-            .eq_r_cycle_stage_2
+            .eq_r_spartan
             .par_fold_out_in(
                 || [F::Unreduced::<9>::zero(); 2],
                 |inner, j, _x_in, e_in| {
@@ -276,7 +253,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             )
             .map(|x| F::from_montgomery_reduce::<9>(x));
 
-        self.eq_r_cycle_stage_2
+        self.eq_r_spartan
             .gruen_poly_deg_3(eval_at_0, eval_at_inf, previous_claim)
     }
 
@@ -291,7 +268,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             rs2_value_poly,
             imm_poly,
             unexpanded_pc_poly,
-            eq_r_cycle_stage_2,
+            eq_r_spartan,
             params: _,
         } = self;
         left_is_rs1_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
@@ -302,7 +279,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         rs2_value_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         imm_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
         unexpanded_pc_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        eq_r_cycle_stage_2.bind(r_j);
+        eq_r_spartan.bind(r_j);
     }
 
     fn cache_openings(
@@ -390,7 +367,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 /// ```
 ///
 /// Note:
-/// - `r_cycle_stage_2` is the randomness from instruction product sumcheck (stage 2).
+/// - `r_spartan` is the randomness from Spartan outer sumcheck (stage 1).
 pub struct InstructionInputSumcheckVerifier<F: JoltField> {
     params: InstructionInputParams<F>,
 }
@@ -436,7 +413,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
 
-        let eq_eval_at_r_cycle_stage_2 = EqPolynomial::mle_endian(&r, &self.params.r_cycle_stage_2);
+        let eq_eval_at_r_spartan = EqPolynomial::mle_endian(&r, &self.params.r_spartan);
 
         let (_, rs1_value_eval) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs1Value,
@@ -476,7 +453,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let right_instruction_input =
             right_is_rs2_eval * rs2_value_eval + right_is_imm_eval * imm_eval;
 
-        let result = eq_eval_at_r_cycle_stage_2
+        let result = eq_eval_at_r_spartan
             * (right_instruction_input + self.params.gamma * left_instruction_input);
 
         #[cfg(test)]
@@ -573,24 +550,24 @@ impl<F: JoltField> SumcheckFrontend<F> for InstructionInputSumcheckVerifier<F> {
         let left_instruction_input_eval = left_is_rs1 * rs1_value + left_is_pc * unexpanded_pc;
         let right_instruction_input_eval = right_is_rs2 * rs2_value + right_is_imm * imm;
 
-        let eq_r_stage2 = VerifierEvaluablePolynomial::Eq(CachedPointRef {
+        let eq_r_spartan = VerifierEvaluablePolynomial::Eq(CachedPointRef {
             opening: PolynomialId::Virtual(VirtualPolynomial::LeftInstructionInput),
-            sumcheck: SumcheckId::SpartanProductVirtualization,
+            sumcheck: SumcheckId::SpartanOuter,
             part: ChallengePart::Cycle,
         });
 
         InputOutputClaims {
             claims: vec![
                 Claim {
-                    input_sumcheck_id: SumcheckId::SpartanProductVirtualization,
+                    input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: right_instruction_input,
-                    batching_poly: eq_r_stage2,
+                    batching_poly: eq_r_spartan,
                     expected_output_claim_expr: right_instruction_input_eval,
                 },
                 Claim {
-                    input_sumcheck_id: SumcheckId::SpartanProductVirtualization,
+                    input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: left_instruction_input,
-                    batching_poly: eq_r_stage2,
+                    batching_poly: eq_r_spartan,
                     expected_output_claim_expr: left_instruction_input_eval,
                 },
             ],

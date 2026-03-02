@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use allocative::Allocative;
+use ark_ff::biginteger::{S128, S160, S192};
 use ark_std::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
@@ -11,7 +12,7 @@ use crate::field::{FMAdd, JoltField, MontgomeryReduce};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangePolynomial;
-use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
+use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::multiquadratic_poly::MultiquadraticPolynomial;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -28,11 +29,12 @@ use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
 use crate::transcripts::Transcript;
 use crate::utils::accumulation::{Acc5U, Acc6S, Acc7S, Acc8S};
 use crate::utils::expanding_table::ExpandingTable;
-use crate::utils::math::Math;
+use crate::utils::math::{s64_from_diff_u64s, Math};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::constraints::OUTER_FIRST_ROUND_POLY_DEGREE_BOUND;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::r1cs::{
@@ -41,44 +43,52 @@ use crate::zkvm::r1cs::{
         OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
     evaluation::R1CSEval,
-    inputs::{R1CSCycleInputs, ALL_R1CS_INPUTS},
+    inputs::{JoltR1CSInputs, R1CSCycleInputs, ALL_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
 
 /// Degree bound of the sumcheck round polynomials for [`OuterRemainingSumcheckVerifier`].
-const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
+/// Degree 4 because the product constraint `is_mul*(rl - li*ri)` is degree 3 inside eq.
+const OUTER_REMAINING_DEGREE_BOUND: usize = 4;
 // this represents the index position in multi-quadratic poly array
 // This should actually be d where degree is the degree of the streaming data structure
 // For example : MultiQuadratic has d=2; for cubic this would be 3 etc.
 const INFINITY: usize = 2;
 
 // Spartan Outer sumcheck
-// (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)
 //
-// We define a univariate in Z first-round polynomial
-//   s1(Y) := L(τ_high, Y) · Σ_{x_out ∈ {0,1}^{m_out}} Σ_{x_in ∈ {0,1}^{m_in}}
-//              E_out(r_out, x_out) · E_in(r_in, x_in) ·
-//              [ Az(x_out, x_in, Y) · Bz(x_out, x_in, Y) ],
-// where L(τ_high, Y) is the Lagrange basis polynomial over the univariate-skip
-// base domain evaluated at τ_high, and Az(·,·,Y), Bz(·,·,Y) are the
-// per-row univariate polynomials in Y induced by the R1CS row (split into two
-// internal groups in code, but algebraically composing to Az·Bz at Y).
-// The prover sends s1(Y) via univariate-skip by evaluating t1(Y) := Σ Σ E_out·E_in·(Az·Bz)
-// on an extended grid Y ∈ {−D..D} outside the base window, interpolating t1,
-// multiplying by L(τ_high, Y) to obtain s1, and the verifier samples r0.
+// Proves the combined R1CS + product constraint:
 //
-// Subsequent outer rounds bind the cycle variables r_tail = (r1, r2, …) using
-// a streaming first cycle-bit round followed by linear-time rounds:
-//   • Streaming round (after r0): compute
-//       t(0)  = Σ_{x_out} E_out · Σ_{x_in} E_in · (Az(0)·Bz(0))
-//       t(∞)  = Σ_{x_out} E_out · Σ_{x_in} E_in · ((Az(1)−Az(0))·(Bz(1)−Bz(0)))
-//     send a cubic built from these endpoints, and bind cached coefficients by r1.
-//   • Remaining rounds: reuse bound coefficients to compute the same endpoints
-//     in linear time for each subsequent bit and bind by r_i.
+//   Σ_x eq(τ, x) · [ Az(x)·Bz(x) + is_mul(x)·(rl(x) − li(x)·ri(x)) ] = 0
 //
-// Final check (verifier): with r = [r0 || r_tail] and outer binding order from
-// the top, evaluate Eq_τ(τ, r) and verify
-//  L(τ_high, r_high) · Eq_τ(τ, r) · (Az(r) · Bz(r)).
+// where Az·Bz encodes the R1CS constraints (no Cz term — all constraints are
+// eq-conditional) and the product term enforces the multiply-instruction
+// identity rl = li·ri on rows where is_mul = 1.
+//
+// The sumcheck proceeds in three phases:
+//
+// 1. Univariate-skip first round (on constraint index Z):
+//    Only Az·Bz participates. The product term is independent of Z.
+//      s1(Z) = L(τ_high, Z) · Σ_x eq(τ_low, x) · Σ_y eq(r_group, y) · Az(x,y,Z)·Bz(x,y,Z)
+//    The prover evaluates t1(Z) = s1(Z)/L(τ_high,Z) on the extended grid,
+//    sends s1 via univariate-skip, and the verifier samples r0.
+//    The scaling factor L(τ_high, r0) is baked into the split-eq polynomial
+//    via `new_with_scaling`, so it multiplies all subsequent terms uniformly.
+//
+// 2. Group-variable round (first cycle-variable round, binding the constraint
+//    group selector):
+//    Only Az·Bz participates. The product term is constant in the group
+//    variable and skipped (degree-3 round polynomial via gruen_poly_deg_3).
+//
+// 3. Remaining cycle-variable rounds:
+//    Both Az·Bz and the product term participate. Each round produces a
+//    degree-4 round polynomial: cubic Az·Bz via gruen_poly_deg_3 plus the
+//    cubic product term via gruen_poly_deg_4, combined additively.
+//    The product term's claim starts at 0 (for a valid witness) and is
+//    tracked separately in prev_claim_product.
+//
+// Final check (verifier):
+//   L(τ_high, r0) · eq(τ_low, r_cycle) · [ Az(r)·Bz(r) + product(r) ]
 
 #[derive(Allocative, Clone)]
 pub struct OuterUniSkipParams<F: JoltField> {
@@ -418,9 +428,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         // Randomness used to bind the rows of R1CS matrices A,B.
         let rx_constr = &[sumcheck_challenges[0], self.params.r0];
         // Compute sum_y A(rx_constr, y)*z(y) * sum_y B(rx_constr, y)*z(y).
-        let inner_sum_prod = self
+        let azbz = self
             .key
             .evaluate_inner_sum_product_at_point(rx_constr, r1cs_input_evals);
+
+        // Product constraint: is_mul * (right_lookup - left_input * right_input)
+        let is_mul_eval =
+            r1cs_input_evals[JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands).to_index()];
+        let rl_eval = r1cs_input_evals[JoltR1CSInputs::RightLookupOperand.to_index()];
+        let li_eval = r1cs_input_evals[JoltR1CSInputs::LeftInstructionInput.to_index()];
+        let ri_eval = r1cs_input_evals[JoltR1CSInputs::RightInstructionInput.to_index()];
+        let product_term = is_mul_eval * (rl_eval - li_eval * ri_eval);
 
         let tau = &self.params.tau;
         let tau_high = &tau[tau.len() - 1];
@@ -432,7 +450,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let r_tail_reversed: Vec<F::Challenge> =
             sumcheck_challenges.iter().rev().copied().collect();
         let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
-        tau_high_bound_r0 * tau_bound_r_tail_reversed * inner_sum_prod
+        tau_high_bound_r0 * tau_bound_r_tail_reversed * (azbz + product_term)
     }
 
     fn cache_openings(
@@ -508,6 +526,7 @@ pub struct OuterSharedState<F: JoltField> {
     #[allocative(skip)]
     lagrange_evals_r0: [F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
     pub params: OuterStreamingProverParams<F>,
+    prev_claim_product: F,
 }
 
 impl<F: JoltField> OuterSharedState<F> {
@@ -552,6 +571,7 @@ impl<F: JoltField> OuterSharedState<F> {
             r_grid,
             params: outer_params,
             lagrange_evals_r0: lagrange_evals_r,
+            prev_claim_product: F::zero(),
         }
     }
 
@@ -801,15 +821,16 @@ impl<F: JoltField> StreamingSumcheckWindow<F> for OuterStreamingWindow<F> {
 
     #[tracing::instrument(skip_all, name = "OuterStreamingWindow::compute_message")]
     fn compute_message(
-        &self,
+        &mut self,
         shared: &Self::Shared,
         window_size: usize,
         previous_claim: F,
     ) -> UniPoly<F> {
+        let prev_claim_azbz = previous_claim - shared.prev_claim_product;
         let (t_prime_0, t_prime_inf) = shared.compute_t_evals(window_size);
         shared
             .split_eq_poly
-            .gruen_poly_deg_3(t_prime_0, t_prime_inf, previous_claim)
+            .gruen_poly_deg_3(t_prime_0, t_prime_inf, prev_claim_azbz)
     }
 
     #[tracing::instrument(skip_all, name = "OuterStreamingWindow::ingest_challenge")]
@@ -828,9 +849,220 @@ impl<F: JoltField> StreamingSumcheckWindow<F> for OuterStreamingWindow<F> {
 pub struct OuterLinearStage<F: JoltField> {
     az: DensePolynomial<F>,
     bz: DensePolynomial<F>,
+    product_is_mul: Option<MultilinearPolynomial<F>>,
+    product_rl: Option<MultilinearPolynomial<F>>,
+    product_li: Option<MultilinearPolynomial<F>>,
+    product_ri: Option<MultilinearPolynomial<F>>,
+    prev_round_poly_product: Option<UniPoly<F>>,
 }
 
 impl<F: JoltField> OuterLinearStage<F> {
+    /// Fused materialization + first-round product eval computation.
+    ///
+    /// In a single pass over the trace, simultaneously:
+    /// 1. Materializes compact `MultilinearPolynomial`s (bool/u128/u64/i128) for
+    ///    subsequent rounds
+    /// 2. Computes the first product round evals `(t2, t_inf)` using small-scalar
+    ///    arithmetic with deferred reduction. `t0 = 0` is known since
+    ///    `prev_claim_product = 0` on the first round (valid witness).
+    #[tracing::instrument(
+        skip_all,
+        name = "OuterLinearStage::fused_materialise_and_first_product_evals"
+    )]
+    fn fused_materialise_and_first_product_evals(
+        shared: &OuterSharedState<F>,
+    ) -> (
+        F,
+        F,
+        MultilinearPolynomial<F>,
+        MultilinearPolynomial<F>,
+        MultilinearPolynomial<F>,
+        MultilinearPolynomial<F>,
+    ) {
+        let num_cycles = shared.trace.len();
+        let mut is_mul_vec: Vec<bool> = vec![false; num_cycles];
+        let mut rl_vec: Vec<u128> = unsafe_allocate_zero_vec(num_cycles);
+        let mut li_vec: Vec<u64> = unsafe_allocate_zero_vec(num_cycles);
+        let mut ri_vec: Vec<i128> = unsafe_allocate_zero_vec(num_cycles);
+
+        let e_out = shared.split_eq_poly.E_out_current();
+        let e_in = shared.split_eq_poly.E_in_current();
+        let num_x_in = e_in.len();
+        let chunk_size = 2 * num_x_in;
+
+        let (t2_unr, tinf_unr) = is_mul_vec
+            .par_chunks_mut(chunk_size)
+            .zip(rl_vec.par_chunks_mut(chunk_size))
+            .zip(li_vec.par_chunks_mut(chunk_size))
+            .zip(ri_vec.par_chunks_mut(chunk_size))
+            .enumerate()
+            .fold(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |(mut acc2, mut acc_inf), (x_out, (((m_chunk, r_chunk), l_chunk), i_chunk))| {
+                    let mut inner2 = Acc7S::<F>::zero();
+                    let mut inner_inf = Acc7S::<F>::zero();
+
+                    for x_in in 0..num_x_in {
+                        let g = x_out * num_x_in + x_in;
+                        let idx_lo = 2 * g;
+                        let idx_hi = idx_lo + 1;
+
+                        let row_lo = R1CSCycleInputs::from_trace::<F>(
+                            &shared.bytecode_preprocessing,
+                            &shared.trace,
+                            idx_lo,
+                        );
+                        let row_hi = R1CSCycleInputs::from_trace::<F>(
+                            &shared.bytecode_preprocessing,
+                            &shared.trace,
+                            idx_hi,
+                        );
+
+                        let m0 = row_lo.flags[CircuitFlags::MultiplyOperands];
+                        let m1 = row_hi.flags[CircuitFlags::MultiplyOperands];
+
+                        let off_lo = 2 * x_in;
+                        let off_hi = off_lo + 1;
+                        m_chunk[off_lo] = m0;
+                        m_chunk[off_hi] = m1;
+                        r_chunk[off_lo] = row_lo.right_lookup;
+                        r_chunk[off_hi] = row_hi.right_lookup;
+                        l_chunk[off_lo] = row_lo.left_input;
+                        l_chunk[off_hi] = row_hi.left_input;
+                        i_chunk[off_lo] = row_lo.right_input.to_i128();
+                        i_chunk[off_hi] = row_hi.right_input.to_i128();
+
+                        if !m0 && !m1 {
+                            continue;
+                        }
+
+                        let dm: i8 = (m1 as i8) - (m0 as i8);
+                        let dl_i128 =
+                            (row_hi.left_input as i128) - (row_lo.left_input as i128);
+                        let di_i128 =
+                            row_hi.right_input.to_i128() - row_lo.right_input.to_i128();
+
+                        if dm != 0 {
+                            let dl_s64 =
+                                s64_from_diff_u64s(row_hi.left_input, row_lo.left_input);
+                            let di_s128 = S128::from(di_i128);
+                            let dl_di: S192 = dl_s64.mul_trunc::<2, 3>(&di_s128);
+                            let p_inf = if dm == 1 { dl_di.neg() } else { dl_di };
+                            inner_inf.fmadd(&e_in[x_in], &p_inf);
+                        }
+
+                        let m2_val: i8 = (m0 as i8) + 2 * dm;
+                        if m2_val != 0 {
+                            let l2 = (row_lo.left_input as i128) + 2 * dl_i128;
+                            let i2 = row_lo.right_input.to_i128() + 2 * di_i128;
+                            let l2_s160 = S160::from(l2);
+                            let i2_s160 = S160::from(i2);
+                            let li_prod = &l2_s160 * &i2_s160;
+                            let r2 = S160::from_sum_u128(
+                                row_hi.right_lookup,
+                                row_hi.right_lookup,
+                            ) - S160::from(row_lo.right_lookup);
+                            let val = r2 - li_prod;
+                            let p2 = match m2_val {
+                                1 => val,
+                                2 => val + val,
+                                _ => -val,
+                            };
+                            inner2.fmadd(&e_in[x_in], &p2);
+                        }
+                    }
+
+                    let e_out_val = e_out[x_out];
+                    let red2: F = inner2.barrett_reduce();
+                    let red_inf: F = inner_inf.barrett_reduce();
+                    acc2 += e_out_val.mul_unreduced::<9>(red2);
+                    acc_inf += e_out_val.mul_unreduced::<9>(red_inf);
+
+                    (acc2, acc_inf)
+                },
+            )
+            .reduce(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |a, b| (a.0 + b.0, a.1 + b.1),
+            );
+
+        let t2 = F::from_montgomery_reduce::<9>(t2_unr);
+        let t_inf = F::from_montgomery_reduce::<9>(tinf_unr);
+
+        (
+            t2,
+            t_inf,
+            is_mul_vec.into(),
+            rl_vec.into(),
+            li_vec.into(),
+            ri_vec.into(),
+        )
+    }
+
+    #[tracing::instrument(skip_all, name = "OuterLinearStage::compute_product_t_evals")]
+    fn compute_product_t_evals(&self, shared: &OuterSharedState<F>) -> (F, F, F) {
+        let is_mul = self.product_is_mul.as_ref().unwrap();
+        let rl = self.product_rl.as_ref().unwrap();
+        let li = self.product_li.as_ref().unwrap();
+        let ri = self.product_ri.as_ref().unwrap();
+
+        let [t0, t2, tinf] = shared
+            .split_eq_poly
+            .par_fold_out_in(
+                || [F::Unreduced::<9>::zero(); 3],
+                |inner, g, _x_in, e_in| {
+                    let m0 = is_mul.get_bound_coeff(2 * g);
+                    let m1 = is_mul.get_bound_coeff(2 * g + 1);
+                    if m0.is_zero() && m1.is_zero() {
+                        return;
+                    }
+
+                    let r0 = rl.get_bound_coeff(2 * g);
+                    let r1 = rl.get_bound_coeff(2 * g + 1);
+                    let l0 = li.get_bound_coeff(2 * g);
+                    let l1 = li.get_bound_coeff(2 * g + 1);
+                    let i0 = ri.get_bound_coeff(2 * g);
+                    let i1 = ri.get_bound_coeff(2 * g + 1);
+
+                    let p0 = m0 * (r0 - l0 * i0);
+
+                    let dm = m1 - m0;
+                    let dr = r1 - r0;
+                    let dl = l1 - l0;
+                    let di = i1 - i0;
+
+                    let m2 = m0 + dm + dm;
+                    let r2 = r0 + dr + dr;
+                    let l2 = l0 + dl + dl;
+                    let i2 = i0 + di + di;
+                    let p2 = m2 * (r2 - l2 * i2);
+
+                    let p_inf = -(dm * dl * di);
+
+                    inner[0] += e_in.mul_unreduced::<9>(p0);
+                    inner[1] += e_in.mul_unreduced::<9>(p2);
+                    inner[2] += e_in.mul_unreduced::<9>(p_inf);
+                },
+                |_x_out, e_out, inner| {
+                    let mut outer = [F::Unreduced::<9>::zero(); 3];
+                    for k in 0..3 {
+                        let red = F::from_montgomery_reduce::<9>(inner[k]);
+                        outer[k] = e_out.mul_unreduced::<9>(red);
+                    }
+                    outer
+                },
+                |mut a, b| {
+                    for k in 0..3 {
+                        a[k] += b[k];
+                    }
+                    a
+                },
+            )
+            .map(F::from_montgomery_reduce::<9>);
+
+        (t0, t2, tinf)
+    }
+
     #[tracing::instrument(
         skip_all,
         name = "OuterLinearStage::fused_materialise_polynomials_general_with_multiquadratic"
@@ -1400,7 +1632,15 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
             Self::fused_materialise_polynomials_round_zero(shared, window_size)
         };
 
-        Self { az, bz }
+        Self {
+            az,
+            bz,
+            product_is_mul: None,
+            product_rl: None,
+            product_li: None,
+            product_ri: None,
+            prev_round_poly_product: None,
+        }
     }
 
     #[tracing::instrument(skip_all, name = "OuterLinearStage::next_window")]
@@ -1410,19 +1650,58 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
 
     #[tracing::instrument(skip_all, name = "OuterLinearStage::compute_message")]
     fn compute_message(
-        &self,
+        &mut self,
         shared: &Self::Shared,
         window_size: usize,
         previous_claim: F,
     ) -> UniPoly<F> {
+        let prev_claim_product = shared.prev_claim_product;
+        let prev_claim_azbz = previous_claim - prev_claim_product;
+
         let (t_prime_0, t_prime_inf) = shared.compute_t_evals(window_size);
-        shared
-            .split_eq_poly
-            .gruen_poly_deg_3(t_prime_0, t_prime_inf, previous_claim)
+        let round_poly_azbz =
+            shared
+                .split_eq_poly
+                .gruen_poly_deg_3(t_prime_0, t_prime_inf, prev_claim_azbz);
+
+        let is_group_variable_round = shared.split_eq_poly.num_challenges() == 0;
+        if is_group_variable_round {
+            self.prev_round_poly_product = None;
+            round_poly_azbz
+        } else {
+            let (t_prod_0, t_prod_2, t_prod_inf) = if self.product_is_mul.is_none() {
+                let (t2, t_inf, is_mul, rl, li, ri) =
+                    Self::fused_materialise_and_first_product_evals(shared);
+                self.product_is_mul = Some(is_mul);
+                self.product_rl = Some(rl);
+                self.product_li = Some(li);
+                self.product_ri = Some(ri);
+                (F::zero(), t2, t_inf)
+            } else {
+                self.compute_product_t_evals(shared)
+            };
+
+            let round_poly_product = shared.split_eq_poly.gruen_poly_deg_4(
+                t_prod_0,
+                t_prod_2,
+                t_prod_inf,
+                prev_claim_product,
+            );
+            self.prev_round_poly_product = Some(round_poly_product.clone());
+
+            let mut combined = round_poly_azbz;
+            combined += &round_poly_product;
+            combined
+        }
     }
 
     #[tracing::instrument(skip_all, name = "OuterLinearStage::ingest_challenge")]
     fn ingest_challenge(&mut self, shared: &mut Self::Shared, r_j: F::Challenge, _round: usize) {
+        if let Some(ref poly) = self.prev_round_poly_product {
+            shared.prev_claim_product = poly.evaluate(&r_j);
+        }
+        self.prev_round_poly_product = None;
+
         shared.split_eq_poly.bind(r_j);
 
         if let Some(t_prime_poly) = shared.t_prime_poly.as_mut() {
@@ -1430,8 +1709,50 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
         }
 
         rayon::join(
-            || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
-            || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
+            || {
+                rayon::join(
+                    || self.az.bind_parallel(r_j, BindingOrder::LowToHigh),
+                    || self.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
+                )
+            },
+            || {
+                if self.product_is_mul.is_some() {
+                    rayon::join(
+                        || {
+                            rayon::join(
+                                || {
+                                    self.product_is_mul
+                                        .as_mut()
+                                        .unwrap()
+                                        .bind_parallel(r_j, BindingOrder::LowToHigh)
+                                },
+                                || {
+                                    self.product_rl
+                                        .as_mut()
+                                        .unwrap()
+                                        .bind_parallel(r_j, BindingOrder::LowToHigh)
+                                },
+                            )
+                        },
+                        || {
+                            rayon::join(
+                                || {
+                                    self.product_li
+                                        .as_mut()
+                                        .unwrap()
+                                        .bind_parallel(r_j, BindingOrder::LowToHigh)
+                                },
+                                || {
+                                    self.product_ri
+                                        .as_mut()
+                                        .unwrap()
+                                        .bind_parallel(r_j, BindingOrder::LowToHigh)
+                                },
+                            )
+                        },
+                    );
+                }
+            },
         );
     }
 

@@ -1,8 +1,8 @@
-//! Two-phase advice claim reduction (Stage 6 cycle → Stage 7 address)
+//! Two-phase advice claim reduction (Stage 5 cycle → Stage 6 address)
 //!
 //! This module generalizes the previous single-phase `AdviceClaimReduction` so that trusted and
 //! untrusted advice can be committed as an arbitrary Dory matrix `2^{nu_a} x 2^{sigma_a}` (balanced
-//! by default), while still keeping a **single Stage 8 Dory opening** at the unified Dory point.
+//! by default), while still keeping a **single Stage 7 Dory opening** at the unified Dory point.
 //!
 //! For an advice matrix embedded as the **top-left block** `2^{nu_a} x 2^{sigma_a}`, the *native*
 //! advice evaluation point (in Dory order, LSB-first) is:
@@ -10,14 +10,14 @@
 //! - `advice_rows = row_coords[0..nu_a]`
 //! - `advice_point = [advice_cols || advice_rows]`
 //!
-//! In our current pipeline, `cycle` coordinates come from Stage 6 and `addr` coordinates come from
-//! Stage 7.
-//! - **Phase 1 (Stage 6)**: bind the cycle-derived advice coordinates and output an intermediate
+//! In our current pipeline, `cycle` coordinates come from Stage 5 and `addr` coordinates come from
+//! Stage 6.
+//! - **Phase 1 (Stage 5)**: bind the cycle-derived advice coordinates and output an intermediate
 //!   scalar claim `C_mid`.
-//! - **Phase 2 (Stage 7)**: resume from `C_mid`, bind the address-derived advice coordinates, and
-//!   cache the final advice opening `AdviceMLE(advice_point)` for batching into Stage 8.
+//! - **Phase 2 (Stage 6)**: resume from `C_mid`, bind the address-derived advice coordinates, and
+//!   cache the final advice opening `AdviceMLE(advice_point)` for batching into Stage 7.
 //!
-//! ## Dummy-gap scaling (within Stage 6)
+//! ## Dummy-gap scaling (within Stage 5)
 //! With cycle-major order, there may be a gap during the cycle phase where the cycle variables
 //! being bound in the batched sumcheck do not appear in the advice polynommial.
 //!

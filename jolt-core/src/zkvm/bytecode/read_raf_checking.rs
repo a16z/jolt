@@ -51,7 +51,8 @@ const N_STAGES: usize = 5;
 /// Bytecode instruction: multi-stage Read + RAF sumcheck (N_STAGES = 5).
 ///
 /// Stages virtualize different claim families (Stage1: Spartan outer; Stage2: product-virtualized
-/// flags; Stage3: Shift; Stage4: Registers RW; Stage5: Registers val-eval + Instruction lookups).
+/// flags + instruction input flags; Stage3: Shift flags only; Stage4: Registers RW;
+/// Stage5: Registers val-eval + Instruction lookups).
 ///
 /// The input claim is a γ-weighted RLC of stage rv_claims plus RAF contributions folded into
 /// stages 1 and 3 via the identity polynomial. Address vars are bound in `d` chunks; cycle vars
@@ -72,11 +73,11 @@ const N_STAGES: usize = 5;
 /// - Int(k) = 1 for all k (evaluation of the IdentityPolynomial over address variables).
 /// - Define per-stage Val_s(k) (address-only) as implemented by `compute_val_*`:
 ///   * Stage1: Val_1(k) = unexpanded_pc(k) + β_1·imm(k) + Σ_t β_1^{2+t}·circuit_flag_t(k).
-///   * Stage2: Val_2(k) = 1_{jump}(k) + β_2·1_{branch}(k) + β_2^2·rd_addr(k) + β_2^3·1_{write_lookup_to_rd}(k)
-///   + β_2^4·1_{VirtualInstruction}(k).
-///   * Stage3: Val_3(k) = imm(k) + β_3·unexpanded_pc(k) + β_3^2·1_{L_is_rs1}(k) + β_3^3·1_{L_is_pc}(k)
-///   + β_3^4·1_{R_is_rs2}(k) + β_3^5·1_{R_is_imm}(k) + β_3^6·1_{IsNoop}(k)
-///   + β_3^7·1_{VirtualInstruction}(k) + β_3^8·1_{IsFirstInSequence}(k).
+///   * Stage2: Val_2(k) = 1_{jump}(k) + β_2·1_{branch}(k) + β_2^2·1_{rd≠0}(k) + β_2^3·1_{write_lookup_to_rd}(k)
+///     + β_2^4·1_{VirtualInstruction}(k) + β_2^5·imm(k) + β_2^6·unexpanded_pc(k)
+///     + β_2^7·1_{L_is_rs1}(k) + β_2^8·1_{L_is_pc}(k) + β_2^9·1_{R_is_rs2}(k) + β_2^10·1_{R_is_imm}(k).
+///   * Stage3: Val_3(k) = unexpanded_pc(k) + β_3·1_{IsNoop}(k) + β_3^2·1_{VirtualInstruction}(k)
+///     + β_3^3·1_{IsFirstInSequence}(k).
 ///   * Stage4: Val_4(k) = 1_{rd=r}(k) + β_4·1_{rs1=r}(k) + β_4^2·1_{rs2=r}(k), where r is fixed by opening.
 ///   * Stage5: Val_5(k) = 1_{rd=r}(k) + β_5·1_{¬interleaved}(k) + Σ_i β_5^{2+i}·1_{table=i}(k).
 ///
@@ -737,8 +738,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
         // Generate all stage-specific gamma powers upfront (order must match verifier)
         let stage1_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
-        let stage2_gammas: Vec<F> = transcript.challenge_scalar_powers(5);
-        let stage3_gammas: Vec<F> = transcript.challenge_scalar_powers(9);
+        let stage2_gammas: Vec<F> = transcript.challenge_scalar_powers(11);
+        let stage3_gammas: Vec<F> = transcript.challenge_scalar_powers(4);
         let stage4_gammas: Vec<F> = transcript.challenge_scalar_powers(3);
         let stage5_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_LOOKUP_TABLES);
 
@@ -903,15 +904,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                     *o0 = lc;
                 }
 
-                // Stage 2 (product virtualization, de-duplicated factors)
-                // Val(k) = jump_flag(k) + γ·branch_flag(k)
-                //          + γ²·is_rd_not_zero_flag(k) + γ³·write_lookup_output_to_rd_flag(k)
-                // where jump_flag(k) = 1 if instruction k is a jump, 0 otherwise;
-                //       branch_flag(k) = 1 if instruction k is a branch, 0 otherwise;
-                //       is_rd_not_zero_flag(k) = 1 if instruction k has rd != 0;
-                //       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd.
-                //       virtual_instruction(k) = 1 if instruction k is a virtual instruction.
-                // This Val matches the fused product sumcheck.
+                // Stage 2 (product virtualization + instruction input flags)
                 {
                     let mut lc = F::zero();
                     if circuit_flags[CircuitFlags::Jump] {
@@ -929,38 +922,34 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                     if circuit_flags[CircuitFlags::VirtualInstruction] {
                         lc += stage2_gammas[4];
                     }
+                    lc += instr.operands.imm.field_mul(stage2_gammas[5]);
+                    lc += stage2_gammas[6].mul_u64(instr.address as u64);
+                    if instr_flags[InstructionFlags::LeftOperandIsRs1Value] {
+                        lc += stage2_gammas[7];
+                    }
+                    if instr_flags[InstructionFlags::LeftOperandIsPC] {
+                        lc += stage2_gammas[8];
+                    }
+                    if instr_flags[InstructionFlags::RightOperandIsRs2Value] {
+                        lc += stage2_gammas[9];
+                    }
+                    if instr_flags[InstructionFlags::RightOperandIsImm] {
+                        lc += stage2_gammas[10];
+                    }
                     *o1 = lc;
                 }
 
-                // Stage 3 (Shift sumcheck)
-                // Val(k) = imm(k) + γ·unexpanded_pc(k)
-                //          + γ²·left_operand_is_rs1_value(k) + γ³·left_operand_is_pc(k)
-                //          + γ⁴·right_operand_is_rs2_value(k) + γ⁵·right_operand_is_imm(k)
-                //          + γ⁶·is_noop(k) + γ⁷·virtual_instruction(k) + γ⁸·is_first_in_sequence(k)
-                // This virtualizes claims output by the ShiftSumcheck.
+                // Stage 3 (Shift flags only — InstructionInput flags moved to Stage 2)
                 {
-                    let mut lc = F::from_i128(instr.operands.imm);
-                    lc += stage3_gammas[1].mul_u64(instr.address as u64);
-                    if instr_flags[InstructionFlags::LeftOperandIsRs1Value] {
-                        lc += stage3_gammas[2];
-                    }
-                    if instr_flags[InstructionFlags::LeftOperandIsPC] {
-                        lc += stage3_gammas[3];
-                    }
-                    if instr_flags[InstructionFlags::RightOperandIsRs2Value] {
-                        lc += stage3_gammas[4];
-                    }
-                    if instr_flags[InstructionFlags::RightOperandIsImm] {
-                        lc += stage3_gammas[5];
-                    }
+                    let mut lc = F::from_u64(instr.address as u64);
                     if instr_flags[InstructionFlags::IsNoop] {
-                        lc += stage3_gammas[6];
+                        lc += stage3_gammas[1];
                     }
                     if circuit_flags[CircuitFlags::VirtualInstruction] {
-                        lc += stage3_gammas[7];
+                        lc += stage3_gammas[2];
                     }
                     if circuit_flags[CircuitFlags::IsFirstInSequence] {
-                        lc += stage3_gammas[8];
+                        lc += stage3_gammas[3];
                     }
                     *o2 = lc;
                 }
@@ -1069,45 +1058,14 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
             SumcheckId::SpartanProductVirtualization,
         );
-
-        [
-            jump_claim,
-            branch_claim,
-            rd_wa_claim,
-            write_lookup_output_to_rd_flag_claim,
-            virtual_instruction_claim,
-        ]
-        .into_iter()
-        .zip_eq(gamma_powers)
-        .map(|(claim, gamma)| claim * gamma)
-        .sum()
-    }
-
-    fn compute_rv_claim_3(
-        opening_accumulator: &dyn OpeningAccumulator<F>,
-        gamma_powers: &[F],
-    ) -> F {
         let (_, imm_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Imm,
             SumcheckId::InstructionInputVirtualization,
         );
-        let (_, spartan_shift_unexpanded_pc_claim) = opening_accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::UnexpandedPC,
-                SumcheckId::SpartanShift,
-            );
-        let (_, instruction_input_unexpanded_pc_claim) = opening_accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::UnexpandedPC,
-                SumcheckId::InstructionInputVirtualization,
-            );
-
-        assert_eq!(
-            spartan_shift_unexpanded_pc_claim,
-            instruction_input_unexpanded_pc_claim
+        let (_, unexpanded_pc_claim) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::InstructionInputVirtualization,
         );
-
-        let unexpanded_pc_claim = spartan_shift_unexpanded_pc_claim;
         let (_, left_is_rs1_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
             SumcheckId::InstructionInputVirtualization,
@@ -1124,6 +1082,34 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
             SumcheckId::InstructionInputVirtualization,
         );
+
+        [
+            jump_claim,
+            branch_claim,
+            rd_wa_claim,
+            write_lookup_output_to_rd_flag_claim,
+            virtual_instruction_claim,
+            imm_claim,
+            unexpanded_pc_claim,
+            left_is_rs1_claim,
+            left_is_pc_claim,
+            right_is_rs2_claim,
+            right_is_imm_claim,
+        ]
+        .into_iter()
+        .zip_eq(gamma_powers)
+        .map(|(claim, gamma)| claim * gamma)
+        .sum()
+    }
+
+    fn compute_rv_claim_3(
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        gamma_powers: &[F],
+    ) -> F {
+        let (_, unexpanded_pc_claim) = opening_accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::SpartanShift,
+        );
         let (_, is_noop_claim) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
@@ -1138,12 +1124,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         );
 
         [
-            imm_claim,
             unexpanded_pc_claim,
-            left_is_rs1_claim,
-            left_is_pc_claim,
-            right_is_rs2_claim,
-            right_is_imm_claim,
             is_noop_claim,
             is_virtual_claim,
             is_first_in_sequence_claim,

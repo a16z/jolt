@@ -11,17 +11,17 @@
 //!
 //! ## Background
 //!
-//! After Stage 6, each ra_i one-hot polynomial has TWO claims at different address points
-//! but the SAME cycle point (r_cycle_stage6):
+//! After Stage 5, each ra_i one-hot polynomial has TWO claims at different address points
+//! but the SAME cycle point (r_cycle_stage5):
 //!
-//! 1. **Booleanity claim**: `ra_i(r_addr_bool, r_cycle_stage6)`
-//!    - From `BooleanitySumcheck` in Stage 6
+//! 1. **Booleanity claim**: `ra_i(r_addr_bool, r_cycle_stage5)`
+//!    - From `BooleanitySumcheck` in Stage 5
 //!    - r_addr_bool is shared across all ra_i and across families (instruction/bytecode/ram)
 //!
-//! 2. **Virtualization claim**: `ra_i(r_addr_virt_i, r_cycle_stage6)`
-//!    - For BytecodeRa: from `BytecodeReadRaf` in Stage 6
-//!    - For InstructionRa: from `InstructionRaVirtualization` in Stage 6
-//!    - For RamRa: from `RamRaVirtualization` in Stage 6
+//! 2. **Virtualization claim**: `ra_i(r_addr_virt_i, r_cycle_stage5)`
+//!    - For BytecodeRa: from `BytecodeReadRaf` in Stage 5
+//!    - For InstructionRa: from `InstructionRaVirtualization` in Stage 5
+//!    - For RamRa: from `RamRaVirtualization` in Stage 5
 //!    - r_addr_virt_i is DIFFERENT per ra_i (each chunk has its own r_address)
 //!
 //! The HammingWeight sumcheck would normally run separately, producing its own
@@ -66,9 +66,9 @@
 //!
 //! ## After This Sumcheck
 //!
-//! Let ρ be the challenges from this sumcheck (r_address_stage7). Each ra_i has a SINGLE opening:
+//! Let ρ be the challenges from this sumcheck (r_address_stage6). Each ra_i has a SINGLE opening:
 //!
-//!   `ra_i(ρ, r_cycle_stage6)`
+//!   `ra_i(ρ, r_cycle_stage5)`
 //!
 //! The verifier computes expected claims using the single opening G_i(ρ):
 //! - HammingWeight: G_i(ρ)
@@ -115,7 +115,7 @@ const DEGREE_BOUND: usize = 2;
 /// - Booleanity: proves Σ_k eq(r_addr_bool, k)·G_i(k) = claim_bool_i
 /// - Virtualization: proves Σ_k eq(r_addr_virt_i, k)·G_i(k) = claim_virt_i
 ///
-/// After this sumcheck, each ra_i has a single opening at (ρ, r_cycle_stage6).
+/// After this sumcheck, each ra_i has a single opening at (ρ, r_cycle_stage5).
 #[derive(Allocative, Clone)]
 pub struct HammingWeightClaimReductionParams<F: JoltField> {
     /// γ^0, γ^1, ..., γ^{3N-1} for batching (3 claims per ra polynomial)
@@ -141,7 +141,7 @@ pub struct HammingWeightClaimReductionParams<F: JoltField> {
 }
 
 impl<F: JoltField> HammingWeightClaimReductionParams<F> {
-    /// Create params by fetching claims from Stage 6 and sampling batching challenge.
+    /// Create params by fetching claims from Stage 5 and sampling batching challenge.
     ///
     /// Fetches:
     /// - HammingWeight claims (from HammingBooleanity virtual polynomial)
@@ -201,7 +201,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
         let mut claims_bool = Vec::with_capacity(N);
         let mut claims_virt = Vec::with_capacity(N);
 
-        // RAM HammingWeight factor: now in Stage 6, so shares r_cycle_stage6
+        // RAM HammingWeight factor: now in Stage 5, so shares r_cycle_stage5
         let ram_hw_factor = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamHammingWeight,
