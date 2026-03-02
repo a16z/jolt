@@ -65,6 +65,8 @@ func LoadStagesAssignment(witnessPath string) (*JoltStagesCircuit, error) {
 	return assignment, nil
 }
 
+// TestStagesCircuitCompile verifies the circuit compiles successfully and reports constraint count.
+// This is a fast smoke test (~6s) that catches circuit definition errors.
 func TestStagesCircuitCompile(t *testing.T) {
 	t.Log("Jolt Stages 1-7 Verifier - Gnark Circuit Compilation Test")
 	t.Log("")
@@ -90,6 +92,8 @@ func TestStagesCircuitCompile(t *testing.T) {
 	t.Log("✓ Circuit compilation successful!")
 }
 
+// TestStagesCircuitSolver verifies the R1CS solver succeeds with the transpiled witness.
+// This test loads the witness, runs the solver, and prints debug values for manual inspection.
 func TestStagesCircuitSolver(t *testing.T) {
 	t.Log("Jolt Stages 1-7 Verifier - Gnark Solver Debug Test")
 	t.Log("")
@@ -206,7 +210,9 @@ func TestStagesCircuitSolver(t *testing.T) {
 	}
 }
 
-
+// TestStagesCircuitProveVerify runs the complete Groth16 workflow: compile, setup, prove, verify.
+// This test generates a 164-byte proof from the transpiled circuit and verifies it succeeds.
+// Expected time: ~100s (setup: 1m22s, prove: 7.5s, verify: 2ms)
 func TestStagesCircuitProveVerify(t *testing.T) {
 	t.Log("Jolt Stages 1-7 Verifier - Full Groth16 Prove/Verify Test")
 	t.Log("")
