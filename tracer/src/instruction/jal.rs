@@ -12,7 +12,8 @@ declare_riscv_instr!(
     mask   = 0x0000_007f,
     match  = 0x0000_006f,
     format = FormatJ,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl JAL {

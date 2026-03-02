@@ -25,7 +25,8 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0x1800302f,
     format = FormatR,
-    ram    = RAMWrite
+    ram    = RAMWrite,
+    side_effects = true
 );
 
 impl SCD {

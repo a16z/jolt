@@ -9,7 +9,8 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00000067,
     format = FormatI,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl JALR {

@@ -16,7 +16,8 @@ declare_riscv_instr!(
     mask   = 0xffffffff,  // Exact match
     match  = 0x00100073,  // EBREAK encoding
     format = FormatI,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl EBREAK {

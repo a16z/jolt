@@ -21,7 +21,8 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0xe000302f,
     format = FormatAMO,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl AMOMAXUD {

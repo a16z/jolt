@@ -24,7 +24,8 @@ declare_riscv_instr!(
     mask   = 0xffff_ffff,
     match  = 0x0000_0073,
     format = FormatI,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl ECALL {

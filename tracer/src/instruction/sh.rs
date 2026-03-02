@@ -29,7 +29,8 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00001023,
     format = FormatS,
-    ram    = RAMWrite
+    ram    = RAMWrite,
+    side_effects = true
 );
 
 impl SH {

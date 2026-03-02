@@ -26,7 +26,8 @@ declare_riscv_instr!(
     mask   = 0xffffffff,  // Exact match
     match  = 0x30200073,  // MRET encoding: priv=0x302, funct3=000, opcode=1110011
     format = FormatI,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 /// CSR address for mepc (Machine Exception Program Counter)

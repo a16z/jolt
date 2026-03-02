@@ -24,7 +24,8 @@ declare_riscv_instr!(
     mask   = 0x0000707f,  // Match opcode (7 bits) + funct3 (3 bits)
     match  = 0x00002073,  // opcode=1110011, funct3=010
     format = FormatI,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl CSRRS {
