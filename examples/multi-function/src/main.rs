@@ -10,7 +10,7 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_add(&mut program);
     let prover_preprocessing = guest::preprocess_prover_add(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup().into();
+    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
     let verifier_preprocessing =
         guest::preprocess_verifier_add(shared_preprocessing, verifier_setup);
 
@@ -25,7 +25,7 @@ pub fn main() {
     let prover_preprocessing = guest::preprocess_prover_mul(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_mul(
         shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup().into(),
+        prover_preprocessing.generators.to_verifier_setup(),
     );
 
     let prove_mul = guest::build_prover_mul(program, prover_preprocessing);

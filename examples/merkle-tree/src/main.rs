@@ -12,7 +12,7 @@ pub fn main() {
     let prover_preprocessing = guest::preprocess_prover_merkle_tree(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_merkle_tree(
         shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup().into(),
+        prover_preprocessing.generators.to_verifier_setup(),
     );
 
     let leaf1: &[u8] = &[5u8; 32];

@@ -11,7 +11,7 @@ pub fn main() {
     let shared_preprocessing = guest::preprocess_shared_collatz_convergence(&mut program);
     let prover_preprocessing =
         guest::preprocess_prover_collatz_convergence(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup().into();
+    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
     let verifier_preprocessing =
         guest::preprocess_verifier_collatz_convergence(shared_preprocessing, verifier_setup);
 
@@ -34,7 +34,7 @@ pub fn main() {
     let shared_preprocessing = guest::preprocess_shared_collatz_convergence_range(&mut program);
     let prover_preprocessing =
         guest::preprocess_prover_collatz_convergence_range(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup().into();
+    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
     let verifier_preprocessing =
         guest::preprocess_verifier_collatz_convergence_range(shared_preprocessing, verifier_setup);
 

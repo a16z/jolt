@@ -35,7 +35,7 @@ pub fn main() {
     let prover_preprocessing = guest::preprocess_prover_recover(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_recover(
         shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup().into(),
+        prover_preprocessing.generators.to_verifier_setup(),
     );
 
     if save_to_disk {

@@ -14,7 +14,7 @@ pub fn main() {
     let prover_preprocessing = guest::preprocess_prover_int_to_string(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_int_to_string(
         shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup().into(),
+        prover_preprocessing.generators.to_verifier_setup(),
     );
 
     let prove = guest::build_prover_int_to_string(program, prover_preprocessing);
@@ -34,7 +34,7 @@ pub fn main() {
     let prover_preprocessing = guest::preprocess_prover_string_concat(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_string_concat(
         shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup().into(),
+        prover_preprocessing.generators.to_verifier_setup(),
     );
 
     let prove = guest::build_prover_string_concat(program, prover_preprocessing);
@@ -59,7 +59,7 @@ pub fn main() {
         guest::preprocess_prover_parallel_sum_of_squares(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_parallel_sum_of_squares(
         shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup().into(),
+        prover_preprocessing.generators.to_verifier_setup(),
     );
 
     let prove = guest::build_prover_parallel_sum_of_squares(program, prover_preprocessing);

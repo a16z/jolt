@@ -28,7 +28,7 @@ pub fn btreemap() {
     let verifier_preprocessing = step!("Preprocessing verifier", {
         guest::preprocess_verifier_btreemap(
             shared_preprocessing,
-            prover_preprocessing.generators.to_verifier_setup().into(),
+            prover_preprocessing.generators.to_verifier_setup(),
         )
     });
 

@@ -2219,7 +2219,7 @@ mod tests {
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             shared_preprocessing,
-            DoryCommitmentScheme::setup_verifier(&prover_preprocessing.generators),
+            prover_preprocessing.generators.to_verifier_setup(),
         );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
@@ -2275,7 +2275,7 @@ mod tests {
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             prover_preprocessing.shared.clone(),
-            DoryCommitmentScheme::setup_verifier(&prover_preprocessing.generators),
+            prover_preprocessing.generators.to_verifier_setup(),
         );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
@@ -2328,7 +2328,7 @@ mod tests {
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             prover_preprocessing.shared.clone(),
-            DoryCommitmentScheme::setup_verifier(&prover_preprocessing.generators),
+            prover_preprocessing.generators.to_verifier_setup(),
         );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
@@ -2391,7 +2391,7 @@ mod tests {
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             prover_preprocessing.shared.clone(),
-            DoryCommitmentScheme::setup_verifier(&prover_preprocessing.generators),
+            prover_preprocessing.generators.to_verifier_setup(),
         );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
@@ -2731,7 +2731,7 @@ mod tests {
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             prover_preprocessing.shared.clone(),
-            DoryCommitmentScheme::setup_verifier(&prover_preprocessing.generators),
+            prover_preprocessing.generators.to_verifier_setup(),
         );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
@@ -2778,7 +2778,7 @@ mod tests {
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             prover_preprocessing.shared.clone(),
-            DoryCommitmentScheme::setup_verifier(&prover_preprocessing.generators),
+            prover_preprocessing.generators.to_verifier_setup(),
         );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
@@ -2825,7 +2825,7 @@ mod tests {
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             prover_preprocessing.shared.clone(),
-            DoryCommitmentScheme::setup_verifier(&prover_preprocessing.generators),
+            prover_preprocessing.generators.to_verifier_setup(),
         );
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
@@ -3099,7 +3099,7 @@ mod tests {
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             prover_preprocessing.shared.clone(),
-            DoryCommitmentScheme::setup_verifier(&prover_preprocessing.generators),
+            prover_preprocessing.generators.to_verifier_setup(),
         );
         let verifier =
             RV64IMACVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
@@ -3144,7 +3144,7 @@ mod tests {
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             prover_preprocessing.shared.clone(),
-            DoryCommitmentScheme::setup_verifier(&prover_preprocessing.generators),
+            prover_preprocessing.generators.to_verifier_setup(),
         );
         let verifier =
             JoltVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
@@ -3302,7 +3302,7 @@ mod tests {
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             shared_preprocessing,
-            DoryCommitmentScheme::setup_verifier(&prover_preprocessing.generators),
+            prover_preprocessing.generators.to_verifier_setup(),
         );
 
         // DoryGlobals is now initialized inside the verifier's verify_stage8
