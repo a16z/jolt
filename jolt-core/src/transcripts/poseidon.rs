@@ -359,6 +359,165 @@ mod tests {
 
     type TestTranscript = PoseidonTranscript;
 
+    // ============================================================================
+    // Append Methods Tests
+    // ============================================================================
+
+    #[test]
+    fn test_append_bytes_chunking() {
+        // Test that chunking (>32 bytes) is handled correctly
+
+        // Test 1: Single chunk (exactly 32 bytes)
+        let mut t1 = TestTranscript::new(b"chunk_test");
+        let data_32 = [0xABu8; 32];
+        t1.append_bytes(b"data", &data_32);
+        let state_32 = t1.state;
+
+        // Test 2: Two chunks (33 bytes = 32 + 1)
+        let mut t2 = TestTranscript::new(b"chunk_test");
+        let data_33 = [0xABu8; 33];
+        t2.append_bytes(b"data", &data_33);
+        let state_33 = t2.state;
+
+        // Adding one byte should produce different state (different chunk boundary)
+        assert_ne!(state_32, state_33, "32-byte and 33-byte inputs should differ");
+
+        // Test 3: Determinism for multi-chunk input
+        let mut t3 = TestTranscript::new(b"chunk_test");
+        let data_100 = [0xCDu8; 100]; // 100 bytes = 4 chunks (32+32+32+4)
+        t3.append_bytes(b"data", &data_100);
+
+        let mut t4 = TestTranscript::new(b"chunk_test");
+        t4.append_bytes(b"data", &data_100);
+        assert_eq!(t3.state, t4.state, "Multi-chunk should be deterministic");
+
+        // Test 4: Append order matters (chunks processed sequentially)
+        let mut t5 = TestTranscript::new(b"chunk_test");
+        t5.append_bytes(b"data", &data_100[..50]);
+        t5.append_bytes(b"data", &data_100[50..]);
+
+        // Splitting across append_bytes calls should produce different result
+        assert_ne!(
+            t3.state, t5.state,
+            "Single append vs split append should differ"
+        );
+
+        // Test 5: Different data in last chunk
+        let mut t6 = TestTranscript::new(b"chunk_test");
+        let mut data_100_diff = data_100;
+        data_100_diff[99] = 0xFF; // Change last byte
+        t6.append_bytes(b"data", &data_100_diff);
+        assert_ne!(t3.state, t6.state, "Different data should differ");
+    }
+
+    #[test]
+    fn test_append_scalar_batch_vs_single() {
+        // Test that batch and single appends produce different states
+        // (batch uses label_with_len, single uses label repeatedly)
+        use ark_std::UniformRand;
+        let mut rng = ark_std::test_rng();
+
+        let scalars: Vec<Fr> = (0..3).map(|_| Fr::rand(&mut rng)).collect();
+
+        // Batch: append_scalars calls label_with_len(label, count) once
+        let mut t_batch = TestTranscript::new(b"batch_test");
+        t_batch.append_scalars(b"s", &scalars);
+
+        // Sequential: append_scalar calls label(label) for each scalar
+        let mut t_sequential = TestTranscript::new(b"batch_test");
+        for scalar in &scalars {
+            t_sequential.append_scalar(b"s", scalar);
+        }
+
+        assert_ne!(
+            t_batch.state, t_sequential.state,
+            "Batch and sequential appends should differ (different label handling)"
+        );
+
+        // Test edge cases: zero and max field element are handled correctly
+        let mut t_zero = TestTranscript::new(b"edge_test");
+        t_zero.append_scalar(b"s", &Fr::from(0u64));
+
+        let mut t_max = TestTranscript::new(b"edge_test");
+        let max_scalar = -Fr::from(1u64); // p-1 in Fr
+        t_max.append_scalar(b"s", &max_scalar);
+
+        assert_ne!(
+            t_zero.state, t_max.state,
+            "Zero and max field element should produce different states"
+        );
+
+        // Batch determinism
+        let mut t_batch2 = TestTranscript::new(b"batch_test");
+        t_batch2.append_scalars(b"s", &scalars);
+        assert_eq!(t_batch.state, t_batch2.state, "Batch should be deterministic");
+    }
+
+
+    #[test]
+    fn test_append_point_batch_vs_single() {
+        // Test infinity handling and batch vs single behavior
+        use ark_bn254::G1Projective;
+        use ark_std::UniformRand;
+
+        let mut rng = ark_std::test_rng();
+        let infinity = G1Projective::default();
+
+        // Test 1: Infinity should not panic and should update state
+        let mut t1 = TestTranscript::new(b"infinity_test");
+        t1.append_point(b"pt", &infinity);
+        assert_eq!(t1.n_rounds, 2, "Label + point = 2 rounds");
+
+        // Test 2: Infinity should be deterministic
+        let mut t2 = TestTranscript::new(b"infinity_test");
+        t2.append_point(b"pt", &infinity);
+        assert_eq!(t1.state, t2.state, "Infinity should be deterministic");
+
+        // Test 3: Infinity differs from non-infinity
+        let mut t3 = TestTranscript::new(b"infinity_test");
+        let non_infinity = G1Projective::rand(&mut rng);
+        t3.append_point(b"pt", &non_infinity);
+        assert_ne!(t1.state, t3.state, "Infinity vs non-infinity should differ");
+
+        // Test 4: Batch and sequential appends differ (different label handling)
+        let points: Vec<G1Projective> = (0..3).map(|_| G1Projective::rand(&mut rng)).collect();
+
+        let mut t_batch = TestTranscript::new(b"batch_test");
+        t_batch.append_points(b"pts", &points);
+
+        let mut t_sequential = TestTranscript::new(b"batch_test");
+        for point in &points {
+            t_sequential.append_point(b"pts", point);
+        }
+
+        assert_ne!(
+            t_batch.state, t_sequential.state,
+            "Batch and sequential appends should differ (different label handling)"
+        );
+
+        // Batch determinism
+        let mut t_batch2 = TestTranscript::new(b"batch_test");
+        t_batch2.append_points(b"pts", &points);
+        assert_eq!(t_batch.state, t_batch2.state, "Batch should be deterministic");
+    }
+
+
+    // ============================================================================
+    // Challenge Methods Tests
+    // ============================================================================
+
+    #[test]
+    fn test_challenge_u128() {
+        let mut transcript1 = TestTranscript::new(b"u128_test");
+        let mut transcript2 = TestTranscript::new(b"u128_test");
+
+        let c1 = transcript1.challenge_u128();
+        let c2 = transcript2.challenge_u128();
+
+        assert_eq!(c1, c2, "Deterministic challenge_u128");
+        assert_ne!(c1, 0, "Challenge should not be zero");
+    }
+
     #[test]
     fn test_challenge_scalar_full_field() {
         // Poseidon returns full Fr challenges (no 128-bit truncation)
@@ -377,19 +536,94 @@ mod tests {
     }
 
     #[test]
-    fn test_challenge_u128() {
-        let mut transcript1 = TestTranscript::new(b"u128_test");
-        let mut transcript2 = TestTranscript::new(b"u128_test");
+    fn test_challenge_vector_operations() {
+        // Test regular and optimized challenge vector generation
 
-        let c1 = transcript1.challenge_u128();
-        let c2 = transcript2.challenge_u128();
+        // Test 1: Determinism
+        let mut transcript1 = TestTranscript::new(b"vector_test");
+        let mut transcript2 = TestTranscript::new(b"vector_test");
 
-        assert_eq!(c1, c2, "Deterministic challenge_u128");
-        assert_ne!(c1, 0, "Challenge should not be zero");
+        let challenges1: Vec<Fr> = transcript1.challenge_vector(5);
+        let challenges2: Vec<Fr> = transcript2.challenge_vector(5);
+
+        assert_eq!(challenges1.len(), 5);
+        assert_eq!(challenges1, challenges2, "challenge_vector should be deterministic");
+
+        // Test 2: Collision resistance (challenges are distinct)
+        let unique_challenges: HashSet<Fr> = challenges1.iter().copied().collect();
+        assert_eq!(
+            unique_challenges.len(),
+            challenges1.len(),
+            "All challenges should be distinct"
+        );
+
+        // Test 3: Optimized version determinism
+        let mut t3 = TestTranscript::new(b"opt_vector_test");
+        let mut t4 = TestTranscript::new(b"opt_vector_test");
+
+        let challenges3: Vec<<Fr as JoltField>::Challenge> = t3.challenge_vector_optimized::<Fr>(5);
+        let challenges4: Vec<<Fr as JoltField>::Challenge> = t4.challenge_vector_optimized::<Fr>(5);
+
+        assert_eq!(challenges3.len(), 5);
+        assert_eq!(
+            challenges3, challenges4,
+            "challenge_vector_optimized should be deterministic"
+        );
     }
 
     #[test]
-    fn test_challenge_special_trivial() {
+    fn test_challenge_scalar_powers_operations() {
+        // Test regular and optimized challenge_scalar_powers
+
+        // Test 1: Regular powers verification
+        let mut transcript = TestTranscript::new(b"powers_test");
+        let powers: Vec<Fr> = transcript.challenge_scalar_powers(5);
+
+        assert_eq!(powers.len(), 5);
+        assert_eq!(powers[0], Fr::from(1u64), "First power should be 1");
+
+        // Verify powers[i] = powers[i-1] * q (powers[1] is the base)
+        for i in 2..powers.len() {
+            assert_eq!(
+                powers[i],
+                powers[i - 1] * powers[1],
+                "Power at index {i} should equal powers[{i}-1] * base"
+            );
+        }
+
+        // Test 2: Optimized powers should also satisfy power property
+        let mut t2 = TestTranscript::new(b"opt_powers_test");
+        let opt_powers: Vec<Fr> = t2.challenge_scalar_powers_optimized(5);
+
+        assert_eq!(opt_powers.len(), 5);
+        assert_eq!(opt_powers[0], Fr::from(1u64), "First power should be 1");
+
+        // Verify power property holds for optimized version
+        for i in 2..opt_powers.len() {
+            assert_eq!(
+                opt_powers[i],
+                opt_powers[i - 1] * opt_powers[1],
+                "Optimized power at index {i} should equal opt_powers[{i}-1] * base"
+            );
+        }
+
+        // Test 3: Equivalence between regular and optimized (same transcript state)
+        let mut t3 = TestTranscript::new(b"equiv_test");
+        let mut t4 = TestTranscript::new(b"equiv_test");
+
+        let regular_powers: Vec<Fr> = t3.challenge_scalar_powers(5);
+        let optimized_powers: Vec<Fr> = t4.challenge_scalar_powers_optimized(5);
+
+        assert_eq!(
+            regular_powers, optimized_powers,
+            "Regular and optimized powers should be equivalent"
+        );
+    }
+
+    #[test]
+    fn test_challenge_optimized_arithmetic_equivalence() {
+        // Verify that challenge_scalar_optimized produces a Truncate128 type
+        // that is arithmetically equivalent to a full Fr element via transmute
         use ark_std::UniformRand;
         let mut rng = ark_std::test_rng();
         let mut transcript1 = TestTranscript::new(b"test_trivial_challenge");
@@ -420,205 +654,98 @@ mod tests {
         );
     }
 
+    // ============================================================================
+    // Property Tests
+    // ============================================================================
+
     #[test]
     fn test_deterministic_challenges() {
-        // Same inputs should produce same challenges
-        let mut transcript1 = TestTranscript::new(b"deterministic");
-        transcript1.append_u64(b"num", 123);
-        transcript1.append_bytes(b"data", b"test data");
-        let challenge1: Fr = transcript1.challenge_scalar();
+        // Same inputs should produce same challenges across multiple test cases
+        let test_cases = vec![
+            (b"test1" as &[u8], 123u64, b"data1" as &[u8]),
+            (b"test2" as &[u8], 456u64, b"data2" as &[u8]),
+            (b"test3" as &[u8], 789u64, b"longer test data here" as &[u8]),
+        ];
 
-        let mut transcript2 = TestTranscript::new(b"deterministic");
-        transcript2.append_u64(b"num", 123);
-        transcript2.append_bytes(b"data", b"test data");
-        let challenge2: Fr = transcript2.challenge_scalar();
+        for (label, num, data) in test_cases {
+            let mut transcript1 = TestTranscript::new(label);
+            transcript1.append_u64(b"num", num);
+            transcript1.append_bytes(b"data", data);
+            let challenge1: Fr = transcript1.challenge_scalar();
 
-        assert_eq!(challenge1, challenge2);
-    }
+            let mut transcript2 = TestTranscript::new(label);
+            transcript2.append_u64(b"num", num);
+            transcript2.append_bytes(b"data", data);
+            let challenge2: Fr = transcript2.challenge_scalar();
 
-    #[test]
-    fn test_append_bytes_multi_chunk() {
-        // Test that >32 byte input is chunked correctly
-        let mut transcript1 = TestTranscript::new(b"multi_chunk_test");
-        let mut transcript2 = TestTranscript::new(b"multi_chunk_test");
-
-        // 100 bytes = 4 chunks (32 + 32 + 32 + 4)
-        let data = [0xABu8; 100];
-        transcript1.append_bytes(b"data", &data);
-        transcript2.append_bytes(b"data", &data);
-
-        assert_eq!(transcript1.state, transcript2.state);
-
-        // Different data should produce different state
-        let mut transcript3 = TestTranscript::new(b"multi_chunk_test");
-        let other_data = [0xCDu8; 100];
-        transcript3.append_bytes(b"data", &other_data);
-        assert_ne!(transcript1.state, transcript3.state);
-    }
-
-    #[test]
-    fn test_append_scalar() {
-        let mut transcript1 = TestTranscript::new(b"scalar_test");
-        let mut transcript2 = TestTranscript::new(b"scalar_test");
-
-        let scalar = Fr::from(12345u64);
-        transcript1.append_scalar(b"s", &scalar);
-        transcript2.append_scalar(b"s", &scalar);
-
-        assert_eq!(transcript1.state, transcript2.state);
-
-        // Different scalar should produce different state
-        let mut transcript3 = TestTranscript::new(b"scalar_test");
-        transcript3.append_scalar(b"s", &Fr::from(99999u64));
-        assert_ne!(transcript1.state, transcript3.state);
-    }
-
-    #[test]
-    fn test_append_point() {
-        use ark_bn254::G1Projective;
-        use ark_std::UniformRand;
-
-        let mut rng = ark_std::test_rng();
-        let point1 = G1Projective::rand(&mut rng);
-        let point2 = G1Projective::rand(&mut rng);
-
-        let mut transcript1 = TestTranscript::new(b"point_test");
-        let mut transcript2 = TestTranscript::new(b"point_test");
-
-        transcript1.append_point(b"pt", &point1);
-        transcript2.append_point(b"pt", &point1);
-
-        assert_eq!(transcript1.state, transcript2.state);
-
-        // Different point should produce different state
-        let mut transcript3 = TestTranscript::new(b"point_test");
-        transcript3.append_point(b"pt", &point2);
-        assert_ne!(transcript1.state, transcript3.state);
-    }
-
-    #[test]
-    fn test_append_point_infinity() {
-        use ark_bn254::G1Projective;
-        use ark_std::UniformRand;
-
-        let mut rng = ark_std::test_rng();
-        let infinity = G1Projective::default(); // point at infinity
-        let non_infinity = G1Projective::rand(&mut rng);
-
-        let mut transcript1 = TestTranscript::new(b"infinity_test");
-        transcript1.append_point(b"pt", &infinity);
-
-        // Should not panic and should update state (label + point = 2 rounds)
-        assert_eq!(transcript1.n_rounds, 2);
-
-        // Infinity should produce different state than non-infinity point
-        let mut transcript2 = TestTranscript::new(b"infinity_test");
-        transcript2.append_point(b"pt", &non_infinity);
-        assert_ne!(transcript1.state, transcript2.state);
-    }
-
-    #[test]
-    fn test_append_scalars() {
-        let mut transcript1 = TestTranscript::new(b"scalars_test");
-        let mut transcript2 = TestTranscript::new(b"scalars_test");
-
-        let scalars: Vec<Fr> = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)];
-        transcript1.append_scalars(b"scalars", &scalars);
-        transcript2.append_scalars(b"scalars", &scalars);
-
-        assert_eq!(transcript1.state, transcript2.state);
-
-        // Different scalars should produce different state
-        let mut transcript3 = TestTranscript::new(b"scalars_test");
-        let other_scalars: Vec<Fr> = vec![Fr::from(4u64), Fr::from(5u64), Fr::from(6u64)];
-        transcript3.append_scalars(b"scalars", &other_scalars);
-        assert_ne!(transcript1.state, transcript3.state);
-    }
-
-    #[test]
-    fn test_append_points() {
-        use ark_bn254::G1Projective;
-        use ark_std::UniformRand;
-
-        let mut rng = ark_std::test_rng();
-        let points: Vec<G1Projective> = (0..3).map(|_| G1Projective::rand(&mut rng)).collect();
-
-        let mut transcript1 = TestTranscript::new(b"points_test");
-        let mut transcript2 = TestTranscript::new(b"points_test");
-
-        transcript1.append_points(b"points", &points);
-        transcript2.append_points(b"points", &points);
-
-        assert_eq!(transcript1.state, transcript2.state);
-    }
-
-    #[test]
-    fn test_append_serializable() {
-        let mut transcript1 = TestTranscript::new(b"serializable_test");
-        let mut transcript2 = TestTranscript::new(b"serializable_test");
-
-        let scalar = Fr::from(12345u64);
-        transcript1.append_serializable(b"ser", &scalar);
-        transcript2.append_serializable(b"ser", &scalar);
-
-        assert_eq!(transcript1.state, transcript2.state);
-    }
-
-    #[test]
-    fn test_challenge_vector() {
-        let mut transcript1 = TestTranscript::new(b"vector_test");
-        let mut transcript2 = TestTranscript::new(b"vector_test");
-
-        let challenges1: Vec<Fr> = transcript1.challenge_vector(5);
-        let challenges2: Vec<Fr> = transcript2.challenge_vector(5);
-
-        assert_eq!(challenges1.len(), 5);
-        assert_eq!(challenges1, challenges2);
-
-        // All challenges should be distinct
-        for i in 0..challenges1.len() {
-            for j in (i + 1)..challenges1.len() {
-                assert_ne!(challenges1[i], challenges1[j]);
-            }
+            assert_eq!(
+                challenge1, challenge2,
+                "Determinism failed for label={:?}",
+                std::str::from_utf8(label).unwrap()
+            );
         }
     }
 
     #[test]
-    fn test_challenge_scalar_powers() {
-        let mut transcript = TestTranscript::new(b"powers_test");
+    fn test_append_order_sensitivity() {
+        // Verify that append order matters (critical for Fiat-Shamir security)
+        let scalar_a = Fr::from(111u64);
+        let scalar_b = Fr::from(222u64);
 
-        let powers: Vec<Fr> = transcript.challenge_scalar_powers(5);
+        // Append A then B
+        let mut t1 = TestTranscript::new(b"order_test");
+        t1.append_scalar(b"s", &scalar_a);
+        t1.append_scalar(b"s", &scalar_b);
 
-        assert_eq!(powers.len(), 5);
-        assert_eq!(powers[0], Fr::from(1u64)); // First power is always 1
+        // Append B then A
+        let mut t2 = TestTranscript::new(b"order_test");
+        t2.append_scalar(b"s", &scalar_b);
+        t2.append_scalar(b"s", &scalar_a);
 
-        // Verify powers[i] = powers[i-1] * q
-        for i in 2..powers.len() {
-            assert_eq!(powers[i], powers[i - 1] * powers[1]);
-        }
+        assert_ne!(
+            t1.state, t2.state,
+            "Append order should affect transcript state"
+        );
+
+        // Also test with different append types
+        let mut t3 = TestTranscript::new(b"mixed_order_test");
+        t3.append_u64(b"num", 123);
+        t3.append_bytes(b"data", b"test");
+
+        let mut t4 = TestTranscript::new(b"mixed_order_test");
+        t4.append_bytes(b"data", b"test");
+        t4.append_u64(b"num", 123);
+
+        assert_ne!(
+            t3.state, t4.state,
+            "Append order should matter across different types"
+        );
     }
 
     #[test]
-    fn test_challenge_vector_optimized() {
-        let mut transcript1 = TestTranscript::new(b"opt_vector_test");
-        let mut transcript2 = TestTranscript::new(b"opt_vector_test");
+    fn test_label_sensitivity() {
+        // Verify that different labels produce different states
+        let scalar = Fr::from(12345u64);
 
-        let challenges1: Vec<<Fr as JoltField>::Challenge> =
-            transcript1.challenge_vector_optimized::<Fr>(5);
-        let challenges2: Vec<<Fr as JoltField>::Challenge> =
-            transcript2.challenge_vector_optimized::<Fr>(5);
+        let mut t1 = TestTranscript::new(b"label_test");
+        t1.append_scalar(b"label1", &scalar);
 
-        assert_eq!(challenges1.len(), 5);
-        assert_eq!(challenges1, challenges2);
+        let mut t2 = TestTranscript::new(b"label_test");
+        t2.append_scalar(b"label2", &scalar);
+
+        assert_ne!(
+            t1.state, t2.state,
+            "Different labels should produce different states"
+        );
+
+        // Test initialization label sensitivity
+        let t3 = TestTranscript::new(b"init_label_1");
+        let t4 = TestTranscript::new(b"init_label_2");
+
+        assert_ne!(
+            t3.state, t4.state,
+            "Different initialization labels should produce different states"
+        );
     }
 
-    #[test]
-    fn test_challenge_scalar_powers_optimized() {
-        let mut transcript = TestTranscript::new(b"opt_powers_test");
-
-        let powers: Vec<Fr> = transcript.challenge_scalar_powers_optimized(5);
-
-        assert_eq!(powers.len(), 5);
-        assert_eq!(powers[0], Fr::from(1u64));
-    }
 }

@@ -1603,3 +1603,289 @@ impl Valid for Node {
 // =============================================================================
 
 pub use crate::ast_bundle::{Assertion, AstBundle, AstCommitment, TargetField, WitnessType};
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =============================================================================
+    // Arena Tests
+    // =============================================================================
+
+    #[test]
+    fn test_node_insertion_and_retrieval() {
+        // Test that inserted nodes can be retrieved correctly
+        let ast_42 = MleAst::from_u64(42);
+        let node_42 = get_node(ast_42.root());
+        assert!(matches!(node_42, Node::Atom(Atom::Scalar([42, 0, 0, 0]))));
+
+        let ast_sum = MleAst::from_u64(1) + MleAst::from_u64(2);
+        let node_sum = get_node(ast_sum.root());
+        assert!(matches!(node_sum, Node::Add(_, _)));
+
+        // Test constant nodes
+        let zero = MleAst::zero();
+        assert!(matches!(get_node(zero.root()), Node::Atom(Atom::Scalar(s)) if s == SCALAR_ZERO));
+
+        let one = MleAst::one();
+        assert!(matches!(get_node(one.root()), Node::Atom(Atom::Scalar(s)) if s == SCALAR_ONE));
+    }
+
+    // =============================================================================
+    // Thread-Local Storage Tests
+    // =============================================================================
+
+    #[test]
+    fn test_pending_challenge_round_trip() {
+        // Test thread-local challenge tunneling
+        let challenge = MleAst::from_u64(12345);
+
+        set_pending_challenge(challenge);
+        let retrieved = take_pending_challenge();
+
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().root(), challenge.root());
+
+        // Taking again should return None
+        let empty = take_pending_challenge();
+        assert!(empty.is_none());
+    }
+
+    #[test]
+    fn test_pending_append_round_trip() {
+        // Test thread-local append tunneling
+        let value = MleAst::from_u64(67890);
+
+        set_pending_append(value);
+        let retrieved = take_pending_append();
+
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().root(), value.root());
+
+        // Taking again should return None
+        let empty = take_pending_append();
+        assert!(empty.is_none());
+    }
+
+    #[test]
+    fn test_pending_commitment_chunks_round_trip() {
+        // Test thread-local commitment chunks tunneling
+        let chunks = vec![
+            MleAst::from_u64(1),
+            MleAst::from_u64(2),
+            MleAst::from_u64(3),
+        ];
+
+        set_pending_commitment_chunks(chunks.clone());
+        let retrieved = take_pending_commitment_chunks();
+
+        assert!(retrieved.is_some());
+        let retrieved_chunks = retrieved.unwrap();
+        assert_eq!(retrieved_chunks.len(), 3);
+        for (i, chunk) in retrieved_chunks.iter().enumerate() {
+            assert_eq!(chunk.root(), chunks[i].root());
+        }
+
+        // Taking again should return None
+        let empty = take_pending_commitment_chunks();
+        assert!(empty.is_none());
+    }
+
+    #[test]
+    fn test_pending_point_elements_round_trip() {
+        // Test thread-local point elements tunneling (must be exactly 2 elements)
+        let elements = vec![
+            MleAst::from_u64(100),
+            MleAst::from_u64(200),
+        ];
+
+        set_pending_point_elements(elements.clone());
+        let retrieved = take_pending_point_elements();
+
+        assert!(retrieved.is_some());
+        let retrieved_elements = retrieved.unwrap();
+        assert_eq!(retrieved_elements.len(), 2);
+        assert_eq!(retrieved_elements[0].root(), elements[0].root());
+        assert_eq!(retrieved_elements[1].root(), elements[1].root());
+
+        // Taking again should return None
+        let empty = take_pending_point_elements();
+        assert!(empty.is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "Point must have exactly 2 elements")]
+    fn test_pending_point_elements_wrong_length() {
+        // Should panic if not exactly 2 elements
+        let elements = vec![MleAst::from_u64(1), MleAst::from_u64(2), MleAst::from_u64(3)];
+        set_pending_point_elements(elements);
+    }
+
+    // =============================================================================
+    // Constraint Mode Tests
+    // =============================================================================
+
+    #[test]
+    fn test_constraint_mode() {
+        // Test enable/disable/add_constraint
+        assert!(!is_constraint_mode());
+
+        enable_constraint_mode();
+        assert!(is_constraint_mode());
+
+        let a = MleAst::from_u64(5);
+        let b = MleAst::from_u64(3);
+
+        // In constraint mode, equality should add constraint and return true
+        assert_eq!(num_constraints(), 0);
+
+        let equal = a == b;
+        assert!(equal); // Should return true in constraint mode
+        assert_eq!(num_constraints(), 1); // Should have added constraint
+
+        let constraints = take_constraints();
+        assert_eq!(constraints.len(), 1);
+        // Constraint should be (a - b)
+        assert!(matches!(get_node(constraints[0].root()), Node::Sub(_, _)));
+
+        // After taking, constraints should be empty
+        assert_eq!(num_constraints(), 0);
+
+        disable_constraint_mode();
+        assert!(!is_constraint_mode());
+
+        // After disabling, equality should not add constraints
+        let equal2 = a == b;
+        assert!(!equal2); // Different nodes, should return false
+        assert_eq!(num_constraints(), 0); // No constraint added
+    }
+
+    // =============================================================================
+    // MleAst Creation Tests
+    // =============================================================================
+
+    #[test]
+    fn test_mle_ast_from_primitives() {
+        // Test from_u64
+        let val_u64 = MleAst::from_u64(42);
+        assert!(matches!(get_node(val_u64.root()), Node::Atom(Atom::Scalar([42, 0, 0, 0]))));
+
+        // Test from_u128
+        let val_u128 = MleAst::from_u128(0xFEDCBA9876543210_123456789ABCDEF0u128);
+        let node_u128 = get_node(val_u128.root());
+        // from_u128 stores: low 64 bits in limb[0], high 64 bits in limb[1]
+        assert!(matches!(
+            node_u128,
+            Node::Atom(Atom::Scalar([0x123456789ABCDEF0, 0xFEDCBA9876543210, 0, 0]))
+        ));
+
+        // Test from_i64 positive
+        let val_i64_pos = MleAst::from_i64(123);
+        assert!(matches!(get_node(val_i64_pos.root()), Node::Atom(Atom::Scalar([123, 0, 0, 0]))));
+
+        // Test from_i64 negative (should compute p - |n|)
+        let val_i64_neg = MleAst::from_i64(-1);
+        let node_neg = get_node(val_i64_neg.root());
+        // -1 in BN254 is p-1
+        assert!(matches!(node_neg, Node::Atom(Atom::Scalar([0x43e1f593f0000000, 0x2833e84879b97091, 0xb85045b68181585d, 0x30644e72e131a029]))));
+
+        // Test from_bool
+        let val_true = MleAst::from_bool(true);
+        assert!(matches!(get_node(val_true.root()), Node::Atom(Atom::Scalar([1, 0, 0, 0]))));
+
+        let val_false = MleAst::from_bool(false);
+        assert!(matches!(get_node(val_false.root()), Node::Atom(Atom::Scalar([0, 0, 0, 0]))));
+    }
+
+    // =============================================================================
+    // Arithmetic Operation Tests
+    // =============================================================================
+
+    #[test]
+    fn test_mle_ast_arithmetic_creates_nodes() {
+        let a = MleAst::from_u64(5);
+        let b = MleAst::from_u64(3);
+
+        // Basic binary ops
+        let sum = a + b;
+        assert!(matches!(get_node(sum.root()), Node::Add(_, _)));
+
+        let diff = a - b;
+        assert!(matches!(get_node(diff.root()), Node::Sub(_, _)));
+
+        let prod = a * b;
+        assert!(matches!(get_node(prod.root()), Node::Mul(_, _)));
+
+        let quot = a / b;
+        assert!(matches!(get_node(quot.root()), Node::Div(_, _)));
+
+        // Unary ops
+        let neg = -a;
+        assert!(matches!(get_node(neg.root()), Node::Neg(_)));
+
+        let inv = a.inverse().unwrap();
+        assert!(matches!(get_node(inv.root()), Node::Inv(_)));
+
+        // Self-operations (edge cases)
+        let squared = a.square();
+        assert!(matches!(get_node(squared.root()), Node::Mul(_, _)));
+
+        let self_prod = a * a;
+        assert!(matches!(get_node(self_prod.root()), Node::Mul(_, _)));
+    }
+
+    #[test]
+    fn test_arithmetic_optimizations() {
+        let a = MleAst::from_u64(5);
+        let zero = MleAst::zero();
+
+        // Test x + 0 = x (should not create Add node)
+        let result1 = a + &zero;
+        assert_eq!(result1.root(), a.root());
+
+        // Test 0 + x = x (should not create Add node)
+        let result2 = zero + &a;
+        assert_eq!(result2.root(), a.root());
+
+        // Test x - 0 = x (should not create Sub node)
+        let result3 = a - &zero;
+        assert_eq!(result3.root(), a.root());
+
+        // Test 0 - x = -x (should create Neg node, not Sub)
+        let result4 = zero - &a;
+        assert!(matches!(get_node(result4.root()), Node::Neg(_)));
+
+        // Test x * 0 = 0 (should return zero, not Mul node)
+        let result5 = a * &zero;
+        assert!(result5.is_zero());
+
+        // Test 0 * x = 0 (should return zero, not Mul node)
+        let result6 = zero * &a;
+        assert!(result6.is_zero());
+    }
+
+    // =============================================================================
+    // Zero/One Tests
+    // =============================================================================
+
+    #[test]
+    fn test_is_zero_is_one() {
+        let zero = MleAst::zero();
+        let one = MleAst::one();
+        let five = MleAst::from_u64(5);
+
+        // Test is_zero
+        assert!(zero.is_zero());
+        assert!(!one.is_zero());
+        assert!(!five.is_zero());
+
+        // Test is_one
+        assert!(one.is_one());
+        assert!(!zero.is_one());
+        assert!(!five.is_one());
+    }
+}
