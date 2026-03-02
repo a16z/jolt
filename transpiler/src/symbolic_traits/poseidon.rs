@@ -315,6 +315,10 @@ fn bytes_to_scalar(bytes: &[u8; 32]) -> [u64; 4] {
 mod tests {
     use super::*;
 
+    // =========================================================================
+    // Helper Methods Tests
+    // =========================================================================
+
     #[test]
     fn test_label_to_field() {
         // "jolt" = [0x6a, 0x6f, 0x6c, 0x74] in ASCII
@@ -340,13 +344,79 @@ mod tests {
     }
 
     #[test]
-    fn test_transcript_creation() {
-        let transcript: PoseidonAstTranscript = Transcript::new(b"test");
-        assert_eq!(transcript.n_rounds, 0);
+    fn test_hash_and_update() {
+        let mut transcript: PoseidonAstTranscript = Transcript::new(b"test");
+        let initial_rounds = transcript.n_rounds;
+
+        transcript.hash_and_update(MleAst::from_u64(42));
+
+        // Verify n_rounds incremented
+        assert_eq!(transcript.n_rounds, initial_rounds + 1);
+
+        // Verify state is now a Poseidon hash node
+        let root = transcript.state.root();
+        let node = zklean_extractor::mle_ast::get_node(root);
+        assert!(
+            matches!(node, zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)),
+            "Expected TranscriptHash node after hash_and_update"
+        );
     }
 
     #[test]
-    fn test_transcript_with_jolt_label() {
+    fn test_challenge_ast() {
+        let mut transcript: PoseidonAstTranscript = Transcript::new(b"test");
+        let initial_rounds = transcript.n_rounds;
+
+        let challenge = transcript.challenge_ast();
+
+        // Verify n_rounds incremented
+        assert_eq!(transcript.n_rounds, initial_rounds + 1);
+
+        // Verify challenge is a Poseidon hash node
+        let root = challenge.root();
+        let node = zklean_extractor::mle_ast::get_node(root);
+        assert!(
+            matches!(node, zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)),
+            "Expected TranscriptHash node for challenge"
+        );
+
+        // Verify state was updated to challenge value
+        assert_eq!(transcript.state.root(), challenge.root());
+    }
+
+    #[test]
+    fn test_append_field_elements_chaining() {
+        // CRITICAL: First element uses n_rounds for domain separation,
+        // remaining elements use 0 for chaining (matching jolt-core)
+        let mut transcript: PoseidonAstTranscript = Transcript::new(b"test");
+        let initial_rounds = transcript.n_rounds;
+
+        let elements = vec![
+            MleAst::from_u64(10),
+            MleAst::from_u64(20),
+            MleAst::from_u64(30),
+        ];
+
+        transcript.append_field_elements(&elements);
+
+        // Verify n_rounds incremented once (not per element)
+        assert_eq!(transcript.n_rounds, initial_rounds + 1);
+
+        // Verify state is a Poseidon hash node
+        let root = transcript.state.root();
+        let node = zklean_extractor::mle_ast::get_node(root);
+        assert!(
+            matches!(node, zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)),
+            "Expected TranscriptHash node after append_field_elements"
+        );
+    }
+
+    // =========================================================================
+    // Transcript Trait Tests
+    // =========================================================================
+
+    #[test]
+    fn test_new_with_label() {
         // Verify that creating transcript with "Jolt" label produces a Poseidon node
         let transcript: PoseidonAstTranscript = Transcript::new(b"Jolt");
         assert_eq!(transcript.n_rounds, 0);
@@ -363,15 +433,28 @@ mod tests {
     }
 
     #[test]
-    fn test_append_and_challenge() {
+    fn test_raw_append_u64() {
+        use jolt_core::transcripts::Transcript as _;
+
         let mut transcript: PoseidonAstTranscript = Transcript::new(b"test");
-        transcript.hash_and_update(MleAst::from_u64(42));
-        let _challenge = transcript.challenge_ast();
-        assert_eq!(transcript.n_rounds, 2); // 1 append + 1 challenge
+        let initial_rounds = transcript.n_rounds;
+
+        transcript.raw_append_u64(12345);
+
+        // Verify n_rounds incremented
+        assert_eq!(transcript.n_rounds, initial_rounds + 1);
+
+        // Verify state contains a Poseidon hash with the u64 value
+        let root = transcript.state.root();
+        let node = zklean_extractor::mle_ast::get_node(root);
+        assert!(
+            matches!(node, zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)),
+            "Expected TranscriptHash node after raw_append_u64"
+        );
     }
 
     #[test]
-    fn test_append_scalar_with_mle_ast() {
+    fn test_raw_append_scalar_with_mle_ast() {
         use jolt_core::transcripts::Transcript as _;
 
         let mut transcript: PoseidonAstTranscript = Transcript::new(b"test");
@@ -379,7 +462,7 @@ mod tests {
         // Create a variable (not a constant)
         let var = MleAst::from_var(42);
 
-        // Append it to transcript
+        // Append it to transcript via append_scalar (which calls raw_append_scalar)
         transcript.append_scalar(b"test_scalar", &var);
 
         // Check that the state now contains a Poseidon node with Var(42) directly
@@ -405,5 +488,45 @@ mod tests {
             }
             _ => panic!("Expected Poseidon node, got {node:?}"),
         }
+    }
+
+    #[test]
+    fn test_append_serializable_with_commitment_chunks() {
+        use jolt_core::transcripts::Transcript as _;
+        use zklean_extractor::mle_ast::{set_pending_commitment_chunks, AstCommitment};
+
+        let mut transcript: PoseidonAstTranscript = Transcript::new(b"test");
+        let initial_rounds = transcript.n_rounds;
+
+        // Create mock commitment chunks (simulating what AstCommitment::serialize does)
+        let chunks = vec![
+            MleAst::from_u64(100),
+            MleAst::from_u64(200),
+            MleAst::from_u64(300),
+        ];
+        set_pending_commitment_chunks(chunks.clone());
+
+        // Create a dummy AstCommitment (its serialize will have already set the chunks above)
+        let commitment = AstCommitment::default();
+
+        // Append the commitment
+        transcript.append_serializable(b"commitment", &commitment);
+
+        // Verify n_rounds incremented by 2:
+        // 1. raw_append_label_with_len (label + length)
+        // 2. append_field_elements (commitment chunks)
+        assert_eq!(
+            transcript.n_rounds,
+            initial_rounds + 2,
+            "n_rounds should increment by 2 after append_serializable (label+len + chunks)"
+        );
+
+        // Verify state is a Poseidon hash node (contains the commitment chunks)
+        let root = transcript.state.root();
+        let node = zklean_extractor::mle_ast::get_node(root);
+        assert!(
+            matches!(node, zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)),
+            "Expected TranscriptHash node after appending commitment"
+        );
     }
 }
