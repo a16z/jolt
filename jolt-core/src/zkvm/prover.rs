@@ -199,6 +199,8 @@ impl<
         PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
         ProofTranscript: Transcript,
     > JoltCpuProver<'a, F, C, PCS, ProofTranscript>
+where
+    C::G1: From<crate::curve::Bn254G1>,
 {
     #[allow(clippy::too_many_arguments)]
     pub fn gen_from_elf(
@@ -434,10 +436,9 @@ impl<
             OneHotParams::new(log_T, preprocessing.shared.bytecode.code_size, ram_K);
 
         #[cfg(feature = "zk")]
-        let pedersen_generators = PCS::pedersen_generators(
-            &preprocessing.generators,
-            PCS::max_pedersen_generators(&preprocessing.generators),
-        );
+        let pedersen_generators = preprocessing
+            .shared
+            .pedersen_generators::<C>(preprocessing.shared.zk_generator_g1s.len());
 
         Self {
             preprocessing,
@@ -1690,8 +1691,10 @@ impl<
         }
 
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
-        let pedersen_generators =
-            PCS::pedersen_generators(&self.preprocessing.generators, pedersen_generator_count);
+        let pedersen_generators = self
+            .preprocessing
+            .shared
+            .pedersen_generators::<C>(pedersen_generator_count);
         let eval_commitments =
             vec![PCS::eval_commitment(joint_opening_proof).expect("missing eval commitment")];
 
@@ -2083,7 +2086,7 @@ where
 
         #[cfg(feature = "zk")]
         {
-            const MAX_ZK_PEDERSEN_GENERATORS: usize = 32;
+            const MAX_ZK_PEDERSEN_GENERATORS: usize = 128;
             if let Some((g1s, h1)) = PCS::zk_generators_raw(&generators, MAX_ZK_PEDERSEN_GENERATORS)
             {
                 shared.zk_generator_g1s = g1s;

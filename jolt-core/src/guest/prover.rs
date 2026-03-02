@@ -49,7 +49,10 @@ pub fn prove<
     JoltProof<F, C, PCS, FS>,
     JoltDevice,
     Option<ProverDebugInfo<F, FS, PCS>>,
-) {
+)
+where
+    C::G1: From<crate::curve::Bn254G1>,
+{
     use crate::zkvm::prover::JoltCpuProver;
 
     let prover = JoltCpuProver::<F, C, PCS, FS>::gen_from_elf(

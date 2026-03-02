@@ -10,9 +10,8 @@ use crate::poly::commitment::dory::DoryContext;
 use crate::{
     curve::JoltCurve,
     field::JoltField,
-    poly::commitment::{
-        commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment},
-        pedersen::PedersenGenerators,
+    poly::commitment::commitment_scheme::{
+        CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment,
     },
     poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::Transcript,
@@ -517,24 +516,6 @@ where
         let g1_0 = C::G1::from(setup.0.g1_0);
         let h1 = C::G1::from(setup.0.h1);
         Some((g1_0, h1))
-    }
-
-    fn max_pedersen_generators(setup: &Self::ProverSetup) -> usize {
-        setup.0.g1_vec.len()
-    }
-
-    fn pedersen_generators(setup: &Self::ProverSetup, count: usize) -> PedersenGenerators<C> {
-        assert!(
-            count <= setup.0.g1_vec.len(),
-            "Requested {count} Pedersen generators but Dory URS only has {}",
-            setup.0.g1_vec.len()
-        );
-        let message_generators = setup.0.g1_vec[..count]
-            .iter()
-            .map(|g| C::G1::from(*g))
-            .collect();
-        let blinding_generator = C::G1::from(setup.0.h1);
-        PedersenGenerators::new(message_generators, blinding_generator)
     }
 }
 
