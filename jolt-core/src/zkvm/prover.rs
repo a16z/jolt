@@ -611,7 +611,7 @@ where
                 &mut self.opening_accumulator,
                 &mut self.transcript,
             );
-            (SumcheckInstanceProof::Standard(proof), r, claim)
+            (SumcheckInstanceProof::Clear(proof), r, claim)
         }
     }
 
@@ -2878,7 +2878,7 @@ mod tests {
             transcript: &mut KeccakTranscript,
         ) -> Vec<(RoundWitness<Fr>, usize)> {
             match proof {
-                SumcheckInstanceProof::Standard(std_proof) => {
+                SumcheckInstanceProof::Clear(std_proof) => {
                     // For Standard proofs, use actual polynomial coefficients
                     let compressed_polys = &std_proof.compressed_polys;
                     let num_rounds = compressed_polys.len();

@@ -29,16 +29,12 @@ pub use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
 pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
     /// Returns (proof, challenges, initial_batched_claim)
-    /// For non-ZK mode - returns StandardSumcheckProof with polynomial coefficients visible.
+    /// For non-ZK mode - returns ClearSumcheckProof with polynomial coefficients visible.
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
-    ) -> (
-        StandardSumcheckProof<F, ProofTranscript>,
-        Vec<F::Challenge>,
-        F,
-    ) {
+    ) -> (ClearSumcheckProof<F, ProofTranscript>, Vec<F::Challenge>, F) {
         let max_num_rounds = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.num_rounds())
@@ -180,7 +176,7 @@ impl BatchedSumcheck {
         opening_accumulator.flush_to_transcript(transcript);
 
         (
-            StandardSumcheckProof::new(compressed_polys),
+            ClearSumcheckProof::new(compressed_polys),
             r_sumcheck,
             initial_batched_claim,
         )
@@ -481,7 +477,7 @@ impl BatchedSumcheck {
     /// Verify a standard (non-ZK) sumcheck proof without requiring a curve type.
     /// Used by opening proof reduction which doesn't need ZK mode.
     pub fn verify_standard<F: JoltField, ProofTranscript: Transcript>(
-        proof: &StandardSumcheckProof<F, ProofTranscript>,
+        proof: &ClearSumcheckProof<F, ProofTranscript>,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
@@ -540,15 +536,15 @@ impl BatchedSumcheck {
     }
 }
 
-/// Standard sumcheck proof - coefficients visible to verifier.
+/// Clear (non-ZK) sumcheck proof - coefficients visible to verifier.
 /// Used in non-ZK mode where the verifier evaluates polynomials directly.
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct StandardSumcheckProof<F: JoltField, ProofTranscript: Transcript> {
+pub struct ClearSumcheckProof<F: JoltField, ProofTranscript: Transcript> {
     pub compressed_polys: Vec<CompressedUniPoly<F>>,
     _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> StandardSumcheckProof<F, ProofTranscript> {
+impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTranscript> {
     pub fn new(compressed_polys: Vec<CompressedUniPoly<F>>) -> Self {
         Self {
             compressed_polys,
@@ -722,7 +718,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
 #[derive(Debug, Clone)]
 pub enum SumcheckInstanceProof<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> {
     /// Non-ZK: coefficients visible to verifier
-    Standard(StandardSumcheckProof<F, ProofTranscript>),
+    Clear(ClearSumcheckProof<F, ProofTranscript>),
     /// ZK: only commitments visible, coefficients hidden in BlindFold
     Zk(ZkSumcheckProof<F, C, ProofTranscript>),
 }
@@ -736,7 +732,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalSerialize
         compress: ark_serialize::Compress,
     ) -> Result<(), ark_serialize::SerializationError> {
         match self {
-            Self::Standard(proof) => {
+            Self::Clear(proof) => {
                 0u8.serialize_with_mode(&mut writer, compress)?;
                 proof.serialize_with_mode(writer, compress)
             }
@@ -749,7 +745,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalSerialize
 
     fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
         1 + match self {
-            Self::Standard(proof) => proof.serialized_size(compress),
+            Self::Clear(proof) => proof.serialized_size(compress),
             Self::Zk(proof) => proof.serialized_size(compress),
         }
     }
@@ -760,7 +756,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> ark_serialize::Val
 {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         match self {
-            Self::Standard(proof) => proof.check(),
+            Self::Clear(proof) => proof.check(),
             Self::Zk(proof) => proof.check(),
         }
     }
@@ -777,9 +773,8 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalDeseriali
         let variant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
         match variant {
             0 => {
-                let proof =
-                    StandardSumcheckProof::deserialize_with_mode(reader, compress, validate)?;
-                Ok(Self::Standard(proof))
+                let proof = ClearSumcheckProof::deserialize_with_mode(reader, compress, validate)?;
+                Ok(Self::Clear(proof))
             }
             1 => {
                 let proof = ZkSumcheckProof::deserialize_with_mode(reader, compress, validate)?;
@@ -795,7 +790,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
 {
     /// Create a standard (non-ZK) sumcheck proof.
     pub fn new_standard(compressed_polys: Vec<CompressedUniPoly<F>>) -> Self {
-        Self::Standard(StandardSumcheckProof::new(compressed_polys))
+        Self::Clear(ClearSumcheckProof::new(compressed_polys))
     }
 
     /// Create a ZK sumcheck proof with only commitments and polynomial degrees.
@@ -822,7 +817,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
         transcript: &mut ProofTranscript,
     ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
         match self {
-            Self::Standard(proof) => proof.verify(claim, num_rounds, degree_bound, transcript),
+            Self::Clear(proof) => proof.verify(claim, num_rounds, degree_bound, transcript),
             Self::Zk(proof) => {
                 if !cfg!(feature = "zk") {
                     return Err(ProofVerifyError::ZkFeatureRequired);
@@ -840,7 +835,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
 
     pub fn num_rounds(&self) -> usize {
         match self {
-            Self::Standard(proof) => proof.compressed_polys.len(),
+            Self::Clear(proof) => proof.compressed_polys.len(),
             Self::Zk(proof) => proof.round_commitments.len(),
         }
     }

@@ -1063,7 +1063,7 @@ where
             let num_rounds = proof.num_rounds();
             for round_idx in 0..num_rounds {
                 let poly_degree = match proof {
-                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Standard(std_proof) => {
+                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Clear(std_proof) => {
                         std_proof.compressed_polys[round_idx]
                             .coeffs_except_linear_term
                             .len()
