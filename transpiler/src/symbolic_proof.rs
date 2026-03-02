@@ -429,3 +429,262 @@ fn symbolize_sumcheck_proof<T: Transcript, OutT: Transcript>(
 
     SumcheckInstanceProof::new(compressed_polys)
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::Fr;
+    use ark_ff::PrimeField;
+    use zklean_extractor::mle_ast::{get_node, Atom, Node};
+
+    // =========================================================================
+    // VarAllocator Tests
+    // =========================================================================
+
+    #[test]
+    fn test_var_allocator_index_increments() {
+        // Each allocation must get a unique, incrementing index
+        let mut alloc = VarAllocator::new();
+        assert_eq!(alloc.next_idx(), 0);
+
+        let var0 = alloc.alloc_with_value("v0", &Fr::from(100u64));
+        assert_eq!(alloc.next_idx(), 1);
+
+        let var1 = alloc.alloc_with_value("v1", &Fr::from(200u64));
+        assert_eq!(alloc.next_idx(), 2);
+
+        // Verify variables have different indices
+        assert!(matches!(get_node(var0.root()), Node::Atom(Atom::Var(0))));
+        assert!(matches!(get_node(var1.root()), Node::Atom(Atom::Var(1))));
+    }
+
+    #[test]
+    fn test_var_allocator_witness_index_sync() {
+        // CRITICAL: witness_values[i] MUST correspond to Var(i)
+        // This is the core invariant - if this breaks, witness loading fails
+        let mut alloc = VarAllocator::new();
+
+        let val0 = Fr::from(111u64);
+        let val1 = Fr::from(222u64);
+        let val2 = Fr::from(333u64);
+
+        let var0 = alloc.alloc_with_value("v0", &val0);
+        let var1 = alloc.alloc_with_value("v1", &val1);
+        let var2 = alloc.alloc_with_value("v2", &val2);
+
+        let witness = alloc.witness_values();
+
+        // Extract variable indices from MleAst nodes
+        let idx0 = match get_node(var0.root()) {
+            Node::Atom(Atom::Var(i)) => i,
+            _ => panic!("Expected Var node"),
+        };
+        let idx1 = match get_node(var1.root()) {
+            Node::Atom(Atom::Var(i)) => i,
+            _ => panic!("Expected Var node"),
+        };
+        let idx2 = match get_node(var2.root()) {
+            Node::Atom(Atom::Var(i)) => i,
+            _ => panic!("Expected Var node"),
+        };
+
+        // CRITICAL: witness[idx] MUST match the value allocated with Var(idx)
+        assert_eq!(
+            witness.get(&(idx0 as usize)).unwrap(),
+            &format!("{}", val0.into_bigint())
+        );
+        assert_eq!(
+            witness.get(&(idx1 as usize)).unwrap(),
+            &format!("{}", val1.into_bigint())
+        );
+        assert_eq!(
+            witness.get(&(idx2 as usize)).unwrap(),
+            &format!("{}", val2.into_bigint())
+        );
+    }
+
+    #[test]
+    fn test_var_allocator_field_type_fr() {
+        // Verify Fr (native) field type tracking
+        let mut alloc = VarAllocator::new();
+        alloc.alloc_with_value_and_field("fr_var", &Fr::from(123u64), TargetField::Fr);
+
+        assert!(alloc.has_variables_for_field(TargetField::Fr));
+        assert!(!alloc.has_variables_for_field(TargetField::Fq));
+
+        let descriptions = alloc.descriptions_with_fields();
+        assert_eq!(descriptions[0].2, TargetField::Fr);
+    }
+
+    #[test]
+    fn test_var_allocator_field_type_non_native() {
+        // Verify non-native field type tracking (Fq in this case, but could be any non-Fr field)
+        let mut alloc = VarAllocator::new();
+        alloc.alloc_with_value_and_field("non_native_var", &Fr::from(456u64), TargetField::Fq);
+
+        assert!(alloc.has_variables_for_field(TargetField::Fq));
+        assert!(!alloc.has_variables_for_field(TargetField::Fr));
+
+        let descriptions = alloc.descriptions_with_fields();
+        assert_eq!(descriptions[0].2, TargetField::Fq);
+    }
+
+    #[test]
+    fn test_var_allocator_has_variables_for_field() {
+        // Verify field query works with mixed allocations (native + non-native)
+        let mut alloc = VarAllocator::new();
+
+        alloc.alloc_with_value("fr_default", &Fr::from(10u64)); // Default = Fr (native)
+        alloc.alloc_with_value_and_field("non_native_explicit", &Fr::from(20u64), TargetField::Fq);
+
+        assert!(alloc.has_variables_for_field(TargetField::Fr));
+        assert!(alloc.has_variables_for_field(TargetField::Fq));
+    }
+
+    #[test]
+    fn test_alloc_n_with_values() {
+        // Test batch allocation with alloc_n_with_values
+        let mut alloc = VarAllocator::new();
+
+        let values = vec![Fr::from(10u64), Fr::from(20u64), Fr::from(30u64)];
+        let vars = alloc.alloc_n_with_values(&values, "batch");
+
+        // Verify correct number of variables allocated
+        assert_eq!(vars.len(), 3);
+        assert_eq!(alloc.next_idx(), 3);
+
+        // Verify each variable has correct index
+        for (i, var) in vars.iter().enumerate() {
+            assert!(matches!(
+                get_node(var.root()),
+                Node::Atom(Atom::Var(idx)) if idx as usize == i
+            ));
+        }
+
+        // Verify witness values
+        let witness = alloc.witness_values();
+        for (i, val) in values.iter().enumerate() {
+            assert_eq!(
+                witness.get(&i).unwrap(),
+                &format!("{}", val.into_bigint())
+            );
+        }
+
+        // Verify descriptions
+        let descriptions = alloc.descriptions_with_fields();
+        assert_eq!(descriptions[0].1, "batch_0");
+        assert_eq!(descriptions[1].1, "batch_1");
+        assert_eq!(descriptions[2].1, "batch_2");
+
+        // Verify all have Fr field type (default)
+        for (_, _, field) in descriptions {
+            assert_eq!(*field, TargetField::Fr);
+        }
+    }
+
+    #[test]
+    fn test_alloc_commitment() {
+        // Test alloc_commitment produces correct number of variables
+        use ark_bn254::G1Affine;
+        use ark_std::UniformRand;
+
+        let mut alloc = VarAllocator::new();
+        let mut rng = ark_std::test_rng();
+        let point = G1Affine::rand(&mut rng);
+
+        let vars = alloc.alloc_commitment(&point, "commitment");
+
+        // Verify number of variables matches chunking
+        let chunks = commitment_to_field_chunks(&point);
+        assert_eq!(vars.len(), chunks.len());
+
+        // Verify indices are sequential
+        for (i, var) in vars.iter().enumerate() {
+            assert!(matches!(
+                get_node(var.root()),
+                Node::Atom(Atom::Var(idx)) if idx as usize == i
+            ));
+        }
+
+        // Verify witness values match chunks
+        let witness = alloc.witness_values();
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(
+                witness.get(&i).unwrap(),
+                &format!("{}", chunk.into_bigint())
+            );
+        }
+
+        // Verify descriptions
+        let descriptions = alloc.descriptions_with_fields();
+        assert_eq!(descriptions[0].1, "commitment_0");
+        assert!(descriptions.len() == chunks.len());
+    }
+
+    // =========================================================================
+    // Commitment Chunking Tests
+    // =========================================================================
+
+    #[test]
+    fn test_commitment_to_field_chunks_g1() {
+        // Verify G1Affine commitment produces correct number of chunks
+        use ark_bn254::G1Affine;
+        use ark_std::UniformRand;
+
+        let mut rng = ark_std::test_rng();
+        let point = G1Affine::rand(&mut rng);
+
+        let chunks = commitment_to_field_chunks(&point);
+        let bytes = commitment_to_bytes(&point);
+
+        // Verify chunk count matches ceil(bytes.len() / 32)
+        let expected_chunks = (bytes.len() + BYTES_PER_CHUNK - 1) / BYTES_PER_CHUNK;
+        assert_eq!(
+            chunks.len(),
+            expected_chunks,
+            "G1Affine ({} bytes) should produce {} chunks",
+            bytes.len(),
+            expected_chunks
+        );
+
+        // Verify chunks are non-trivial (random point → non-zero chunks)
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_ne!(
+                *chunk,
+                Fr::from(0u64),
+                "Chunk {i} should not be zero for random point"
+            );
+        }
+    }
+
+    #[test]
+    fn test_commitment_chunking_matches_poseidon() {
+        // CRITICAL: Verify chunk values match what Poseidon transcript expects
+        // This ensures commitment_to_field_chunks produces identical chunks
+        // to what Poseidon transcript uses when hashing commitments
+        use ark_bn254::G1Affine;
+        use ark_std::UniformRand;
+
+        let mut rng = ark_std::test_rng();
+        let point = G1Affine::rand(&mut rng);
+
+        let chunks = commitment_to_field_chunks(&point);
+        let bytes = commitment_to_bytes(&point);
+
+        // Verify each chunk matches its byte slice
+        for (i, chunk) in chunks.iter().enumerate() {
+            let start = i * BYTES_PER_CHUNK;
+            let end = std::cmp::min(start + BYTES_PER_CHUNK, bytes.len());
+            let expected_chunk = Fr::from_le_bytes_mod_order(&bytes[start..end]);
+
+            assert_eq!(
+                *chunk, expected_chunk,
+                "Chunk {i} should match bytes[{start}..{end}] (Poseidon format)"
+            );
+        }
+    }
+}

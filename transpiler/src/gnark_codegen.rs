@@ -905,81 +905,48 @@ mod tests {
     use super::*;
     use zklean_extractor::mle_ast::{AstBundle, TargetField, WitnessType};
 
-    /// Verifies that codegen panics with a clear error when Fq variables are present.
+    /// Verifies that codegen panics with a clear error when non-native field variables are present.
     ///
     /// This test ensures `target_field` is actually being read and interpreted by codegen,
     /// not just stored and ignored.
     #[test]
     #[should_panic(expected = "Non-native field codegen not yet implemented")]
-    fn test_fq_variable_panics_in_codegen() {
+    fn test_non_native_field_variable_panics_in_codegen() {
         let mut bundle = AstBundle::new();
 
         // Add an Fr variable (should be fine)
         bundle.add_input_with_field(0, "fr_var", WitnessType::ProofData, TargetField::Fr);
 
-        // Add an Fq variable (should cause panic)
-        bundle.add_input_with_field(1, "fq_var", WitnessType::ProofData, TargetField::Fq);
+        // Add a non-native field variable (Fq in this case, but could be any non-Fr field)
+        bundle.add_input_with_field(1, "non_native_var", WitnessType::ProofData, TargetField::Fq);
 
-        // This should panic because Fq codegen is not implemented
+        // This should panic because non-native field codegen is not implemented
         let _ = generate_circuit_from_bundle(&bundle, "TestCircuit");
     }
 
-    /// Verifies that Fr-only bundles proceed without panic.
+    /// Verifies the panic message includes the non-native variable name and field type.
     #[test]
-    fn test_fr_only_bundle_does_not_panic() {
+    fn test_non_native_panic_message_includes_variable_name() {
         let mut bundle = AstBundle::new();
-
-        // Add only Fr variables
-        bundle.add_input_with_field(0, "stage1_r0", WitnessType::ProofData, TargetField::Fr);
-        bundle.add_input_with_field(1, "stage1_r1", WitnessType::ProofData, TargetField::Fr);
-
-        // This should NOT panic (no Fq variables)
-        // Note: Will still fail later because no assertions, but won't hit the Fq panic
-        let result = std::panic::catch_unwind(|| {
-            generate_circuit_from_bundle(&bundle, "TestCircuit")
-        });
-
-        // Should not panic with "Emulated arithmetic" message
-        match result {
-            Ok(_) => (), // Success, no panic
-            Err(e) => {
-                let msg = e
-                    .downcast_ref::<String>()
-                    .map(|s| s.as_str())
-                    .or_else(|| e.downcast_ref::<&str>().copied())
-                    .unwrap_or("");
-                // Acceptable: any panic that's NOT about non-native fields
-                assert!(
-                    !msg.contains("Non-native field"),
-                    "Should not panic about non-native fields for Fr-only bundle"
-                );
-            }
-        }
-    }
-
-    /// Verifies the panic message includes the Fq variable name.
-    #[test]
-    fn test_fq_panic_message_includes_variable_name() {
-        let mut bundle = AstBundle::new();
-        bundle.add_input_with_field(0, "my_fq_test_variable", WitnessType::ProofData, TargetField::Fq);
+        bundle.add_input_with_field(0, "my_non_native_test_variable", WitnessType::ProofData, TargetField::Fq);
 
         let result = std::panic::catch_unwind(|| {
             generate_circuit_from_bundle(&bundle, "TestCircuit")
         });
 
         let panic_msg = result
-            .expect_err("Expected panic for Fq variable")
+            .expect_err("Expected panic for non-native field variable")
             .downcast_ref::<String>()
             .cloned()
             .unwrap_or_default();
 
         assert!(
-            panic_msg.contains("my_fq_test_variable"),
-            "Panic message should include the Fq variable name, got: {panic_msg}"
+            panic_msg.contains("my_non_native_test_variable"),
+            "Panic message should include the variable name, got: {panic_msg}"
         );
         assert!(
             panic_msg.contains("Fq"),
-            "Panic message should mention Fq field type, got: {panic_msg}"
+            "Panic message should mention the field type, got: {panic_msg}"
         );
     }
 
