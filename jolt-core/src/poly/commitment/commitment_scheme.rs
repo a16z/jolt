@@ -146,7 +146,7 @@ pub trait ZkEvalCommitment<C: JoltCurve>: CommitmentScheme {
     /// Constructs Pedersen generators from the PCS prover setup (reuses URS generators).
     fn pedersen_generators(setup: &Self::ProverSetup, count: usize) -> PedersenGenerators<C>;
 
-    /// Constructs Pedersen generators from the PCS verifier setup (reconstructs from URS seed).
+    /// Constructs Pedersen generators from the PCS verifier setup (reuses URS generators).
     fn pedersen_generators_verifier(
         setup: &Self::VerifierSetup,
         count: usize,

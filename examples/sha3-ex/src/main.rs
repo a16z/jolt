@@ -10,7 +10,7 @@ pub fn main() {
     let prover_preprocessing = guest::preprocess_prover_sha3(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_sha3(
         shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
+        prover_preprocessing.generators.to_verifier_setup().into(),
     );
 
     let prove_sha3 = guest::build_prover_sha3(program, prover_preprocessing);

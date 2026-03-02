@@ -18,7 +18,7 @@ mod tests {
         poly: MultilinearPolynomial<Fr>,
         poly_type_name: &str,
         prover_setup: &ArkworksProverSetup,
-        verifier_setup: &ArkworksVerifierSetup,
+        verifier_setup: &DoryVerifierSetup,
     ) {
         let num_vars = poly.get_num_vars();
 
@@ -61,7 +61,7 @@ mod tests {
         );
     }
 
-    fn setup_dory_for_test(num_vars: usize) -> (ArkworksProverSetup, ArkworksVerifierSetup) {
+    fn setup_dory_for_test(num_vars: usize) -> (ArkworksProverSetup, DoryVerifierSetup) {
         // Reset globals to ensure clean state
         DoryGlobals::reset();
 

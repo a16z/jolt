@@ -21,6 +21,9 @@ use crate::{
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
 use dory::primitives::{
     arithmetic::{Group, PairingCurve},
     poly::Polynomial,
@@ -31,6 +34,73 @@ use rayon::prelude::*;
 use sha3::{Digest, Sha3_256};
 use std::borrow::Borrow;
 use tracing::trace_span;
+
+#[derive(Clone, Debug)]
+pub struct DoryVerifierSetup {
+    pub inner: ArkworksVerifierSetup,
+    #[cfg(feature = "zk")]
+    pub g1_vec: Vec<ArkG1>,
+}
+
+impl std::ops::Deref for DoryVerifierSetup {
+    type Target = ArkworksVerifierSetup;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl From<ArkworksVerifierSetup> for DoryVerifierSetup {
+    fn from(inner: ArkworksVerifierSetup) -> Self {
+        Self {
+            inner,
+            #[cfg(feature = "zk")]
+            g1_vec: Vec::new(),
+        }
+    }
+}
+
+impl Valid for DoryVerifierSetup {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.inner.check()
+    }
+}
+
+impl CanonicalSerialize for DoryVerifierSetup {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.inner.serialize_with_mode(&mut writer, compress)?;
+        #[cfg(feature = "zk")]
+        CanonicalSerialize::serialize_with_mode(&self.g1_vec, &mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let size = self.inner.serialized_size(compress);
+        #[cfg(feature = "zk")]
+        let size = size + CanonicalSerialize::serialized_size(&self.g1_vec, compress);
+        size
+    }
+}
+
+impl CanonicalDeserialize for DoryVerifierSetup {
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let inner = ArkworksVerifierSetup::deserialize_with_mode(&mut reader, compress, validate)?;
+        #[cfg(feature = "zk")]
+        let g1_vec = Vec::<ArkG1>::deserialize_with_mode(&mut reader, compress, validate)?;
+        Ok(Self {
+            inner,
+            #[cfg(feature = "zk")]
+            g1_vec,
+        })
+    }
+}
 
 #[derive(Clone)]
 pub struct DoryCommitmentScheme;
@@ -98,7 +168,7 @@ pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve, ProofTranscript: Trans
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
     type ProverSetup = ArkworksProverSetup;
-    type VerifierSetup = ArkworksVerifierSetup;
+    type VerifierSetup = DoryVerifierSetup;
     type Commitment = ArkGT;
     type Proof = ArkDoryProof;
     type BatchedProof = Vec<ArkDoryProof>;
@@ -128,7 +198,11 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_verifier").entered();
-        setup.to_verifier_setup()
+        DoryVerifierSetup {
+            inner: setup.to_verifier_setup(),
+            #[cfg(feature = "zk")]
+            g1_vec: setup.0.g1_vec.clone(),
+        }
     }
 
     fn commit(
@@ -252,7 +326,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             ark_eval,
             &ark_point,
             proof,
-            setup.clone().into_inner(),
+            setup.inner.clone().into_inner(),
             &mut dory_transcript,
         )
         .map_err(|_| ProofVerifyError::InternalError)?;
@@ -524,21 +598,28 @@ where
     }
 
     fn pedersen_generators_verifier(
-        _setup: &Self::VerifierSetup,
+        setup: &Self::VerifierSetup,
         count: usize,
     ) -> PedersenGenerators<C> {
-        // Reconstruct g1_vec from the deterministic Dory URS seed.
-        // ProverSetup::new generates: g1_vec[0..n], g2_vec[0..n], h1, h2
-        // from ChaCha20Rng seeded with SHA3("Jolt Dory URS seed").
-        use ark_std::UniformRand;
-
-        let seed: [u8; 32] = Sha3_256::digest(b"Jolt Dory URS seed").into();
-        let mut rng = ChaCha20Rng::from_seed(seed);
-        let message_generators: Vec<C::G1> = (0..count)
-            .map(|_| C::G1::from(ArkG1(G1Projective::rand(&mut rng))))
-            .collect();
-        let blinding_generator = C::G1::from(_setup.0.h1);
-        PedersenGenerators::new(message_generators, blinding_generator)
+        #[cfg(feature = "zk")]
+        {
+            assert!(
+                count <= setup.g1_vec.len(),
+                "Requested {count} Pedersen generators but verifier setup only has {}",
+                setup.g1_vec.len()
+            );
+            let message_generators = setup.g1_vec[..count]
+                .iter()
+                .map(|g| C::G1::from(*g))
+                .collect();
+            let blinding_generator = C::G1::from(setup.inner.0.h1);
+            PedersenGenerators::new(message_generators, blinding_generator)
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            let _ = (setup, count);
+            unimplemented!("pedersen_generators_verifier requires the zk feature")
+        }
     }
 }
 

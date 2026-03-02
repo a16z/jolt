@@ -1,5 +1,7 @@
 use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
+use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::zkvm::prover::JoltProverPreprocessing;
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifierPreprocessing};
 use jolt_core::zkvm::{RV64IMACProver, RV64IMACVerifier};
@@ -232,7 +234,7 @@ fn prove_example(
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
             shared_preprocessing,
-            preprocessing.generators.to_verifier_setup(),
+            DoryCommitmentScheme::setup_verifier(&preprocessing.generators),
         );
         let verifier =
             RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, program_io, None, None)

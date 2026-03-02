@@ -10,7 +10,7 @@ pub fn main() {
     let shared_preprocessing = guest::preprocess_shared_secp256k1_ecdsa_verify(&mut program);
     let prover_preprocessing =
         guest::preprocess_prover_secp256k1_ecdsa_verify(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
+    let verifier_setup = prover_preprocessing.generators.to_verifier_setup().into();
     let verifier_preprocessing =
         guest::preprocess_verifier_secp256k1_ecdsa_verify(shared_preprocessing, verifier_setup);
 

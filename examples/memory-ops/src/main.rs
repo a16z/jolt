@@ -11,7 +11,7 @@ pub fn main() {
     let prover_preprocessing = guest::preprocess_prover_memory_ops(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_memory_ops(
         shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
+        prover_preprocessing.generators.to_verifier_setup().into(),
     );
 
     let prove = guest::build_prover_memory_ops(program, prover_preprocessing);
