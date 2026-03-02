@@ -242,3 +242,146 @@ impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
         }
     }
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_core::field::JoltField;
+    use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+
+    #[test]
+    fn test_new_with_claims_populates_openings() {
+        // CRITICAL: new_with_claims must correctly store all claims
+        let claims = vec![
+            (
+                OpeningId::virtual_poly(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
+                MleAst::from_u64(100),
+            ),
+            (
+                OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter),
+                MleAst::from_u64(200),
+            ),
+            (
+                OpeningId::TrustedAdvice(SumcheckId::SpartanProductVirtualization),
+                MleAst::from_u64(300),
+            ),
+        ];
+
+        let accumulator = AstOpeningAccumulator::new_with_claims(claims.clone(), 10);
+
+        // Verify all claims were stored
+        assert_eq!(accumulator.openings.len(), 3);
+        assert_eq!(accumulator.log_T, 10);
+
+        // Verify each claim is stored with empty point
+        for (key, expected_claim) in claims {
+            let (point, claim) = accumulator.openings.get(&key).unwrap();
+            assert_eq!(point.len(), 0, "Point should be empty initially");
+            assert_eq!(claim.root(), expected_claim.root());
+        }
+    }
+
+    #[test]
+    fn test_append_virtual_updates_point() {
+        use crate::symbolic_traits::poseidon::PoseidonAstTranscript;
+        use jolt_core::transcripts::Transcript;
+
+        let claims = vec![(
+            OpeningId::virtual_poly(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
+            MleAst::from_u64(100),
+        )];
+
+        let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+        let mut transcript = PoseidonAstTranscript::new(b"test");
+
+        // Append opening with a point
+        let point_values = vec![MleAst::from_u64(1), MleAst::from_u64(2)];
+        let opening_point = OpeningPoint::new(point_values.clone());
+
+        accumulator.append_virtual(
+            &mut transcript,
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanOuter,
+            opening_point,
+        );
+
+        // Verify point was stored
+        let key = OpeningId::virtual_poly(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
+        let (stored_point, _) = accumulator.openings.get(&key).unwrap();
+        assert_eq!(stored_point.len(), 2);
+        assert_eq!(stored_point[0].root(), point_values[0].root());
+        assert_eq!(stored_point[1].root(), point_values[1].root());
+    }
+
+    #[test]
+    fn test_get_committed_polynomial_opening() {
+        let claim = MleAst::from_u64(12345);
+        let claims = vec![(
+            OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter),
+            claim,
+        )];
+
+        let accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+
+        let (point, retrieved_claim) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::SpartanOuter,
+        );
+
+        // Verify correct claim was retrieved
+        assert_eq!(retrieved_claim.root(), claim.root());
+        // Point should be empty (not yet set)
+        assert_eq!(point.r.len(), 0);
+    }
+
+    #[test]
+    fn test_append_sparse_multiple_polynomials() {
+        use crate::symbolic_traits::poseidon::PoseidonAstTranscript;
+        use jolt_core::transcripts::Transcript;
+
+        let claims = vec![
+            (
+                OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter),
+                MleAst::from_u64(100),
+            ),
+            (
+                OpeningId::committed(CommittedPolynomial::RamInc, SumcheckId::SpartanOuter),
+                MleAst::from_u64(200),
+            ),
+            (
+                OpeningId::committed(CommittedPolynomial::TrustedAdvice, SumcheckId::SpartanOuter),
+                MleAst::from_u64(300),
+            ),
+        ];
+
+        let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+        let mut transcript = PoseidonAstTranscript::new(b"test");
+
+        let point_values = vec![MleAst::from_u64(1), MleAst::from_u64(2)];
+        let polynomials = vec![
+            CommittedPolynomial::RdInc,
+            CommittedPolynomial::RamInc,
+            CommittedPolynomial::TrustedAdvice,
+        ];
+
+        accumulator.append_sparse(
+            &mut transcript,
+            polynomials.clone(),
+            SumcheckId::SpartanOuter,
+            point_values.clone(),
+        );
+
+        // Verify all polynomials have the same point stored
+        for poly in polynomials {
+            let key = OpeningId::committed(poly, SumcheckId::SpartanOuter);
+            let (stored_point, _) = accumulator.openings.get(&key).unwrap();
+            assert_eq!(stored_point.len(), 2);
+            assert_eq!(stored_point[0].root(), point_values[0].root());
+            assert_eq!(stored_point[1].root(), point_values[1].root());
+        }
+    }
+}
