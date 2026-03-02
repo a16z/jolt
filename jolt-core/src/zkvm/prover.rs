@@ -2069,19 +2069,28 @@ where
 {
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::gen")]
     pub fn new(
-        shared: JoltSharedPreprocessing,
-        // max_trace_length: usize,
+        #[cfg_attr(not(feature = "zk"), allow(unused_mut))] mut shared: JoltSharedPreprocessing,
     ) -> JoltProverPreprocessing<F, PCS> {
         use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let max_T: usize = shared.max_padded_trace_length.next_power_of_two();
         let max_log_T = max_T.log_2();
-        // Use the maximum possible log_k_chunk for generator setup
         let max_log_k_chunk = if max_log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
             4
         } else {
             8
         };
         let generators = PCS::setup_prover(max_log_k_chunk + max_log_T);
+
+        #[cfg(feature = "zk")]
+        {
+            const MAX_ZK_PEDERSEN_GENERATORS: usize = 128;
+            if let Some((g1s, h1)) = PCS::zk_generators_raw(&generators, MAX_ZK_PEDERSEN_GENERATORS)
+            {
+                shared.zk_generator_g1s = g1s;
+                shared.zk_generator_h1 = h1;
+            }
+        }
+
         JoltProverPreprocessing { generators, shared }
     }
 
@@ -2201,7 +2210,7 @@ mod tests {
             1 << 16,
         );
 
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -2218,7 +2227,7 @@ mod tests {
         let (jolt_proof, debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            shared_preprocessing,
+            prover_preprocessing.shared.clone(),
             prover_preprocessing.generators.to_verifier_setup(),
         );
         let verifier = RV64IMACVerifier::new(
@@ -3285,7 +3294,7 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
-        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
             &prover_preprocessing,
@@ -3301,7 +3310,7 @@ mod tests {
         let (proof, debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            shared_preprocessing,
+            prover_preprocessing.shared.clone(),
             prover_preprocessing.generators.to_verifier_setup(),
         );
 

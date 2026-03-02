@@ -264,6 +264,20 @@ impl CommitmentScheme for DoryCommitmentScheme {
         b"Dory"
     }
 
+    #[cfg(feature = "zk")]
+    fn zk_generators_raw(
+        setup: &Self::ProverSetup,
+        count: usize,
+    ) -> Option<(Vec<crate::curve::Bn254G1>, crate::curve::Bn254G1)> {
+        let count = std::cmp::min(count, setup.0.g1_vec.len());
+        let g1s = setup.0.g1_vec[..count]
+            .iter()
+            .map(|g| crate::curve::Bn254G1(g.0))
+            .collect();
+        let h1 = crate::curve::Bn254G1(setup.0.h1.0);
+        Some((g1s, h1))
+    }
+
     /// In Dory, the opening proof hint consists of the Pedersen commitments to the rows
     /// of the polynomial coefficient matrix. In the context of a batch opening proof, we
     /// can homomorphically combine the row commitments for multiple polynomials into the
@@ -520,24 +534,6 @@ where
             .map(|g| C::G1::from(*g))
             .collect();
         let blinding_generator = C::G1::from(setup.0.h1);
-        PedersenGenerators::new(message_generators, blinding_generator)
-    }
-
-    fn pedersen_generators_verifier(
-        _setup: &Self::VerifierSetup,
-        count: usize,
-    ) -> PedersenGenerators<C> {
-        // Reconstruct g1_vec from the deterministic Dory URS seed.
-        // ProverSetup::new generates: g1_vec[0..n], g2_vec[0..n], h1, h2
-        // from ChaCha20Rng seeded with SHA3("Jolt Dory URS seed").
-        use ark_std::UniformRand;
-
-        let seed: [u8; 32] = Sha3_256::digest(b"Jolt Dory URS seed").into();
-        let mut rng = ChaCha20Rng::from_seed(seed);
-        let message_generators: Vec<C::G1> = (0..count)
-            .map(|_| C::G1::from(ArkG1(G1Projective::rand(&mut rng))))
-            .collect();
-        let blinding_generator = C::G1::from(_setup.0.h1);
         PedersenGenerators::new(message_generators, blinding_generator)
     }
 }

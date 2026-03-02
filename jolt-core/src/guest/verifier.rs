@@ -40,7 +40,10 @@ pub fn verify<
     outputs_bytes: &[u8],
     proof: JoltProof<F, C, PCS, FS>,
     preprocessing: &JoltVerifierPreprocessing<F, PCS>,
-) -> Result<(), ProofVerifyError> {
+) -> Result<(), ProofVerifyError>
+where
+    C::G1: From<crate::curve::Bn254G1>,
+{
     use common::jolt_device::JoltDevice;
     let memory_layout = &preprocessing.shared.memory_layout;
     let memory_config = MemoryConfig {

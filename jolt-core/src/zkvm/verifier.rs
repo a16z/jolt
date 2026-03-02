@@ -223,6 +223,8 @@ impl<
         PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>,
         ProofTranscript: Transcript,
     > JoltVerifier<'a, F, C, PCS, ProofTranscript>
+where
+    C::G1: From<crate::curve::Bn254G1>,
 {
     pub fn new(
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
@@ -1206,10 +1208,10 @@ impl<
         };
 
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
-        let pedersen_generators = PCS::pedersen_generators_verifier(
-            &self.preprocessing.generators,
-            pedersen_generator_count,
-        );
+        let pedersen_generators = self
+            .preprocessing
+            .shared
+            .pedersen_generators::<C>(pedersen_generator_count);
         let eval_commitment_gens =
             PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
         let verifier =
@@ -1565,6 +1567,10 @@ pub struct JoltSharedPreprocessing {
     pub ram: RAMPreprocessing,
     pub memory_layout: MemoryLayout,
     pub max_padded_trace_length: usize,
+    #[cfg(feature = "zk")]
+    pub zk_generator_g1s: Vec<crate::curve::Bn254G1>,
+    #[cfg(feature = "zk")]
+    pub zk_generator_h1: crate::curve::Bn254G1,
 }
 
 impl CanonicalSerialize for JoltSharedPreprocessing {
@@ -1573,7 +1579,6 @@ impl CanonicalSerialize for JoltSharedPreprocessing {
         mut writer: W,
         compress: ark_serialize::Compress,
     ) -> Result<(), ark_serialize::SerializationError> {
-        // Serialize the inner BytecodePreprocessing (not the Arc wrapper)
         self.bytecode
             .as_ref()
             .serialize_with_mode(&mut writer, compress)?;
@@ -1582,14 +1587,28 @@ impl CanonicalSerialize for JoltSharedPreprocessing {
             .serialize_with_mode(&mut writer, compress)?;
         self.max_padded_trace_length
             .serialize_with_mode(&mut writer, compress)?;
+        #[cfg(feature = "zk")]
+        {
+            self.zk_generator_g1s
+                .serialize_with_mode(&mut writer, compress)?;
+            self.zk_generator_h1
+                .serialize_with_mode(&mut writer, compress)?;
+        }
         Ok(())
     }
 
     fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        self.bytecode.serialized_size(compress)
+        #[allow(unused_mut)]
+        let mut size = self.bytecode.serialized_size(compress)
             + self.ram.serialized_size(compress)
             + self.memory_layout.serialized_size(compress)
-            + self.max_padded_trace_length.serialized_size(compress)
+            + self.max_padded_trace_length.serialized_size(compress);
+        #[cfg(feature = "zk")]
+        {
+            size += self.zk_generator_g1s.serialized_size(compress)
+                + self.zk_generator_h1.serialized_size(compress);
+        }
+        size
     }
 }
 
@@ -1605,11 +1624,21 @@ impl CanonicalDeserialize for JoltSharedPreprocessing {
         let memory_layout = MemoryLayout::deserialize_with_mode(&mut reader, compress, validate)?;
         let max_padded_trace_length =
             usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        #[cfg(feature = "zk")]
+        let zk_generator_g1s =
+            Vec::<crate::curve::Bn254G1>::deserialize_with_mode(&mut reader, compress, validate)?;
+        #[cfg(feature = "zk")]
+        let zk_generator_h1 =
+            crate::curve::Bn254G1::deserialize_with_mode(&mut reader, compress, validate)?;
         Ok(Self {
             bytecode: Arc::new(bytecode),
             ram,
             memory_layout,
             max_padded_trace_length,
+            #[cfg(feature = "zk")]
+            zk_generator_g1s,
+            #[cfg(feature = "zk")]
+            zk_generator_h1,
         })
     }
 }
@@ -1618,7 +1647,13 @@ impl ark_serialize::Valid for JoltSharedPreprocessing {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         self.bytecode.check()?;
         self.ram.check()?;
-        self.memory_layout.check()
+        self.memory_layout.check()?;
+        #[cfg(feature = "zk")]
+        {
+            self.zk_generator_g1s.check()?;
+            self.zk_generator_h1.check()?;
+        }
+        Ok(())
     }
 }
 
@@ -1637,7 +1672,36 @@ impl JoltSharedPreprocessing {
             ram,
             memory_layout,
             max_padded_trace_length,
+            #[cfg(feature = "zk")]
+            zk_generator_g1s: Vec::new(),
+            #[cfg(feature = "zk")]
+            zk_generator_h1: Default::default(),
         }
+    }
+
+    /// Constructs Pedersen generators from the stored ZK generator points.
+    #[cfg(feature = "zk")]
+    pub fn pedersen_generators<C: JoltCurve>(
+        &self,
+        count: usize,
+    ) -> crate::poly::commitment::pedersen::PedersenGenerators<C>
+    where
+        C::G1: From<crate::curve::Bn254G1>,
+    {
+        assert!(
+            count <= self.zk_generator_g1s.len(),
+            "Requested {count} Pedersen generators but shared preprocessing only has {}",
+            self.zk_generator_g1s.len()
+        );
+        let message_generators = self.zk_generator_g1s[..count]
+            .iter()
+            .map(|g| C::G1::from(*g))
+            .collect();
+        let blinding_generator = C::G1::from(self.zk_generator_h1);
+        crate::poly::commitment::pedersen::PedersenGenerators::new(
+            message_generators,
+            blinding_generator,
+        )
     }
 }
 
