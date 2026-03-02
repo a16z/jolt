@@ -9,8 +9,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError
 use ark_std::Zero;
 use serde::{Deserialize, Serialize};
 
-use jolt_core::transcripts::AppendToTranscript;
-
 use std::collections::{HashMap, HashSet};
 
 use crate::mle_ast::{node_arena, set_pending_commitment_chunks, Edge, MleAst, Node, NodeId};
@@ -592,15 +590,3 @@ impl PartialEq for AstCommitment {
     }
 }
 
-impl AppendToTranscript for AstCommitment {
-    fn append_to_transcript<T: jolt_core::transcripts::Transcript>(
-        &self,
-        label: &'static [u8],
-        transcript: &mut T,
-    ) {
-        // Store chunks in thread-local for transcript to retrieve
-        set_pending_commitment_chunks(self.chunks.clone());
-        // The transcript's append_serializable will handle the actual hashing
-        transcript.append_serializable(label, self);
-    }
-}

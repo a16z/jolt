@@ -8,4 +8,4 @@ pub use blake2b::Blake2bTranscript;
 pub use keccak::KeccakTranscript;
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonTranscript;
-pub use transcript::{AppendToTranscript, Transcript};
+pub use transcript::Transcript;
