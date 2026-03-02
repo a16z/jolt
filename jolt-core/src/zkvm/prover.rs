@@ -2083,7 +2083,7 @@ where
 
         #[cfg(feature = "zk")]
         {
-            const MAX_ZK_PEDERSEN_GENERATORS: usize = 128;
+            const MAX_ZK_PEDERSEN_GENERATORS: usize = 32;
             if let Some((g1s, h1)) = PCS::zk_generators_raw(&generators, MAX_ZK_PEDERSEN_GENERATORS)
             {
                 shared.zk_generator_g1s = g1s;
