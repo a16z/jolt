@@ -179,7 +179,7 @@ where
 
     // The prover computes the challenge to keep the transcript in the same
     // state as that of the verifier
-    transcript.append_points_serializable(b"hyperkzg_witness", &w);
+    transcript.append_commitments_serializable(b"hyperkzg_witness", &w);
     let _d_0: P::ScalarField = transcript.challenge_scalar();
 
     (w, v)
@@ -204,7 +204,7 @@ where
     transcript.append_scalars(b"hyperkzg_evals", &scalars);
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(k);
 
-    transcript.append_points_serializable(b"hyperkzg_witness", W);
+    transcript.append_commitments_serializable(b"hyperkzg_witness", W);
     let d_0: P::ScalarField = transcript.challenge_scalar();
     let d_1 = d_0 * d_0;
 
@@ -334,7 +334,7 @@ where
         // Phase 2
         // We do not need to add x to the transcript, because in our context x was obtained from the transcript.
         // We also do not need to absorb `C` and `eval` as they are already absorbed by the transcript by the caller
-        transcript.append_points_serializable(b"hyperkzg_com", &com);
+        transcript.append_commitments_serializable(b"hyperkzg_com", &com);
         let r: <P as Pairing>::ScalarField = transcript.challenge_scalar();
         let u = vec![r, -r, r * r];
 
@@ -361,7 +361,7 @@ where
 
         // we do not need to add x to the transcript, because in our context x was
         // obtained from the transcript
-        transcript.append_points_serializable(b"hyperkzg_com", &com);
+        transcript.append_commitments_serializable(b"hyperkzg_com", &com);
         let r: <P as Pairing>::ScalarField = transcript.challenge_scalar();
 
         if r == P::ScalarField::zero() || C.0 == P::G1Affine::zero() {

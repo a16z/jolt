@@ -75,7 +75,7 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
 
     /// Append a curve point with a label (compressed serialization).
     /// Fixed-size: no length prefix needed.
-    fn append_point<G: JoltGroupElement>(&mut self, label: &'static [u8], point: &G) {
+    fn append_commitment<G: JoltGroupElement>(&mut self, label: &'static [u8], point: &G) {
         self.raw_append_label(label);
         let mut bytes = Vec::new();
         point
@@ -106,7 +106,7 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
 
     /// Append a slice of curve points with a label (compressed serialization).
     /// Variable-length: label and count packed into single 32-byte word.
-    fn append_points<G: JoltGroupElement>(&mut self, label: &'static [u8], points: &[G]) {
+    fn append_commitments<G: JoltGroupElement>(&mut self, label: &'static [u8], points: &[G]) {
         self.raw_append_label_with_len(label, points.len() as u64);
         for p in points {
             let mut bytes = Vec::new();
@@ -117,8 +117,8 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     }
 
     /// Append a slice of `CanonicalSerialize` points with a label (compressed serialization).
-    /// Same layout as `append_points` but works with any serializable type (e.g. arkworks affine points).
-    fn append_points_serializable<T: CanonicalSerialize>(
+    /// Same layout as `append_commitments` but works with any serializable type (e.g. arkworks affine points).
+    fn append_commitments_serializable<T: CanonicalSerialize>(
         &mut self,
         label: &'static [u8],
         points: &[T],

@@ -172,7 +172,7 @@ pub fn prove_uniskip_round_zk<
     let blinding = F::random(rng);
     let commitment = pedersen_gens.commit(&uni_poly.coeffs, &blinding);
 
-    transcript.append_point(b"sumcheck_commitment", &commitment);
+    transcript.append_commitment(b"sumcheck_commitment", &commitment);
 
     let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
     instance.cache_openings(opening_accumulator, &[r0]);
@@ -181,7 +181,7 @@ pub fn prove_uniskip_round_zk<
     let output_claims_blinding = F::random(rng);
     let output_claims_commitment = pedersen_gens.commit(&output_claims, &output_claims_blinding);
 
-    transcript.append_point(b"output_claims_commitment", &output_claims_commitment);
+    transcript.append_commitment(b"output_claims_commitment", &output_claims_commitment);
 
     let input_constraint = instance.get_params().input_claim_constraint();
     let input_constraint_challenge_values = instance
@@ -296,12 +296,12 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> ZkUniSkipFirstRoundProof<F, C, T
             ));
         }
 
-        transcript.append_point(b"sumcheck_commitment", &self.commitment);
+        transcript.append_commitment(b"sumcheck_commitment", &self.commitment);
 
         let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         sumcheck_instance.cache_openings(opening_accumulator, &[r0]);
 
-        transcript.append_point(b"output_claims_commitment", &self.output_claims_commitment);
+        transcript.append_commitment(b"output_claims_commitment", &self.output_claims_commitment);
         opening_accumulator.take_pending_claims();
 
         Ok(r0)

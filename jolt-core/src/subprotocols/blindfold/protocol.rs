@@ -105,7 +105,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         let (t_row_commitments, t_row_blindings) =
             commit_cross_term_rows(self.gens, &T, R_E, C_E, &mut rng);
 
-        transcript.append_points(b"blindfold_cross_term", &t_row_commitments);
+        transcript.append_commitments(b"blindfold_cross_term", &t_row_commitments);
 
         let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let r_field: F = r.into();
@@ -327,7 +327,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         transcript.append_label(b"BlindFold_random_instance");
         append_instance_to_transcript(&proof.random_instance, transcript);
 
-        transcript.append_points(b"blindfold_cross_term", &proof.cross_term_row_commitments);
+        transcript.append_commitments(b"blindfold_cross_term", &proof.cross_term_row_commitments);
 
         let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let r_field: F = r.into();
@@ -502,10 +502,10 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
         .expect("Serialization should not fail");
     transcript.append_bytes(b"blindfold_u", &u_bytes);
 
-    transcript.append_points(b"blindfold_round_coms", &instance.round_commitments);
-    transcript.append_points(b"blindfold_noncoeff", &instance.noncoeff_row_commitments);
-    transcript.append_points(b"blindfold_e_rows", &instance.e_row_commitments);
-    transcript.append_points(b"blindfold_eval_coms", &instance.eval_commitments);
+    transcript.append_commitments(b"blindfold_round_coms", &instance.round_commitments);
+    transcript.append_commitments(b"blindfold_noncoeff", &instance.noncoeff_row_commitments);
+    transcript.append_commitments(b"blindfold_e_rows", &instance.e_row_commitments);
+    transcript.append_commitments(b"blindfold_eval_coms", &instance.eval_commitments);
 }
 
 #[cfg(test)]

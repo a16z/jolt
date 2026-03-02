@@ -88,7 +88,7 @@ pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve, ProofTranscript: Trans
     }
     transcript.append_scalars(b"dory_opening_point", &point_scalars);
 
-    transcript.append_point(b"dory_eval_commitment", y_com);
+    transcript.append_commitment(b"dory_eval_commitment", y_com);
 }
 
 impl CommitmentScheme for DoryCommitmentScheme {

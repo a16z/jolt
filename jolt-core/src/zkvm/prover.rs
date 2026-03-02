@@ -2928,7 +2928,7 @@ mod tests {
                     let mut rounds = Vec::with_capacity(num_rounds);
 
                     for (round_idx, commitment) in zk_proof.round_commitments.iter().enumerate() {
-                        transcript.append_point(b"sumcheck_commitment", commitment);
+                        transcript.append_commitment(b"sumcheck_commitment", commitment);
                         let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
 
                         let degree = zk_proof.poly_degrees[round_idx];

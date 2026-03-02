@@ -276,7 +276,7 @@ impl BatchedSumcheck {
             let blinding = F::random(rng);
             let commitment = pedersen_gens.commit(&batched_univariate_poly.coeffs, &blinding);
 
-            transcript.append_point(b"sumcheck_commitment", &commitment);
+            transcript.append_commitment(b"sumcheck_commitment", &commitment);
 
             let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
@@ -326,7 +326,7 @@ impl BatchedSumcheck {
         let output_claims_commitment =
             pedersen_gens.commit(&output_claims, &output_claims_blinding);
 
-        transcript.append_point(b"output_claims_commitment", &output_claims_commitment);
+        transcript.append_commitment(b"output_claims_commitment", &output_claims_commitment);
 
         let output_constraints: Vec<_> = sumcheck_instances
             .iter()
@@ -459,7 +459,7 @@ impl BatchedSumcheck {
         if !is_zk {
             opening_accumulator.flush_to_transcript(transcript);
         } else if let SumcheckInstanceProof::Zk(zk_proof) = proof {
-            transcript.append_point(
+            transcript.append_commitment(
                 b"output_claims_commitment",
                 &zk_proof.output_claims_commitment,
             );
@@ -706,7 +706,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
 
         let mut r: Vec<F::Challenge> = Vec::new();
         for commitment in &self.round_commitments {
-            transcript.append_point(b"sumcheck_commitment", commitment);
+            transcript.append_commitment(b"sumcheck_commitment", commitment);
             let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
             r.push(r_i);
         }

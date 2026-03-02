@@ -63,6 +63,7 @@ pub trait SumcheckInstanceParams<F: JoltField> {
 
     #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint>;
+
     #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F>;
 }
