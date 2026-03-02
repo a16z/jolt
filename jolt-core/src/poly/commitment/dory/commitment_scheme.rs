@@ -21,13 +21,10 @@ use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
 use dory::primitives::{
-    arithmetic::{Group, PairingCurve},
+    arithmetic::{Field as DoryField, Group, PairingCurve},
     poly::Polynomial,
 };
-use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
 use rayon::prelude::*;
-use sha3::{Digest, Sha3_256};
 use std::borrow::Borrow;
 use tracing::trace_span;
 
@@ -105,15 +102,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
-        let mut hasher = Sha3_256::new();
-        hasher.update(b"Jolt Dory URS seed");
-        let hash_result = hasher.finalize();
-        let seed: [u8; 32] = hash_result.into();
-        let mut rng = ChaCha20Rng::from_seed(seed);
         #[cfg(not(target_arch = "wasm32"))]
-        let setup = ArkworksProverSetup::new_from_urs(&mut rng, max_num_vars);
+        let setup = ArkworksProverSetup::new_from_urs(max_num_vars);
         #[cfg(target_arch = "wasm32")]
-        let setup = ArkworksProverSetup::new(&mut rng, max_num_vars);
+        let setup = ArkworksProverSetup::new(max_num_vars);
 
         // The prepared-point cache in dory-pcs is global and can only be initialized once.
         // In unit tests, multiple setups with different sizes are created, so initializing the
@@ -141,12 +133,13 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = num_cols.log_2();
         let nu = num_rows.log_2();
 
-        let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
-            ArkFr,
-        >>::commit::<BN254, JoltG1Routines>(
-            poly, nu, sigma, setup
-        )
-        .expect("commitment should succeed");
+        let (tier_2, row_commitments, _commit_blind) =
+            <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<ArkFr>>::commit::<
+                BN254,
+                dory::Transparent,
+                JoltG1Routines,
+            >(poly, nu, sigma, setup)
+            .expect("commitment should succeed");
 
         (tier_2, DoryOpeningProofHint::new(row_commitments))
     }
@@ -174,13 +167,12 @@ impl CommitmentScheme for DoryCommitmentScheme {
         transcript: &mut ProofTranscript,
     ) -> (Self::Proof, Option<Self::Field>) {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
-        let mut rng = rand::thread_rng();
 
-        let row_commitments = hint
-            .map(DoryOpeningProofHint::into_rows)
+        let (row_commitments, commit_blind) = hint
+            .map(|h| (h.into_rows(), DoryField::zero()))
             .unwrap_or_else(|| {
                 let (_commitment, row_commitments) = Self::commit(poly, setup);
-                row_commitments.into_rows()
+                (row_commitments.into_rows(), DoryField::zero())
             });
 
         let num_cols = DoryGlobals::get_num_columns();
@@ -206,15 +198,15 @@ impl CommitmentScheme for DoryCommitmentScheme {
         type DoryMode = dory::Transparent;
 
         let (proof, y_blinding) =
-            dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _, DoryMode, _>(
+            dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _, DoryMode>(
                 poly,
                 &ark_point,
                 row_commitments,
+                commit_blind,
                 nu,
                 sigma,
                 setup,
                 &mut dory_transcript,
-                &mut rng,
             )
             .expect("proof generation should succeed");
 

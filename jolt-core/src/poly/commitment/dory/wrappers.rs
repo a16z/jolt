@@ -11,8 +11,6 @@ use crate::{
 use ark_bn254::Fr;
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
-#[cfg(feature = "zk")]
-use dory::primitives::arithmetic::Field;
 use dory::{
     error::DoryError,
     primitives::{
@@ -56,60 +54,31 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
         jolt_to_ark(&result)
     }
 
-    fn commit<E, _M1>(
+    fn commit<E, Mo, _M1>(
         &self,
         _nu: usize,
         sigma: usize,
         setup: &ProverSetup<E>,
-    ) -> Result<(E::GT, Vec<E::G1>), DoryError>
+    ) -> Result<(E::GT, Vec<E::G1>, ArkFr), DoryError>
     where
         E: PairingCurve,
+        Mo: dory::Mode,
         _M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = ArkFr>,
+        E::GT: DoryGroup<Scalar = ArkFr>,
     {
         let num_cols = 1 << sigma;
 
-        // Perform an MSM per row of the polynomial's matrix representation
         let row_commitments = commit_tier_1::<E>(self, &setup.g1_vec, num_cols)?;
 
         let g2_bases = &setup.g2_vec[..row_commitments.len()];
         let commitment = E::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-        Ok((commitment, row_commitments))
-    }
+        // In ZK mode, blind the tier-2 commitment with r_d1 * HT
+        let r_d1: ArkFr = Mo::sample();
+        let commitment = Mo::mask(commitment, &setup.ht, &r_d1);
 
-    #[cfg(feature = "zk")]
-    #[allow(clippy::type_complexity)]
-    fn commit_zk<E, _M1, R>(
-        &self,
-        nu: usize,
-        sigma: usize,
-        setup: &ProverSetup<E>,
-        rng: &mut R,
-    ) -> Result<(E::GT, Vec<E::G1>, Vec<ArkFr>), DoryError>
-    where
-        E: PairingCurve,
-        _M1: DoryRoutines<E::G1>,
-        E::G1: DoryGroup<Scalar = ArkFr>,
-        R: rand_core::RngCore,
-    {
-        let num_cols = 1 << sigma;
-        let num_rows = 1 << nu;
-
-        // Perform an MSM per row of the polynomial's matrix representation
-        let mut row_commitments = commit_tier_1::<E>(self, &setup.g1_vec, num_cols)?;
-
-        let mut row_blinds = Vec::with_capacity(num_rows);
-        for i in 0..num_rows {
-            let r_i = ArkFr::random(rng);
-            row_blinds.push(r_i);
-            row_commitments[i] = row_commitments[i] + setup.h1.scale(&r_i);
-        }
-
-        let g2_bases = &setup.g2_vec[..row_commitments.len()];
-        let commitment = E::multi_pair_g2_setup(&row_commitments, g2_bases);
-
-        Ok((commitment, row_commitments, row_blinds))
+        Ok((commitment, row_commitments, r_d1))
     }
 }
 
