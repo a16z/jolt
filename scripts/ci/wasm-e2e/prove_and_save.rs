@@ -1,4 +1,4 @@
-use jolt_sdk::Serializable;
+use jolt_sdk::{JoltVerifierPreprocessing, Serializable};
 use tracing::info;
 
 pub fn main() {
@@ -8,10 +8,8 @@ pub fn main() {
     let mut program = guest::compile_fib(target_dir);
 
     let shared_preprocessing = guest::preprocess_shared_fib(&mut program);
-    let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
-    let verifier_preprocessing =
-        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup);
+    let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing);
+    let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
 
     let pp_bytes = verifier_preprocessing.serialize_to_bytes().expect("serialize pp");
     std::fs::write("pp.bin", &pp_bytes).expect("write pp");
