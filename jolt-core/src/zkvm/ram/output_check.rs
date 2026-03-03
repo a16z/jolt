@@ -1,3 +1,9 @@
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::{
     field::JoltField,
     poly::{
@@ -115,6 +121,71 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OutputSumcheckParams<F> {
         .concat();
         debug_assert_eq!(addr_challenges.len(), self.log_K());
         OpeningPoint::<LITTLE_ENDIAN, F>::new(addr_challenges).match_endianness()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::default()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim = eq_eval * io_mask_eval * (val_final - val_io_eval)
+        //                       = eq_eval * io_mask_eval * val_final - eq_eval * io_mask_eval * val_io_eval
+        //
+        // Challenge layout:
+        //   Challenge(0) = eq_eval * io_mask_eval
+        //   Challenge(1) = -eq_eval * io_mask_eval * val_io_eval (constant term)
+        let val_final_opening =
+            OpeningId::virt(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck);
+
+        let terms = vec![
+            // eq*io_mask * val_final
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(val_final_opening)],
+            ),
+            // -eq*io_mask*val_io (constant term, no opening factors)
+            ProductTerm::single(ValueSource::Challenge(1)),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        self.constraint_challenge_values(sumcheck_challenges)
+    }
+}
+
+impl<F: JoltField> OutputSumcheckParams<F> {
+    pub fn constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r_address = &self.r_address;
+        let r_address_prime = self.normalize_opening_point(sumcheck_challenges).r;
+        let program_io = &self.program_io;
+
+        let io_mask = RangeMaskPolynomial::<F>::new(
+            remap_address(
+                program_io.memory_layout.input_start,
+                &program_io.memory_layout,
+            )
+            .unwrap() as u128,
+            remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as u128,
+        );
+
+        let eq_eval: F = EqPolynomial::<F>::mle(r_address, &r_address_prime);
+        let io_mask_eval = io_mask.evaluate_mle(&r_address_prime);
+        let val_io_eval: F = super::eval_io_mle::<F>(program_io, &r_address_prime);
+
+        let eq_io_mask = eq_eval * io_mask_eval;
+        let neg_eq_io_mask_val_io = -eq_io_mask * val_io_eval;
+
+        vec![eq_io_mask, neg_eq_io_mask_val_io]
     }
 }
 
@@ -250,13 +321,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let Self { val_final, .. } = self;
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamValFinal,
             SumcheckId::RamOutputCheck,
             opening_point.clone(),
@@ -329,12 +398,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OutputSumch
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamValFinal,
             SumcheckId::RamOutputCheck,
             opening_point.clone(),

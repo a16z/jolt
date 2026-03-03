@@ -37,11 +37,15 @@ use crate::field::JoltField;
 use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -244,6 +248,91 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
             .match_endianness(),
         }
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        match self.phase {
+            ReductionPhase::CycleVariables => {
+                let val_opening = match self.kind {
+                    AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::RamValCheck),
+                    AdviceKind::Untrusted => OpeningId::UntrustedAdvice(SumcheckId::RamValCheck),
+                };
+                InputClaimConstraint::direct(val_opening)
+            }
+            ReductionPhase::AddressVariables => {
+                let cycle_phase_opening = match self.kind {
+                    AdviceKind::Trusted => {
+                        OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                    }
+                    AdviceKind::Untrusted => {
+                        OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                    }
+                };
+                InputClaimConstraint::direct(cycle_phase_opening)
+            }
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        match self.phase {
+            ReductionPhase::CycleVariables => {
+                let advice_opening = match self.kind {
+                    AdviceKind::Trusted => {
+                        OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                    }
+                    AdviceKind::Untrusted => {
+                        OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                    }
+                };
+                Some(OutputClaimConstraint::direct(advice_opening))
+            }
+            ReductionPhase::AddressVariables => {
+                let advice_opening = match self.kind {
+                    AdviceKind::Trusted => {
+                        OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReduction)
+                    }
+                    AdviceKind::Untrusted => {
+                        OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReduction)
+                    }
+                };
+                // output = (eq_combined * scale) * advice_claim
+                // Challenge(0) holds eq_combined * scale (computed in output_constraint_challenge_values)
+                Some(OutputClaimConstraint::linear(vec![(
+                    ValueSource::Challenge(0),
+                    ValueSource::Opening(advice_opening),
+                )]))
+            }
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        match self.phase {
+            ReductionPhase::CycleVariables => vec![],
+            ReductionPhase::AddressVariables => {
+                let opening_point = self.normalize_opening_point(sumcheck_challenges);
+                let eq_eval = EqPolynomial::mle(&opening_point.r, &self.r_val.r);
+
+                let gap_len = if self.cycle_phase_row_rounds.is_empty()
+                    || self.cycle_phase_col_rounds.is_empty()
+                {
+                    0
+                } else {
+                    self.cycle_phase_row_rounds.start - self.cycle_phase_col_rounds.end
+                };
+                let two_inv = F::from_u64(2).inverse().unwrap();
+                let scale = (0..gap_len).fold(F::one(), |acc, _| acc * two_inv);
+
+                vec![eq_eval * scale]
+            }
+        }
+    }
 }
 
 #[derive(Allocative)]
@@ -417,7 +506,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -435,13 +523,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
 
             match self.params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
                     opening_point.clone(),
                     c_mid,
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
                     opening_point.clone(),
                     c_mid,
@@ -454,13 +540,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
             let advice_claim = self.advice_poly.final_sumcheck_claim();
             match self.params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReduction,
                     opening_point,
                     advice_claim,
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReduction,
                     opening_point,
                     advice_claim,
@@ -555,7 +639,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let mut params = self.params.borrow_mut();
@@ -563,12 +646,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             let opening_point = params.normalize_opening_point(sumcheck_challenges);
             match params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
                     opening_point.clone(),
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
-                    transcript,
                     SumcheckId::AdviceClaimReductionCyclePhase,
                     opening_point.clone(),
                 ),
@@ -582,16 +663,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         {
             let opening_point = params.normalize_opening_point(sumcheck_challenges);
             match params.kind {
-                AdviceKind::Trusted => accumulator.append_trusted_advice(
-                    transcript,
-                    SumcheckId::AdviceClaimReduction,
-                    opening_point,
-                ),
-                AdviceKind::Untrusted => accumulator.append_untrusted_advice(
-                    transcript,
-                    SumcheckId::AdviceClaimReduction,
-                    opening_point,
-                ),
+                AdviceKind::Trusted => accumulator
+                    .append_trusted_advice(SumcheckId::AdviceClaimReduction, opening_point),
+                AdviceKind::Untrusted => accumulator
+                    .append_untrusted_advice(SumcheckId::AdviceClaimReduction, opening_point),
             }
         }
     }
