@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772567812415,
+  "lastUpdate": 1772574858897,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -57874,6 +57874,234 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 792772,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "74484b46a7f5491858896c4c11007f8416af81d8",
+          "message": "refactor: replace JoltField Unreduced<N> GAT with named types + accumulator associated types (#1298)\n\n* refactor: replace JoltField Unreduced<N> GAT with named types + accumulator associated types\n\n- Replace `type Unreduced<const N: usize>` GAT with 6 explicit named types:\n  UnreducedElem, UnreducedMulU64, UnreducedMulU128, UnreducedMulU128Accum,\n  UnreducedProduct, UnreducedProductAccum\n- Add WideAccumS/FullAccumS associated types to JoltField for field-specific\n  signed accumulation (enables future Fp128 support with eager reduction)\n- Restore const MONTGOMERY_R/MONTGOMERY_R_SQUARE for compile-time folding\n- Replace as_unreduced_ref() with to_unreduced() returning by value (enables SROA)\n- Rename accumulators: Acc5U->SmallAccumU, Acc6U->MedAccumU, Acc7U->WideAccumU\n- Move Acc7S/Acc8S into BN254-specific structs (WideAccumSBn254/FullAccumSBn254)\n- Remove MulTrunc/MulU64WithCarry wrapper traits from JoltField\n- Migrate all call sites (~30 files) to new API\n\n* docs: add docstrings to accumulator structs and unreduced types\n\n* refactor: convert WideAccumS/FullAccumS from associated types to generic structs\n\nReplace the two JoltField associated types with generic wrapper structs\nin accumulation.rs, making all 7 accumulator types follow the same\npattern. Field-specific mul_trunc logic moves to two new JoltField\nmethods (mul_to_accum_mag, mul_to_product_mag).\n\nRemoves ~270 lines of BN254-specific concrete structs, TrackedFr\ndelegation boilerplate, and MleAst stubs. Net -146 lines.\n\n* optimize: remove dead branches in polynomial binding hot paths\n\nRemove filter/branch patterns in DensePolynomial and CompactPolynomial\nbinding that add overhead on random data: the `filter(a != b)` in\nHighToLow and `is_zero()`/`is_one()` checks in LowToHigh rarely\ntrigger after the first sumcheck round. Scale LowToHigh `with_min_len`\nby `32 / F::NUM_BYTES` to keep work-per-chunk consistent across field\nsizes.\n\nMade-with: Cursor\n\n* optimize: fold 256-bit unreduced accumulators to reduce carry dependencies\n\nSwitch BN254 unreduced accumulation ladders to folded 256-bit slot accumulators so hot accumulation paths avoid inter-lane carry chains and defer normalization until reduction.\n\nMade-with: Cursor",
+          "timestamp": "2026-03-03T15:58:43-05:00",
+          "tree_id": "468b328c32c781d054dcf248440ab2b3c6076a54",
+          "url": "https://github.com/a16z/jolt/commit/74484b46a7f5491858896c4c11007f8416af81d8"
+        },
+        "date": 1772574857853,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9239,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 794356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3313,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 463632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 467536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 470260,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7274,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 474020,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6084,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 468736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.4519,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 468516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.3559,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 790752,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5809,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 463960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4831,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 472652,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7054,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 468796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.7187,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1018360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.1798,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 621012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 82.5776,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2144784,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4812,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 472784,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.528,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 470272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.1998,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 793700,
             "unit": "KB",
             "extra": ""
           }
