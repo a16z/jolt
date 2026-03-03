@@ -6,7 +6,6 @@ use super::wrappers::{
     ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup,
     ArkworksVerifierSetup, JoltToDoryTranscript, BN254,
 };
-use crate::poly::commitment::dory::DoryContext;
 use crate::{
     curve::JoltCurve,
     field::JoltField,
@@ -31,32 +30,16 @@ use tracing::trace_span;
 #[derive(Clone)]
 pub struct DoryCommitmentScheme;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DoryHintPad {
-    Replicate,
-    ZeroPad,
-}
-
 #[derive(Clone, Debug, PartialEq)]
-pub struct DoryOpeningProofHint {
-    row_commitments: Vec<ArkG1>,
-    pad: DoryHintPad,
-}
+pub struct DoryOpeningProofHint(Vec<ArkG1>);
 
 impl DoryOpeningProofHint {
     fn new(row_commitments: Vec<ArkG1>) -> Self {
-        let pad = match DoryGlobals::current_context() {
-            DoryContext::Main => DoryHintPad::Replicate,
-            DoryContext::TrustedAdvice | DoryContext::UntrustedAdvice => DoryHintPad::ZeroPad,
-        };
-        Self {
-            row_commitments,
-            pad,
-        }
+        Self(row_commitments)
     }
 
     fn into_rows(self) -> Vec<ArkG1> {
-        self.row_commitments
+        self.0
     }
 }
 
@@ -275,10 +258,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
     /// row commitments for the RLC of those polynomials. This is more efficient than computing
     /// the row commitments for the RLC from scratch.
     ///
-    /// For shorter polynomials (e.g., T-length dense polys in a K*T RLC), we replicate their
-    /// row commitments K times to match the K*T matrix layout. This is because a dense poly
-    /// p(cycle) embedded in K*T is constant in the address dimension, so its row commitments
-    /// repeat with period T/num_cols.
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_hints")]
     fn combine_hints(
         hints: Vec<Self::OpeningProofHint>,
@@ -287,39 +266,13 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let num_rows = DoryGlobals::get_max_num_rows();
 
         let mut rlc_hint = vec![ArkG1(G1Projective::zero()); num_rows];
-        for (coeff, hint) in coeffs.iter().zip(hints.into_iter()) {
-            let DoryOpeningProofHint {
-                row_commitments: hint_rows,
-                pad,
-            } = hint;
-            // Replicate shorter hints to match num_rows for dense poly embedding.
-            // For advice polynomials, we zero-pad instead (they occupy the top-left block only).
-            let mut expanded_hint = if hint_rows.len() < num_rows && !hint_rows.is_empty() {
-                match pad {
-                    DoryHintPad::ZeroPad => {
-                        let mut h = hint_rows;
-                        h.resize(num_rows, ArkG1(G1Projective::zero()));
-                        h
-                    }
-                    DoryHintPad::Replicate => {
-                        let replication_factor = num_rows / hint_rows.len();
-                        let mut expanded = Vec::with_capacity(num_rows);
-                        for _ in 0..replication_factor {
-                            expanded.extend(hint_rows.iter().cloned());
-                        }
-                        expanded
-                    }
-                }
-            } else {
-                let mut h = hint_rows;
-                h.resize(num_rows, ArkG1(G1Projective::zero()));
-                h
-            };
+        for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
+            hint.0.resize(num_rows, ArkG1(G1Projective::zero()));
 
             let row_commitments: &mut [G1Projective] = unsafe {
                 std::slice::from_raw_parts_mut(
-                    expanded_hint.as_mut_ptr() as *mut G1Projective,
-                    expanded_hint.len(),
+                    hint.0.as_mut_ptr() as *mut G1Projective,
+                    hint.0.len(),
                 )
             };
 
@@ -330,15 +283,13 @@ impl CommitmentScheme for DoryCommitmentScheme {
             let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
             let _enter = _span.enter();
 
-            // Scales the row commitments for the current polynomial by
-            // its coefficient
             jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
                 row_commitments,
                 *coeff,
                 rlc_row_commitments,
             );
 
-            let _ = std::mem::replace(&mut rlc_hint, expanded_hint);
+            let _ = std::mem::replace(&mut rlc_hint, hint.0);
         }
 
         DoryOpeningProofHint::new(rlc_hint)
@@ -453,31 +404,13 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 
             (tier_2, DoryOpeningProofHint::new(row_commitments))
         } else {
-            // Dense polynomial: replicate row commitments to match K*T matrix layout
-            // This ensures homomorphic combination works correctly with one-hot polynomials
-            let dense_rows: Vec<ArkG1> = chunks.iter().flat_map(|chunk| chunk.clone()).collect();
+            let row_commitments: Vec<ArkG1> =
+                chunks.iter().flat_map(|chunk| chunk.clone()).collect();
 
-            let dense_row_count = dense_rows.len();
-            if dense_row_count > 0 && dense_row_count < num_rows {
-                // Replicate dense rows to fill the full matrix
-                let replication_factor = num_rows / dense_row_count;
-                let mut row_commitments = Vec::with_capacity(num_rows);
-                for _ in 0..replication_factor {
-                    row_commitments.extend(dense_rows.iter().cloned());
-                }
+            let g2_bases = &setup.g2_vec[..row_commitments.len()];
+            let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-                let g2_bases = &setup.g2_vec[..num_rows];
-                let tier_2 =
-                    <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
-
-                (tier_2, DoryOpeningProofHint::new(row_commitments))
-            } else {
-                // No replication needed (dense_row_count == num_rows or edge case)
-                let g2_bases = &setup.g2_vec[..dense_rows.len()];
-                let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&dense_rows, g2_bases);
-
-                (tier_2, DoryOpeningProofHint::new(dense_rows))
-            }
+            (tier_2, DoryOpeningProofHint::new(row_commitments))
         }
     }
 }

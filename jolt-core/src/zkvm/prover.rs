@@ -33,6 +33,7 @@ use crate::{
             commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment},
             dory::{DoryGlobals, DoryLayout},
         },
+        eq_poly::EqPolynomial,
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
             compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator,
@@ -1855,15 +1856,9 @@ where
             SumcheckId::IncClaimReduction,
         );
 
-        // In AddressMajor, dense coefficients occupy every K-th column (sparse embedding),
-        // so the Dory VMV includes a factor eq(r_addr, 0) = ∏(1 − r_addr_i).
-        // In CycleMajor, dense rows are replicated K times, and the streaming VMV
-        // sums row_factors = Σ_addr eq(r_addr, addr) = 1, so no correction is needed.
-        let lagrange_factor: F = if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
-            r_address_stage7.iter().map(|r| F::one() - r).product()
-        } else {
-            F::one()
-        };
+        // Dense polynomials are zero-padded in the Dory matrix, so their evaluation
+        // includes a factor eq(r_addr, 0) = ∏(1 − r_addr_i).
+        let lagrange_factor: F = EqPolynomial::zero_selector(r_address_stage7);
         polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
         scaling_factors.push(lagrange_factor);
         polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
