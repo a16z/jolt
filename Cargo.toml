@@ -107,17 +107,16 @@ mimalloc.workspace = true
 rand.workspace = true
 sysinfo.workspace = true
 syn.workspace = true
-serde.workspace = true
-rmp-serde.workspace = true
 toml_edit.workspace = true
 anyhow.workspace = true
 log.workspace = true
 env_logger.workspace = true
 zeroos-build.workspace = true
 
+ark-bn254.workspace = true
+
 jolt-sdk = { workspace = true, features = ["host"] }
 jolt-core = { workspace = true, features = ["default"] }
-tracer = { workspace = true, features = ["default"] }
 common = { workspace = true, features = ["std"] }
 
 [profile.test]

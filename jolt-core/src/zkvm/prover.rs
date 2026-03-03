@@ -1,13 +1,14 @@
 #[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
 use crate::zkvm::{claim_reductions::advice::ReductionPhase, config::OneHotConfig};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 use std::{
     collections::HashMap,
     fs::File,
     io::{Read, Write},
     path::Path,
     sync::Arc,
-    time::Instant,
 };
 
 #[cfg(not(feature = "zk"))]
@@ -483,6 +484,7 @@ where
     ) {
         let _pprof_prove = pprof_scope!("prove");
 
+        #[cfg(not(target_arch = "wasm32"))]
         let start = Instant::now();
         fiat_shamir_preamble(
             &self.program_io,
@@ -573,14 +575,16 @@ where
             dory_layout: DoryGlobals::get_layout(),
         };
 
-        let prove_duration = start.elapsed();
-
-        tracing::info!(
-            "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
-            prove_duration.as_secs_f64(),
-            self.unpadded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
-            self.padded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
-        );
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let prove_duration = start.elapsed();
+            tracing::info!(
+                "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
+                prove_duration.as_secs_f64(),
+                self.unpadded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
+                self.padded_trace_len as f64 / prove_duration.as_secs_f64() / 1000.0,
+            );
+        }
 
         (proof, debug_info)
     }

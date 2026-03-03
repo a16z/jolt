@@ -123,6 +123,51 @@ jobs:
         working-directory: ./sample_project
         run: cargo run --release
 
+  test-wasm-verify:
+    name: WASM Verifier E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-directories: ~/.cache/dory
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked
+
+      - name: Install wasm-pack and wasm32 target
+        run: |
+          curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | bash
+          rustup target add wasm32-unknown-unknown
+
+      - name: Generate sample project
+        run: jolt new sample_project
+
+      - name: Pin jolt-sdk to current commit
+        run: |
+          COMMIT_HASH=$(git rev-parse HEAD)
+          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
+          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
+
+      - name: Set up prover and verifier scripts
+        run: |
+          cp scripts/ci/wasm-e2e/prove_and_save.rs sample_project/src/main.rs
+          cp scripts/ci/wasm-e2e/verify.mjs sample_project/verify.mjs
+
+      - name: Prove natively and save artifacts
+        working-directory: ./sample_project
+        run: cargo run --release
+
+      - name: Build WASM verifier
+        working-directory: ./sample_project
+        run: jolt build-wasm
+
+      - name: Verify proof in WASM
+        working-directory: ./sample_project
+        run: node verify.mjs
+
   test-inlines:
     name: Test inlines
     runs-on: ubuntu-latest
