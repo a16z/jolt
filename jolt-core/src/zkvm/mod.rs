@@ -1,8 +1,12 @@
 use std::fs::File;
 
+use crate::zkvm::config::OneHotParams;
+use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
+    curve::Bn254Curve,
     field::JoltField,
     poly::opening_proof::ProverOpeningAccumulator,
+    poly::opening_proof::{OpeningId, SumcheckId},
     poly::{
         commitment::commitment_scheme::CommitmentScheme, commitment::dory::DoryCommitmentScheme,
     },
@@ -35,6 +39,51 @@ pub mod registers;
 pub mod spartan;
 pub mod verifier;
 pub mod witness;
+
+pub(crate) fn stage8_opening_ids(
+    one_hot_params: &OneHotParams,
+    include_trusted_advice: bool,
+    include_untrusted_advice: bool,
+) -> Vec<OpeningId> {
+    let mut opening_ids = Vec::new();
+
+    opening_ids.push(OpeningId::committed(
+        CommittedPolynomial::RamInc,
+        SumcheckId::IncClaimReduction,
+    ));
+    opening_ids.push(OpeningId::committed(
+        CommittedPolynomial::RdInc,
+        SumcheckId::IncClaimReduction,
+    ));
+
+    for i in 0..one_hot_params.instruction_d {
+        opening_ids.push(OpeningId::committed(
+            CommittedPolynomial::InstructionRa(i),
+            SumcheckId::HammingWeightClaimReduction,
+        ));
+    }
+    for i in 0..one_hot_params.bytecode_d {
+        opening_ids.push(OpeningId::committed(
+            CommittedPolynomial::BytecodeRa(i),
+            SumcheckId::HammingWeightClaimReduction,
+        ));
+    }
+    for i in 0..one_hot_params.ram_d {
+        opening_ids.push(OpeningId::committed(
+            CommittedPolynomial::RamRa(i),
+            SumcheckId::HammingWeightClaimReduction,
+        ));
+    }
+
+    if include_trusted_advice {
+        opening_ids.push(OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReduction));
+    }
+    if include_untrusted_advice {
+        opening_ids.push(OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReduction));
+    }
+
+    opening_ids
+}
 
 // Scoped CPU profiler for performance analysis. Feature-gated by "pprof".
 // Usage: let _guard = pprof_scope!("label");
@@ -134,9 +183,11 @@ pub fn fiat_shamir_preamble(
 }
 
 #[cfg(feature = "prover")]
-pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
-pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, DoryCommitmentScheme, Blake2bTranscript>;
-pub type RV64IMACProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACProver<'a> =
+    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACVerifier<'a> =
+    JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
 
 pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     /// Gets the byte size of the serialized data
