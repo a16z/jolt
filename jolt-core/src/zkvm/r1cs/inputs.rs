@@ -24,7 +24,7 @@ use crate::field::JoltField;
 use ark_ff::biginteger::S64;
 use common::constants::XLEN;
 use std::fmt::Debug;
-use tracer::instruction::Cycle;
+use tracer::instruction::{Cycle, RAMAccess};
 
 use strum::IntoEnumIterator;
 
@@ -302,9 +302,9 @@ impl R1CSCycleInputs {
         // RAM
         let ram_addr = cycle.ram_access().address() as u64;
         let (ram_read_value, ram_write_value) = match cycle.ram_access() {
-            tracer::instruction::RAMAccess::Read(r) => (r.value, r.value),
-            tracer::instruction::RAMAccess::Write(w) => (w.pre_value, w.post_value),
-            tracer::instruction::RAMAccess::NoOp => (0u64, 0u64),
+            RAMAccess::Read(r) => (r.value, r.value),
+            RAMAccess::Write(w) => (w.pre_value, w.post_value),
+            RAMAccess::NoOp => (0u64, 0u64),
         };
 
         // PCs

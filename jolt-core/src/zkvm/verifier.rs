@@ -4,6 +4,11 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::jolt_device::MemoryLayout;
+use tracer::instruction::Instruction;
+use tracer::JoltDevice;
+
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitment};
 #[cfg(feature = "zk")]
@@ -11,6 +16,8 @@ use crate::poly::commitment::dory::bind_opening_inputs_zk;
 use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals};
 #[cfg(feature = "zk")]
 use crate::poly::lagrange_poly::LagrangeHelper;
+#[cfg(not(feature = "zk"))]
+use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::{
     pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldVerifier,
@@ -184,11 +191,6 @@ fn scale_batching_coefficients<F: JoltField, T: Transcript>(
         })
         .collect()
 }
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::jolt_device::MemoryLayout;
-use tracer::instruction::Instruction;
-use tracer::JoltDevice;
-
 pub struct JoltVerifier<
     'a,
     F: JoltField,
@@ -268,7 +270,6 @@ where
 
         #[cfg(not(feature = "zk"))]
         {
-            use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
             for (id, (_, claim)) in &proof.opening_claims.0 {
                 let dummy_point = OpeningPoint::<BIG_ENDIAN, F>::new(vec![]);
                 opening_accumulator
@@ -1003,14 +1004,11 @@ where
             let num_rounds = proof.num_rounds();
             for round_idx in 0..num_rounds {
                 let poly_degree = match proof {
-                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Clear(std_proof) => {
-                        std_proof.compressed_polys[round_idx]
-                            .coeffs_except_linear_term
-                            .len()
-                    }
-                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Zk(zk_proof) => {
-                        zk_proof.poly_degrees[round_idx]
-                    }
+                    SumcheckInstanceProof::Clear(std_proof) => std_proof.compressed_polys
+                        [round_idx]
+                        .coeffs_except_linear_term
+                        .len(),
+                    SumcheckInstanceProof::Zk(zk_proof) => zk_proof.poly_degrees[round_idx],
                 };
                 let starts_new_chain = round_idx == 0;
                 let config = if starts_new_chain {

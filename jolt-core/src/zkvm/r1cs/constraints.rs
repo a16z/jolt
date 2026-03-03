@@ -43,6 +43,12 @@ use strum::EnumCount as EnumCountTrait;
 use strum_macros::{EnumCount, EnumIter};
 
 pub use super::ops::{Term, LC};
+#[cfg(test)]
+use crate::field::JoltField;
+#[cfg(test)]
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+#[cfg(test)]
+use std::fmt::Write as _;
 
 /// A single R1CS constraint row
 #[derive(Clone, Copy, Debug)]
@@ -59,14 +65,12 @@ impl R1CSConstraint {
     }
 
     #[cfg(test)]
-    pub fn pretty_fmt<F: crate::field::JoltField>(
+    pub fn pretty_fmt<F: JoltField>(
         &self,
         f: &mut String,
-        flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
+        flattened_polynomials: &[MultilinearPolynomial<F>],
         step_index: usize,
     ) -> std::fmt::Result {
-        use std::fmt::Write as _;
-
         self.a.pretty_fmt(f)?;
         write!(f, " ⋅ ")?;
         self.b.pretty_fmt(f)?;
@@ -107,8 +111,6 @@ impl R1CSConstraint {
         f: &mut String,
         row: &super::inputs::R1CSCycleInputs,
     ) -> std::fmt::Result {
-        use std::fmt::Write as _;
-
         self.a.pretty_fmt(f)?;
         write!(f, " ⋅ ")?;
         self.b.pretty_fmt(f)?;
@@ -181,14 +183,12 @@ pub struct NamedR1CSConstraint {
 
 impl NamedR1CSConstraint {
     #[cfg(test)]
-    pub fn pretty_fmt<F: crate::field::JoltField>(
+    pub fn pretty_fmt<F: JoltField>(
         &self,
         f: &mut String,
-        flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
+        flattened_polynomials: &[MultilinearPolynomial<F>],
         step_index: usize,
     ) -> std::fmt::Result {
-        use std::fmt::Write as _;
-
         writeln!(f, "[{:?}]", self.label)?;
         self.cons.pretty_fmt(f, flattened_polynomials, step_index)
     }
@@ -199,8 +199,6 @@ impl NamedR1CSConstraint {
         f: &mut String,
         row: &super::inputs::R1CSCycleInputs,
     ) -> std::fmt::Result {
-        use std::fmt::Write as _;
-
         writeln!(f, "[{:?}]", self.label)?;
         self.cons.pretty_fmt_with_row(f, row)
     }

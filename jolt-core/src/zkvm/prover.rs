@@ -18,6 +18,8 @@ use crate::poly::commitment::dory::bind_opening_inputs;
 #[cfg(feature = "zk")]
 use crate::poly::commitment::dory::bind_opening_inputs_zk;
 use crate::poly::commitment::dory::DoryContext;
+#[cfg(not(feature = "zk"))]
+use crate::zkvm::proof_serialization::Claims;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::zkvm::config::ReadWriteConfig;
@@ -145,9 +147,10 @@ use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangeHelper;
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::{
-    pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldProof, BlindFoldProver,
-    BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, RelaxedR1CSInstance,
-    RoundWitness, StageConfig, StageWitness, VerifierR1CSBuilder,
+    pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldAccumulator, BlindFoldProof,
+    BlindFoldProver, BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness,
+    OpeningProofData, RelaxedR1CSInstance, RoundWitness, StageConfig, StageWitness,
+    VerifierR1CSBuilder,
 };
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
@@ -192,7 +195,7 @@ pub struct JoltCpuProver<
     pub pedersen_generators: PedersenGenerators<C>,
     pub rw_config: ReadWriteConfig,
     #[cfg(feature = "zk")]
-    blindfold_accumulator: crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
+    blindfold_accumulator: BlindFoldAccumulator<F, C>,
     #[cfg(not(feature = "zk"))]
     _curve: std::marker::PhantomData<C>,
 }
@@ -471,7 +474,7 @@ where
             #[cfg(feature = "zk")]
             pedersen_generators,
             #[cfg(feature = "zk")]
-            blindfold_accumulator: crate::subprotocols::blindfold::BlindFoldAccumulator::new(),
+            blindfold_accumulator: BlindFoldAccumulator::new(),
             #[cfg(not(feature = "zk"))]
             _curve: std::marker::PhantomData,
         }
@@ -529,8 +532,7 @@ where
         let blindfold_proof = self.prove_blindfold(&joint_opening_proof);
 
         #[cfg(not(feature = "zk"))]
-        let opening_claims =
-            crate::zkvm::proof_serialization::Claims(self.opening_accumulator.openings.clone());
+        let opening_claims = Claims(self.opening_accumulator.openings.clone());
 
         #[cfg(test)]
         assert!(
@@ -1992,14 +1994,13 @@ where
         {
             let y_com: C::G1 = PCS::eval_commitment(&proof).expect("ZK proof must have y_com");
             bind_opening_inputs_zk::<F, C, _>(&mut self.transcript, &opening_point.r, &y_com);
-            self.blindfold_accumulator.set_opening_proof_data(
-                crate::subprotocols::blindfold::OpeningProofData {
+            self.blindfold_accumulator
+                .set_opening_proof_data(OpeningProofData {
                     opening_ids,
                     constraint_coeffs,
                     joint_claim,
                     y_blinding: _y_blinding.expect("ZK mode requires y_blinding"),
-                },
-            );
+                });
         }
         #[cfg(not(feature = "zk"))]
         {
@@ -2121,6 +2122,8 @@ mod tests {
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{OpeningAccumulator, SumcheckId},
     };
+    #[cfg(feature = "zk")]
+    use crate::subprotocols::blindfold::StageWitness;
     use crate::zkvm::claim_reductions::AdviceKind;
     use crate::zkvm::verifier::JoltSharedPreprocessing;
     use crate::zkvm::witness::CommittedPolynomial;
@@ -2136,7 +2139,7 @@ mod tests {
     #[cfg(feature = "zk")]
     fn round_commitment_data<F: JoltField, C: JoltCurve, R: rand_core::RngCore>(
         gens: &PedersenGenerators<C>,
-        stages: &[crate::subprotocols::blindfold::StageWitness<F>],
+        stages: &[StageWitness<F>],
         rng: &mut R,
     ) -> (Vec<C::G1>, Vec<Vec<F>>, Vec<F>) {
         let mut commitments = Vec::new();

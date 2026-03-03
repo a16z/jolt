@@ -1,3 +1,5 @@
+#[cfg(feature = "zk")]
+use std::collections::BTreeSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -441,7 +443,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F>
         // Build structural template by iterating R1CS constraints to find
         // which input indices appear in A-sides and B-sides.
 
-        use std::collections::BTreeSet;
         let mut a_indices = BTreeSet::new();
         let mut b_indices = BTreeSet::new();
         let mut a_has_const = false;
@@ -578,8 +579,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for OuterRemainingSumcheckParams<F>
 
     #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        use std::collections::BTreeSet;
-
         let r_stream = sumcheck_challenges[0];
 
         // Lagrange weights at r0
