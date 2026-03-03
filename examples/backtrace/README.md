@@ -15,10 +15,10 @@ From the workspace root:
 
 ```bash
 # Run no_std demo
-cargo run --release -p backtrace-demo --no-default-features --features nostd
+cargo run --release -p backtrace --no-default-features --features nostd
 
 # Run std demo
-cargo run --release -p backtrace-demo --no-default-features --features std
+cargo run --release -p backtrace --no-default-features --features std
 ```
 
 ## Expected Output
@@ -39,7 +39,7 @@ The `JOLT_BACKTRACE` environment variable controls how much information is shown
 #### No `JOLT_BACKTRACE` (default)
 
 ```bash
-cargo run --release -p backtrace-demo --no-default-features --features nostd
+cargo run --release -p backtrace --no-default-features --features nostd
 ```
 
 ```
@@ -54,7 +54,7 @@ Only the panic location and cycle count are shown. No call stack.
 #### `JOLT_BACKTRACE=1`
 
 ```bash
-JOLT_BACKTRACE=1 cargo run --release -p backtrace-demo --no-default-features --features nostd
+JOLT_BACKTRACE=1 cargo run --release -p backtrace --no-default-features --features nostd
 ```
 
 ```
@@ -84,7 +84,7 @@ Symbolized function names and source locations are displayed. The full call chai
 #### `JOLT_BACKTRACE=full`
 
 ```bash
-JOLT_BACKTRACE=full cargo run --release -p backtrace-demo --no-default-features --features nostd
+JOLT_BACKTRACE=full cargo run --release -p backtrace --no-default-features --features nostd
 ```
 
 ```
@@ -124,7 +124,7 @@ Same as `JOLT_BACKTRACE=1`, plus non-zero register values and the cycle count at
 #### No `JOLT_BACKTRACE` (default)
 
 ```bash
-cargo run --release -p backtrace-demo --no-default-features --features std
+cargo run --release -p backtrace --no-default-features --features std
 ```
 
 ```
@@ -145,7 +145,7 @@ The guest's own std backtrace fires but shows `<unknown>` because symbols are st
 #### `JOLT_BACKTRACE=1`
 
 ```bash
-JOLT_BACKTRACE=1 cargo run --release -p backtrace-demo --no-default-features --features std
+JOLT_BACKTRACE=1 cargo run --release -p backtrace --no-default-features --features std
 ```
 
 ```
@@ -180,7 +180,7 @@ The tracer's backtrace now shows symbolized function names. The guest's own `<un
 #### `JOLT_BACKTRACE=full`
 
 ```bash
-JOLT_BACKTRACE=full cargo run --release -p backtrace-demo --no-default-features --features std
+JOLT_BACKTRACE=full cargo run --release -p backtrace --no-default-features --features std
 ```
 
 ```
