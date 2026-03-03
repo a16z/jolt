@@ -283,9 +283,18 @@ pub fn modify_cargo_toml(name: &str) -> Result<()> {
 
         let lib_section = doc["lib"].as_table_mut().unwrap();
 
-        let mut array = Array::new();
-        array.push("cdylib");
-        lib_section["crate-type"] = Item::Value(toml_edit::Value::Array(array));
+        if let Some(array) = lib_section
+            .get_mut("crate-type")
+            .and_then(|v| v.as_array_mut())
+        {
+            if !array.iter().any(|v| v.as_str() == Some("cdylib")) {
+                array.push("cdylib");
+            }
+        } else {
+            let mut array = Array::new();
+            array.push("cdylib");
+            lib_section["crate-type"] = Item::Value(toml_edit::Value::Array(array));
+        }
         lib_section["path"] = value("src/wasm_verify.rs");
         let dependencies = doc["dependencies"].as_table_mut().unwrap();
         add_wasm_dependencies(dependencies);
