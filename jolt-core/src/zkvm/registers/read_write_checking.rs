@@ -1,7 +1,13 @@
 use std::sync::Arc;
 
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::PolynomialId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::read_write_matrix::{
     AddressMajorMatrixEntry, LookupTableIndex, ReadWriteMatrixAddressMajor,
     ReadWriteMatrixCycleMajor, RegistersAddressMajorEntry, RegistersCycleMajorEntry,
@@ -171,6 +177,117 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersReadWriteCheckingParam
             .collect();
 
         [r_address, r_cycle].concat().into()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::virt(
+                VirtualPolynomial::RdWriteValue,
+                SumcheckId::RegistersClaimReduction,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::Rs1Value,
+                SumcheckId::RegistersClaimReduction,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::Rs2Value,
+                SumcheckId::RegistersClaimReduction,
+            ),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        vec![self.gamma, self.gamma * self.gamma]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim = eq_eval * (rd_wa * (inc + val) + γ * (rs1_ra * val + γ * rs2_ra * val))
+        //
+        // Expanding:
+        // = eq_eval * rd_wa * inc
+        // + eq_eval * rd_wa * val
+        // + eq_eval * γ * rs1_ra * val
+        // + eq_eval * γ² * rs2_ra * val
+        //
+        // Challenges:
+        // - Challenge(0) = eq_eval (EqPolynomial::mle_endian)
+        // - Challenge(1) = γ
+        // - Challenge(2) = γ²
+
+        let val = OpeningId::virt(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let rs1_ra = OpeningId::virt(
+            VirtualPolynomial::Rs1Ra,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let rs2_ra = OpeningId::virt(
+            VirtualPolynomial::Rs2Ra,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let rd_wa = OpeningId::virt(
+            VirtualPolynomial::RdWa,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let inc = OpeningId::committed(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+
+        let eq_eval = ValueSource::Challenge(0);
+        let gamma = ValueSource::Challenge(1);
+        let gamma_sq = ValueSource::Challenge(2);
+
+        let terms = vec![
+            // eq_eval * rd_wa * inc
+            ProductTerm::product(vec![
+                eq_eval.clone(),
+                ValueSource::Opening(rd_wa),
+                ValueSource::Opening(inc),
+            ]),
+            // eq_eval * rd_wa * val
+            ProductTerm::product(vec![
+                eq_eval.clone(),
+                ValueSource::Opening(rd_wa),
+                ValueSource::Opening(val),
+            ]),
+            // eq_eval * γ * rs1_ra * val
+            ProductTerm::product(vec![
+                eq_eval.clone(),
+                gamma,
+                ValueSource::Opening(rs1_ra),
+                ValueSource::Opening(val),
+            ]),
+            // eq_eval * γ² * rs2_ra * val
+            ProductTerm::product(vec![
+                eq_eval,
+                gamma_sq,
+                ValueSource::Opening(rs2_ra),
+                ValueSource::Opening(val),
+            ]),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        // Challenge(0) = eq_eval
+        // Challenge(1) = γ
+        // Challenge(2) = γ²
+
+        let r = self.normalize_opening_point(sumcheck_challenges);
+        let (_, r_cycle) = r.split_at(LOG_K);
+
+        let eq_eval = EqPolynomial::mle_endian(&r_cycle, &self.r_cycle);
+        let gamma = self.gamma;
+        let gamma_sq = gamma * gamma;
+
+        vec![eq_eval, gamma, gamma_sq]
     }
 }
 
@@ -702,7 +819,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -724,28 +840,24 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let rs1_ra_claim = (combined_ra_claim - gamma * gamma * rs2_ra_claim) * gamma_inverse;
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
             opening_point.clone(),
             val_claim,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs1Ra,
             SumcheckId::RegistersReadWriteChecking,
             opening_point.clone(),
             rs1_ra_claim,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs2Ra,
             SumcheckId::RegistersReadWriteChecking,
             opening_point.clone(),
             rs2_ra_claim,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersReadWriteChecking,
             opening_point.clone(),
@@ -753,7 +865,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         );
 
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersReadWriteChecking,
             r_cycle.r,
@@ -880,30 +991,25 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs1Ra,
             SumcheckId::RegistersReadWriteChecking,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs2Ra,
             SumcheckId::RegistersReadWriteChecking,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersReadWriteChecking,
             opening_point.clone(),
@@ -911,7 +1017,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
         let (_, r_cycle) = opening_point.split_at(LOG_K);
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersReadWriteChecking,
             r_cycle.r,

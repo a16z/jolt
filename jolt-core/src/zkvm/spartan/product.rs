@@ -11,12 +11,18 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::multilinear_polynomial::BindingOrder;
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
@@ -133,6 +139,40 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> 
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         challenges.to_vec().into()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let openings: Vec<OpeningId> = PRODUCT_CONSTRAINTS
+            .iter()
+            .map(|cons| OpeningId::virt(cons.output, SumcheckId::SpartanOuter))
+            .collect();
+        InputClaimConstraint::all_weighted_openings(&openings)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        let tau_high = self.tau[self.tau.len() - 1];
+        let w = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&tau_high);
+        w.to_vec()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // Uni-skip output = evaluation at challenge r0, stored as UnivariateSkip opening
+        let opening = OpeningId::virt(
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::SpartanProductVirtualization,
+        );
+        Some(OutputClaimConstraint::direct(opening))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
     }
 }
 
@@ -271,7 +311,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProductVirtua
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -279,7 +318,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProductVirtua
         let claim = self.uni_poly.as_ref().unwrap().evaluate(&opening_point[0]);
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanProductVirtualization,
             opening_point,
@@ -325,13 +363,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         debug_assert_eq!(opening_point.len(), 1);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnivariateSkip,
             SumcheckId::SpartanProductVirtualization,
             opening_point,
@@ -392,6 +428,141 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let opening = OpeningId::virt(
+            VirtualPolynomial::UnivariateSkip,
+            SumcheckId::SpartanProductVirtualization,
+        );
+        InputClaimConstraint::direct(opening)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let left_openings = [
+            OpeningId::virt(
+                VirtualPolynomial::LeftInstructionInput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ];
+
+        let right_openings = [
+            OpeningId::virt(
+                VirtualPolynomial::RightInstructionInput,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::NextIsNoop,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+        ];
+
+        let mut terms = Vec::with_capacity(24);
+        let mut challenge_idx = 0;
+
+        for left_opening in &left_openings {
+            for right_opening in &right_openings {
+                terms.push(ProductTerm::scaled(
+                    ValueSource::Challenge(challenge_idx),
+                    vec![
+                        ValueSource::Opening(*left_opening),
+                        ValueSource::Opening(*right_opening),
+                    ],
+                ));
+                challenge_idx += 1;
+            }
+        }
+
+        for left_opening in &left_openings {
+            terms.push(ProductTerm::scaled(
+                ValueSource::Challenge(challenge_idx),
+                vec![ValueSource::Opening(*left_opening)],
+            ));
+            challenge_idx += 1;
+        }
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        self.constraint_challenge_values(sumcheck_challenges)
+    }
+}
+
+impl<F: JoltField> ProductVirtualRemainderParams<F> {
+    /// Compute constraint challenge values for both prover and verifier.
+    pub fn constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        // Compute λ = tau_high_bound_r0 * tau_bound_r_tail_reversed
+        let tau_high = &self.tau[self.tau.len() - 1];
+        let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
+            F::Challenge,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(tau_high, &self.r0);
+        let tau_low = &self.tau[..self.tau.len() - 1];
+        let r_tail_reversed: Vec<F::Challenge> =
+            sumcheck_challenges.iter().rev().copied().collect();
+        let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
+        let lambda = tau_high_bound_r0 * tau_bound_r_tail_reversed;
+
+        // Compute Lagrange weights at r0
+        let w = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&self.r0);
+
+        // Left coefficients: [w[0], w[1]+w[2], w[3], w[4]]
+        let alpha = [w[0], w[1] + w[2], w[3], w[4]];
+
+        // Right coefficients: [w[0], w[1], w[2], w[3], -w[4]]
+        let beta = [w[0], w[1], w[2], w[3], -w[4]];
+
+        let mut challenges = Vec::with_capacity(24);
+
+        // Product coefficients: λ*α_i*β_j
+        for alpha_i in &alpha {
+            for beta_j in &beta {
+                challenges.push(lambda * *alpha_i * *beta_j);
+            }
+        }
+
+        // Constant contribution coefficients: λ*w[4]*α_i
+        for alpha_i in &alpha {
+            challenges.push(lambda * w[4] * *alpha_i);
+        }
+
+        challenges
     }
 }
 
@@ -618,14 +789,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
         let claims = ProductVirtualEval::compute_claimed_factors::<F>(&self.trace, &r_cycle);
         for (poly, claim) in zip(PRODUCT_UNIQUE_FACTOR_VIRTUALS, claims) {
             accumulator.append_virtual(
-                transcript,
                 poly,
                 SumcheckId::SpartanProductVirtualization,
                 r_cycle.clone(),
@@ -752,13 +921,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         for vp in PRODUCT_UNIQUE_FACTOR_VIRTUALS.iter() {
             accumulator.append_virtual(
-                transcript,
                 *vp,
                 SumcheckId::SpartanProductVirtualization,
                 opening_point.clone(),
