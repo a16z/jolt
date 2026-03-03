@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772225966059,
+  "lastUpdate": 1772557355866,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -57202,6 +57202,222 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 790052,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "62e9f945daad12c2e102e26f74a7ae5aa6f35745",
+          "message": "feat: BlindFold zero-knowledge protocol (#1205)\n\n* group traits\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* generate hiding commitments of the mesages\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* all sumcehcks and generic curves\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* blindfold r1cs\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* all stages satisfy blindfold r1cs\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* integrate blindfold protocol into jolt proving pipeline\n\n- Add BlindFoldProof to JoltProof with initial_claims for all 6 stages\n- Implement prove_blindfold() in prover after stage 6 sumcheck\n- Implement verify_blindfold() with full verification:\n  - Initial claims match between JoltProof and BlindFoldProof\n  - Commitment openings (W and E)\n  - R1CS satisfaction of folded witness\n- Support multiple independent chains in R1CS (one per Jolt stage)\n  via StageConfig.starts_new_chain flag\n- Add deterministic Pedersen generator creation for consistent\n  generators between prover and verifier\n- Update BatchedSumcheck::prove/prove_zk to return initial claims\n\n* fix(blindfold): address security vulnerabilities in commitment scheme\n\n- Add hash_to_g1 to JoltCurve trait with try-and-increment implementation\n  for BN254, ensuring blinding generator has unknown discrete log\n- Bind real_instance to Fiat-Shamir transcript before deriving challenge\n  to prevent adaptive attacks\n- Convert debug_assert to assert for commitment verification in prover\n\n* refactor(blindfold): remove duplicate code and unused test utilities\n\n- Replace duplicate mock_generators with PedersenGenerators::deterministic()\n  across 4 test modules (folding, protocol, relaxed_r1cs, prover)\n- Remove unused verify_cross_term, alloc_var, alloc_vars functions\n- Inline verify_folding_preserves_satisfaction into its test\n- Move verify_commitment_opening inside test module\n\nNet reduction of ~110 lines.\n\n* fix(blindfold): bind BlindFold to main sumcheck transcript challenges\n\nSECURITY: Previously, BlindFold replayed challenges from a fresh transcript\nusing only polynomial coefficients, which produced challenges unrelated to\nthose derived by the verifier from the main transcript. This meant BlindFold\nwas proving an R1CS instance with arbitrary challenges, not the actual\nsumcheck challenges.\n\nFix:\n- Prover: Pass actual sumcheck challenges from prove_stageN to prove_blindfold\n- prove_blindfold: Use passed challenges instead of replaying from fresh transcript\n- Verifier: Collect challenges from verify_stageN and compare against BlindFold\n  proof's public inputs to ensure they match\n\nAlso removes unused to_z_vector function with incorrect Z vector layout.\n\nRemaining issues deferred to separate PRs:\n- ZK sumcheck commitments are not opened/verified\n- Uni-skip first rounds are not included in BlindFold\n\n* docs(blindfold): add TODO comments for deferred security issues\n\nDocument two remaining security issues for future work:\n\n1. TODO(#ZK-SUMCHECK): Pedersen commitments in ZK sumcheck are used for\n   Fiat-Shamir but never opened/verified, allowing challenge manipulation.\n\n2. TODO(#UNI-SKIP): Stages 1-2 uni-skip rounds reveal full polynomials\n   without commitments and are not included in BlindFold R1CS.\n\n* fix(sumcheck): hide polynomial coefficients from verifier in ZK mode\n\nZK sumcheck proofs now contain only Pedersen commitments and polynomial\ndegrees - coefficients are never exposed to the verifier. This ensures\nthe zero-knowledge property where the verifier learns nothing beyond\nvalidity.\n\nChanges:\n- Split SumcheckInstanceProof into Standard (coefficients visible) and\n  Zk (only commitments) variants with proper enum dispatch\n- Store coefficients and blindings in ProverOpeningAccumulator's new\n  ZkStageData for BlindFold to retrieve during prove_blindfold\n- Add poly_degrees field to ZkSumcheckProof so verifier can construct\n  correct R1CS structure without seeing actual coefficients\n- Update verifier to use poly_degrees instead of hardcoded default\n- Update tests to handle both proof variants\n\nSecurity: Coefficients are verified indirectly through BlindFold's R1CS\nconstraints which prove committed values satisfy sumcheck relations.\n\n* feat(zk): make uni-skip first rounds ZK-compatible\n\nStages 1-2 previously revealed full polynomial coefficients in the\ntranscript via prove_uniskip_round(). This broke the ZK property.\n\nChanges:\n- Add ZkUniSkipFirstRoundProof with Pedersen commitment to coefficients\n- Add UniSkipFirstRoundProofVariant enum (Standard/Zk) for proof types\n- Extend BlindFold R1CS to verify uni-skip sum constraints via power sums\n- Store uni-skip data in accumulator for BlindFold verification\n- Update prover to use prove_uniskip_round_zk() in ZK mode\n- Update verifier to defer uni-skip verification to BlindFold\n- Add unit tests for uni-skip R1CS constraint satisfaction\n\n* fix(sumcheck): add missing finalize() call in prove_zk\n\nprove_zk was missing the finalize() loop that exists in standard prove,\nwhich could cause incorrect state for sumcheck instances with deferred\noperations (e.g., flushing delayed bindings).\n\n* chore(blindfold): remove unused jolt_stage_configs function\n\nPlaceholder function that was never called. Actual stage configs are\nbuilt dynamically in verify_blindfold.\n\n* fix(sumcheck): correct transcript ordering in verify_standard\n\nAppend input claims to transcript BEFORE deriving batching coefficients,\nmatching the ordering in BatchedSumcheck::prove. The previous inverted\nordering would cause transcript desync between prover and verifier.\n\n* fix(blindfold): commit to full coefficients and fix chain structure\n\nFixes soundness vulnerability where prover could commit to compressed\ncoefficients [c0, c2, c3] but use a different c1 in BlindFold witness.\n\nChanges:\n- Commit to full coefficients [c0, c1, c2, c3] instead of compressed\n- Separate uni-skip and regular rounds into independent chains (9 total)\n  since batching makes their claims incompatible for direct chaining\n- Add round commitment verification in BlindFold verifier\n- Cross-check round commitments match between sumcheck proofs and BlindFold\n\nThe original code reconstructed c1 from claimed_sum, which masked the\nmismatch between uni-skip output and batched ZK sumcheck initial claim.\nWith full coefficients, c1 is fixed, exposing the chain structure bug.\n\n* fix(blindfold): ensure round coefficients consistency after folding\n\nAdd verification that coefficients in witness W match round_coefficients\nstored separately for commitment opening. This binds the R1CS constraints\nto the committed values.\n\nChanges:\n- Add verify_round_coefficients_consistency to RelaxedR1CSWitness\n- Call consistency check in BlindFold verifier after commitment openings\n- Fix sample_random_satisfying_pair to generate W with proper structure\n  (coefficients, intermediates, next_claim per round) so that\n  round_coefficients extracted from W match the committed values\n\nThe previous implementation generated round_coefficients independently\nof W in the random satisfying pair, breaking consistency after folding.\n\n* WIP fixing the constraints to have connections\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* fix(blindfold): compute aux vars for general output constraints\n\nThe BlindFold R1CS witness assignment was leaving auxiliary variables\nas zeros for general sum-of-products constraints. R1CS only verifies\nvalues, it doesn't compute them - so aux vars must be computed during\nwitness assignment.\n\nChanges:\n- Add compute_aux_vars() to witness.rs that calculates intermediate\n  product values matching R1CS allocation order\n- Add output_claim_constraint() to verifier sumcheck instances\n  (ValEvaluationSumcheckVerifier, ValFinalSumcheckVerifier,\n  RegistersReadWriteCheckingVerifier)\n- Update verifier to collect and batch constraints from instances\n- Re-enable prover final_output constraint code\n- Clean up debug prints and unused imports\n\n* fix(blindfold): verify constraint challenge values as public inputs\n\nMove constraint challenge values (batching coefficients, gammas, eq_evals)\nfrom witness to public inputs in BlindFold R1CS. Add explicit verification\nin verify_blindfold that compares values in the proof against transcript-\nderived expected values.\n\nChanges:\n- r1cs.rs: Allocate constraint_challenge_vars as public inputs\n- witness.rs: Assign challenge values to public input section\n- folding.rs: Exclude challenge vars from witness allocation\n- protocol.rs: Update FinalOutputInfo to exclude challenge vars\n- verifier.rs: Compute batching coefficients and verify all constraint\n  challenge values match between proof and verifier computation\n\n* fix(blindfold): implement prover output constraints for all sumcheck stages\n\nAdd output_claim_constraint() and output_constraint_challenge_values()\nto all sumcheck prover instances to match their verifier counterparts.\nThis enables BlindFold R1CS verification by ensuring prover and verifier\nproduce identical constraint structures and challenge values.\n\nProvers updated:\n- BooleanitySumcheckProver\n- RamRaVirtualSumcheckProver\n- InstructionRaSumcheckProver\n- BytecodeReadRafSumcheckProver\n- HammingBooleanitySumcheckProver\n- And various claim reduction/evaluation provers\n\nAlso removes debug eprintln! statements and fixes clippy warnings.\n\n* feat(blindfold): implement input claim constraints infrastructure\n\nAdd input constraint support to BlindFold R1CS, mirroring output constraints.\nThis enables verification that input claims are correctly derived from\npolynomial openings and challenges.\n\n- Add InputClaimConstraint type alias and trait methods\n- Extend ZkStageData with input constraint fields\n- Add initial_input to StageConfig with builder method\n- Implement input constraints for Registers and InstructionLookups sumchecks\n- Integrate input constraint collection in prover\n\n* feat(macros): add sumcheck_claims macro for claim reduction boilerplate\n\nIntroduce jolt-core-macros crate with #[sumcheck_claims] proc macro that\ngenerates input_claim, input_claim_constraint, input_constraint_challenge_values,\nexpected_output_claim, output_claim_constraint, and output_constraint_challenge_values\nmethods from a declarative DSL.\n\nApplied to registers.rs and instruction_lookups.rs, eliminating ~220 lines of\nboilerplate while maintaining the same semantics. Complex sumchecks (increments,\nram_ra, hamming_weight, advice) retain manual implementations due to their\nspecialized patterns.\n\n* refactor(macros): merge SumcheckClaims into SumcheckInstanceParams, add product_of\n\n- Remove ClaimSpec::None and ClaimSpec::Manual variants (all sumchecks\n  now require full specification)\n- Add product_of field to ClaimSpecContent for sum-of-products pattern\n  (e.g., Σ_i coeff_i * ∏_j opening_{f(i,j)})\n- Move output methods (expected_output_claim, output_claim_constraint,\n  output_constraint_challenge_values) from SumcheckClaims trait into\n  SumcheckInstanceParams trait with default implementations\n- Remove SumcheckClaims trait entirely\n- Update macro codegen to generate single SumcheckInstanceParams impl\n\n* refactor(sumcheck): unify streaming state with SumcheckInstanceParams\n\n- Remove SharedStreamingSumcheckState trait, use SumcheckInstanceParams directly\n- Make get_params() required on SumcheckInstanceProver/Verifier traits\n- Delegate constraint methods to params instead of providing defaults\n- Remove OuterStreamingProverParams, reuse OuterRemainingSumcheckParams\n- Make StreamingSumcheck Allocative impl feature-gated\n\n* Revert \"feat(macros): add sumcheck_claims macro for claim reduction boilerplate\"\n\nThis reverts commit dad0a476b0adf17ee372270f3a05f3241894c741.\n\n* fix compilation issue\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* refactor(sumcheck): move constraint methods to SumcheckInstanceParams\n\nMove output_claim_constraint, output_constraint_challenge_values,\ninput_claim_constraint, and input_constraint_challenge_values from\nSumcheckInstanceProver/Verifier traits to SumcheckInstanceParams.\n\nCall sites updated to use get_params().method_name(). BytecodeReadRaf\nstores bound values before clearing polys for prover compatibility.\n\n* wip: uniskip output constraints\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* feat(blindfold): make input claim constraints required for all sumchecks\n\nImplement InputClaimConstraint for all sumcheck instances, enabling\nBlindFold R1CS to verify that each sumcheck's input claim correctly\nrelates to polynomial openings.\n\nKey changes:\n- Remove default implementations from SumcheckInstanceParams trait,\n  making input_claim_constraint() and input_constraint_challenge_values()\n  required methods\n- Implement constraints for all sumcheck patterns:\n  - Pattern A (constant zero): booleanity, outer uni-skip\n  - Pattern B (direct opening): outer remaining, product remainder\n  - Pattern C (linear combination): most sumchecks\n  - Pattern D (Lagrange weights): product uni-skip\n  - Pattern E (opening minus value): val_final\n- Add scaling exponents to ZkStageData to handle different-round batched\n  sumchecks (claims scaled by 2^(max_rounds - instance_rounds))\n- Update verifier to use scaled batching coefficients for input constraints\n- Add evaluate() method to OutputClaimConstraint for debugging/verification\n\n* feat(blindfold): complete output-to-input constraint chains\n\n- Add output constraints to OuterUniSkipParams and ProductVirtualUniSkipParams\n  (produce UnivariateSkip openings consumed by respective Remaining params)\n- Update InstructionReadRaf to consume LookupOutput from both\n  InstructionClaimReduction and SpartanProductVirtualization\n- Fully expand BytecodeReadRaf input_claim_constraint to include all openings:\n  Stage 1 (SpartanOuter), Stage 2 (SpartanProductVirtualization),\n  Stage 3 (InstructionInputVirtualization + SpartanShift),\n  Stage 4 (RegistersReadWriteChecking), Stage 5 (RegistersValEvaluation +\n  InstructionReadRaf), plus raf_claim and raf_shift_claim\n- Store stage gammas in BytecodeReadRafSumcheckParams for proper challenge values\n\nThis ensures every virtual polynomial opening in output constraints is\nconsumed by input constraints, completing the R1CS constraint chain.\n\n* feat(blindfold): add OuterRemaining output constraint for tau*Az*Bz\n\n* fix(sumcheck): enforce degree bounds in ZK mode verify_transcript_only\n\n* feat(dory): integrate ZK evaluation commitments with BlindFold\n\n- Switch to local dory fork with ZK feature enabled\n- Add ZkEvalCommitment trait for extracting y_com/y_blinding from proofs\n- Fix DoryPolynomial::evaluate: use Fr directly instead of unsafe transmute\n- Fix commit hint replication for dense poly embedding in K*T matrices\n- Add RLC polynomial evaluation support via vector-matrix product\n- Add BlindFold extra_constraints for PCS binding verification\n- Wire evaluation commitments through relaxed R1CS folding\n\n* fix(dory): remove y_blinding from proof to prevent ZK leakage\n\ny_blinding was serialized in DoryProof but never used by verifier,\nleaking the blinding factor unnecessarily. Now:\n\n- dory::prove returns (proof, y_blinding) tuple instead\n- CommitmentScheme::prove returns (Proof, Option<Field>)\n- Remove ZkEvalCommitment::eval_commitment_blinding (no longer needed)\n- Store y_blinding in Stage8ZkData for BlindFold witness construction\n\n* chore(dory): switch from local path to git dependency\n\n- Use a16z/dory#zk-integration branch instead of local path\n- Remove dory gitlink from tracking\n- Add dory/ to .gitignore\n\n* Fix blindfold sizing and sumcheck rounds\n\n* Bind Dory openings into transcript\n\n* Fix Dory hints and verifier constraint offsets\n\n* spartan sumcheck\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* feat(blindfold): commit E polynomial with Dory and wire opening proof\n\nThe Spartan sumcheck produces a final claim involving E(r) but previously\ndeferred its verification. Now the prover commits the folded E vector via\nDory (under a new BlindFoldE context) and generates an opening proof at\nthe sumcheck challenge point. The verifier checks this proof inline.\n\n- Add DoryContext::BlindFoldE with dedicated statics\n- Add PCS generic to BlindFoldProof/Prover/Verifier\n- Prover: pad E, commit, prove opening after sumcheck rounds\n- Verifier: verify E opening proof after sumcheck rounds\n- Update JoltProof, prover/verifier call sites accordingly\n\n* fix(blindfold): reconcile merge artifacts from main\n\nTwo issues introduced by merge of main into feat/zk:\n\n1. input_claim_constraint() in BytecodeReadRafSumcheckParams was missing\n   the VirtualInstruction term in Stage 2, while compute_rv_claim_2,\n   stage2_gammas, and input_constraint_challenge_values all included it.\n\n2. bind_opening_inputs() was dropped from DoryCommitmentScheme::verify()\n   during merge, causing prover/verifier transcript divergence in Stage 8.\n\n* feat(blindfold): add inner sumcheck and Pedersen/Dory final claim verification\n\nClose the soundness gap where the Spartan outer sumcheck final claim\nwas never verified (the `let _ = folded_instance;` placeholder).\n\nAfter the outer sumcheck, the prover sends (az_r, bz_r, cz_r) and\nruns a degree-2 inner sumcheck reducing matrix evaluation claims to\na single-point evaluation of the witness polynomial W(ry_w).\n\nW(ry_w) is decomposed into:\n- W_ped(ry_w): coefficient values pinned by Pedersen commitments\n- W_dory(ry_w): non-coefficient values committed and opened via Dory\n\nThe verifier checks: inner_final == L_w(ry_w) · (W_ped(ry_w) + W_dory(ry_w))\n\n* feat(blindfold): replace Pedersen/Dory openings with Hyrax-style matrix openings\n\nRestructure BlindFold witness W into an R' × C grid layout where coefficient\nrows reuse existing sumcheck round commitments. Replace per-round Pedersen\ncoefficient reveals (~600 field elements) and Dory E/W openings with single\nHyrax combined-row openings (C+1 elements each for W and E).\n\nKey changes:\n- Grid layout: coefficients at row-aligned positions, non-coefficients packed after R_coeff*C\n- HyraxParams computes grid dimensions (C, R_coeff, R_prime) from stage configs\n- RelaxedR1CSInstance uses row commitments (round, noncoeff, E) instead of monolithic W_bar/E_bar\n- Folding operates on row commitments; E rows fold with cross-term T\n- Spartan/inner sumcheck work on R'×C witness vector\n- Hyrax opening: MSM over row commitments with eq weights, verify Pedersen, evaluate via eq(ry_col)\n- Remove PCS generic from BlindFoldProof/Prover/Verifier\n- Remove DoryContext::BlindFoldE/BlindFoldW from Dory globals\n\n* feat(blindfold): verifier to not have access to r2\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* refactor(blindfold): bake public inputs into R1CS matrix coefficients\n\nFiat-Shamir challenges, initial claims, batching coefficients, and\nconstraint challenges are now baked into R1CS matrix coefficients\ninstead of occupying Z vector slots as public input variables.\n\nZ layout simplifies from [u, public_inputs..., W...] to [u, W...].\nHorner evaluation intermediates eliminated — g(γ) becomes a single\nlinear constraint with baked powers of γ. Simple final output\ncollapses from n constraints + accumulators to 1 constraint.\n\nRemoves x field from RelaxedR1CSInstance, random_x from BlindFoldProof,\nand public_inputs from BlindFoldVerifierInput. Halves constraints per\nround (4→2) and eliminates all public input variables.\n\n* refactor(blindfold): remove dead fields and deduplicate test helpers\n\n- Remove dead `num_public_inputs` field from `VerifierR1CS` (always 0)\n- Remove dead `is_general_constraint` field from `FinalOutputWitness`\n- Deduplicate `estimate_aux_var_count` into `OutputClaimConstraint` method\n- Consolidate 4 copies of `make_baked_from_witness` into `BakedPublicInputs::from_witness`\n\n* fix(blindfold): enforce sumcheck degree bounds and replace panics with errors\n\nMalicious prover could send oversized sumcheck polynomials causing\nunbounded memory/compute, or trigger verifier panics via malformed\nproof data. Add exact degree checks for outer Spartan (degree 3) and\ninner sumcheck (degree 2), make RelaxedR1CSInstance::fold() return\nResult, and replace .unwrap() in compute_joint_commitment with proper\nerror propagation.\n\n* feat(blindfold): verify eval_commitment binding and remove cleartext claims\n\nAdd Pedersen binding check for eval_commitments after Nova folding in\nBlindFold verifier, preventing unverified commitment-witness binding.\n\nRemove cleartext polynomial evaluations from JoltProof and transcript\nto prevent private execution data leakage. In ZK mode: skip claim\nabsorption in sumcheck/stage8, use y_com-based transcript binding\ninstead of cleartext evaluations, and pass dummy values to Dory verify\n(which uses y_com internally).\n\n* chore: remove zk.md from tracking\n\n* chore: remove dev artifacts and rename fo → fout\n\n* refactor: deduplicate curve trait impls via macros and remove debug scaffolding\n\n* feat(blindfold): remove blindfold_initial_claims from JoltProof\n\nInitial claims leaked private execution data as cleartext in the proof.\nMake them witness variables instead — the existing initial_input\nconstraints already prove correctness via R1CS.\n\n* fix(blindfold): decompose init_eval into public + advice opening variables\n\nIn ZK mode, advice polynomial opening values are private and not sent\nto the verifier. The verifier's opening accumulator defaulted to zero\nfor advice evals at RamValEvaluation/RamValFinalEvaluation points,\ncausing init_eval to be wrong and BlindFold R1CS matrix mismatch.\n\nFix by decomposing init_eval = eval_public + Σ(selector_i * advice_opening_i)\nin the BlindFold R1CS constraint. The public eval and selectors are baked\nconstants; advice openings are witness variables referenced by OpeningId.\n\nAlso makes AdviceClaimReductionParams phase-aware: input/output constraints\nnow dispatch on CycleVariables vs AddressVariables phase.\n\nFixes advice_e2e_dory, advice_opening_point_derives_from_unified_point,\nand max_advice_with_small_trace test failures.\n\n* refactor(ram): deduplicate advice contribution computation into shared function\n\n* fix(dory): apply dense-poly lagrange factor only for AddressMajor layout\n\nIn AddressMajor, dense coefficients (RamInc, RdInc) occupy every K-th\ncolumn in the Dory matrix, so the VMV product includes an implicit\nfactor eq(r_addr, 0) = ∏(1 − r_addr_i). The joint_claim must account\nfor this to match the Dory evaluation.\n\nIn CycleMajor, dense rows are replicated K times and the streaming VMV\nsums row_factors = Σ_addr eq(r_addr, addr) = 1, so the raw dense claim\nalready matches the Dory evaluation — no correction needed.\n\n* cargo update\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* docs(book): add BlindFold zero-knowledge chapter\n\nReplace the roadmap ZK placeholder with a full technical chapter\ncovering the BlindFold protocol: ZK sumcheck rounds, verifier R1CS\nconstruction, Nova folding, Spartan outer/inner sumchecks, and\nHyrax-style openings. Add to SUMMARY.md and how-it-works.md.\n\n* docs: add BlindFold architecture and claim/constraint invariant to CLAUDE.md\n\n* fix(verifier): replace panics with error returns in verification paths\n\n- Replace zip_eq panic with length check returning InvalidInputLength\n- Replace assert_eq! with error return in sumcheck round count validation\n- Replace .expect() with .ok_or() for ZK eval commitment extraction\n- Replace .unwrap() with error propagation in guest verifier\n\n* fix(blindfold): validate non-coeff and E row commitment lengths in verifier\n\nReject malformed proofs with wrong noncoeff_row_commitments or\nrandom_e_row_commitments counts instead of silently zero-padding.\n\n* refactor(blindfold): deduplicate variable allocation via witness layout iterator\n\nEliminate triplicated variable allocation walks across r1cs.rs, folding.rs,\nand witness.rs by introducing a shared LayoutStep enum in layout.rs. All three\nconsumers now iterate the same compute_witness_layout() sequence.\n\nAlso includes:\n- Visitor trait for sum-of-products dispatch (replaces 4 parallel implementations)\n- Sparse matrix helpers project_columns/bilinear_eval (replaces 12 loop instances)\n- FinalOutputWitness converted from struct to enum (eliminates impossible states)\n- FinalOutputConfig renamed to ClaimBindingConfig\n- Dead code removed (FinalOutputVariables, compute_horner_intermediates, accessors)\n- Hyrax helpers moved to methods on HyraxParams\n- batch()/batch_required() merged via shared batch_inner()\n\n* feat(zk): feature-gate ZK behind cfg(feature = \"zk\") for standard mode (#1261)\n\n* feat(zk): feature-gate ZK behind cfg(feature = \"zk\") for standard mode\n\nWithout `zk` feature: genuine standard proofs with transparent Dory\n(cleartext evaluation revealed), no BlindFold compilation. Proof includes\n`opening_claims` so verifier pre-populates its accumulator before\nstages 1-7; PCS (stage 8) proves claims correct.\n\nWith `zk` feature: full ZK proofs with blinded Dory, BlindFold\nverification, sigma proofs — behavior unchanged.\n\nKey changes:\n- Move dory/zk from prover feature to zk feature\n- Conditional Dory mode: ZK vs Transparent in prove()\n- Add opening_claims field to JoltProof with serialization\n- Prover: zk_mode = cfg!(feature = \"zk\"), conditional stage8 binding\n- Verifier: pre-populate accumulator from claims, conditional stage8\n- cfg-gate bind_opening_inputs_zk, Stage8ZkData, commit_zk\n\n* ci: add clippy and test jobs for zk feature\n\n* refactor(zkvm): derive-based JoltProof ser, prove methods to &mut self, clean verifier vars\n\n- Replace manual ser/deser macros with #[derive(CanonicalSerialize, CanonicalDeserialize)]\n  on JoltProof; add cfg-gated Claims<F> struct wrapping Openings<F>\n- Change opening_claims from Option<Vec<(OpeningId, F)>> to #[cfg(not(feature = \"zk\"))] Claims<F>\n- Refactor prove_batched_sumcheck and prove_uniskip from 5 explicit args to &mut self\n- Simplify prove_stage8 return type to PCS::Proof; construct Claims at proof site\n- Remove underscore prefix from stage1_result..stage8_data in verifier (used in zk block)\n\n* refactor(zk): remove unused imports and dead code from ZK feature-gating\n\nClean up leftover unused imports, dead cfg-gated code, and redundant\ntrait bounds introduced during the ZK feature-gate pass.\n\n* fix(ram): reconstruct full init_eval in verifier for non-ZK mode\n\nThe verifier's ValEvaluation and ValFinal params used only the public\nportion of init_eval (excluding advice contributions). In ZK mode this\nis harmless because input_claim() is never called. In non-ZK mode\ninput_claim() IS called and the missing advice terms cause a\nFiat-Shamir transcript mismatch.\n\n* docs: update CLAUDE.md with ZK feature-gate guidance\n\nAdd ZK Feature Gate section documenting cfg(feature = \"zk\") behavior,\ndual-mode clippy/test commands, and the critical invariant about\nverifier new_from_verifier needing full init_eval reconstruction in\nstandard mode.\n\n* refactor(blindfold): reduce constraint boilerplate with OpeningId and weighted_openings helpers\n\nAdd OpeningId::virt()/committed() shorthand constructors and\nOutputClaimConstraint::weighted_openings()/all_weighted_openings() builders,\nthen apply across all SumcheckInstanceParams impls to eliminate ~200 lines\nof verbose OpeningId::Polynomial(PolynomialId::...) and ProductTerm/ValueSource\nwrapping.\n\n* refactor(blindfold): feature-gate constraint types behind cfg(feature = \"zk\")\n\nMove constraint_types.rs back into blindfold/output_constraint.rs and\ngate all constraint-related code behind #[cfg(feature = \"zk\")]:\n- SumcheckInstanceParams trait methods (input/output claim constraints)\n- All ~24 implementations across zkvm/ submodules\n- ZkStageData/UniSkipStageData constraint fields in opening_proof.rs\n- prove_zk/prove_uniskip_round_zk functions\n- Verifier StageVerifyResult split into ZK/non-ZK variants\n- Verifier constraint batching functions and per-stage constraint code\n\n* micro cleanup\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* feat(zk): re-add output claims to Fiat-Shamir transcript\n\nBuffer claims during cache_openings, then flush per-stage:\n- Standard mode: append cleartext claims to transcript\n- ZK mode: Pedersen-commit buffered claims, append commitment\n\nAdds output_claims_commitment to ZkSumcheckProof and\nZkUniSkipFirstRoundProof for verifier transcript replay.\n\nAlso simplifies Dory prove call via cfg type alias and minor\ntest cleanup.\n\n* refactor(transcript): unify append_point under JoltGroupElement\n\nRemove CurveGroup-bound `append_point`/`append_points` and\n`raw_append_point` from the Transcript trait. Replace with\nJoltGroupElement-bound versions (previously `append_jolt_point`/\n`append_jolt_points`). Add `append_label` for domain-separation\nand `append_points_serializable` for generic CanonicalSerialize\ntypes (used by HyperKZG). Remove unused arkworks imports from\nblake2b/keccak transcript impls.\n\n* refactor(verifier): replace anyhow with ProofVerifyError, make zk_mode compile-time\n\n- Change all verifier methods from anyhow::Error to ProofVerifyError\n- Add ZkFeatureRequired and BlindFoldError variants to ProofVerifyError\n- Add tracing::error! with stage context at each verification stage\n- Remove zk_mode field from ProverOpeningAccumulator and JoltCpuProver;\n  use #[cfg(feature = \"zk\")] blocks instead of runtime checks\n- Fix #[cfg(feature = \"zk\")] placement in sumcheck prove_zk doc comment\n- Guard ZK proof verification behind cfg!(feature = \"zk\") check\n- Restore removed cache behavior doc comments in dory_globals\n- Add TODO for dory git dependency revert\n\n* chore: remove unused anyhow dep from jolt-core, update CLAUDE.md\n\n* docs(blindfold): fix stage table and module structure references\n\nStage table had wrong protocol-to-stage mappings for all 7 stages.\nUpdate output_constraint.rs description (constraint_types.rs was deleted),\nadd missing layout.rs entry.\n\n* docs(blindfold): add Vega paper and explainer references, remove roadmap/zk stub\n\n* refactor(verifier): return batching coefficients from BatchedSumcheck::verify\n\nEliminates 7 transcript clone-and-peek blocks in the verifier by having\nBatchedSumcheck::verify return the batching coefficients it already computes.\n\n* refactor(blindfold): drop redundant VerifierR1CS::is_satisfied\n\nReplace with check_satisfaction().unwrap() — same logic, but reports\nthe failing constraint index on panic.\n\n* refactor(blindfold): remove dead coefficient_positions fn, drop unused batch param\n\n* refactor(blindfold): inline hyrax wrapper functions into direct HyraxParams calls\n\n* refactor(blindfold): remove dead FinalOutputInfo and collect_final_output_info\n\n* refactor(blindfold): extract BlindFoldAccumulator from ProverOpeningAccumulator\n\nMove ZK-specific data (ZkStageData, UniSkipStageData, Stage8ZkData) out of\nProverOpeningAccumulator into a dedicated BlindFoldAccumulator<F, C>. Stores\nPedersen commitments as native C::G1 curve points instead of serialized bytes,\neliminating pointless serialize/deserialize round-trips in prove_blindfold.\n\n* refactor(curve): replace hand-rolled hash-to-curve with arkworks UniformRand\n\nSeed ChaCha20Rng from SHA3-256(domain) and delegate to G1Projective::rand,\nwhich uses the same try-random-x approach internally. Removes ~40 lines of\nmanual BN254 curve arithmetic.\n\n* refactor(blindfold): group random instance fields and extract HyraxOpeningProof\n\nBlindFoldProof: replace 5 random_* fields with `random_instance: RelaxedR1CSInstance`,\nreplace w/e combined_row + combined_blinding pairs with `w_opening`/`e_opening: HyraxOpeningProof`.\n\nMove Hyrax free functions (combined_row, evaluate, combined_blinding) to\npoly/commitment/hyrax.rs and remove the now-dead HyraxParams wrapper methods.\n\n* refactor(blindfold): use expected_claim() for outer sumcheck verification\n\nSimplify expected_claim() to take full (az_r, bz_r, cz_r) evaluations\ninstead of witness-only portions, and call it from the verifier instead\nof inlining the formula.\n\n* docs(blindfold): document LayoutStep enum variants and chain concept\n\n* fix(verifier): restore Fiat-Shamir claim absorption in non-ZK stage-8 opening\n\n* fix(dory): use non-caching setup on wasm32\n\n`ArkworksProverSetup::new_from_urs` is gated behind\n`not(target_arch = \"wasm32\")` in dory-pcs. Fall back to\n`ArkworksProverSetup::new` (no disk cache) on wasm targets.\n\n* chore: address PR review — remove dead code, AI comments, fix docs\n\n- Remove unused `from_dory_generators` from pedersen.rs\n- Delete ~25 AI-meta-comments across sumcheck.rs, prover.rs, verifier.rs\n- Fix blindfold.md: clarify ZK advantage over sigma protocols, clarify \"cache\" terminology\n\n* refactor(pedersen): derive generators from Dory URS instead of hash-to-curve\n\nPedersen generators for ZK sumcheck commitments now come from the Dory\nURS (g1_vec for message generators, h1 for blinding) rather than an\nindependent hash-to-curve derivation. This ensures all curve points in\nthe proof system share the same trusted setup.\n\n- Add pedersen_generators/pedersen_generators_verifier to ZkEvalCommitment trait\n- Prover slices generators from ProverSetup.g1_vec\n- Verifier reconstructs generators from deterministic Dory URS seed\n- Remove hash_to_g1 from JoltCurve trait (now test-only in pedersen.rs)\n- Feature-gate pedersen_generators field behind cfg(feature = \"zk\")\n\n* refactor(dory): store g1_vec in verifier setup to avoid ChaCha reconstruction\n\nDoryVerifierSetup wraps ArkworksVerifierSetup and caches g1_vec under\nthe zk feature. setup_verifier copies g1_vec from ProverSetup directly.\npedersen_generators_verifier now slices from the cached g1_vec instead\nof re-deriving generators from the URS seed on every call.\n\n* Revert \"refactor(dory): store g1_vec in verifier setup to avoid ChaCha reconstruction\"\n\nThis reverts commit edf41419b322d5e6abaa7262f57e01b0b778b25d.\n\n* refactor(pedersen): store ZK generators on shared preprocessing\n\nStrip Dory URS to 128 ZK Pedersen generators and store on\nJoltSharedPreprocessing. Both prover and verifier now read\ngenerators from the same source — eliminates ChaCha20Rng\nreconstruction on verifier side.\n\n- Add `zk_generators_raw()` to CommitmentScheme trait\n- Populate generators in JoltProverPreprocessing::new()\n- Remove unused `pedersen_generators_verifier` from ZkEvalCommitment\n\n* fix(pedersen): reduce ZK generator count from 128 to 32\n\nOUTER_FIRST_ROUND_POLY_NUM_COEFFS = 28 is the actual max,\nnext_power_of_two gives 32. Saves 9 KB on shared preprocessing.\n\n* refactor(pedersen): remove redundant ZkEvalCommitment generator methods\n\nProver now reads Pedersen generators from shared preprocessing\n(populated from Dory URS at JoltProverPreprocessing::new time).\n\nRemove max_pedersen_generators and pedersen_generators from\nZkEvalCommitment trait — both prover call sites now use\nshared.pedersen_generators::<C>(count) instead.\n\nRevert generator count back to 128: the bottleneck is output_claims\n(stage 6 has ~83 claims with log_k_chunk=4), not round poly coeffs.\n\n* chore(dory): upgrade dory-pcs from git feat/zk to crates.io 0.3.0\n\nAdapt to API changes: Polynomial::commit now takes Mode type param\nand returns commit_blind; prove() dropped RNG arg, takes commit_blind;\nsetup constructors take only max_log_n; commit_zk merged into commit.\n\n* rename Standard → Clear for sumcheck proof variant\n\n* rename append_point → append_commitment in transcript API\n\n* refactor(dory): remove dense polynomial replication, use zero-padding\n\nDense polynomials (RdInc, RamInc) were replicated K times in the Dory\nmatrix to match one-hot polynomial dimensions. This is unnecessary —\nzero-padding is correct and simpler.\n\n- Remove DoryHintPad enum, simplify DoryOpeningProofHint to newtype\n- combine_hints: always zero-pad instead of replicate/zero-pad\n- aggregate_chunks: remove dense replication\n- Streaming VMP: use row_weight instead of row_factor for dense polys\n- Always apply lagrange_factor via EqPolynomial::zero_selector for\n  dense claims in prover/verifier\n\n---------\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-03-03T11:06:09-05:00",
+          "tree_id": "3f8daf172bc5e43937fc9e8c6e342ef2e68b06a8",
+          "url": "https://github.com/a16z/jolt/commit/62e9f945daad12c2e102e26f74a7ae5aa6f35745"
+        },
+        "date": 1772557354350,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0434,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 791520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4725,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 471032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 472100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0477,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 474516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.0305,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 462912,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8957,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 470280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.6898,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 792440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 1.0087,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 470004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.9925,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 470036,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7702,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 474012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.6204,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1016876,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.2791,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 610468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 82.3627,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2127056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.6281,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 469920,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6826,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 474124,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.2103,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 793552,
             "unit": "KB",
             "extra": ""
           }
