@@ -472,7 +472,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                     let mut ra_eval_pairs = vec![(F::zero(), F::zero()); self.ra.len()];
                     let mut ra_prod_evals = vec![F::zero(); degree - 1];
                     let mut evals_per_stage: [_; N_STAGES] =
-                        array::from_fn(|_| vec![F::Unreduced::zero(); degree - 1]);
+                        array::from_fn(|_| vec![F::UnreducedProductAccum::zero(); degree - 1]);
 
                     for j_lo in 0..in_len {
                         let j = j_lo + (j_hi << in_n_vars);
@@ -489,7 +489,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                             let eq_in_eval = self.gruen_eq_polys[stage].E_in_current()[j_lo];
                             for i in 0..degree - 1 {
                                 evals_per_stage[stage][i] +=
-                                    eq_in_eval.mul_unreduced::<9>(ra_prod_evals[i]);
+                                    eq_in_eval.mul_to_product_accum(ra_prod_evals[i]);
                             }
                         }
                     }
@@ -498,7 +498,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                         let eq_out_eval = self.gruen_eq_polys[stage].E_out_current()[j_hi];
                         evals_per_stage[stage]
                             .iter()
-                            .map(|v| eq_out_eval * F::from_montgomery_reduce(*v))
+                            .map(|v| eq_out_eval * F::reduce_product_accum(*v))
                             .collect()
                     })
                 })

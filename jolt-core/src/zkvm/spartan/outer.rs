@@ -32,7 +32,7 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::{Acc5U, Acc6S, Acc7S, Acc8S};
+use crate::utils::accumulation::{FullAccumS, MedAccumS, SmallAccumU, WideAccumS};
 use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
@@ -216,7 +216,7 @@ impl<F: JoltField> OuterUniSkipProver<F> {
 
         split_eq
             .par_fold_out_in(
-                || [Acc8S::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
+                || [FullAccumS::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
                 |inner, g, x_in, e_in| {
                     // Decode (x_out, x_in') from g and choose group by the last x_in bit
                     let x_out = g >> num_x_in_bits;
@@ -241,10 +241,10 @@ impl<F: JoltField> OuterUniSkipProver<F> {
                     }
                 },
                 |_x_out, e_out, inner| {
-                    let mut out = [F::Unreduced::<9>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
+                    let mut out = [F::UnreducedProductAccum::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
                     for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
                         let reduced = inner[j].montgomery_reduce();
-                        out[j] = e_out.mul_unreduced::<9>(reduced);
+                        out[j] = e_out.mul_to_product_accum(reduced);
                     }
                     out
                 },
@@ -255,7 +255,7 @@ impl<F: JoltField> OuterUniSkipProver<F> {
                     a
                 },
             )
-            .map(|x| F::from_montgomery_reduce::<9>(x) * outer_scale)
+            .map(|x| F::reduce_product_accum(x) * outer_scale)
     }
 }
 
@@ -811,9 +811,9 @@ impl<F: JoltField> OuterSharedState<F> {
     )]
     fn extrapolate_from_binary_grid_to_tertiary_grid(
         &self,
-        acc_az: &mut [Acc5U<F>],
-        acc_bz_first: &mut [Acc6S<F>],
-        acc_bz_second: &mut [Acc7S<F>],
+        acc_az: &mut [SmallAccumU<F>],
+        acc_bz_first: &mut [MedAccumS<F>],
+        acc_bz_second: &mut [WideAccumS<F>],
         grid_az: &mut [F],
         grid_bz: &mut [F],
         jlen: usize,
@@ -835,9 +835,9 @@ impl<F: JoltField> OuterSharedState<F> {
             .zip(acc_bz_first.par_iter_mut())
             .zip(acc_bz_second.par_iter_mut())
             .for_each(|((a, b), c)| {
-                *a = Acc5U::zero();
-                *b = Acc6S::zero();
-                *c = Acc7S::zero();
+                *a = SmallAccumU::zero();
+                *b = MedAccumS::zero();
+                *c = WideAccumS::zero();
             });
 
         acc_az
@@ -923,15 +923,15 @@ impl<F: JoltField> OuterSharedState<F> {
             .par_iter()
             .enumerate()
             .map(|(out_idx, out_val)| {
-                let mut local_res_unr = vec![F::Unreduced::<9>::zero(); three_pow_dim];
+                let mut local_res_unr = vec![F::UnreducedProductAccum::zero(); three_pow_dim];
                 let mut buff_a: Vec<F> = vec![F::zero(); three_pow_dim];
                 let mut buff_b = vec![F::zero(); three_pow_dim];
                 let mut tmp = vec![F::zero(); three_pow_dim];
                 let mut grid_a = vec![F::zero(); jlen];
                 let mut grid_b = vec![F::zero(); jlen];
-                let mut acc_az = vec![Acc5U::<F>::zero(); jlen];
-                let mut acc_bz_first = vec![Acc6S::<F>::zero(); jlen];
-                let mut acc_bz_second = vec![Acc7S::<F>::zero(); jlen];
+                let mut acc_az = vec![SmallAccumU::<F>::zero(); jlen];
+                let mut acc_bz_first = vec![MedAccumS::<F>::zero(); jlen];
+                let mut acc_bz_second = vec![WideAccumS::<F>::zero(); jlen];
 
                 for (in_idx, in_val) in e_in.iter().enumerate() {
                     let i = out_idx * e_in_len + in_idx;
@@ -965,25 +965,25 @@ impl<F: JoltField> OuterSharedState<F> {
 
                     let e_in_val = *in_val;
                     if window_size == 1 {
-                        local_res_unr[0] += e_in_val.mul_unreduced::<9>(buff_a[0] * buff_b[0]);
-                        local_res_unr[2] += e_in_val.mul_unreduced::<9>(buff_a[2] * buff_b[2]);
+                        local_res_unr[0] += e_in_val.mul_to_product_accum(buff_a[0] * buff_b[0]);
+                        local_res_unr[2] += e_in_val.mul_to_product_accum(buff_a[2] * buff_b[2]);
                     } else {
                         for idx in 0..three_pow_dim {
                             let val = buff_a[idx] * buff_b[idx];
-                            local_res_unr[idx] += e_in_val.mul_unreduced::<9>(val);
+                            local_res_unr[idx] += e_in_val.mul_to_product_accum(val);
                         }
                     }
                 }
 
                 let e_out_val = *out_val;
                 for idx in 0..three_pow_dim {
-                    let inner_red = F::from_montgomery_reduce::<9>(local_res_unr[idx]);
-                    local_res_unr[idx] = e_out_val.mul_unreduced::<9>(inner_red);
+                    let inner_red = F::reduce_product_accum(local_res_unr[idx]);
+                    local_res_unr[idx] = e_out_val.mul_to_product_accum(inner_red);
                 }
                 local_res_unr
             })
             .reduce(
-                || vec![F::Unreduced::<9>::zero(); three_pow_dim],
+                || vec![F::UnreducedProductAccum::zero(); three_pow_dim],
                 |mut acc, local| {
                     for idx in 0..three_pow_dim {
                         acc[idx] += local[idx];
@@ -994,7 +994,7 @@ impl<F: JoltField> OuterSharedState<F> {
 
         let res: Vec<F> = res_unr
             .into_iter()
-            .map(|unr| F::from_montgomery_reduce::<9>(unr))
+            .map(|unr| F::reduce_product_accum(unr))
             .collect();
         self.t_prime_poly = Some(MultiquadraticPolynomial::new(window_size, res));
     }
@@ -1162,12 +1162,12 @@ impl<F: JoltField> OuterLinearStage<F> {
                     let mut az_grid = vec![F::zero(); grid_size];
                     let mut bz_grid = vec![F::zero(); grid_size];
 
-                    let mut acc_az: Vec<Acc5U<F>> = vec![Acc5U::zero(); grid_size];
-                    let mut acc_bz_first: Vec<Acc6S<F>> = vec![Acc6S::zero(); grid_size];
-                    let mut acc_bz_second: Vec<Acc7S<F>> = vec![Acc7S::zero(); grid_size];
+                    let mut acc_az: Vec<SmallAccumU<F>> = vec![SmallAccumU::zero(); grid_size];
+                    let mut acc_bz_first: Vec<MedAccumS<F>> = vec![MedAccumS::zero(); grid_size];
+                    let mut acc_bz_second: Vec<WideAccumS<F>> = vec![WideAccumS::zero(); grid_size];
 
-                    let mut inner_sum: Vec<F::Unreduced<9>> =
-                        vec![F::Unreduced::<9>::zero(); three_pow_dim];
+                    let mut inner_sum: Vec<F::UnreducedProductAccum> =
+                        vec![F::UnreducedProductAccum::zero(); three_pow_dim];
                     let mut current_x_out = start_pair / num_x_in_vals;
 
                     for pair_idx in start_pair..end_pair {
@@ -1177,17 +1177,16 @@ impl<F: JoltField> OuterLinearStage<F> {
                         if x_out_val != current_x_out {
                             let e_out = E_out[current_x_out];
                             for idx in 0..three_pow_dim {
-                                local_ans[idx] +=
-                                    F::from_montgomery_reduce::<9>(inner_sum[idx]) * e_out;
-                                inner_sum[idx] = F::Unreduced::<9>::zero();
+                                local_ans[idx] += F::reduce_product_accum(inner_sum[idx]) * e_out;
+                                inner_sum[idx] = F::UnreducedProductAccum::zero();
                             }
                             current_x_out = x_out_val;
                         }
 
                         for x_val in 0..grid_size {
-                            acc_az[x_val] = Acc5U::zero();
-                            acc_bz_first[x_val] = Acc6S::zero();
-                            acc_bz_second[x_val] = Acc7S::zero();
+                            acc_az[x_val] = SmallAccumU::zero();
+                            acc_bz_first[x_val] = MedAccumS::zero();
+                            acc_bz_second[x_val] = WideAccumS::zero();
                         }
 
                         let base_idx = (x_out_val << (num_x_in_bits + window_size + num_r_bits))
@@ -1254,19 +1253,19 @@ impl<F: JoltField> OuterLinearStage<F> {
                         if window_size == 1 {
                             let prod0 = buff_a[0] * buff_b[0];
                             let prod2 = buff_a[2] * buff_b[2];
-                            inner_sum[0] += prod0.mul_unreduced::<9>(e_in);
-                            inner_sum[2] += prod2.mul_unreduced::<9>(e_in);
+                            inner_sum[0] += prod0.mul_to_product_accum(e_in);
+                            inner_sum[2] += prod2.mul_to_product_accum(e_in);
                         } else {
                             for idx in 0..three_pow_dim {
                                 let prod = buff_a[idx] * buff_b[idx];
-                                inner_sum[idx] += prod.mul_unreduced::<9>(e_in);
+                                inner_sum[idx] += prod.mul_to_product_accum(e_in);
                             }
                         }
                     }
 
                     let e_out = E_out[current_x_out];
                     for idx in 0..three_pow_dim {
-                        local_ans[idx] += F::from_montgomery_reduce::<9>(inner_sum[idx]) * e_out;
+                        local_ans[idx] += F::reduce_product_accum(inner_sum[idx]) * e_out;
                     }
 
                     local_ans

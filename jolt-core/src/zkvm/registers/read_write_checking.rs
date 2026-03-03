@@ -453,23 +453,20 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                     params.gamma,
                 )
             })
-            .fold_with([F::Unreduced::<5>::zero(); 2], |running, new| {
+            .fold_with([F::UnreducedMulU64::zero(); 2], |running, new| {
                 [
-                    running[0] + new[0].as_unreduced_ref(),
-                    running[1] + new[1].as_unreduced_ref(),
+                    running[0] + new[0].to_unreduced(),
+                    running[1] + new[1].to_unreduced(),
                 ]
             })
             .reduce(
-                || [F::Unreduced::<5>::zero(); 2],
+                || [F::UnreducedMulU64::zero(); 2],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             );
 
         UniPoly::from_evals_and_hint(
             previous_claim,
-            &[
-                F::from_barrett_reduce(evals[0]),
-                F::from_barrett_reduce(evals[1]),
-            ],
+            &[F::reduce_mul_u64(evals[0]), F::reduce_mul_u64(evals[1])],
         )
     }
 
@@ -517,15 +514,15 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                                     + wa_evals[2] * (val_evals[2] + inc_evals[2]),
                             ]
                         })
-                        .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                        .fold_with([F::UnreducedMulU64::zero(); DEGREE], |running, new| {
                             [
-                                running[0] + new[0].as_unreduced_ref(),
-                                running[1] + new[1].as_unreduced_ref(),
-                                running[2] + new[2].as_unreduced_ref(),
+                                running[0] + new[0].to_unreduced(),
+                                running[1] + new[1].to_unreduced(),
+                                running[2] + new[2].to_unreduced(),
                             ]
                         })
                         .reduce(
-                            || [F::Unreduced::<5>::zero(); DEGREE],
+                            || [F::UnreducedMulU64::zero(); DEGREE],
                             |running, new| {
                                 [
                                     running[0] + new[0],
@@ -535,20 +532,20 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                             },
                         );
                     [
-                        eq_evals[0] * F::from_barrett_reduce(inner[0]),
-                        eq_evals[1] * F::from_barrett_reduce(inner[1]),
-                        eq_evals[2] * F::from_barrett_reduce(inner[2]),
+                        eq_evals[0] * F::reduce_mul_u64(inner[0]),
+                        eq_evals[1] * F::reduce_mul_u64(inner[1]),
+                        eq_evals[2] * F::reduce_mul_u64(inner[2]),
                     ]
                 })
-                .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                .fold_with([F::UnreducedMulU64::zero(); DEGREE], |running, new| {
                     [
-                        running[0] + new[0].as_unreduced_ref(),
-                        running[1] + new[1].as_unreduced_ref(),
-                        running[2] + new[2].as_unreduced_ref(),
+                        running[0] + new[0].to_unreduced(),
+                        running[1] + new[1].to_unreduced(),
+                        running[2] + new[2].to_unreduced(),
                     ]
                 })
                 .reduce(
-                    || [F::Unreduced::<5>::zero(); DEGREE],
+                    || [F::UnreducedMulU64::zero(); DEGREE],
                     |running, new| {
                         [
                             running[0] + new[0],
@@ -561,9 +558,9 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             UniPoly::from_evals_and_hint(
                 previous_claim,
                 &[
-                    F::from_barrett_reduce(evals[0]),
-                    F::from_barrett_reduce(evals[1]),
-                    F::from_barrett_reduce(evals[2]),
+                    F::reduce_mul_u64(evals[0]),
+                    F::reduce_mul_u64(evals[1]),
+                    F::reduce_mul_u64(evals[2]),
                 ],
             )
         } else {
@@ -583,22 +580,22 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                         ra_evals[1] * val_evals[1] + wa_evals[1] * (val_evals[1] + inc_eval),
                     ]
                 })
-                .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                .fold_with([F::UnreducedMulU64::zero(); DEGREE], |running, new| {
                     [
-                        running[0] + new[0].as_unreduced_ref(),
-                        running[1] + new[1].as_unreduced_ref(),
+                        running[0] + new[0].to_unreduced(),
+                        running[1] + new[1].to_unreduced(),
                     ]
                 })
                 .reduce(
-                    || [F::Unreduced::<5>::zero(); DEGREE],
+                    || [F::UnreducedMulU64::zero(); DEGREE],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
 
             UniPoly::from_evals_and_hint(
                 previous_claim,
                 &[
-                    eq_eval * F::from_barrett_reduce(evals[0]),
-                    eq_eval * F::from_barrett_reduce(evals[1]),
+                    eq_eval * F::reduce_mul_u64(evals[0]),
+                    eq_eval * F::reduce_mul_u64(evals[1]),
                 ],
             )
         }

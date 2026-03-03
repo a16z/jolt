@@ -27,7 +27,7 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::Acc8S;
+use crate::utils::accumulation::FullAccumS;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -243,7 +243,7 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
         // Fold-out-in across (x_out, x_in) using signed Montgomery accumulators, mirroring outer.rs
         split_eq
             .par_fold_out_in(
-                || [Acc8S::<F>::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
+                || [FullAccumS::<F>::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
                 |inner, g, _x_in, e_in| {
                     // Materialize product-cycle row with raw types for this group index
                     let row = ProductCycleInputs::from_trace::<F>(trace, g);
@@ -259,10 +259,10 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
                 },
                 |_x_out, e_out, inner| {
                     let mut out =
-                        [F::Unreduced::<9>::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
+                        [F::UnreducedProductAccum::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
                     for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
                         let reduced = inner[j].montgomery_reduce();
-                        out[j] = e_out.mul_unreduced::<9>(reduced);
+                        out[j] = e_out.mul_to_product_accum(reduced);
                     }
                     out
                 },
@@ -273,7 +273,7 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
                     a
                 },
             )
-            .map(|x| F::from_montgomery_reduce::<9>(x) * outer_scale)
+            .map(|x| F::reduce_product_accum(x) * outer_scale)
     }
 }
 
@@ -686,10 +686,15 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
             .zip(right_bound.par_chunks_exact_mut(2 * num_x_in_vals))
             .enumerate()
             .fold(
-                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                || {
+                    (
+                        F::UnreducedProductAccum::zero(),
+                        F::UnreducedProductAccum::zero(),
+                    )
+                },
                 |(mut acc0, mut acci), (x_out_val, (left_chunk, right_chunk))| {
-                    let mut inner_sum0 = F::Unreduced::<9>::zero();
-                    let mut inner_sum_inf = F::Unreduced::<9>::zero();
+                    let mut inner_sum0 = F::UnreducedProductAccum::zero();
+                    let mut inner_sum_inf = F::UnreducedProductAccum::zero();
                     for x_in_val in 0..num_x_in_vals {
                         let base_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
                         let idx_lo = base_idx << 1;
@@ -711,8 +716,8 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
                         let p0 = left0 * right0;
                         let slope = (left1 - left0) * (right1 - right0);
                         let e_in = split_eq_poly.E_in_current()[x_in_val];
-                        inner_sum0 += e_in.mul_unreduced::<9>(p0);
-                        inner_sum_inf += e_in.mul_unreduced::<9>(slope);
+                        inner_sum0 += e_in.mul_to_product_accum(p0);
+                        inner_sum_inf += e_in.mul_to_product_accum(slope);
                         let off = 2 * x_in_val;
                         left_chunk[off] = left0;
                         left_chunk[off + 1] = left1;
@@ -720,21 +725,26 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
                         right_chunk[off + 1] = right1;
                     }
                     let e_out = split_eq_poly.E_out_current()[x_out_val];
-                    let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
-                    let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
-                    acc0 += e_out.mul_unreduced::<9>(reduced0);
-                    acci += e_out.mul_unreduced::<9>(reduced_inf);
+                    let reduced0 = F::reduce_product_accum(inner_sum0);
+                    let reduced_inf = F::reduce_product_accum(inner_sum_inf);
+                    acc0 += e_out.mul_to_product_accum(reduced0);
+                    acci += e_out.mul_to_product_accum(reduced_inf);
                     (acc0, acci)
                 },
             )
             .reduce(
-                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                || {
+                    (
+                        F::UnreducedProductAccum::zero(),
+                        F::UnreducedProductAccum::zero(),
+                    )
+                },
                 |a, b| (a.0 + b.0, a.1 + b.1),
             );
 
         (
-            F::from_montgomery_reduce::<9>(t0_acc_unr),
-            F::from_montgomery_reduce::<9>(t_inf_acc_unr),
+            F::reduce_product_accum(t0_acc_unr),
+            F::reduce_product_accum(t_inf_acc_unr),
             DensePolynomial::new(left_bound),
             DensePolynomial::new(right_bound),
         )
@@ -744,7 +754,7 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
     fn remaining_quadratic_evals(&self) -> (F, F) {
         let n = self.left.len();
         debug_assert_eq!(n, self.right.len());
-        let [t0, tinf] = self.split_eq_poly.par_fold_out_in_unreduced::<9, 2>(&|g| {
+        let [t0, tinf] = self.split_eq_poly.par_fold_out_in_unreduced::<2>(&|g| {
             let l0 = self.left[2 * g];
             let l1 = self.left[2 * g + 1];
             let r0 = self.right[2 * g];

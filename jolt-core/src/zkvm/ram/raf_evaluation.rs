@@ -289,15 +289,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
 
                 // Compute the product evaluations
                 [
-                    ra_evals[0].mul_unreduced::<9>(unmap_evals[0]),
-                    ra_evals[1].mul_unreduced::<9>(unmap_evals[1]),
+                    ra_evals[0].mul_to_product_accum(unmap_evals[0]),
+                    ra_evals[1].mul_to_product_accum(unmap_evals[1]),
                 ]
             })
             .reduce(
-                || [F::Unreduced::zero(); DEGREE_BOUND],
+                || [F::UnreducedProductAccum::zero(); DEGREE_BOUND],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             )
-            .map(F::from_montgomery_reduce);
+            .map(F::reduce_product_accum);
 
         UniPoly::from_evals_and_hint(previous_claim, &evals)
     }

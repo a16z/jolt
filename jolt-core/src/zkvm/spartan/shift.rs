@@ -634,10 +634,12 @@ impl<F: JoltField> Phase1State<F> {
                     ),
                 )| {
                     let chunk_len = Q_0_for_r_outer_chunk.len();
-                    let mut Q_0_for_r_outer_unreduced = [F::Unreduced::<9>::zero(); BLOCK_SIZE];
-                    let mut Q_1_for_r_outer_unreduced = [F::Unreduced::<9>::zero(); BLOCK_SIZE];
-                    let mut Q_0_for_r_prod_unreduced = [F::Unreduced::<5>::zero(); BLOCK_SIZE];
-                    let mut Q_1_for_r_prod_unreduced = [F::Unreduced::<5>::zero(); BLOCK_SIZE];
+                    let mut Q_0_for_r_outer_unreduced =
+                        [F::UnreducedProductAccum::zero(); BLOCK_SIZE];
+                    let mut Q_1_for_r_outer_unreduced =
+                        [F::UnreducedProductAccum::zero(); BLOCK_SIZE];
+                    let mut Q_0_for_r_prod_unreduced = [F::UnreducedMulU64::zero(); BLOCK_SIZE];
+                    let mut Q_1_for_r_prod_unreduced = [F::UnreducedMulU64::zero(); BLOCK_SIZE];
 
                     for x_hi in 0..1 << suffix_n_vars {
                         for i in 0..chunk_len {
@@ -660,29 +662,27 @@ impl<F: JoltField> Phase1State<F> {
                                 v += params.gamma_powers[3];
                             }
                             Q_0_for_r_outer_unreduced[i] +=
-                                v.mul_unreduced::<9>(suffix_0_for_r_outer[x_hi]);
+                                v.mul_to_product_accum(suffix_0_for_r_outer[x_hi]);
                             Q_1_for_r_outer_unreduced[i] +=
-                                v.mul_unreduced::<9>(suffix_1_for_r_outer[x_hi]);
+                                v.mul_to_product_accum(suffix_1_for_r_outer[x_hi]);
 
                             // Q += suffix * (1 - is_noop)
                             if !is_noop {
                                 Q_0_for_r_prod_unreduced[i] +=
-                                    *suffix_0_for_r_prod[x_hi].as_unreduced_ref();
+                                    suffix_0_for_r_prod[x_hi].to_unreduced();
                                 Q_1_for_r_prod_unreduced[i] +=
-                                    *suffix_1_for_r_prod[x_hi].as_unreduced_ref();
+                                    suffix_1_for_r_prod[x_hi].to_unreduced();
                             }
                         }
                     }
 
                     for i in 0..chunk_len {
                         Q_0_for_r_outer_chunk[i] =
-                            F::from_montgomery_reduce(Q_0_for_r_outer_unreduced[i]);
+                            F::reduce_product_accum(Q_0_for_r_outer_unreduced[i]);
                         Q_1_for_r_outer_chunk[i] =
-                            F::from_montgomery_reduce(Q_1_for_r_outer_unreduced[i]);
-                        Q_0_for_r_prod_chunk[i] =
-                            F::from_barrett_reduce(Q_0_for_r_prod_unreduced[i]);
-                        Q_1_for_r_prod_chunk[i] =
-                            F::from_barrett_reduce(Q_1_for_r_prod_unreduced[i]);
+                            F::reduce_product_accum(Q_1_for_r_outer_unreduced[i]);
+                        Q_0_for_r_prod_chunk[i] = F::reduce_mul_u64(Q_0_for_r_prod_unreduced[i]);
+                        Q_1_for_r_prod_chunk[i] = F::reduce_mul_u64(Q_1_for_r_prod_unreduced[i]);
                     }
                 },
             );
@@ -817,11 +817,11 @@ impl<F: JoltField> Phase2State<F> {
                     is_noop_eval,
                     trace_chunk,
                 )| {
-                    let mut unexpanded_pc_eval_unreduced = F::Unreduced::<5>::zero();
-                    let mut pc_eval_unreduced = F::Unreduced::<6>::zero();
-                    let mut is_virtual_eval_unreduced = F::Unreduced::<5>::zero();
-                    let mut is_first_in_sequence_eval_unreduced = F::Unreduced::<5>::zero();
-                    let mut is_noop_eval_unreduced = F::Unreduced::<5>::zero();
+                    let mut unexpanded_pc_eval_unreduced = F::UnreducedMulU64::zero();
+                    let mut pc_eval_unreduced = F::UnreducedMulU128::zero();
+                    let mut is_virtual_eval_unreduced = F::UnreducedMulU64::zero();
+                    let mut is_first_in_sequence_eval_unreduced = F::UnreducedMulU64::zero();
+                    let mut is_noop_eval_unreduced = F::UnreducedMulU64::zero();
 
                     for (i, cycle) in trace_chunk.iter().enumerate() {
                         let ShiftSumcheckCycleState {
@@ -835,22 +835,22 @@ impl<F: JoltField> Phase2State<F> {
                         unexpanded_pc_eval_unreduced += eq_eval.mul_u64_unreduced(unexpanded_pc);
                         pc_eval_unreduced += eq_eval.mul_u64_unreduced(pc);
                         if is_virtual {
-                            is_virtual_eval_unreduced += *eq_eval.as_unreduced_ref();
+                            is_virtual_eval_unreduced += eq_eval.to_unreduced();
                         }
                         if is_first_in_sequence {
-                            is_first_in_sequence_eval_unreduced += *eq_eval.as_unreduced_ref();
+                            is_first_in_sequence_eval_unreduced += eq_eval.to_unreduced();
                         }
                         if is_noop {
-                            is_noop_eval_unreduced += *eq_eval.as_unreduced_ref();
+                            is_noop_eval_unreduced += eq_eval.to_unreduced();
                         }
                     }
 
-                    *unexpanded_pc_eval = F::from_barrett_reduce(unexpanded_pc_eval_unreduced);
-                    *pc_eval = F::from_barrett_reduce(pc_eval_unreduced);
-                    *is_virtual_eval = F::from_barrett_reduce(is_virtual_eval_unreduced);
+                    *unexpanded_pc_eval = F::reduce_mul_u64(unexpanded_pc_eval_unreduced);
+                    *pc_eval = F::reduce_mul_u128(pc_eval_unreduced);
+                    *is_virtual_eval = F::reduce_mul_u64(is_virtual_eval_unreduced);
                     *is_first_in_sequence_eval =
-                        F::from_barrett_reduce(is_first_in_sequence_eval_unreduced);
-                    *is_noop_eval = F::from_barrett_reduce(is_noop_eval_unreduced);
+                        F::reduce_mul_u64(is_first_in_sequence_eval_unreduced);
+                    *is_noop_eval = F::reduce_mul_u64(is_noop_eval_unreduced);
                 },
             );
 
