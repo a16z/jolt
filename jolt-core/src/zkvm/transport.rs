@@ -14,7 +14,6 @@ use std::io::{self, Read, Write};
 /// Maximum number of bytes in a u64 varint (LEB128-style).
 const VARINT_U64_MAX_BYTES: usize = 10;
 
-
 #[inline]
 pub fn signature_check<R: Read>(r: &mut R, expected: &[u8]) -> io::Result<()> {
     let mut got = vec![0u8; expected.len()];

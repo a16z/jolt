@@ -11,7 +11,9 @@ mod wrappers;
 #[cfg(test)]
 mod tests;
 
-pub use commitment_scheme::DoryCommitmentScheme;
+#[cfg(feature = "zk")]
+pub use commitment_scheme::bind_opening_inputs_zk;
+pub use commitment_scheme::{bind_opening_inputs, DoryCommitmentScheme};
 pub use dory_globals::{DoryContext, DoryGlobals, DoryLayout};
 pub use jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 pub use wrappers::{

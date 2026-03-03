@@ -13,6 +13,8 @@ use super::{
     compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
 };
 use crate::field::JoltField;
+use crate::poly::commitment::dory::DoryGlobals;
+use crate::utils::math::Math;
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]
@@ -767,8 +769,52 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
 
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
+            MultilinearPolynomial::RLC(poly) => {
+                let num_columns = DoryGlobals::get_num_columns();
+                let num_rows = DoryGlobals::get_max_num_rows();
+                let sigma = num_columns.log_2();
+                let nu = num_rows.log_2();
+
+                let mut left_vec = vec![F::zero(); 1 << nu];
+                let mut right_vec = vec![F::zero(); 1 << sigma];
+
+                match r.len() {
+                    0 => {
+                        left_vec[0] = F::one();
+                        right_vec[0] = F::one();
+                    }
+                    n if n <= sigma => {
+                        let right_evals = EqPolynomial::evals(r);
+                        right_vec[..right_evals.len()].copy_from_slice(&right_evals);
+                        left_vec[0] = F::one();
+                    }
+                    n if n <= nu + sigma => {
+                        let (r_rows, r_cols) = r.split_at(nu);
+                        let right_evals = EqPolynomial::evals(r_cols);
+                        right_vec.copy_from_slice(&right_evals);
+
+                        let left_evals = EqPolynomial::evals(r_rows);
+                        left_vec[..left_evals.len()].copy_from_slice(&left_evals);
+                    }
+                    _ => {
+                        let r_rows = &r[..nu];
+                        let r_cols = &r[r.len() - sigma..];
+                        let right_evals = EqPolynomial::evals(r_cols);
+                        right_vec.copy_from_slice(&right_evals);
+
+                        let left_evals = EqPolynomial::evals(r_rows);
+                        left_vec.copy_from_slice(&left_evals);
+                    }
+                }
+
+                let v_vec = poly.vector_matrix_product(&left_vec);
+                v_vec
+                    .iter()
+                    .zip(right_vec.iter())
+                    .map(|(v, r)| *v * *r)
+                    .sum()
+            }
             MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
-            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
     }
 

@@ -200,7 +200,7 @@ impl OneHotConfig {
 /// Full one-hot parameters with cached derived values.
 ///
 /// This struct is NOT serialized in the proof. It is constructed by the prover
-/// and verifier from `OneHotConfig` plus the proof parameters (bytecode_K, ram_K).
+/// and verifier from `OneHotConfig`, `bytecode_K` (from preprocessing), and `ram_K` (from proof).
 #[derive(Allocative, Clone, Debug, Default)]
 pub struct OneHotParams {
     pub log_k_chunk: usize,

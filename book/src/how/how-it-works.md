@@ -22,6 +22,7 @@ This section is comprised of the following subsections:
     - [Batched opening proof](./architecture/opening-proof.md)
 - [Twist and Shout](./twist-shout.md)
 - [Dory](./dory.md)
+- [BlindFold (Zero Knowledge)](./blindfold.md)
 - [Optimizations](./optimizations/optimizations.md)
     - [Batched sumcheck](./optimizations/batched-sumcheck.md)
     - [Batched openings](./optimizations/batched-openings.md)

@@ -459,7 +459,6 @@ impl DoryGlobals {
         *UNTRUSTED_ADVICE_MAX_NUM_ROWS.write().unwrap() = None;
         *UNTRUSTED_ADVICE_NUM_COLUMNS.write().unwrap() = None;
 
-        // Reset context to Main
         CURRENT_CONTEXT.store(0, Ordering::SeqCst);
     }
 

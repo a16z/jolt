@@ -426,6 +426,10 @@ impl<F: JoltField> MulAssign<&F> for UniPoly<F> {
 }
 
 impl<F: JoltField> CompressedUniPoly<F> {
+    pub fn get_compressed_coeffs(&self) -> &[F] {
+        &self.coeffs_except_linear_term
+    }
+
     // we require eval(0) + eval(1) = hint, so we can solve for the linear term as:
     // linear_term = hint - 2 * constant_term - deg2 term - deg3 term
     pub fn decompress(&self, hint: &F) -> UniPoly<F> {

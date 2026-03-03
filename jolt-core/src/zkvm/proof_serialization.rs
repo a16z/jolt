@@ -1,21 +1,28 @@
-use std::{
-    collections::BTreeMap,
-    fs::File,
-    io::{Read, Write},
-};
+#[cfg(not(feature = "zk"))]
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
 
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use num::FromPrimitive;
 
+#[cfg(not(feature = "zk"))]
+use crate::poly::opening_proof::{OpeningPoint, Openings};
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::BlindFoldProof;
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
-        opening_proof::{OpeningId, OpeningPoint, Openings, SumcheckId},
+        opening_proof::{OpeningId, PolynomialId, SumcheckId},
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
+};
+use crate::{
+    subprotocols::{
+        sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
+    },
     transcripts::Transcript,
     zkvm::{
         config::{OneHotConfig, ReadWriteConfig},
@@ -23,20 +30,14 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use crate::{
-    poly::opening_proof::PolynomialId, subprotocols::univariate_skip::UniSkipFirstRoundProof,
-};
 
 use crate::zkvm::transport;
 
-/// Stream signature for `JoltProof` bytes.
-///
-/// Last byte is the format version (bump when the wire format changes).
 const PROOF_SIGNATURE: &[u8; 8] = b"JOLTPRF\x01";
 
-// Frame tags for proof sections. Decoding is strict: unknown tags are rejected.
 const TAG_PARAMS: u8 = 1;
 const TAG_COMMITMENTS: u8 = 2;
+#[cfg(not(feature = "zk"))]
 const TAG_OPENING_CLAIMS: u8 = 3;
 const TAG_STAGE1: u8 = 10;
 const TAG_STAGE2: u8 = 11;
@@ -46,30 +47,37 @@ const TAG_STAGE5: u8 = 14;
 const TAG_STAGE6: u8 = 15;
 const TAG_STAGE7: u8 = 16;
 const TAG_JOINT_OPENING: u8 = 20;
+#[cfg(feature = "zk")]
+const TAG_BLINDFOLD: u8 = 21;
 
 const MAX_PARAMS_LEN: u64 = 16 * 1024;
 const MAX_COMMITMENTS_LEN: u64 = 1024 * 1024;
+#[cfg(not(feature = "zk"))]
 const MAX_OPENING_CLAIMS_LEN: u64 = 1024 * 1024;
 const MAX_STAGE_LEN: u64 = 1024 * 1024;
 const MAX_JOINT_OPENING_LEN: u64 = 1024 * 1024;
+#[cfg(feature = "zk")]
+const MAX_BLINDFOLD_LEN: u64 = 16 * 1024 * 1024;
 
-pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
-    pub opening_claims: Claims<F>,
+pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub commitments: Vec<PCS::Commitment>,
-    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
-    pub stage1_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProof<F, FS>,
-    pub stage2_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage3_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage4_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage5_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage6_sumcheck_proof: SumcheckInstanceProof<F, FS>,
-    pub stage7_sumcheck_proof: SumcheckInstanceProof<F, FS>,
+    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
+    pub stage1_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
+    pub stage2_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage3_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage4_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage6_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    #[cfg(feature = "zk")]
+    pub blindfold_proof: BlindFoldProof<F, C>,
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
+    #[cfg(not(feature = "zk"))]
+    pub opening_claims: Claims<F>,
     pub trace_length: usize,
     pub ram_K: usize,
-    pub bytecode_K: usize,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
     pub dory_layout: DoryLayout,
@@ -107,8 +115,8 @@ macro_rules! read_singleton {
     }};
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
-    for JoltProof<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalSerialize for JoltProof<F, C, PCS, FS>
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -118,15 +126,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         transport::signature_write(&mut writer, PROOF_SIGNATURE).map_err(io_err)?;
 
         let params_len = (transport::varint_u64_len(self.trace_length as u64)
-            + transport::varint_u64_len(self.ram_K as u64)
-            + transport::varint_u64_len(self.bytecode_K as u64)) as u64
+            + transport::varint_u64_len(self.ram_K as u64)) as u64
             + self.rw_config.serialized_size(compress) as u64
             + self.one_hot_config.serialized_size(compress) as u64
             + self.dory_layout.serialized_size(compress) as u64;
         transport::write_frame_header(&mut writer, TAG_PARAMS, params_len).map_err(io_err)?;
         transport::write_varint_u64(&mut writer, self.trace_length as u64).map_err(io_err)?;
         transport::write_varint_u64(&mut writer, self.ram_K as u64).map_err(io_err)?;
-        transport::write_varint_u64(&mut writer, self.bytecode_K as u64).map_err(io_err)?;
         self.rw_config.serialize_with_mode(&mut writer, compress)?;
         self.one_hot_config
             .serialize_with_mode(&mut writer, compress)?;
@@ -160,23 +166,27 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             }
         }
 
-        let claims_count_len = transport::varint_u64_len(self.opening_claims.0.len() as u64) as u64;
-        let claims_items_len: u64 = self
-            .opening_claims
-            .0
-            .iter()
-            .map(|(k, (_p, claim))| {
-                (k.serialized_size(compress) + claim.serialized_size(compress)) as u64
-            })
-            .sum();
-        let claims_len = claims_count_len + claims_items_len;
-        transport::write_frame_header(&mut writer, TAG_OPENING_CLAIMS, claims_len)
-            .map_err(io_err)?;
-        transport::write_varint_u64(&mut writer, self.opening_claims.0.len() as u64)
-            .map_err(io_err)?;
-        for (k, (_p, claim)) in self.opening_claims.0.iter() {
-            k.serialize_with_mode(&mut writer, compress)?;
-            claim.serialize_with_mode(&mut writer, compress)?;
+        #[cfg(not(feature = "zk"))]
+        {
+            let claims_count_len =
+                transport::varint_u64_len(self.opening_claims.0.len() as u64) as u64;
+            let claims_items_len: u64 = self
+                .opening_claims
+                .0
+                .iter()
+                .map(|(k, (_p, claim))| {
+                    (k.serialized_size(compress) + claim.serialized_size(compress)) as u64
+                })
+                .sum();
+            let claims_len = claims_count_len + claims_items_len;
+            transport::write_frame_header(&mut writer, TAG_OPENING_CLAIMS, claims_len)
+                .map_err(io_err)?;
+            transport::write_varint_u64(&mut writer, self.opening_claims.0.len() as u64)
+                .map_err(io_err)?;
+            for (k, (_p, claim)) in self.opening_claims.0.iter() {
+                k.serialize_with_mode(&mut writer, compress)?;
+                claim.serialize_with_mode(&mut writer, compress)?;
+            }
         }
 
         write_framed_section!(
@@ -230,6 +240,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             &self.joint_opening_proof
         );
 
+        #[cfg(feature = "zk")]
+        write_framed_section!(&mut writer, compress, TAG_BLINDFOLD, &self.blindfold_proof);
+
         Ok(())
     }
 
@@ -237,8 +250,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         let mut size = PROOF_SIGNATURE.len();
 
         let params_len = (transport::varint_u64_len(self.trace_length as u64)
-            + transport::varint_u64_len(self.ram_K as u64)
-            + transport::varint_u64_len(self.bytecode_K as u64)) as u64
+            + transport::varint_u64_len(self.ram_K as u64)) as u64
             + self.rw_config.serialized_size(compress) as u64
             + self.one_hot_config.serialized_size(compress) as u64
             + self.dory_layout.serialized_size(compress) as u64;
@@ -259,17 +271,21 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             commitments_count_len + commitments_items_len + 1 + untrusted_commitment_len;
         size += 1 + transport::varint_u64_len(commitments_len) + commitments_len as usize;
 
-        let claims_count_len = transport::varint_u64_len(self.opening_claims.0.len() as u64) as u64;
-        let claims_items_len: u64 = self
-            .opening_claims
-            .0
-            .iter()
-            .map(|(k, (_p, claim))| {
-                (k.serialized_size(compress) + claim.serialized_size(compress)) as u64
-            })
-            .sum();
-        let claims_len = claims_count_len + claims_items_len;
-        size += 1 + transport::varint_u64_len(claims_len) + claims_len as usize;
+        #[cfg(not(feature = "zk"))]
+        {
+            let claims_count_len =
+                transport::varint_u64_len(self.opening_claims.0.len() as u64) as u64;
+            let claims_items_len: u64 = self
+                .opening_claims
+                .0
+                .iter()
+                .map(|(k, (_p, claim))| {
+                    (k.serialized_size(compress) + claim.serialized_size(compress)) as u64
+                })
+                .sum();
+            let claims_len = claims_count_len + claims_items_len;
+            size += 1 + transport::varint_u64_len(claims_len) + claims_len as usize;
+        }
 
         size += framed_section_size!(
             compress,
@@ -288,20 +304,25 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         size += framed_section_size!(compress, &self.stage7_sumcheck_proof);
         size += framed_section_size!(compress, &self.joint_opening_proof);
 
+        #[cfg(feature = "zk")]
+        {
+            size += framed_section_size!(compress, &self.blindfold_proof);
+        }
+
         size
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
-    for JoltProof<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
+    for JoltProof<F, C, PCS, FS>
 {
     fn check(&self) -> Result<(), SerializationError> {
         Ok(())
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
-    for JoltProof<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalDeserialize for JoltProof<F, C, PCS, FS>
 {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -312,36 +333,41 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
 
         let mut trace_length: Option<usize> = None;
         let mut ram_K: Option<usize> = None;
-        let mut bytecode_K: Option<usize> = None;
         let mut rw_config: Option<ReadWriteConfig> = None;
         let mut one_hot_config: Option<OneHotConfig> = None;
         let mut dory_layout: Option<DoryLayout> = None;
 
         let mut commitments: Option<Vec<PCS::Commitment>> = None;
         let mut untrusted_advice_commitment: Option<Option<PCS::Commitment>> = None;
+        #[cfg(not(feature = "zk"))]
         let mut opening_claims: Option<Claims<F>> = None;
 
-        let mut stage1_uni: Option<UniSkipFirstRoundProof<F, FS>> = None;
-        let mut stage1_sumcheck: Option<SumcheckInstanceProof<F, FS>> = None;
-        let mut stage2_uni: Option<UniSkipFirstRoundProof<F, FS>> = None;
-        let mut stage2_sumcheck: Option<SumcheckInstanceProof<F, FS>> = None;
-        let mut stage3_sumcheck: Option<SumcheckInstanceProof<F, FS>> = None;
-        let mut stage4_sumcheck: Option<SumcheckInstanceProof<F, FS>> = None;
-        let mut stage5_sumcheck: Option<SumcheckInstanceProof<F, FS>> = None;
-        let mut stage6_sumcheck: Option<SumcheckInstanceProof<F, FS>> = None;
-        let mut stage7_sumcheck: Option<SumcheckInstanceProof<F, FS>> = None;
+        let mut stage1_uni: Option<UniSkipFirstRoundProofVariant<F, C, FS>> = None;
+        let mut stage1_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
+        let mut stage2_uni: Option<UniSkipFirstRoundProofVariant<F, C, FS>> = None;
+        let mut stage2_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
+        let mut stage3_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
+        let mut stage4_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
+        let mut stage5_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
+        let mut stage6_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
+        let mut stage7_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
         let mut joint_opening_proof: Option<PCS::Proof> = None;
+        #[cfg(feature = "zk")]
+        let mut blindfold_proof: Option<BlindFoldProof<F, C>> = None;
 
         while let Some((tag, len)) =
-            transport::read_frame_header(&mut reader, MAX_STAGE_LEN).map_err(io_err)?
+            transport::read_frame_header(&mut reader, MAX_BLINDFOLD_LEN_VAL).map_err(io_err)?
         {
             let cap = match tag {
                 TAG_PARAMS => MAX_PARAMS_LEN,
                 TAG_COMMITMENTS => MAX_COMMITMENTS_LEN,
+                #[cfg(not(feature = "zk"))]
                 TAG_OPENING_CLAIMS => MAX_OPENING_CLAIMS_LEN,
                 TAG_STAGE1 | TAG_STAGE2 | TAG_STAGE3 | TAG_STAGE4 | TAG_STAGE5 | TAG_STAGE6
                 | TAG_STAGE7 => MAX_STAGE_LEN,
                 TAG_JOINT_OPENING => MAX_JOINT_OPENING_LEN,
+                #[cfg(feature = "zk")]
+                TAG_BLINDFOLD => MAX_BLINDFOLD_LEN,
                 _ => {
                     return Err(io_err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -367,12 +393,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                     }
                     let t = transport::read_varint_u64(&mut limited).map_err(io_err)?;
                     let r = transport::read_varint_u64(&mut limited).map_err(io_err)?;
-                    let b = transport::read_varint_u64(&mut limited).map_err(io_err)?;
                     trace_length =
                         Some(usize::try_from(t).map_err(|_| SerializationError::InvalidData)?);
                     ram_K = Some(usize::try_from(r).map_err(|_| SerializationError::InvalidData)?);
-                    bytecode_K =
-                        Some(usize::try_from(b).map_err(|_| SerializationError::InvalidData)?);
                     rw_config = Some(ReadWriteConfig::deserialize_with_mode(
                         &mut limited,
                         compress,
@@ -423,6 +446,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                     commitments = Some(v);
                     untrusted_advice_commitment = Some(opt);
                 }
+                #[cfg(not(feature = "zk"))]
                 TAG_OPENING_CLAIMS => {
                     if opening_claims.is_some() {
                         return Err(io_err(std::io::Error::new(
@@ -461,6 +485,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                 TAG_JOINT_OPENING => {
                     read_singleton!(&mut limited, compress, validate, joint_opening_proof)
                 }
+                #[cfg(feature = "zk")]
+                TAG_BLINDFOLD => {
+                    read_singleton!(&mut limited, compress, validate, blindfold_proof)
+                }
                 _ => unreachable!("unknown tags rejected above"),
             }
 
@@ -487,7 +515,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         }
 
         Ok(Self {
-            opening_claims: require!(opening_claims, "opening_claims"),
             commitments: require!(commitments, "commitments"),
             stage1_uni_skip_first_round_proof: require!(stage1_uni, "stage1_uni"),
             stage1_sumcheck_proof: require!(stage1_sumcheck, "stage1_sumcheck"),
@@ -498,18 +525,78 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             stage5_sumcheck_proof: require!(stage5_sumcheck, "stage5_sumcheck"),
             stage6_sumcheck_proof: require!(stage6_sumcheck, "stage6_sumcheck"),
             stage7_sumcheck_proof: require!(stage7_sumcheck, "stage7_sumcheck"),
+            #[cfg(feature = "zk")]
+            blindfold_proof: require!(blindfold_proof, "blindfold"),
             joint_opening_proof: require!(joint_opening_proof, "joint_opening"),
             untrusted_advice_commitment: require!(
                 untrusted_advice_commitment,
                 "untrusted_advice_commitment"
             ),
+            #[cfg(not(feature = "zk"))]
+            opening_claims: require!(opening_claims, "opening_claims"),
             trace_length: require!(trace_length, "params"),
             ram_K: require!(ram_K, "params"),
-            bytecode_K: require!(bytecode_K, "params"),
             rw_config: require!(rw_config, "params"),
             one_hot_config: require!(one_hot_config, "params"),
             dory_layout: require!(dory_layout, "params"),
         })
+    }
+}
+
+/// Inline constant so both cfg branches can reference it in `read_frame_header`.
+const MAX_BLINDFOLD_LEN_VAL: u64 = 16 * 1024 * 1024;
+
+#[cfg(not(feature = "zk"))]
+pub struct Claims<F: JoltField>(pub Openings<F>);
+
+#[cfg(not(feature = "zk"))]
+impl<F: JoltField> CanonicalSerialize for Claims<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.0.len().serialize_with_mode(&mut writer, compress)?;
+        for (key, (_opening_point, claim)) in self.0.iter() {
+            key.serialize_with_mode(&mut writer, compress)?;
+            claim.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let mut size = self.0.len().serialized_size(compress);
+        for (key, (_opening_point, claim)) in self.0.iter() {
+            size += key.serialized_size(compress);
+            size += claim.serialized_size(compress);
+        }
+        size
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+impl<F: JoltField> Valid for Claims<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+impl<F: JoltField> CanonicalDeserialize for Claims<F> {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let size = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let mut claims = BTreeMap::new();
+        for _ in 0..size {
+            let key = OpeningId::deserialize_with_mode(&mut reader, compress, validate)?;
+            let claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
+            claims.insert(key, (OpeningPoint::default(), claim));
+        }
+
+        Ok(Claims(claims))
     }
 }
 
@@ -547,56 +634,6 @@ impl CanonicalDeserialize for DoryLayout {
     }
 }
 
-pub struct Claims<F: JoltField>(pub Openings<F>);
-
-impl<F: JoltField> CanonicalSerialize for Claims<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.0.len().serialize_with_mode(&mut writer, compress)?;
-        for (key, (_opening_point, claim)) in self.0.iter() {
-            key.serialize_with_mode(&mut writer, compress)?;
-            claim.serialize_with_mode(&mut writer, compress)?;
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        let mut size = self.0.len().serialized_size(compress);
-        for (key, (_opening_point, claim)) in self.0.iter() {
-            size += key.serialized_size(compress);
-            size += claim.serialized_size(compress);
-        }
-        size
-    }
-}
-
-impl<F: JoltField> Valid for Claims<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl<F: JoltField> CanonicalDeserialize for Claims<F> {
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let size = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        let mut claims = BTreeMap::new();
-        for _ in 0..size {
-            let key = OpeningId::deserialize_with_mode(&mut reader, compress, validate)?;
-            let claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
-            claims.insert(key, (OpeningPoint::default(), claim));
-        }
-
-        Ok(Claims(claims))
-    }
-}
-
 // OpeningId wire encoding (packed, self-describing):
 //
 // Header byte:
@@ -608,8 +645,6 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
 //
 // If kind indicates a polynomial:
 //   append polynomial id bytes (CommittedPolynomial / VirtualPolynomial)
-//
-// This does NOT depend on `SumcheckId::COUNT` range boundaries.
 const OPENING_ID_KIND_UNTRUSTED_ADVICE: u8 = 0;
 const OPENING_ID_KIND_TRUSTED_ADVICE: u8 = 1;
 const OPENING_ID_KIND_COMMITTED: u8 = 2;
@@ -713,18 +748,12 @@ impl CanonicalDeserialize for OpeningId {
             OPENING_ID_KIND_COMMITTED => {
                 let polynomial =
                     CommittedPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(OpeningId::Polynomial(
-                    PolynomialId::Committed(polynomial),
-                    sumcheck_id,
-                ))
+                Ok(OpeningId::committed(polynomial, sumcheck_id))
             }
             OPENING_ID_KIND_VIRTUAL => {
                 let polynomial =
                     VirtualPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
-                Ok(OpeningId::Polynomial(
-                    PolynomialId::Virtual(polynomial),
-                    sumcheck_id,
-                ))
+                Ok(OpeningId::virt(polynomial, sumcheck_id))
             }
             _ => Err(SerializationError::InvalidData),
         }
@@ -957,6 +986,7 @@ pub fn serialize_and_print_size(
     file_name: &str,
     item: &impl CanonicalSerialize,
 ) -> Result<(), SerializationError> {
+    use std::fs::File;
     let mut file = File::create(file_name)?;
     item.serialize_compressed(&mut file)?;
     let file_size_bytes = file.metadata()?.len();
@@ -969,9 +999,8 @@ pub fn serialize_and_print_size(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::poly::opening_proof::{OpeningId, PolynomialId, SumcheckId};
+    use crate::poly::opening_proof::{OpeningId, SumcheckId};
     use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 
     #[test]
     fn opening_id_header_is_packed_common_case() {
@@ -982,23 +1011,17 @@ mod tests {
         let expected = (OPENING_ID_KIND_UNTRUSTED_ADVICE << 6) | (SumcheckId::SpartanOuter as u8);
         assert_eq!(bytes[0], expected);
 
-        let id = OpeningId::Polynomial(
-            PolynomialId::Committed(CommittedPolynomial::RdInc),
-            SumcheckId::SpartanOuter,
-        );
+        let id = OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter);
         let mut bytes = Vec::new();
         id.serialize_compressed(&mut bytes).unwrap();
-        assert!(bytes.len() >= 2); // header + poly id
+        assert!(bytes.len() >= 2);
         assert_eq!(bytes[0] >> 6, OPENING_ID_KIND_COMMITTED);
         assert_eq!(bytes[0] & 0x3F, SumcheckId::SpartanOuter as u8);
 
-        let id = OpeningId::Polynomial(
-            PolynomialId::Virtual(VirtualPolynomial::PC),
-            SumcheckId::SpartanOuter,
-        );
+        let id = OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
         let mut bytes = Vec::new();
         id.serialize_compressed(&mut bytes).unwrap();
-        assert!(bytes.len() >= 2); // header + poly id
+        assert!(bytes.len() >= 2);
         assert_eq!(bytes[0] >> 6, OPENING_ID_KIND_VIRTUAL);
         assert_eq!(bytes[0] & 0x3F, SumcheckId::SpartanOuter as u8);
     }
@@ -1008,14 +1031,8 @@ mod tests {
         let cases = [
             OpeningId::UntrustedAdvice(SumcheckId::SpartanOuter),
             OpeningId::TrustedAdvice(SumcheckId::SpartanOuter),
-            OpeningId::Polynomial(
-                PolynomialId::Committed(CommittedPolynomial::RdInc),
-                SumcheckId::SpartanOuter,
-            ),
-            OpeningId::Polynomial(
-                PolynomialId::Virtual(VirtualPolynomial::PC),
-                SumcheckId::SpartanOuter,
-            ),
+            OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter),
+            OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
         ];
         for id in cases {
             let mut bytes = Vec::new();
@@ -1045,7 +1062,6 @@ mod tests {
             _ => panic!("expected decode error"),
         }
 
-        // Unknown tag should reject.
         let mut bytes = Vec::new();
         bytes.extend_from_slice(PROOF_SIGNATURE);
         transport::write_frame_header(&mut bytes, 99, 0).unwrap();
