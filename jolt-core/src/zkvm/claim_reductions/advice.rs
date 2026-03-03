@@ -40,8 +40,8 @@ use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, P
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+    LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 #[cfg(feature = "zk")]
@@ -587,7 +587,7 @@ impl<F: JoltField> AdviceClaimReductionVerifier<F> {
         kind: AdviceKind,
         memory_layout: &MemoryLayout,
         trace_len: usize,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let params = AdviceClaimReductionParams::new(kind, memory_layout, trace_len, accumulator);
 
