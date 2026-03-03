@@ -1,5 +1,5 @@
 [package]
-name = "backtrace-demo"
+name = "backtrace"
 version = "0.1.0"
 edition = "2021"
 

@@ -37,6 +37,9 @@ cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
 ```bash
 # Prefer clippy over build for validation. Only build when preparing to execute a binary.
 cargo build -p jolt-core --message-format=short -q
+
+# After pulling changes, reinstall the jolt CLI or guest builds may fail.
+cargo install --path . --locked
 ```
 
 ### Profiling

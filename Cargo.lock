@@ -839,6 +839,17 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "backtrace"
+version = "0.1.0"
+dependencies = [
+ "backtrace-guest-nostd",
+ "backtrace-guest-std",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb531853791a215d7c62a30daf0dde835f381ab5de4589cfe7c649d2cbe92bd6"
@@ -850,17 +861,6 @@ dependencies = [
  "object 0.37.3",
  "rustc-demangle",
  "windows-link 0.2.1",
-]
-
-[[package]]
-name = "backtrace-demo"
-version = "0.1.0"
-dependencies = [
- "backtrace-guest-nostd",
- "backtrace-guest-std",
- "jolt-sdk",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2468,7 +2468,7 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
- "syn 2.0.114",
+ "syn 2.0.115",
 ]
 
 [[package]]
@@ -3915,7 +3915,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38a01da47675efa7673b032bf8efd8214f1917d89685e07e395ab125ea42b187"
 dependencies = [
  "aligned-vec",
- "backtrace",
+ "backtrace 0.3.76",
  "cfg-if",
  "findshlibs",
  "inferno 0.11.21",
