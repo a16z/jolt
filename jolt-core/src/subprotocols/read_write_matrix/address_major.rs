@@ -70,7 +70,7 @@ pub trait AddressMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
         inc_eval: F,
         eq_eval: F,
         gamma: F,
-    ) -> [F::Unreduced<8>; 2];
+    ) -> [F::UnreducedProduct; 2];
 }
 
 /// Represents the ra(k, j) and Val(k, j) polynomials for the RAM
@@ -509,7 +509,7 @@ impl<F: JoltField, E: AddressMajorMatrixEntry<F>> ReadWriteMatrixAddressMajor<F,
     ) -> [F; 2] {
         let mut i = 0;
         let mut j = 0;
-        let mut evals_accumulator = [F::Unreduced::<9>::zero(); 2];
+        let mut evals_accumulator = [F::UnreducedProductAccum::zero(); 2];
 
         while i < even.len() && j < odd.len() {
             if even[i].row() == odd[j].row() {
@@ -586,8 +586,8 @@ impl<F: JoltField, E: AddressMajorMatrixEntry<F>> ReadWriteMatrixAddressMajor<F,
         }
 
         [
-            F::from_montgomery_reduce(evals_accumulator[0]),
-            F::from_montgomery_reduce(evals_accumulator[1]),
+            F::reduce_product_accum(evals_accumulator[0]),
+            F::reduce_product_accum(evals_accumulator[1]),
         ]
     }
 }

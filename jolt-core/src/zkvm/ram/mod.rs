@@ -60,7 +60,7 @@ use crate::{
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
     },
-    utils::{accumulation::Acc6U, math::Math},
+    utils::{accumulation::MedAccumU, math::Math},
     zkvm::{claim_reductions::AdviceKind, witness::VirtualPolynomial},
 };
 use std::vec;
@@ -438,7 +438,7 @@ pub fn reconstruct_full_eval<F: JoltField>(
 /// without materializing a full length-\(K\) vector or a full `eq(r, ·)` table.
 ///
 /// Uses aligned power-of-two block decomposition with `EqPolynomial::evals_for_max_aligned_block`,
-/// and accumulates using unreduced limb arithmetic via `Acc6U`.
+/// and accumulates using unreduced limb arithmetic via `MedAccumU`.
 fn sparse_eval_u64_block<F: JoltField>(
     start_index: usize,
     values: &[u64],
@@ -458,7 +458,7 @@ fn sparse_eval_u64_block<F: JoltField>(
         debug_assert_eq!(block_evals.len(), block_size);
 
         // Accumulate this block in unreduced form, then reduce once.
-        let mut block_acc: Acc6U<F> = Acc6U::default();
+        let mut block_acc: MedAccumU<F> = MedAccumU::default();
         for j in 0..block_size {
             // FMAdd implementation skips zeros internally.
             block_acc.fmadd(&block_evals[j], &values[off + j]);

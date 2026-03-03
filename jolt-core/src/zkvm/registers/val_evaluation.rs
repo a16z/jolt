@@ -219,16 +219,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
 
                 // Eval inc * wa * lt.
                 [
-                    (inc_at_1_j * wa_at_1_j).mul_unreduced::<9>(lt_at_1_j),
-                    (inc_at_2_j * wa_at_2_j).mul_unreduced::<9>(lt_at_2_j),
-                    (inc_at_inf_j * wa_at_inf_j).mul_unreduced::<9>(lt_at_inf_j),
+                    (inc_at_1_j * wa_at_1_j).mul_to_product_accum(lt_at_1_j),
+                    (inc_at_2_j * wa_at_2_j).mul_to_product_accum(lt_at_2_j),
+                    (inc_at_inf_j * wa_at_inf_j).mul_to_product_accum(lt_at_inf_j),
                 ]
             })
             .reduce(
-                || [F::Unreduced::zero(); DEGREE_BOUND],
+                || [F::UnreducedProductAccum::zero(); DEGREE_BOUND],
                 |a, b| array::from_fn(|i| a[i] + b[i]),
             )
-            .map(F::from_montgomery_reduce);
+            .map(F::reduce_product_accum);
 
         let eval_at_0 = previous_claim - eval_at_1;
         UniPoly::from_evals_toom(&[eval_at_0, eval_at_1, eval_at_2, eval_at_inf])

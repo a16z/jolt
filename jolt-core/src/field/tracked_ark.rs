@@ -35,7 +35,6 @@ use crate::utils::counters::{
 };
 use allocative::Allocative;
 use ark_bn254::Fr;
-use ark_ff::BigInt;
 use ark_ff::UniformRand;
 use ark_ff::{One, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -317,11 +316,18 @@ impl FieldOps<&TrackedFr, TrackedFr> for TrackedFr {}
 
 impl JoltField for TrackedFr {
     const NUM_BYTES: usize = <ark_bn254::Fr as JoltField>::NUM_BYTES;
-    /// The Montgomery factor R = 2^(64*N) mod p
+    const NUM_LIMBS: usize = <ark_bn254::Fr as JoltField>::NUM_LIMBS;
+
     const MONTGOMERY_R: Self = TrackedFr(<ark_bn254::Fr as JoltField>::MONTGOMERY_R);
-    /// The squared Montgomery factor R^2 = 2^(128*N) mod p
     const MONTGOMERY_R_SQUARE: Self = TrackedFr(<ark_bn254::Fr as JoltField>::MONTGOMERY_R_SQUARE);
-    type Unreduced<const N: usize> = <ark_bn254::Fr as JoltField>::Unreduced<N>;
+
+    type UnreducedElem = <ark_bn254::Fr as JoltField>::UnreducedElem;
+    type UnreducedMulU64 = <ark_bn254::Fr as JoltField>::UnreducedMulU64;
+    type UnreducedMulU128 = <ark_bn254::Fr as JoltField>::UnreducedMulU128;
+    type UnreducedMulU128Accum = <ark_bn254::Fr as JoltField>::UnreducedMulU128Accum;
+    type UnreducedProduct = <ark_bn254::Fr as JoltField>::UnreducedProduct;
+    type UnreducedProductAccum = <ark_bn254::Fr as JoltField>::UnreducedProductAccum;
+
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
 
     // Default: Use optimized 125-bit MontChallenge
@@ -422,33 +428,80 @@ impl JoltField for TrackedFr {
         Self(<Fr as JoltField>::mul_i128(&self.0, n))
     }
 
-    fn as_unreduced_ref(&self) -> &Self::Unreduced<4> {
-        self.0.as_unreduced_ref()
+    fn to_unreduced(&self) -> Self::UnreducedElem {
+        self.0.to_unreduced()
     }
 
-    fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L> {
-        MUL_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
-        <Fr as JoltField>::mul_unreduced(self.0, other.0)
-    }
-
-    fn mul_u64_unreduced(self, other: u64) -> BigInt<5> {
+    fn mul_u64_unreduced(self, other: u64) -> Self::UnreducedMulU64 {
         MUL_U64_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
         <Fr as JoltField>::mul_u64_unreduced(self.0, other)
     }
 
-    fn mul_u128_unreduced(self, other: u128) -> BigInt<6> {
+    fn mul_u128_unreduced(self, other: u128) -> Self::UnreducedMulU128 {
         MUL_U128_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
         <Fr as JoltField>::mul_u128_unreduced(self.0, other)
     }
 
-    fn from_montgomery_reduce<const N: usize>(unreduced: BigInt<N>) -> Self {
-        MONT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
-        TrackedFr(<Fr as JoltField>::from_montgomery_reduce(unreduced))
+    fn mul_to_product(self, other: Self) -> Self::UnreducedProduct {
+        MUL_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
+        <Fr as JoltField>::mul_to_product(self.0, other.0)
     }
 
-    fn from_barrett_reduce<const N: usize>(unreduced: BigInt<N>) -> Self {
+    fn mul_to_product_accum(self, other: Self) -> Self::UnreducedProductAccum {
+        MUL_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
+        <Fr as JoltField>::mul_to_product_accum(self.0, other.0)
+    }
+
+    fn unreduced_mul_u64(a: &Self::UnreducedElem, b: u64) -> Self::UnreducedMulU64 {
+        <Fr as JoltField>::unreduced_mul_u64(a, b)
+    }
+
+    fn unreduced_mul_to_product_accum(
+        a: &Self::UnreducedElem,
+        b: &Self::UnreducedElem,
+    ) -> Self::UnreducedProductAccum {
+        <Fr as JoltField>::unreduced_mul_to_product_accum(a, b)
+    }
+
+    #[inline]
+    fn mul_to_accum_mag<const M: usize>(
+        &self,
+        mag: &ark_ff::BigInt<M>,
+    ) -> Self::UnreducedMulU128Accum {
+        self.0.mul_to_accum_mag(mag)
+    }
+
+    #[inline]
+    fn mul_to_product_mag<const M: usize>(
+        &self,
+        mag: &ark_ff::BigInt<M>,
+    ) -> Self::UnreducedProduct {
+        self.0.mul_to_product_mag(mag)
+    }
+
+    fn reduce_mul_u64(x: Self::UnreducedMulU64) -> Self {
         BARRETT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
-        TrackedFr(<Fr as JoltField>::from_barrett_reduce(unreduced))
+        TrackedFr(<Fr as JoltField>::reduce_mul_u64(x))
+    }
+
+    fn reduce_mul_u128(x: Self::UnreducedMulU128) -> Self {
+        BARRETT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
+        TrackedFr(<Fr as JoltField>::reduce_mul_u128(x))
+    }
+
+    fn reduce_mul_u128_accum(x: Self::UnreducedMulU128Accum) -> Self {
+        BARRETT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
+        TrackedFr(<Fr as JoltField>::reduce_mul_u128_accum(x))
+    }
+
+    fn reduce_product(x: Self::UnreducedProduct) -> Self {
+        MONT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
+        TrackedFr(<Fr as JoltField>::reduce_product(x))
+    }
+
+    fn reduce_product_accum(x: Self::UnreducedProductAccum) -> Self {
+        MONT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
+        TrackedFr(<Fr as JoltField>::reduce_product_accum(x))
     }
 }
 

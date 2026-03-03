@@ -13,7 +13,7 @@ use tracer::instruction::Cycle;
 use super::LOG_K;
 
 use crate::{
-    field::{JoltField, MulTrunc},
+    field::JoltField,
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
@@ -622,7 +622,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                             // layout: [suffix_0 | suffix_1 | ... | suffix_{num_suffixes-1}],
                             // each suffix segment has length `m`.
                             let total_len = num_suffixes * m;
-                            let mut chunk_result: Vec<F::Unreduced<6>> =
+                            let mut chunk_result: Vec<F::UnreducedMulU128> =
                                 unsafe_allocate_zero_vec(total_len);
 
                             for j in chunk {
@@ -634,7 +634,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
 
                                 // Suffixes::One always evaluates to 1, so just add u directly.
                                 if let Some(one_idx) = suffix_one_idx {
-                                    chunk_result[one_idx * m + idx] += *u.as_unreduced_ref();
+                                    chunk_result[one_idx * m + idx] += u.to_unreduced();
                                 }
 
                                 // Other {0,1}-valued suffixes: add u when suffix_mle == 1.
@@ -643,7 +643,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                                     let t = suffixes[s_idx].suffix_mle::<XLEN>(suffix_bits);
                                     debug_assert!(t == 0 || t == 1);
                                     if t == 1 {
-                                        chunk_result[s_idx * m + idx] += *u.as_unreduced_ref();
+                                        chunk_result[s_idx * m + idx] += u.to_unreduced();
                                     }
                                 }
 
@@ -679,7 +679,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                             unreduced_polys[start..end]
                                 .iter()
                                 .copied()
-                                .map(F::from_barrett_reduce)
+                                .map(F::reduce_mul_u128)
                                 .collect::<Vec<F>>()
                         })
                         .collect::<Vec<_>>()
@@ -867,7 +867,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 .map(|(j_out, e_out)| {
                     // Each pair is a linear polynomial.
                     let mut pairs = vec![(F::zero(), F::zero()); n_evals];
-                    let mut evals_acc = vec![F::Unreduced::<9>::zero(); n_evals];
+                    let mut evals_acc = vec![F::UnreducedProductAccum::zero(); n_evals];
 
                     for (j_in, e_in) in self.eq_r_reduction.E_in_current().iter().enumerate() {
                         let j = self.eq_r_reduction.group_index(j_out, j_in);
@@ -893,7 +893,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
                     evals_acc
                         .into_iter()
-                        .map(|v| F::from_montgomery_reduce(v) * e_out)
+                        .map(|v| F::reduce_product_accum(v) * e_out)
                         .collect::<Vec<F>>()
                 })
                 .reduce(
@@ -1067,13 +1067,13 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 let (r0, r2) = self.right_operand_ps.sumcheck_evals(b);
                 let (l0, l2) = self.left_operand_ps.sumcheck_evals(b);
                 [
-                    *l0.as_unreduced_ref(),
-                    *l2.as_unreduced_ref(),
-                    *(i0 + r0).as_unreduced_ref(),
-                    *(i2 + r2).as_unreduced_ref(),
+                    l0.to_unreduced(),
+                    l2.to_unreduced(),
+                    (i0 + r0).to_unreduced(),
+                    (i2 + r2).to_unreduced(),
                 ]
             })
-            .fold_with([F::Unreduced::<5>::zero(); 4], |running, new| {
+            .fold_with([F::UnreducedMulU64::zero(); 4], |running, new| {
                 [
                     running[0] + new[0],
                     running[1] + new[1],
@@ -1082,7 +1082,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 ]
             })
             .reduce(
-                || [F::Unreduced::zero(); 4],
+                || [F::UnreducedMulU64::zero(); 4],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -1093,13 +1093,13 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 },
             );
         [
-            F::from_montgomery_reduce(
-                left_0.mul_trunc::<4, 9>(self.params.gamma.as_unreduced_ref())
-                    + right_0.mul_trunc::<4, 9>(self.params.gamma_sqr.as_unreduced_ref()),
+            F::reduce_product_accum(
+                F::reduce_mul_u64(left_0).mul_to_product_accum(self.params.gamma)
+                    + F::reduce_mul_u64(right_0).mul_to_product_accum(self.params.gamma_sqr),
             ),
-            F::from_montgomery_reduce(
-                left_2.mul_trunc::<4, 9>(self.params.gamma.as_unreduced_ref())
-                    + right_2.mul_trunc::<4, 9>(self.params.gamma_sqr.as_unreduced_ref()),
+            F::reduce_product_accum(
+                F::reduce_mul_u64(left_2).mul_to_product_accum(self.params.gamma)
+                    + F::reduce_mul_u64(right_2).mul_to_product_accum(self.params.gamma_sqr),
             ),
         ]
     }
@@ -1164,15 +1164,15 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                         ]
                     })
             })
-            .fold_with([F::Unreduced::<5>::zero(); 3], |running, new| {
+            .fold_with([F::UnreducedMulU64::zero(); 3], |running, new| {
                 [
-                    running[0] + new[0].as_unreduced_ref(),
-                    running[1] + new[1].as_unreduced_ref(),
-                    running[2] + new[2].as_unreduced_ref(),
+                    running[0] + new[0].to_unreduced(),
+                    running[1] + new[1].to_unreduced(),
+                    running[2] + new[2].to_unreduced(),
                 ]
             })
             .reduce(
-                || [F::Unreduced::zero(); 3],
+                || [F::UnreducedMulU64::zero(); 3],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -1181,7 +1181,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                     ]
                 },
             )
-            .map(F::from_barrett_reduce);
+            .map(F::reduce_mul_u64);
         [eval_0, eval_2_right + eval_2_right - eval_2_left]
     }
 
@@ -1231,9 +1231,9 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                     let c_hi_base = c_hi * in_len;
 
                     // Local unreduced accumulators for this c_hi (5-limb)
-                    let mut local_flags: Vec<F::Unreduced<5>> =
-                        vec![F::Unreduced::<5>::zero(); num_tables];
-                    let mut local_raf: F::Unreduced<5> = F::Unreduced::<5>::zero();
+                    let mut local_flags: Vec<F::UnreducedMulU64> =
+                        vec![F::UnreducedMulU64::zero(); num_tables];
+                    let mut local_raf: F::UnreducedMulU64 = F::UnreducedMulU64::zero();
 
                     // Sequential over c_lo (contiguous cycles for this c_hi)
                     for c_lo in 0..in_len {
@@ -1243,7 +1243,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                         }
 
                         let cycle = &self.trace[j];
-                        let e_lo_unreduced = *E_lo[c_lo].as_unreduced_ref();
+                        let e_lo_unreduced = E_lo[c_lo].to_unreduced();
 
                         // Accumulate table flag
                         if let Some(table) = cycle.lookup_table() {
@@ -1263,10 +1263,10 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
 
                     // Reduce and scale by e_hi
                     for t_idx in 0..num_tables {
-                        let reduced = F::from_barrett_reduce::<5>(local_flags[t_idx]);
+                        let reduced = F::reduce_mul_u64(local_flags[t_idx]);
                         partial_flags[t_idx] += e_hi * reduced;
                     }
-                    let raf_reduced = F::from_barrett_reduce::<5>(local_raf);
+                    let raf_reduced = F::reduce_mul_u64(local_raf);
                     partial_raf += e_hi * raf_reduced;
                 }
 

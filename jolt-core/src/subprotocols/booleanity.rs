@@ -358,7 +358,7 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
 
         // Compute quadratic coefficients via generic split-eq fold
         let quadratic_coeffs: [F; DEGREE_BOUND - 1] = B
-            .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|k_prime| {
+            .par_fold_out_in_unreduced::<{ DEGREE_BOUND - 1 }>(&|k_prime| {
                 let coeffs = (0..N)
                     .into_par_iter()
                     .map(|i| {
@@ -380,23 +380,23 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
                                 [eval_0, eval_infty]
                             })
                             .fold_with(
-                                [F::Unreduced::<5>::zero(); DEGREE_BOUND - 1],
+                                [F::UnreducedMulU64::zero(); DEGREE_BOUND - 1],
                                 |running, new| {
                                     [
-                                        running[0] + new[0].as_unreduced_ref(),
-                                        running[1] + new[1].as_unreduced_ref(),
+                                        running[0] + new[0].to_unreduced(),
+                                        running[1] + new[1].to_unreduced(),
                                     ]
                                 },
                             )
                             .reduce(
-                                || [F::Unreduced::zero(); DEGREE_BOUND - 1],
+                                || [F::UnreducedMulU64::zero(); DEGREE_BOUND - 1],
                                 |running, new| [running[0] + new[0], running[1] + new[1]],
                             );
 
                         let gamma_2i = self.params.gamma_powers_square[i];
                         [
-                            gamma_2i * F::from_barrett_reduce(inner_sum[0]),
-                            gamma_2i * F::from_barrett_reduce(inner_sum[1]),
+                            gamma_2i * F::reduce_mul_u64(inner_sum[0]),
+                            gamma_2i * F::reduce_mul_u64(inner_sum[1]),
                         ]
                     })
                     .reduce(
@@ -416,10 +416,10 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
 
         // Compute quadratic coefficients via generic split-eq fold (handles both E_in cases).
         let quadratic_coeffs: [F; DEGREE_BOUND - 1] = D
-            .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|j_prime| {
+            .par_fold_out_in_unreduced::<{ DEGREE_BOUND - 1 }>(&|j_prime| {
                 // Accumulate in unreduced form to minimize per-term reductions
-                let mut acc_c = F::Unreduced::<9>::zero();
-                let mut acc_e = F::Unreduced::<9>::zero();
+                let mut acc_c = F::UnreducedProductAccum::zero();
+                let mut acc_e = F::UnreducedProductAccum::zero();
                 for i in 0..num_polys {
                     let h_0 = H.get_bound_coeff(i, 2 * j_prime);
                     let h_1 = H.get_bound_coeff(i, 2 * j_prime + 1);
@@ -430,12 +430,12 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
                     //   gamma^{2i}*h0*(h0-1) = (rho*h0) * (rho*h0 - rho)
                     //   gamma^{2i}*b*b       = (rho*b) * (rho*b)
                     let rho = self.gamma_powers[i];
-                    acc_c += h_0.mul_unreduced::<9>(h_0 - rho);
-                    acc_e += b.mul_unreduced::<9>(b);
+                    acc_c += h_0.mul_to_product_accum(h_0 - rho);
+                    acc_e += b.mul_to_product_accum(b);
                 }
                 [
-                    F::from_montgomery_reduce::<9>(acc_c),
-                    F::from_montgomery_reduce::<9>(acc_e),
+                    F::reduce_product_accum(acc_c),
+                    F::reduce_product_accum(acc_e),
                 ]
             });
 
