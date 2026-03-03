@@ -1,11 +1,12 @@
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
+use crate::utils::errors::ProofVerifyError;
 
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
-use crate::utils::errors::ProofVerifyError;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::verifier::JoltVerifier;
@@ -28,13 +29,21 @@ pub fn preprocess(
     JoltVerifierPreprocessing::new(shared, verifier_setup)
 }
 
-pub fn verify<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript>(
+pub fn verify<
+    F: JoltField,
+    C: JoltCurve,
+    PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
+    FS: Transcript,
+>(
     inputs_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],
-    proof: JoltProof<F, PCS, FS>,
+    proof: JoltProof<F, C, PCS, FS>,
     preprocessing: &JoltVerifierPreprocessing<F, PCS>,
-) -> Result<(), ProofVerifyError> {
+) -> Result<(), ProofVerifyError>
+where
+    C::G1: From<crate::curve::Bn254G1>,
+{
     use common::jolt_device::JoltDevice;
     let memory_layout = &preprocessing.shared.memory_layout;
     let memory_config = MemoryConfig {
@@ -58,6 +67,5 @@ pub fn verify<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Trans
         trusted_advice_commitment,
         None,
     )?;
-    verifier.verify().unwrap();
-    Ok(())
+    verifier.verify()
 }

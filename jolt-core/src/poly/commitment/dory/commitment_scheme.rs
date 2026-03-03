@@ -3,12 +3,15 @@
 use super::dory_globals::{DoryGlobals, DoryLayout};
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 use super::wrappers::{
-    jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
-    JoltToDoryTranscript, BN254,
+    ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup,
+    ArkworksVerifierSetup, JoltToDoryTranscript, BN254,
 };
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
-    poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
+    poly::commitment::commitment_scheme::{
+        CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment,
+    },
     poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
@@ -17,18 +20,59 @@ use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
 use dory::primitives::{
-    arithmetic::{Group, PairingCurve},
+    arithmetic::{Field as DoryField, Group, PairingCurve},
     poly::Polynomial,
 };
-use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
 use rayon::prelude::*;
-use sha3::{Digest, Sha3_256};
 use std::borrow::Borrow;
 use tracing::trace_span;
 
 #[derive(Clone)]
 pub struct DoryCommitmentScheme;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DoryOpeningProofHint(Vec<ArkG1>);
+
+impl DoryOpeningProofHint {
+    fn new(row_commitments: Vec<ArkG1>) -> Self {
+        Self(row_commitments)
+    }
+
+    fn into_rows(self) -> Vec<ArkG1> {
+        self.0
+    }
+}
+
+pub fn bind_opening_inputs<F: JoltField, ProofTranscript: Transcript>(
+    transcript: &mut ProofTranscript,
+    opening_point: &[F::Challenge],
+    opening: &F,
+) {
+    let mut point_scalars = Vec::with_capacity(opening_point.len());
+    for point in opening_point {
+        let scalar: F = (*point).into();
+        point_scalars.push(scalar);
+    }
+    transcript.append_scalars(b"dory_opening_point", &point_scalars);
+
+    transcript.append_scalar(b"dory_opening_eval", opening);
+}
+
+#[cfg(feature = "zk")]
+pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>(
+    transcript: &mut ProofTranscript,
+    opening_point: &[F::Challenge],
+    y_com: &C::G1,
+) {
+    let mut point_scalars = Vec::with_capacity(opening_point.len());
+    for point in opening_point {
+        let scalar: F = (*point).into();
+        point_scalars.push(scalar);
+    }
+    transcript.append_scalars(b"dory_opening_point", &point_scalars);
+
+    transcript.append_commitment(b"dory_eval_commitment", y_com);
+}
 
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
@@ -37,19 +81,14 @@ impl CommitmentScheme for DoryCommitmentScheme {
     type Commitment = ArkGT;
     type Proof = ArkDoryProof;
     type BatchedProof = Vec<ArkDoryProof>;
-    type OpeningProofHint = Vec<ArkG1>;
+    type OpeningProofHint = DoryOpeningProofHint;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
-        let mut hasher = Sha3_256::new();
-        hasher.update(b"Jolt Dory URS seed");
-        let hash_result = hasher.finalize();
-        let seed: [u8; 32] = hash_result.into();
-        let mut rng = ChaCha20Rng::from_seed(seed);
         #[cfg(not(target_arch = "wasm32"))]
-        let setup = ArkworksProverSetup::new_from_urs(&mut rng, max_num_vars);
+        let setup = ArkworksProverSetup::new_from_urs(max_num_vars);
         #[cfg(target_arch = "wasm32")]
-        let setup = ArkworksProverSetup::new(&mut rng, max_num_vars);
+        let setup = ArkworksProverSetup::new(max_num_vars);
 
         // The prepared-point cache in dory-pcs is global and can only be initialized once.
         // In unit tests, multiple setups with different sizes are created, so initializing the
@@ -77,14 +116,15 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = num_cols.log_2();
         let nu = num_rows.log_2();
 
-        let (tier_2, row_commitments) = <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<
-            ArkFr,
-        >>::commit::<BN254, JoltG1Routines>(
-            poly, nu, sigma, setup
-        )
-        .expect("commitment should succeed");
+        let (tier_2, row_commitments, _commit_blind) =
+            <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<ArkFr>>::commit::<
+                BN254,
+                dory::Transparent,
+                JoltG1Routines,
+            >(poly, nu, sigma, setup)
+            .expect("commitment should succeed");
 
-        (tier_2, row_commitments)
+        (tier_2, DoryOpeningProofHint::new(row_commitments))
     }
 
     fn batch_commit<U>(
@@ -108,13 +148,15 @@ impl CommitmentScheme for DoryCommitmentScheme {
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
+    ) -> (Self::Proof, Option<Self::Field>) {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
 
-        let row_commitments = hint.unwrap_or_else(|| {
-            let (_commitment, row_commitments) = Self::commit(poly, setup);
-            row_commitments
-        });
+        let (row_commitments, commit_blind) = hint
+            .map(|h| (h.into_rows(), DoryField::zero()))
+            .unwrap_or_else(|| {
+                let (_commitment, row_commitments) = Self::commit(poly, setup);
+                (row_commitments.into_rows(), DoryField::zero())
+            });
 
         let num_cols = DoryGlobals::get_num_columns();
         let num_rows = DoryGlobals::get_max_num_rows();
@@ -122,11 +164,9 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let nu = num_rows.log_2();
 
         let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
-
-        // Dory uses the opposite endian-ness as Jolt
         let ark_point: Vec<ArkFr> = reordered_point
             .iter()
-            .rev() // Reverse the order for Dory
+            .rev()
             .map(|p| {
                 let f_val: ark_bn254::Fr = (*p).into();
                 jolt_to_ark(&f_val)
@@ -135,16 +175,25 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
 
-        dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _>(
-            poly,
-            &ark_point,
-            row_commitments,
-            nu,
-            sigma,
-            setup,
-            &mut dory_transcript,
-        )
-        .expect("proof generation should succeed")
+        #[cfg(feature = "zk")]
+        type DoryMode = dory::ZK;
+        #[cfg(not(feature = "zk"))]
+        type DoryMode = dory::Transparent;
+
+        let (proof, y_blinding) =
+            dory::prove::<ArkFr, BN254, JoltG1Routines, JoltG2Routines, _, _, DoryMode>(
+                poly,
+                &ark_point,
+                row_commitments,
+                commit_blind,
+                nu,
+                sigma,
+                setup,
+                &mut dory_transcript,
+            )
+            .expect("proof generation should succeed");
+
+        (proof, y_blinding.map(|b| ark_to_jolt(&b)))
     }
 
     fn verify<ProofTranscript: Transcript>(
@@ -189,11 +238,26 @@ impl CommitmentScheme for DoryCommitmentScheme {
         b"Dory"
     }
 
+    #[cfg(feature = "zk")]
+    fn zk_generators_raw(
+        setup: &Self::ProverSetup,
+        count: usize,
+    ) -> Option<(Vec<crate::curve::Bn254G1>, crate::curve::Bn254G1)> {
+        let count = std::cmp::min(count, setup.0.g1_vec.len());
+        let g1s = setup.0.g1_vec[..count]
+            .iter()
+            .map(|g| crate::curve::Bn254G1(g.0))
+            .collect();
+        let h1 = crate::curve::Bn254G1(setup.0.h1.0);
+        Some((g1s, h1))
+    }
+
     /// In Dory, the opening proof hint consists of the Pedersen commitments to the rows
     /// of the polynomial coefficient matrix. In the context of a batch opening proof, we
     /// can homomorphically combine the row commitments for multiple polynomials into the
     /// row commitments for the RLC of those polynomials. This is more efficient than computing
     /// the row commitments for the RLC from scratch.
+    ///
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_hints")]
     fn combine_hints(
         hints: Vec<Self::OpeningProofHint>,
@@ -203,10 +267,13 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let mut rlc_hint = vec![ArkG1(G1Projective::zero()); num_rows];
         for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
-            hint.resize(num_rows, ArkG1(G1Projective::zero()));
+            hint.0.resize(num_rows, ArkG1(G1Projective::zero()));
 
             let row_commitments: &mut [G1Projective] = unsafe {
-                std::slice::from_raw_parts_mut(hint.as_mut_ptr() as *mut G1Projective, hint.len())
+                std::slice::from_raw_parts_mut(
+                    hint.0.as_mut_ptr() as *mut G1Projective,
+                    hint.0.len(),
+                )
             };
 
             let rlc_row_commitments: &[G1Projective] = unsafe {
@@ -216,18 +283,16 @@ impl CommitmentScheme for DoryCommitmentScheme {
             let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
             let _enter = _span.enter();
 
-            // Scales the row commitments for the current polynomial by
-            // its coefficient
             jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
                 row_commitments,
                 *coeff,
                 rlc_row_commitments,
             );
 
-            let _ = std::mem::replace(&mut rlc_hint, hint);
+            let _ = std::mem::replace(&mut rlc_hint, hint.0);
         }
 
-        rlc_hint
+        DoryOpeningProofHint::new(rlc_hint)
     }
 
     /// Homomorphically combines multiple commitments using a random linear combination.
@@ -317,11 +382,12 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         onehot_k: Option<usize>,
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
-        if let Some(K) = onehot_k {
+        let num_rows = DoryGlobals::get_max_num_rows();
+
+        if let Some(_K) = onehot_k {
             let row_len = DoryGlobals::get_num_columns();
             let T = DoryGlobals::get_T();
             let rows_per_k = T / row_len;
-            let num_rows = K * T / row_len;
 
             let mut row_commitments = vec![ArkG1(G1Projective::zero()); num_rows];
             for (chunk_index, commitments) in chunks.iter().enumerate() {
@@ -333,10 +399,10 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
                     .for_each(|(dest, src)| *dest = *src);
             }
 
-            let g2_bases = &setup.g2_vec[..row_commitments.len()];
+            let g2_bases = &setup.g2_vec[..num_rows];
             let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-            (tier_2, row_commitments)
+            (tier_2, DoryOpeningProofHint::new(row_commitments))
         } else {
             let row_commitments: Vec<ArkG1> =
                 chunks.iter().flat_map(|chunk| chunk.clone()).collect();
@@ -344,8 +410,37 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             let g2_bases = &setup.g2_vec[..row_commitments.len()];
             let tier_2 = <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-            (tier_2, row_commitments)
+            (tier_2, DoryOpeningProofHint::new(row_commitments))
         }
+    }
+}
+
+impl<C: JoltCurve> ZkEvalCommitment<C> for DoryCommitmentScheme
+where
+    C::G1: From<ArkG1>,
+{
+    fn eval_commitment(proof: &Self::Proof) -> Option<C::G1> {
+        #[cfg(feature = "zk")]
+        {
+            proof.y_com.as_ref().copied().map(C::G1::from)
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            let _ = proof;
+            None
+        }
+    }
+
+    fn eval_commitment_gens(setup: &Self::ProverSetup) -> Option<(C::G1, C::G1)> {
+        let g1_0 = setup.0.g1_vec.first().copied().map(C::G1::from)?;
+        let h1 = C::G1::from(setup.0.h1);
+        Some((g1_0, h1))
+    }
+
+    fn eval_commitment_gens_verifier(setup: &Self::VerifierSetup) -> Option<(C::G1, C::G1)> {
+        let g1_0 = C::G1::from(setup.0.g1_0);
+        let h1 = C::G1::from(setup.0.h1);
+        Some((g1_0, h1))
     }
 }
 

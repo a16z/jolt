@@ -11,7 +11,9 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that effic
 ### Linting and Formatting
 
 ```bash
-cargo clippy --all --message-format=short -q --all-targets --features allocative,host -- -D warnings
+# CRITICAL: Must pass in BOTH standard and ZK modes
+cargo clippy -p jolt-core --features host --message-format=short -q --all-targets -- -D warnings
+cargo clippy -p jolt-core --features host,zk --message-format=short -q --all-targets -- -D warnings
 cargo fmt -q
 ```
 
@@ -24,8 +26,10 @@ cargo nextest run --cargo-quiet
 # Run specific test in specific package
 cargo nextest run -p [package_name] [test_name] --cargo-quiet
 
-# CRITICAL: Primary correctness check — run muldiv e2e test
-cargo nextest run -p jolt-core muldiv --cargo-quiet
+# CRITICAL: Primary correctness check — run muldiv e2e test in BOTH modes
+cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
+
 ```
 
 ### Building
@@ -61,7 +65,7 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 - `zkvm/`: Jolt PIOP — prover, verifier, R1CS/Spartan, memory checking, instruction lookups
 - `poly/`: Polynomial types, commitment schemes (Dory, HyperKZG), opening proofs
 - `field/`: `JoltField` trait and BN254 scalar field implementation
-- `subprotocols/`: Sumcheck (batched, streaming, univariate skip), booleanity checks
+- `subprotocols/`: Sumcheck (batched, streaming, univariate skip), booleanity checks, BlindFold ZK protocol
 - `msm/`: Multi-scalar multiplication
 - `transcripts/`: Fiat-Shamir transcripts (Blake2b, Keccak)
 
@@ -93,6 +97,7 @@ ProofTranscript: Transcript               — Fiat-Shamir transcript (Blake2bTra
 4. **Spartan**: R1CS constraint satisfaction via univariate skip + outer/product sumchecks
 5. **Sumcheck rounds**: Batched sumchecks for instruction lookups, bytecode, RAM/register read-write checking, Hamming booleanity, claim reductions
 6. **Opening proofs**: Batched Dory opening proofs via `ProverOpeningAccumulator`
+7. **BlindFold**: ZK proof over all sumcheck stages (see BlindFold section below)
 
 ### Polynomial Types (poly/)
 
@@ -119,6 +124,76 @@ Virtual (derived during proving): PC, register values, RAM values, instruction f
 - `claim_reductions/`: Advice, Hamming weight, increment, instruction lookups, register, RAM RA reductions
 - `bytecode/`: Bytecode preprocessing and PC mapping, read-RAF checking
 - `config.rs`: `OneHotParams`, `OneHotConfig`, `ReadWriteConfig` — control proof structure (chunk sizes, phase rounds)
+
+### ZK Feature Gate
+
+The `zk` Cargo feature (`cfg(feature = "zk")`) controls zero-knowledge mode:
+
+| Aspect | Standard (`--features host`) | ZK (`--features host,zk`) |
+|---|---|---|
+| Sumcheck proving | `BatchedSumcheck::prove` — cleartext round polys | `BatchedSumcheck::prove_zk` — Pedersen-committed |
+| Uni-skip | `prove_uniskip_round` | `prove_uniskip_round_zk` |
+| Proof contains | `Claims<F>` (all opening claims) | `BlindFoldProof` (no cleartext claims) |
+| `input_claim()` | Called, appended to Fiat-Shamir transcript | Skipped; `input_claim_constraint()` used by BlindFold |
+| Output claim check | Explicit equality check | Skipped; verified by BlindFold R1CS |
+| Opening proof | `bind_opening_inputs` (raw eval) | `bind_opening_inputs_zk` (committed eval) |
+
+**Key cfg-gated items:**
+- `JoltProof::opening_claims: Claims<F>` — `#[cfg(not(feature = "zk"))]`
+- `JoltProof::blindfold_proof: BlindFoldProof` — `#[cfg(feature = "zk")]`
+- Prover uses `#[cfg(feature = "zk")]` / `#[cfg(not(feature = "zk"))]` blocks — compile-time path selection, no runtime `zk_mode` field
+- Verifier detects mode from proof at runtime: `proof.stage1_sumcheck_proof.is_zk()` — stored as `VerifierOpeningAccumulator::zk_mode`
+
+**CRITICAL — Verifier `new_from_verifier` must support both modes:**
+
+In ZK mode, `input_claim()` is never called so verifier params can use partial values (e.g., `init_eval = init_eval_public`). In standard mode, `input_claim()` IS called and the values must match the prover exactly. Any verifier param that decomposes a value for BlindFold constraints must reconstruct the full value for standard mode. Use `ram::reconstruct_full_eval()` to add advice contributions back.
+
+**Opening accumulator transcript changes (vs main):**
+
+On this branch, `ProverOpeningAccumulator::append_*` and `VerifierOpeningAccumulator::append_*` do NOT append claims to the Fiat-Shamir transcript (the `transcript` parameter was removed). Both sides are consistent. On main, these methods DO append `opening_claim` scalars.
+
+### BlindFold Zero-Knowledge Protocol (subprotocols/blindfold/)
+
+BlindFold makes all sumcheck proofs zero-knowledge without SNARK composition. Instead of revealing sumcheck round polynomial coefficients, the prover sends Pedersen commitments. Sumcheck verifier checks are encoded into a small verifier R1CS, proved via Nova folding + Spartan.
+
+**Module structure:**
+- `mod.rs`: `StageConfig`, `BakedPublicInputs`, `HyraxParams`, R1CS primitives (`Variable`, `LinearCombination`, `Constraint`)
+- `r1cs.rs`: `VerifierR1CS`, `VerifierR1CSBuilder` — sparse R1CS encoding of sumcheck verification
+- `protocol.rs`: `BlindFoldProver`, `BlindFoldVerifier`, `BlindFoldProof`
+- `folding.rs`: Nova folding — cross-term computation, random instance sampling
+- `spartan.rs`: Spartan outer + inner sumcheck over the folded R1CS
+- `relaxed_r1cs.rs`: Relaxed R1CS instance/witness with Hyrax grid layout
+- `witness.rs`: `BlindFoldWitness` — witness assignment from sumcheck stage data
+- `output_constraint.rs`: `InputClaimConstraint`, `OutputClaimConstraint`, `ValueSource`, `ProductTerm` — constraint types for claim binding
+- `layout.rs`: `LayoutStep`, `ConstraintKind`, `compute_witness_layout` — witness grid layout computation
+
+**Protocol flow:**
+1. During stages 1–7, `prove_zk` commits each sumcheck round's coefficients via Pedersen and caches them in `ProverOpeningAccumulator`
+2. At stage 8, prover and verifier build the same `VerifierR1CS` from `StageConfig`s and `BakedPublicInputs` (Fiat-Shamir-derived values baked into matrix coefficients)
+3. Nova folds the real instance with a random satisfying instance to hide the witness
+4. Spartan outer sumcheck proves relaxed R1CS satisfaction; inner sumcheck reduces to a single witness evaluation
+5. Hyrax-style openings verify W(ry) and E(rx) against folded row commitments
+
+**Supporting changes:**
+- `poly/commitment/pedersen.rs`: Pedersen commitment scheme for small vectors (round polynomials)
+- `curve.rs`: `JoltCurve`/`JoltGroupElement` traits for elliptic curve abstractions
+- `poly/commitment/dory/commitment_scheme.rs`: ZK evaluation commitments (`y_com`) — Dory proves evaluation correctness without revealing the evaluation value
+- `sumcheck.rs` / `univariate_skip.rs`: `prove_zk`/`verify_zk` variants
+
+**CRITICAL INVARIANT — Sumcheck claim/constraint synchronization:**
+
+Every sumcheck instance implements `SumcheckInstanceParams` which defines both the claim computation AND the corresponding BlindFold constraint. These must stay in sync:
+
+- `input_claim(accumulator)` computes the input claim value from polynomial openings
+- `input_claim_constraint()` returns an `InputClaimConstraint` describing the same formula as a sum-of-products over `ValueSource::{Opening, Challenge, Constant}` terms
+- `input_constraint_challenge_values(accumulator)` returns the public challenge values the constraint evaluates against
+- `output_claim_constraint()` / `output_constraint_challenge_values()` — same pattern for output claims
+
+**Any change to how a sumcheck's input or output claim is derived requires a matching update to its constraint.** If you modify `input_claim()` to include a new term, you must add a corresponding `ProductTerm` to `input_claim_constraint()` and supply any new challenge values. Failure to synchronize causes BlindFold R1CS unsatisfiability — the `muldiv` e2e test will catch this.
+
+**Corollary — prover/verifier `input_claim()` consistency:** When a value is decomposed for BlindFold constraints (e.g., `init_eval` split into `init_eval_public` + advice terms), the verifier's `new_from_verifier` must reconstruct the full value for `input_claim()` in standard mode. If only the public portion is stored, the verifier computes a different `input_claim` than the prover, causing a Fiat-Shamir transcript mismatch. The `advice` e2e tests catch this (they exercise non-ZK mode with advice polynomials).
+
+Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `RamReadWriteCheckingParams` (ram/read_write_checking.rs), `InstructionRaSumcheckParams` (instruction_lookups/ra_virtual.rs), and all claim reduction params.
 
 ## Development Guidelines
 

@@ -65,6 +65,9 @@ members = [
     "examples/overflow/guest",
     "examples/memory-ops",
     "examples/memory-ops/guest",
+    "examples/backtrace",
+    "examples/backtrace/guest-nostd",
+    "examples/backtrace/guest-std",
     "examples/recursion",
     "examples/recursion/guest",
     "examples/recover-ecdsa",
@@ -133,6 +136,9 @@ overflow-checks = true
 [profile.guest]
 inherits = "release"
 debug = false
+lto = "fat"
+strip = false
+codegen-units = 1
 
 [patch.crates-io]
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
@@ -223,7 +229,7 @@ proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.36.7", features = [
+object = { version = "0.38.1", features = [
     "build_core",
     "elf",
 ], default-features = false }
@@ -240,16 +246,16 @@ spinners = { version = "4.1.1", default-features = false }
 
 # Testing
 criterion = { version = "0.5.1", features = ["html_reports"] }
-iai-callgrind = "0.10.2"
-serial_test = "3.2.0"
+iai-callgrind = "0.16.1"
+serial_test = "3.4.0"
 
 # Logging
 log = { version = "0.4" }
 env_logger = { version = "0.11" }
 
 # ZeroOS build system
-zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", rev = "aaf6e261cbf3e935ecd748de406bf5359c1ebb55" }
-zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", rev = "aaf6e261cbf3e935ecd748de406bf5359c1ebb55", default-features = false }
+zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false, rev = "ebdf6de34a0719022d42c9d719391b02ba747f8b" }
+zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false, rev = "ebdf6de34a0719022d42c9d719391b02ba747f8b" }
 cfg-if = "1.0"
 riscv = { version = "0.12", default-features = false }
 

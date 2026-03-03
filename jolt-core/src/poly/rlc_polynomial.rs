@@ -536,7 +536,6 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                     let row_idx = row_start + local_idx;
                     let chunk_start = row_idx * num_columns;
 
-                    // Row-scaled dense coefficients.
                     let scaled_rd_inc = row_weight * setup.rd_inc_coeff;
                     let scaled_ram_inc = row_weight * setup.ram_inc_coeff;
                     let row_factor = setup.row_factors[row_idx];
