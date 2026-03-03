@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772565240066,
+  "lastUpdate": 1772567812415,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -57646,6 +57646,234 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 792800,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8e7e961924dc51e50f8debe961e90f29bbc1a01c",
+          "message": "feat: add WASM verifier support (#1290)\n\n* feat: add WASM verifier support\n\n- Switch dory-pcs from crates.io to git dependency with default-features = false\n- Add ark-grumpkin, ark-secp256k1 patches and WASM workspace deps\n- Add uncompressed serialization methods to Serializable trait\n- Guard std::time::Instant and timing blocks behind not(wasm32)\n- Make dory init_prepared_cache a no-op on wasm32\n- Rewrite build-wasm to use full verifier preprocessing pipeline\n- Update secp256k1 example to use UnwrapOrSpoilProof pattern\n\n* refactor: use jolt-sdk re-exports in generated WASM verifier\n\nGenerated wasm_verify.rs now imports types from jolt_sdk (F, PCS,\nRV64IMACProof, RV64IMACVerifier, etc.) instead of requiring direct\njolt-core, tracer, and ark-bn254 dependencies. This simplifies user\nproject setup — only jolt-sdk + wasm-bindgen are needed.\n\nAlso suppress the ASCII banner when stdout is not a TTY.\n\n* fix: revert dory to crates.io\n\nThe git dependency resolved to a HEAD without new_from_urs. The\ncrates.io 0.2.0 release is the same code and already compiles on\nwasm32.\n\n* fix: switch dory to git for cross-platform usize serialization\n\ndory-pcs 0.2.0 (crates.io) serializes usize with platform-dependent\nsize, causing WASM verification to fail when deserializing data\nserialized on x86_64. The git version includes the fix (always u64).\n\nAlso adds WASM Verifier E2E CI job that proves natively, builds\nthe WASM verifier, and verifies the proof in Node.js.\n\n* chore: remove redundant wasm build from jolt binary check\n\nThe new test-wasm-verify job covers WASM building and verification.\n\n* chore: extract WASM E2E scripts, remove unused deps\n\nMove inline CI code to scripts/ci/wasm-e2e/.\nRemove unused WASM workspace deps.\nFix secp256k1 max_trace_length (250000 → 262144).\n\n* chore: remove unused tracer dep from jolt CLI\n\n* chore: pipe wasm-pack installer into bash\n\n* rev dory cahnge\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* simplify verifier preprocessing via JoltVerifierPreprocessing::from\n\n* preserve existing crate-type entries when adding cdylib\n\n---------\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-03-03T13:58:41-05:00",
+          "tree_id": "093f11840e4b37f5793c0e2d84e019648a6a5ea0",
+          "url": "https://github.com/a16z/jolt/commit/8e7e961924dc51e50f8debe961e90f29bbc1a01c"
+        },
+        "date": 1772567810707,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.1066,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 788888,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.443,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 462256,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 470204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 460300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7767,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 471532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6292,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 462492,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.2823,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 460076,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4448,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 790448,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6069,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 474772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4871,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 469384,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.2188,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 473684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 33.6338,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1013960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.7564,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 613224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 92.1745,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2115976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5911,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 469288,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6295,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 464424,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.1982,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 792772,
             "unit": "KB",
             "extra": ""
           }
