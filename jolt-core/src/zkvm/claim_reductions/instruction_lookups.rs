@@ -5,11 +5,15 @@ use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialBinding;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -86,6 +90,54 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::virt(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter),
+            OpeningId::virt(
+                VirtualPolynomial::LeftLookupOperand,
+                SumcheckId::SpartanOuter,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::RightLookupOperand,
+                SumcheckId::SpartanOuter,
+            ),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &dyn OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        vec![self.gamma, self.gamma_sqr]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::all_weighted_openings(&[
+            OpeningId::virt(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::InstructionClaimReduction,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::LeftLookupOperand,
+                SumcheckId::InstructionClaimReduction,
+            ),
+            OpeningId::virt(
+                VirtualPolynomial::RightLookupOperand,
+                SumcheckId::InstructionClaimReduction,
+            ),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let opening_point = self.normalize_opening_point(sumcheck_challenges);
+        let eq_eval = EqPolynomial::<F>::mle(&opening_point.r, &self.r_spartan.r);
+        vec![eq_eval, eq_eval * self.gamma, eq_eval * self.gamma_sqr]
     }
 }
 
@@ -165,7 +217,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let InstructionLookupsClaimReductionPhase::Phase2(state) = &self.phase else {
@@ -180,21 +231,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let right_lookup_operand_claim = state.right_lookup_operand_poly.final_sumcheck_claim();
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
             opening_point.clone(),
             lookup_output_claim,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::InstructionClaimReduction,
             opening_point.clone(),
             left_lookup_operand_claim,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
             opening_point,
@@ -242,9 +290,9 @@ impl<F: JoltField> InstructionLookupsPhase1State<F> {
         Q.par_chunks_mut(BLOCK_SIZE)
             .enumerate()
             .for_each(|(chunk_i, q_chunk)| {
-                let mut q_lookup_output = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
-                let mut q_left_lookup_operand = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
-                let mut q_right_lookup_operand = [F::Unreduced::<7>::zero(); BLOCK_SIZE];
+                let mut q_lookup_output = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
+                let mut q_left_lookup_operand = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
+                let mut q_right_lookup_operand = [F::UnreducedMulU128Accum::zero(); BLOCK_SIZE];
 
                 for x_hi in 0..(1 << suffix_n_vars) {
                     for i in 0..q_chunk.len() {
@@ -265,9 +313,9 @@ impl<F: JoltField> InstructionLookupsPhase1State<F> {
                 }
 
                 for (i, q) in q_chunk.iter_mut().enumerate() {
-                    *q = F::from_barrett_reduce(q_lookup_output[i])
-                        + gamma * F::from_barrett_reduce(q_left_lookup_operand[i])
-                        + gamma_sqr * F::from_barrett_reduce(q_right_lookup_operand[i]);
+                    *q = F::reduce_mul_u128(q_lookup_output[i])
+                        + gamma * F::reduce_mul_u128(q_left_lookup_operand[i])
+                        + gamma_sqr * F::reduce_mul_u128_accum(q_right_lookup_operand[i]);
                 }
             });
 
@@ -344,9 +392,9 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
                     right_lookup_operand_eval,
                     trace_chunk,
                 )| {
-                    let mut lookup_output_eval_unreduced = F::Unreduced::<6>::zero();
-                    let mut left_lookup_operand_eval_unreduced = F::Unreduced::<6>::zero();
-                    let mut right_lookup_operand_eval_unreduced = F::Unreduced::<7>::zero();
+                    let mut lookup_output_eval_unreduced = F::UnreducedMulU128::zero();
+                    let mut left_lookup_operand_eval_unreduced = F::UnreducedMulU128::zero();
+                    let mut right_lookup_operand_eval_unreduced = F::UnreducedMulU128Accum::zero();
 
                     for (i, cycle) in trace_chunk.iter().enumerate() {
                         let (left_lookup, right_lookup) =
@@ -361,11 +409,11 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
                             eq_evals[i].mul_u128_unreduced(right_lookup);
                     }
 
-                    *lookup_output_eval = F::from_barrett_reduce(lookup_output_eval_unreduced);
+                    *lookup_output_eval = F::reduce_mul_u128(lookup_output_eval_unreduced);
                     *left_lookup_operand_eval =
-                        F::from_barrett_reduce(left_lookup_operand_eval_unreduced);
+                        F::reduce_mul_u128(left_lookup_operand_eval_unreduced);
                     *right_lookup_operand_eval =
-                        F::from_barrett_reduce(right_lookup_operand_eval_unreduced);
+                        F::reduce_mul_u128_accum(right_lookup_operand_eval_unreduced);
                 },
             );
 
@@ -494,26 +542,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::LookupOutput,
             SumcheckId::InstructionClaimReduction,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::InstructionClaimReduction,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
             opening_point,

@@ -114,8 +114,6 @@ impl<F: JoltField> DensePolynomial<F> {
         self.len = n;
     }
 
-    /// Bounds the polynomial's most significant index bit to 'r' optimized for a
-    /// high P(eval = 0).
     #[tracing::instrument(skip_all)]
     pub fn bound_poly_var_top_zero_optimized(&mut self, r: &F::Challenge) {
         let n = self.len() / 2;
@@ -125,7 +123,6 @@ impl<F: JoltField> DensePolynomial<F> {
         left.par_iter_mut()
             .zip(right.par_iter())
             .with_min_len(4096)
-            .filter(|(&mut a, &b)| a != b)
             .for_each(|(a, b)| {
                 *a += *r * (*b - *a);
             });
@@ -213,16 +210,9 @@ impl<F: JoltField> DensePolynomial<F> {
         let mut bound_Z = Vec::with_capacity(n);
         (bound_Z.spare_capacity_mut(), self.Z.par_chunks_exact(2))
             .into_par_iter()
-            .with_min_len(512)
+            .with_min_len(512 * 32 / F::NUM_BYTES)
             .for_each(|(bound_coeff, coeffs)| {
-                let m = coeffs[1] - coeffs[0];
-                bound_coeff.write(if m.is_zero() {
-                    coeffs[0]
-                } else if m.is_one() {
-                    coeffs[0] + *r
-                } else {
-                    coeffs[0] + *r * m
-                });
+                bound_coeff.write(coeffs[0] + *r * (coeffs[1] - coeffs[0]));
             });
         unsafe { bound_Z.set_len(n) };
         self.Z = bound_Z;
