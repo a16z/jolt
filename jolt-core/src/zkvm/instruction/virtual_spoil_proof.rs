@@ -1,13 +1,13 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{virtual_spoil_proof::VirtualSpoilProof, RISCVCycle};
 
-use crate::zkvm::lookup_table::{equal::EqualTable, LookupTables};
+use crate::zkvm::lookup_table::{range_check::RangeCheckTable, LookupTables};
 
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualSpoilProof {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(EqualTable.into())
+        Some(RangeCheckTable.into())
     }
 }
 
