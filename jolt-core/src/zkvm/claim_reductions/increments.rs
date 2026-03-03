@@ -68,7 +68,7 @@ use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::Acc6S;
+use crate::utils::accumulation::MedAccumS;
 use crate::utils::math::{s64_from_diff_u64s, Math};
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::witness::CommittedPolynomial;
@@ -383,10 +383,10 @@ impl<F: JoltField> IncClaimReductionPhase1State<F> {
                 for i in 0..q_ram_0.len() {
                     let x_lo = chunk_i * chunk_size + i;
 
-                    let mut acc_ram_0: Acc6S<F> = Acc6S::zero();
-                    let mut acc_ram_1: Acc6S<F> = Acc6S::zero();
-                    let mut acc_rd_0: Acc6S<F> = Acc6S::zero();
-                    let mut acc_rd_1: Acc6S<F> = Acc6S::zero();
+                    let mut acc_ram_0: MedAccumS<F> = MedAccumS::zero();
+                    let mut acc_ram_1: MedAccumS<F> = MedAccumS::zero();
+                    let mut acc_rd_0: MedAccumS<F> = MedAccumS::zero();
+                    let mut acc_rd_1: MedAccumS<F> = MedAccumS::zero();
 
                     for x_hi in 0..suffix_len {
                         let x = x_lo + (x_hi << prefix_n_vars);
@@ -587,8 +587,8 @@ impl<F: JoltField> IncClaimReductionPhase2State<F> {
             .for_each(|(chunk_i, (ram_chunk, rd_chunk))| {
                 for i in 0..ram_chunk.len() {
                     let x_hi = chunk_i * chunk_size + i;
-                    let mut acc_ram: Acc6S<F> = Acc6S::zero();
-                    let mut acc_rd: Acc6S<F> = Acc6S::zero();
+                    let mut acc_ram: MedAccumS<F> = MedAccumS::zero();
+                    let mut acc_rd: MedAccumS<F> = MedAccumS::zero();
 
                     for (x_lo, eq_val) in eq_prefix_evals.iter().enumerate() {
                         let x = x_lo + (x_hi << prefix_len.log_2());

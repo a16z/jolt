@@ -315,7 +315,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let [eval_at_0, eval_at_inf] = self
             .eq_r_cycle_stage_2
             .par_fold_out_in(
-                || [F::Unreduced::<9>::zero(); 2],
+                || [F::UnreducedProductAccum::zero(); 2],
                 |inner, j, _x_in, e_in| {
                     // Eval RightInstructionInputIsRs2(x) at (r', j, {0, inf}).
                     let right_is_rs2_at_j_0 = self.right_is_rs2_poly.get_bound_coeff(j * 2);
@@ -365,15 +365,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                     let input_at_j_inf = right_at_j_inf + self.params.gamma * left_at_j_inf;
 
                     // Accumulate in Montgomery-unreduced form to minimize reductions
-                    inner[0] += e_in.mul_unreduced::<9>(input_at_j_0);
-                    inner[1] += e_in.mul_unreduced::<9>(input_at_j_inf);
+                    inner[0] += e_in.mul_to_product_accum(input_at_j_0);
+                    inner[1] += e_in.mul_to_product_accum(input_at_j_inf);
                 },
                 |_x_out, e_out, inner| {
-                    let mut out = [F::Unreduced::<9>::zero(); 2];
-                    let reduced0 = F::from_montgomery_reduce::<9>(inner[0]);
-                    let reduced1 = F::from_montgomery_reduce::<9>(inner[1]);
-                    out[0] = e_out.mul_unreduced::<9>(reduced0);
-                    out[1] = e_out.mul_unreduced::<9>(reduced1);
+                    let mut out = [F::UnreducedProductAccum::zero(); 2];
+                    let reduced0 = F::reduce_product_accum(inner[0]);
+                    let reduced1 = F::reduce_product_accum(inner[1]);
+                    out[0] = e_out.mul_to_product_accum(reduced0);
+                    out[1] = e_out.mul_to_product_accum(reduced1);
                     out
                 },
                 |mut a, b| {
@@ -383,7 +383,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                     a
                 },
             )
-            .map(|x| F::from_montgomery_reduce::<9>(x));
+            .map(|x| F::reduce_product_accum(x));
 
         self.eq_r_cycle_stage_2
             .gruen_poly_deg_3(eval_at_0, eval_at_inf, previous_claim)

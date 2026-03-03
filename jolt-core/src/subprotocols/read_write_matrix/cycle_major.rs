@@ -39,7 +39,7 @@ pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
     ) -> Self;
 
     /// For the given pair of adjacent entries, computes the pair's contribution to the prover's
-    /// sumcheck message, returning `Unreduced<8>` to avoid Montgomery reduction.
+    /// sumcheck message, returning `UnreducedProduct` to avoid Montgomery reduction.
     ///
     /// By "adjacent", here we mean entries that are in the same column and
     /// adjacent rows (rows 2j and 2j+1).
@@ -47,7 +47,7 @@ pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
     /// entry is not explicitly represented in the `ReadWriteMatrixCycleMajor` data structure.
     /// Instead, we can infer its values from the matrix entry that is `Some`.
     ///
-    /// The final `ra * (...)` uses `mul_unreduced` instead of regular multiplication.
+    /// The final `ra * (...)` uses `mul_to_product` instead of regular multiplication.
     /// This is used in `seq_prover_message_contribution` for better performance when
     /// accumulating many entries.
     fn compute_evals(
@@ -57,7 +57,7 @@ pub trait CycleMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
         gamma: F,
         ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
         wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
-    ) -> [F::Unreduced<8>; 2];
+    ) -> [F::UnreducedProduct; 2];
 
     fn to_address_major(
         self,
@@ -435,9 +435,9 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
     /// For the given pair of adjacent rows, computes the pair's contribution to the prover's
     /// sumcheck message. This is the sequential counterpart of `prover_message_contribution`.
     ///
-    /// Uses `Unreduced<9>` accumulator to delay modular reductions for better performance.
-    /// Each `compute_evals_unreduced` returns `Unreduced<8>` (no reduction on the final multiply),
-    /// and we accumulate into `Unreduced<9>` for headroom. Only one Montgomery reduction at the end.
+    /// Uses `UnreducedProductAccum` accumulator to delay modular reductions for better performance.
+    /// Each `compute_evals` returns `UnreducedProduct` (no reduction on the final multiply),
+    /// and we accumulate into `UnreducedProductAccum` for headroom. Only one Montgomery reduction at the end.
     fn seq_prover_message_contribution(
         &self,
         even: &[E],
@@ -447,7 +447,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
     ) -> [F; 2] {
         let mut i = 0;
         let mut j = 0;
-        let mut evals_accumulator = [F::Unreduced::<9>::zero(); 2];
+        let mut evals_accumulator = [F::UnreducedProductAccum::zero(); 2];
 
         while i < even.len() && j < odd.len() {
             if even[i].column() == odd[j].column() {
@@ -514,6 +514,6 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
             evals_accumulator[1] += evals[1];
         }
 
-        std::array::from_fn(|i| F::from_montgomery_reduce(evals_accumulator[i]))
+        std::array::from_fn(|i| F::reduce_product_accum(evals_accumulator[i]))
     }
 }
