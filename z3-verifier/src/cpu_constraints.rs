@@ -69,6 +69,7 @@ use tracer::instruction::{
     virtual_shift_right_bitmask::VirtualShiftRightBitmask,
     virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI,
     virtual_sign_extend_word::VirtualSignExtendWord,
+    virtual_spoil_proof::VirtualSpoilProof,
     virtual_sra::VirtualSRA,
     virtual_srai::VirtualSRAI,
     virtual_srl::VirtualSRL,
@@ -516,6 +517,7 @@ test_instruction_constraints!(SLTU, FormatR);
 test_instruction_constraints!(SUB, FormatR);
 test_instruction_constraints!(VirtualAdvice, FormatJ, advice: 0);
 test_instruction_constraints!(VirtualAssertEQ, FormatB);
+test_instruction_constraints!(VirtualSpoilProof, FormatB);
 test_instruction_constraints!(VirtualAssertHalfwordAlignment, FormatAssert);
 test_instruction_constraints!(VirtualAssertLTE, FormatB);
 test_instruction_constraints!(VirtualAssertMulUNoOverflow, FormatB);

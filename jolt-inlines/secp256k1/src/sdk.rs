@@ -60,9 +60,10 @@ pub fn hcf() {
         let u = 0u64;
         let v = 1u64;
         core::arch::asm!(
-            ".insn b {opcode}, {funct3}, {rs1}, {rs2}, 0",
-            opcode = const 0x5B, // virtual instruction opcode
-            funct3 = const 0b001, // VirtualAssertEQ funct3
+            ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+            opcode = const 0x5B,
+            funct3 = const 0b001,
+            funct7 = const 0b0000001,
             rs1 = in(reg) u,
             rs2 = in(reg) v,
             options(nostack)
@@ -135,7 +136,8 @@ impl<T> UnwrapOrSpoilProof<T> for Result<T, Secp256k1Error> {
             Ok(v) => v,
             Err(_) => {
                 hcf();
-                unreachable!()
+                // SAFETY: proof is already spoiled; this value never appears in a valid proof
+                unsafe { core::mem::zeroed() }
             }
         }
     }

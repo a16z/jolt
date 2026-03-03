@@ -60,6 +60,7 @@ use tracer::{
         virtual_pow2_w::VirtualPow2W,
         virtual_shift_right_bitmask::VirtualShiftRightBitmask,
         virtual_sign_extend_word::VirtualSignExtendWord,
+        virtual_spoil_proof::VirtualSpoilProof,
         virtual_sra::VirtualSRA,
         virtual_srai::VirtualSRAI,
         virtual_srl::VirtualSRL,
@@ -287,6 +288,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 - rs2));
         }
         Instruction::VirtualAssertEQ(VirtualAssertEQ { operands, .. }) => {
+            let val1 = cpu.x[operands.rs1 as usize].clone();
+            let val2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.asserts.push(val1.eq(&val2));
+        }
+        Instruction::VirtualSpoilProof(VirtualSpoilProof { operands, .. }) => {
             let val1 = cpu.x[operands.rs1 as usize].clone();
             let val2 = cpu.x[operands.rs2 as usize].clone();
             cpu.asserts.push(val1.eq(&val2));
