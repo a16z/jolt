@@ -121,10 +121,8 @@ macro_rules! check_advice {
             let cond_value = if $cond { 1u64 } else { 0u64 };
             let expected_value = 1u64;
             unsafe {
-                // VirtualAssertEQ: assert rs1 == rs2
-                // Use B-format encoding with CUSTOM_OPCODE and FUNCT3_VIRTUAL_ASSERT_EQ
                 core::arch::asm!(
-                    ".insn b {opcode}, {funct3}, {rs1}, {rs2}, 0",
+                    ".insn r {opcode}, {funct3}, 0, x0, {rs1}, {rs2}",
                     opcode = const $crate::CUSTOM_OPCODE,
                     funct3 = const $crate::FUNCT3_VIRTUAL_ASSERT_EQ,
                     rs1 = in(reg) cond_value,
@@ -158,7 +156,7 @@ macro_rules! check_advice_eq {
             let right = $right;
             unsafe {
                 core::arch::asm!(
-                    ".insn b {opcode}, {funct3}, {rs1}, {rs2}, 0",
+                    ".insn r {opcode}, {funct3}, 0, x0, {rs1}, {rs2}",
                     opcode = const $crate::CUSTOM_OPCODE,
                     funct3 = const $crate::FUNCT3_VIRTUAL_ASSERT_EQ,
                     rs1 = in(reg) left,

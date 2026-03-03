@@ -516,7 +516,7 @@ test_instruction_constraints!(SLTIU, FormatI);
 test_instruction_constraints!(SLTU, FormatR);
 test_instruction_constraints!(SUB, FormatR);
 test_instruction_constraints!(VirtualAdvice, FormatJ, advice: 0);
-test_instruction_constraints!(VirtualAssertEQ, FormatB);
+test_instruction_constraints!(VirtualAssertEQ, FormatR);
 test_instruction_constraints!(VirtualSpoilProof, FormatR);
 test_instruction_constraints!(VirtualAssertHalfwordAlignment, FormatAssert);
 test_instruction_constraints!(VirtualAssertLTE, FormatB);

@@ -136,7 +136,7 @@ impl RISCVTrace for DIV {
 
         asm.emit_r::<MUL>(*t2, *a2, *t0); // quotient × adjusted_divisor
         asm.emit_i::<SRAI>(*t3, *t2, shmat); // Sign-extend low bits
-        asm.emit_b::<VirtualAssertEQ>(*t1, *t3, 0); // Assert no overflow
+        asm.emit_r::<VirtualAssertEQ>(0, *t1, *t3); // Assert no overflow
 
         // Apply sign of dividend to remainder
         asm.emit_i::<SRAI>(*t1, a0, shmat); // Sign bit of dividend
@@ -145,7 +145,7 @@ impl RISCVTrace for DIV {
 
         // Verify: dividend = quotient × divisor + remainder
         asm.emit_r::<ADD>(*t2, *t2, *t3); // Add signed remainder
-        asm.emit_b::<VirtualAssertEQ>(*t2, a0, 0); // Assert equals dividend
+        asm.emit_r::<VirtualAssertEQ>(0, *t2, a0); // Assert equals dividend
 
         // Verify: |remainder| < |divisor|
         asm.emit_i::<SRAI>(*t1, *t0, shmat); // Sign bit of adjusted divisor
