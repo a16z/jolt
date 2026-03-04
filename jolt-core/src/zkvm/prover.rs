@@ -444,9 +444,10 @@ where
             OneHotParams::new(log_T, preprocessing.shared.bytecode.code_size, ram_K);
 
         #[cfg(feature = "zk")]
-        let pedersen_generators = preprocessing
-            .shared
-            .pedersen_generators::<C>(preprocessing.shared.zk_generator_g1s.len());
+        let pedersen_generators = {
+            const MAX_ZK_PEDERSEN_GENERATORS: usize = 128;
+            preprocessing.pedersen_generators::<C>(MAX_ZK_PEDERSEN_GENERATORS)
+        };
 
         Self {
             preprocessing,
@@ -1668,7 +1669,6 @@ where
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
         let pedersen_generators = self
             .preprocessing
-            .shared
             .pedersen_generators::<C>(pedersen_generator_count);
         let eval_commitments =
             vec![PCS::eval_commitment(joint_opening_proof).expect("missing eval commitment")];
@@ -2057,9 +2057,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::gen")]
-    pub fn new(
-        #[cfg_attr(not(feature = "zk"), allow(unused_mut))] mut shared: JoltSharedPreprocessing,
-    ) -> JoltProverPreprocessing<F, PCS> {
+    pub fn new(shared: JoltSharedPreprocessing) -> JoltProverPreprocessing<F, PCS> {
         let max_T: usize = shared.max_padded_trace_length.next_power_of_two();
         let max_log_T = max_T.log_2();
         let max_log_k_chunk = if max_log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
@@ -2069,17 +2067,23 @@ where
         };
         let generators = PCS::setup_prover(max_log_k_chunk + max_log_T);
 
-        #[cfg(feature = "zk")]
-        {
-            const MAX_ZK_PEDERSEN_GENERATORS: usize = 128;
-            if let Some((g1s, h1)) = PCS::zk_generators_raw(&generators, MAX_ZK_PEDERSEN_GENERATORS)
-            {
-                shared.zk_generator_g1s = g1s;
-                shared.zk_generator_h1 = h1;
-            }
-        }
-
         JoltProverPreprocessing { generators, shared }
+    }
+
+    #[cfg(feature = "zk")]
+    pub fn pedersen_generators<C: crate::curve::JoltCurve>(
+        &self,
+        count: usize,
+    ) -> crate::poly::commitment::pedersen::PedersenGenerators<C>
+    where
+        C::G1: From<crate::curve::Bn254G1>,
+    {
+        let (g1s, h1) = PCS::zk_generators_raw(&self.generators, count)
+            .expect("PCS does not support ZK Pedersen generators");
+        crate::poly::commitment::pedersen::PedersenGenerators::new(
+            g1s.into_iter().map(C::G1::from).collect(),
+            C::G1::from(h1),
+        )
     }
 
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
@@ -2216,10 +2220,7 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -2272,10 +2273,7 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -2325,10 +2323,7 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -2388,10 +2383,7 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -2728,10 +2720,7 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -2775,10 +2764,7 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -2822,10 +2808,7 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier = RV64IMACVerifier::new(
             &verifier_preprocessing,
             jolt_proof,
@@ -3095,10 +3078,7 @@ mod tests {
 
         let (proof, _) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier =
             RV64IMACVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
         verifier.verify().unwrap();
@@ -3140,10 +3120,7 @@ mod tests {
         );
         let (proof, _) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
         let verifier =
             JoltVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
         verifier.verify().unwrap();
@@ -3298,10 +3275,7 @@ mod tests {
         let io_device = prover.program_io.clone();
         let (proof, debug_info) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            prover_preprocessing.shared.clone(),
-            prover_preprocessing.generators.to_verifier_setup(),
-        );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
 
         // DoryGlobals is now initialized inside the verifier's verify_stage7
         RV64IMACVerifier::new(&verifier_preprocessing, proof, io_device, None, debug_info)

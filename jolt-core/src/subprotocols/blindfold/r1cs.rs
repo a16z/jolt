@@ -425,7 +425,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         }
     }
 
-    /// Build the complete verifier R1CS
+    #[tracing::instrument(skip_all, name = "VerifierR1CSBuilder::build")]
     pub fn build(mut self) -> VerifierR1CS<F> {
         use super::layout::{compute_witness_layout, ConstraintKind, LayoutStep};
 
