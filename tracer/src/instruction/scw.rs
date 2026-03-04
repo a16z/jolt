@@ -110,7 +110,7 @@ impl SCW {
         let v_addr_diff = allocator.allocate();
         asm.emit_r::<SUB>(*v_addr_diff, v_reservation, self.operands.rs1);
         asm.emit_r::<MUL>(*v_addr_diff, *v_success, *v_addr_diff);
-        asm.emit_r::<VirtualAssertEQ>(0, *v_addr_diff, 0);
+        asm.emit_b::<VirtualAssertEQ>(*v_addr_diff, 0, 0);
         drop(v_addr_diff);
 
         // 6-10: Conditional store (VirtualLW/VirtualSW for 32-bit mode)
@@ -154,7 +154,7 @@ impl SCW {
         let v_addr_diff = allocator.allocate();
         asm.emit_r::<SUB>(*v_addr_diff, v_reservation, self.operands.rs1);
         asm.emit_r::<MUL>(*v_addr_diff, *v_success, *v_addr_diff);
-        asm.emit_r::<VirtualAssertEQ>(0, *v_addr_diff, 0);
+        asm.emit_b::<VirtualAssertEQ>(*v_addr_diff, 0, 0);
         drop(v_addr_diff);
 
         // 6: Spill v_success to a reservation register. In 64-bit mode, LW/SW

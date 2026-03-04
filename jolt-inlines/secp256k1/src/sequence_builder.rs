@@ -371,7 +371,7 @@ impl Secp256k1Mulq {
         match self.op_type {
             MulqType::Div => {
                 self.asm.emit_ld::<LD>(*self.aux, self.operands.rs1, 0);
-                self.asm.emit_r::<VirtualAssertEQ>(0, *self.r[0], *self.aux);
+                self.asm.emit_b::<VirtualAssertEQ>(*self.r[0], *self.aux, 0);
             }
             _ => {
                 self.asm.emit_s::<SD>(self.operands.rs3, *self.r[0], 0);
@@ -521,7 +521,7 @@ impl Secp256k1Mulq {
                     MulqType::Div => {
                         self.asm
                             .emit_ld::<LD>(*self.aux, self.operands.rs1, k as i64 * 8);
-                        self.asm.emit_r::<VirtualAssertEQ>(0, rk, *self.aux);
+                        self.asm.emit_b::<VirtualAssertEQ>(rk, *self.aux, 0);
                     }
                     _ => {
                         self.asm.emit_s::<SD>(self.operands.rs3, rk, k as i64 * 8);
@@ -529,7 +529,7 @@ impl Secp256k1Mulq {
                 }
                 // verify that the upper limbs match w
             } else if k >= 4 {
-                self.asm.emit_r::<VirtualAssertEQ>(0, rk, *self.w[k - 4]);
+                self.asm.emit_b::<VirtualAssertEQ>(rk, *self.w[k - 4], 0);
             }
         }
         // special handling for top limb
@@ -545,7 +545,7 @@ impl Secp256k1Mulq {
         self.asm.emit_r::<ADD>(*self.r[1], *self.r[1], *self.aux);
         // verify that w[4] matches top limb
         self.asm
-            .emit_r::<VirtualAssertEQ>(0, *self.r[1], *self.w[3]);
+            .emit_b::<VirtualAssertEQ>(*self.r[1], *self.w[3], 0);
         // ensure no overflow
         self.asm
             .emit_b::<VirtualAssertLTE>(*self.aux, *self.r[1], 0);

@@ -59,6 +59,7 @@ pub fn hcf() {
     unsafe {
         let u = 0u64;
         let v = 1u64;
+        // Encoded as R-type with funct7=1; B-type decode extracts imm≠0 → spoil mode
         core::arch::asm!(
             ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
             opcode = const 0x5B,

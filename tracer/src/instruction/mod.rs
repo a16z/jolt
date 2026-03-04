@@ -141,7 +141,6 @@ use virtual_rotriw::VirtualROTRIW;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sign_extend_word::VirtualSignExtendWord;
-use virtual_spoil_proof::VirtualSpoilProof;
 use virtual_sra::VirtualSRA;
 use virtual_srai::VirtualSRAI;
 use virtual_srl::VirtualSRL;
@@ -284,7 +283,6 @@ pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sign_extend_word;
-pub mod virtual_spoil_proof;
 pub mod virtual_sra;
 pub mod virtual_srai;
 pub mod virtual_srl;
@@ -677,7 +675,7 @@ define_rv32im_enums! {
         AdviceLB, AdviceLD, AdviceLH, AdviceLW,
         VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
         VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
-        VirtualHostIO, VirtualSpoilProof,
+        VirtualHostIO,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
         VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,
@@ -1004,12 +1002,7 @@ impl Instruction {
                         Ok(VirtualRev8W::new(instr, address, true, compressed).into())
                     }
                     FUNCT3_VIRTUAL_ASSERT_EQ => {
-                        let funct7 = (instr >> 25) & 0x7F;
-                        if funct7 == 0 {
-                            Ok(VirtualAssertEQ::new(instr, address, true, compressed).into())
-                        } else {
-                            Ok(VirtualSpoilProof::new(instr, address, true, compressed).into())
-                        }
+                        Ok(VirtualAssertEQ::new(instr, address, true, compressed).into())
                     }
                     FUNCT3_VIRTUAL_HOST_IO => {
                         Ok(VirtualHostIO::new(instr, address, true, compressed).into())

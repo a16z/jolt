@@ -295,7 +295,7 @@ define_rv32im_trait_impls! {
         SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
         VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
         VirtualAssertEQ, VirtualAssertHalfwordAlignment,
-        VirtualAssertWordAlignment, VirtualAssertLTE, VirtualHostIO, VirtualSpoilProof,
+        VirtualAssertWordAlignment, VirtualAssertLTE, VirtualHostIO,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
         VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMovsign, VirtualMULI, VirtualPow2,
@@ -361,7 +361,6 @@ pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sign_extend_word;
-pub mod virtual_spoil_proof;
 pub mod virtual_sra;
 pub mod virtual_srai;
 pub mod virtual_srl;
