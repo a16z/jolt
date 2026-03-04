@@ -18,7 +18,8 @@ declare_riscv_instr!(
     mask   = 0xf9f0707f,
     match  = 0x1000202f,
     format = FormatR,
-    ram    = RAMRead  // Restored to match original
+    ram    = RAMRead,
+    side_effects = true
 );
 
 impl LRW {
@@ -32,15 +33,15 @@ impl LRW {
         // Load the word from memory
         let value = cpu.mmu.load_word(address);
 
-        cpu.x[self.operands.rd as usize] = match value {
+        let write_value = match value {
             Ok((word, _memory_read)) => {
                 cpu.set_reservation(address, ReservationWidth::Word);
-
                 // Sign extend the 32-bit value
                 word as i32 as i64
             }
             Err(_) => panic!("MMU load error"),
         };
+        cpu.write_register(self.operands.rd as usize, write_value);
     }
 }
 

@@ -85,13 +85,13 @@ impl InstructionFormat for FormatAMO {
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu.x[self.rs1 as usize], &cpu.xlen);
-        state.rs2 = normalize_register_value(cpu.x[self.rs2 as usize], &cpu.xlen);
-        state.rd.0 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
+        state.rs1 = normalize_register_value(cpu, self.rs1 as usize);
+        state.rs2 = normalize_register_value(cpu, self.rs2 as usize);
+        state.rd.0 = normalize_register_value(cpu, self.rd as usize);
     }
 
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
+        state.rd.1 = normalize_register_value(cpu, self.rd as usize);
     }
 
     #[cfg(any(feature = "test-utils", test))]
@@ -104,6 +104,10 @@ impl InstructionFormat for FormatAMO {
             rs1: 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1)),
             rs2: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
         }
+    }
+
+    fn set_rd(&mut self, rd: u8) {
+        self.rd = rd;
     }
 }
 
