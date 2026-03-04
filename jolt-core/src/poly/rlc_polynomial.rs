@@ -91,6 +91,11 @@ impl<F: JoltField> PartialEq for RLCPolynomial<F> {
 }
 
 impl<F: JoltField> RLCPolynomial<F> {
+    /// Total number of coefficients in the Dory matrix for this RLC polynomial.
+    pub fn len(&self) -> usize {
+        DoryGlobals::get_num_columns() * DoryGlobals::get_max_num_rows()
+    }
+
     pub fn new() -> Self {
         Self {
             dense_rlc: unsafe_allocate_zero_vec(DoryGlobals::get_T()),

@@ -16,14 +16,47 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use super::{
-    commitment::commitment_scheme::CommitmentScheme, multilinear_polynomial::MultilinearPolynomial,
-};
+use super::multilinear_polynomial::MultilinearPolynomial;
 use crate::{
     field::JoltField,
     transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
+
+/// Provides lazy access to polynomial data for batch opening proofs.
+/// Constructed by the Jolt prover from trace + preprocessing data.
+/// Each PCS calls methods on the source as needed:
+/// - Dory calls `build_joint_polynomial` to get a streaming RLC polynomial
+/// - Hachi ignores the source and uses ring_coeffs from its OpeningProofHint
+pub trait BatchPolynomialSource<F: JoltField>: Send + Sync {
+    /// Construct the joint (RLC) polynomial: `sum_i coeffs[i] * poly_i`.
+    /// The returned polynomial may evaluate lazily (e.g., streaming from trace data).
+    fn build_joint_polynomial(&self, coeffs: &[F]) -> MultilinearPolynomial<F>;
+}
+
+/// Streams polynomial data from the execution trace for Dory batch opening.
+/// Wraps the existing `RLCPolynomial::new_streaming` path so that Dory's
+/// `batch_prove` avoids regenerating witness polynomials.
+pub struct StreamingBatchSource<F: JoltField> {
+    pub one_hot_params: OneHotParams,
+    pub trace_source: TraceSource,
+    pub streaming_data: Arc<RLCStreamingData>,
+    pub advice_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+    pub poly_ids: Vec<CommittedPolynomial>,
+}
+
+impl<F: JoltField> BatchPolynomialSource<F> for StreamingBatchSource<F> {
+    fn build_joint_polynomial(&self, coeffs: &[F]) -> MultilinearPolynomial<F> {
+        MultilinearPolynomial::RLC(RLCPolynomial::new_streaming(
+            self.one_hot_params.clone(),
+            Arc::clone(&self.streaming_data),
+            self.trace_source.clone(),
+            self.poly_ids.clone(),
+            coeffs,
+            self.advice_polys.clone(),
+        ))
+    }
+}
 
 pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
@@ -237,61 +270,6 @@ pub trait OpeningAccumulator<F: JoltField> {
         kind: AdviceKind,
         sumcheck: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)>;
-}
-
-/// State for Dory batch opening (Stage 8).
-/// This is a generic interface for batch opening proofs.
-#[derive(Clone, Allocative)]
-pub struct DoryOpeningState<F: JoltField> {
-    /// Unified opening point for all polynomials (length = log_k_chunk + log_T)
-    pub opening_point: Vec<F::Challenge>,
-    /// γ^i coefficients for the RLC polynomial
-    pub gamma_powers: Vec<F>,
-    /// (polynomial, claim) pairs at the opening point
-    /// (with Lagrange factors already applied for shorter polys)
-    pub polynomial_claims: Vec<(CommittedPolynomial, F)>,
-}
-
-impl<F: JoltField> DoryOpeningState<F> {
-    /// Build streaming RLC polynomial from this state.
-    /// Streams directly from trace - no witness regeneration needed.
-    /// Advice polynomials are passed separately (not streamed from trace).
-    #[tracing::instrument(skip_all)]
-    pub fn build_streaming_rlc<PCS: CommitmentScheme<Field = F>>(
-        &self,
-        one_hot_params: OneHotParams,
-        trace_source: TraceSource,
-        rlc_streaming_data: Arc<RLCStreamingData>,
-        mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        advice_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
-    ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
-        // Accumulate gamma coefficients per polynomial
-        let mut rlc_map = BTreeMap::new();
-        for (gamma, (poly, _claim)) in self.gamma_powers.iter().zip(self.polynomial_claims.iter()) {
-            *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
-        }
-
-        let (poly_ids, coeffs): (Vec<CommittedPolynomial>, Vec<F>) =
-            rlc_map.iter().map(|(k, v)| (*k, *v)).unzip();
-
-        let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::new_streaming(
-            one_hot_params,
-            rlc_streaming_data,
-            trace_source,
-            poly_ids.clone(),
-            &coeffs,
-            advice_polys,
-        ));
-
-        let hints: Vec<PCS::OpeningProofHint> = rlc_map
-            .into_keys()
-            .map(|k| opening_hints.remove(&k).unwrap())
-            .collect();
-
-        let hint = PCS::combine_hints(hints, &coeffs);
-
-        (joint_poly, hint)
-    }
 }
 
 impl<F> Default for ProverOpeningAccumulator<F>

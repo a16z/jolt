@@ -13,6 +13,7 @@ use crate::{
         CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment,
     },
     poly::multilinear_polynomial::MultilinearPolynomial,
+    poly::opening_proof::BatchPolynomialSource,
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
@@ -24,11 +25,34 @@ use dory::primitives::{
     poly::Polynomial,
 };
 use rayon::prelude::*;
-use std::borrow::Borrow;
 use tracing::trace_span;
 
 #[derive(Clone)]
-pub struct DoryCommitmentScheme;
+pub struct DoryCommitmentScheme {
+    pub layout: DoryLayout,
+    pub sigma: usize,
+    pub nu: usize,
+}
+
+impl Default for DoryCommitmentScheme {
+    fn default() -> Self {
+        Self {
+            layout: DoryGlobals::get_layout(),
+            sigma: DoryGlobals::get_num_columns().log_2(),
+            nu: DoryGlobals::get_max_num_rows().log_2(),
+        }
+    }
+}
+
+/// Split `total_vars` into balanced `(sigma, nu)` where sigma = ceil(total_vars / 2)
+/// and nu = total_vars - sigma. sigma is the number of column variables,
+/// nu is the number of row variables.
+#[inline]
+pub fn balanced_sigma_nu(total_vars: usize) -> (usize, usize) {
+    let sigma = total_vars.div_ceil(2);
+    let nu = total_vars - sigma;
+    (sigma, nu)
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DoryOpeningProofHint(Vec<ArkG1>);
@@ -76,11 +100,11 @@ pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve, ProofTranscript: Trans
 
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = ark_bn254::Fr;
+    type Config = DoryLayout;
     type ProverSetup = ArkworksProverSetup;
     type VerifierSetup = ArkworksVerifierSetup;
     type Commitment = ArkGT;
     type Proof = ArkDoryProof;
-    type BatchedProof = Vec<ArkDoryProof>;
     type OpeningProofHint = DoryOpeningProofHint;
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
@@ -105,16 +129,23 @@ impl CommitmentScheme for DoryCommitmentScheme {
         setup.to_verifier_setup()
     }
 
+    fn from_proof(_proof: &Self::Proof) -> Self {
+        Self::default()
+    }
+
+    fn config(&self) -> &DoryLayout {
+        &self.layout
+    }
+
     fn commit(
+        &self,
         poly: &MultilinearPolynomial<ark_bn254::Fr>,
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         let _span = trace_span!("DoryCommitmentScheme::commit").entered();
 
-        let num_cols = DoryGlobals::get_num_columns();
-        let num_rows = DoryGlobals::get_max_num_rows();
-        let sigma = num_cols.log_2();
-        let nu = num_rows.log_2();
+        let sigma = self.sigma;
+        let nu = self.nu;
 
         let (tier_2, row_commitments, _commit_blind) =
             <MultilinearPolynomial<ark_bn254::Fr> as Polynomial<ArkFr>>::commit::<
@@ -128,6 +159,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     }
 
     fn batch_commit<U>(
+        &self,
         polys: &[U],
         gens: &Self::ProverSetup,
     ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
@@ -138,32 +170,33 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         polys
             .par_iter()
-            .map(|poly| Self::commit(poly.borrow(), gens))
+            .map(|poly| self.commit(poly.borrow(), gens))
             .collect()
     }
 
     fn prove<ProofTranscript: Transcript>(
+        &self,
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<ark_bn254::Fr>,
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
+        _commitment: &Self::Commitment,
     ) -> (Self::Proof, Option<Self::Field>) {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
 
         let (row_commitments, commit_blind) = hint
             .map(|h| (h.into_rows(), DoryField::zero()))
             .unwrap_or_else(|| {
-                let (_commitment, row_commitments) = Self::commit(poly, setup);
+                let (_commitment, row_commitments) = self.commit(poly, setup);
                 (row_commitments.into_rows(), DoryField::zero())
             });
 
-        let num_cols = DoryGlobals::get_num_columns();
-        let num_rows = DoryGlobals::get_max_num_rows();
-        let sigma = num_cols.log_2();
-        let nu = num_rows.log_2();
+        let sigma = self.sigma;
+        let nu = self.nu;
 
-        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
+        let reordered_point =
+            reorder_opening_point_for_layout::<ark_bn254::Fr>(self.layout, opening_point);
         let ark_point: Vec<ArkFr> = reordered_point
             .iter()
             .rev()
@@ -197,6 +230,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     }
 
     fn verify<ProofTranscript: Transcript>(
+        &self,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
@@ -206,7 +240,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> Result<(), ProofVerifyError> {
         let _span = trace_span!("DoryCommitmentScheme::verify").entered();
 
-        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
+        let reordered_point =
+            reorder_opening_point_for_layout::<ark_bn254::Fr>(self.layout, opening_point);
 
         // Dory uses the opposite endian-ness as Jolt
         let ark_point: Vec<ArkFr> = reordered_point
@@ -234,6 +269,52 @@ impl CommitmentScheme for DoryCommitmentScheme {
         Ok(())
     }
 
+    fn batch_prove<ProofTranscript: Transcript, S: BatchPolynomialSource<Self::Field>>(
+        &self,
+        setup: &Self::ProverSetup,
+        poly_source: &S,
+        hints: Vec<Self::OpeningProofHint>,
+        commitments: &[&Self::Commitment],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        _claims: &[Self::Field],
+        coeffs: &[Self::Field],
+        transcript: &mut ProofTranscript,
+    ) -> (Self::Proof, Option<Self::Field>) {
+        let joint_poly = poly_source.build_joint_polynomial(coeffs);
+        let combined_hint = self.combine_hints_internal(hints, coeffs);
+        let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
+        self.prove(
+            setup,
+            &joint_poly,
+            opening_point,
+            Some(combined_hint),
+            transcript,
+            &joint_commitment,
+        )
+    }
+
+    fn batch_verify<ProofTranscript: Transcript>(
+        &self,
+        proof: &Self::Proof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut ProofTranscript,
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        commitments: &[&Self::Commitment],
+        claims: &[Self::Field],
+        coeffs: &[Self::Field],
+    ) -> Result<(), ProofVerifyError> {
+        let joint_commitment = Self::combine_commitments_internal(commitments, coeffs);
+        let joint_claim: ark_bn254::Fr = coeffs.iter().zip(claims).map(|(c, v)| *c * *v).sum();
+        self.verify(
+            proof,
+            setup,
+            transcript,
+            opening_point,
+            &joint_claim,
+            &joint_commitment,
+        )
+    }
+
     fn protocol_name() -> &'static [u8] {
         b"Dory"
     }
@@ -251,24 +332,21 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let h1 = crate::curve::Bn254G1(setup.0.h1.0);
         Some((g1s, h1))
     }
+}
 
-    /// In Dory, the opening proof hint consists of the Pedersen commitments to the rows
-    /// of the polynomial coefficient matrix. In the context of a batch opening proof, we
-    /// can homomorphically combine the row commitments for multiple polynomials into the
-    /// row commitments for the RLC of those polynomials. This is more efficient than computing
-    /// the row commitments for the RLC from scratch.
-    ///
-    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_hints")]
-    fn combine_hints(
-        hints: Vec<Self::OpeningProofHint>,
-        coeffs: &[Self::Field],
-    ) -> Self::OpeningProofHint {
-        let num_rows = DoryGlobals::get_max_num_rows();
-
-        let mut rlc_hint = vec![ArkG1(G1Projective::zero()); num_rows];
+impl DoryCommitmentScheme {
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_hints_internal")]
+    pub(crate) fn combine_hints_internal(
+        &self,
+        hints: Vec<DoryOpeningProofHint>,
+        coeffs: &[ark_bn254::Fr],
+    ) -> DoryOpeningProofHint {
+        let max_num_rows = 1 << self.nu;
+        let mut rlc_hint = vec![ArkG1(G1Projective::zero()); max_num_rows];
         for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
-            hint.0.resize(num_rows, ArkG1(G1Projective::zero()));
+            hint.0.resize(max_num_rows, ArkG1(G1Projective::zero()));
 
+            // SAFETY: ArkG1 is repr(transparent) over G1Projective
             let row_commitments: &mut [G1Projective] = unsafe {
                 std::slice::from_raw_parts_mut(
                     hint.0.as_mut_ptr() as *mut G1Projective,
@@ -295,20 +373,15 @@ impl CommitmentScheme for DoryCommitmentScheme {
         DoryOpeningProofHint::new(rlc_hint)
     }
 
-    /// Homomorphically combines multiple commitments using a random linear combination.
-    /// Computes: sum_i(coeff_i * commitment_i) for the GT elements.
-    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_commitments")]
-    fn combine_commitments<C: Borrow<Self::Commitment>>(
-        commitments: &[C],
-        coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        let _span = trace_span!("DoryCommitmentScheme::combine_commitments").entered();
-
-        // Combine GT elements using parallel RLC
-        let commitments_vec: Vec<&ArkGT> = commitments.iter().map(|c| c.borrow()).collect();
+    /// Homomorphically combines multiple GT commitments using a random linear combination.
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_commitments_internal")]
+    pub(crate) fn combine_commitments_internal(
+        commitments: &[&ArkGT],
+        coeffs: &[ark_bn254::Fr],
+    ) -> ArkGT {
         coeffs
             .par_iter()
-            .zip(commitments_vec.par_iter())
+            .zip(commitments.par_iter())
             .map(|(coeff, commitment)| {
                 let ark_coeff = jolt_to_ark(coeff);
                 ark_coeff * **commitment
@@ -318,13 +391,15 @@ impl CommitmentScheme for DoryCommitmentScheme {
 }
 
 impl StreamingCommitmentScheme for DoryCommitmentScheme {
-    type ChunkState = Vec<ArkG1>; // Tier 1 commitment chunks
+    type ChunkState = Vec<ArkG1>;
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier1_commitment")]
-    fn process_chunk<T: SmallScalar>(setup: &Self::ProverSetup, chunk: &[T]) -> Self::ChunkState {
-        debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
-
-        let row_len = DoryGlobals::get_num_columns();
+    fn process_chunk<T: SmallScalar>(
+        &self,
+        setup: &Self::ProverSetup,
+        chunk: &[T],
+    ) -> Self::ChunkState {
+        let row_len = chunk.len();
         let g1_slice =
             unsafe { std::slice::from_raw_parts(setup.g1_vec.as_ptr(), setup.g1_vec.len()) };
 
@@ -343,13 +418,14 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         name = "DoryCommitmentScheme::compute_tier1_commitment_onehot"
     )]
     fn process_chunk_onehot(
+        &self,
         setup: &Self::ProverSetup,
         onehot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::ChunkState {
         let K = onehot_k;
+        let row_len = chunk.len();
 
-        let row_len = DoryGlobals::get_num_columns();
         let g1_slice =
             unsafe { std::slice::from_raw_parts(setup.g1_vec.as_ptr(), setup.g1_vec.len()) };
 
@@ -378,16 +454,14 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::compute_tier2_commitment")]
     fn aggregate_chunks(
+        &self,
         setup: &Self::ProverSetup,
         onehot_k: Option<usize>,
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
-        let num_rows = DoryGlobals::get_max_num_rows();
-
-        if let Some(_K) = onehot_k {
-            let row_len = DoryGlobals::get_num_columns();
-            let T = DoryGlobals::get_T();
-            let rows_per_k = T / row_len;
+        if let Some(K) = onehot_k {
+            let rows_per_k = chunks.len();
+            let num_rows = K * rows_per_k;
 
             let mut row_commitments = vec![ArkG1(G1Projective::zero()); num_rows];
             for (chunk_index, commitments) in chunks.iter().enumerate() {
@@ -453,9 +527,12 @@ where
 ///
 /// For CycleMajor layout, returns the point unchanged.
 fn reorder_opening_point_for_layout<F: JoltField>(
+    layout: DoryLayout,
     opening_point: &[F::Challenge],
 ) -> Vec<F::Challenge> {
-    if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+    if layout == DoryLayout::AddressMajor {
+        // For AddressMajor, T is needed to split the point.
+        // Fall back to DoryGlobals for now; will be eliminated in Phase 2d.
         let log_T = DoryGlobals::get_T().log_2();
         let log_K = opening_point.len().saturating_sub(log_T);
         let (r_address, r_cycle) = opening_point.split_at(log_K);

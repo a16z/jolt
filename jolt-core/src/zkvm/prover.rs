@@ -4,7 +4,7 @@ use crate::zkvm::{claim_reductions::advice::ReductionPhase, config::OneHotConfig
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::File,
     io::{Read, Write},
     path::Path,
@@ -37,8 +37,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
-            compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator,
-            ProverOpeningAccumulator, SumcheckId,
+            compute_advice_lagrange_factor, OpeningAccumulator, ProverOpeningAccumulator,
+            StreamingBatchSource, SumcheckId,
         },
         rlc_polynomial::{RLCStreamingData, TraceSource},
     },
@@ -503,7 +503,19 @@ where
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
 
-        // Add advice hints for batched Stage 8 opening
+        // Build per-polynomial commitment map for Stage 8
+        let main_polys = all_committed_polynomials(&self.one_hot_params);
+        let mut commitment_map: HashMap<CommittedPolynomial, PCS::Commitment> = main_polys
+            .into_iter()
+            .zip(commitments.iter().cloned())
+            .collect();
+        if let Some(ref c) = self.advice.trusted_advice_commitment {
+            commitment_map.insert(CommittedPolynomial::TrustedAdvice, c.clone());
+        }
+        if let Some(ref c) = untrusted_advice_commitment {
+            commitment_map.insert(CommittedPolynomial::UntrustedAdvice, c.clone());
+        }
+
         if let Some(hint) = self.advice.trusted_advice_hint.take() {
             opening_proof_hints.insert(CommittedPolynomial::TrustedAdvice, hint);
         }
@@ -525,7 +537,7 @@ where
             r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
         ];
 
-        let joint_opening_proof = self.prove_stage8(opening_proof_hints);
+        let joint_opening_proof = self.prove_stage8(opening_proof_hints, commitment_map);
         #[cfg(feature = "zk")]
         let blindfold_proof = self.prove_blindfold(&joint_opening_proof);
 
@@ -690,7 +702,7 @@ where
                         &trace,
                         Some(&self.one_hot_params),
                     );
-                    PCS::commit(&witness, &self.preprocessing.generators)
+                    PCS::default().commit(&witness, &self.preprocessing.generators)
                 })
                 .unzip();
 
@@ -750,7 +762,7 @@ where
                 .zip(&polys)
                 .map(|(tier1_commitments, poly)| {
                     let onehot_k = poly.get_onehot_k(&self.one_hot_params);
-                    PCS::aggregate_chunks(
+                    PCS::default().aggregate_chunks(
                         &self.preprocessing.generators,
                         onehot_k,
                         &tier1_commitments,
@@ -795,7 +807,7 @@ where
         let _guard =
             DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice, None);
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
-        let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
+        let (commitment, hint) = PCS::default().commit(&poly, &self.preprocessing.generators);
         self.transcript
             .append_serializable(b"untrusted_advice", &commitment);
 
@@ -1820,14 +1832,15 @@ where
         (sumcheck_proof, r_stage7)
     }
 
-    /// Stage 8: Dory batch opening proof.
-    /// Builds streaming RLC polynomial directly from trace (no witness regeneration needed).
+    /// Stage 8: PCS batch opening proof.
+    /// Streams polynomial data lazily from trace via `StreamingBatchSource` -- no witness regeneration.
     #[tracing::instrument(skip_all)]
     fn prove_stage8(
         &mut self,
         opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        commitment_map: HashMap<CommittedPolynomial, PCS::Commitment>,
     ) -> PCS::Proof {
-        tracing::info!("Stage 8 proving (Dory batch opening)");
+        tracing::info!("Stage 8 proving (batch opening)");
 
         let _guard = DoryGlobals::initialize_context(
             self.one_hot_params.k_chunk,
@@ -1836,8 +1849,6 @@ where
             Some(DoryGlobals::get_layout()),
         );
 
-        // Get the unified opening point from HammingWeightClaimReduction
-        // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
         let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::InstructionRa(0),
             SumcheckId::HammingWeightClaimReduction,
@@ -1849,16 +1860,31 @@ where
         let mut polynomial_claims = Vec::new();
         let mut scaling_factors = Vec::new();
 
-        // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
-        // at r_cycle_stage6 only (length log_T)
-        let (_, ram_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RamInc,
-            SumcheckId::IncClaimReduction,
-        );
-        let (_, rd_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RdInc,
-            SumcheckId::IncClaimReduction,
-        );
+        let (_ram_inc_point, ram_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamInc,
+                SumcheckId::IncClaimReduction,
+            );
+        let (_rd_inc_point, rd_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RdInc,
+                SumcheckId::IncClaimReduction,
+            );
+
+        #[cfg(test)]
+        {
+            let r_cycle_stage6 = &opening_point.r[log_k_chunk..];
+            debug_assert_eq!(
+                _ram_inc_point.r.as_slice(),
+                r_cycle_stage6,
+                "RamInc opening point should match r_cycle from HammingWeightClaimReduction"
+            );
+            debug_assert_eq!(
+                _rd_inc_point.r.as_slice(),
+                r_cycle_stage6,
+                "RdInc opening point should match r_cycle from HammingWeightClaimReduction"
+            );
+        }
 
         // Dense polynomials are zero-padded in the Dory matrix, so their evaluation
         // includes a factor eq(r_addr, 0) = ∏(1 − r_addr_i).
@@ -1868,8 +1894,6 @@ where
         polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
         scaling_factors.push(lagrange_factor);
 
-        // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
-        // These are at (r_address_stage7, r_cycle_stage6)
         for i in 0..self.one_hot_params.instruction_d {
             let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::InstructionRa(i),
@@ -1895,9 +1919,6 @@ where
             scaling_factors.push(F::one());
         }
 
-        // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
-        // These are committed with smaller dimensions, so we apply Lagrange factors to embed
-        // them in the top-left block of the main Dory matrix.
         #[cfg(feature = "zk")]
         let mut include_trusted_advice = false;
         #[cfg(feature = "zk")]
@@ -1937,7 +1958,7 @@ where
             }
         }
 
-        // 2. Sample gamma and compute powers for RLC
+        // Sample gamma and compute powers for RLC
         let claims: Vec<F> = polynomial_claims.iter().map(|(_, c)| *c).collect();
         // In non-ZK mode, absorb claims before sampling gamma for Fiat-Shamir binding.
         // In ZK mode, claims are secret; binding comes from BlindFold constraints instead.
@@ -1963,19 +1984,36 @@ where
             include_untrusted_advice,
         );
 
-        // Build DoryOpeningState
-        let state = DoryOpeningState {
-            opening_point: opening_point.r.clone(),
-            gamma_powers,
-            polynomial_claims,
-        };
+        // Accumulate gamma coefficients per unique polynomial (BTreeMap orders by CommittedPolynomial)
+        let mut rlc_map = BTreeMap::new();
+        for (gamma, (poly, claim)) in gamma_powers.iter().zip(polynomial_claims.iter()) {
+            let entry = rlc_map.entry(*poly).or_insert((F::zero(), F::zero()));
+            entry.0 += *gamma;
+            entry.1 = *claim;
+        }
+
+        let (poly_ids, coeffs_and_claims): (Vec<CommittedPolynomial>, Vec<(F, F)>) =
+            rlc_map.into_iter().collect();
+        let (coeffs, sorted_claims): (Vec<F>, Vec<F>) = coeffs_and_claims.into_iter().unzip();
+
+        // Collect per-polynomial hints and commitments in the same order
+        let mut hint_map = opening_proof_hints;
+        let hints: Vec<PCS::OpeningProofHint> = poly_ids
+            .iter()
+            .map(|id| hint_map.remove(id).unwrap())
+            .collect();
+        let mut commit_map = commitment_map;
+        let commitment_refs: Vec<PCS::Commitment> = poly_ids
+            .iter()
+            .map(|id| commit_map.remove(id).unwrap())
+            .collect();
+        let commitment_ref_slice: Vec<&PCS::Commitment> = commitment_refs.iter().collect();
 
         let streaming_data = Arc::new(RLCStreamingData {
             bytecode: Arc::clone(&self.preprocessing.shared.bytecode),
             memory_layout: self.preprocessing.shared.memory_layout.clone(),
         });
 
-        // Build advice polynomials map for RLC
         let mut advice_polys = HashMap::new();
         if let Some(poly) = self.advice.trusted_advice_polynomial.take() {
             advice_polys.insert(CommittedPolynomial::TrustedAdvice, poly);
@@ -1984,21 +2022,22 @@ where
             advice_polys.insert(CommittedPolynomial::UntrustedAdvice, poly);
         }
 
-        // Build streaming RLC polynomial directly (no witness poly regeneration!)
-        // Use materialized trace (default, single pass) instead of lazy trace
-        let (joint_poly, hint) = state.build_streaming_rlc::<PCS>(
-            self.one_hot_params.clone(),
-            TraceSource::Materialized(Arc::clone(&self.trace)),
+        let poly_source = StreamingBatchSource {
+            one_hot_params: self.one_hot_params.clone(),
+            trace_source: TraceSource::Materialized(Arc::clone(&self.trace)),
             streaming_data,
-            opening_proof_hints,
             advice_polys,
-        );
+            poly_ids,
+        };
 
-        let (proof, _y_blinding) = PCS::prove(
+        let (proof, _y_blinding) = PCS::default().batch_prove(
             &self.preprocessing.generators,
-            &joint_poly,
+            &poly_source,
+            hints,
+            &commitment_ref_slice,
             &opening_point.r,
-            Some(hint),
+            &sorted_claims,
+            &coeffs,
             &mut self.transcript,
         );
 
@@ -2196,7 +2235,7 @@ mod tests {
             DoryGlobals::initialize_context(1, advice_len, DoryContext::TrustedAdvice, None);
         let (commitment, hint) = {
             let _ctx = DoryGlobals::with_context(DoryContext::TrustedAdvice);
-            DoryCommitmentScheme::commit(&poly, &preprocessing.generators)
+            DoryCommitmentScheme::default().commit(&poly, &preprocessing.generators)
         };
         (commitment, hint)
     }
