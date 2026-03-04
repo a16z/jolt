@@ -144,4 +144,15 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge;
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge>;
     fn challenge_scalar_powers_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F>;
+    /// Debug method to print current transcript state.
+    ///
+    /// Used for intermediate value comparison testing between Rust verifier and
+    /// transpiled gnark circuit. When `debug-expected-output` feature is enabled,
+    /// implementations print the transcript state (bytes, field element, n_rounds)
+    /// at labeled checkpoints. This allows verification that both systems compute
+    /// identical Fiat-Shamir challenges.
+    ///
+    /// See `.claude/tasks/002-circuit-intermediate-value-comparison.md` for the
+    /// full testing strategy.
+    fn debug_state(&self, label: &str);
 }
