@@ -21,7 +21,8 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0x8000202f,
     format = FormatAMO,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl AMOMINW {
@@ -47,7 +48,7 @@ impl AMOMINW {
             .expect("MMU store error");
 
         // Return the original value
-        cpu.x[self.operands.rd as usize] = original_value;
+        cpu.write_register(self.operands.rd as usize, original_value);
     }
 }
 

@@ -20,7 +20,7 @@ impl VirtualRev8W {
         match cpu.xlen {
             Xlen::Bit64 => {
                 let v = cpu.x[self.operands.rs1 as usize] as u64;
-                cpu.x[self.operands.rd as usize] = rev8w(v) as i64;
+                cpu.write_register(self.operands.rd as usize, rev8w(v) as i64);
             }
             Xlen::Bit32 => unimplemented!(),
         }

@@ -9,7 +9,8 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00000067,
     format = FormatI,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl JALR {
@@ -25,7 +26,7 @@ impl JALR {
             if self.operands.rd == 1 {
                 cpu.track_call(self.address, NormalizedOperands::from(self.operands));
             }
-            cpu.x[self.operands.rd as usize] = tmp;
+            cpu.write_register(self.operands.rd as usize, tmp);
         }
     }
 }

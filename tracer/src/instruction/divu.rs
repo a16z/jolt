@@ -30,10 +30,12 @@ impl DIVU {
         let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]);
         let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]);
         if divisor == 0 {
-            cpu.x[self.operands.rd as usize] = -1;
+            cpu.write_register(self.operands.rd as usize, -1);
         } else {
-            cpu.x[self.operands.rd as usize] =
-                cpu.sign_extend(dividend.wrapping_div(divisor) as i64)
+            cpu.write_register(
+                self.operands.rd as usize,
+                cpu.sign_extend(dividend.wrapping_div(divisor) as i64),
+            );
         }
     }
 }

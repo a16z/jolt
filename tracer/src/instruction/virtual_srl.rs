@@ -17,9 +17,12 @@ declare_riscv_instr!(
 impl VirtualSRL {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSRL as RISCVInstruction>::RAMAccess) {
         let shift = cpu.x[self.operands.rs2 as usize].trailing_zeros();
-        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
-            cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
-                .wrapping_shr(shift) as i64,
+        cpu.write_register(
+            self.operands.rd as usize,
+            cpu.sign_extend(
+                cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
+                    .wrapping_shr(shift) as i64,
+            ),
         );
     }
 }
