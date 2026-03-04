@@ -16,11 +16,18 @@ use rayon::prelude::*;
 
 use super::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 
-#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Allocative)]
+#[derive(Default, Debug, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct DensePolynomial<F: JoltField> {
-    pub num_vars: usize, // the number of variables in the multilinear polynomial
+    pub num_vars: usize,
     pub len: usize,
-    pub Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
+    pub Z: Vec<F>,
+    binding_scratch_space: Option<Vec<F>>,
+}
+
+impl<F: JoltField> PartialEq for DensePolynomial<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.num_vars == other.num_vars && self.len == other.len && self.Z == other.Z
+    }
 }
 
 impl<F: JoltField> DensePolynomial<F> {
@@ -35,6 +42,7 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars: Z.len().log_2(),
             len: Z.len(),
             Z,
+            binding_scratch_space: None,
         }
     }
 
@@ -49,6 +57,7 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars: poly_evals.len().log_2(),
             len: poly_evals.len(),
             Z: poly_evals,
+            binding_scratch_space: None,
         }
     }
 
@@ -151,6 +160,7 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars,
             len,
             Z: new_evals,
+            binding_scratch_space: None,
         }
     }
 
@@ -190,6 +200,7 @@ impl<F: JoltField> DensePolynomial<F> {
             num_vars,
             len,
             Z: new_evals,
+            binding_scratch_space: None,
         }
     }
 
@@ -207,15 +218,26 @@ impl<F: JoltField> DensePolynomial<F> {
 
     pub fn bound_poly_var_bot_01_optimized(&mut self, r: &F::Challenge) {
         let n = self.len() / 2;
-        let mut bound_Z = Vec::with_capacity(n);
-        (bound_Z.spare_capacity_mut(), self.Z.par_chunks_exact(2))
+
+        let scratch = self
+            .binding_scratch_space
+            .get_or_insert_with(|| Vec::with_capacity(n));
+        debug_assert!(scratch.capacity() >= n);
+
+        // SAFETY: We will write exactly n elements via MaybeUninit before set_len.
+        unsafe { scratch.set_len(0) };
+        let spare = &mut scratch.spare_capacity_mut()[..n];
+
+        (spare, self.Z.par_chunks_exact(2))
             .into_par_iter()
             .with_min_len(512 * 32 / F::NUM_BYTES)
             .for_each(|(bound_coeff, coeffs)| {
                 bound_coeff.write(coeffs[0] + *r * (coeffs[1] - coeffs[0]));
             });
-        unsafe { bound_Z.set_len(n) };
-        self.Z = bound_Z;
+        // SAFETY: All n elements were initialized by the parallel iterator above.
+        unsafe { scratch.set_len(n) };
+
+        std::mem::swap(&mut self.Z, scratch);
         self.num_vars -= 1;
         self.len = n;
     }
