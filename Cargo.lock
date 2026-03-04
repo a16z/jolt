@@ -6913,9 +6913,12 @@ dependencies = [
  "clap",
  "common",
  "jolt-core",
+ "num-bigint",
  "proptest",
  "rand_core 0.6.4",
  "regex",
+ "serde",
+ "serde_json",
  "strum 0.27.2",
  "tracer",
 ]

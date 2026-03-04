@@ -52,8 +52,7 @@ use tracer::instruction::Cycle;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::ra_poly::RaPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
@@ -291,10 +290,10 @@ pub struct RamRaVirtualSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> RamRaVirtualSumcheckVerifier<F> {
-    pub fn new(
+    pub fn new<A: OpeningAccumulator<F>>(
         trace_len: usize,
         one_hot_params: &OneHotParams,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &A,
         _transcript: &mut impl Transcript,
     ) -> Self {
         let params = RamRaVirtualParams::new(trace_len, one_hot_params, opening_accumulator);
@@ -302,7 +301,7 @@ impl<F: JoltField> RamRaVirtualSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F> + 'static> SumcheckInstanceVerifier<F, T, A>
     for RamRaVirtualSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -311,7 +310,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let r_cycle_final = self.params.normalize_opening_point(sumcheck_challenges);
@@ -335,7 +334,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle_final = self.params.normalize_opening_point(sumcheck_challenges);

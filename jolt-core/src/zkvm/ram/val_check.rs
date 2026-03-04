@@ -162,7 +162,7 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
         ram_K: usize,
         _rw_config: &ReadWriteConfig,
         gamma: F,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         // (r_address, r_cycle) from RamVal/RamReadWriteChecking.
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -473,7 +473,7 @@ impl<F: JoltField> RamValCheckSumcheckVerifier<F> {
         ram_K: usize,
         rw_config: &ReadWriteConfig,
         gamma: F,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let params = RamValCheckSumcheckParams::new_from_verifier(
             initial_ram_state,
@@ -489,7 +489,7 @@ impl<F: JoltField> RamValCheckSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F> + 'static> SumcheckInstanceVerifier<F, T, A>
     for RamValCheckSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -498,7 +498,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         // LT(r_cycle′, r_cycle) term for (1), computed the same way as ValEvaluation verifier.
@@ -528,7 +528,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle_prime = self.params.normalize_opening_point(sumcheck_challenges);
