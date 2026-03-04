@@ -1,7 +1,0 @@
-{
-  "name": "jolt",
-  "description": "Jolt zkVM SDK assistant — helps build provable RISC-V programs",
-  "version": "0.1.0",
-  "author": { "name": "a16z crypto" },
-  "skills": ["./agent-skills/jolt"]
-}

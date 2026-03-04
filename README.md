@@ -188,7 +188,7 @@ Jolt ships an [agent skill](https://vercel.com/docs/agent-resources/skills) that
 npx skills add a16z/jolt
 ```
 
-Fallback (Claude Code only):
+Fallback (Claude Code / Codex):
 ```bash
 curl -sfL jolt.rs/skill | bash
 ```

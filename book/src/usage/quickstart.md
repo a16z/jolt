@@ -8,7 +8,7 @@ Install the Jolt [agent skill](https://vercel.com/docs/agent-resources/skills) t
 npx skills add a16z/jolt
 ```
 
-Fallback (Claude Code only):
+Fallback (Claude Code / Codex):
 ```bash
 curl -sfL jolt.rs/skill | bash
 ```
