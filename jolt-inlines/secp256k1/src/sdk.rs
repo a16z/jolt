@@ -129,15 +129,14 @@ pub trait UnwrapOrSpoilProof<T> {
     fn unwrap_or_spoil_proof(self) -> T;
 }
 
-impl<T> UnwrapOrSpoilProof<T> for Result<T, Secp256k1Error> {
+impl<T: Default> UnwrapOrSpoilProof<T> for Result<T, Secp256k1Error> {
     #[inline(always)]
     fn unwrap_or_spoil_proof(self) -> T {
         match self {
             Ok(v) => v,
             Err(_) => {
                 hcf();
-                // SAFETY: proof is already spoiled; this value never appears in a valid proof
-                unsafe { core::mem::zeroed() }
+                T::default()
             }
         }
     }
