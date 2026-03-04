@@ -31,7 +31,7 @@ impl Program {
             max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             std: false,
-            backtrace: Some("off".to_string()), // Default to off for minimal size
+            backtrace: Some("disable".to_string()), // Default to disable for minimal size
             elf: None,
             elf_compute_advice: None,
         }
