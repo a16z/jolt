@@ -9,7 +9,7 @@ use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand_core::CryptoRngCore;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PedersenGenerators<C: JoltCurve> {
     pub message_generators: Vec<C::G1>,
     pub blinding_generator: C::G1,

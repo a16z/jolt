@@ -2089,6 +2089,24 @@ where
     }
 
     #[cfg(feature = "zk")]
+    pub fn blindfold_setup<C: crate::curve::JoltCurve>(
+        &self,
+        count: usize,
+    ) -> crate::subprotocols::blindfold::BlindfoldSetup<C>
+    where
+        C::G1: From<crate::curve::Bn254G1>,
+    {
+        let (g1s, h1) = PCS::zk_generators_raw(&self.generators, count)
+            .expect("PCS does not support ZK Pedersen generators");
+        crate::subprotocols::blindfold::BlindfoldSetup(
+            crate::poly::commitment::pedersen::PedersenGenerators::new(
+                g1s.into_iter().map(C::G1::from).collect(),
+                C::G1::from(h1),
+            ),
+        )
+    }
+
+    #[cfg(feature = "zk")]
     pub fn pedersen_generators<C: crate::curve::JoltCurve>(
         &self,
         count: usize,
@@ -2096,12 +2114,7 @@ where
     where
         C::G1: From<crate::curve::Bn254G1>,
     {
-        let (g1s, h1) = PCS::zk_generators_raw(&self.generators, count)
-            .expect("PCS does not support ZK Pedersen generators");
-        crate::poly::commitment::pedersen::PedersenGenerators::new(
-            g1s.into_iter().map(C::G1::from).collect(),
-            C::G1::from(h1),
-        )
+        self.blindfold_setup::<C>(count).into()
     }
 
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {

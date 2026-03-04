@@ -1709,7 +1709,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
     {
         assert!(
             count <= self.zk_generator_g1s.len(),
-            "Requested {count} Pedersen generators but verifier preprocessing only has {}",
+            "Requested {count} Pedersen generators but verifier preprocessing only has {}. \
+             Use JoltVerifierPreprocessing::from(&prover_preprocessing) \
+             (or verifier_preprocessing_from_prover_*) to populate ZK generators.",
             self.zk_generator_g1s.len()
         );
         let message_generators = self.zk_generator_g1s[..count]
