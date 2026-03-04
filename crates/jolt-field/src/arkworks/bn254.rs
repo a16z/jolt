@@ -1,3 +1,4 @@
+use crate::bigint_ext::BigIntExt;
 #[cfg(feature = "challenge-254-bit")]
 use crate::challenge::Mont254BitChallenge;
 #[cfg(not(feature = "challenge-254-bit"))]
@@ -5,6 +6,8 @@ use crate::challenge::MontU128Challenge;
 use crate::{Field, ReductionOps, UnreducedOps, WithChallenge};
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rand_core::RngCore;
+
+use super::bn254_ops;
 
 type Fr = ark_bn254::Fr;
 type FrConfig = ark_bn254::FrConfig;
@@ -54,126 +57,65 @@ impl Field for Fr {
 
     #[inline]
     fn from_u8(n: u8) -> Self {
-        <Self as ark_ff::PrimeField>::from_u64::<5>(n as u64).unwrap()
+        bn254_ops::from_u64(n as u64)
     }
 
     #[inline]
     fn from_u16(n: u16) -> Self {
-        <Self as ark_ff::PrimeField>::from_u64::<5>(n as u64).unwrap()
+        bn254_ops::from_u64(n as u64)
     }
 
     #[inline]
     fn from_u32(n: u32) -> Self {
-        <Self as ark_ff::PrimeField>::from_u64::<5>(n as u64).unwrap()
+        bn254_ops::from_u64(n as u64)
     }
 
     #[inline]
     fn from_u64(n: u64) -> Self {
-        if n <= u16::MAX as u64 {
-            <Self as Field>::from_u16(n as u16)
-        } else if n <= u32::MAX as u64 {
-            <Self as Field>::from_u32(n as u32)
-        } else {
-            <Self as ark_ff::PrimeField>::from_u64::<5>(n).unwrap()
-        }
+        bn254_ops::from_u64(n)
     }
 
     #[inline]
     fn from_i64(val: i64) -> Self {
         if val.is_negative() {
-            let val = val.unsigned_abs();
-            if val <= u16::MAX as u64 {
-                -<Self as Field>::from_u16(val as u16)
-            } else if val <= u32::MAX as u64 {
-                -<Self as Field>::from_u32(val as u32)
-            } else {
-                -<Self as Field>::from_u64(val)
-            }
+            -bn254_ops::from_u64(val.unsigned_abs())
         } else {
-            let val = val as u64;
-            if val <= u16::MAX as u64 {
-                <Self as Field>::from_u16(val as u16)
-            } else if val <= u32::MAX as u64 {
-                <Self as Field>::from_u32(val as u32)
-            } else {
-                <Self as Field>::from_u64(val)
-            }
+            bn254_ops::from_u64(val as u64)
         }
     }
 
     #[inline]
     fn from_i128(val: i128) -> Self {
         if val.is_negative() {
-            let val = val.unsigned_abs();
-            if val <= u16::MAX as u128 {
-                -<Self as Field>::from_u16(val as u16)
-            } else if val <= u32::MAX as u128 {
-                -<Self as Field>::from_u32(val as u32)
-            } else if val <= u64::MAX as u128 {
-                -<Self as Field>::from_u64(val as u64)
-            } else {
-                let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
-                -<Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
-            }
+            -bn254_ops::from_u128(val.unsigned_abs())
         } else {
-            let val = val as u128;
-            if val <= u16::MAX as u128 {
-                <Self as Field>::from_u16(val as u16)
-            } else if val <= u32::MAX as u128 {
-                <Self as Field>::from_u32(val as u32)
-            } else if val <= u64::MAX as u128 {
-                <Self as Field>::from_u64(val as u64)
-            } else {
-                let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
-                <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
-            }
+            bn254_ops::from_u128(val as u128)
         }
     }
 
     #[inline]
     fn from_u128(val: u128) -> Self {
-        if val <= u16::MAX as u128 {
-            <Self as Field>::from_u16(val as u16)
-        } else if val <= u32::MAX as u128 {
-            <Self as Field>::from_u32(val as u32)
-        } else if val <= u64::MAX as u128 {
-            <Self as Field>::from_u64(val as u64)
-        } else {
-            let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
-            <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
-        }
+        bn254_ops::from_u128(val)
     }
 
     #[inline]
     fn mul_u64(&self, n: u64) -> Self {
-        if n == 0 || self.is_zero() {
-            Self::zero()
-        } else if n == 1 {
-            *self
-        } else {
-            ark_ff::Fp::mul_u64::<5>(*self, n)
-        }
+        bn254_ops::mul_u64(*self, n)
     }
 
     #[inline(always)]
     fn mul_i64(&self, n: i64) -> Self {
-        ark_ff::Fp::mul_i64::<5>(*self, n)
+        bn254_ops::mul_i64(*self, n)
     }
 
     #[inline(always)]
     fn mul_u128(&self, n: u128) -> Self {
-        ark_ff::Fp::mul_u128::<5, 6>(*self, n)
+        bn254_ops::mul_u128(*self, n)
     }
 
     #[inline]
     fn mul_i128(&self, n: i128) -> Self {
-        if n == 0 || self.is_zero() {
-            Self::zero()
-        } else if n == 1 {
-            *self
-        } else {
-            ark_ff::Fp::mul_i128::<5, 6>(*self, n)
-        }
+        bn254_ops::mul_i128(*self, n)
     }
 }
 
@@ -185,26 +127,28 @@ impl UnreducedOps for Fr {
 
     #[inline]
     fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L> {
-        self.0.mul_trunc::<4, L>(&other.0)
+        BigIntExt::mul_trunc(&self.0, &other.0)
     }
 
     #[inline]
     fn mul_u64_unreduced(self, other: u64) -> BigInt<5> {
-        self.0.mul_trunc::<1, 5>(&BigInt::new([other]))
+        BigIntExt::mul_trunc(&self.0, &BigInt::new([other]))
     }
 
     #[inline]
     fn mul_u128_unreduced(self, other: u128) -> BigInt<6> {
-        self.0
-            .mul_trunc::<2, 6>(&BigInt::new([other as u64, (other >> 64) as u64]))
+        BigIntExt::mul_trunc(&self.0, &BigInt::new([other as u64, (other >> 64) as u64]))
     }
 }
 
 impl ReductionOps for Fr {
+    // SAFETY: `Fr` and `BigInt<4>` have identical layout (4 x u64 limbs).
+    // `MontConfig::R` is the Montgomery form of 1, which is a valid `Fr` value.
     const MONTGOMERY_R: Self = unsafe {
         use ark_ff::MontConfig;
         std::mem::transmute(<FrConfig as MontConfig<4>>::R)
     };
+    // SAFETY: Same layout guarantee as above. `R2 = R^2 mod p` is a valid field element.
     const MONTGOMERY_R_SQUARE: Self = unsafe {
         use ark_ff::MontConfig;
         std::mem::transmute(<FrConfig as MontConfig<4>>::R2)
@@ -212,12 +156,12 @@ impl ReductionOps for Fr {
 
     #[inline]
     fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
-        Fr::from_montgomery_reduce::<L, 5>(unreduced)
+        bn254_ops::from_montgomery_reduce(unreduced)
     }
 
     #[inline]
     fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
-        Fr::from_barrett_reduce::<L, 5>(unreduced)
+        bn254_ops::from_barrett_reduce(unreduced)
     }
 }
 

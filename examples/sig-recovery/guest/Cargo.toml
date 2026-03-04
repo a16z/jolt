@@ -8,9 +8,9 @@ guest = []
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
-	"guest-std",
-	"thread",
-	"stdout",
+  "guest-std",
+  "thread",
+  "stdout",
 ] }
 reth-primitives-traits = { workspace = true }
 reth-ethereum-primitives = { workspace = true }

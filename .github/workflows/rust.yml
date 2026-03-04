@@ -25,6 +25,26 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all --check
 
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Check docs for crates/
+        run: |
+          cargo doc --no-deps --document-private-items \
+            -p jolt-field \
+            -p jolt-transcript \
+            -p jolt-poly \
+            -p jolt-openings \
+            -p jolt-sumcheck \
+            -p jolt-spartan \
+            -p jolt-instructions \
+            -p jolt-dory \
+            -p jolt-zkvm
+        env:
+          RUSTDOCFLAGS: -D warnings
+
   clippy:
     runs-on: ubuntu-latest
     steps:
@@ -36,6 +56,20 @@ jobs:
         run: cargo clippy --all --all-targets --features allocative,host
       - name: cargo clippy --no-default-features
         run: cargo clippy --all --all-targets --no-default-features
+
+  taplo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install taplo
+        run: |
+          curl -fsSL https://github.com/tamasfe/taplo/releases/latest/download/taplo-full-linux-x86_64.gz \
+            | gunzip > /usr/local/bin/taplo
+          chmod +x /usr/local/bin/taplo
+      - name: Check TOML formatting
+        run: taplo fmt --check
+      - name: Validate TOML files
+        run: taplo lint
 
   machete:
     runs-on: ubuntu-latest

@@ -2898,6 +2898,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-dory"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "dory-pcs",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "sha3",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-field"
 version = "0.1.0"
 dependencies = [
@@ -2995,6 +3015,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-instructions"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "serde",
+]
+
+[[package]]
+name = "jolt-openings"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-transcript",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
@@ -3019,6 +3061,22 @@ dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "rand 0.8.5",
+]
+
+[[package]]
+name = "jolt-poly"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-serialize 0.5.0",
+ "bincode",
+ "jolt-field",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -3048,6 +3106,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-spartan"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-sumcheck"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-serialize 0.5.0",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-transcript",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-transcript"
 version = "0.1.0"
 dependencies = [
@@ -3056,6 +3148,10 @@ dependencies = [
  "hex",
  "sha3",
 ]
+
+[[package]]
+name = "jolt-zkvm"
+version = "0.1.0"
 
 [[package]]
 name = "js-sys"

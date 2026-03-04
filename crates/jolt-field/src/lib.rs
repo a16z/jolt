@@ -3,23 +3,22 @@
 //! This crate provides the core field trait (`Field`) and associated types
 //! used throughout the Jolt zkVM ecosystem.
 
-// Core field traits
 mod field;
 pub use field::{
     Challenge, Field, MaybeAllocative, OptimizedMul, ReductionOps, UnreducedOps, WithChallenge,
 };
 
-// Accumulation patterns
 mod accumulation;
 pub use accumulation::{BarrettReduce, FMAdd, MontgomeryReduce};
 
-// Challenge types
 pub mod challenge;
 
-// Arkworks backend implementations
+pub mod bigint_ext;
+
+pub mod signed;
+
 pub mod arkworks;
 
-// Re-export commonly used types
 #[cfg(not(feature = "challenge-254-bit"))]
 pub type DefaultChallenge<F> = challenge::MontU128Challenge<F>;
 #[cfg(feature = "challenge-254-bit")]

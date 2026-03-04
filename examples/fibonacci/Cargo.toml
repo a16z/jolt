@@ -8,4 +8,3 @@ jolt-sdk = { workspace = true, features = ["host"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
 guest = { package = "fibonacci-guest", path = "./guest" }
-

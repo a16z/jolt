@@ -8,7 +8,15 @@ use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-/// Core field trait with minimal bounds
+/// Prime field element abstraction used throughout Jolt.
+///
+/// This trait provides a backend-agnostic interface over a prime-order scalar
+/// field. The only production implementation is BN254 `Fr` (via arkworks), but
+/// the trait allows swapping backends or fields without touching protocol code.
+///
+/// All arithmetic is modular over the field's prime order. Elements are `Copy`,
+/// thread-safe, and cheaply serializable. Negative integers are mapped via
+/// their canonical representative modulo `p`.
 pub trait Field:
     'static
     + Sized
@@ -42,13 +50,20 @@ pub trait Field:
     + Hash
     + MaybeAllocative
 {
+    /// Byte length of a canonical (compressed) serialized element.
     const NUM_BYTES: usize;
 
+    /// Samples a uniformly random field element.
     fn random<R: RngCore>(rng: &mut R) -> Self;
+    /// Deserializes from little-endian bytes, reducing modulo the field prime.
     fn from_bytes(bytes: &[u8]) -> Self;
+    /// Returns the value as `u64` if it fits, or `None` if >= 2^64.
     fn to_u64(&self) -> Option<u64>;
+    /// Number of significant bits in the canonical representation.
     fn num_bits(&self) -> u32;
+    /// Returns `self * self`.
     fn square(&self) -> Self;
+    /// Multiplicative inverse, or `None` for the zero element.
     fn inverse(&self) -> Option<Self>;
 
     fn from_bool(val: bool) -> Self;
@@ -56,7 +71,11 @@ pub trait Field:
     fn from_u16(n: u16) -> Self;
     fn from_u32(n: u32) -> Self;
     fn from_u64(n: u64) -> Self;
+    /// Maps a signed integer to its canonical field representative: negative
+    /// values become `p - |val|`.
     fn from_i64(val: i64) -> Self;
+    /// Maps a signed integer to its canonical field representative: negative
+    /// values become `p - |val|`.
     fn from_i128(val: i128) -> Self;
     fn from_u128(val: u128) -> Self;
 

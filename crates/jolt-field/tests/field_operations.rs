@@ -84,8 +84,8 @@ fn field_conversions() {
 fn bytes_conversion() {
     let mut rng = test_rng();
 
-    for len in [1, 8, 16, 32, 48, 64].iter() {
-        let mut bytes = vec![0u8; *len];
+    for &len in &[1, 8, 16, 32, 48, 64] {
+        let mut bytes = vec![0u8; len];
         rng.fill_bytes(&mut bytes);
         let _field_elem = <Fr as Field>::from_bytes(&bytes);
     }

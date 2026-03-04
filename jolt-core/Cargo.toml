@@ -2,18 +2,18 @@
 name = "jolt-core"
 version = "0.1.0"
 authors = [
-    # author of original Spartan paper and code base
-    "Srinath Setty <srinath@microsoft.com>",
-    # authors who contributed to the Arkworks Spartan fork
-    "Zhenfei Zhang <zhenfei.zhang@hotmail.com>",
-    # authors who contributed to Lasso/Jolt
-    "Michael Zhu <mzhu@a16z.com>",
-    "Sam Ragsdale <sragsdale@a16z.com>",
-    "Noah Citron <ncitron@a16z.com>",
-    "Arasu Arun <arasu.arun5@gmail.com>",
-    "Quang Dao <dvquang85@gmail.com>",
-    "Andrew Tretyakov <atretyakov@a16z.com>",
-    "Markos Georghiades <mgeorghiades@a16z.com>",
+  # author of original Spartan paper and code base
+  "Srinath Setty <srinath@microsoft.com>",
+  # authors who contributed to the Arkworks Spartan fork
+  "Zhenfei Zhang <zhenfei.zhang@hotmail.com>",
+  # authors who contributed to Lasso/Jolt
+  "Michael Zhu <mzhu@a16z.com>",
+  "Sam Ragsdale <sragsdale@a16z.com>",
+  "Noah Citron <ncitron@a16z.com>",
+  "Arasu Arun <arasu.arun5@gmail.com>",
+  "Quang Dao <dvquang85@gmail.com>",
+  "Andrew Tretyakov <atretyakov@a16z.com>",
+  "Markos Georghiades <mgeorghiades@a16z.com>",
 ]
 edition = "2021"
 description = "The lookup singularity. Based on Spartan; built on Arkworks."
@@ -24,19 +24,15 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
 default = ["host"]
-host = [
-    "prover",
-    "dep:jolt-inlines-sha2",
-    "dep:jolt-inlines-keccak256",
-]
+host = ["prover", "dep:jolt-inlines-sha2", "dep:jolt-inlines-keccak256"]
 prover = [
-    "minimal",
-    "ark-ec/parallel",
-    "ark-ff/parallel",
-    "ark-std/parallel",
-    "dory/backends",
-    "dory/cache", # This includes `parallel` feature
-    "dory/disk-persistence"
+  "minimal",
+  "ark-ec/parallel",
+  "ark-ff/parallel",
+  "ark-std/parallel",
+  "dory/backends",
+  "dory/cache",            # This includes `parallel` feature
+  "dory/disk-persistence",
 ]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
@@ -86,13 +82,13 @@ allocative.workspace = true
 inferno = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [
-    "host",
+  "host",
 ], optional = true }
 sysinfo = { version = "0.37", optional = true }
 pprof = { version = "0.15", features = [
-    "prost-codec",
-    "flamegraph",
-    "frame-pointer",
+  "prost-codec",
+  "flamegraph",
+  "frame-pointer",
 ], optional = true }
 prost = { version = "0.14", optional = true }
 
@@ -104,8 +100,8 @@ criterion.workspace = true
 iai-callgrind.workspace = true
 serial_test.workspace = true
 tracer = { workspace = true, default-features = false, features = [
-    "std",
-    "test-utils",
+  "std",
+  "test-utils",
 ] }
 
 [build-dependencies]

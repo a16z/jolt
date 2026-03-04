@@ -4,19 +4,25 @@ use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
-use ark_ec::scalar_mul::variable_base::{
-    msm_binary, msm_i128, msm_i64, msm_s128, msm_s64, msm_u128, msm_u16, msm_u32, msm_u64, msm_u8,
-    VariableBaseMSM as ArkVariableBaseMSM,
-};
+use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{CurveGroup, ScalarMul};
-use ark_ff::biginteger::{S128, S64};
+use jolt_field::signed::{S128, S64};
 use rayon::prelude::*;
 
-// A very light wrapper around Ark5.0 VariableBaseMSM
-pub trait VariableBaseMSM: ArkVariableBaseMSM
+pub mod bucket;
+pub mod stream_pippenger;
+pub mod typed_msm;
+
+pub use typed_msm::BucketMSM;
+
+use typed_msm::{
+    msm_binary, msm_i128, msm_i64, msm_s128, msm_s64, msm_u128, msm_u16, msm_u32, msm_u64,
+    msm_u8,
+};
+
+pub trait VariableBaseMSM: ArkVariableBaseMSM + BucketMSM
 where
-    Self: ScalarMul, // technically implied by ArkVariableBaseMSM, but explicitly mentioned to be
-    // consistent with current Jolt Msm implementation.
+    Self: ScalarMul,
     Self::ScalarField: JoltField,
 {
     #[tracing::instrument(skip_all)]
@@ -38,7 +44,8 @@ where
                     if scalars.par_iter().all(|&s| s == 0) {
                         Self::zero()
                     } else if scalars.par_iter().all(|&s| s <= 1) {
-                        let bool_scalars: Vec<bool> = scalars.par_iter().map(|&s| s == 1).collect();
+                        let bool_scalars: Vec<bool> =
+                            scalars.par_iter().map(|&s| s == 1).collect();
                         msm_binary::<Self>(bases, &bool_scalars, false)
                     } else {
                         msm_u8::<Self>(bases, scalars, false)
@@ -181,5 +188,4 @@ where
     }
 }
 
-// Implement VariableBaseMSM For any type G (like G1Projective) that implements the CurveGroup trait.
 impl<F: JoltField, G: CurveGroup<ScalarField = F>> VariableBaseMSM for G {}

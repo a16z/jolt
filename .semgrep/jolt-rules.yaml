@@ -1,0 +1,229 @@
+rules:
+  - id: jolt-no-panic
+    message: >-
+      `panic!()` should not appear in production code. Return a proper
+      error type instead. Panics in the prover abort proof generation.
+    severity: ERROR
+    languages: [rust]
+    metadata:
+      category: correctness
+      confidence: HIGH
+    patterns:
+      - pattern: panic!(...)
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $MOD { ... }
+      - pattern-not-inside: |
+          #[test]
+          fn $FUNC(...) { ... }
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/*_test.rs"
+        - "**/benches/**"
+        - "**/examples/**"
+
+  - id: jolt-no-todo-unimplemented
+    message: >-
+      `todo!()` and `unimplemented!()` must not reach production.
+      Implement the functionality or return an error.
+    severity: ERROR
+    languages: [rust]
+    metadata:
+      category: correctness
+      confidence: HIGH
+    pattern-either:
+      - pattern: todo!(...)
+      - pattern: unimplemented!(...)
+
+  - id: jolt-no-transmute
+    message: >-
+      `std::mem::transmute` reinterprets bits without checks. In ZK code,
+      incorrect transmutes can silently produce invalid field elements or
+      corrupt proof data. Prefer `from_bytes`, `try_from`, or explicit
+      conversion. If transmute is necessary, add a SAFETY comment.
+    severity: ERROR
+    languages: [rust]
+    metadata:
+      category: security
+      confidence: HIGH
+    pattern-either:
+      - pattern: std::mem::transmute(...)
+      - pattern: std::mem::transmute_copy(...)
+      - pattern: core::mem::transmute(...)
+      - pattern: core::mem::transmute_copy(...)
+
+  - id: jolt-no-println
+    message: >-
+      Use the `tracing` crate instead of `println!`/`eprintln!`. Print
+      macros bypass structured logging and cannot be filtered or directed
+      to profiling outputs.
+    severity: WARNING
+    languages: [rust]
+    metadata:
+      category: best-practice
+      confidence: HIGH
+    pattern-either:
+      - pattern: println!(...)
+      - pattern: eprintln!(...)
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/examples/**"
+        - "**/benches/**"
+        - "**/build.rs"
+
+  - id: jolt-no-dbg
+    message: >-
+      `dbg!()` writes to stderr and should not be committed. Remove
+      or replace with `tracing::debug!`.
+    severity: WARNING
+    languages: [rust]
+    metadata:
+      category: best-practice
+      confidence: HIGH
+    pattern: dbg!(...)
+    paths:
+      exclude:
+        - "**/tests/**"
+
+  - id: jolt-no-unwrap
+    message: >-
+      Avoid `.unwrap()` in non-test code. Use `?`, `.expect()` with a
+      descriptive message, or handle the error explicitly. In a zkVM
+      prover, unwrap panics can crash long-running proof generation.
+    severity: WARNING
+    languages: [rust]
+    metadata:
+      category: correctness
+      confidence: HIGH
+    patterns:
+      - pattern: $EXPR.unwrap()
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $MOD { ... }
+      - pattern-not-inside: |
+          #[test]
+          fn $FUNC(...) { ... }
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/*_test.rs"
+        - "**/benches/**"
+        - "**/examples/**"
+
+  - id: jolt-no-expect
+    message: >-
+      `.expect()` panics on failure. In library code, prefer returning
+      errors with `?`. If this is truly unreachable, add a comment
+      explaining why.
+    severity: INFO
+    languages: [rust]
+    metadata:
+      category: correctness
+      confidence: MEDIUM
+    patterns:
+      - pattern: $EXPR.expect(...)
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $MOD { ... }
+      - pattern-not-inside: |
+          #[test]
+          fn $FUNC(...) { ... }
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/*_test.rs"
+        - "**/benches/**"
+        - "**/examples/**"
+
+  - id: jolt-review-allow-attribute
+    message: >-
+      `#[allow(...)]` suppresses a compiler/clippy lint. Verify this
+      suppression is justified. Acceptable: `non_snake_case` for math
+      variables. Suspicious: suppressing correctness or safety lints.
+    severity: INFO
+    languages: [rust]
+    metadata:
+      category: best-practice
+      confidence: MEDIUM
+      subcategory: [audit]
+    pattern-regex: '#\[allow\(.*\)\]'
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/examples/**"
+
+  - id: jolt-expensive-clone
+    message: >-
+      Calling `.clone()` on a polynomial, proof, accumulator, or other large
+      struct is an O(n) allocation. Consider borrowing, using `Arc`, or
+      restructuring to avoid the clone. In hot paths this can dominate prover
+      runtime. Suppress with `// nosemgrep: jolt-expensive-clone` if justified.
+    severity: WARNING
+    languages: [rust]
+    metadata:
+      category: performance
+      confidence: MEDIUM
+    patterns:
+      - pattern: $EXPR.clone()
+      - metavariable-regex:
+          metavariable: $EXPR
+          regex: ".*(?i)(poly|polynomial|proof|accumulator|witness|commitment|uni_poly|eq_poly|evaluations|coeffs|coefficients|spartan_key|openings|claims).*"
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+        - "**/examples/**"
+
+  - id: jolt-clone-vec
+    message: >-
+      Cloning a `Vec` is an O(n) heap allocation. Consider borrowing with
+      a slice, using `Cow`, or restructuring to avoid the copy. In sumcheck
+      inner loops this multiplies across millions of rounds.
+    severity: WARNING
+    languages: [rust]
+    metadata:
+      category: performance
+      confidence: MEDIUM
+    patterns:
+      - pattern: $EXPR.clone()
+      - pattern-either:
+          - pattern-inside: |
+              let $V: Vec<$T> = ...;
+              ...
+          - pattern-inside: |
+              let $V = vec![...];
+              ...
+          - pattern-inside: |
+              let $V = Vec::new();
+              ...
+          - pattern-inside: |
+              let $V = Vec::with_capacity(...);
+              ...
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+        - "**/examples/**"
+
+  - id: jolt-prefer-fnv-hashmap
+    message: >-
+      `std::collections::HashMap` uses SipHash which is slower for small
+      keys. For non-adversarial hash maps with small keys (u32, u64, usize),
+      prefer `fnv::FnvHashMap`. Suppress with `// nosemgrep` if DoS
+      resistance is needed.
+    severity: INFO
+    languages: [rust]
+    metadata:
+      category: performance
+      confidence: LOW
+      subcategory: [audit]
+    pattern-either:
+      - pattern: use std::collections::HashMap;
+      - pattern: use std::collections::HashMap as $ALIAS;
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+        - "**/examples/**"

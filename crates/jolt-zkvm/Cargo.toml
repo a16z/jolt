@@ -1,0 +1,11 @@
+[package]
+name = "jolt-zkvm"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "zkVM prover and verifier orchestration for the Jolt proving system"
+
+[lints]
+workspace = true
+
+[dependencies]

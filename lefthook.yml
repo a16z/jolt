@@ -1,0 +1,56 @@
+pre-commit:
+  piped: true
+  commands:
+    # Stage 1: Auto-fix everything
+    autofix-fmt:
+      priority: 1
+      glob: "*.rs"
+      run: cargo fmt --all -q && git add -u -- '*.rs'
+    autofix-clippy:
+      priority: 1
+      glob: "*.rs"
+      run: cargo clippy --all --message-format=short -q --all-targets --features allocative,host --exclude recursion-guest --fix --allow-dirty --allow-staged 2>/dev/null; git add -u -- '*.rs'
+    autofix-taplo:
+      priority: 1
+      glob: "*.toml"
+      run: taplo fmt && git add -u -- '*.toml'
+    autofix-typos:
+      priority: 1
+      run: typos -w 2>/dev/null; git add -u
+    # Stage 2: Verify everything is clean
+    check-fmt:
+      priority: 2
+      glob: "*.rs"
+      run: cargo fmt --all -- --check
+    check-clippy:
+      priority: 2
+      glob: "*.rs"
+      run: cargo clippy --all --message-format=short -q --all-targets --features allocative,host --exclude recursion-guest -- -D warnings
+    check-taplo:
+      priority: 2
+      glob: "*.toml"
+      run: taplo fmt --check
+    check-typos:
+      priority: 2
+      run: typos
+    check-machete:
+      priority: 2
+      glob: "*.toml"
+      run: cargo machete --with-metadata
+
+commit-msg:
+  commands:
+    conventional:
+      run: |
+        msg=$(head -1 {1})
+        if ! echo "$msg" | grep -qE '^(feat|fix|refactor|chore|docs|test|ci|perf|style|build|revert)(\(.+\))?: .+'; then
+          echo "ERROR: Commit message must follow conventional commits format:"
+          echo "  feat(scope): description"
+          echo "  fix(scope): description"
+          echo "  refactor(scope): description"
+          echo ""
+          echo "Valid scopes: core, tracer, sdk, poly, spartan, dory, sumcheck, field, transcript, openings, instructions, zkvm, deps, ci"
+          echo ""
+          echo "Got: $msg"
+          exit 1
+        fi

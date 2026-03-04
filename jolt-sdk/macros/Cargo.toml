@@ -2,9 +2,9 @@
 name = "jolt-sdk-macros"
 version = "0.1.0"
 authors = [
-    "Michael Zhu <mzhu@a16z.com>",
-    "Sam Ragsdale <sragsdale@a16z.com>",
-    "Noah Citron <ncitron@a16z.com>",
+  "Michael Zhu <mzhu@a16z.com>",
+  "Sam Ragsdale <sragsdale@a16z.com>",
+  "Noah Citron <ncitron@a16z.com>",
 ]
 description = "SDK for Jolt"
 license = "MIT"

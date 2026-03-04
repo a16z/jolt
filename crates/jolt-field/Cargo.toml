@@ -6,6 +6,9 @@ edition = "2021"
 license = "MIT"
 description = "Field abstractions for the Jolt zkVM"
 
+[lints]
+workspace = true
+
 [dependencies]
 ark-ff = { workspace = true }
 ark-serialize = { workspace = true }

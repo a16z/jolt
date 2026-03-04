@@ -1,0 +1,102 @@
+//! Sumcheck prover: generates round polynomials and binds witnesses.
+
+use jolt_field::Field;
+use jolt_poly::UnivariatePoly;
+use jolt_transcript::Transcript;
+
+use crate::claim::SumcheckClaim;
+use crate::proof::SumcheckProof;
+
+/// Trait that a concrete witness must implement to participate in the
+/// sumcheck protocol.
+///
+/// The prover engine calls [`round_polynomial`](SumcheckWitness::round_polynomial)
+/// to obtain the univariate restriction of the summed polynomial in the
+/// current round, then calls [`bind`](SumcheckWitness::bind) with the
+/// Fiat-Shamir challenge to fix that variable and advance to the next round.
+///
+/// # Implementor contract
+///
+/// * `round_polynomial` must return a polynomial $s(X)$ of degree at most
+///   the claim's `degree` bound such that $s(0) + s(1)$ equals the partial
+///   sum over the remaining Boolean hypercube.
+/// * `bind(r)` must fix the current leading variable to $r$ in place,
+///   reducing `num_vars` by one.
+pub trait SumcheckWitness<F: Field>: Send + Sync {
+    /// Computes the round polynomial $s_i(X)$ for the current round.
+    ///
+    /// The returned univariate polynomial satisfies
+    /// $s_i(0) + s_i(1) = \sum_{x' \in \{0,1\}^{n-i}} g(r_1,\ldots,r_{i-1}, X, x')$
+    /// summed over $X \in \{0, 1\}$.
+    fn round_polynomial(&self) -> UnivariatePoly<F>;
+
+    /// Fixes the current leading variable to `challenge`, reducing the
+    /// witness to one fewer variable.
+    fn bind(&mut self, challenge: F);
+}
+
+/// Stateless sumcheck prover engine.
+///
+/// Orchestrates the interaction between a [`SumcheckWitness`] and a
+/// [`Transcript`], producing a [`SumcheckProof`].
+pub struct SumcheckProver;
+
+impl SumcheckProver {
+    /// Executes the sumcheck prover protocol.
+    ///
+    /// For each of the `claim.num_vars` rounds:
+    /// 1. Queries the witness for the round polynomial $s_i(X)$.
+    /// 2. Absorbs the round polynomial coefficients into the transcript.
+    /// 3. Squeezes a challenge $r_i$ from the transcript.
+    /// 4. Binds the witness at $r_i$.
+    ///
+    /// Returns a [`SumcheckProof`] containing all $n$ round polynomials.
+    ///
+    /// # Parameters
+    ///
+    /// * `claim` -- the public sumcheck claim.
+    /// * `witness` -- mutable witness implementing [`SumcheckWitness`].
+    /// * `transcript` -- Fiat-Shamir transcript shared with the verifier.
+    /// * `challenge_fn` -- converts the transcript's opaque challenge type
+    ///   into a field element. Typically `|c| F::from_u128(c)` when
+    ///   `T::Challenge = u128`.
+    pub fn prove<F, T>(
+        claim: &SumcheckClaim<F>,
+        witness: &mut impl SumcheckWitness<F>,
+        transcript: &mut T,
+        challenge_fn: impl Fn(T::Challenge) -> F,
+    ) -> SumcheckProof<F>
+    where
+        F: Field,
+        T: Transcript,
+    {
+        let mut round_polynomials = Vec::with_capacity(claim.num_vars);
+
+        for _round in 0..claim.num_vars {
+            let round_poly = witness.round_polynomial();
+            append_poly_to_transcript(&round_poly, transcript);
+
+            let challenge = challenge_fn(transcript.challenge());
+            witness.bind(challenge);
+            round_polynomials.push(round_poly);
+        }
+
+        SumcheckProof { round_polynomials }
+    }
+}
+
+/// Serializes each coefficient of a univariate polynomial and absorbs the
+/// bytes into the transcript.
+#[inline]
+fn append_poly_to_transcript<F: Field, T: Transcript>(
+    poly: &UnivariatePoly<F>,
+    transcript: &mut T,
+) {
+    for coeff in poly.coefficients() {
+        let mut buf = Vec::with_capacity(F::NUM_BYTES);
+        coeff
+            .serialize_compressed(&mut buf)
+            .expect("field serialization should not fail");
+        transcript.append_bytes(&buf);
+    }
+}

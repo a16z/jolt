@@ -8,6 +8,9 @@ license = "MIT OR Apache-2.0"
 keywords = ["SNARK", "cryptography", "proofs", "fiat-shamir"]
 categories = ["cryptography", "no-std"]
 
+[lints]
+workspace = true
+
 [dependencies]
 blake2.workspace = true
 digest = "0.10"
