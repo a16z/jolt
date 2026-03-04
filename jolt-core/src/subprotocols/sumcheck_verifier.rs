@@ -3,10 +3,16 @@ use crate::poly::opening_proof::{OpeningAccumulator, OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
 use crate::transcripts::Transcript;
 
-use crate::{field::JoltField, poly::opening_proof::VerifierOpeningAccumulator};
+use crate::field::JoltField;
 
-pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
-    fn get_params(&self) -> &dyn SumcheckInstanceParams<F>;
+pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript, A: OpeningAccumulator<F> + 'static> {
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        unimplemented!(
+            "If get_params is unimplemented, degree, num_rounds, and \
+            input_claim should be implemented directly"
+        )
+    }
+
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize {
         self.get_params().degree()
@@ -26,14 +32,14 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
     }
 
     /// Returns the initial claim of this sumcheck instance.
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &A) -> F {
         self.get_params().input_claim(accumulator)
     }
 
     /// Expected final claim after binding to the provided instance-local r slice.
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         sumcheck_challenges: &[F::Challenge],
     ) -> F;
 
@@ -41,11 +47,13 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
     /// r is the instance-local slice; instance normalizes internally.
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[F::Challenge],
     );
 }
 
+/// Params shared between prover and verifier.
+/// Note: input_claim uses dyn OpeningAccumulator to work with both Prover and Verifier accumulators.
 pub trait SumcheckInstanceParams<F: JoltField> {
     fn degree(&self) -> usize;
 

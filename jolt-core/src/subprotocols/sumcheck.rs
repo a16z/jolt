@@ -3,6 +3,7 @@
 
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
+use crate::poly::opening_proof::OpeningAccumulator;
 #[cfg(feature = "zk")]
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
@@ -394,7 +395,7 @@ impl BatchedSumcheck {
 
     pub fn verify<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>(
         proof: &SumcheckInstanceProof<F, C, ProofTranscript>,
-        sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>>,
+        sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
     ) -> Result<(Vec<F>, Vec<F::Challenge>), ProofVerifyError> {
@@ -415,8 +416,34 @@ impl BatchedSumcheck {
                 let input_claim = sumcheck.input_claim(opening_accumulator);
                 transcript.append_scalar(b"sumcheck_claim", &input_claim);
             });
+
+            #[cfg(feature = "debug-expected-output")]
+            {
+                transcript.debug_state("before_batching_coeffs");
+            }
         }
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
+
+        // Debug: Print batching coefficients for transpilation verification.
+        // These coefficients are used to combine multiple sumcheck instances into a single
+        // batched claim. Values printed here should match those computed in the transpiled
+        // gnark circuit to verify Fiat-Shamir transcript continuity.
+        #[cfg(feature = "debug-expected-output")]
+        {
+            use ark_serialize::CanonicalSerialize;
+            fn to_decimal<T: CanonicalSerialize>(val: &T) -> String {
+                let mut bytes = Vec::new();
+                val.serialize_compressed(&mut bytes).unwrap();
+                num_bigint::BigUint::from_bytes_le(&bytes).to_string()
+            }
+            eprintln!("=== BATCHING COEFFS DEBUG ===");
+            eprintln!("num_sumcheck_instances = {}", sumcheck_instances.len());
+            for (i, coeff) in batching_coeffs.iter().enumerate() {
+                eprintln!("batching_coeff[{}] = {}", i, to_decimal(coeff));
+            }
+            transcript.debug_state("after_batching_coeffs");
+            eprintln!("=== END BATCHING DEBUG ===");
+        }
 
         // To see why we may need to scale by a power of two, consider a batch of
         // two sumchecks:
@@ -456,6 +483,30 @@ impl BatchedSumcheck {
             })
             .sum();
 
+        #[cfg(feature = "debug-expected-output")]
+        {
+            use ark_serialize::CanonicalSerialize;
+            fn to_decimal<T: CanonicalSerialize>(val: &T) -> String {
+                let mut bytes = Vec::new();
+                val.serialize_compressed(&mut bytes).unwrap();
+                num_bigint::BigUint::from_bytes_le(&bytes).to_string()
+            }
+            eprintln!("=== SUMCHECK VERIFY DEBUG ===");
+            eprintln!(
+                "output_claim (from sumcheck) = {}",
+                to_decimal(&output_claim)
+            );
+            eprintln!(
+                "expected_output_claim (batched) = {}",
+                to_decimal(&expected_output_claim)
+            );
+            eprintln!(
+                "difference = {}",
+                to_decimal(&(output_claim - expected_output_claim))
+            );
+            eprintln!("=== END SUMCHECK DEBUG ===");
+        }
+
         if !is_zk {
             opening_accumulator.flush_to_transcript(transcript);
         } else if let SumcheckInstanceProof::Zk(zk_proof) = proof {
@@ -474,12 +525,12 @@ impl BatchedSumcheck {
         Ok((batching_coeffs, r_sumcheck))
     }
 
-    /// Verify a standard (non-ZK) sumcheck proof without requiring a curve type.
-    /// Used by opening proof reduction which doesn't need ZK mode.
-    pub fn verify_standard<F: JoltField, ProofTranscript: Transcript>(
+    /// Generic verify for standard (non-ZK) sumcheck.
+    /// Used by transpiler with AstOpeningAccumulator and by opening proof reduction.
+    pub fn verify_standard<F: JoltField, ProofTranscript: Transcript, A: OpeningAccumulator<F> + 'static>(
         proof: &ClearSumcheckProof<F, ProofTranscript>,
-        sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>>,
-        opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+        sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>>,
+        opening_accumulator: &mut A,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         let max_degree = sumcheck_instances
@@ -500,7 +551,29 @@ impl BatchedSumcheck {
             transcript.append_scalar(b"sumcheck_claim", &input_claim);
         });
 
+        #[cfg(feature = "debug-expected-output")]
+        {
+            transcript.debug_state("before_batching_coeffs");
+        }
+
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
+
+        #[cfg(feature = "debug-expected-output")]
+        {
+            use ark_serialize::CanonicalSerialize;
+            fn to_decimal<T: CanonicalSerialize>(val: &T) -> String {
+                let mut bytes = Vec::new();
+                val.serialize_compressed(&mut bytes).unwrap();
+                num_bigint::BigUint::from_bytes_le(&bytes).to_string()
+            }
+            eprintln!("=== BATCHING COEFFS DEBUG ===");
+            eprintln!("num_sumcheck_instances = {}", sumcheck_instances.len());
+            for (i, coeff) in batching_coeffs.iter().enumerate() {
+                eprintln!("batching_coeff[{}] = {}", i, to_decimal(coeff));
+            }
+            transcript.debug_state("after_batching_coeffs");
+            eprintln!("=== END BATCHING DEBUG ===");
+        }
 
         let claim: F = sumcheck_instances
             .iter()
@@ -515,11 +588,12 @@ impl BatchedSumcheck {
         let (output_claim, r_sumcheck) =
             proof.verify(claim, max_num_rounds, max_degree, transcript)?;
 
-        let expected_output_claim = sumcheck_instances
+        let expected_output_claim: F = sumcheck_instances
             .iter()
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
-                let r_slice = &r_sumcheck[max_num_rounds - sumcheck.num_rounds()..];
+                let offset = sumcheck.round_offset(max_num_rounds);
+                let r_slice = &r_sumcheck[offset..offset + sumcheck.num_rounds()];
                 sumcheck.cache_openings(opening_accumulator, r_slice);
                 let claim = sumcheck.expected_output_claim(opening_accumulator, r_slice);
                 claim * coeff
@@ -527,6 +601,30 @@ impl BatchedSumcheck {
             .sum();
 
         opening_accumulator.flush_to_transcript(transcript);
+
+        #[cfg(feature = "debug-expected-output")]
+        {
+            use ark_serialize::CanonicalSerialize;
+            fn to_decimal<T: CanonicalSerialize>(val: &T) -> String {
+                let mut bytes = Vec::new();
+                val.serialize_compressed(&mut bytes).unwrap();
+                num_bigint::BigUint::from_bytes_le(&bytes).to_string()
+            }
+            eprintln!("=== SUMCHECK VERIFY DEBUG ===");
+            eprintln!(
+                "output_claim (from sumcheck) = {}",
+                to_decimal(&output_claim)
+            );
+            eprintln!(
+                "expected_output_claim (batched) = {}",
+                to_decimal(&expected_output_claim)
+            );
+            eprintln!(
+                "difference = {}",
+                to_decimal(&(output_claim - expected_output_claim))
+            );
+            eprintln!("=== END SUMCHECK DEBUG ===");
+        }
 
         if output_claim != expected_output_claim {
             return Err(ProofVerifyError::SumcheckVerificationError);
@@ -587,6 +685,26 @@ impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTrans
             let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
             r.push(r_i);
             e = self.compressed_polys[i].eval_from_hint(&e, &r_i);
+        }
+
+        // Debug: Print all sumcheck round challenges for transcript verification.
+        // These challenges (r_0, r_1, ..., r_{n-1}) are generated via Fiat-Shamir from
+        // the transcript state. Values printed here should match those computed in the
+        // transpiled gnark circuit to verify correct challenge derivation.
+        #[cfg(feature = "debug-expected-output")]
+        {
+            use ark_serialize::CanonicalSerialize;
+            fn to_decimal<T: CanonicalSerialize>(val: &T) -> String {
+                let mut bytes = Vec::new();
+                val.serialize_compressed(&mut bytes).unwrap();
+                num_bigint::BigUint::from_bytes_le(&bytes).to_string()
+            }
+            eprintln!("=== SUMCHECK CHALLENGES DEBUG ===");
+            eprintln!("num_rounds = {}", num_rounds);
+            for (i, r_i) in r.iter().enumerate() {
+                eprintln!("sumcheck_challenge[{}] = {}", i, to_decimal(r_i));
+            }
+            eprintln!("=== END CHALLENGES DEBUG ===");
         }
 
         Ok((e, r))
