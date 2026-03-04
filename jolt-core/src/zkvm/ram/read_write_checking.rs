@@ -7,7 +7,13 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{OpeningAccumulator, PolynomialId};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::read_write_matrix::{
     AddressMajorMatrixEntry, RamAddressMajorEntry, RamCycleMajorEntry, ReadWriteMatrixAddressMajor,
     ReadWriteMatrixCycleMajor,
@@ -149,6 +155,76 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
 
         [r_address, r_cycle].concat().into()
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::virt(VirtualPolynomial::RamReadValue, SumcheckId::SpartanOuter),
+            OpeningId::virt(VirtualPolynomial::RamWriteValue, SumcheckId::SpartanOuter),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        vec![self.gamma]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // expected_output_claim = eq_eval * ra * (val + γ*(val + inc))
+        //                       = eq_eval * ra * val * (1+γ) + eq_eval * ra * inc * γ
+        //
+        // Challenge layout:
+        //   Challenge(0) = eq_eval * (1 + γ)
+        //   Challenge(1) = eq_eval * γ
+        let ra_opening =
+            OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking);
+        let val_opening =
+            OpeningId::virt(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
+        let inc_opening = OpeningId::committed(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamReadWriteChecking,
+        );
+
+        let terms = vec![
+            // eq*(1+γ) * ra * val
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![
+                    ValueSource::Opening(ra_opening),
+                    ValueSource::Opening(val_opening),
+                ],
+            ),
+            // eq*γ * ra * inc
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![
+                    ValueSource::Opening(ra_opening),
+                    ValueSource::Opening(inc_opening),
+                ],
+            ),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        self.constraint_challenge_values(sumcheck_challenges)
+    }
+}
+
+impl<F: JoltField> RamReadWriteCheckingParams<F> {
+    pub fn constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r = self.normalize_opening_point(sumcheck_challenges);
+        let (_, r_cycle) = r.split_at(self.K.log_2());
+        let eq_eval_cycle = EqPolynomial::mle_endian(&self.r_cycle, &r_cycle);
+
+        let gamma = self.gamma;
+        let one_plus_gamma = F::one() + gamma;
+
+        vec![eq_eval_cycle * one_plus_gamma, eq_eval_cycle * gamma]
+    }
 }
 
 #[derive(Allocative)]
@@ -286,26 +362,26 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                         );
 
                         [
-                            E_in_eval.mul_unreduced::<9>(inner_sum_evals[0]),
-                            E_in_eval.mul_unreduced::<9>(inner_sum_evals[1]),
+                            E_in_eval.mul_to_product_accum(inner_sum_evals[0]),
+                            E_in_eval.mul_to_product_accum(inner_sum_evals[1]),
                         ]
                     })
                     .reduce(
-                        || [F::Unreduced::<9>::zero(); DEGREE_BOUND - 1],
+                        || [F::UnreducedProductAccum::zero(); DEGREE_BOUND - 1],
                         |running, new| [running[0] + new[0], running[1] + new[1]],
                     )
-                    .map(F::from_montgomery_reduce);
+                    .map(F::reduce_product_accum);
 
                 [
-                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[0]),
-                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[1]),
+                    E_out_eval.mul_to_product_accum(outer_sum_evals[0]),
+                    E_out_eval.mul_to_product_accum(outer_sum_evals[1]),
                 ]
             })
             .reduce(
-                || [F::Unreduced::<9>::zero(); DEGREE_BOUND - 1],
+                || [F::UnreducedProductAccum::zero(); DEGREE_BOUND - 1],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             )
-            .map(F::from_montgomery_reduce);
+            .map(F::reduce_product_accum);
 
         // Convert quadratic coefficients to cubic evaluations
         gruen_eq.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
@@ -339,23 +415,20 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                     params.gamma,
                 )
             })
-            .fold_with([F::Unreduced::<5>::zero(); 2], |running, new| {
+            .fold_with([F::UnreducedMulU64::zero(); 2], |running, new| {
                 [
-                    running[0] + new[0].as_unreduced_ref(),
-                    running[1] + new[1].as_unreduced_ref(),
+                    running[0] + new[0].to_unreduced(),
+                    running[1] + new[1].to_unreduced(),
                 ]
             })
             .reduce(
-                || [F::Unreduced::<5>::zero(); 2],
+                || [F::UnreducedMulU64::zero(); 2],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             );
 
         UniPoly::from_evals_and_hint(
             previous_claim,
-            &[
-                F::from_barrett_reduce(evals[0]),
-                F::from_barrett_reduce(evals[1]),
-            ],
+            &[F::reduce_mul_u64(evals[0]), F::reduce_mul_u64(evals[1])],
         )
     }
 
@@ -406,15 +479,15 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                     * (val_evals[2] + params.gamma * (val_evals[2] + inc_evals[2])),
                             ]
                         })
-                        .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                        .fold_with([F::UnreducedMulU64::zero(); DEGREE], |running, new| {
                             [
-                                running[0] + new[0].as_unreduced_ref(),
-                                running[1] + new[1].as_unreduced_ref(),
-                                running[2] + new[2].as_unreduced_ref(),
+                                running[0] + new[0].to_unreduced(),
+                                running[1] + new[1].to_unreduced(),
+                                running[2] + new[2].to_unreduced(),
                             ]
                         })
                         .reduce(
-                            || [F::Unreduced::<5>::zero(); DEGREE],
+                            || [F::UnreducedMulU64::zero(); DEGREE],
                             |running, new| {
                                 [
                                     running[0] + new[0],
@@ -424,20 +497,20 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                             },
                         );
                     [
-                        eq_evals[0] * F::from_barrett_reduce(inner[0]),
-                        eq_evals[1] * F::from_barrett_reduce(inner[1]),
-                        eq_evals[2] * F::from_barrett_reduce(inner[2]),
+                        eq_evals[0] * F::reduce_mul_u64(inner[0]),
+                        eq_evals[1] * F::reduce_mul_u64(inner[1]),
+                        eq_evals[2] * F::reduce_mul_u64(inner[2]),
                     ]
                 })
-                .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                .fold_with([F::UnreducedMulU64::zero(); DEGREE], |running, new| {
                     [
-                        running[0] + new[0].as_unreduced_ref(),
-                        running[1] + new[1].as_unreduced_ref(),
-                        running[2] + new[2].as_unreduced_ref(),
+                        running[0] + new[0].to_unreduced(),
+                        running[1] + new[1].to_unreduced(),
+                        running[2] + new[2].to_unreduced(),
                     ]
                 })
                 .reduce(
-                    || [F::Unreduced::<5>::zero(); DEGREE],
+                    || [F::UnreducedMulU64::zero(); DEGREE],
                     |running, new| {
                         [
                             running[0] + new[0],
@@ -450,9 +523,9 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             UniPoly::from_evals_and_hint(
                 previous_claim,
                 &[
-                    F::from_barrett_reduce(evals[0]),
-                    F::from_barrett_reduce(evals[1]),
-                    F::from_barrett_reduce(evals[2]),
+                    F::reduce_mul_u64(evals[0]),
+                    F::reduce_mul_u64(evals[1]),
+                    F::reduce_mul_u64(evals[2]),
                 ],
             )
         } else {
@@ -471,22 +544,22 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                         ra_evals[1] * (val_evals[1] + params.gamma * (val_evals[1] + inc_eval)),
                     ]
                 })
-                .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                .fold_with([F::UnreducedMulU64::zero(); DEGREE], |running, new| {
                     [
-                        running[0] + new[0].as_unreduced_ref(),
-                        running[1] + new[1].as_unreduced_ref(),
+                        running[0] + new[0].to_unreduced(),
+                        running[1] + new[1].to_unreduced(),
                     ]
                 })
                 .reduce(
-                    || [F::Unreduced::<5>::zero(); DEGREE],
+                    || [F::UnreducedMulU64::zero(); DEGREE],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
 
             UniPoly::from_evals_and_hint(
                 previous_claim,
                 &[
-                    eq_eval * F::from_barrett_reduce(evals[0]),
-                    eq_eval * F::from_barrett_reduce(evals[1]),
+                    eq_eval * F::reduce_mul_u64(evals[0]),
+                    eq_eval * F::reduce_mul_u64(evals[1]),
                 ],
             )
         }
@@ -594,19 +667,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteC
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
             opening_point.clone(),
             self.val.as_ref().unwrap().final_sumcheck_claim(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamReadWriteChecking,
             opening_point.clone(),
@@ -614,7 +684,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteC
         );
         let (_, r_cycle) = opening_point.split_at(self.params.K.log_2());
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,
@@ -723,26 +792,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
             opening_point.clone(),
         );
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamReadWriteChecking,
             opening_point.clone(),
         );
         let (_, r_cycle) = opening_point.split_at(self.params.K.log_2());
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,

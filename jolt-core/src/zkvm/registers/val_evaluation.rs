@@ -2,6 +2,12 @@ use num_traits::Zero;
 use std::{array, sync::Arc};
 use tracer::instruction::Cycle;
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::{
     field::JoltField,
     poly::{
@@ -91,6 +97,56 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersValEvaluationSumcheckP
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let opening = OpeningId::virt(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        InputClaimConstraint::direct(opening)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let inc_opening = OpeningId::committed(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersValEvaluation,
+        );
+        let wa_opening =
+            OpeningId::virt(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation);
+
+        let terms = vec![ProductTerm::scaled(
+            ValueSource::Challenge(0),
+            vec![
+                ValueSource::Opening(inc_opening),
+                ValueSource::Opening(wa_opening),
+            ],
+        )];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r_cycle = self.r_cycle.r.to_vec();
+
+        let mut lt_eval = F::zero();
+        let mut eq_term = F::one();
+
+        let r: OpeningPoint<BIG_ENDIAN, F> = self.normalize_opening_point(sumcheck_challenges);
+        for (x, y) in r.r.iter().zip(r_cycle.iter()) {
+            lt_eval += (F::one() - *x) * *y * eq_term;
+            eq_term *= F::one() - *x - *y + *x * *y + *x * *y;
+        }
+
+        vec![lt_eval]
+    }
 }
 
 #[derive(Allocative)]
@@ -163,16 +219,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
 
                 // Eval inc * wa * lt.
                 [
-                    (inc_at_1_j * wa_at_1_j).mul_unreduced::<9>(lt_at_1_j),
-                    (inc_at_2_j * wa_at_2_j).mul_unreduced::<9>(lt_at_2_j),
-                    (inc_at_inf_j * wa_at_inf_j).mul_unreduced::<9>(lt_at_inf_j),
+                    (inc_at_1_j * wa_at_1_j).mul_to_product_accum(lt_at_1_j),
+                    (inc_at_2_j * wa_at_2_j).mul_to_product_accum(lt_at_2_j),
+                    (inc_at_inf_j * wa_at_inf_j).mul_to_product_accum(lt_at_inf_j),
                 ]
             })
             .reduce(
-                || [F::Unreduced::zero(); DEGREE_BOUND],
+                || [F::UnreducedProductAccum::zero(); DEGREE_BOUND],
                 |a, b| array::from_fn(|i| a[i] + b[i]),
             )
-            .map(F::from_montgomery_reduce);
+            .map(F::reduce_product_accum);
 
         let eval_at_0 = previous_claim - eval_at_1;
         UniPoly::from_evals_toom(&[eval_at_0, eval_at_1, eval_at_2, eval_at_inf])
@@ -191,7 +247,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle: OpeningPoint<BIG_ENDIAN, F> =
@@ -206,7 +261,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
         let wa_claim = self.wa.final_sumcheck_claim();
 
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersValEvaluation,
             r_cycle.r.clone(),
@@ -215,7 +269,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluation
 
         let r = [r_address.r.as_slice(), r_cycle.r.as_slice()].concat();
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),
@@ -285,7 +338,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle: OpeningPoint<BIG_ENDIAN, F> =
@@ -298,7 +350,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
         // Append claims to accumulator
         accumulator.append_dense(
-            transcript,
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersValEvaluation,
             r_cycle.r.clone(),
@@ -306,7 +357,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
         let r = [r_address.r.as_slice(), r_cycle.r.as_slice()].concat();
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),

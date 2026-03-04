@@ -303,6 +303,8 @@ impl MacroBuilder {
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
         let set_std = self.make_set_std();
+        let set_backtrace = self.make_set_backtrace();
+        let set_profile = self.make_set_profile();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -333,6 +335,8 @@ impl MacroBuilder {
                 let mut program = Program::new(#guest_name);
                 program.set_func(#fn_name_str);
                 #set_std
+                #set_profile
+                #set_backtrace
                 #set_mem_size
 
                 let mut input_bytes = vec![];
@@ -352,6 +356,8 @@ impl MacroBuilder {
         let guest_name = self.get_guest_name();
         let set_mem_size = self.make_set_linker_parameters();
         let set_std = self.make_set_std();
+        let set_backtrace = self.make_set_backtrace();
+        let set_profile = self.make_set_profile();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -382,6 +388,8 @@ impl MacroBuilder {
                 let path = std::path::PathBuf::from(target_dir);
                 program.set_func(#fn_name_str);
                 #set_std
+                #set_profile
+                #set_backtrace
                 #set_mem_size
 
                 let mut input_bytes = vec![];
@@ -401,6 +409,8 @@ impl MacroBuilder {
         let guest_name = self.get_guest_name();
         let set_mem_size = self.make_set_linker_parameters();
         let set_std = self.make_set_std();
+        let set_backtrace = self.make_set_backtrace();
+        let set_profile = self.make_set_profile();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -413,6 +423,8 @@ impl MacroBuilder {
                 let mut program = Program::new(#guest_name);
                 program.set_func(#fn_name_str);
                 #set_std
+                #set_profile
+                #set_backtrace
                 #set_mem_size
 
                 // Build the compute_advice version first
@@ -997,6 +1009,28 @@ impl MacroBuilder {
             quote! {
                 program.set_std(false);
             }
+        }
+    }
+
+    fn make_set_backtrace(&self) -> TokenStream2 {
+        let attributes = parse_attributes(&self.attr);
+        if let Some(features) = attributes.backtrace {
+            quote! {
+                program.set_backtrace(#features);
+            }
+        } else {
+            quote! {}
+        }
+    }
+
+    fn make_set_profile(&self) -> TokenStream2 {
+        let attributes = parse_attributes(&self.attr);
+        if let Some(profile) = attributes.profile {
+            quote! {
+                program.set_profile(#profile);
+            }
+        } else {
+            quote! {}
         }
     }
 

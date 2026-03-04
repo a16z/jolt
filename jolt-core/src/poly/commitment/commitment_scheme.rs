@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use crate::poly::opening_proof::BatchPolynomialSource;
 use crate::transcripts::Transcript;
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
@@ -25,7 +26,6 @@ pub trait CommitmentScheme: Clone + Sync + Send + Default + 'static {
         + CanonicalDeserialize
         + Clone;
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
-    type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     /// A hint that helps the prover compute an opening proof. Typically some byproduct of
     /// the commitment computation, e.g. for Dory the Pedersen commitments to the rows can be
     /// used as a hint for the opening proof.
@@ -37,7 +37,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + Default + 'static {
 
     /// Reconstruct a PCS instance from a batched proof (e.g. for the verifier to
     /// recover PCS-specific configuration serialized during proving).
-    fn from_proof(proof: &Self::BatchedProof) -> Self;
+    fn from_proof(proof: &Self::Proof) -> Self;
 
     fn config(&self) -> &Self::Config;
 
@@ -63,7 +63,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + Default + 'static {
         hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
         commitment: &Self::Commitment,
-    ) -> Self::Proof;
+    ) -> (Self::Proof, Option<Self::Field>);
 
     fn verify<ProofTranscript: Transcript>(
         &self,
@@ -86,12 +86,12 @@ pub trait CommitmentScheme: Clone + Sync + Send + Default + 'static {
         claims: &[Self::Field],
         coeffs: &[Self::Field],
         transcript: &mut ProofTranscript,
-    ) -> Self::BatchedProof;
+    ) -> (Self::Proof, Option<Self::Field>);
 
     #[allow(clippy::too_many_arguments)]
     fn batch_verify<ProofTranscript: Transcript>(
         &self,
-        proof: &Self::BatchedProof,
+        proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
         opening_point: &[<Self::Field as JoltField>::Challenge],
@@ -101,6 +101,28 @@ pub trait CommitmentScheme: Clone + Sync + Send + Default + 'static {
     ) -> Result<(), ProofVerifyError>;
 
     fn protocol_name() -> &'static [u8];
+
+    /// Extracts raw BN254 G1 generators and blinding generator from the prover setup.
+    /// Used to derive ZK Pedersen generators from PCS setup.
+    /// Returns None for PCS that don't support ZK Pedersen commitments.
+    #[cfg(feature = "zk")]
+    fn zk_generators_raw(
+        _setup: &Self::ProverSetup,
+        _count: usize,
+    ) -> Option<(Vec<crate::curve::Bn254G1>, crate::curve::Bn254G1)> {
+        None
+    }
+}
+
+pub trait ZkEvalCommitment<C: JoltCurve>: CommitmentScheme {
+    /// Returns the evaluation commitment (e.g. y_com) if present in the proof.
+    fn eval_commitment(proof: &Self::Proof) -> Option<C::G1>;
+
+    /// Returns the generators used for evaluation commitments in the prover setup.
+    fn eval_commitment_gens(setup: &Self::ProverSetup) -> Option<(C::G1, C::G1)>;
+
+    /// Returns the generators used for evaluation commitments in the verifier setup.
+    fn eval_commitment_gens_verifier(setup: &Self::VerifierSetup) -> Option<(C::G1, C::G1)>;
 }
 
 pub trait StreamingCommitmentScheme: CommitmentScheme {

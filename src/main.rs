@@ -197,14 +197,20 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     let backtrace_via_env = std::env::var("JOLT_BACKTRACE")
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false);
+
+    let force_frame_pointers = matches!(
+        args.base.backtrace,
+        BacktraceMode::Dwarf | BacktraceMode::FramePointers
+    );
+
     let preserve_symbols = backtrace_via_env
+        || force_frame_pointers
         || match args.base.backtrace {
-            BacktraceMode::Enable => true,
-            BacktraceMode::Disable => false,
             BacktraceMode::Auto => {
                 let profile = zeroos_build::project::detect_profile(&args.base.cargo_args);
                 matches!(profile.as_str(), "debug" | "dev")
             }
+            _ => false,
         };
 
     let mut jolt_rustflags: Vec<&str> = vec![
@@ -233,6 +239,12 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
 
     if !preserve_symbols {
         jolt_rustflags.push("-Cstrip=symbols");
+    }
+
+    // Frame pointers change generated code — only enable for explicit --backtrace modes,
+    // never for JOLT_BACKTRACE (which only needs symbol metadata).
+    if force_frame_pointers {
+        jolt_rustflags.push("-Cforce-frame-pointers=yes");
     }
 
     zeroos_build::cmds::build_binary_with_rustflags(
@@ -437,6 +449,9 @@ fn create_guest_files(name: &str) -> eyre::Result<()> {
 }
 
 fn display_welcome() {
+    if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        return;
+    }
     display_greeting();
     println!("{}", "-".repeat(80));
     display_sysinfo();

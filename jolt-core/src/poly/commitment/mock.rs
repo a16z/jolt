@@ -46,14 +46,13 @@ where
     type VerifierSetup = ();
     type Commitment = MockCommitment<F>;
     type Proof = MockProof<F>;
-    type BatchedProof = MockProof<F>;
     type OpeningProofHint = ();
 
     fn setup_prover(_num_vars: usize) -> Self::ProverSetup {}
 
     fn setup_verifier(_setup: &Self::ProverSetup) -> Self::VerifierSetup {}
 
-    fn from_proof(_proof: &Self::BatchedProof) -> Self {
+    fn from_proof(_proof: &Self::Proof) -> Self {
         Self::default()
     }
 
@@ -91,10 +90,13 @@ where
         _hint: Option<Self::OpeningProofHint>,
         _transcript: &mut ProofTranscript,
         _commitment: &Self::Commitment,
-    ) -> Self::Proof {
-        MockProof {
-            opening_point: opening_point.to_owned(),
-        }
+    ) -> (Self::Proof, Option<Self::Field>) {
+        (
+            MockProof {
+                opening_point: opening_point.to_owned(),
+            },
+            None,
+        )
     }
 
     fn verify<ProofTranscript: Transcript>(
@@ -120,15 +122,18 @@ where
         _claims: &[Self::Field],
         _coeffs: &[Self::Field],
         _transcript: &mut ProofTranscript,
-    ) -> Self::BatchedProof {
-        MockProof {
-            opening_point: opening_point.to_owned(),
-        }
+    ) -> (Self::Proof, Option<Self::Field>) {
+        (
+            MockProof {
+                opening_point: opening_point.to_owned(),
+            },
+            None,
+        )
     }
 
     fn batch_verify<ProofTranscript: Transcript>(
         &self,
-        proof: &Self::BatchedProof,
+        proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,
         opening_point: &[<Self::Field as JoltField>::Challenge],
