@@ -1,5 +1,6 @@
 #[cfg(not(feature = "zk"))]
 use std::collections::BTreeMap;
+use std::fs::File;
 use std::io::{Read, Write};
 
 use ark_serialize::{
@@ -33,31 +34,11 @@ use crate::{
 
 use crate::zkvm::transport;
 
-const PROOF_SIGNATURE: &[u8; 8] = b"JOLTPRF\x01";
+const PROOF_MAGIC: &[u8; 7] = b"JOLTPRF";
+const PROOF_VERSION: u8 = 1;
 
-const TAG_PARAMS: u8 = 1;
-const TAG_COMMITMENTS: u8 = 2;
-#[cfg(not(feature = "zk"))]
-const TAG_OPENING_CLAIMS: u8 = 3;
-const TAG_STAGE1: u8 = 10;
-const TAG_STAGE2: u8 = 11;
-const TAG_STAGE3: u8 = 12;
-const TAG_STAGE4: u8 = 13;
-const TAG_STAGE5: u8 = 14;
-const TAG_STAGE6: u8 = 15;
-const TAG_STAGE7: u8 = 16;
-const TAG_JOINT_OPENING: u8 = 20;
-#[cfg(feature = "zk")]
-const TAG_BLINDFOLD: u8 = 21;
-
-const MAX_PARAMS_LEN: u64 = 16 * 1024;
-const MAX_COMMITMENTS_LEN: u64 = 1024 * 1024;
-#[cfg(not(feature = "zk"))]
-const MAX_OPENING_CLAIMS_LEN: u64 = 1024 * 1024;
-const MAX_STAGE_LEN: u64 = 1024 * 1024;
-const MAX_JOINT_OPENING_LEN: u64 = 1024 * 1024;
-#[cfg(feature = "zk")]
-const MAX_BLINDFOLD_LEN: u64 = 16 * 1024 * 1024;
+const MAX_PARAMS_LEN: u64 = 1024;
+const MAX_SECTION_LEN: u64 = 128 * 1024;
 
 pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub commitments: Vec<PCS::Commitment>,
@@ -88,31 +69,70 @@ fn io_err(e: std::io::Error) -> SerializationError {
     SerializationError::IoError(e)
 }
 
-macro_rules! write_framed_section {
-    ($w:expr, $c:expr, $tag:expr, $($item:expr),+ $(,)?) => {{
+macro_rules! write_section {
+    ($w:expr, $c:expr, $($item:expr),+ $(,)?) => {{
         let len: u64 = 0 $(+ $item.serialized_size($c) as u64)+;
-        transport::write_frame_header($w, $tag, len).map_err(io_err)?;
+        transport::write_varint_u64($w, len).map_err(io_err)?;
         $($item.serialize_with_mode($w, $c)?;)+
     }};
 }
 
-macro_rules! framed_section_size {
+macro_rules! section_size {
     ($c:expr, $($item:expr),+ $(,)?) => {{
         let payload: u64 = 0 $(+ $item.serialized_size($c) as u64)+;
-        1 + transport::varint_u64_len(payload) + payload as usize
+        transport::varint_u64_len(payload) + payload as usize
     }};
 }
 
-macro_rules! read_singleton {
-    ($r:expr, $c:expr, $v:expr, $field:expr) => {{
-        if $field.is_some() {
-            return Err(io_err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                concat!("duplicate field: ", stringify!($field)),
-            )));
-        }
-        $field = Some(CanonicalDeserialize::deserialize_with_mode($r, $c, $v)?);
-    }};
+fn check_trailing_bytes(limited: &std::io::Take<&mut impl Read>) -> Result<(), SerializationError> {
+    if limited.limit() != 0 {
+        return Err(io_err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{} trailing bytes not consumed", limited.limit()),
+        )));
+    }
+    Ok(())
+}
+
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    JoltProof<F, C, PCS, FS>
+{
+    fn params_payload_len(&self, compress: Compress) -> u64 {
+        (transport::varint_u64_len(self.trace_length as u64)
+            + transport::varint_u64_len(self.ram_K as u64)) as u64
+            + self.rw_config.serialized_size(compress) as u64
+            + self.one_hot_config.serialized_size(compress) as u64
+            + self.dory_layout.serialized_size(compress) as u64
+    }
+
+    fn commitments_payload_len(&self, compress: Compress) -> u64 {
+        let count_len = transport::varint_u64_len(self.commitments.len() as u64) as u64;
+        let items_len: u64 = self
+            .commitments
+            .iter()
+            .map(|c| c.serialized_size(compress) as u64)
+            .sum();
+        let untrusted_len = self
+            .untrusted_advice_commitment
+            .as_ref()
+            .map(|c| c.serialized_size(compress) as u64)
+            .unwrap_or(0);
+        count_len + items_len + 1 + untrusted_len
+    }
+
+    #[cfg(not(feature = "zk"))]
+    fn claims_payload_len(&self, compress: Compress) -> u64 {
+        let count_len = transport::varint_u64_len(self.opening_claims.0.len() as u64) as u64;
+        let items_len: u64 = self
+            .opening_claims
+            .0
+            .iter()
+            .map(|(k, (_p, claim))| {
+                (k.serialized_size(compress) + claim.serialized_size(compress)) as u64
+            })
+            .sum();
+        count_len + items_len
+    }
 }
 
 impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
@@ -123,14 +143,10 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        transport::signature_write(&mut writer, PROOF_SIGNATURE).map_err(io_err)?;
+        transport::write_magic_version(&mut writer, PROOF_MAGIC, PROOF_VERSION).map_err(io_err)?;
 
-        let params_len = (transport::varint_u64_len(self.trace_length as u64)
-            + transport::varint_u64_len(self.ram_K as u64)) as u64
-            + self.rw_config.serialized_size(compress) as u64
-            + self.one_hot_config.serialized_size(compress) as u64
-            + self.dory_layout.serialized_size(compress) as u64;
-        transport::write_frame_header(&mut writer, TAG_PARAMS, params_len).map_err(io_err)?;
+        let params_len = self.params_payload_len(compress);
+        transport::write_varint_u64(&mut writer, params_len).map_err(io_err)?;
         transport::write_varint_u64(&mut writer, self.trace_length as u64).map_err(io_err)?;
         transport::write_varint_u64(&mut writer, self.ram_K as u64).map_err(io_err)?;
         self.rw_config.serialize_with_mode(&mut writer, compress)?;
@@ -139,21 +155,8 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
         self.dory_layout
             .serialize_with_mode(&mut writer, compress)?;
 
-        let commitments_count_len = transport::varint_u64_len(self.commitments.len() as u64) as u64;
-        let commitments_items_len: u64 = self
-            .commitments
-            .iter()
-            .map(|c| c.serialized_size(compress) as u64)
-            .sum();
-        let untrusted_commitment_len = self
-            .untrusted_advice_commitment
-            .as_ref()
-            .map(|c| c.serialized_size(compress) as u64)
-            .unwrap_or(0);
-        let commitments_len =
-            commitments_count_len + commitments_items_len + 1 + untrusted_commitment_len;
-        transport::write_frame_header(&mut writer, TAG_COMMITMENTS, commitments_len)
-            .map_err(io_err)?;
+        let commitments_len = self.commitments_payload_len(compress);
+        transport::write_varint_u64(&mut writer, commitments_len).map_err(io_err)?;
         transport::write_varint_u64(&mut writer, self.commitments.len() as u64).map_err(io_err)?;
         for c in &self.commitments {
             c.serialize_with_mode(&mut writer, compress)?;
@@ -168,19 +171,8 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
 
         #[cfg(not(feature = "zk"))]
         {
-            let claims_count_len =
-                transport::varint_u64_len(self.opening_claims.0.len() as u64) as u64;
-            let claims_items_len: u64 = self
-                .opening_claims
-                .0
-                .iter()
-                .map(|(k, (_p, claim))| {
-                    (k.serialized_size(compress) + claim.serialized_size(compress)) as u64
-                })
-                .sum();
-            let claims_len = claims_count_len + claims_items_len;
-            transport::write_frame_header(&mut writer, TAG_OPENING_CLAIMS, claims_len)
-                .map_err(io_err)?;
+            let claims_len = self.claims_payload_len(compress);
+            transport::write_varint_u64(&mut writer, claims_len).map_err(io_err)?;
             transport::write_varint_u64(&mut writer, self.opening_claims.0.len() as u64)
                 .map_err(io_err)?;
             for (k, (_p, claim)) in self.opening_claims.0.iter() {
@@ -189,124 +181,66 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
             }
         }
 
-        write_framed_section!(
+        write_section!(
             &mut writer,
             compress,
-            TAG_STAGE1,
             &self.stage1_uni_skip_first_round_proof,
             &self.stage1_sumcheck_proof
         );
-        write_framed_section!(
+        write_section!(
             &mut writer,
             compress,
-            TAG_STAGE2,
             &self.stage2_uni_skip_first_round_proof,
             &self.stage2_sumcheck_proof
         );
-        write_framed_section!(
-            &mut writer,
-            compress,
-            TAG_STAGE3,
-            &self.stage3_sumcheck_proof
-        );
-        write_framed_section!(
-            &mut writer,
-            compress,
-            TAG_STAGE4,
-            &self.stage4_sumcheck_proof
-        );
-        write_framed_section!(
-            &mut writer,
-            compress,
-            TAG_STAGE5,
-            &self.stage5_sumcheck_proof
-        );
-        write_framed_section!(
-            &mut writer,
-            compress,
-            TAG_STAGE6,
-            &self.stage6_sumcheck_proof
-        );
-        write_framed_section!(
-            &mut writer,
-            compress,
-            TAG_STAGE7,
-            &self.stage7_sumcheck_proof
-        );
-        write_framed_section!(
-            &mut writer,
-            compress,
-            TAG_JOINT_OPENING,
-            &self.joint_opening_proof
-        );
+        write_section!(&mut writer, compress, &self.stage3_sumcheck_proof);
+        write_section!(&mut writer, compress, &self.stage4_sumcheck_proof);
+        write_section!(&mut writer, compress, &self.stage5_sumcheck_proof);
+        write_section!(&mut writer, compress, &self.stage6_sumcheck_proof);
+        write_section!(&mut writer, compress, &self.stage7_sumcheck_proof);
+        write_section!(&mut writer, compress, &self.joint_opening_proof);
 
         #[cfg(feature = "zk")]
-        write_framed_section!(&mut writer, compress, TAG_BLINDFOLD, &self.blindfold_proof);
+        write_section!(&mut writer, compress, &self.blindfold_proof);
 
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        let mut size = PROOF_SIGNATURE.len();
+        let mut size = PROOF_MAGIC.len() + 1; // magic + version byte
 
-        let params_len = (transport::varint_u64_len(self.trace_length as u64)
-            + transport::varint_u64_len(self.ram_K as u64)) as u64
-            + self.rw_config.serialized_size(compress) as u64
-            + self.one_hot_config.serialized_size(compress) as u64
-            + self.dory_layout.serialized_size(compress) as u64;
-        size += 1 + transport::varint_u64_len(params_len) + params_len as usize;
+        let params_len = self.params_payload_len(compress);
+        size += transport::varint_u64_len(params_len) + params_len as usize;
 
-        let commitments_count_len = transport::varint_u64_len(self.commitments.len() as u64) as u64;
-        let commitments_items_len: u64 = self
-            .commitments
-            .iter()
-            .map(|c| c.serialized_size(compress) as u64)
-            .sum();
-        let untrusted_commitment_len = self
-            .untrusted_advice_commitment
-            .as_ref()
-            .map(|c| c.serialized_size(compress) as u64)
-            .unwrap_or(0);
-        let commitments_len =
-            commitments_count_len + commitments_items_len + 1 + untrusted_commitment_len;
-        size += 1 + transport::varint_u64_len(commitments_len) + commitments_len as usize;
+        let commitments_len = self.commitments_payload_len(compress);
+        size += transport::varint_u64_len(commitments_len) + commitments_len as usize;
 
         #[cfg(not(feature = "zk"))]
         {
-            let claims_count_len =
-                transport::varint_u64_len(self.opening_claims.0.len() as u64) as u64;
-            let claims_items_len: u64 = self
-                .opening_claims
-                .0
-                .iter()
-                .map(|(k, (_p, claim))| {
-                    (k.serialized_size(compress) + claim.serialized_size(compress)) as u64
-                })
-                .sum();
-            let claims_len = claims_count_len + claims_items_len;
-            size += 1 + transport::varint_u64_len(claims_len) + claims_len as usize;
+            let claims_len = self.claims_payload_len(compress);
+            size += transport::varint_u64_len(claims_len) + claims_len as usize;
         }
 
-        size += framed_section_size!(
+        size += section_size!(
             compress,
             &self.stage1_uni_skip_first_round_proof,
             &self.stage1_sumcheck_proof
         );
-        size += framed_section_size!(
+        size += section_size!(
             compress,
             &self.stage2_uni_skip_first_round_proof,
             &self.stage2_sumcheck_proof
         );
-        size += framed_section_size!(compress, &self.stage3_sumcheck_proof);
-        size += framed_section_size!(compress, &self.stage4_sumcheck_proof);
-        size += framed_section_size!(compress, &self.stage5_sumcheck_proof);
-        size += framed_section_size!(compress, &self.stage6_sumcheck_proof);
-        size += framed_section_size!(compress, &self.stage7_sumcheck_proof);
-        size += framed_section_size!(compress, &self.joint_opening_proof);
+        size += section_size!(compress, &self.stage3_sumcheck_proof);
+        size += section_size!(compress, &self.stage4_sumcheck_proof);
+        size += section_size!(compress, &self.stage5_sumcheck_proof);
+        size += section_size!(compress, &self.stage6_sumcheck_proof);
+        size += section_size!(compress, &self.stage7_sumcheck_proof);
+        size += section_size!(compress, &self.joint_opening_proof);
 
         #[cfg(feature = "zk")]
         {
-            size += framed_section_size!(compress, &self.blindfold_proof);
+            size += section_size!(compress, &self.blindfold_proof);
         }
 
         size
@@ -329,222 +263,146 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        transport::signature_check(&mut reader, PROOF_SIGNATURE).map_err(io_err)?;
+        let version = transport::read_magic_version(&mut reader, PROOF_MAGIC).map_err(io_err)?;
+        if version != PROOF_VERSION {
+            return Err(io_err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unsupported proof version {version}, expected {PROOF_VERSION}"),
+            )));
+        }
 
-        let mut trace_length: Option<usize> = None;
-        let mut ram_K: Option<usize> = None;
-        let mut rw_config: Option<ReadWriteConfig> = None;
-        let mut one_hot_config: Option<OneHotConfig> = None;
-        let mut dory_layout: Option<DoryLayout> = None;
+        // Params
+        let mut limited = transport::read_section(&mut reader, MAX_PARAMS_LEN).map_err(io_err)?;
+        let t = transport::read_varint_u64(&mut limited).map_err(io_err)?;
+        let r = transport::read_varint_u64(&mut limited).map_err(io_err)?;
+        let trace_length = usize::try_from(t).map_err(|_| SerializationError::InvalidData)?;
+        if trace_length == 0 {
+            return Err(io_err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "trace_length must be nonzero",
+            )));
+        }
+        let ram_K = usize::try_from(r).map_err(|_| SerializationError::InvalidData)?;
+        let rw_config = ReadWriteConfig::deserialize_with_mode(&mut limited, compress, validate)?;
+        let one_hot_config = OneHotConfig::deserialize_with_mode(&mut limited, compress, validate)?;
+        let dory_layout = DoryLayout::deserialize_with_mode(&mut limited, compress, validate)?;
+        check_trailing_bytes(&limited)?;
 
-        let mut commitments: Option<Vec<PCS::Commitment>> = None;
-        let mut untrusted_advice_commitment: Option<Option<PCS::Commitment>> = None;
+        // Commitments
+        let mut limited = transport::read_section(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
+        let n = transport::read_varint_u64(&mut limited).map_err(io_err)?;
+        let n_usize = usize::try_from(n).map_err(|_| SerializationError::InvalidData)?;
+        if n_usize > 10_000 {
+            return Err(SerializationError::InvalidData);
+        }
+        let mut commitments = Vec::with_capacity(n_usize);
+        for _ in 0..n_usize {
+            commitments.push(PCS::Commitment::deserialize_with_mode(
+                &mut limited,
+                compress,
+                validate,
+            )?);
+        }
+        let presence = u8::deserialize_with_mode(&mut limited, compress, validate)?;
+        let untrusted_advice_commitment = match presence {
+            0 => None,
+            1 => Some(PCS::Commitment::deserialize_with_mode(
+                &mut limited,
+                compress,
+                validate,
+            )?),
+            _ => return Err(SerializationError::InvalidData),
+        };
+        check_trailing_bytes(&limited)?;
+
+        // Opening claims (non-ZK only)
         #[cfg(not(feature = "zk"))]
-        let mut opening_claims: Option<Claims<F>> = None;
+        let opening_claims = {
+            let mut limited =
+                transport::read_section(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
+            let n = transport::read_varint_u64(&mut limited).map_err(io_err)?;
+            let n_usize = usize::try_from(n).map_err(|_| SerializationError::InvalidData)?;
+            if n_usize > 10_000 {
+                return Err(SerializationError::InvalidData);
+            }
+            let mut claims = BTreeMap::new();
+            for _ in 0..n_usize {
+                let key = OpeningId::deserialize_with_mode(&mut limited, compress, validate)?;
+                let claim = F::deserialize_with_mode(&mut limited, compress, validate)?;
+                if claims
+                    .insert(key, (OpeningPoint::default(), claim))
+                    .is_some()
+                {
+                    return Err(SerializationError::InvalidData);
+                }
+            }
+            check_trailing_bytes(&limited)?;
+            Claims(claims)
+        };
 
-        let mut stage1_uni: Option<UniSkipFirstRoundProofVariant<F, C, FS>> = None;
-        let mut stage1_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
-        let mut stage2_uni: Option<UniSkipFirstRoundProofVariant<F, C, FS>> = None;
-        let mut stage2_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
-        let mut stage3_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
-        let mut stage4_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
-        let mut stage5_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
-        let mut stage6_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
-        let mut stage7_sumcheck: Option<SumcheckInstanceProof<F, C, FS>> = None;
-        let mut joint_opening_proof: Option<PCS::Proof> = None;
+        // Stage 1
+        let mut limited = transport::read_section(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
+        let stage1_uni_skip_first_round_proof =
+            CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
+        let stage1_sumcheck_proof =
+            CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
+        check_trailing_bytes(&limited)?;
+
+        // Stage 2
+        let mut limited = transport::read_section(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
+        let stage2_uni_skip_first_round_proof =
+            CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
+        let stage2_sumcheck_proof =
+            CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
+        check_trailing_bytes(&limited)?;
+
+        // Stages 3-7
+        macro_rules! read_single_section {
+            ($reader:expr) => {{
+                let mut limited =
+                    transport::read_section($reader, MAX_SECTION_LEN).map_err(io_err)?;
+                let val =
+                    CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
+                check_trailing_bytes(&limited)?;
+                val
+            }};
+        }
+
+        let stage3_sumcheck_proof = read_single_section!(&mut reader);
+        let stage4_sumcheck_proof = read_single_section!(&mut reader);
+        let stage5_sumcheck_proof = read_single_section!(&mut reader);
+        let stage6_sumcheck_proof = read_single_section!(&mut reader);
+        let stage7_sumcheck_proof = read_single_section!(&mut reader);
+        let joint_opening_proof = read_single_section!(&mut reader);
+
         #[cfg(feature = "zk")]
-        let mut blindfold_proof: Option<BlindFoldProof<F, C>> = None;
-
-        while let Some((tag, len)) =
-            transport::read_frame_header(&mut reader, MAX_BLINDFOLD_LEN_VAL).map_err(io_err)?
-        {
-            let cap = match tag {
-                TAG_PARAMS => MAX_PARAMS_LEN,
-                TAG_COMMITMENTS => MAX_COMMITMENTS_LEN,
-                #[cfg(not(feature = "zk"))]
-                TAG_OPENING_CLAIMS => MAX_OPENING_CLAIMS_LEN,
-                TAG_STAGE1 | TAG_STAGE2 | TAG_STAGE3 | TAG_STAGE4 | TAG_STAGE5 | TAG_STAGE6
-                | TAG_STAGE7 => MAX_STAGE_LEN,
-                TAG_JOINT_OPENING => MAX_JOINT_OPENING_LEN,
-                #[cfg(feature = "zk")]
-                TAG_BLINDFOLD => MAX_BLINDFOLD_LEN,
-                _ => {
-                    return Err(io_err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("unknown proof section tag {tag}"),
-                    )));
-                }
-            };
-            if len > cap {
-                return Err(io_err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("section tag {tag} payload {len} exceeds cap {cap}"),
-                )));
-            }
-            let mut limited = (&mut reader).take(len);
-
-            match tag {
-                TAG_PARAMS => {
-                    if trace_length.is_some() {
-                        return Err(io_err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "duplicate params section",
-                        )));
-                    }
-                    let t = transport::read_varint_u64(&mut limited).map_err(io_err)?;
-                    let r = transport::read_varint_u64(&mut limited).map_err(io_err)?;
-                    trace_length =
-                        Some(usize::try_from(t).map_err(|_| SerializationError::InvalidData)?);
-                    ram_K = Some(usize::try_from(r).map_err(|_| SerializationError::InvalidData)?);
-                    rw_config = Some(ReadWriteConfig::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
-                    one_hot_config = Some(OneHotConfig::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
-                    dory_layout = Some(DoryLayout::deserialize_with_mode(
-                        &mut limited,
-                        compress,
-                        validate,
-                    )?);
-                }
-                TAG_COMMITMENTS => {
-                    if commitments.is_some() {
-                        return Err(io_err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "duplicate commitments section",
-                        )));
-                    }
-                    let n = transport::read_varint_u64(&mut limited).map_err(io_err)?;
-                    let n_usize =
-                        usize::try_from(n).map_err(|_| SerializationError::InvalidData)?;
-                    if n_usize > 1_000_000 {
-                        return Err(SerializationError::InvalidData);
-                    }
-                    let mut v = Vec::with_capacity(n_usize.min(1024));
-                    for _ in 0..n_usize {
-                        v.push(PCS::Commitment::deserialize_with_mode(
-                            &mut limited,
-                            compress,
-                            validate,
-                        )?);
-                    }
-                    let presence = u8::deserialize_with_mode(&mut limited, compress, validate)?;
-                    let opt = match presence {
-                        0 => None,
-                        1 => Some(PCS::Commitment::deserialize_with_mode(
-                            &mut limited,
-                            compress,
-                            validate,
-                        )?),
-                        _ => return Err(SerializationError::InvalidData),
-                    };
-                    commitments = Some(v);
-                    untrusted_advice_commitment = Some(opt);
-                }
-                #[cfg(not(feature = "zk"))]
-                TAG_OPENING_CLAIMS => {
-                    if opening_claims.is_some() {
-                        return Err(io_err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "duplicate opening claims section",
-                        )));
-                    }
-                    let n = transport::read_varint_u64(&mut limited).map_err(io_err)?;
-                    let n_usize =
-                        usize::try_from(n).map_err(|_| SerializationError::InvalidData)?;
-                    if n_usize > 10_000_000 {
-                        return Err(SerializationError::InvalidData);
-                    }
-                    let mut claims = BTreeMap::new();
-                    for _ in 0..n_usize {
-                        let key =
-                            OpeningId::deserialize_with_mode(&mut limited, compress, validate)?;
-                        let claim = F::deserialize_with_mode(&mut limited, compress, validate)?;
-                        claims.insert(key, (OpeningPoint::default(), claim));
-                    }
-                    opening_claims = Some(Claims(claims));
-                }
-                TAG_STAGE1 => {
-                    read_singleton!(&mut limited, compress, validate, stage1_uni);
-                    read_singleton!(&mut limited, compress, validate, stage1_sumcheck);
-                }
-                TAG_STAGE2 => {
-                    read_singleton!(&mut limited, compress, validate, stage2_uni);
-                    read_singleton!(&mut limited, compress, validate, stage2_sumcheck);
-                }
-                TAG_STAGE3 => read_singleton!(&mut limited, compress, validate, stage3_sumcheck),
-                TAG_STAGE4 => read_singleton!(&mut limited, compress, validate, stage4_sumcheck),
-                TAG_STAGE5 => read_singleton!(&mut limited, compress, validate, stage5_sumcheck),
-                TAG_STAGE6 => read_singleton!(&mut limited, compress, validate, stage6_sumcheck),
-                TAG_STAGE7 => read_singleton!(&mut limited, compress, validate, stage7_sumcheck),
-                TAG_JOINT_OPENING => {
-                    read_singleton!(&mut limited, compress, validate, joint_opening_proof)
-                }
-                #[cfg(feature = "zk")]
-                TAG_BLINDFOLD => {
-                    read_singleton!(&mut limited, compress, validate, blindfold_proof)
-                }
-                _ => unreachable!("unknown tags rejected above"),
-            }
-
-            if limited.limit() != 0 {
-                return Err(io_err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "frame tag {tag}: {} trailing bytes not consumed",
-                        limited.limit()
-                    ),
-                )));
-            }
-        }
-
-        macro_rules! require {
-            ($opt:expr, $name:expr) => {
-                $opt.ok_or_else(|| {
-                    io_err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        concat!("missing required section: ", $name),
-                    ))
-                })?
-            };
-        }
+        let blindfold_proof = read_single_section!(&mut reader);
 
         Ok(Self {
-            commitments: require!(commitments, "commitments"),
-            stage1_uni_skip_first_round_proof: require!(stage1_uni, "stage1_uni"),
-            stage1_sumcheck_proof: require!(stage1_sumcheck, "stage1_sumcheck"),
-            stage2_uni_skip_first_round_proof: require!(stage2_uni, "stage2_uni"),
-            stage2_sumcheck_proof: require!(stage2_sumcheck, "stage2_sumcheck"),
-            stage3_sumcheck_proof: require!(stage3_sumcheck, "stage3_sumcheck"),
-            stage4_sumcheck_proof: require!(stage4_sumcheck, "stage4_sumcheck"),
-            stage5_sumcheck_proof: require!(stage5_sumcheck, "stage5_sumcheck"),
-            stage6_sumcheck_proof: require!(stage6_sumcheck, "stage6_sumcheck"),
-            stage7_sumcheck_proof: require!(stage7_sumcheck, "stage7_sumcheck"),
+            commitments,
+            stage1_uni_skip_first_round_proof,
+            stage1_sumcheck_proof,
+            stage2_uni_skip_first_round_proof,
+            stage2_sumcheck_proof,
+            stage3_sumcheck_proof,
+            stage4_sumcheck_proof,
+            stage5_sumcheck_proof,
+            stage6_sumcheck_proof,
+            stage7_sumcheck_proof,
             #[cfg(feature = "zk")]
-            blindfold_proof: require!(blindfold_proof, "blindfold"),
-            joint_opening_proof: require!(joint_opening_proof, "joint_opening"),
-            untrusted_advice_commitment: require!(
-                untrusted_advice_commitment,
-                "untrusted_advice_commitment"
-            ),
+            blindfold_proof,
+            joint_opening_proof,
+            untrusted_advice_commitment,
             #[cfg(not(feature = "zk"))]
-            opening_claims: require!(opening_claims, "opening_claims"),
-            trace_length: require!(trace_length, "params"),
-            ram_K: require!(ram_K, "params"),
-            rw_config: require!(rw_config, "params"),
-            one_hot_config: require!(one_hot_config, "params"),
-            dory_layout: require!(dory_layout, "params"),
+            opening_claims,
+            trace_length,
+            ram_K,
+            rw_config,
+            one_hot_config,
+            dory_layout,
         })
     }
 }
-
-/// Inline constant so both cfg branches can reference it in `read_frame_header`.
-const MAX_BLINDFOLD_LEN_VAL: u64 = 16 * 1024 * 1024;
 
 #[cfg(not(feature = "zk"))]
 pub struct Claims<F: JoltField>(pub Openings<F>);
@@ -593,7 +451,12 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
         for _ in 0..size {
             let key = OpeningId::deserialize_with_mode(&mut reader, compress, validate)?;
             let claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
-            claims.insert(key, (OpeningPoint::default(), claim));
+            if claims
+                .insert(key, (OpeningPoint::default(), claim))
+                .is_some()
+            {
+                return Err(SerializationError::InvalidData);
+            }
         }
 
         Ok(Claims(claims))
@@ -895,11 +758,47 @@ impl CanonicalSerialize for VirtualPolynomial {
 
     fn serialized_size(&self, _compress: Compress) -> usize {
         match self {
+            Self::PC
+            | Self::UnexpandedPC
+            | Self::NextPC
+            | Self::NextUnexpandedPC
+            | Self::NextIsNoop
+            | Self::NextIsVirtual
+            | Self::NextIsFirstInSequence
+            | Self::LeftLookupOperand
+            | Self::RightLookupOperand
+            | Self::LeftInstructionInput
+            | Self::RightInstructionInput
+            | Self::Product
+            | Self::ShouldJump
+            | Self::ShouldBranch
+            | Self::WritePCtoRD
+            | Self::WriteLookupOutputToRD
+            | Self::Rd
+            | Self::Imm
+            | Self::Rs1Value
+            | Self::Rs2Value
+            | Self::RdWriteValue
+            | Self::Rs1Ra
+            | Self::Rs2Ra
+            | Self::RdWa
+            | Self::LookupOutput
+            | Self::InstructionRaf
+            | Self::InstructionRafFlag
+            | Self::RegistersVal
+            | Self::RamAddress
+            | Self::RamRa
+            | Self::RamReadValue
+            | Self::RamWriteValue
+            | Self::RamVal
+            | Self::RamValInit
+            | Self::RamValFinal
+            | Self::RamHammingWeight
+            | Self::UnivariateSkip => 1,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
             | Self::LookupTableFlag(_) => 2,
-            _ => 1,
         }
     }
 }
@@ -986,7 +885,6 @@ pub fn serialize_and_print_size(
     file_name: &str,
     item: &impl CanonicalSerialize,
 ) -> Result<(), SerializationError> {
-    use std::fs::File;
     let mut file = File::create(file_name)?;
     item.serialize_compressed(&mut file)?;
     let file_size_bytes = file.metadata()?.len();
@@ -1001,6 +899,7 @@ mod tests {
     use super::*;
     use crate::poly::opening_proof::{OpeningId, SumcheckId};
     use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+    use crate::zkvm::RV64IMACProof;
 
     #[test]
     fn opening_id_header_is_packed_common_case() {
@@ -1043,37 +942,65 @@ mod tests {
     }
 
     #[test]
-    fn proof_signature_version_byte() {
-        assert_eq!(PROOF_SIGNATURE[7], 1, "format version should be 1");
+    fn proof_version_byte() {
+        assert_eq!(PROOF_VERSION, 1);
     }
 
     #[test]
-    fn proof_signature_is_required_and_unknown_tags_reject() {
-        let mut just_sig = Vec::new();
-        just_sig.extend_from_slice(PROOF_SIGNATURE);
-        let res = crate::zkvm::RV64IMACProof::deserialize_with_mode(
-            std::io::Cursor::new(&just_sig),
+    fn proof_magic_required() {
+        let mut just_magic = Vec::new();
+        transport::write_magic_version(&mut just_magic, PROOF_MAGIC, PROOF_VERSION).unwrap();
+        let res = RV64IMACProof::deserialize_with_mode(
+            std::io::Cursor::new(&just_magic),
             Compress::Yes,
             Validate::Yes,
         )
         .map(|_| ());
-        match res {
-            Err(SerializationError::InvalidData) | Err(SerializationError::IoError(_)) => {}
-            _ => panic!("expected decode error"),
-        }
+        assert!(res.is_err());
+    }
 
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(PROOF_SIGNATURE);
-        transport::write_frame_header(&mut bytes, 99, 0).unwrap();
-        let res = crate::zkvm::RV64IMACProof::deserialize_with_mode(
-            std::io::Cursor::new(&bytes),
+    #[test]
+    fn wrong_version_rejected() {
+        let mut buf = Vec::new();
+        transport::write_magic_version(&mut buf, PROOF_MAGIC, 99).unwrap();
+        // Append enough zeros to avoid EOF on the version read
+        buf.extend_from_slice(&[0u8; 100]);
+        let res = RV64IMACProof::deserialize_with_mode(
+            std::io::Cursor::new(&buf),
             Compress::Yes,
             Validate::Yes,
         )
         .map(|_| ());
         match res {
-            Err(SerializationError::InvalidData) | Err(SerializationError::IoError(_)) => {}
-            _ => panic!("expected decode error"),
+            Err(SerializationError::IoError(e)) => {
+                assert!(
+                    e.to_string().contains("unsupported proof version"),
+                    "unexpected error: {e}"
+                );
+            }
+            other => panic!("expected IoError with version message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wrong_magic_rejected() {
+        let mut buf = Vec::new();
+        transport::write_magic_version(&mut buf, b"BADMAGC", 1).unwrap();
+        buf.extend_from_slice(&[0u8; 100]);
+        let res = RV64IMACProof::deserialize_with_mode(
+            std::io::Cursor::new(&buf),
+            Compress::Yes,
+            Validate::Yes,
+        )
+        .map(|_| ());
+        match res {
+            Err(SerializationError::IoError(e)) => {
+                assert!(
+                    e.to_string().contains("invalid proof magic"),
+                    "unexpected error: {e}"
+                );
+            }
+            other => panic!("expected IoError with magic message, got {other:?}"),
         }
     }
 }

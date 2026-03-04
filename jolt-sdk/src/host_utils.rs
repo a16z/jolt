@@ -11,7 +11,6 @@ pub use jolt_core::curve::{Bn254Curve, JoltCurve};
 pub use jolt_core::field::JoltField;
 pub use jolt_core::guest;
 pub use jolt_core::poly::commitment::dory::DoryCommitmentScheme as PCS;
-pub use jolt_core::zkvm::transport;
 pub use jolt_core::zkvm::{
     proof_serialization::JoltProof, verifier::JoltSharedPreprocessing,
     verifier::JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, Serializable,
