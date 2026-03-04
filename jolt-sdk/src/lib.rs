@@ -88,6 +88,10 @@ impl<T> core::ops::Deref for UntrustedAdvice<T> {
     }
 }
 
+/// Alias for `UntrustedAdvice<T>` — marks a guest function parameter as private
+/// (committed by the prover but not revealed to the verifier).
+pub type Private<T> = UntrustedAdvice<T>;
+
 // This is a dummy _HEAP_PTR to keep the compiler happy.
 // It should never be used when compiled as a guest or with
 // our custom allocator

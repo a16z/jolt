@@ -1113,7 +1113,7 @@ impl MacroBuilder {
     fn is_untrusted_advice_type(ty: &Type) -> bool {
         if let Type::Path(type_path) = ty {
             if let Some(last_segment) = type_path.path.segments.last() {
-                return last_segment.ident == "UntrustedAdvice";
+                return last_segment.ident == "UntrustedAdvice" || last_segment.ident == "Private";
             }
         }
         false
