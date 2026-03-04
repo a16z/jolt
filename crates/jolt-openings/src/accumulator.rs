@@ -315,8 +315,8 @@ fn point_key<F: Field>(point: &[F]) -> u64 {
 mod tests {
     use super::*;
     use crate::mock::MockCommitmentScheme;
-    use ark_bn254::Fr;
     use jolt_field::Field;
+    use jolt_field::Fr;
     use jolt_transcript::Blake2bTranscript;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha20Rng;

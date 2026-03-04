@@ -24,79 +24,79 @@ keywords = ["SNARK", "cryptography", "proofs"]
 
 [workspace]
 members = [
-    "crates/jolt-transcript",
-    "crates/jolt-field",
-    "crates/jolt-poly",
-    "crates/jolt-openings",
-    "crates/jolt-sumcheck",
-    "crates/jolt-spartan",
-    "crates/jolt-instructions",
-    "crates/jolt-dory",
-    "crates/jolt-zkvm",
-    "jolt-core",
-    "tracer",
-    "common",
-    "jolt-platform",
-    "jolt-sdk",
-    "jolt-sdk/macros",
-    "jolt-inlines/sha2",
-    "jolt-inlines/keccak256",
-    "jolt-inlines/blake2",
-    "jolt-inlines/blake3",
-    "jolt-inlines/bigint",
-    "jolt-inlines/secp256k1",
-    "jolt-inlines/grumpkin",
-    "examples/btreemap/host",
-    "examples/btreemap/guest",
-    "examples/collatz",
-    "examples/collatz/guest",
-    "examples/fibonacci",
-    "examples/fibonacci/guest",
-    "examples/secp256k1-ecdsa-verify",
-    "examples/secp256k1-ecdsa-verify/guest",
-    "examples/sha2-ex",
-    "examples/sha2-ex/guest",
-    "examples/sha3-ex",
-    "examples/sha3-ex/guest",
-    "examples/sha2-chain",
-    "examples/sha2-chain/guest",
-    "examples/sha3-chain",
-    "examples/sha3-chain/guest",
-    "examples/multi-function",
-    "examples/multi-function/guest",
-    "examples/alloc",
-    "examples/alloc/guest",
-    "examples/stdlib",
-    "examples/stdlib/guest",
-    "examples/muldiv",
-    "examples/muldiv/guest",
-    "examples/overflow",
-    "examples/overflow/guest",
-    "examples/memory-ops",
-    "examples/memory-ops/guest",
-    "examples/backtrace",
-    "examples/backtrace/guest-nostd",
-    "examples/backtrace/guest-std",
-    "examples/recursion",
-    "examples/recursion/guest",
-    "examples/recover-ecdsa",
-    "examples/recover-ecdsa/guest",
-    "examples/random",
-    "examples/random/guest",
-    "examples/malloc",
-    "examples/malloc/guest",
-    "examples/merkle-tree",
-    "examples/merkle-tree/guest",
-    "examples/hash-bench",
-    "examples/hash-bench/guest",
-    "examples/modinv",
-    "examples/modinv/guest",
-    "examples/advice-demo",
-    "examples/advice-demo/guest",
-    "examples/sig-recovery/host",
-    "examples/sig-recovery/guest",
-    "zklean-extractor",
-    "z3-verifier",
+  "crates/jolt-transcript",
+  "crates/jolt-field",
+  "crates/jolt-poly",
+  "crates/jolt-openings",
+  "crates/jolt-sumcheck",
+  "crates/jolt-spartan",
+  "crates/jolt-instructions",
+  "crates/jolt-dory",
+  "crates/jolt-zkvm",
+  "jolt-core",
+  "tracer",
+  "common",
+  "jolt-platform",
+  "jolt-sdk",
+  "jolt-sdk/macros",
+  "jolt-inlines/sha2",
+  "jolt-inlines/keccak256",
+  "jolt-inlines/blake2",
+  "jolt-inlines/blake3",
+  "jolt-inlines/bigint",
+  "jolt-inlines/secp256k1",
+  "jolt-inlines/grumpkin",
+  "examples/btreemap/host",
+  "examples/btreemap/guest",
+  "examples/collatz",
+  "examples/collatz/guest",
+  "examples/fibonacci",
+  "examples/fibonacci/guest",
+  "examples/secp256k1-ecdsa-verify",
+  "examples/secp256k1-ecdsa-verify/guest",
+  "examples/sha2-ex",
+  "examples/sha2-ex/guest",
+  "examples/sha3-ex",
+  "examples/sha3-ex/guest",
+  "examples/sha2-chain",
+  "examples/sha2-chain/guest",
+  "examples/sha3-chain",
+  "examples/sha3-chain/guest",
+  "examples/multi-function",
+  "examples/multi-function/guest",
+  "examples/alloc",
+  "examples/alloc/guest",
+  "examples/stdlib",
+  "examples/stdlib/guest",
+  "examples/muldiv",
+  "examples/muldiv/guest",
+  "examples/overflow",
+  "examples/overflow/guest",
+  "examples/memory-ops",
+  "examples/memory-ops/guest",
+  "examples/backtrace",
+  "examples/backtrace/guest-nostd",
+  "examples/backtrace/guest-std",
+  "examples/recursion",
+  "examples/recursion/guest",
+  "examples/recover-ecdsa",
+  "examples/recover-ecdsa/guest",
+  "examples/random",
+  "examples/random/guest",
+  "examples/malloc",
+  "examples/malloc/guest",
+  "examples/merkle-tree",
+  "examples/merkle-tree/guest",
+  "examples/hash-bench",
+  "examples/hash-bench/guest",
+  "examples/modinv",
+  "examples/modinv/guest",
+  "examples/advice-demo",
+  "examples/advice-demo/guest",
+  "examples/sig-recovery/host",
+  "examples/sig-recovery/guest",
+  "zklean-extractor",
+  "z3-verifier",
 ]
 
 [features]
@@ -150,10 +150,6 @@ strip = false
 codegen-units = 1
 
 [patch.crates-io]
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 [workspace.metadata.cargo-machete]
@@ -213,22 +209,25 @@ unused_results = "warn"
 
 [workspace.dependencies]
 # Cryptography and Math
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
-ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false, features = [
+ark-bn254 = { version = "0.5.0", default-features = false }
+ark-grumpkin = { version = "0.5.0", default-features = false }
+ark-ec = { version = "0.5.0", default-features = false }
+ark-ff = { version = "0.5.0", default-features = false }
+ark-serialize = { version = "0.5.0", default-features = false, features = [
   "derive",
 ] }
-ark-secp256k1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-secp256k1 = { version = "0.5.0", default-features = false }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.10"
 sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
-jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", version = "0.3.0", features = ["backends", "cache", "disk-persistence"] }
+dory = { package = "dory-pcs", version = "0.3.0", features = [
+  "backends",
+  "cache",
+  "disk-persistence",
+] }
 
 # Core Utilities
 clap = { version = "4.5.4", features = ["derive"] }
@@ -292,7 +291,10 @@ proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.38.1", features = ["build_core", "elf"], default-features = false }
+object = { version = "0.38.1", features = [
+  "build_core",
+  "elf",
+], default-features = false }
 addr2line = "0.26.0"
 getrandom = { version = "0.2.16", default-features = false }
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false }

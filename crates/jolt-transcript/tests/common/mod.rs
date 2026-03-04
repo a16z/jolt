@@ -21,9 +21,8 @@ macro_rules! transcript_tests {
             let mut t1 = <$transcript_type>::new(b"determinism_test");
             let mut t2 = <$transcript_type>::new(b"determinism_test");
 
-            // Identical operations should produce identical states
-            t1.append(&42u64);
-            t2.append(&42u64);
+            t1.append_bytes(&42u64.to_be_bytes());
+            t2.append_bytes(&42u64.to_be_bytes());
             assert_eq!(
                 t1.state(),
                 t2.state(),
@@ -34,7 +33,6 @@ macro_rules! transcript_tests {
             t2.append_bytes(b"hello world");
             assert_eq!(t1.state(), t2.state());
 
-            // Identical challenges
             assert_eq!(
                 t1.challenge(),
                 t2.challenge(),
@@ -47,14 +45,12 @@ macro_rules! transcript_tests {
             let mut t1 = <$transcript_type>::new(b"protocol_a");
             let mut t2 = <$transcript_type>::new(b"protocol_b");
 
-            // Different labels should produce different initial states
             assert_ne!(
                 t1.state(),
                 t2.state(),
                 "Different labels should produce different initial states"
             );
 
-            // And different challenges
             assert_ne!(
                 t1.challenge(),
                 t2.challenge(),
@@ -67,7 +63,6 @@ macro_rules! transcript_tests {
             let mut transcript = <$transcript_type>::new(b"uniqueness_test");
             let mut challenges = HashSet::new();
 
-            // Generate many challenges and verify uniqueness
             for i in 0..10_000 {
                 let c = transcript.challenge();
                 assert!(
@@ -82,7 +77,7 @@ macro_rules! transcript_tests {
             let mut transcript = <$transcript_type>::new(b"mutation_test");
             let initial_state = *transcript.state();
 
-            transcript.append(&1u64);
+            transcript.append_bytes(&1u64.to_be_bytes());
             assert_ne!(
                 *transcript.state(),
                 initial_state,
@@ -116,12 +111,11 @@ macro_rules! transcript_tests {
             let mut t1 = <$transcript_type>::new(b"order_test");
             let mut t2 = <$transcript_type>::new(b"order_test");
 
-            // Different order of operations
-            t1.append(&1u64);
-            t1.append(&2u64);
+            t1.append_bytes(&1u64.to_be_bytes());
+            t1.append_bytes(&2u64.to_be_bytes());
 
-            t2.append(&2u64);
-            t2.append(&1u64);
+            t2.append_bytes(&2u64.to_be_bytes());
+            t2.append_bytes(&1u64.to_be_bytes());
 
             assert_ne!(
                 t1.state(),
@@ -135,8 +129,8 @@ macro_rules! transcript_tests {
             let mut t1 = <$transcript_type>::new(b"data_test");
             let mut t2 = <$transcript_type>::new(b"data_test");
 
-            t1.append(&0u64);
-            t2.append(&1u64);
+            t1.append_bytes(&0u64.to_be_bytes());
+            t2.append_bytes(&1u64.to_be_bytes());
 
             assert_ne!(
                 t1.state(),
@@ -152,14 +146,12 @@ macro_rules! transcript_tests {
             let initial_state = *t1.state();
 
             t1.append_bytes(&[]);
-            // Empty bytes should still change state (absorbs empty input)
             assert_ne!(
                 *t1.state(),
                 initial_state,
                 "Empty bytes should change state"
             );
 
-            // But both transcripts with empty bytes should match
             t2.append_bytes(&[]);
             assert_eq!(t1.state(), t2.state());
         }
@@ -169,22 +161,19 @@ macro_rules! transcript_tests {
             let mut transcript = <$transcript_type>::new(b"large_data_test");
             let large_data = vec![0xABu8; 10_000];
 
-            // Should handle large data without panicking
             transcript.append_bytes(&large_data);
             let _ = transcript.challenge();
         }
 
         #[test]
         fn test_prover_verifier_consistency() {
-            // Simulate prover
             let mut prover = <$transcript_type>::new(b"protocol");
-            prover.append(&42u64);
+            prover.append_bytes(&42u64.to_be_bytes());
             prover.append_bytes(b"commitment");
             let prover_challenge = prover.challenge();
 
-            // Simulate verifier with identical operations
             let mut verifier = <$transcript_type>::new(b"protocol");
-            verifier.append(&42u64);
+            verifier.append_bytes(&42u64.to_be_bytes());
             verifier.append_bytes(b"commitment");
             let verifier_challenge = verifier.challenge();
 
@@ -197,19 +186,17 @@ macro_rules! transcript_tests {
         #[test]
         fn test_clone_independence() {
             let mut original = <$transcript_type>::new(b"clone_test");
-            original.append(&1u64);
+            original.append_bytes(&1u64.to_be_bytes());
 
             let mut cloned = original.clone();
 
-            // Mutating clone should not affect original
-            cloned.append(&2u64);
+            cloned.append_bytes(&2u64.to_be_bytes());
 
             let original_challenge = original.challenge();
 
-            // Original should give different challenge than if we had appended 2
             let mut fresh = <$transcript_type>::new(b"clone_test");
-            fresh.append(&1u64);
-            fresh.append(&2u64);
+            fresh.append_bytes(&1u64.to_be_bytes());
+            fresh.append_bytes(&2u64.to_be_bytes());
             let fresh_challenge = fresh.challenge();
 
             assert_ne!(
@@ -223,7 +210,6 @@ macro_rules! transcript_tests {
             let transcript = <$transcript_type>::new(b"debug_test");
             let debug_str = format!("{:?}", transcript);
 
-            // Should contain useful information
             assert!(
                 debug_str.contains("state"),
                 "Debug output should contain state"
@@ -239,8 +225,6 @@ macro_rules! transcript_tests {
             let default_transcript = <$transcript_type>::default();
             let new_transcript = <$transcript_type>::new(b"");
 
-            // Default should have zero state, new with empty label should have hashed state
-            // They should be different
             assert_ne!(
                 default_transcript.state(),
                 new_transcript.state(),
@@ -257,7 +241,6 @@ macro_rules! transcript_tests {
 
         #[test]
         fn test_max_valid_label() {
-            // 32 bytes should be valid
             let max_label: &[u8; 32] = &[b'L'; 32];
             let transcript = <$transcript_type>::new(max_label);
             assert!(!transcript.state().iter().all(|&b| b == 0));
@@ -270,7 +253,6 @@ macro_rules! transcript_tests {
 
             assert_eq!(challenges.len(), 5);
 
-            // All challenges should be unique
             let unique: HashSet<_> = challenges.iter().collect();
             assert_eq!(unique.len(), 5, "All challenges in vector should be unique");
         }

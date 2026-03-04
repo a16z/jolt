@@ -16,7 +16,6 @@ mod dense;
 mod eq;
 mod identity;
 mod lagrange;
-pub mod serde_canonical;
 mod traits;
 mod univariate;
 

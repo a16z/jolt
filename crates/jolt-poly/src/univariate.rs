@@ -3,8 +3,6 @@
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
-use crate::serde_canonical::vec_canonical;
-
 /// Univariate polynomial in coefficient form: $p(x) = \sum_{i=0}^{d} c_i x^i$.
 ///
 /// Coefficients are stored in ascending degree order: `coefficients[i]` is the
@@ -12,7 +10,6 @@ use crate::serde_canonical::vec_canonical;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct UnivariatePoly<F: Field> {
-    #[serde(with = "vec_canonical")]
     coefficients: Vec<F>,
 }
 
@@ -112,8 +109,8 @@ impl<F: Field> UnivariatePoly<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
     use jolt_field::Field;
+    use jolt_field::Fr;
     use num_traits::Zero;
 
     #[test]

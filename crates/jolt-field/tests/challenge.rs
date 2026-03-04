@@ -1,12 +1,10 @@
-use ark_bn254::Fr;
 use ark_ff::UniformRand;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
 use ark_std::test_rng;
 #[cfg(feature = "challenge-254-bit")]
 use jolt_field::challenge::Mont254BitChallenge;
 use jolt_field::challenge::MontU128Challenge;
-use jolt_field::{Field, OptimizedMul, WithChallenge};
+use jolt_field::{Field, Fr, OptimizedMul, WithChallenge};
 use num_traits::{One, Zero};
 
 #[test]
@@ -71,37 +69,6 @@ fn mont_u128_challenge_arithmetic() {
         let prod3: Fr = c * a;
         assert_eq!(prod3, c * Into::<Fr>::into(a));
     }
-}
-
-#[test]
-fn mont_u128_challenge_serialization() {
-    let mut rng = test_rng();
-
-    for _ in 0..100 {
-        let challenge = MontU128Challenge::<Fr>::rand(&mut rng);
-
-        let mut bytes = Vec::new();
-        challenge.serialize_compressed(&mut bytes).unwrap();
-
-        let recovered = MontU128Challenge::<Fr>::deserialize_compressed(&bytes[..]).unwrap();
-
-        assert_eq!(challenge, recovered);
-    }
-}
-
-#[test]
-fn mont_u128_challenge_deserialization_masks_high_bits() {
-    // Create a challenge with max 61-bit high limb
-    let val = ((u64::MAX >> 3) as u128) << 64 | u64::MAX as u128;
-    let challenge = MontU128Challenge::<Fr>::from(val);
-    assert_eq!(challenge.high, u64::MAX >> 3);
-
-    let mut bytes = Vec::new();
-    challenge.serialize_compressed(&mut bytes).unwrap();
-
-    let recovered = MontU128Challenge::<Fr>::deserialize_compressed(&bytes[..]).unwrap();
-    assert_eq!(challenge.low, recovered.low);
-    assert_eq!(challenge.high, recovered.high);
 }
 
 #[test]

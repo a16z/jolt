@@ -68,8 +68,8 @@ pub fn rlc_combine_scalars<F: Field>(evals: &[F], rho: F) -> F {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
     use jolt_field::Field;
+    use jolt_field::Fr;
 
     #[test]
     fn rlc_combine_single_polynomial_is_identity() {

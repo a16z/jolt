@@ -82,10 +82,16 @@ cfg-if = { workspace = true }
 
 [target.'cfg(all(target_arch = "riscv64"))'.dependencies]
 riscv = { workspace = true }
-zeroos = { workspace = true, default-features = false, features = ["arch-riscv", "alloc-linked-list"]}
+zeroos = { workspace = true, default-features = false, features = [
+  "arch-riscv",
+  "alloc-linked-list",
+] }
 
 [target.'cfg(all(target_arch = "riscv64", target_os = "none"))'.dependencies]
-zeroos = { workspace = true, default-features = false, features = ["runtime-nostd", "panic"]}
+zeroos = { workspace = true, default-features = false, features = [
+  "runtime-nostd",
+  "panic",
+] }
 
 [target.'cfg(all(target_arch = "riscv64", target_os = "linux"))'.dependencies]
 zeroos = { workspace = true, default-features = false, features = ["os-linux"] }

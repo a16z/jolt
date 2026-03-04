@@ -1,36 +1,15 @@
-//! Blanket implementations of [`AppendToTranscript`] for common types.
+//! Blanket implementation of [`AppendToTranscript`] for field elements.
+
+use jolt_field::Field;
 
 use crate::transcript::{AppendToTranscript, Transcript};
 
-impl AppendToTranscript for [u8] {
+/// Absorbs any field element as big-endian bytes (reversed from the canonical
+/// LE layout) for EVM compatibility.
+impl<F: Field> AppendToTranscript for F {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append_bytes(self);
-    }
-}
-
-impl<const N: usize> AppendToTranscript for [u8; N] {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append_bytes(self);
-    }
-}
-
-/// Absorbs as 8 big-endian bytes.
-impl AppendToTranscript for u64 {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append_bytes(&self.to_be_bytes());
-    }
-}
-
-/// Absorbs as 16 big-endian bytes.
-impl AppendToTranscript for u128 {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append_bytes(&self.to_be_bytes());
-    }
-}
-
-/// Absorbs as 8 big-endian bytes (cast to `u64`).
-impl AppendToTranscript for usize {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append_bytes(&(*self as u64).to_be_bytes());
+        let mut buf = self.to_bytes();
+        buf.reverse();
+        transcript.append_bytes(&buf);
     }
 }

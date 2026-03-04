@@ -3,42 +3,242 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
 
 jobs:
-  claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
+  soundness-review:
+    name: "Review: Cryptographic Soundness"
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       issues: read
       id-token: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
-
-      - name: Run Claude Code Review
-        id: claude-review
-        uses: anthropics/claude-code-action@v1
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
+          claude_args: "--model claude-opus-4-6 --timeout 600000"
+          prompt: |
+            You are a cryptographic protocol auditor specializing in zero-knowledge proof systems.
+            Review this PR for soundness and cryptographic correctness in the Jolt zkVM.
 
+            Jolt is a sumcheck-based zkVM using Dory polynomial commitments over BN254. Key protocols:
+            - Batched sumcheck with univariate skip optimization
+            - Spartan R1CS (outer sumcheck + product virtual sumcheck)
+            - Twist/Shout lookup argument (one-hot RA polynomials)
+            - RAM/register read-write memory checking
+            - BlindFold ZK protocol (Pedersen-committed sumcheck rounds + Nova folding)
+            - Dory batched opening proofs
+
+            Focus areas:
+            1. **Sumcheck correctness**: Are round polynomials computed correctly? Do degree bounds hold? Are challenges applied properly?
+            2. **Constraint satisfaction**: Do R1CS constraints match the intended relation? Are all witness variables bound correctly?
+            3. **Fiat-Shamir transcript**: Is every public value absorbed before challenges are squeezed? Are there missing or misordered transcript entries that could enable selective forgery?
+            4. **Polynomial identity**: Are polynomial evaluations, bindings, and openings consistent? Could a malicious prover forge an opening?
+            5. **Memory checking**: Are read-write timestamps monotonic? Are init/final values correctly constrained?
+            6. **Field arithmetic**: Are reductions correct? Could overflow or underflow produce invalid field elements?
+            7. **BlindFold synchronization**: If sumcheck claim computation changed, does the corresponding `input_claim_constraint()` / `output_claim_constraint()` match?
+
+            Rate findings as CRITICAL (breaks soundness), HIGH (potential exploit path), or MEDIUM (defense-in-depth concern).
+            Only comment on genuine issues. Do not flag style, naming, or code quality — other reviewers handle that.
+
+  rust-security-review:
+    name: "Review: Rust Security"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-6 --timeout 600000"
+          prompt: |
+            You are a Rust security engineer reviewing a high-performance zkVM codebase.
+            This is NOT a generic Rust review — think like an attacker trying to exploit the prover or verifier.
+
+            This codebase legitimately uses `unsafe` in hot paths for performance (polynomial evaluation,
+            MSM, pre-allocated buffers). Do NOT blindly flag every `unsafe` block. Instead, reason about
+            whether the invariants actually hold:
+            - Is the bounds check elided correctly, or could an out-of-bounds access occur under edge conditions?
+            - Could a malicious input (crafted proof, corrupted serialized data) violate assumed invariants?
+            - Are transmutes between types actually layout-compatible in all cases?
+            - Could concurrent access via rayon introduce data races in unsafe code?
+
+            Focus areas:
+            1. **Deserialization attacks**: Could a crafted proof cause OOM, panic, or undefined behavior during deserialization? Are lengths validated before allocation?
+            2. **Integer overflow/underflow**: Are index computations, polynomial sizes, or chunk counts susceptible to overflow? Especially in `usize` arithmetic on 32-bit WASM targets.
+            3. **Panic paths in the verifier**: Could a malicious proof cause the verifier to panic (via unwrap, index out of bounds, division by zero) instead of returning an error?
+            4. **Side channels**: Are there timing differences based on secret witness values? (This matters less for a prover but matters if the verifier leaks information.)
+            5. **Resource exhaustion**: Could a proof with extreme parameters (huge polynomial degree, excessive number of openings) cause the verifier to run out of memory or time?
+            6. **Unsafe soundness**: For each unsafe block touched by this PR, verify the SAFETY comment's reasoning. Don't just check it exists — check if it's *correct*.
+
+            Do not comment on code style, naming, or documentation. Only flag real security concerns.
+
+  performance-review:
+    name: "Review: Performance"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-6 --timeout 600000"
+          prompt: |
+            You are a performance engineer optimizing a zero-knowledge prover.
+            In this codebase, the sumcheck inner loop dominates runtime. A 1% regression in polynomial
+            bind or evaluation multiplies across millions of rounds and thousands of polynomials.
+
+            Key performance-critical types:
+            - `DensePolynomial<F>`: Full field-element coefficients — bind and eval are the hottest paths
+            - `CompactPolynomial<T>`: Small scalar coefficients (u8–i128) promoted to field on bind — keep scalars small
+            - `SharedRaPolynomials`: Shares eq tables across N polynomials to avoid per-polynomial memory duplication
+            - `EqPolynomial`: Evaluation of equality polynomial — used in every sumcheck round
+            - `UniPoly`: Univariate round polynomials in sumcheck
+
+            Review this PR for:
+            1. **Unnecessary allocations**: Vec clones, collect() where iterators suffice, String formatting in hot paths
+            2. **Clone on large types**: Cloning polynomials, proofs, accumulators, or Vec<F> is O(n) — flag every instance
+            3. **Field promotion**: Are CompactPolynomial scalars being converted to field elements too early? Each bind should operate on the small type as long as possible
+            4. **Missing parallelism**: Are loops over independent polynomials using rayon? Are there sequential bottlenecks that could be parallelized?
+            5. **Cache efficiency**: Are memory access patterns sequential or random? Are struct layouts cache-friendly?
+            6. **Redundant computation**: Are values computed multiple times that could be cached? Are eq_poly evaluations shared across polynomials?
+            7. **Inlining**: Are hot-path functions missing `#[inline]`? Are cold-path functions needlessly inlined (code bloat)?
+
+            Suggest specific fixes. Estimate impact where possible (e.g., "this clone is O(2^20) per sumcheck round").
+            Do not comment on style, naming, safety, or documentation.
+
+  comments-review:
+    name: "Review: Comments & Documentation"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-6 --timeout 600000"
+          prompt: |
+            You are a technical writer reviewing comments and documentation in a ZK proof system codebase.
+            Your only job is to improve signal-to-noise ratio of comments in the changed files.
+
+            DELETE or flag for removal:
+            - Section separators (`// ==========`, `// ----------`, `// ---`)
+            - Doc comments that restate the item name (`/// The sumcheck prover` on `SumcheckProver`)
+            - Obvious comments (`/// Returns the length` on `fn len()`)
+            - Commented-out code
+            - TODOs without issue links
+            - AI-generated boilerplate comments that add no information
+
+            IMPROVE or suggest improvements for:
+            - `// SAFETY:` comments that don't actually explain why the invariants hold
+            - Doc comments on public APIs that don't explain behavior, constraints, or invariants
+            - Complex algorithms missing references to papers or explanations of why they work
+            - Missing doc comments on public types/functions in `crates/` (these are library crates)
+
+            This codebase uses mathematical variable names (log_T, ram_K, log_K) — these are intentional
+            and do NOT need comments explaining what they are.
+
+            Do not comment on code correctness, performance, style, or security. Only comment quality.
+
+  book-review:
+    name: "Review: Book & Documentation Sync"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-6 --timeout 600000"
+          prompt: |
+            You are a documentation maintainer for the Jolt zkVM project.
+            The Jolt book lives in `book/src/` and is an mdBook deployed to the project website.
+
+            Your job: check if this PR introduces changes that should be reflected in the book.
+
+            Book structure:
+            - `book/src/usage/` — User-facing guides (quickstart, guests/hosts, profiling, troubleshooting)
+            - `book/src/how/architecture/` — Architecture docs (spartan, bytecode, instruction execution, RAM, registers, opening proofs, R1CS)
+            - `book/src/how/optimizations/` — Optimization explanations (batched sumcheck, batched openings, compression, streaming, inlines, eq polynomial)
+            - `book/src/how/appendix/` — Background material (sumcheck, PCS, memory checking, multilinear extensions, RISC-V)
+            - `book/src/how/dory.md` — Dory commitment scheme
+            - `book/src/how/twist-shout.md` — Twist/Shout lookup argument
+            - `book/src/how/blindfold.md` — BlindFold ZK protocol
+            - `book/src/roadmap/` — Roadmap items
+
+            Check for:
+            1. **API changes**: If public SDK APIs changed, does `usage/` need updating?
+            2. **Architecture changes**: If the prover pipeline, polynomial types, or commitment scheme changed, do the architecture docs reflect it?
+            3. **New features**: If a new feature was added, should there be a new book section?
+            4. **Removed features**: If something was removed, are there stale references in the book?
+            5. **Renamed types/functions**: Are there references to old names in the book?
+
+            If the PR doesn't affect anything documented in the book, simply say "No book updates needed."
+            Do not review code quality, security, or performance.
+
+  quality-review:
+    name: "Review: Rust Quality & Style"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-6 --timeout 600000"
+          prompt: |
+            You are a senior Rust engineer reviewing code quality and idiomatic style.
+
+            This codebase:
+            - Uses pedantic clippy with targeted overrides for math-heavy ZK code
+            - Uses `non_snake_case` for math variables (log_T, ram_K) — this is intentional
+            - Uses `thiserror` for library errors, `eyre`/`anyhow` for application code
+            - Has three generic type parameters everywhere: `F: JoltField`, `PCS: CommitmentScheme`, `ProofTranscript: Transcript`
+            - Uses `tracing` for all output (println/eprintln are denied by clippy)
+            - Prefers `CompactPolynomial<T>` over `DensePolynomial<F>` when scalars are small
+
+            Review this PR for:
+            1. **Error handling**: `.unwrap()` and `.expect()` in library code should use `?` instead. Panics should only represent true invariant violations, not input validation failures.
+            2. **Type design**: Are generics used appropriately? Are trait bounds minimal? Are type aliases clear?
+            3. **API ergonomics**: Are public APIs intuitive? Are parameter types appropriate (owned vs borrowed)?
+            4. **Idiomatic Rust**: Iterator chains vs manual loops, proper use of Option/Result combinators, appropriate use of lifetimes
+            5. **Module organization**: Does the code belong in the crate it's in? Does it respect the dependency DAG? (jolt-field has no internal deps, jolt-poly depends only on jolt-field, etc.)
+            6. **Test quality**: Are tests testing the right thing? Are edge cases covered? Are test names descriptive?
+            7. **Dead code**: Unused functions, types, imports, or feature-gated code that's never enabled
+            8. **Import style**: Prefer `use` imports over fully qualified paths (e.g., `use std::collections::HashMap; HashMap::new()` not `std::collections::HashMap::new()`). Exception: canonical `std` paths like `std::mem::transmute`, `std::ptr`, or one-off uses where an import would be noise.
+
+            Do not comment on security, cryptographic correctness, performance, or documentation.

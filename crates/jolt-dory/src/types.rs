@@ -126,26 +126,28 @@ unsafe impl Send for DoryPartialCommitment {}
 // SAFETY: `ArkG1` elements are plain curve points with no interior mutability.
 unsafe impl Sync for DoryPartialCommitment {}
 
-/// Converts a `jolt_field::Field`-compatible `ark_bn254::Fr` to the dory-pcs `ArkFr` wrapper.
+/// Converts a `jolt_field::Fr` to the dory-pcs `ArkFr` wrapper.
 ///
 /// # Safety
 ///
-/// `ArkFr` is `#[repr(transparent)]` over `ark_bn254::Fr`, guaranteeing
-/// identical memory layout.
+/// Both `jolt_field::Fr` and `ArkFr` are `#[repr(transparent)]` over
+/// `ark_bn254::Fr`, guaranteeing identical memory layout.
 #[inline]
-pub fn jolt_fr_to_ark(f: &ark_bn254::Fr) -> ArkFr {
-    // SAFETY: ArkFr is repr(transparent) over ark_bn254::Fr.
+pub fn jolt_fr_to_ark(f: &jolt_field::Fr) -> ArkFr {
+    // SAFETY: jolt_field::Fr is repr(transparent) over ark_bn254::Fr,
+    // and ArkFr is repr(transparent) over ark_bn254::Fr.
     unsafe { std::mem::transmute_copy(f) }
 }
 
-/// Converts a dory-pcs `ArkFr` back to an `ark_bn254::Fr`.
+/// Converts a dory-pcs `ArkFr` back to a `jolt_field::Fr`.
 ///
 /// # Safety
 ///
 /// Same layout guarantee as [`jolt_fr_to_ark`].
 #[inline]
-pub fn ark_to_jolt_fr(ark: &ArkFr) -> ark_bn254::Fr {
-    // SAFETY: ArkFr is repr(transparent) over ark_bn254::Fr.
+pub fn ark_to_jolt_fr(ark: &ArkFr) -> jolt_field::Fr {
+    // SAFETY: ArkFr is repr(transparent) over ark_bn254::Fr,
+    // and jolt_field::Fr is repr(transparent) over ark_bn254::Fr.
     unsafe { std::mem::transmute_copy(ark) }
 }
 
@@ -179,7 +181,7 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    type Fr = ark_bn254::Fr;
+    use jolt_field::Fr;
 
     #[test]
     fn dory_commitment_serde_round_trip() {

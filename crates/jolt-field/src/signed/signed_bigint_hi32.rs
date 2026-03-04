@@ -482,7 +482,7 @@ impl<const N: usize> CanonicalSerialize for SignedBigIntHi32<N> {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         (self.is_positive as u8).serialize_with_mode(&mut w, compress)?;
-        (self.magnitude_hi as i32).serialize_with_mode(&mut w, compress)?;
+        self.magnitude_hi.serialize_with_mode(&mut w, compress)?;
         for i in 0..N {
             self.magnitude_lo[i].serialize_with_mode(&mut w, compress)?;
         }
@@ -492,7 +492,7 @@ impl<const N: usize> CanonicalSerialize for SignedBigIntHi32<N> {
     #[inline]
     fn serialized_size(&self, compress: Compress) -> usize {
         (self.is_positive as u8).serialized_size(compress)
-            + (self.magnitude_hi as i32).serialized_size(compress)
+            + self.magnitude_hi.serialized_size(compress)
             + (0u64).serialized_size(compress) * N
     }
 }
@@ -505,12 +505,12 @@ impl<const N: usize> CanonicalDeserialize for SignedBigIntHi32<N> {
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let sign_u8 = u8::deserialize_with_mode(&mut r, compress, validate)?;
-        let hi = i32::deserialize_with_mode(&mut r, compress, validate)?;
+        let hi = u32::deserialize_with_mode(&mut r, compress, validate)?;
         let mut lo = [0u64; N];
         for limb in &mut lo {
             *limb = u64::deserialize_with_mode(&mut r, compress, validate)?;
         }
-        Ok(SignedBigIntHi32::new(lo, hi as u32, sign_u8 != 0))
+        Ok(SignedBigIntHi32::new(lo, hi, sign_u8 != 0))
     }
 }
 

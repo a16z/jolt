@@ -40,6 +40,7 @@ impl<P: Pairing> HyperKZGSRS<P> {
     pub fn setup<R: RngCore + CryptoRng>(rng: &mut R, max_degree: usize) -> Self
     where
         P::ScalarField: JoltField,
+        P::G1: VariableBaseMSM,
     {
         Self(Arc::new(SRS::setup(rng, max_degree, 2)))
     }
@@ -96,6 +97,7 @@ fn kzg_batch_open_no_rem<P: Pairing>(
 ) -> Vec<P::G1Affine>
 where
     <P as Pairing>::ScalarField: JoltField,
+    P::G1: VariableBaseMSM,
 {
     let f: &DensePolynomial<P::ScalarField> = f.try_into().unwrap();
     let h = u
@@ -135,6 +137,7 @@ fn kzg_open_batch<P: Pairing, ProofTranscript: Transcript>(
 ) -> (Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>)
 where
     <P as Pairing>::ScalarField: JoltField,
+    P::G1: VariableBaseMSM,
 {
     let k = f.len();
     let t = u.len();
@@ -196,6 +199,7 @@ fn kzg_verify_batch<P: Pairing, ProofTranscript: Transcript>(
 ) -> bool
 where
     <P as Pairing>::ScalarField: JoltField,
+    P::G1: VariableBaseMSM,
 {
     let k = C.len();
     let t = u.len();
@@ -276,6 +280,7 @@ pub struct HyperKZG<P: Pairing> {
 impl<P: Pairing> HyperKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
+    P::G1: VariableBaseMSM,
 {
     pub fn protocol_name() -> &'static [u8] {
         b"HyperKZG"
@@ -409,6 +414,7 @@ where
 impl<P: Pairing> CommitmentScheme for HyperKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
+    P::G1: VariableBaseMSM,
 {
     type Field = P::ScalarField;
     type ProverSetup = HyperKZGProverKey<P>;
@@ -509,6 +515,7 @@ where
 impl<P: Pairing> super::commitment_scheme::StreamingCommitmentScheme for HyperKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
+    P::G1: VariableBaseMSM,
 {
     type ChunkState = ();
 

@@ -2,7 +2,7 @@
 
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::Transcript;
+use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::claim::SumcheckClaim;
 use crate::error::SumcheckError;
@@ -89,10 +89,6 @@ fn append_poly_to_transcript<F: Field, T: Transcript>(
     transcript: &mut T,
 ) {
     for coeff in poly.coefficients() {
-        let mut buf = Vec::with_capacity(F::NUM_BYTES);
-        coeff
-            .serialize_compressed(&mut buf)
-            .expect("field serialization should not fail");
-        transcript.append_bytes(&buf);
+        coeff.append_to_transcript(transcript);
     }
 }

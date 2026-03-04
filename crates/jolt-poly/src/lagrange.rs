@@ -62,8 +62,8 @@ impl LagrangePolynomial {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
     use jolt_field::Field;
+    use jolt_field::Fr;
     use num_traits::{One, Zero};
 
     #[test]

@@ -101,17 +101,14 @@ impl<F: Field> SpartanKey<F> {
         (a_entries, b_entries, c_entries)
     }
 
-    /// Precomputed MLE of the $A$ constraint matrix.
     pub fn a_mle(&self) -> &DensePolynomial<F> {
         &self.a_mle
     }
 
-    /// Precomputed MLE of the $B$ constraint matrix.
     pub fn b_mle(&self) -> &DensePolynomial<F> {
         &self.b_mle
     }
 
-    /// Precomputed MLE of the $C$ constraint matrix.
     pub fn c_mle(&self) -> &DensePolynomial<F> {
         &self.c_mle
     }
@@ -143,8 +140,8 @@ fn sparse_to_dense_mle<F: Field>(entries: &[(usize, F)], total: usize) -> DenseP
 mod tests {
     use super::*;
     use crate::r1cs::SimpleR1CS;
-    use ark_bn254::Fr;
     use jolt_field::Field;
+    use jolt_field::Fr;
     use jolt_poly::MultilinearPolynomial;
 
     #[test]

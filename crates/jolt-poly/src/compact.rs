@@ -176,8 +176,8 @@ impl<S: SmallScalar, F: Field> MultilinearPolynomial<F> for CompactPolynomial<S,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
     use jolt_field::Field;
+    use jolt_field::Fr;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 

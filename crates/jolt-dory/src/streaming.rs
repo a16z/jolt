@@ -4,9 +4,9 @@
 //! polynomials one chunk at a time, without materializing the full
 //! evaluation table in memory.
 
-use ark_bn254::Fr;
 use dory::backends::arkworks::G1Routines;
 use dory::primitives::arithmetic::{DoryRoutines, Group as DoryGroup, PairingCurve};
+use jolt_field::Fr;
 use jolt_openings::StreamingCommitmentScheme;
 
 use crate::scheme::DoryScheme;

@@ -16,8 +16,6 @@ serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-ark-bn254 = { workspace = true, features = ["scalar_field"] }
-ark-serialize = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }

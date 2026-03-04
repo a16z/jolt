@@ -20,7 +20,6 @@ impl IdentityPolynomial {
         Self { num_vars }
     }
 
-    /// Number of variables.
     pub fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -46,8 +45,8 @@ impl IdentityPolynomial {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
     use jolt_field::Field;
+    use jolt_field::Fr;
     use num_traits::{One, Zero};
 
     #[test]

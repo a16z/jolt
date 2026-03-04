@@ -1,7 +1,7 @@
-use ark_bn254::Fr;
 use ark_std::rand::Rng;
 use ark_std::{test_rng, One, Zero};
 use jolt_field::Field;
+use jolt_field::Fr;
 use rand_chacha::rand_core::RngCore;
 
 #[test]

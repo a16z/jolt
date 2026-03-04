@@ -26,6 +26,7 @@
 //! ```
 
 pub mod error;
+pub mod optimizations;
 pub mod params;
 pub mod scheme;
 pub mod streaming;

@@ -1,8 +1,9 @@
-//! [`Field`] implementation for the BN254 scalar field (`ark_bn254::Fr`).
+//! Newtype wrapper around `ark_bn254::Fr` that decouples the public API from arkworks.
 //!
-//! This is the only production backend. All arithmetic delegates to the
-//! arkworks `Fp256` implementation with custom Montgomery and Barrett
-//! reduction paths from `bn254_ops`.
+//! [`Fr`] is `#[repr(transparent)]` over the inner arkworks scalar field element,
+//! so it has identical layout and can be transmuted where needed. It implements
+//! `serde::Serialize`/`Deserialize` natively, enabling the `Field` trait to
+//! require serde bounds without leaking arkworks serialization traits.
 
 use crate::bigint_ext::BigIntExt;
 #[cfg(feature = "challenge-254-bit")]
@@ -15,14 +16,262 @@ use rand_core::RngCore;
 
 use super::bn254_ops;
 
-type Fr = ark_bn254::Fr;
+type InnerFr = ark_bn254::Fr;
 type FrConfig = ark_bn254::FrConfig;
+
+/// BN254 scalar field element.
+///
+/// A `#[repr(transparent)]` newtype over `ark_bn254::Fr` that provides
+/// native serde support and decouples the public API from arkworks types.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct Fr(pub(crate) InnerFr);
+
+impl From<ark_bn254::Fr> for Fr {
+    #[inline(always)]
+    fn from(inner: ark_bn254::Fr) -> Self {
+        Fr(inner)
+    }
+}
+
+impl From<Fr> for ark_bn254::Fr {
+    #[inline(always)]
+    fn from(wrapper: Fr) -> Self {
+        wrapper.0
+    }
+}
+
+impl std::fmt::Debug for Fr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for Fr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+macro_rules! delegate_binop {
+    ($Trait:ident, $method:ident) => {
+        impl std::ops::$Trait for Fr {
+            type Output = Fr;
+            #[inline(always)]
+            fn $method(self, rhs: Fr) -> Fr {
+                Fr(std::ops::$Trait::$method(self.0, rhs.0))
+            }
+        }
+
+        impl std::ops::$Trait<&Fr> for Fr {
+            type Output = Fr;
+            #[inline(always)]
+            fn $method(self, rhs: &Fr) -> Fr {
+                Fr(std::ops::$Trait::$method(self.0, &rhs.0))
+            }
+        }
+
+        impl std::ops::$Trait<Fr> for &Fr {
+            type Output = Fr;
+            #[inline(always)]
+            fn $method(self, rhs: Fr) -> Fr {
+                Fr(std::ops::$Trait::$method(self.0, rhs.0))
+            }
+        }
+
+        impl<'a, 'b> std::ops::$Trait<&'b Fr> for &'a Fr {
+            type Output = Fr;
+            #[inline(always)]
+            fn $method(self, rhs: &'b Fr) -> Fr {
+                Fr(std::ops::$Trait::$method(self.0, &rhs.0))
+            }
+        }
+    };
+}
+
+delegate_binop!(Add, add);
+delegate_binop!(Sub, sub);
+delegate_binop!(Mul, mul);
+delegate_binop!(Div, div);
+
+impl std::ops::Neg for Fr {
+    type Output = Fr;
+    #[inline(always)]
+    fn neg(self) -> Fr {
+        Fr(self.0.neg())
+    }
+}
+
+impl std::ops::AddAssign for Fr {
+    #[inline(always)]
+    fn add_assign(&mut self, rhs: Fr) {
+        self.0.add_assign(rhs.0);
+    }
+}
+
+impl std::ops::SubAssign for Fr {
+    #[inline(always)]
+    fn sub_assign(&mut self, rhs: Fr) {
+        self.0.sub_assign(rhs.0);
+    }
+}
+
+impl std::ops::MulAssign for Fr {
+    #[inline(always)]
+    fn mul_assign(&mut self, rhs: Fr) {
+        self.0.mul_assign(rhs.0);
+    }
+}
+
+impl std::iter::Sum for Fr {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        Fr(iter.map(|f| f.0).sum())
+    }
+}
+
+impl<'a> std::iter::Sum<&'a Fr> for Fr {
+    fn sum<I: Iterator<Item = &'a Fr>>(iter: I) -> Self {
+        Fr(iter.map(|f| f.0).sum())
+    }
+}
+
+impl std::iter::Product for Fr {
+    fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
+        Fr(iter.map(|f| f.0).product())
+    }
+}
+
+impl<'a> std::iter::Product<&'a Fr> for Fr {
+    fn product<I: Iterator<Item = &'a Fr>>(iter: I) -> Self {
+        Fr(iter.map(|f| f.0).product())
+    }
+}
+
+impl num_traits::Zero for Fr {
+    #[inline(always)]
+    fn zero() -> Self {
+        Fr(InnerFr::zero())
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+}
+
+impl num_traits::One for Fr {
+    #[inline(always)]
+    fn one() -> Self {
+        Fr(InnerFr::one())
+    }
+
+    #[inline(always)]
+    fn is_one(&self) -> bool {
+        self.0.is_one()
+    }
+}
+
+impl serde::Serialize for Fr {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use ark_serialize::CanonicalSerialize;
+        let mut buf = [0u8; 32];
+        self.0
+            .serialize_compressed(&mut buf[..])
+            .map_err(serde::ser::Error::custom)?;
+        <[u8; 32]>::serialize(&buf, serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Fr {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use ark_serialize::CanonicalDeserialize;
+        let buf = <[u8; 32]>::deserialize(deserializer)?;
+        let inner = InnerFr::deserialize_compressed(&buf[..]).map_err(serde::de::Error::custom)?;
+        Ok(Fr(inner))
+    }
+}
+
+impl ark_serialize::CanonicalSerialize for Fr {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        self.0.serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.0.serialized_size(compress)
+    }
+}
+
+impl ark_serialize::Valid for Fr {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.0.check()
+    }
+}
+
+impl ark_serialize::CanonicalDeserialize for Fr {
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        InnerFr::deserialize_with_mode(reader, compress, validate).map(Fr)
+    }
+}
+
+impl UniformRand for Fr {
+    fn rand<R: RngCore + ?Sized>(rng: &mut R) -> Self {
+        Fr(<InnerFr as UniformRand>::rand(rng))
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for Fr {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.visit_simple_sized::<Self>();
+    }
+}
+
+impl Fr {
+    /// Multiplies `self` by a 128-bit value stored as two high limbs.
+    ///
+    /// Used by the `impl_field_ops_inline!` macro for the optimized
+    /// [`MontU128Challenge`] multiplication path.
+    #[inline(always)]
+    pub fn mul_by_hi_2limbs(&self, limb_lo: u64, limb_hi: u64) -> Self {
+        Fr(bn254_ops::mul_by_hi_2limbs(self.0, limb_lo, limb_hi))
+    }
+
+    /// Deserializes from little-endian bytes, reducing modulo the field prime.
+    #[inline]
+    pub fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
+        Fr(InnerFr::from_le_bytes_mod_order(bytes))
+    }
+
+    /// Converts a `BigInt<4>` to a field element without checking that it is
+    /// less than the modulus.
+    #[inline]
+    pub fn from_bigint_unchecked(bigint: BigInt<4>) -> Option<Self> {
+        Some(Fr(bn254_ops::from_bigint_unchecked(bigint)))
+    }
+}
 
 impl Field for Fr {
     const NUM_BYTES: usize = 32;
 
+    fn to_bytes(&self) -> Vec<u8> {
+        use ark_serialize::CanonicalSerialize;
+        let mut buf = Vec::with_capacity(32);
+        self.0
+            .serialize_compressed(&mut buf)
+            .expect("field serialization should not fail");
+        buf
+    }
+
     fn random<R: RngCore>(rng: &mut R) -> Self {
-        <Self as UniformRand>::rand(rng)
+        Fr(<InnerFr as UniformRand>::rand(rng))
     }
 
     fn from_bytes(bytes: &[u8]) -> Self {
@@ -30,7 +279,7 @@ impl Field for Fr {
     }
 
     fn to_u64(&self) -> Option<u64> {
-        let bigint = <Self as ark_ff::PrimeField>::into_bigint(*self);
+        let bigint = <InnerFr as PrimeField>::into_bigint(self.0);
         let limbs: &[u64] = bigint.as_ref();
         let result = limbs[0];
 
@@ -42,15 +291,15 @@ impl Field for Fr {
     }
 
     fn num_bits(&self) -> u32 {
-        <Self as ark_ff::PrimeField>::into_bigint(*self).num_bits()
+        <InnerFr as PrimeField>::into_bigint(self.0).num_bits()
     }
 
     fn square(&self) -> Self {
-        <Self as ark_ff::Field>::square(self)
+        Fr(<InnerFr as ark_ff::Field>::square(&self.0))
     }
 
     fn inverse(&self) -> Option<Self> {
-        <Self as ark_ff::Field>::inverse(self)
+        <InnerFr as ark_ff::Field>::inverse(&self.0).map(Fr)
     }
 
     fn from_bool(val: bool) -> Self {
@@ -63,98 +312,102 @@ impl Field for Fr {
 
     #[inline]
     fn from_u8(n: u8) -> Self {
-        bn254_ops::from_u64(n as u64)
+        Fr(bn254_ops::from_u64(n as u64))
     }
 
     #[inline]
     fn from_u16(n: u16) -> Self {
-        bn254_ops::from_u64(n as u64)
+        Fr(bn254_ops::from_u64(n as u64))
     }
 
     #[inline]
     fn from_u32(n: u32) -> Self {
-        bn254_ops::from_u64(n as u64)
+        Fr(bn254_ops::from_u64(n as u64))
     }
 
     #[inline]
     fn from_u64(n: u64) -> Self {
-        bn254_ops::from_u64(n)
+        Fr(bn254_ops::from_u64(n))
     }
 
     #[inline]
     fn from_i64(val: i64) -> Self {
         if val.is_negative() {
-            -bn254_ops::from_u64(val.unsigned_abs())
+            -Fr(bn254_ops::from_u64(val.unsigned_abs()))
         } else {
-            bn254_ops::from_u64(val as u64)
+            Fr(bn254_ops::from_u64(val as u64))
         }
     }
 
     #[inline]
     fn from_i128(val: i128) -> Self {
         if val.is_negative() {
-            -bn254_ops::from_u128(val.unsigned_abs())
+            -Fr(bn254_ops::from_u128(val.unsigned_abs()))
         } else {
-            bn254_ops::from_u128(val as u128)
+            Fr(bn254_ops::from_u128(val as u128))
         }
     }
 
     #[inline]
     fn from_u128(val: u128) -> Self {
-        bn254_ops::from_u128(val)
+        Fr(bn254_ops::from_u128(val))
     }
 
     #[inline]
     fn mul_u64(&self, n: u64) -> Self {
-        bn254_ops::mul_u64(*self, n)
+        Fr(bn254_ops::mul_u64(self.0, n))
     }
 
     #[inline(always)]
     fn mul_i64(&self, n: i64) -> Self {
-        bn254_ops::mul_i64(*self, n)
+        Fr(bn254_ops::mul_i64(self.0, n))
     }
 
     #[inline(always)]
     fn mul_u128(&self, n: u128) -> Self {
-        bn254_ops::mul_u128(*self, n)
+        Fr(bn254_ops::mul_u128(self.0, n))
     }
 
     #[inline]
     fn mul_i128(&self, n: i128) -> Self {
-        bn254_ops::mul_i128(*self, n)
+        Fr(bn254_ops::mul_i128(self.0, n))
     }
 }
 
 impl UnreducedOps for Fr {
     #[inline(always)]
     fn as_unreduced_ref(&self) -> &BigInt<4> {
-        &self.0
+        &(self.0).0
     }
 
     #[inline]
     fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L> {
-        BigIntExt::mul_trunc(&self.0, &other.0)
+        BigIntExt::mul_trunc(&(self.0).0, &(other.0).0)
     }
 
     #[inline]
     fn mul_u64_unreduced(self, other: u64) -> BigInt<5> {
-        BigIntExt::mul_trunc(&self.0, &BigInt::new([other]))
+        BigIntExt::mul_trunc(&(self.0).0, &BigInt::new([other]))
     }
 
     #[inline]
     fn mul_u128_unreduced(self, other: u128) -> BigInt<6> {
-        BigIntExt::mul_trunc(&self.0, &BigInt::new([other as u64, (other >> 64) as u64]))
+        BigIntExt::mul_trunc(
+            &(self.0).0,
+            &BigInt::new([other as u64, (other >> 64) as u64]),
+        )
     }
 }
 
 impl ReductionOps for Fr {
-    // SAFETY: `Fr` and `BigInt<4>` have identical layout (4 x u64 limbs).
-    // `MontConfig::R` is the Montgomery form of 1, which is a valid `Fr` value.
+    // SAFETY: `Fr` is `#[repr(transparent)]` over `ark_bn254::Fr`, which itself
+    // is layout-compatible with `BigInt<4>` (4 × u64 limbs).
+    // `MontConfig::R` is the Montgomery form of 1, a valid field element.
     const MONTGOMERY_R: Self = unsafe {
         use ark_ff::MontConfig;
         std::mem::transmute(<FrConfig as MontConfig<4>>::R)
     };
-    // SAFETY: Same layout guarantee as above. `R2 = R^2 mod p` is a valid field element.
+    // SAFETY: Same layout guarantee. `R2 = R^2 mod p` is a valid field element.
     const MONTGOMERY_R_SQUARE: Self = unsafe {
         use ark_ff::MontConfig;
         std::mem::transmute(<FrConfig as MontConfig<4>>::R2)
@@ -162,12 +415,12 @@ impl ReductionOps for Fr {
 
     #[inline]
     fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
-        bn254_ops::from_montgomery_reduce(unreduced)
+        Fr(bn254_ops::from_montgomery_reduce(unreduced))
     }
 
     #[inline]
     fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
-        bn254_ops::from_barrett_reduce(unreduced)
+        Fr(bn254_ops::from_barrett_reduce(unreduced))
     }
 }
 

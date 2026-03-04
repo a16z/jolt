@@ -5,11 +5,11 @@
 //! challenges. This module provides [`JoltToDoryTranscript`], a wrapper that
 //! delegates all dory-pcs transcript operations to an underlying Jolt transcript.
 
-use ark_serialize::CanonicalSerialize;
 use dory::backends::arkworks::BN254;
 use dory::primitives::arithmetic::Group as DoryGroup;
 use dory::primitives::transcript::Transcript as DoryTranscript;
 use dory::primitives::DorySerialize;
+use jolt_field::Field;
 use jolt_transcript::Transcript;
 
 use crate::types::ark_to_jolt_fr;
@@ -50,11 +50,7 @@ impl<T: Transcript> DoryTranscript for JoltToDoryTranscript<'_, T> {
 
     fn append_field(&mut self, _label: &[u8], x: &InnerFr) {
         let jolt_scalar = ark_to_jolt_fr(x);
-        let mut buf = Vec::new();
-        jolt_scalar
-            .serialize_compressed(&mut buf)
-            .expect("field serialization should not fail");
-        self.transcript.append_bytes(&buf);
+        self.transcript.append_bytes(&jolt_scalar.to_bytes());
     }
 
     fn append_group<G: DoryGroup>(&mut self, _label: &[u8], g: &G) {

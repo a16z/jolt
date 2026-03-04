@@ -7,7 +7,6 @@
 use std::marker::PhantomData;
 
 use jolt_field::Field;
-use jolt_poly::serde_canonical::vec_canonical;
 use jolt_poly::{DensePolynomial, MultilinearPolynomial};
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
@@ -37,7 +36,6 @@ pub struct MockCommitment {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MockProof<F: Field> {
-    #[serde(with = "vec_canonical")]
     evaluations: Vec<F>,
 }
 
@@ -185,8 +183,8 @@ impl<F: Field> HomomorphicCommitmentScheme for MockCommitmentScheme<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
     use jolt_field::Field;
+    use jolt_field::Fr;
     use jolt_transcript::Blake2bTranscript;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha20Rng;

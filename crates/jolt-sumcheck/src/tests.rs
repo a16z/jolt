@@ -1,10 +1,9 @@
 //! Integration tests for the sumcheck protocol.
 
-use ark_bn254::Fr;
-use ark_serialize::CanonicalSerialize;
 use jolt_field::Field;
+use jolt_field::Fr;
 use jolt_poly::{DensePolynomial, EqPolynomial, MultilinearPolynomial, UnivariatePoly};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -724,11 +723,7 @@ fn streaming_prover_produces_correct_rounds() {
 
         // Absorb into transcript
         for coeff in rp.coefficients() {
-            let mut buf = Vec::with_capacity(Fr::NUM_BYTES);
-            coeff
-                .serialize_compressed(&mut buf)
-                .expect("serialization should not fail");
-            transcript.append_bytes(&buf);
+            coeff.append_to_transcript(&mut transcript);
         }
 
         let challenge = challenge_to_field(transcript.challenge());
@@ -780,11 +775,7 @@ fn streaming_prover_multi_chunk() {
         let rp = streaming.finish_round();
 
         for coeff in rp.coefficients() {
-            let mut buf = Vec::with_capacity(Fr::NUM_BYTES);
-            coeff
-                .serialize_compressed(&mut buf)
-                .expect("serialization should not fail");
-            transcript.append_bytes(&buf);
+            coeff.append_to_transcript(&mut transcript);
         }
 
         let challenge = challenge_to_field(transcript.challenge());

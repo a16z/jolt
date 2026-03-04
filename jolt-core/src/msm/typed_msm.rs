@@ -3,10 +3,10 @@
 //
 // Original code dual-licensed under Apache-2.0 and MIT.
 
-use ark_ec::scalar_mul::variable_base::VariableBaseMSM;
-use ark_ff::biginteger::{S128, S64};
+use crate::msm::VariableBaseMSM;
 use ark_std::{iterable::Iterable, vec, vec::Vec};
 use itertools::{Either, Itertools};
+use jolt_field::signed::{S128, S64};
 use rayon::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ fn msm_serial_inner<'a, V: VariableBaseMSM, S: Into<u128> + Copy + Send + Sync +
         ln_without_floats(bases.len()) + 2
     };
 
-    let zero = V::ZERO_BUCKET;
+    let zero = <V as VariableBaseMSM>::MSM_ZERO_BUCKET;
     let two_to_c = 1 << c;
 
     let window_sums: Vec<_> = (0..(core::mem::size_of::<S>() * 8))
@@ -83,7 +83,7 @@ fn msm_serial_inner<'a, V: VariableBaseMSM, S: Into<u128> + Copy + Send + Sync +
                     }
                 });
 
-            let mut running_sum = V::ZERO_BUCKET;
+            let mut running_sum = <V as VariableBaseMSM>::MSM_ZERO_BUCKET;
             buckets.into_iter().rev().for_each(|b| {
                 running_sum += &b;
                 res += &running_sum;
@@ -102,7 +102,7 @@ fn msm_serial_inner<'a, V: VariableBaseMSM, S: Into<u128> + Copy + Send + Sync +
             .iter()
             .rev()
             .fold(V::zero(), |mut total, sum_i| {
-                total += sum_i;
+                total += (*sum_i).into();
                 for _ in 0..c {
                     total.double_in_place();
                 }
@@ -128,7 +128,7 @@ pub fn msm_binary<V: VariableBaseMSM>(
         .par_chunks(chunk_size)
         .zip(scalars.par_chunks(chunk_size))
         .map(|(bases, scalars)| {
-            let mut res = V::ZERO_BUCKET;
+            let mut res = <V as VariableBaseMSM>::MSM_ZERO_BUCKET;
             for (base, _) in bases.iter().zip(scalars).filter(|(_, &s)| s) {
                 res += base;
             }
@@ -137,11 +137,7 @@ pub fn msm_binary<V: VariableBaseMSM>(
         .sum()
 }
 
-pub fn msm_u8<V: VariableBaseMSM>(
-    mut bases: &[V::MulBase],
-    mut scalars: &[u8],
-    serial: bool,
-) -> V {
+pub fn msm_u8<V: VariableBaseMSM>(mut bases: &[V::MulBase], mut scalars: &[u8], serial: bool) -> V {
     let chunk_size = match preamble(&mut bases, &mut scalars, serial) {
         Some(chunk_size) => chunk_size,
         None => return V::zero(),

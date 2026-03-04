@@ -17,8 +17,14 @@ dory = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 ark-bn254 = { workspace = true, features = ["scalar_field"] }
+ark-ec = { workspace = true }
 ark-ff = { workspace = true }
 ark-serialize = { workspace = true }
+ark-std = { workspace = true }
+num-bigint = { workspace = true }
+num-integer = { workspace = true }
+num-traits = { workspace = true }
+rayon = { workspace = true }
 
 [dev-dependencies]
 serde_json = "1"

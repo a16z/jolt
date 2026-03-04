@@ -14,7 +14,6 @@ serde = { workspace = true, features = ["derive", "alloc"] }
 rayon = { workspace = true, optional = true }
 rand_core = { workspace = true }
 num-traits = { workspace = true }
-ark-serialize = { workspace = true }
 
 [dev-dependencies]
 ark-bn254 = { workspace = true, features = ["scalar_field"] }

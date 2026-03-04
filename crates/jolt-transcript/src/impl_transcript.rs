@@ -135,8 +135,7 @@ macro_rules! impl_transcript {
             fn challenge(&mut self) -> Self::Challenge {
                 let mut buf = [0u8; 16];
                 self.challenge_bytes(&mut buf);
-                buf.reverse();
-                u128::from_be_bytes(buf)
+                u128::from_le_bytes(buf)
             }
 
             #[inline]

@@ -3,8 +3,6 @@
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
-use crate::serde_canonical::vec_canonical;
-
 /// Equality polynomial $\widetilde{eq}(x, r) = \prod_{i=1}^{n}(r_i x_i + (1-r_i)(1-x_i))$.
 ///
 /// Given a fixed point $r \in \mathbb{F}^n$, the equality polynomial evaluates to 1
@@ -17,7 +15,6 @@ use crate::serde_canonical::vec_canonical;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct EqPolynomial<F: Field> {
-    #[serde(with = "vec_canonical")]
     point: Vec<F>,
 }
 
@@ -30,7 +27,6 @@ impl<F: Field> EqPolynomial<F> {
         Self { point }
     }
 
-    /// Number of variables $n$.
     pub fn num_vars(&self) -> usize {
         self.point.len()
     }
@@ -114,8 +110,8 @@ impl<F: Field> EqPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
     use jolt_field::Field;
+    use jolt_field::Fr;
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

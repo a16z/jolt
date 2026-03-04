@@ -5,15 +5,11 @@
 //! multiplication with Fr elements, resulting in ~1.3x speedup for polynomial
 //! binding operations.
 
+use crate::arkworks::bn254::Fr;
 use crate::{Challenge, Field, OptimizedMul};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
-use ark_bn254::Fr;
-use ark_ff::{BigInt, PrimeField, UniformRand};
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
-    Write,
-};
+use ark_ff::{BigInt, UniformRand};
 use num_traits::{One, Zero};
 use rand::{Rng, RngCore};
 use std::fmt::{Debug, Display};
@@ -82,44 +78,6 @@ where
 {
     fn rand<R: RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)
-    }
-}
-
-impl<F: Field> Valid for MontU128Challenge<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl<F: Field> CanonicalSerialize for MontU128Challenge<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.to_bigint_array()
-            .serialize_with_mode(&mut writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        [0u64; 4].serialized_size(compress)
-    }
-}
-
-impl<F: Field> CanonicalDeserialize for MontU128Challenge<F> {
-    fn deserialize_with_mode<R: Read>(
-        reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let arr = <[u64; 4]>::deserialize_with_mode(reader, compress, validate)?;
-        // arr[0] and arr[1] should be 0, arr[2] is low, arr[3] is high
-        Ok(Self {
-            low: arr[2],
-            // Enforce 125-bit invariant: mask top 3 bits
-            high: arr[3] & (u64::MAX >> 3),
-            _marker: PhantomData,
-        })
     }
 }
 

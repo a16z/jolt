@@ -96,7 +96,12 @@ pub fn double_affine_to_bucket<P: SWCurveConfig>(p: &Affine<P>) -> Bucket<P> {
     let x = m.square() - s.double();
     let y = m * (s - x) - w * p.y;
 
-    Bucket { x, y, zz: v, zzz: w }
+    Bucket {
+        x,
+        y,
+        zz: v,
+        zzz: w,
+    }
 }
 
 impl<P: SWCurveConfig> Neg for Bucket<P> {

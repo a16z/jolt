@@ -20,7 +20,6 @@ pub trait MultilinearPolynomial<F: Field>: Send + Sync {
     /// Number of evaluations, equal to $2^n$.
     fn len(&self) -> usize;
 
-    /// Returns `true` if the polynomial has no evaluations.
     fn is_empty(&self) -> bool {
         self.len() == 0
     }

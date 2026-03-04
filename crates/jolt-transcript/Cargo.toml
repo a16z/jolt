@@ -16,3 +16,4 @@ blake2.workspace = true
 digest = "0.10"
 hex = "0.4"
 sha3.workspace = true
+jolt-field = { path = "../jolt-field" }

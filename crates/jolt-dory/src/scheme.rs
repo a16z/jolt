@@ -4,13 +4,13 @@
 //! [`HomomorphicCommitmentScheme`] trait interfaces, using instance-local
 //! [`DoryParams`] instead of global state.
 
-use ark_bn254::Fr;
 use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
 use dory::mode::Transparent;
 use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
+use jolt_field::Fr;
 use jolt_openings::{CommitmentScheme, HomomorphicCommitmentScheme, OpeningsError};
 use jolt_poly::MultilinearPolynomial;
 use jolt_transcript::Transcript;

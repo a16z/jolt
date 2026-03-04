@@ -47,8 +47,8 @@ pub use verifier::SpartanVerifier;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
     use jolt_field::Field;
+    use jolt_field::Fr;
     use jolt_openings::mock::MockCommitmentScheme;
     use jolt_transcript::{Blake2bTranscript, Transcript};
 

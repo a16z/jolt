@@ -4,21 +4,18 @@
 //! challenges to 125 bits for cheaper multiplication, this type uses the
 //! full field range. Enable with the `challenge-254-bit` feature flag.
 
+use crate::arkworks::bn254::Fr;
 use crate::{Challenge, Field, OptimizedMul};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
-use ark_bn254::Fr;
 use ark_ff::UniformRand;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_traits::{One, Zero};
 use rand::RngCore;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::*;
 
-#[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, Hash, CanonicalSerialize, CanonicalDeserialize,
-)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 /// Fiat-Shamir challenge that wraps a full-width field element.
 ///

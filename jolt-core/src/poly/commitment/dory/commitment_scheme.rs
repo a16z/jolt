@@ -283,7 +283,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
             let _enter = _span.enter();
 
-            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+            jolt_dory::optimizations::vector_scalar_mul_add_gamma_g1_online(
                 row_commitments,
                 *coeff,
                 rlc_row_commitments,
@@ -365,7 +365,7 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             }
         }
 
-        let results = jolt_optimizations::batch_g1_additions_multi(&g1_bases, &indices_per_k);
+        let results = jolt_dory::optimizations::batch_g1_additions_multi(&g1_bases, &indices_per_k);
 
         let mut row_commitments = vec![ArkG1(G1Projective::zero()); K];
         for (k, result) in results.into_iter().enumerate() {

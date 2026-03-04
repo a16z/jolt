@@ -25,24 +25,20 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 [features]
 default = ["host"]
 zk = ["dory/zk"]
-host = [
-    "prover",
-    "dep:jolt-inlines-sha2",
-    "dep:jolt-inlines-keccak256",
-]
+host = ["prover", "dep:jolt-inlines-sha2", "dep:jolt-inlines-keccak256"]
 prover = [
-    "minimal",
-    "ark-ec/parallel",
-    "ark-ff/parallel",
-    "ark-std/parallel",
-    "dory/backends",
-    "dory/cache", # This includes `parallel` feature
-    "dory/disk-persistence",
+  "minimal",
+  "ark-ec/parallel",
+  "ark-ff/parallel",
+  "ark-std/parallel",
+  "dory/backends",
+  "dory/cache",            # This includes `parallel` feature
+  "dory/disk-persistence",
 ]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
 minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
-allocative = ["dep:inferno"]
+allocative = ["dep:inferno", "jolt-field/allocative"]
 monitor = ["dep:sysinfo"]
 pprof = ["dep:pprof", "dep:prost"]
 test_incremental = []
@@ -50,7 +46,8 @@ challenge-254-bit = []
 
 [dependencies]
 ark-bn254.workspace = true
-jolt-optimizations.workspace = true
+jolt-dory = { path = "../crates/jolt-dory" }
+jolt-field = { path = "../crates/jolt-field" }
 ark-ec.workspace = true
 ark-ff.workspace = true
 ark-serialize.workspace = true

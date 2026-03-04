@@ -1,8 +1,5 @@
 //! Sign-magnitude big integer with `N * 64`-bit width.
 
-#[cfg(feature = "allocative")]
-use allocative::Allocative;
-
 use ark_ff::biginteger::BigInteger;
 use ark_ff::BigInt;
 use ark_serialize::{
@@ -21,10 +18,18 @@ use crate::bigint_ext::BigIntExt;
 /// Structural equality distinguishes `+0` and `-0`, but ordering treats them
 /// as equal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct SignedBigInt<const N: usize> {
     pub magnitude: BigInt<N>,
     pub is_positive: bool,
+}
+
+// Manual Allocative impl: SignedBigInt is purely stack-allocated (BigInt<N> is [u64; N]),
+// so we report the simple sized footprint without recursing into fields.
+#[cfg(feature = "allocative")]
+impl<const N: usize> allocative::Allocative for SignedBigInt<N> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.visit_simple_sized::<Self>();
+    }
 }
 
 impl<const N: usize> Default for SignedBigInt<N> {
@@ -364,17 +369,27 @@ impl<const N: usize> SignedBigInt<N> {
     #[inline]
     pub fn from_u128(value: u128) -> Self {
         debug_assert!(N >= 2, "from_u128 requires at least 2 limbs");
-        Self::from_bigint(BigInt::from(value), true)
+        let mut bigint = BigInt::<N>::default();
+        bigint.0[0] = value as u64;
+        bigint.0[1] = (value >> 64) as u64;
+        Self::from_bigint(bigint, true)
     }
 
     #[inline]
     pub fn from_i128(value: i128) -> Self {
         debug_assert!(N >= 2, "from_i128 requires at least 2 limbs");
         if value >= 0 {
-            Self::from_bigint(BigInt::from(value as u128), true)
+            let mut bigint = BigInt::<N>::default();
+            let v = value as u128;
+            bigint.0[0] = v as u64;
+            bigint.0[1] = (v >> 64) as u64;
+            Self::from_bigint(bigint, true)
         } else {
             let mag = value.unsigned_abs();
-            Self::from_bigint(BigInt::from(mag), false)
+            let mut bigint = BigInt::<N>::default();
+            bigint.0[0] = mag as u64;
+            bigint.0[1] = (mag >> 64) as u64;
+            Self::from_bigint(bigint, false)
         }
     }
 }

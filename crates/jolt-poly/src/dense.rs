@@ -7,7 +7,6 @@ use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::eq::EqPolynomial;
-use crate::serde_canonical::vec_canonical;
 use crate::traits::MultilinearPolynomial;
 
 /// Minimum number of evaluations before parallelizing bind/evaluate.
@@ -25,7 +24,6 @@ const PAR_THRESHOLD: usize = 1024;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct DensePolynomial<F: Field> {
-    #[serde(with = "vec_canonical")]
     evaluations: Vec<F>,
     num_vars: usize,
 }
@@ -206,8 +204,8 @@ impl<F: Field> MultilinearPolynomial<F> for DensePolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
     use jolt_field::Field;
+    use jolt_field::Fr;
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

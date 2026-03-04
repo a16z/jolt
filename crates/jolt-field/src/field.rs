@@ -1,9 +1,9 @@
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use ark_ff::BigInt;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_traits::{One, Zero};
 use rand_core::RngCore;
+use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -11,8 +11,7 @@ use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 /// Prime field element abstraction used throughout Jolt.
 ///
 /// This trait provides a backend-agnostic interface over a prime-order scalar
-/// field. The only production implementation is BN254 `Fr` (via arkworks), but
-/// the trait allows swapping backends or fields without touching protocol code.
+/// field.
 ///
 /// All arithmetic is modular over the field's prime order. Elements are `Copy`,
 /// thread-safe, and cheaply serializable. Negative integers are mapped via
@@ -45,13 +44,16 @@ pub trait Field:
     + Display
     + Debug
     + Default
-    + CanonicalSerialize
-    + CanonicalDeserialize
     + Hash
+    + Serialize
+    + for<'de> Deserialize<'de>
     + MaybeAllocative
 {
     /// Byte length of a canonical (compressed) serialized element.
     const NUM_BYTES: usize;
+
+    /// Serializes to compressed canonical form (little-endian, `NUM_BYTES` long).
+    fn to_bytes(&self) -> Vec<u8>;
 
     /// Samples a uniformly random field element.
     fn random<R: RngCore>(rng: &mut R) -> Self;

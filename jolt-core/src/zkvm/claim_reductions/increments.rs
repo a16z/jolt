@@ -48,8 +48,8 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use ark_ff::biginteger::S64;
 use ark_std::Zero;
+use jolt_field::signed::S64;
 use rayon::prelude::*;
 use tracer::instruction::{Cycle, RAMAccess};
 

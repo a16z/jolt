@@ -1,8 +1,8 @@
-use ark_bn254::Fr;
 use ark_ff::BigInt;
 use ark_std::rand::Rng;
 use ark_std::test_rng;
 use ark_std::{One, Zero};
+use jolt_field::Fr;
 use jolt_field::{Field, ReductionOps, UnreducedOps};
 use rand_chacha::rand_core::RngCore;
 
@@ -108,7 +108,12 @@ fn unreduced_accumulation() {
     let mut accumulator = BigInt::<8>::zero();
     for (a_elem, b_elem) in a.iter().zip(b.iter()) {
         let prod: BigInt<8> = UnreducedOps::mul_unreduced(*a_elem, *b_elem);
-        accumulator += prod;
+        let mut carry = 0u64;
+        for i in 0..8 {
+            let sum = (accumulator.0[i] as u128) + (prod.0[i] as u128) + (carry as u128);
+            accumulator.0[i] = sum as u64;
+            carry = (sum >> 64) as u64;
+        }
     }
 
     let result = <Fr as ReductionOps>::from_montgomery_reduce(accumulator);
