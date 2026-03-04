@@ -3,17 +3,10 @@
 
 use std::path::PathBuf;
 
-mod constants;
-use crate::constants::*;
-mod mle_ast;
-use crate::mle_ast::*;
-mod lookups;
-mod util;
-use crate::lookups::*;
-mod instruction;
-use crate::instruction::*;
-mod r1cs;
-use crate::r1cs::*;
+use zklean_extractor::constants::*;
+use zklean_extractor::lookups::*;
+use zklean_extractor::instruction::*;
+use zklean_extractor::r1cs::*;
 mod sumchecks;
 use crate::sumchecks::*;
 mod lookup_table_flags;

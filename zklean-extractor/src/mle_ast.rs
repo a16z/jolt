@@ -1,30 +1,108 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
-use ark_std::{One, Zero};
-use jolt_core::field::{FieldOps, JoltField};
+// =============================================================================
+// Imports
+// =============================================================================
 
+use std::cell::RefCell;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::fmt::{self};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{OnceLock, RwLock};
 
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
+use ark_std::{One, Zero};
+use serde::{Deserialize, Serialize};
+
+use jolt_core::field::{FieldOps, JoltField};
+
 #[cfg(test)]
 use crate::util::Environment;
 use crate::util::LetBinderIndex;
 
-type Scalar = i128;
+// Import scalar constants for internal use (pub use handles function re-exports)
+use crate::scalar_ops::{SCALAR_ONE, SCALAR_ZERO};
 
-type Index = u16;
+// Re-export scalar_ops for external use
+pub use crate::scalar_ops::{
+    scalar_add_mod, scalar_mul_mod, scalar_neg_mod, scalar_sub_mod, scalar_to_decimal_string,
+};
+// Short aliases for backward compatibility
+pub use crate::scalar_ops::{
+    scalar_add_mod as scalar_add, scalar_mul_mod as scalar_mul, scalar_neg_mod as scalar_neg,
+    scalar_sub_mod as scalar_sub,
+};
 
-type NodeId = usize;
+// =============================================================================
+// Constants (CSE only - scalar constants moved to scalar_ops.rs)
+// =============================================================================
+
+const CSE_PREFIX: &str = "cse";
+
+/// This guides the extractor as to the granularity at which to output definitions for common
+/// sub-expressions.
+/// A low depth will produce many more intermediate definitions, but each definition will be for a
+/// smaller term.  There may be repeated sub-terms of depth less than the threshold.
+///
+/// For instance, starting with the expression ((a + b) * (a + b)) * ((a + b) / (a + b)) might yield
+///   v1     = a + b
+///   v2     = v1 * v1
+///   v3     = v1 / v1
+///   result = v2 * v3
+/// at threshold 1, versus:
+///   v1     = (a + b) * (a + b)
+///   v2     = (a + b) / (a + b)
+///   result = v1 * v2
+/// at threshold 2, fewer intermediates, but small terms get repeated.
+// NOTE: For gnark-transpiler, CSE doesn't help much because constraints don't share
+// actual AST nodes (they're constructed separately). For zkLean/Lean output where
+// there's a single large AST, CSE with threshold 4 helps.
+const CSE_DEPTH_THRESHOLD: usize = 4;
+
+// =============================================================================
+// Type aliases
+// =============================================================================
+
+/// A 256-bit scalar value represented as 4 u64 limbs in little-endian order.
+/// Value = limb0 + limb1*2^64 + limb2*2^128 + limb3*2^192
+///
+/// # Design Note
+///
+/// Using `[u64; 4]` supports full BN254 scalar field elements (~254 bits), which is
+/// required for gnark circuit generation where constants must be exact field values.
+///
+/// Lean4 extraction still works: `scalar_to_decimal_string()` converts `[u64; 4]`
+/// to decimal strings for Lean output.
+pub type Scalar = [u64; 4];
+
+type Index = u32;
+
+pub type NodeId = usize;
+
+pub type DefaultMleAst = MleAst;
+
+/// This maps a given `Node` hash to a list of the nodes we've already seen with the same hash, and
+/// what let-binder index they were given.  When no collisions happen, each bucket should have
+/// exactly one element in the vector.  The vector deals with collisions.
+///
+/// To find what binder to use, you should hash your node, then traverse the vector at that key
+/// checking for equality against the nodes there.
+pub type Bindings = HashMap<u64, Vec<(Node, LetBinderIndex)>>;
+
+// =============================================================================
+// Global arena
+// =============================================================================
+//
+// Note: These functions were private (`fn`) in upstream zklean. We made them
+// `pub fn` so that `AstBundle::snapshot_arena()` can clone the arena for
+// serialization, and so codegen can read nodes during code generation.
 
 static NODE_ARENA: OnceLock<RwLock<Vec<Node>>> = OnceLock::new();
 
-fn node_arena() -> &'static RwLock<Vec<Node>> {
+pub fn node_arena() -> &'static RwLock<Vec<Node>> {
     NODE_ARENA.get_or_init(|| RwLock::new(Vec::new()))
 }
 
-fn insert_node(node: Node) -> NodeId {
+pub fn insert_node(node: Node) -> NodeId {
     let arena = node_arena();
     let mut guard = arena.write().expect("node arena poisoned");
     let id = guard.len();
@@ -32,10 +110,10 @@ fn insert_node(node: Node) -> NodeId {
     id
 }
 
-fn get_node(id: NodeId) -> Node {
+pub fn get_node(id: NodeId) -> Node {
     let arena = node_arena();
     let guard = arena.read().expect("node arena poisoned");
-    guard.get(id).copied().expect("invalid node reference")
+    guard.get(id).cloned().expect("invalid node reference")
 }
 
 fn edge_for_root(root: NodeId) -> Edge {
@@ -45,10 +123,174 @@ fn edge_for_root(root: NodeId) -> Edge {
     }
 }
 
-pub type DefaultMleAst = MleAst;
+// =============================================================================
+// Thread-local storage for Transcript trait integration
+// =============================================================================
+//
+// These thread-locals enable MleAst to work with jolt-core's generic Transcript trait.
+// The Transcript trait uses `F: JoltField` with methods like:
+//   - `append_scalar<F>(&mut self, scalar: &F)` - calls F::serialize
+//   - `challenge_scalar<F>(&mut self) -> F` - calls F::from_bytes
+//
+// Since MleAst implements JoltField but serialize/from_bytes don't make semantic sense
+// for ASTs, we use thread-local storage to tunnel the actual MleAst values through
+// these trait boundaries.
+//
+// This will be used by PoseidonAstTranscript (in transpiler) to build symbolic
+// AST nodes for Poseidon hash operations during verifier transpilation.
+//
+// Note: These are kept here (rather than a separate module) because they're used by
+// MleAst's own trait impls (from_bytes, serialize_with_mode) and form part of MleAst's
+// JoltField implementation machinery. Unlike scalar_ops/ast_bundle, they can't be
+// cleanly decoupled from MleAst without introducing circular dependencies.
+// =============================================================================
+
+thread_local! {
+    static PENDING_CHALLENGE: RefCell<Option<MleAst>> = const { RefCell::new(None) };
+}
+
+/// Set a pending challenge that will be returned by the next MleAst::from_bytes call.
+/// Called by PoseidonAstTranscript::challenge_scalar before returning.
+pub fn set_pending_challenge(challenge: MleAst) {
+    PENDING_CHALLENGE.with(|cell| {
+        *cell.borrow_mut() = Some(challenge);
+    });
+}
+
+/// Take the pending challenge (if any).
+fn take_pending_challenge() -> Option<MleAst> {
+    PENDING_CHALLENGE.with(|cell| cell.borrow_mut().take())
+}
+
+thread_local! {
+    static PENDING_APPEND: RefCell<Option<MleAst>> = const { RefCell::new(None) };
+}
+
+/// Set a pending MleAst value that will be retrieved by PoseidonAstTranscript::append_scalar.
+/// Called by MleAst::serialize_with_mode.
+pub fn set_pending_append(value: MleAst) {
+    PENDING_APPEND.with(|cell| {
+        *cell.borrow_mut() = Some(value);
+    });
+}
+
+/// Take the pending append value (if any).
+/// Called by PoseidonAstTranscript::append_scalar to get the actual MleAst.
+pub fn take_pending_append() -> Option<MleAst> {
+    PENDING_APPEND.with(|cell| cell.borrow_mut().take())
+}
+
+thread_local! {
+    static PENDING_COMMITMENT_CHUNKS: RefCell<Option<Vec<MleAst>>> = const { RefCell::new(None) };
+}
+
+/// Set pending commitment chunks for PoseidonAstTranscript::append_serializable.
+/// Called by AstCommitment::serialize_with_mode.
+pub fn set_pending_commitment_chunks(chunks: Vec<MleAst>) {
+    PENDING_COMMITMENT_CHUNKS.with(|cell| {
+        *cell.borrow_mut() = Some(chunks);
+    });
+}
+
+/// Take the pending commitment chunks (if any).
+/// Called by PoseidonAstTranscript::append_serializable to get the 12 MleAst chunks.
+pub fn take_pending_commitment_chunks() -> Option<Vec<MleAst>> {
+    PENDING_COMMITMENT_CHUNKS.with(|cell| cell.borrow_mut().take())
+}
+
+thread_local! {
+    static PENDING_POINT_ELEMENTS: RefCell<Option<Vec<MleAst>>> = const { RefCell::new(None) };
+}
+
+/// Set pending point elements for PoseidonAstTranscript::raw_append_point.
+/// `elements` must have exactly 2 entries: [x_field_element, y_field_element].
+pub fn set_pending_point_elements(elements: Vec<MleAst>) {
+    assert_eq!(
+        elements.len(),
+        2,
+        "Point must have exactly 2 elements (x, y)"
+    );
+    PENDING_POINT_ELEMENTS.with(|cell| {
+        *cell.borrow_mut() = Some(elements);
+    });
+}
+
+/// Take the pending point elements (if any).
+/// Called by PoseidonAstTranscript::raw_append_point to get the 2 MleAst elements.
+pub fn take_pending_point_elements() -> Option<Vec<MleAst>> {
+    PENDING_POINT_ELEMENTS.with(|cell| cell.borrow_mut().take())
+}
+
+// =============================================================================
+// Symbolic constraint accumulation for transpilation
+// =============================================================================
+//
+// Note: This section is specific to circuit transpilation and not used by Lean4 extraction.
+//
+// When Jolt's verifier runs `assert_eq!(computed, expected)`, we need to capture
+// that assertion as a circuit constraint `(computed - expected) == 0` rather than
+// actually comparing values (which would fail since MleAst holds symbolic AST nodes,
+// not concrete field elements).
+//
+// Constraint mode makes PartialEq record `(lhs - rhs)` as a constraint and return
+// `true`, allowing symbolic execution to continue through all verification steps.
+
+thread_local! {
+    /// Accumulated constraints during symbolic execution.
+    /// Each constraint is an MleAst that should equal zero.
+    static SYMBOLIC_CONSTRAINTS: RefCell<Vec<MleAst>> = const { RefCell::new(Vec::new()) };
+
+    /// Flag to enable constraint accumulation mode.
+    /// When true, PartialEq comparisons register constraints instead of comparing NodeIds.
+    static CONSTRAINT_MODE: RefCell<bool> = const { RefCell::new(false) };
+}
+
+/// Enable constraint accumulation mode.
+/// In this mode, `MleAst == MleAst` registers `(lhs - rhs) == 0` as a constraint
+/// and returns `true` to allow verification to continue.
+pub fn enable_constraint_mode() {
+    CONSTRAINT_MODE.with(|cell| {
+        *cell.borrow_mut() = true;
+    });
+}
+
+/// Disable constraint accumulation mode.
+/// After this, `MleAst == MleAst` returns `false` for different expressions
+/// instead of registering constraints.
+pub fn disable_constraint_mode() {
+    CONSTRAINT_MODE.with(|cell| {
+        *cell.borrow_mut() = false;
+    });
+}
+
+/// Check if constraint mode is enabled.
+pub fn is_constraint_mode() -> bool {
+    CONSTRAINT_MODE.with(|cell| *cell.borrow())
+}
+
+/// Return the number of accumulated constraints without taking them.
+pub fn num_constraints() -> usize {
+    SYMBOLIC_CONSTRAINTS.with(|cell| cell.borrow().len())
+}
+
+/// Take all accumulated constraints, clearing the list.
+pub fn take_constraints() -> Vec<MleAst> {
+    SYMBOLIC_CONSTRAINTS.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
+}
+
+/// Add a constraint that should equal zero.
+fn add_constraint(constraint: MleAst) {
+    SYMBOLIC_CONSTRAINTS.with(|cell| {
+        cell.borrow_mut().push(constraint);
+    });
+}
+
+// =============================================================================
+// Core types
+// =============================================================================
 
 /// An atomic (var or const) AST element
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum Atom {
     /// A constant value.
     Scalar(Scalar),
@@ -62,7 +304,17 @@ impl Atom {
     #[cfg(test)]
     fn evaluate<F: JoltField>(&self, env: &Environment<F>) -> F {
         match self {
-            Self::Scalar(value) => F::from_i128(*value),
+            Self::Scalar(value) => {
+                // Convert [u64; 4] to F
+                // value = limb0 + limb1*2^64 + limb2*2^128 + limb3*2^192
+                // For test purposes, we only support values that fit in u128
+                assert!(
+                    value[2] == 0 && value[3] == 0,
+                    "Scalar too large for test evaluation"
+                );
+                let val_u128 = value[0] as u128 + ((value[1] as u128) << 64);
+                F::from_u128(val_u128)
+            }
             Self::Var(index) => env.vars[*index as usize],
             Self::NamedVar(index) => *env
                 .let_bindings
@@ -73,7 +325,7 @@ impl Atom {
 }
 
 /// Either an index into the arena, or an atomic (var or const) element.
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum Edge {
     /// An atomic (var or const) AST element.
     Atom(Atom),
@@ -81,13 +333,33 @@ pub enum Edge {
     NodeRef(NodeId),
 }
 
+/// Data payload for a transcript hash node.
+/// The variant determines both the hash backend and the data shape (arity).
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub enum TranscriptHashData {
+    /// Poseidon: exactly 1 data element. Arity enforced by type.
+    Poseidon(Edge),
+    /// Blake2b: variable arity (0..N data elements in a single hash call).
+    Blake2b(Vec<Edge>),
+}
+
+impl TranscriptHashData {
+    /// View data elements as a slice (generic traversal).
+    pub fn as_slice(&self) -> &[Edge] {
+        match self {
+            Self::Poseidon(e) => std::slice::from_ref(e),
+            Self::Blake2b(v) => v.as_slice(),
+        }
+    }
+}
+
 /// A node for a polynomial AST. Children are represented by node IDs into the global arena.
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum Node {
     /// An atomic (var or const) AST element. This should only be used for MLE's with a single
     /// node.
     Atom(Atom),
-    /// The negation of a node
+    /// The negation of a node (from zklean base, unused by Jolt transpiler)
     Neg(Edge),
     /// The multiplicative inverse of a node
     Inv(Edge),
@@ -97,15 +369,47 @@ pub enum Node {
     Mul(Edge, Edge),
     /// The difference between the first and second nodes
     Sub(Edge, Edge),
-    /// The quotient between the first and second nodes
+    /// The quotient between the first and second nodes (from zklean base, unused by Jolt transpiler)
     /// NOTE: No div-by-zero checks are performed here
     Div(Edge, Edge),
+    /// Transcript hash: hash(state, n_rounds, data).
+    /// The `TranscriptHashData` variant determines which hash function and arity.
+    TranscriptHash(TranscriptHashData, Edge, Edge),
+    // -------------------------------------------------------------------------
+    // Byte-level transcript transforms
+    // -------------------------------------------------------------------------
+    // Note: These are NOT used by Poseidon (which operates on field elements natively).
+    // They are used by Blake2b/Keccak transcripts, which use byte-level serialization
+    // inherited from the original Jolt transcript design (for EVM compatibility).
+    // -------------------------------------------------------------------------
+    /// Byte-reverse a field element.
+    /// Transforms: serialize(x) as LE bytes -> reverse -> from_le_bytes_mod_order.
+    /// Used by transcript append_scalar which reverses bytes for EVM compatibility.
+    ByteReverse(Edge),
+    /// Truncate to 128 bits and byte-reverse, then shift by 2^128.
+    /// Used for challenge_scalar_optimized which produces F::Challenge (MontU128Challenge).
+    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes -> multiply by 2^128.
+    /// The 2^128 shift matches MontU128Challenge internal layout.
+    Truncate128Reverse(Edge),
+    /// Truncate to 128 bits and byte-reverse WITHOUT shifting.
+    /// Used for challenge_scalar which produces F (raw field element).
+    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes.
+    Truncate128(Edge),
+    /// Transform for transcript append_u64.
+    ///
+    /// Computes: bswap64(x) * 2^192
+    ///
+    /// Packs u64 x into bytes 24-31 of a 32-byte array using x.to_be_bytes(),
+    /// then interprets the 32 bytes as a little-endian field element.
+    ///
+    /// The result is bswap64(x) * 2^192, not just x * 2^192.
+    AppendU64Transform(Edge),
 }
 
 /// An AST intended for representing an MLE computation (although it will actually work for any
 /// multivariate polynomial). The nodes are stored in a global arena, which allows each AST handle
 /// to remain [`Copy`] and [`Sized`] while supporting unbounded growth of the underlying graph.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+#[derive(Debug, PartialOrd, Ord, Clone, Copy)]
 pub struct MleAst {
     /// Index of the root node in the arena.
     /// nodes: [ ]
@@ -114,6 +418,10 @@ pub struct MleAst {
     // TODO: Support multiple registers?
     reg_name: Option<char>,
 }
+
+// =============================================================================
+// impl MleAst (inherent methods)
+// =============================================================================
 
 impl MleAst {
     fn new_scalar(scalar: Scalar) -> Self {
@@ -154,7 +462,104 @@ impl MleAst {
         let rhs_edge = edge_for_root(rhs.root);
         self.root = insert_node(constructor(lhs_edge, rhs_edge));
     }
+
+    /// Create a variable from an index (for symbolic execution).
+    pub fn from_var(index: u32) -> Self {
+        Self::new_var('v', index)
+    }
+
+    /// Get the root node ID for this AST.
+    pub fn root(&self) -> NodeId {
+        self.root
+    }
+
+    /// Poseidon hash with 3 inputs (state, n_rounds, data).
+    pub fn poseidon(state: &Self, n_rounds: &Self, data: &Self) -> Self {
+        let state_edge = edge_for_root(state.root);
+        let rounds_edge = edge_for_root(n_rounds.root);
+        let data_edge = edge_for_root(data.root);
+        let root = insert_node(Node::TranscriptHash(
+            TranscriptHashData::Poseidon(data_edge),
+            state_edge,
+            rounds_edge,
+        ));
+        Self {
+            root,
+            reg_name: state.reg_name.or(n_rounds.reg_name).or(data.reg_name),
+        }
+    }
+
+    /// Blake2b hash with variable-arity data.
+    pub fn blake2b(state: &Self, n_rounds: &Self, data: &[Self]) -> Self {
+        let data_edges: Vec<Edge> = data.iter().map(|d| edge_for_root(d.root)).collect();
+        let root = insert_node(Node::TranscriptHash(
+            TranscriptHashData::Blake2b(data_edges),
+            edge_for_root(state.root),
+            edge_for_root(n_rounds.root),
+        ));
+        Self {
+            root,
+            reg_name: state.reg_name.or(n_rounds.reg_name),
+        }
+    }
+
+    /// Byte-reverse a field element.
+    /// Transforms: serialize(x) as LE bytes -> reverse -> from_le_bytes_mod_order.
+    pub fn byte_reverse(input: &Self) -> Self {
+        let edge = edge_for_root(input.root);
+        let root = insert_node(Node::ByteReverse(edge));
+        Self {
+            root,
+            reg_name: input.reg_name,
+        }
+    }
+
+    /// Truncate to 128 bits and byte-reverse, then shift by 2^128.
+    /// Used for challenge_scalar_optimized (produces MontU128Challenge).
+    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes -> multiply by 2^128.
+    pub fn truncate_128_reverse(input: &Self) -> Self {
+        let edge = edge_for_root(input.root);
+        let root = insert_node(Node::Truncate128Reverse(edge));
+        Self {
+            root,
+            reg_name: input.reg_name,
+        }
+    }
+
+    /// Truncate to 128 bits and byte-reverse WITHOUT shifting.
+    /// Used for challenge_scalar (produces raw F field element).
+    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes.
+    pub fn truncate_128(input: &Self) -> Self {
+        let edge = edge_for_root(input.root);
+        let root = insert_node(Node::Truncate128(edge));
+        Self {
+            root,
+            reg_name: input.reg_name,
+        }
+    }
+
+    /// Transform for PoseidonTranscript::append_u64.
+    ///
+    /// Computes: bswap64(x) * 2^192
+    ///
+    /// This matches PoseidonTranscript::raw_append_u64 which:
+    /// 1. Packs u64 x into bytes 24-31 of a 32-byte array using x.to_be_bytes()
+    /// 2. Interprets the 32 bytes as a little-endian field element
+    ///
+    /// The result is bswap64(x) * 2^192, not just x * 2^192.
+    pub fn append_u64_transform(input: &Self) -> Self {
+        let edge = edge_for_root(input.root);
+        let root = insert_node(Node::AppendU64Transform(edge));
+        Self {
+            root,
+            reg_name: input.reg_name,
+        }
+    }
 }
+
+// =============================================================================
+// Test-only evaluation helpers
+// =============================================================================
 
 #[cfg(test)]
 fn evaluate_edge<F: JoltField>(edge: Edge, env: &Environment<F>) -> F {
@@ -174,8 +579,20 @@ fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
         Node::Mul(e1, e2) => evaluate_edge(e1, env) * evaluate_edge(e2, env),
         Node::Sub(e1, e2) => evaluate_edge(e1, env) - evaluate_edge(e2, env),
         Node::Div(e1, e2) => evaluate_edge(e1, env) / evaluate_edge(e2, env),
+        Node::TranscriptHash(_, _, _)
+        | Node::ByteReverse(_)
+        | Node::Truncate128Reverse(_)
+        | Node::Truncate128(_)
+        | Node::AppendU64Transform(_) => {
+            // Hash/transform nodes are for circuit generation only, not field evaluation
+            unreachable!("Hash/transform nodes should not appear in zklean-extractor tests")
+        }
     }
 }
+
+// =============================================================================
+// Formatting
+// =============================================================================
 
 struct FormattingData<'a> {
     prefix: &'a String,
@@ -184,7 +601,7 @@ struct FormattingData<'a> {
 
 fn fmt_atom(f: &mut fmt::Formatter<'_>, fmt_data: &FormattingData<'_>, atom: Atom) -> fmt::Result {
     match atom {
-        Atom::Scalar(value) => write!(f, "{value}")?,
+        Atom::Scalar(value) => write!(f, "{}", scalar_to_decimal_string(&value))?,
         Atom::Var(index) => {
             let name = fmt_data
                 .reg_name
@@ -207,130 +624,6 @@ fn fmt_edge(
         Edge::Atom(atom) => fmt_atom(f, fmt_data, atom),
         Edge::NodeRef(node) => fmt_node(f, fmt_data, node, group),
     }
-}
-
-/// This maps a given `Node` hash to a list of the nodes we've already seen with the same hash, and
-/// what let-binder index they were given.  When no collisions happen, each bucket should have
-/// exactly one element in the vector.  The vector deals with collisions.
-///
-/// To find what binder to use, you should hash your node, then traverse the vector at that key
-/// checking for equality against the nodes there.
-type Bindings = HashMap<u64, Vec<(Node, LetBinderIndex)>>;
-
-fn compute_hash<T: Hash>(value: &T) -> u64 {
-    let mut h = DefaultHasher::new();
-    value.hash(&mut h);
-    h.finish()
-}
-
-fn node_depth(node: Node) -> usize {
-    fn edge_depth(edge: Edge) -> usize {
-        match edge {
-            Edge::Atom(_) => 0,
-            Edge::NodeRef(n) => node_depth(get_node(n)),
-        }
-    }
-    match node {
-        Node::Atom(_) => 0,
-        Node::Neg(e) => 1 + edge_depth(e),
-        Node::Inv(e) => 1 + edge_depth(e),
-        Node::Add(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
-        Node::Mul(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
-        Node::Sub(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
-        Node::Div(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
-    }
-}
-
-const CSE_PREFIX: &str = "cse";
-
-/// This guides the extractor as to the granularity at which to output definitions for common
-/// sub-expressions.
-/// A low depth will produce many more intermediate definitions, but each definition will be for a
-/// smaller term.  There may be repeated sub-terms of depth less than the threshold.
-///
-/// For instance, starting with the expression ((a + b) * (a + b)) * ((a + b) / (a + b)) might yield
-///   v1     = a + b
-///   v2     = v1 * v1
-///   v3     = v1 / v1
-///   result = v2 * v3
-/// at threshold 1, versus:
-///   v1     = (a + b) * (a + b)
-///   v2     = (a + b) / (a + b)
-///   result = v1 * v2
-/// at threshold 2, fewer intermediates, but small terms get repeated.
-const CSE_DEPTH_THRESHOLD: usize = 4;
-
-fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
-    /// Assumption: the sub-nodes have already been CSE-d
-    fn register(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
-        let node_hash = compute_hash(&node);
-        if let Some(v) = bindings.get(&node_hash) {
-            if let Some((_, i)) = v.iter().find(|(n, _)| n == &node) {
-                return Node::Atom(Atom::NamedVar(*i));
-            }
-        }
-        if node_depth(node) < CSE_DEPTH_THRESHOLD {
-            return node;
-        }
-        // Registering a new node
-        let index = nodes.len();
-        bindings
-            .entry(node_hash)
-            .and_modify(|v| {
-                v.push((node, index));
-            })
-            .or_insert(vec![(node, index)]);
-        nodes.push(node);
-        Node::Atom(Atom::NamedVar(index))
-    }
-
-    fn aux_node(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
-        match node {
-            Node::Atom(_) => node,
-            Node::Neg(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::Neg(cse_e))
-            }
-            Node::Inv(e) => {
-                let cse_e = aux_edge(bindings, nodes, e);
-                register(bindings, nodes, Node::Inv(cse_e))
-            }
-            Node::Add(e1, e2) => {
-                let cse_e1 = aux_edge(bindings, nodes, e1);
-                let cse_e2 = aux_edge(bindings, nodes, e2);
-                register(bindings, nodes, Node::Add(cse_e1, cse_e2))
-            }
-            Node::Mul(e1, e2) => {
-                let cse_e1 = aux_edge(bindings, nodes, e1);
-                let cse_e2 = aux_edge(bindings, nodes, e2);
-                register(bindings, nodes, Node::Mul(cse_e1, cse_e2))
-            }
-            Node::Sub(e1, e2) => {
-                let cse_e1 = aux_edge(bindings, nodes, e1);
-                let cse_e2 = aux_edge(bindings, nodes, e2);
-                register(bindings, nodes, Node::Sub(cse_e1, cse_e2))
-            }
-            Node::Div(e1, e2) => {
-                let cse_e1 = aux_edge(bindings, nodes, e1);
-                let cse_e2 = aux_edge(bindings, nodes, e2);
-                register(bindings, nodes, Node::Div(cse_e1, cse_e2))
-            }
-        }
-    }
-
-    fn aux_edge(bindings: &mut Bindings, nodes: &mut Vec<Node>, edge: Edge) -> Edge {
-        match edge {
-            Edge::Atom(_) => edge,
-            Edge::NodeRef(node) => {
-                Edge::NodeRef(insert_node(aux_node(bindings, nodes, get_node(node))))
-            }
-        }
-    }
-
-    let mut bindings = HashMap::new();
-    let mut nodes = Vec::new();
-    let new_node = aux_node(&mut bindings, &mut nodes, node);
-    (nodes, new_node)
 }
 
 fn fmt_node(
@@ -383,8 +676,202 @@ fn fmt_node(
             write!(f, " / ")?;
             fmt_edge(f, fmt_data, e2, true)
         }
+        Node::TranscriptHash(ref hash_data, e1, e2) => {
+            let backend_name = match hash_data {
+                TranscriptHashData::Poseidon(_) => "Poseidon",
+                TranscriptHashData::Blake2b(_) => "Blake2b",
+            };
+            write!(f, "transcript_hash({backend_name}, ")?;
+            fmt_edge(f, fmt_data, e1, false)?;
+            write!(f, ", ")?;
+            fmt_edge(f, fmt_data, e2, false)?;
+            write!(f, ", [")?;
+            for (i, d) in hash_data.as_slice().iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                fmt_edge(f, fmt_data, *d, false)?;
+            }
+            write!(f, "])")
+        }
+        Node::ByteReverse(edge) => {
+            write!(f, "byte_reverse(")?;
+            fmt_edge(f, fmt_data, edge, false)?;
+            write!(f, ")")
+        }
+        Node::Truncate128Reverse(edge) => {
+            write!(f, "truncate_128_reverse(")?;
+            fmt_edge(f, fmt_data, edge, false)?;
+            write!(f, ")")
+        }
+        Node::Truncate128(edge) => {
+            write!(f, "truncate_128(")?;
+            fmt_edge(f, fmt_data, edge, false)?;
+            write!(f, ")")
+        }
+        Node::AppendU64Transform(edge) => {
+            write!(f, "append_u64_transform(")?;
+            fmt_edge(f, fmt_data, edge, false)?;
+            write!(f, ")")
+        }
     }
 }
+
+// =============================================================================
+// Common Subexpression Elimination (CSE)
+// =============================================================================
+
+pub fn compute_hash<T: Hash>(value: &T) -> u64 {
+    let mut h = DefaultHasher::new();
+    value.hash(&mut h);
+    h.finish()
+}
+
+fn node_depth(node: &Node) -> usize {
+    fn edge_depth(edge: Edge) -> usize {
+        match edge {
+            Edge::Atom(_) => 0,
+            Edge::NodeRef(n) => node_depth(&get_node(n)),
+        }
+    }
+    match node {
+        Node::Atom(_) => 0,
+        Node::Neg(e)
+        | Node::Inv(e)
+        | Node::ByteReverse(e)
+        | Node::Truncate128Reverse(e)
+        | Node::Truncate128(e)
+        | Node::AppendU64Transform(e) => 1 + edge_depth(*e),
+        Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
+            1 + max(edge_depth(*e1), edge_depth(*e2))
+        }
+        Node::TranscriptHash(ref hash_data, e1, e2) => {
+            let data_max = hash_data
+                .as_slice()
+                .iter()
+                .map(|e| edge_depth(*e))
+                .max()
+                .unwrap_or(0);
+            1 + max(edge_depth(*e1), max(edge_depth(*e2), data_max))
+        }
+    }
+}
+
+/// Perform common subexpression elimination on an AST (Lean4 extraction only).
+///
+/// # Note: Two CSE Implementations Exist
+///
+/// This CSE is specifically for **Lean4 extraction** (`format_for_lean()` in lookups.rs).
+/// The transpilation pipeline uses a separate CSE in `ast_bundle.rs` (`run_cse()`).
+///
+/// The two implementations have different requirements:
+///
+/// | Aspect | Lean4 CSE (this) | Transpiler CSE (ast_bundle.rs) |
+/// |--------|------------------|--------------------------------|
+/// | Goal | Reduce Lean type-checker load | Minimize circuit constraints |
+/// | Method | Hash-based structural dedup | Reference counting |
+/// | Threshold | Depth >= 3 only | All multi-ref nodes |
+/// | Output | Transforms AST (NamedVar nodes) | Records NodeIds to hoist |
+/// | Scope | Single expression tree | Per-constraint isolation |
+///
+/// # Returns
+///
+/// A tuple of (bindings, new_root) where:
+/// - bindings: Vec of nodes that should be hoisted as named variables (cse_0, cse_1, ...)
+/// - new_root: The transformed root node with common subexpressions replaced by NamedVar references
+///
+/// The CSE_DEPTH_THRESHOLD controls granularity - subexpressions below this depth
+/// are not hoisted (to avoid excessive small definitions).
+pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
+    /// Assumption: the sub-nodes have already been CSE-d
+    fn register(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
+        let node_hash = compute_hash(&node);
+        let depth = node_depth(&node);
+
+        if let Some(v) = bindings.get(&node_hash) {
+            if let Some((_, i)) = v.iter().find(|(n, _)| n == &node) {
+                return Node::Atom(Atom::NamedVar(*i));
+            }
+        }
+        if depth < CSE_DEPTH_THRESHOLD {
+            return node;
+        }
+        // Registering a new node
+        let index = nodes.len();
+        nodes.push(node.clone());
+        bindings
+            .entry(node_hash)
+            .and_modify(|v| {
+                v.push((node.clone(), index));
+            })
+            .or_insert(vec![(node, index)]);
+        Node::Atom(Atom::NamedVar(index))
+    }
+
+    fn aux_node(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
+        match node {
+            Node::Atom(_) => node,
+            Node::Neg(e) => {
+                let cse_e = aux_edge(bindings, nodes, e);
+                register(bindings, nodes, Node::Neg(cse_e))
+            }
+            Node::Inv(e) => {
+                let cse_e = aux_edge(bindings, nodes, e);
+                register(bindings, nodes, Node::Inv(cse_e))
+            }
+            Node::Add(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                register(bindings, nodes, Node::Add(cse_e1, cse_e2))
+            }
+            Node::Mul(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                register(bindings, nodes, Node::Mul(cse_e1, cse_e2))
+            }
+            Node::Sub(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                register(bindings, nodes, Node::Sub(cse_e1, cse_e2))
+            }
+            Node::Div(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                register(bindings, nodes, Node::Div(cse_e1, cse_e2))
+            }
+            // Transpilation-only nodes: used by challenge derivation and Blake/Keccak transcripts.
+            // Lean4 extraction never encounters them.
+            Node::TranscriptHash(..)
+            | Node::ByteReverse(..)
+            | Node::Truncate128Reverse(..)
+            | Node::Truncate128(..)
+            | Node::AppendU64Transform(..) => {
+                unreachable!(
+                    "Transpilation-only node {:?} should never appear in Lean4 CSE",
+                    node
+                )
+            }
+        }
+    }
+
+    fn aux_edge(bindings: &mut Bindings, nodes: &mut Vec<Node>, edge: Edge) -> Edge {
+        match edge {
+            Edge::Atom(_) => edge,
+            Edge::NodeRef(node) => {
+                Edge::NodeRef(insert_node(aux_node(bindings, nodes, get_node(node))))
+            }
+        }
+    }
+
+    let mut bindings = HashMap::new();
+    let mut nodes = Vec::new();
+    let new_node = aux_node(&mut bindings, &mut nodes, node);
+    (nodes, new_node)
+}
+
+// =============================================================================
+// Trait implementations for MleAst
+// =============================================================================
 
 impl crate::util::ZkLeanReprField for MleAst {
     fn register(name: char, size: usize) -> Vec<Self> {
@@ -425,7 +912,7 @@ impl crate::util::ZkLeanReprField for MleAst {
                 "def {}{index} [Field f] (x : Vector f {num_variables}) : f := ",
                 fmt_data.prefix,
             )?;
-            fmt_node(f, &fmt_data, insert_node(*binding), false)?;
+            fmt_node(f, &fmt_data, insert_node(binding.clone()), false)?;
             writeln!(f)?;
         }
         write!(
@@ -439,22 +926,74 @@ impl crate::util::ZkLeanReprField for MleAst {
     }
 }
 
+/// Equality comparison for symbolic field elements.
+///
+/// This implementation has two modes controlled by `enable_constraint_mode()`:
+///
+/// - **Constraint mode** (during symbolic verification): Registers `(self - other) == 0`
+///   as a constraint and returns `true`, allowing verification to continue. This captures
+///   the verifier's `assert_eq!` calls as circuit constraints.
+///
+/// - **Normal mode**: Returns `true` only if both values reference the same AST node,
+///   `false` otherwise. Different symbolic expressions are considered not equal.
+///
+/// # Note on `is_one()` and `is_zero()`
+///
+/// The `One::is_one()` and `Zero::is_zero()` implementations check node structure directly
+/// to avoid triggering constraint registration. See their docstrings for details.
+impl PartialEq for MleAst {
+    fn eq(&self, other: &Self) -> bool {
+        // Same node reference: trivially equal in both modes
+        if self.root == other.root {
+            return true;
+        }
+
+        // Constraint mode: register (self - other) == 0 and return true
+        if is_constraint_mode() {
+            let diff = *self - *other;
+            add_constraint(diff);
+            return true;
+        }
+
+        // Normal mode: different symbolic expressions are not equal
+        false
+    }
+}
+
+impl Eq for MleAst {}
+
+/// `Scalar` is `[u64; 4]` (BN254 field element), so we use typed constants.
 impl Zero for MleAst {
     fn zero() -> Self {
-        Self::new_scalar(0)
+        Self::new_scalar(SCALAR_ZERO)
     }
 
+    /// Check if this MleAst represents the constant 0.
+    ///
+    /// Checks node structure directly to avoid triggering `PartialEq::eq`,
+    /// which would register a spurious constraint in constraint mode.
     fn is_zero(&self) -> bool {
         matches!(
             get_node(self.root),
-            Node::Atom(Atom::Scalar(value)) if value == 0
+            Node::Atom(Atom::Scalar(value)) if value == SCALAR_ZERO
         )
     }
 }
 
 impl One for MleAst {
     fn one() -> Self {
-        Self::new_scalar(1)
+        Self::new_scalar(SCALAR_ONE)
+    }
+
+    /// Check if this MleAst represents the constant 1.
+    ///
+    /// Checks node structure directly to avoid triggering `PartialEq::eq`,
+    /// which would register a spurious constraint in constraint mode.
+    fn is_one(&self) -> bool {
+        matches!(
+            get_node(self.root),
+            Node::Atom(Atom::Scalar(value)) if value == SCALAR_ONE
+        )
     }
 }
 
@@ -505,6 +1044,14 @@ impl std::ops::Add<&Self> for MleAst {
     type Output = Self;
 
     fn add(mut self, rhs: &Self) -> Self::Output {
+        // Optimization: x + 0 = x, 0 + x = x
+        // This prevents constant-vs-constant additions in generated code
+        if self.is_zero() {
+            return *rhs;
+        }
+        if rhs.is_zero() {
+            return self;
+        }
         self.binop(Node::Add, rhs);
         self
     }
@@ -514,6 +1061,15 @@ impl std::ops::Sub<&Self> for MleAst {
     type Output = Self;
 
     fn sub(mut self, rhs: &Self) -> Self::Output {
+        // Optimization: x - 0 = x
+        // This prevents constant-vs-constant subtractions in generated code
+        if rhs.is_zero() {
+            return self;
+        }
+        // Optimization: 0 - x = -x
+        if self.is_zero() {
+            return -*rhs;
+        }
         self.binop(Node::Sub, rhs);
         self
     }
@@ -523,6 +1079,12 @@ impl std::ops::Mul<&Self> for MleAst {
     type Output = Self;
 
     fn mul(mut self, rhs: &Self) -> Self::Output {
+        // Optimization: x * 0 = 0, 0 * x = 0
+        // This prevents constant-vs-constant assertions in Gnark when
+        // EqPolynomial::evals expands to terms multiplied by zero coefficients.
+        if self.is_zero() || rhs.is_zero() {
+            return Self::zero();
+        }
         self.binop(Node::Mul, rhs);
         self
     }
@@ -541,36 +1103,82 @@ impl FieldOps<&Self, Self> for MleAst {}
 
 impl std::ops::AddAssign for MleAst {
     fn add_assign(&mut self, rhs: Self) {
+        // Optimization: x += 0 is a no-op
+        if rhs.is_zero() {
+            return;
+        }
+        // Optimization: 0 += x => self = x
+        if self.is_zero() {
+            *self = rhs;
+            return;
+        }
         self.binop(Node::Add, &rhs);
     }
 }
 
 impl<'a> std::ops::AddAssign<&'a Self> for MleAst {
     fn add_assign(&mut self, rhs: &'a Self) {
+        // Optimization: x += 0 is a no-op
+        if rhs.is_zero() {
+            return;
+        }
+        // Optimization: 0 += x => self = x
+        if self.is_zero() {
+            *self = *rhs;
+            return;
+        }
         self.binop(Node::Add, rhs);
     }
 }
 
 impl std::ops::SubAssign for MleAst {
     fn sub_assign(&mut self, rhs: Self) {
+        // Optimization: x -= 0 is a no-op
+        if rhs.is_zero() {
+            return;
+        }
+        // Optimization: 0 -= x => self = -x
+        if self.is_zero() {
+            *self = -rhs;
+            return;
+        }
         self.binop(Node::Sub, &rhs);
     }
 }
 
 impl<'a> std::ops::SubAssign<&'a Self> for MleAst {
     fn sub_assign(&mut self, rhs: &'a Self) {
+        // Optimization: x -= 0 is a no-op
+        if rhs.is_zero() {
+            return;
+        }
+        // Optimization: 0 -= x => self = -x
+        if self.is_zero() {
+            *self = -*rhs;
+            return;
+        }
         self.binop(Node::Sub, rhs);
     }
 }
 
 impl std::ops::MulAssign for MleAst {
     fn mul_assign(&mut self, rhs: Self) {
+        // Optimization: x *= 0 => x = 0, 0 *= x => stays 0
+        if self.is_zero() || rhs.is_zero() {
+            *self = Self::zero();
+            return;
+        }
         self.binop(Node::Mul, &rhs);
     }
 }
 
 impl<'a> std::ops::MulAssign<&'a Self> for MleAst {
     fn mul_assign(&mut self, rhs: &'a Self) {
+        // Optimization: x *= 0 => x = 0, 0 *= x => stays 0
+        if self.is_zero() || rhs.is_zero() {
+            *self = Self::zero();
+            return;
+        }
         self.binop(Node::Mul, rhs);
     }
 }
@@ -656,9 +1264,17 @@ impl From<ark_ff::biginteger::signed_hi_32::SignedBigIntHi32<3>> for MleAst {
     }
 }
 
+/// Required for `JoltField::Unreduced<N>` which is `Self` for MleAst.
+///
+/// Converts `[u64; N]` to a scalar constant. For N > 4, only the first 4 limbs
+/// are used (higher limbs are truncated). This is acceptable for symbolic execution
+/// since we're just creating a constant node. Actual arithmetic is tracked in the AST.
 impl<const N: usize> From<[u64; N]> for MleAst {
-    fn from(_value: [u64; N]) -> Self {
-        unimplemented!("Not needed for constructing ASTs");
+    fn from(value: [u64; N]) -> Self {
+        let mut limbs = [0u64; 4];
+        let copy_len = N.min(4);
+        limbs[..copy_len].copy_from_slice(&value[..copy_len]);
+        Self::new_scalar(limbs)
     }
 }
 
@@ -686,35 +1302,82 @@ impl JoltField for MleAst {
     }
 
     fn from_bool(val: bool) -> Self {
-        Self::new_scalar(val as Scalar)
+        Self::new_scalar([val as u64, 0, 0, 0])
     }
 
     fn from_u8(n: u8) -> Self {
-        Self::new_scalar(n as Scalar)
+        Self::new_scalar([n as u64, 0, 0, 0])
     }
 
     fn from_u16(n: u16) -> Self {
-        Self::new_scalar(n as Scalar)
+        Self::new_scalar([n as u64, 0, 0, 0])
     }
 
     fn from_u32(n: u32) -> Self {
-        Self::new_scalar(n as Scalar)
+        Self::new_scalar([n as u64, 0, 0, 0])
     }
 
     fn from_u64(n: u64) -> Self {
-        Self::new_scalar(n as Scalar)
+        Self::new_scalar([n, 0, 0, 0])
     }
 
     fn from_i64(n: i64) -> Self {
-        Self::new_scalar(n as Scalar)
+        if n >= 0 {
+            Self::new_scalar([n as u64, 0, 0, 0])
+        } else {
+            // For negative numbers in BN254 field: compute p - |n|
+            // BN254 scalar field modulus:
+            // p = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+            const BN254_MODULUS: [u64; 4] = [
+                0x43e1f593f0000001,
+                0x2833e84879b97091,
+                0xb85045b68181585d,
+                0x30644e72e131a029,
+            ];
+
+            let abs_n = n.unsigned_abs();
+            let (l0, b0) = BN254_MODULUS[0].overflowing_sub(abs_n);
+            let (l1, b1) = BN254_MODULUS[1].overflowing_sub(b0 as u64);
+            let (l2, b2) = BN254_MODULUS[2].overflowing_sub(b1 as u64);
+            let (l3, _) = BN254_MODULUS[3].overflowing_sub(b2 as u64);
+
+            Self::new_scalar([l0, l1, l2, l3])
+        }
     }
 
     fn from_u128(n: u128) -> Self {
-        Self::new_scalar(n as Scalar)
+        let low = n as u64;
+        let high = (n >> 64) as u64;
+        Self::new_scalar([low, high, 0, 0])
     }
 
     fn from_i128(n: i128) -> Self {
-        Self::new_scalar(n as Scalar)
+        if n >= 0 {
+            let low = n as u64;
+            let high = (n >> 64) as u64;
+            Self::new_scalar([low, high, 0, 0])
+        } else {
+            // For negative numbers in BN254 field: compute p - |n|
+            // BN254 scalar field modulus
+            const BN254_MODULUS: [u64; 4] = [
+                0x43e1f593f0000001,
+                0x2833e84879b97091,
+                0xb85045b68181585d,
+                0x30644e72e131a029,
+            ];
+
+            let abs_n = n.unsigned_abs();
+            let abs_low = abs_n as u64;
+            let abs_high = (abs_n >> 64) as u64;
+
+            // Compute p - |n| with borrow propagation
+            let (l0, b0) = BN254_MODULUS[0].overflowing_sub(abs_low);
+            let (l1, b1) = BN254_MODULUS[1].overflowing_sub(abs_high + b0 as u64);
+            let (l2, b2) = BN254_MODULUS[2].overflowing_sub(b1 as u64);
+            let (l3, _) = BN254_MODULUS[3].overflowing_sub(b2 as u64);
+
+            Self::new_scalar([l0, l1, l2, l3])
+        }
     }
 
     fn square(&self) -> Self {
@@ -722,7 +1385,12 @@ impl JoltField for MleAst {
     }
 
     fn from_bytes(_bytes: &[u8]) -> Self {
-        unimplemented!("Not needed for constructing ASTs");
+        // Check if there's a pending challenge from PoseidonAstTranscript
+        if let Some(challenge) = take_pending_challenge() {
+            return challenge;
+        }
+        // Fallback: create constant from bytes (for non-transpilation use)
+        MleAst::from_i128(0)
     }
 
     fn inverse(&self) -> Option<Self> {
@@ -797,9 +1465,48 @@ impl JoltField for MleAst {
     }
 }
 
-/**********************************************************************
- * NOTE: We probably never need to serialize MleAst, so these are stubs
- */
+/// Serialization for MleAst uses thread-local tunneling to pass symbolic values
+/// through the generic `Transcript` trait (which expects `CanonicalSerialize`).
+///
+/// `serialize_with_mode` stores `self` in a thread-local via `set_pending_append`,
+/// which `PoseidonAstTranscript::raw_append_scalar` retrieves via `take_pending_append`.
+impl CanonicalSerialize for MleAst {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        _writer: W,
+        _compress: ark_serialize::Compress,
+    ) -> Result<(), SerializationError> {
+        set_pending_append(*self);
+        Ok(())
+    }
+
+    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
+        // Return 32 bytes (standard field element size) for append_scalar length calculations
+        32
+    }
+}
+
+/// Required by `JoltField` trait bound but not called during symbolic execution.
+impl CanonicalDeserialize for MleAst {
+    fn deserialize_with_mode<R: std::io::Read>(
+        _reader: R,
+        _compress: ark_serialize::Compress,
+        _validate: ark_serialize::Validate,
+    ) -> Result<Self, SerializationError> {
+        unimplemented!("MleAst deserialization not needed. We build ASTs, not read them")
+    }
+}
+
+/// Required by `CanonicalDeserialize` but not called during symbolic execution.
+impl Valid for MleAst {
+    fn check(&self) -> Result<(), SerializationError> {
+        unimplemented!("MleAst validation not needed")
+    }
+}
+
+// =============================================================================
+// Serialization stubs for Atom, Edge, Node
+// =============================================================================
 
 impl CanonicalSerialize for Atom {
     fn serialize_with_mode<W: std::io::Write>(
@@ -891,34 +1598,294 @@ impl Valid for Node {
     }
 }
 
-impl CanonicalSerialize for MleAst {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        _writer: W,
-        _compress: ark_serialize::Compress,
-    ) -> Result<(), SerializationError> {
-        unimplemented!("Not needed for constructing ASTs")
+// =============================================================================
+// Re-exports from ast_bundle module for backward compatibility
+// =============================================================================
+
+pub use crate::ast_bundle::{Assertion, AstBundle, AstCommitment, TargetField, WitnessType};
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =============================================================================
+    // Arena Tests
+    // =============================================================================
+
+    #[test]
+    fn test_node_insertion_and_retrieval() {
+        // Test that inserted nodes can be retrieved correctly
+        let ast_42 = MleAst::from_u64(42);
+        let node_42 = get_node(ast_42.root());
+        assert!(matches!(node_42, Node::Atom(Atom::Scalar([42, 0, 0, 0]))));
+
+        let ast_sum = MleAst::from_u64(1) + MleAst::from_u64(2);
+        let node_sum = get_node(ast_sum.root());
+        assert!(matches!(node_sum, Node::Add(_, _)));
+
+        // Test constant nodes
+        let zero = MleAst::zero();
+        assert!(matches!(get_node(zero.root()), Node::Atom(Atom::Scalar(s)) if s == SCALAR_ZERO));
+
+        let one = MleAst::one();
+        assert!(matches!(get_node(one.root()), Node::Atom(Atom::Scalar(s)) if s == SCALAR_ONE));
     }
 
-    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        unimplemented!("Not needed for constructing ASTs")
+    // =============================================================================
+    // Thread-Local Storage Tests
+    // =============================================================================
+
+    #[test]
+    fn test_pending_challenge_round_trip() {
+        // Test thread-local challenge tunneling
+        let challenge = MleAst::from_u64(12345);
+
+        set_pending_challenge(challenge);
+        let retrieved = take_pending_challenge();
+
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().root(), challenge.root());
+
+        // Taking again should return None
+        let empty = take_pending_challenge();
+        assert!(empty.is_none());
+    }
+
+    #[test]
+    fn test_pending_append_round_trip() {
+        // Test thread-local append tunneling
+        let value = MleAst::from_u64(67890);
+
+        set_pending_append(value);
+        let retrieved = take_pending_append();
+
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().root(), value.root());
+
+        // Taking again should return None
+        let empty = take_pending_append();
+        assert!(empty.is_none());
+    }
+
+    #[test]
+    fn test_pending_commitment_chunks_round_trip() {
+        // Test thread-local commitment chunks tunneling
+        let chunks = vec![
+            MleAst::from_u64(1),
+            MleAst::from_u64(2),
+            MleAst::from_u64(3),
+        ];
+
+        set_pending_commitment_chunks(chunks.clone());
+        let retrieved = take_pending_commitment_chunks();
+
+        assert!(retrieved.is_some());
+        let retrieved_chunks = retrieved.unwrap();
+        assert_eq!(retrieved_chunks.len(), 3);
+        for (i, chunk) in retrieved_chunks.iter().enumerate() {
+            assert_eq!(chunk.root(), chunks[i].root());
+        }
+
+        // Taking again should return None
+        let empty = take_pending_commitment_chunks();
+        assert!(empty.is_none());
+    }
+
+    #[test]
+    fn test_pending_point_elements_round_trip() {
+        // Test thread-local point elements tunneling (must be exactly 2 elements)
+        let elements = vec![
+            MleAst::from_u64(100),
+            MleAst::from_u64(200),
+        ];
+
+        set_pending_point_elements(elements.clone());
+        let retrieved = take_pending_point_elements();
+
+        assert!(retrieved.is_some());
+        let retrieved_elements = retrieved.unwrap();
+        assert_eq!(retrieved_elements.len(), 2);
+        assert_eq!(retrieved_elements[0].root(), elements[0].root());
+        assert_eq!(retrieved_elements[1].root(), elements[1].root());
+
+        // Taking again should return None
+        let empty = take_pending_point_elements();
+        assert!(empty.is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "Point must have exactly 2 elements")]
+    fn test_pending_point_elements_wrong_length() {
+        // Should panic if not exactly 2 elements
+        let elements = vec![MleAst::from_u64(1), MleAst::from_u64(2), MleAst::from_u64(3)];
+        set_pending_point_elements(elements);
+    }
+
+    // =============================================================================
+    // Constraint Mode Tests
+    // =============================================================================
+
+    #[test]
+    fn test_constraint_mode() {
+        // Test enable/disable/add_constraint
+        assert!(!is_constraint_mode());
+
+        enable_constraint_mode();
+        assert!(is_constraint_mode());
+
+        let a = MleAst::from_u64(5);
+        let b = MleAst::from_u64(3);
+
+        // In constraint mode, equality should add constraint and return true
+        assert_eq!(num_constraints(), 0);
+
+        let equal = a == b;
+        assert!(equal); // Should return true in constraint mode
+        assert_eq!(num_constraints(), 1); // Should have added constraint
+
+        let constraints = take_constraints();
+        assert_eq!(constraints.len(), 1);
+        // Constraint should be (a - b)
+        assert!(matches!(get_node(constraints[0].root()), Node::Sub(_, _)));
+
+        // After taking, constraints should be empty
+        assert_eq!(num_constraints(), 0);
+
+        disable_constraint_mode();
+        assert!(!is_constraint_mode());
+
+        // After disabling, equality should not add constraints
+        let equal2 = a == b;
+        assert!(!equal2); // Different nodes, should return false
+        assert_eq!(num_constraints(), 0); // No constraint added
+    }
+
+    // =============================================================================
+    // MleAst Creation Tests
+    // =============================================================================
+
+    #[test]
+    fn test_mle_ast_from_primitives() {
+        // Test from_u64
+        let val_u64 = MleAst::from_u64(42);
+        assert!(matches!(get_node(val_u64.root()), Node::Atom(Atom::Scalar([42, 0, 0, 0]))));
+
+        // Test from_u128
+        let val_u128 = MleAst::from_u128(0xFEDCBA9876543210_123456789ABCDEF0u128);
+        let node_u128 = get_node(val_u128.root());
+        // from_u128 stores: low 64 bits in limb[0], high 64 bits in limb[1]
+        assert!(matches!(
+            node_u128,
+            Node::Atom(Atom::Scalar([0x123456789ABCDEF0, 0xFEDCBA9876543210, 0, 0]))
+        ));
+
+        // Test from_i64 positive
+        let val_i64_pos = MleAst::from_i64(123);
+        assert!(matches!(get_node(val_i64_pos.root()), Node::Atom(Atom::Scalar([123, 0, 0, 0]))));
+
+        // Test from_i64 negative (should compute p - |n|)
+        let val_i64_neg = MleAst::from_i64(-1);
+        let node_neg = get_node(val_i64_neg.root());
+        // -1 in BN254 is p-1
+        assert!(matches!(node_neg, Node::Atom(Atom::Scalar([0x43e1f593f0000000, 0x2833e84879b97091, 0xb85045b68181585d, 0x30644e72e131a029]))));
+
+        // Test from_bool
+        let val_true = MleAst::from_bool(true);
+        assert!(matches!(get_node(val_true.root()), Node::Atom(Atom::Scalar([1, 0, 0, 0]))));
+
+        let val_false = MleAst::from_bool(false);
+        assert!(matches!(get_node(val_false.root()), Node::Atom(Atom::Scalar([0, 0, 0, 0]))));
+    }
+
+    // =============================================================================
+    // Arithmetic Operation Tests
+    // =============================================================================
+
+    #[test]
+    fn test_mle_ast_arithmetic_creates_nodes() {
+        let a = MleAst::from_u64(5);
+        let b = MleAst::from_u64(3);
+
+        // Basic binary ops
+        let sum = a + b;
+        assert!(matches!(get_node(sum.root()), Node::Add(_, _)));
+
+        let diff = a - b;
+        assert!(matches!(get_node(diff.root()), Node::Sub(_, _)));
+
+        let prod = a * b;
+        assert!(matches!(get_node(prod.root()), Node::Mul(_, _)));
+
+        let quot = a / b;
+        assert!(matches!(get_node(quot.root()), Node::Div(_, _)));
+
+        // Unary ops
+        let neg = -a;
+        assert!(matches!(get_node(neg.root()), Node::Neg(_)));
+
+        let inv = a.inverse().unwrap();
+        assert!(matches!(get_node(inv.root()), Node::Inv(_)));
+
+        // Self-operations (edge cases)
+        let squared = a.square();
+        assert!(matches!(get_node(squared.root()), Node::Mul(_, _)));
+
+        let self_prod = a * a;
+        assert!(matches!(get_node(self_prod.root()), Node::Mul(_, _)));
+    }
+
+    #[test]
+    fn test_arithmetic_optimizations() {
+        let a = MleAst::from_u64(5);
+        let zero = MleAst::zero();
+
+        // Test x + 0 = x (should not create Add node)
+        let result1 = a + &zero;
+        assert_eq!(result1.root(), a.root());
+
+        // Test 0 + x = x (should not create Add node)
+        let result2 = zero + &a;
+        assert_eq!(result2.root(), a.root());
+
+        // Test x - 0 = x (should not create Sub node)
+        let result3 = a - &zero;
+        assert_eq!(result3.root(), a.root());
+
+        // Test 0 - x = -x (should create Neg node, not Sub)
+        let result4 = zero - &a;
+        assert!(matches!(get_node(result4.root()), Node::Neg(_)));
+
+        // Test x * 0 = 0 (should return zero, not Mul node)
+        let result5 = a * &zero;
+        assert!(result5.is_zero());
+
+        // Test 0 * x = 0 (should return zero, not Mul node)
+        let result6 = zero * &a;
+        assert!(result6.is_zero());
+    }
+
+    // =============================================================================
+    // Zero/One Tests
+    // =============================================================================
+
+    #[test]
+    fn test_is_zero_is_one() {
+        let zero = MleAst::zero();
+        let one = MleAst::one();
+        let five = MleAst::from_u64(5);
+
+        // Test is_zero
+        assert!(zero.is_zero());
+        assert!(!one.is_zero());
+        assert!(!five.is_zero());
+
+        // Test is_one
+        assert!(one.is_one());
+        assert!(!zero.is_one());
+        assert!(!five.is_one());
     }
 }
-
-impl CanonicalDeserialize for MleAst {
-    fn deserialize_with_mode<R: std::io::Read>(
-        _reader: R,
-        _compress: ark_serialize::Compress,
-        _validate: ark_serialize::Validate,
-    ) -> Result<Self, SerializationError> {
-        unimplemented!("Not needed for constructing ASTs")
-    }
-}
-
-impl Valid for MleAst {
-    fn check(&self) -> Result<(), SerializationError> {
-        unimplemented!("Not needed for constructing ASTs")
-    }
-}
-
-/**********************************************************************/
