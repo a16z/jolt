@@ -1,0 +1,12 @@
+[package]
+name = "modexp-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["guest-std"] }
+num-bigint = { workspace = true, default-features = false }
+num-traits = { workspace = true, default-features = false }

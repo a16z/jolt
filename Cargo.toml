@@ -82,6 +82,8 @@ members = [
     "examples/hash-bench/guest",
     "examples/modinv",
     "examples/modinv/guest",
+    "examples/modexp",
+    "examples/modexp/guest",
     "examples/advice-demo",
     "examples/advice-demo/guest",
     "examples/sig-recovery/host",
