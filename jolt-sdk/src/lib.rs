@@ -88,11 +88,9 @@ impl<T> core::ops::Deref for UntrustedAdvice<T> {
     }
 }
 
-/// Alias for `UntrustedAdvice<T>` — marks a guest function parameter as private.
-///
-/// When the `zk` feature is enabled, BlindFold guarantees the input is
-/// cryptographically hidden from the verifier. Without `zk`, the verifier
-/// still does not receive the input, but the proof does not hide it.
+#[cfg(feature = "private-inputs")]
+/// Alias for `UntrustedAdvice<T>` — marks a guest function parameter as private
+/// (committed by the prover, cryptographically hidden from the verifier via BlindFold).
 pub type Private<T> = UntrustedAdvice<T>;
 
 // This is a dummy _HEAP_PTR to keep the compiler happy.

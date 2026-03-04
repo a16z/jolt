@@ -55,7 +55,16 @@ A program can use any combination of these input types. To access the inner valu
 
 ### Private inputs (ZK)
 
-When you need inputs that are cryptographically hidden from the verifier, use `Private<T>`. This requires the `zk` Cargo feature.
+When you need inputs that are cryptographically hidden from the verifier, use `Private<T>`. This requires:
+- The `private-inputs` feature on `jolt-sdk` in the guest's `Cargo.toml`
+- The `zk` feature when building the host (which includes `private-inputs` automatically)
+
+Guest `Cargo.toml`:
+
+```toml
+[dependencies]
+jolt = { package = "jolt-sdk", features = ["private-inputs"] }
+```
 
 Guest (`guest/src/lib.rs`):
 
