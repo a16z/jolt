@@ -16,8 +16,7 @@ use crate::poly::multiquadratic_poly::MultiquadraticPolynomial;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
@@ -322,14 +321,16 @@ impl<F: JoltField> OuterUniSkipVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OuterUniSkipVerifier<F> {
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F> + 'static> SumcheckInstanceVerifier<F, T, A>
+    for OuterUniSkipVerifier<F>
+{
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
     fn expected_output_claim(
         &self,
-        _accumulator: &VerifierOpeningAccumulator<F>,
+        _accumulator: &A,
         _sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) -> F {
         unimplemented!("Unused for univariate skip")
@@ -337,7 +338,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for OuterUniSki
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -675,11 +676,11 @@ pub struct OuterRemainingSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> OuterRemainingSumcheckVerifier<F> {
-    pub fn new(
+    pub fn new<A: OpeningAccumulator<F>>(
         key: UniformSpartanKey<F>,
         trace_len: usize,
         uni_skip_params: &OuterUniSkipParams<F>,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &A,
     ) -> Self {
         let params =
             OuterRemainingSumcheckParams::new(trace_len, uni_skip_params, opening_accumulator);
@@ -687,7 +688,7 @@ impl<F: JoltField> OuterRemainingSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F> + 'static> SumcheckInstanceVerifier<F, T, A>
     for OuterRemainingSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -696,7 +697,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let r1cs_input_evals = ALL_R1CS_INPUTS.map(|input| {
@@ -722,12 +723,31 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let r_tail_reversed: Vec<F::Challenge> =
             sumcheck_challenges.iter().rev().copied().collect();
         let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
+
+        // Debug output for concrete Fr types (not MleAst)
+        #[cfg(feature = "debug-expected-output")]
+        {
+            use ark_serialize::CanonicalSerialize;
+            fn to_decimal<T: CanonicalSerialize>(val: &T) -> String {
+                let mut bytes = Vec::new();
+                val.serialize_compressed(&mut bytes).unwrap();
+                num_bigint::BigUint::from_bytes_le(&bytes).to_string()
+            }
+            eprintln!("=== expected_output_claim DEBUG ===");
+            eprintln!("inner_sum_prod = {}", to_decimal(&inner_sum_prod));
+            eprintln!("tau_high_bound_r0 = {}", to_decimal(&tau_high_bound_r0));
+            eprintln!("tau_bound_r_tail_reversed = {}", to_decimal(&tau_bound_r_tail_reversed));
+            let result = tau_high_bound_r0 * tau_bound_r_tail_reversed * inner_sum_prod;
+            eprintln!("expected_output_claim (unbatched) = {}", to_decimal(&result));
+            eprintln!("=== END DEBUG ===");
+        }
+
         tau_high_bound_r0 * tau_bound_r_tail_reversed * inner_sum_prod
     }
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);

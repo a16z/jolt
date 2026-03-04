@@ -16,8 +16,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
@@ -496,8 +495,8 @@ pub struct InstructionInputSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> InstructionInputSumcheckVerifier<F> {
-    pub fn new(
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+    pub fn new<A: OpeningAccumulator<F>>(
+        opening_accumulator: &A,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params = InstructionInputParams::new(opening_accumulator, transcript);
@@ -505,10 +504,10 @@ impl<F: JoltField> InstructionInputSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F> + 'static> SumcheckInstanceVerifier<F, T, A>
     for InstructionInputSumcheckVerifier<F>
 {
-    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+    fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);
 
         #[cfg(test)]
@@ -531,7 +530,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
@@ -596,7 +595,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r = self.params.normalize_opening_point(sumcheck_challenges);

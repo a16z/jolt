@@ -23,7 +23,7 @@ use crate::{
         },
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
         split_eq_poly::GruenSplitEqPolynomial,
@@ -1298,10 +1298,10 @@ pub struct InstructionReadRafSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> InstructionReadRafSumcheckVerifier<F> {
-    pub fn new(
+    pub fn new<A: OpeningAccumulator<F>>(
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &A,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params = InstructionReadRafSumcheckParams::new(
@@ -1314,7 +1314,7 @@ impl<F: JoltField> InstructionReadRafSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F> + 'static> SumcheckInstanceVerifier<F, T, A>
     for InstructionReadRafSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -1323,7 +1323,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         // Verifier's RHS reconstruction from virtual claims at r:
@@ -1396,7 +1396,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let r_sumcheck = self.params.normalize_opening_point(sumcheck_challenges);
@@ -1437,6 +1437,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::poly::opening_proof::VerifierOpeningAccumulator;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
     use ark_bn254::Fr;

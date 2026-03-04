@@ -88,8 +88,8 @@ use crate::poly::{
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     opening_proof::{
-        OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-        VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+        OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+        LITTLE_ENDIAN,
     },
     shared_ra_polys::compute_all_G,
     unipoly::UniPoly,
@@ -572,9 +572,12 @@ pub struct HammingWeightClaimReductionVerifier<F: JoltField> {
 
 impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     /// Create verifier. r_cycle and r_addr_bool are extracted from Booleanity opening.
+    ///
+    /// Takes a generic `OpeningAccumulator` to support both real verification
+    /// (`VerifierOpeningAccumulator`) and symbolic transpilation (`AstOpeningAccumulator`).
     pub fn new(
         one_hot_params: &OneHotParams,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         let params =
@@ -583,7 +586,7 @@ impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F> + 'static> SumcheckInstanceVerifier<F, T, A>
     for HammingWeightClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -592,7 +595,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn expected_output_claim(
         &self,
-        accumulator: &VerifierOpeningAccumulator<F>,
+        accumulator: &A,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let N = self.params.polynomial_types.len();
@@ -632,7 +635,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
     fn cache_openings(
         &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
+        accumulator: &mut A,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let N = self.params.polynomial_types.len();
