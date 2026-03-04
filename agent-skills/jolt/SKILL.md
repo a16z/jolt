@@ -43,7 +43,7 @@ If inside an existing Rust library repo, propose:
 
 ```bash
 jolt new <project-name>        # standard mode
-jolt new <project-name> --zk   # with UntrustedAdvice + BlindFold ZK support
+jolt new <project-name> --zk   # with PrivateInput + BlindFold support
 ```
 
 This generates a workspace with a `fib` example — replace it by renaming `fib` → `<fn>` throughout `src/main.rs` and `guest/src/lib.rs`. Preserve the `[patch.crates-io]` block in the root `Cargo.toml` (required arkworks patches).
