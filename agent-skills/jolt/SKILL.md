@@ -1,4 +1,5 @@
 ---
+name: jolt
 description: Wrap a Rust function in a Jolt zero-knowledge proof
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task
 ---

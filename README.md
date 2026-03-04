@@ -180,6 +180,14 @@ To further assist in debugging, Jolt supports `print!` and `println!` macros in 
 
 When debugging issues with guest programs, it's recommended to use the corresponding `trace_analyze` for your `#[jolt::provable]` functions. This skips instantiating the prover and allows for faster iteration.
 
+## AI Coding Skill
+
+Jolt ships an [agent skill](https://vercel.com/docs/agent-resources/skills) that teaches AI coding agents (Claude Code, Cursor, Codex, etc.) how to wrap Rust functions in Jolt zero-knowledge proofs.
+
+```bash
+npx skills add a16z/jolt
+```
+
 ## CI Benchmarking
 
 We have enabled [benchmarking during CI](https://a16z.github.io/jolt/dev/bench/) to track performance changes over time in terms of prover runtime and peak memory usage.

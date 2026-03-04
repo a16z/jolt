@@ -1,17 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
-TOOL="${1:-claude}"
-REPO="a16z/jolt"
-BRANCH="main"
-BASE="https://raw.githubusercontent.com/$REPO/$BRANCH/agent-skills/jolt"
+BASE="https://raw.githubusercontent.com/a16z/jolt/main/agent-skills/jolt"
+installed=0
 
-case "$TOOL" in
-  claude) DEST="${2:-$HOME/.claude/skills/jolt}" ;;
-  codex)  DEST="${2:-$HOME/.agents/skills/jolt}" ;;
-  *)      echo "Usage: install.sh [claude|codex] [dest-dir]"; exit 1 ;;
-esac
+for dir in "$HOME/.claude" "$HOME/.codex"; do
+  if [ -d "$dir" ]; then
+    dest="$dir/skills/jolt"
+    mkdir -p "$dest"
+    curl -sfL "$BASE/SKILL.md" -o "$dest/SKILL.md"
+    echo "Installed Jolt skill to $dest"
+    installed=1
+  fi
+done
 
-mkdir -p "$DEST"
-curl -sfL "$BASE/SKILL.md" -o "$DEST/SKILL.md"
-echo "Installed Jolt skill to $DEST"
+if [ "$installed" -eq 0 ]; then
+  echo "No agent config found (~/.claude or ~/.codex). Install Claude Code or Codex first."
+  exit 1
+fi
