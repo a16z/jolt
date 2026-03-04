@@ -88,7 +88,7 @@ impl<T> core::ops::Deref for UntrustedAdvice<T> {
     }
 }
 
-#[cfg(feature = "private-inputs")]
+#[cfg(feature = "zk")]
 /// Alias for `UntrustedAdvice<T>` — marks a guest function parameter as private
 /// (committed by the prover, cryptographically hidden from the verifier via BlindFold).
 pub type Private<T> = UntrustedAdvice<T>;
