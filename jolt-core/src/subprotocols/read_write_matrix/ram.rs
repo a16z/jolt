@@ -190,7 +190,7 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
         gamma: F,
         _ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
         _wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
-    ) -> [F::Unreduced<8>; 2] {
+    ) -> [F::UnreducedProduct; 2] {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.row.is_even());
@@ -199,8 +199,10 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
                 let ra_evals = [even.ra_coeff, odd.ra_coeff - even.ra_coeff];
                 let val_evals = [even.val_coeff, odd.val_coeff - even.val_coeff];
                 [
-                    ra_evals[0].mul_unreduced(val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
-                    ra_evals[1].mul_unreduced(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
+                    ra_evals[0]
+                        .mul_to_product(val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
+                    ra_evals[1]
+                        .mul_to_product(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
                 ]
             }
             (Some(even), None) => {
@@ -208,8 +210,10 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
                 let ra_evals = [even.ra_coeff, -even.ra_coeff];
                 let val_evals = [even.val_coeff, odd_val_coeff - even.val_coeff];
                 [
-                    ra_evals[0].mul_unreduced(val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
-                    ra_evals[1].mul_unreduced(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
+                    ra_evals[0]
+                        .mul_to_product(val_evals[0] + gamma * (inc_evals[0] + val_evals[0])),
+                    ra_evals[1]
+                        .mul_to_product(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
                 ]
             }
             (None, Some(odd)) => {
@@ -217,8 +221,9 @@ impl<F: JoltField> CycleMajorMatrixEntry<F> for RamCycleMajorEntry<F> {
                 let ra_evals = [F::zero(), odd.ra_coeff];
                 let val_evals = [even_val_coeff, odd.val_coeff - even_val_coeff];
                 [
-                    F::Unreduced::<8>::zero(), // ra_evals[0] is zero
-                    ra_evals[1].mul_unreduced(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
+                    F::UnreducedProduct::zero(),
+                    ra_evals[1]
+                        .mul_to_product(val_evals[1] + gamma * (inc_evals[1] + val_evals[1])),
                 ]
             }
             (None, None) => panic!("Both entries are None"),
@@ -420,7 +425,7 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RamAddressMajorEntry<F> {
         inc_eval: F,
         eq_eval: F,
         gamma: F,
-    ) -> [F::Unreduced<8>; 2] {
+    ) -> [F::UnreducedProduct; 2] {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.col.is_even());
@@ -432,48 +437,38 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RamAddressMajorEntry<F> {
                     odd.val_coeff + odd.val_coeff - even.val_coeff,
                 ];
                 [
-                    eq_eval.mul_unreduced(
+                    eq_eval.mul_to_product(
                         ra_evals[0] * (val_evals[0] + gamma * (inc_eval + val_evals[0])),
                     ),
-                    eq_eval.mul_unreduced(
+                    eq_eval.mul_to_product(
                         ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
                     ),
                 ]
             }
             (Some(even), None) => {
-                // For SparseMatrixPolynomial, the absence of a matrix entry implies
-                // that its coeff has not been bound yet.
-                // The absence of an odd-row entry in the same column as even
-                // means that its implicit Val coeff is odd_checkpoint, and its implicit
-                // ra coeff is 0.
                 let ra_evals = [even.ra_coeff, -even.ra_coeff];
                 let val_evals = [
                     even.val_coeff,
                     odd_checkpoint + odd_checkpoint - even.val_coeff,
                 ];
                 [
-                    eq_eval.mul_unreduced(
+                    eq_eval.mul_to_product(
                         ra_evals[0] * (val_evals[0] + gamma * (inc_eval + val_evals[0])),
                     ),
-                    eq_eval.mul_unreduced(
+                    eq_eval.mul_to_product(
                         ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
                     ),
                 ]
             }
             (None, Some(odd)) => {
-                // For SparseMatrixPolynomial, the absence of a matrix entry implies
-                // that its coeff has not been bound yet.
-                // The absence of an even-row entry in the same column as odd
-                // means that its implicit Val coeff is even_checkpoint, and its implicit
-                // ra coeff is 0.
                 let ra_evals = [F::zero(), odd.ra_coeff + odd.ra_coeff];
                 let val_evals = [
                     even_checkpoint,
                     odd.val_coeff + odd.val_coeff - even_checkpoint,
                 ];
                 [
-                    F::Unreduced::<8>::zero(), // ra_evals[0] is zero
-                    eq_eval.mul_unreduced(
+                    F::UnreducedProduct::zero(),
+                    eq_eval.mul_to_product(
                         ra_evals[1] * (val_evals[1] + gamma * (inc_eval + val_evals[1])),
                     ),
                 ]

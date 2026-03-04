@@ -6,14 +6,14 @@
 
 use ark_bn254::Fr;
 use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
-use dory::primitives::arithmetic::{DoryRoutines, Group as DoryGroup, PairingCurve};
+use dory::mode::Transparent;
+use dory::primitives::arithmetic::{
+    DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
+};
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use jolt_openings::{CommitmentScheme, HomomorphicCommitmentScheme, OpeningsError};
 use jolt_poly::MultilinearPolynomial;
 use jolt_transcript::Transcript;
-use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
-use sha3::{Digest, Sha3_256};
 
 use crate::params::DoryParams;
 use crate::transcript::JoltToDoryTranscript;
@@ -70,20 +70,22 @@ impl CommitmentScheme for DoryScheme {
         "Dory"
     }
 
+    /// Generates prover SRS (G1/G2 generator vectors) from a deterministic
+    /// SHA3-seeded RNG. `max_num_vars` is the maximum polynomial size
+    /// ($\log_2$ of evaluations) that can be committed.
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
-        let mut hasher = Sha3_256::new();
-        hasher.update(b"Jolt Dory URS seed");
-        let hash_result = hasher.finalize();
-        let seed: [u8; 32] = hash_result.into();
-        let mut rng = ChaCha20Rng::from_seed(seed);
-        DoryProverSetup(ArkworksProverSetup::new_from_urs(&mut rng, max_num_vars))
+        DoryProverSetup(ArkworksProverSetup::new_from_urs(max_num_vars))
     }
 
+    /// Derives the verifier SRS (a subset of the prover SRS).
     fn setup_verifier(max_num_vars: usize) -> Self::VerifierSetup {
         let prover_setup = Self::setup_prover(max_num_vars);
         DoryVerifierSetup(prover_setup.0.to_verifier_setup())
     }
 
+    /// Commits to a multilinear polynomial via two-tier Dory:
+    /// tier-1 computes per-row MSMs against G1 generators, then tier-2
+    /// pairs those row commitments with G2 generators into a single GT element.
     fn commit(
         poly: &impl MultilinearPolynomial<Fr>,
         setup: &Self::ProverSetup,
@@ -100,6 +102,10 @@ impl CommitmentScheme for DoryScheme {
         DoryCommitment(tier_2)
     }
 
+    /// Generates an opening proof for `poly` at `point`.
+    ///
+    /// The evaluation point is reversed before passing to `dory-pcs` because
+    /// Jolt uses MSB-first variable ordering while `dory-pcs` uses LSB-first.
     fn prove(
         poly: &impl MultilinearPolynomial<Fr>,
         point: &[Fr],
@@ -119,20 +125,23 @@ impl CommitmentScheme for DoryScheme {
 
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
-        let proof = dory::prove::<InnerFr, InnerBN254, G1Routines, G2Routines, _, _>(
-            &wrapped,
-            &ark_point,
-            row_commitments,
-            nu,
-            sigma,
-            &setup.0,
-            &mut dory_transcript,
-        )
-        .expect("Dory proof generation should not fail");
+        let (proof, _blind) =
+            dory::prove::<InnerFr, InnerBN254, G1Routines, G2Routines, _, _, Transparent>(
+                &wrapped,
+                &ark_point,
+                row_commitments,
+                <InnerFr as DoryField>::zero(),
+                nu,
+                sigma,
+                &setup.0,
+                &mut dory_transcript,
+            )
+            .expect("Dory proof generation should not fail");
 
         DoryProof(proof)
     }
 
+    /// Verifies an opening proof against a commitment, point, and claimed evaluation.
     fn verify(
         commitment: &Self::Commitment,
         point: &[Fr],
@@ -161,6 +170,7 @@ impl CommitmentScheme for DoryScheme {
 impl HomomorphicCommitmentScheme for DoryScheme {
     type BatchedProof = DoryBatchedProof;
 
+    /// Computes $\sum_i s_i \cdot C_i$ in GT, used for RLC batching.
     fn combine_commitments(
         commitments: &[Self::Commitment],
         scalars: &[Self::Field],
@@ -183,6 +193,7 @@ impl HomomorphicCommitmentScheme for DoryScheme {
         DoryCommitment(combined)
     }
 
+    /// Produces one independent opening proof per polynomial.
     fn batch_prove(
         polynomials: &[&dyn MultilinearPolynomial<Fr>],
         points: &[Vec<Fr>],
@@ -203,6 +214,7 @@ impl HomomorphicCommitmentScheme for DoryScheme {
         DoryBatchedProof(proofs)
     }
 
+    /// Verifies each proof in the batch independently.
     fn batch_verify(
         commitments: &[Self::Commitment],
         points: &[Vec<Fr>],
@@ -249,16 +261,18 @@ fn prove_inner(
 
     let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
-    let proof = dory::prove::<InnerFr, InnerBN254, G1Routines, G2Routines, _, _>(
-        &wrapped,
-        &ark_point,
-        row_commitments,
-        nu,
-        sigma,
-        &setup.0,
-        &mut dory_transcript,
-    )
-    .expect("Dory proof generation should not fail");
+    let (proof, _blind) =
+        dory::prove::<InnerFr, InnerBN254, G1Routines, G2Routines, _, _, Transparent>(
+            &wrapped,
+            &ark_point,
+            row_commitments,
+            <InnerFr as DoryField>::zero(),
+            nu,
+            sigma,
+            &setup.0,
+            &mut dory_transcript,
+        )
+        .expect("Dory proof generation should not fail");
 
     DoryProof(proof)
 }
@@ -322,14 +336,15 @@ impl DoryPolynomial<InnerFr> for DoryPolyAdapter {
         jolt_fr_to_ark(&result)
     }
 
-    fn commit<E, M1>(
+    fn commit<E, Mo, M1>(
         &self,
         _nu: usize,
         sigma: usize,
         setup: &dory::setup::ProverSetup<E>,
-    ) -> Result<(E::GT, Vec<E::G1>), dory::error::DoryError>
+    ) -> Result<(E::GT, Vec<E::G1>, InnerFr), dory::error::DoryError>
     where
         E: PairingCurve,
+        Mo: dory::mode::Mode,
         M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = InnerFr>,
     {
@@ -347,7 +362,7 @@ impl DoryPolynomial<InnerFr> for DoryPolyAdapter {
         let g2_bases = &setup.g2_vec[..row_commitments.len()];
         let tier_2 = E::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-        Ok((tier_2, row_commitments))
+        Ok((tier_2, row_commitments, <InnerFr as DoryField>::zero()))
     }
 }
 

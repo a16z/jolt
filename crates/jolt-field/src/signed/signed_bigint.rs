@@ -183,6 +183,7 @@ impl<const N: usize> SignedBigInt<N> {
 }
 
 impl<const N: usize> SignedBigInt<N> {
+    /// Adds two values and truncates the result to `M` limbs.
     #[inline]
     pub fn add_trunc<const M: usize>(&self, rhs: &SignedBigInt<N>) -> SignedBigInt<M> {
         if self.is_positive == rhs.is_positive {
@@ -210,6 +211,7 @@ impl<const N: usize> SignedBigInt<N> {
         }
     }
 
+    /// Subtracts and truncates the result to `M` limbs.
     #[inline]
     pub fn sub_trunc<const M: usize>(&self, rhs: &SignedBigInt<N>) -> SignedBigInt<M> {
         if self.is_positive != rhs.is_positive {
@@ -237,6 +239,7 @@ impl<const N: usize> SignedBigInt<N> {
         }
     }
 
+    /// Adds values of different widths (`N` and `M` limbs) and truncates to `P` limbs.
     #[inline]
     pub fn add_trunc_mixed<const M: usize, const P: usize>(
         &self,
@@ -267,6 +270,7 @@ impl<const N: usize> SignedBigInt<N> {
         }
     }
 
+    /// Subtracts values of different widths and truncates to `P` limbs.
     #[inline]
     pub fn sub_trunc_mixed<const M: usize, const P: usize>(
         &self,
@@ -297,6 +301,7 @@ impl<const N: usize> SignedBigInt<N> {
         }
     }
 
+    /// Multiplies and truncates the result to `P` limbs.
     #[inline]
     pub fn mul_trunc<const M: usize, const P: usize>(
         &self,
@@ -310,6 +315,7 @@ impl<const N: usize> SignedBigInt<N> {
         }
     }
 
+    /// Fused multiply-add: `acc += self * rhs`, truncated to `P` limbs.
     #[inline]
     pub fn fmadd_trunc<const M: usize, const P: usize>(
         &self,
@@ -493,6 +499,7 @@ impl S128 {
     }
 }
 
+/// Adds two sign-magnitude `u64` values, returning `(magnitude, is_positive)`.
 #[inline]
 pub fn add_with_sign_u64(a_mag: u64, a_pos: bool, b_mag: u64, b_pos: bool) -> (u64, bool) {
     let a = SignedBigInt::<1>::from_u64_with_sign(a_mag, a_pos);

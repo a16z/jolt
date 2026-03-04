@@ -27,6 +27,12 @@ use std::iter::zip;
 use common::jolt_device::MemoryLayout;
 use tracer::instruction::Cycle;
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::{
     field::JoltField,
     poly::{
@@ -99,6 +105,58 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BooleanitySumcheckParams<F> {
         opening_point[..self.log_k_chunk].reverse();
         opening_point[self.log_k_chunk..].reverse();
         opening_point.into()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::default()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let n = self.polynomial_types.len();
+
+        let mut terms = Vec::with_capacity(2 * n);
+        for (i, poly_type) in self.polynomial_types.iter().enumerate() {
+            let opening = OpeningId::committed(*poly_type, SumcheckId::Booleanity);
+
+            terms.push(ProductTerm::scaled(
+                ValueSource::Challenge(2 * i),
+                vec![ValueSource::Opening(opening), ValueSource::Opening(opening)],
+            ));
+            terms.push(ProductTerm::scaled(
+                ValueSource::Challenge(2 * i + 1),
+                vec![ValueSource::Opening(opening)],
+            ));
+        }
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let combined_r: Vec<F::Challenge> = self
+            .r_address
+            .iter()
+            .cloned()
+            .rev()
+            .chain(self.r_cycle.iter().cloned().rev())
+            .collect();
+
+        let eq_eval: F = EqPolynomial::<F>::mle(sumcheck_challenges, &combined_r);
+
+        let mut challenges = Vec::with_capacity(2 * self.polynomial_types.len());
+        for gamma_2i in &self.gamma_powers_square {
+            let coeff = eq_eval * *gamma_2i;
+            challenges.push(coeff);
+            challenges.push(-coeff);
+        }
+        challenges
     }
 }
 
@@ -300,7 +358,7 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
 
         // Compute quadratic coefficients via generic split-eq fold
         let quadratic_coeffs: [F; DEGREE_BOUND - 1] = B
-            .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|k_prime| {
+            .par_fold_out_in_unreduced::<{ DEGREE_BOUND - 1 }>(&|k_prime| {
                 let coeffs = (0..N)
                     .into_par_iter()
                     .map(|i| {
@@ -322,23 +380,23 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
                                 [eval_0, eval_infty]
                             })
                             .fold_with(
-                                [F::Unreduced::<5>::zero(); DEGREE_BOUND - 1],
+                                [F::UnreducedMulU64::zero(); DEGREE_BOUND - 1],
                                 |running, new| {
                                     [
-                                        running[0] + new[0].as_unreduced_ref(),
-                                        running[1] + new[1].as_unreduced_ref(),
+                                        running[0] + new[0].to_unreduced(),
+                                        running[1] + new[1].to_unreduced(),
                                     ]
                                 },
                             )
                             .reduce(
-                                || [F::Unreduced::zero(); DEGREE_BOUND - 1],
+                                || [F::UnreducedMulU64::zero(); DEGREE_BOUND - 1],
                                 |running, new| [running[0] + new[0], running[1] + new[1]],
                             );
 
                         let gamma_2i = self.params.gamma_powers_square[i];
                         [
-                            gamma_2i * F::from_barrett_reduce(inner_sum[0]),
-                            gamma_2i * F::from_barrett_reduce(inner_sum[1]),
+                            gamma_2i * F::reduce_mul_u64(inner_sum[0]),
+                            gamma_2i * F::reduce_mul_u64(inner_sum[1]),
                         ]
                     })
                     .reduce(
@@ -358,10 +416,10 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
 
         // Compute quadratic coefficients via generic split-eq fold (handles both E_in cases).
         let quadratic_coeffs: [F; DEGREE_BOUND - 1] = D
-            .par_fold_out_in_unreduced::<9, { DEGREE_BOUND - 1 }>(&|j_prime| {
+            .par_fold_out_in_unreduced::<{ DEGREE_BOUND - 1 }>(&|j_prime| {
                 // Accumulate in unreduced form to minimize per-term reductions
-                let mut acc_c = F::Unreduced::<9>::zero();
-                let mut acc_e = F::Unreduced::<9>::zero();
+                let mut acc_c = F::UnreducedProductAccum::zero();
+                let mut acc_e = F::UnreducedProductAccum::zero();
                 for i in 0..num_polys {
                     let h_0 = H.get_bound_coeff(i, 2 * j_prime);
                     let h_1 = H.get_bound_coeff(i, 2 * j_prime + 1);
@@ -372,12 +430,12 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
                     //   gamma^{2i}*h0*(h0-1) = (rho*h0) * (rho*h0 - rho)
                     //   gamma^{2i}*b*b       = (rho*b) * (rho*b)
                     let rho = self.gamma_powers[i];
-                    acc_c += h_0.mul_unreduced::<9>(h_0 - rho);
-                    acc_e += b.mul_unreduced::<9>(b);
+                    acc_c += h_0.mul_to_product_accum(h_0 - rho);
+                    acc_e += b.mul_to_product_accum(b);
                 }
                 [
-                    F::from_montgomery_reduce::<9>(acc_c),
-                    F::from_montgomery_reduce::<9>(acc_e),
+                    F::reduce_product_accum(acc_c),
+                    F::reduce_product_accum(acc_e),
                 ]
             });
 
@@ -455,7 +513,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
@@ -468,7 +525,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
         // All polynomials share the same opening point (r_address, r_cycle)
         // Use a single SumcheckId for all
         accumulator.append_sparse(
-            transcript,
             self.params.polynomial_types.clone(),
             SumcheckId::Booleanity,
             opening_point.r[..self.params.log_k_chunk].to_vec(),
@@ -533,12 +589,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BooleanityS
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_sparse(
-            transcript,
             self.params.polynomial_types.clone(),
             SumcheckId::Booleanity,
             opening_point.r,

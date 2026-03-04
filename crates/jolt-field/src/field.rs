@@ -108,10 +108,12 @@ pub trait Field:
     }
 }
 
-/// Trait for operations with unreduced representations.
+/// Exposes unreduced (wider-than-field) multiplication results.
 ///
-/// Uses `BigInt<N>` directly with const-generic sizes instead of an associated type,
-/// matching the arkworks fork's API for truncated multiplication.
+/// In Montgomery form, a product of two 4-limb elements produces up to 8 limbs
+/// before reduction. This trait gives access to those raw limbs so that
+/// [`FMAdd`](crate::FMAdd) accumulators can defer reduction across many
+/// multiply-add steps, amortizing the cost.
 pub trait UnreducedOps: Field {
     /// Direct reference to the inner Montgomery-form limbs as `BigInt<4>`.
     fn as_unreduced_ref(&self) -> &BigInt<4>;
@@ -126,16 +128,34 @@ pub trait UnreducedOps: Field {
     fn mul_u128_unreduced(self, other: u128) -> BigInt<6>;
 }
 
-/// Trait for field reduction operations
+/// Converts wide (unreduced) limb representations back to field elements.
+///
+/// Two reduction strategies are available:
+/// - **Montgomery reduction** — standard REDC; used when the accumulator is
+///   already in Montgomery form.
+/// - **Barrett reduction** — uses a precomputed approximate inverse of `p`;
+///   faster when the accumulator has more than `2N` limbs because it avoids
+///   the sequential carry chain of REDC.
 pub trait ReductionOps: UnreducedOps {
+    /// Montgomery constant $R = 2^{256} \mod p$ (in Montgomery form).
     const MONTGOMERY_R: Self;
+    /// Montgomery constant $R^2 = 2^{512} \mod p$ (in Montgomery form).
     const MONTGOMERY_R_SQUARE: Self;
 
+    /// Reduces a wide `BigInt<L>` to a field element via Montgomery REDC.
     fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Self;
+    /// Reduces a wide `BigInt<L>` to a field element via Barrett reduction.
     fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self;
 }
 
-/// Challenge trait with minimal bounds
+/// A Fiat-Shamir challenge value that can be combined with field elements.
+///
+/// Challenges are drawn from a transcript and used as random scalars in
+/// batching (RLC) and sumcheck. Two implementations exist:
+/// - [`MontU128Challenge`](crate::challenge::MontU128Challenge) — 125-bit
+///   range, avoids full-width Montgomery reduction (default).
+/// - [`Mont254BitChallenge`](crate::challenge::Mont254BitChallenge) — full
+///   254-bit field element, used when the wider range is needed.
 pub trait Challenge<F: Field>:
     Copy
     + Send
@@ -149,7 +169,10 @@ pub trait Challenge<F: Field>:
     fn rand<R: RngCore>(rng: &mut R) -> Self;
 }
 
-/// Trait for fields that support challenge types
+/// Associates a [`Field`] with its default [`Challenge`] type.
+///
+/// The associated type is selected at compile time via the
+/// `challenge-254-bit` feature flag.
 pub trait WithChallenge: Field {
     type Challenge: Challenge<Self>;
 }
@@ -163,9 +186,16 @@ pub trait MaybeAllocative {}
 #[cfg(not(feature = "allocative"))]
 impl<T> MaybeAllocative for T {}
 
+/// Multiplication with fast-path short-circuits for zero and one.
+///
+/// In sumcheck hot loops many evaluations multiply by 0 or 1.
+/// These methods avoid the full Montgomery multiplication in those cases.
 pub trait OptimizedMul<Rhs, Output>: Sized + Mul<Rhs, Output = Output> {
+    /// Returns `zero()` immediately if either operand is zero.
     fn mul_0_optimized(self, other: Rhs) -> Self::Output;
+    /// Returns the other operand immediately if either is one.
     fn mul_1_optimized(self, other: Rhs) -> Self::Output;
+    /// Combined: short-circuits on both zero and one.
     fn mul_01_optimized(self, other: Rhs) -> Self::Output;
 }
 

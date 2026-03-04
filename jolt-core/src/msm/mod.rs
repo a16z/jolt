@@ -6,21 +6,18 @@ use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{CurveGroup, ScalarMul};
-use jolt_field::signed::{S128, S64};
+use ark_ff::biginteger::{S128, S64};
 use rayon::prelude::*;
 
 pub mod bucket;
-pub mod stream_pippenger;
 pub mod typed_msm;
-
-pub use typed_msm::BucketMSM;
 
 use typed_msm::{
     msm_binary, msm_i128, msm_i64, msm_s128, msm_s64, msm_u128, msm_u16, msm_u32, msm_u64,
     msm_u8,
 };
 
-pub trait VariableBaseMSM: ArkVariableBaseMSM + BucketMSM
+pub trait VariableBaseMSM: ArkVariableBaseMSM
 where
     Self: ScalarMul,
     Self::ScalarField: JoltField,

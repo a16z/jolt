@@ -281,10 +281,10 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         let chunk_size = (indices.len() / num_chunks).max(1);
 
         // Accumulate in row-major for write locality: rows are r_index in [0, poly_len)
-        let new_Q_rows: Vec<[F::Unreduced<7>; ORDER]> = indices
+        let new_Q_rows: Vec<[F::UnreducedMulU128Accum; ORDER]> = indices
             .par_chunks(chunk_size)
             .fold(
-                || vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
+                || vec![[F::UnreducedMulU128Accum::zero(); ORDER]; poly_len],
                 |mut acc, chunk| {
                     for j in chunk {
                         let k = lookup_bits[*j];
@@ -303,7 +303,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 },
             )
             .reduce(
-                || vec![[F::Unreduced::<7>::zero(); ORDER]; poly_len],
+                || vec![[F::UnreducedMulU128Accum::zero(); ORDER]; poly_len],
                 |mut acc, new| {
                     for (acc_row, new_row) in acc.iter_mut().zip(new.iter()) {
                         for s in 0..ORDER {
@@ -319,7 +319,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
         for r_idx in 0..poly_len {
             for s in 0..ORDER {
-                reduced_Q[s][r_idx] = F::from_barrett_reduce(new_Q_rows[r_idx][s]);
+                reduced_Q[s][r_idx] = F::reduce_mul_u128_accum(new_Q_rows[r_idx][s]);
             }
         }
 
@@ -349,24 +349,24 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 let q_left = q[index];
                 let q_right = q[index + len / 2];
                 (
-                    p_evals.0.mul_unreduced::<9>(q_left),  // prefix(0) * suffix(0)
-                    p_evals.1.mul_unreduced::<9>(q_left),  // prefix(2) * suffix(0)
-                    p_evals.1.mul_unreduced::<9>(q_right), // prefix(2) * suffix(1)
+                    p_evals.0.mul_to_product_accum(q_left), // prefix(0) * suffix(0)
+                    p_evals.1.mul_to_product_accum(q_left), // prefix(2) * suffix(0)
+                    p_evals.1.mul_to_product_accum(q_right), // prefix(2) * suffix(1)
                 )
             })
             .reduce(
                 || {
                     (
-                        F::Unreduced::<9>::zero(),
-                        F::Unreduced::<9>::zero(),
-                        F::Unreduced::<9>::zero(),
+                        F::UnreducedProductAccum::zero(),
+                        F::UnreducedProductAccum::zero(),
+                        F::UnreducedProductAccum::zero(),
                     )
                 },
                 |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
             );
-        let eval_0 = F::from_montgomery_reduce(eval_0);
-        let eval_2_right = F::from_montgomery_reduce(eval_2_right);
-        let eval_2_left = F::from_montgomery_reduce(eval_2_left);
+        let eval_0 = F::reduce_product_accum(eval_0);
+        let eval_2_right = F::reduce_product_accum(eval_2_right);
+        let eval_2_left = F::reduce_product_accum(eval_2_left);
         (eval_0, eval_2_right + eval_2_right - eval_2_left)
     }
 
@@ -484,7 +484,7 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
         let num_threads = rayon::current_num_threads();
         let chunk_size = lookup_bits.len().div_ceil(num_threads).max(1);
 
-        type U7<F> = <F as JoltField>::Unreduced<7>;
+        type U7<F> = <F as JoltField>::UnreducedMulU128Accum;
         let total_len = 5 * poly_len;
 
         // Single allocation for all 5 accumulators (layout: [sh | l | r | sf | id]).
@@ -521,7 +521,7 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                             // ShiftHalfSuffixPolynomial is constant for a fixed `suffix_len`, so
                             // we just accumulate `u` here and apply the 2^{suffix_len/2} scaling
                             // once per bucket after reduction.
-                            acc[sh_idx] += *u.as_unreduced_ref();
+                            acc[sh_idx] += u.to_unreduced();
 
                             let (lo_bits, ro_bits) = suffix_bits.uninterleave();
                             let lo: u64 = lo_bits.into();
@@ -537,7 +537,7 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                             // ShiftSuffixPolynomial is constant for a fixed `suffix_len`, so
                             // we just accumulate `u` here and apply the 2^{suffix_len} scaling
                             // once per bucket after reduction.
-                            acc[sf_idx] += *u.as_unreduced_ref();
+                            acc[sf_idx] += u.to_unreduced();
 
                             if id_fits_u64 {
                                 let id: u64 = suffix_bits.into();
@@ -581,7 +581,7 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                         rows_left
                             .par_iter()
                             .copied()
-                            .map(F::from_barrett_reduce)
+                            .map(F::reduce_mul_u128_accum)
                             .collect::<Vec<F>>()
                     },
                     || {
@@ -590,14 +590,14 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                                 rows_right
                                     .par_iter()
                                     .copied()
-                                    .map(F::from_barrett_reduce)
+                                    .map(F::reduce_mul_u128_accum)
                                     .collect::<Vec<F>>()
                             },
                             || {
                                 rows_identity
                                     .par_iter()
                                     .copied()
-                                    .map(F::from_barrett_reduce)
+                                    .map(F::reduce_mul_u128_accum)
                                     .collect::<Vec<F>>()
                             },
                         )
@@ -613,7 +613,7 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                             .par_iter()
                             .copied()
                             .map(|v| {
-                                let reduced = F::from_barrett_reduce(v);
+                                let reduced = F::reduce_mul_u128_accum(v);
                                 if shift_half == 1 {
                                     reduced
                                 } else {
@@ -627,7 +627,7 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                             .par_iter()
                             .copied()
                             .map(|v| {
-                                let reduced = F::from_barrett_reduce(v);
+                                let reduced = F::reduce_mul_u128_accum(v);
                                 if shift_full == 1 {
                                     reduced
                                 } else {

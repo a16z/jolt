@@ -609,6 +609,7 @@ impl<const N: usize> From<S224> for BigInt<N> {
 }
 
 impl S160 {
+    /// Computes the signed difference `a - b` as an `S160`.
     #[inline]
     pub fn from_diff_u64(a: u64, b: u64) -> Self {
         let mag = a.abs_diff(b);
@@ -616,6 +617,7 @@ impl S160 {
         S160::new([mag, 0], 0, is_positive)
     }
 
+    /// Creates an `S160` from a `u128` magnitude and sign.
     #[inline]
     pub fn from_magnitude_u128(mag: u128, is_positive: bool) -> Self {
         let lo = mag as u64;
@@ -623,6 +625,7 @@ impl S160 {
         S160::new([lo, hi], 0, is_positive)
     }
 
+    /// Computes the signed difference `u1 - u2` as an `S160`.
     #[inline]
     pub fn from_diff_u128(u1: u128, u2: u128) -> Self {
         if u1 >= u2 {
@@ -632,6 +635,7 @@ impl S160 {
         }
     }
 
+    /// Computes `u1 + u2` as an `S160`, handling carry into the hi32 limb.
     #[inline]
     pub fn from_sum_u128(u1: u128, u2: u128) -> Self {
         let u1_lo = u1 as u64;
@@ -645,6 +649,7 @@ impl S160 {
         S160::new([sum_lo, sum_hi], u32::from(carry_out), true)
     }
 
+    /// Computes `u - i` as an `S160`.
     #[inline]
     pub fn from_u128_minus_i128(u: u128, i: i128) -> Self {
         if i >= 0 {

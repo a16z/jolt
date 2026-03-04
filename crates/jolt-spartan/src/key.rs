@@ -101,27 +101,30 @@ impl<F: Field> SpartanKey<F> {
         (a_entries, b_entries, c_entries)
     }
 
-    /// Returns a reference to the MLE of the $A$ matrix.
+    /// Precomputed MLE of the $A$ constraint matrix.
     pub fn a_mle(&self) -> &DensePolynomial<F> {
         &self.a_mle
     }
 
-    /// Returns a reference to the MLE of the $B$ matrix.
+    /// Precomputed MLE of the $B$ constraint matrix.
     pub fn b_mle(&self) -> &DensePolynomial<F> {
         &self.b_mle
     }
 
-    /// Returns a reference to the MLE of the $C$ matrix.
+    /// Precomputed MLE of the $C$ constraint matrix.
     pub fn c_mle(&self) -> &DensePolynomial<F> {
         &self.c_mle
     }
 
-    /// Number of sumcheck variables: $\log_2(m')$ where $m'$ is the padded constraint count.
+    /// Number of sumcheck variables: $\log_2(m')$ where $m'$ is the padded
+    /// constraint count. This determines the number of rounds in the outer
+    /// Spartan sumcheck.
     pub fn num_sumcheck_vars(&self) -> usize {
         self.num_constraints_padded.trailing_zeros() as usize
     }
 
-    /// Number of variables in the witness MLE: $\log_2(n')$.
+    /// Number of variables in the witness MLE: $\log_2(n')$. This determines
+    /// the dimensionality of witness opening evaluation points.
     pub fn num_witness_vars(&self) -> usize {
         self.num_variables_padded.trailing_zeros() as usize
     }

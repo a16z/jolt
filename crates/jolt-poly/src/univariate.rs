@@ -103,7 +103,7 @@ impl<F: Field> UnivariatePoly<F> {
         }
     }
 
-    /// Read access to the coefficient vector.
+    /// Coefficients in ascending degree order: index $i$ holds the coefficient of $x^i$.
     pub fn coefficients(&self) -> &[F] {
         &self.coefficients
     }

@@ -5,7 +5,7 @@
 // Original code dual-licensed under Apache-2.0 and MIT.
 
 use ark_ec::models::short_weierstrass::{Affine, Projective, SWCurveConfig};
-use ark_ff::{AdditiveGroup, Field};
+use ark_ff::{AdditiveGroup, Field, One, Zero};
 use std::ops::{AddAssign, Neg, SubAssign};
 
 #[must_use]
@@ -68,7 +68,7 @@ impl<P: SWCurveConfig> Bucket<P> {
         self.x.square_in_place();
         self.x -= &s.double();
 
-        self.y = P::BaseField::sum_of_products(&[m, -w], &[(s - &self.x), self.y]);
+        self.y = P::BaseField::sum_of_products(&[m, -w], &[(s - self.x), self.y]);
 
         self.zz *= v;
         self.zzz *= &w;
@@ -84,8 +84,8 @@ pub fn double_affine_to_bucket<P: SWCurveConfig>(p: &Affine<P>) -> Bucket<P> {
 
     let u = p.y.double();
     let v = u.square();
-    let w = u * &v;
-    let s = p.x * &v;
+    let w = u * v;
+    let s = p.x * v;
 
     let mut m = p.x.square();
     m += m.double();
@@ -120,8 +120,8 @@ impl<P: SWCurveConfig> AddAssign<&Affine<P>> for Bucket<P> {
         if self.is_zero() {
             self.x = other.x;
             self.y = other.y;
-            self.zz = P::BaseField::one();
-            self.zzz = P::BaseField::one();
+            self.zz = <P::BaseField as One>::one();
+            self.zzz = <P::BaseField as One>::one();
             return;
         }
 
@@ -263,7 +263,7 @@ impl<P: SWCurveConfig> From<Bucket<P>> for Projective<P> {
         if p.is_zero() {
             Self::zero()
         } else {
-            Self::new_unchecked(p.x * &p.zz, p.y * &p.zzz, p.zz)
+            Self::new_unchecked(p.x * p.zz, p.y * p.zzz, p.zz)
         }
     }
 }

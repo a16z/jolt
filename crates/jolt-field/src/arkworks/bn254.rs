@@ -1,3 +1,9 @@
+//! [`Field`] implementation for the BN254 scalar field (`ark_bn254::Fr`).
+//!
+//! This is the only production backend. All arithmetic delegates to the
+//! arkworks `Fp256` implementation with custom Montgomery and Barrett
+//! reduction paths from `bn254_ops`.
+
 use crate::bigint_ext::BigIntExt;
 #[cfg(feature = "challenge-254-bit")]
 use crate::challenge::Mont254BitChallenge;

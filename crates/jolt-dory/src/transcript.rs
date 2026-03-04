@@ -42,6 +42,8 @@ impl<T: Transcript> Default for JoltToDoryTranscript<'_, T> {
 impl<T: Transcript> DoryTranscript for JoltToDoryTranscript<'_, T> {
     type Curve = BN254;
 
+    /// Forwards raw bytes to the Jolt transcript, ignoring dory-pcs labels
+    /// since Jolt transcripts use implicit domain separation via round counters.
     fn append_bytes(&mut self, _label: &[u8], bytes: &[u8]) {
         self.transcript.append_bytes(bytes);
     }
@@ -69,13 +71,12 @@ impl<T: Transcript> DoryTranscript for JoltToDoryTranscript<'_, T> {
         self.transcript.append_bytes(&buffer);
     }
 
+    /// Squeezes a challenge from the Jolt transcript's current state and
+    /// converts it to the dory-pcs field type (`ark_bn254::Fr`), then
+    /// advances the transcript so subsequent calls produce fresh challenges.
     fn challenge_scalar(&mut self, _label: &[u8]) -> InnerFr {
-        // Squeeze a challenge from the Jolt transcript state and convert to
-        // the dory-pcs field type. We use the current 32-byte state as input
-        // to construct a deterministic field element.
         let state = *self.transcript.state();
         let fr = jolt_field::Field::from_bytes(&state);
-        // Advance the transcript by squeezing a challenge
         let _: <T as Transcript>::Challenge = self.transcript.challenge();
         crate::types::jolt_fr_to_ark(&fr)
     }

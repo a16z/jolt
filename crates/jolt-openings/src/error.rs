@@ -1,4 +1,8 @@
-//! Error types for commitment scheme operations.
+//! Error types for polynomial commitment scheme operations.
+//!
+//! These errors can arise during setup (invalid or undersized parameters),
+//! proving (polynomial exceeds setup capacity), or verification (opening
+//! proof rejection, commitment mismatch).
 
 /// Errors arising from polynomial commitment scheme operations.
 #[derive(Debug, thiserror::Error)]

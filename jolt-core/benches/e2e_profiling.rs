@@ -213,7 +213,7 @@ fn prove_example(
             init_memory_state,
             padded_trace_len,
         );
-        let preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -230,10 +230,7 @@ fn prove_example(
         let program_io = prover.program_io.clone();
         let (jolt_proof, _) = prover.prove();
 
-        let verifier_preprocessing = JoltVerifierPreprocessing::new(
-            shared_preprocessing,
-            preprocessing.generators.to_verifier_setup(),
-        );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verifier =
             RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, program_io, None, None)
                 .expect("Failed to create verifier");

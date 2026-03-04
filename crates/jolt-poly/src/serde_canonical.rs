@@ -1,4 +1,10 @@
 //! Serde bridge for types implementing arkworks `CanonicalSerialize`/`CanonicalDeserialize`.
+//!
+//! Arkworks field elements use a custom binary encoding (`CanonicalSerialize`)
+//! that is more compact than serde's default derive. This module lets us use
+//! `#[serde(with = "vec_canonical")]` on `Vec<F>` fields so that the outer
+//! struct can derive `Serialize`/`Deserialize` while the inner field elements
+//! are encoded in arkworks' canonical compressed form.
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress};
 use serde::{Deserializer, Serializer};

@@ -1,4 +1,8 @@
-//! Challenge type whose range is the same as the Field type
+//! Full 254-bit challenge type wrapping a field element directly.
+//!
+//! Unlike [`MontU128Challenge`](super::MontU128Challenge) which restricts
+//! challenges to 125 bits for cheaper multiplication, this type uses the
+//! full field range. Enable with the `challenge-254-bit` feature flag.
 
 use crate::{Challenge, Field, OptimizedMul};
 #[cfg(feature = "allocative")]
@@ -16,6 +20,11 @@ use std::ops::*;
     Copy, Clone, Debug, Default, PartialEq, Eq, Hash, CanonicalSerialize, CanonicalDeserialize,
 )]
 #[cfg_attr(feature = "allocative", derive(Allocative))]
+/// Fiat-Shamir challenge that wraps a full-width field element.
+///
+/// This variant uses the entire 254-bit field range. It is simpler but
+/// slower than [`MontU128Challenge`](super::MontU128Challenge) because
+/// challenge × field multiplications go through full Montgomery reduction.
 pub struct Mont254BitChallenge<F: Field> {
     value: F,
 }

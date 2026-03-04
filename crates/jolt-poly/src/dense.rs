@@ -10,7 +10,11 @@ use crate::eq::EqPolynomial;
 use crate::serde_canonical::vec_canonical;
 use crate::traits::MultilinearPolynomial;
 
-/// Parallelism threshold for bind and evaluation operations.
+/// Minimum number of evaluations before parallelizing bind/evaluate.
+///
+/// Below this threshold the overhead of Rayon work-stealing exceeds the
+/// benefit. 1024 field elements is roughly one L1 cache line's worth of
+/// useful work per core, keeping synchronization cost negligible.
 const PAR_THRESHOLD: usize = 1024;
 
 /// Dense multilinear polynomial: stores all $2^n$ evaluations as `Vec<F>`.

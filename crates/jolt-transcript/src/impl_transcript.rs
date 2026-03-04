@@ -15,7 +15,7 @@ macro_rules! impl_transcript {
             expected_state_history: Option<Vec<[u8; 32]>>,
         }
 
-        #[doc = concat!("Fiat-Shamir transcript implementation using ", stringify!($name), ".")]
+        #[doc = concat!("Fiat-Shamir transcript backed by ", stringify!($hasher), ".")]
         #[derive(Clone)]
         pub struct $name {
             /// 256-bit running state.

@@ -364,10 +364,6 @@ fn deterministic_proofs() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Batched sumcheck edge cases
-// ---------------------------------------------------------------------------
-
 #[test]
 fn batched_single_claim_matches_unbatched() {
     let mut rng = ChaCha20Rng::seed_from_u64(200);
@@ -497,10 +493,6 @@ fn batched_wrong_claim_fails() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Degree-3 (triple product with eq) -- models Spartan's sumcheck
-// ---------------------------------------------------------------------------
-
 /// Witness for $\sum_x f(x) \cdot g(x) \cdot \widetilde{eq}(x, \tau)$.
 ///
 /// The round polynomial has degree 3, so we evaluate at t = 0, 1, 2, 3
@@ -610,10 +602,6 @@ fn degree_3_triple_product() {
     assert_eq!(final_eval, f_r * g_r * eq_r);
 }
 
-// ---------------------------------------------------------------------------
-// Zero claimed sum
-// ---------------------------------------------------------------------------
-
 #[test]
 fn zero_claimed_sum() {
     let num_vars = 4;
@@ -646,10 +634,6 @@ fn zero_claimed_sum() {
 
     assert_eq!(final_eval, poly.evaluate(&challenges));
 }
-
-// ---------------------------------------------------------------------------
-// StreamingSumcheckProver trait test
-// ---------------------------------------------------------------------------
 
 /// A streaming prover for $\sum_x f(x)$ (degree-1 round polynomials).
 ///

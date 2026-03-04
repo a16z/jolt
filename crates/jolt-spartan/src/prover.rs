@@ -128,7 +128,11 @@ impl SpartanProver {
     }
 }
 
-/// Pads a slice to `target_len` with zeros and wraps it as a [`DensePolynomial`].
+/// Pads `data` with zeros to `target_len` and wraps it as a [`DensePolynomial`].
+///
+/// R1CS matrices and witness vectors are not necessarily power-of-two sized,
+/// but multilinear polynomials require $2^n$ evaluations. This zero-pads the
+/// evaluation table so that unused hypercube entries contribute nothing.
 fn pad_to_power_of_two<F: Field>(data: &[F], target_len: usize) -> DensePolynomial<F> {
     let mut evals = vec![F::zero(); target_len];
     let copy_len = data.len().min(target_len);
