@@ -197,6 +197,10 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                 }
             }
         } else {
+            // We want to compute `a * (1 - r) + b * r` where `a` and `b` are small scalars
+            // If `a == b`, we can just return `a`
+            // If `a < b`, we can compute `a + r * (b - a)`
+            // If `a > b`, we can compute `a - r * (a - b)`
             match order {
                 BindingOrder::LowToHigh => {
                     self.bound_coeffs = (0..n)
@@ -205,9 +209,11 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             let b = self.coeffs[2 * i + 1];
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
+                                // a < b: Compute a + r * (b - a)
                                 Ordering::Less => {
                                     a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into())
                                 }
+                                // a > b: Compute a - r * (a - b)
                                 Ordering::Greater => {
                                     a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into())
                                 }
@@ -222,9 +228,11 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                         .zip(right.iter())
                         .map(|(&a, &b)| match a.cmp(&b) {
                             Ordering::Equal => a.to_field(),
+                            // a < b: Compute a + r * (b - a)
                             Ordering::Less => {
                                 a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into())
                             }
+                            // a > b: Compute a - r * (a - b)
                             Ordering::Greater => {
                                 a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into())
                             }
@@ -269,6 +277,10 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                 }
             }
         } else {
+            // We want to compute `a * (1 - r) + b * r` where `a` and `b` are small scalars
+            // If `a == b`, we can just return `a`
+            // If `a < b`, we can compute `a + r * (b - a)`
+            // If `a > b`, we can compute `a - r * (a - b)`
             match order {
                 BindingOrder::LowToHigh => {
                     self.bound_coeffs = (0..n)
@@ -278,9 +290,11 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             let b = self.coeffs[2 * i + 1];
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
+                                // a < b: Compute a + r * (b - a)
                                 Ordering::Less => {
                                     a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into())
                                 }
+                                // a > b: Compute a - r * (a - b)
                                 Ordering::Greater => {
                                     a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into())
                                 }
@@ -295,9 +309,11 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                         .zip(right.par_iter())
                         .map(|(&a, &b)| match a.cmp(&b) {
                             Ordering::Equal => a.to_field(),
+                            // a < b: Compute a + r * (b - a)
                             Ordering::Less => {
                                 a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into())
                             }
+                            // a > b: Compute a - r * (a - b)
                             Ordering::Greater => {
                                 a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into())
                             }
