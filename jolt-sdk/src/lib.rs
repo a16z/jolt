@@ -122,7 +122,7 @@ macro_rules! check_advice {
             let expected_value = 1u64;
             unsafe {
                 core::arch::asm!(
-                    ".insn r {opcode}, {funct3}, 0, x0, {rs1}, {rs2}",
+                    ".insn b {opcode}, {funct3}, {rs1}, {rs2}, .",
                     opcode = const $crate::CUSTOM_OPCODE,
                     funct3 = const $crate::FUNCT3_VIRTUAL_ASSERT_EQ,
                     rs1 = in(reg) cond_value,
@@ -156,7 +156,7 @@ macro_rules! check_advice_eq {
             let right = $right;
             unsafe {
                 core::arch::asm!(
-                    ".insn r {opcode}, {funct3}, 0, x0, {rs1}, {rs2}",
+                    ".insn b {opcode}, {funct3}, {rs1}, {rs2}, .",
                     opcode = const $crate::CUSTOM_OPCODE,
                     funct3 = const $crate::FUNCT3_VIRTUAL_ASSERT_EQ,
                     rs1 = in(reg) left,
