@@ -46,14 +46,10 @@
 //!
 //! This crate transpiles stages 1-7 (all sumcheck verifications):
 //! - Stages 1-6: Standard sumcheck verifications
-//! - Stage 7: HammingWeight claim reduction sumcheck
+//! - Stage 7: HammingWeight and AdviceClaimReduction sumchecks
 //!
-//! Stage 8 (PCS/Hyrax) is NOT transpiled because it requires native elliptic curve
-//! operations. For a complete recursive verifier, see `quangvdao/quang-jolt` which
-//! uses Hyrax over Grumpkin with native curve operations.
-//!
-//! **Note**: Stage 7 does not include `AdviceClaimReduction` verifiers (they require
-//! state management across stages 6-7). For proofs without advice, this is complete.
+//! Stage 8 (PCS/Dory) is NOT transpiled because pairing operations are too expensive
+//! in-circuit. The PCS choice may change, so this is deferred.
 //!
 //! # Transcript Feature Flags
 //!
