@@ -20,11 +20,13 @@ impl VirtualAssertEQ {
                 cpu.x[self.operands.rs2 as usize]
             );
         } else {
-            tracing::warn!(
-                "VirtualAssertEQ (spoil): rs1={} != rs2={}, proof will be unsatisfiable",
-                cpu.x[self.operands.rs1 as usize],
-                cpu.x[self.operands.rs2 as usize]
-            );
+            let rs1 = cpu.x[self.operands.rs1 as usize];
+            let rs2 = cpu.x[self.operands.rs2 as usize];
+            if rs1 != rs2 {
+                tracing::warn!(
+                    "VirtualAssertEQ (spoil): rs1={rs1} != rs2={rs2}, proof will be unsatisfiable",
+                );
+            }
         }
     }
 }
