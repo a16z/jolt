@@ -130,14 +130,14 @@ pub trait UnwrapOrSpoilProof<T> {
     fn unwrap_or_spoil_proof(self) -> T;
 }
 
-impl<T: Default> UnwrapOrSpoilProof<T> for Result<T, Secp256k1Error> {
+impl<T> UnwrapOrSpoilProof<T> for Result<T, Secp256k1Error> {
     #[inline(always)]
     fn unwrap_or_spoil_proof(self) -> T {
         match self {
             Ok(v) => v,
             Err(_) => {
                 hcf();
-                T::default()
+                panic!("unwrap_or_spoil_proof: unreachable after hcf")
             }
         }
     }
