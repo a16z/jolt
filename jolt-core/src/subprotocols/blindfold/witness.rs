@@ -207,13 +207,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         self.assign_with_u(r1cs, F::one())
     }
 
-    /// Assign with a specific u value (for relaxed R1CS).
-    ///
-    /// Z layout (public inputs baked into matrix coefficients):
-    /// ```text
-    /// Z = [u, W_grid...]
-    /// ```
-    /// W_grid is R' × C: coefficient rows, then non-coefficient values.
+    #[tracing::instrument(skip_all, name = "BlindFoldWitness::assign")]
     pub fn assign_with_u(&self, r1cs: &VerifierR1CS<F>, u: F) -> Vec<F> {
         use super::layout::{compute_witness_layout, ConstraintKind, LayoutStep};
 

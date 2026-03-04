@@ -14,6 +14,7 @@ use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 /// Compute the cross-term T for folding two R1CS instances.
 ///
 ///   T = (AZ₁) ∘ (BZ₂) + (AZ₂) ∘ (BZ₁) - u₁*(CZ₂) - u₂*(CZ₁)
+#[tracing::instrument(skip_all, name = "BlindFold::compute_cross_term")]
 pub fn compute_cross_term<F: JoltField>(
     r1cs: &VerifierR1CS<F>,
     z1: &[F],
@@ -60,6 +61,7 @@ fn commit_rows<F: JoltField, C: JoltCurve>(
 ///
 /// W is arranged in grid layout: coefficient rows first (one per round, padded to C),
 /// then non-coefficient values packed in subsequent rows.
+#[tracing::instrument(skip_all, name = "BlindFold::sample_random_satisfying_pair")]
 pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCore>(
     gens: &PedersenGenerators<C>,
     r1cs: &VerifierR1CS<F>,
@@ -236,6 +238,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
 ///
 /// T is the cross-term vector. We lay it out as rows × columns (same grid as E)
 /// and commit each row.
+#[tracing::instrument(skip_all, name = "BlindFold::commit_cross_term_rows")]
 pub fn commit_cross_term_rows<F: JoltField, C: JoltCurve>(
     gens: &PedersenGenerators<C>,
     T: &[F],

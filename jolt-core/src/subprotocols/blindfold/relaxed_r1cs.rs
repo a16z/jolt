@@ -89,10 +89,7 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
         (instance, witness_struct)
     }
 
-    /// Fold two instances into one.
-    ///
-    /// E row commitments fold with cross-term T row commitments:
-    ///   e_row_i' = e_row_i_1 + r·t_row_i + r²·e_row_i_2
+    #[tracing::instrument(skip_all, name = "RelaxedR1CSInstance::fold")]
     pub fn fold(
         &self,
         other: &Self,
@@ -177,10 +174,7 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
 }
 
 impl<F: JoltField> RelaxedR1CSWitness<F> {
-    /// Fold two witnesses into one.
-    ///
-    /// E folds with cross-term: E' = E₁ + r·T + r²·E₂
-    /// W folds linearly: W' = W₁ + r·W₂
+    #[tracing::instrument(skip_all, name = "RelaxedR1CSWitness::fold")]
     pub fn fold(&self, other: &Self, T: &[F], t_row_blindings: &[F], r: F) -> Self {
         let r_squared = r * r;
 
