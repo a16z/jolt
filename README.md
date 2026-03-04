@@ -188,6 +188,11 @@ Jolt ships an [agent skill](https://vercel.com/docs/agent-resources/skills) that
 npx skills add a16z/jolt
 ```
 
+Fallback (Claude Code only):
+```bash
+curl -sfL jolt.rs/skill | bash
+```
+
 ## CI Benchmarking
 
 We have enabled [benchmarking during CI](https://a16z.github.io/jolt/dev/bench/) to track performance changes over time in terms of prover runtime and peak memory usage.
