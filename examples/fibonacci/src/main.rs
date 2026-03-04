@@ -1,4 +1,4 @@
-use jolt_sdk::{serialize_and_print_size, Private};
+use jolt_sdk::{serialize_and_print_size, PrivateInput};
 use std::time::Instant;
 use tracing::info;
 
@@ -28,17 +28,17 @@ pub fn main() {
     let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
 
-    let program_summary = guest::analyze_fib(Private::new(10));
+    let program_summary = guest::analyze_fib(PrivateInput::new(10));
     program_summary
         .write_to_file("fib_10.txt".into())
         .expect("should write");
 
     let trace_file = "/tmp/fib_trace.bin";
-    guest::trace_fib_to_file(trace_file, Private::new(50));
+    guest::trace_fib_to_file(trace_file, PrivateInput::new(50));
     info!("Trace file written to: {trace_file}.");
 
     let now = Instant::now();
-    let (output, proof, io_device) = prove_fib(Private::new(50));
+    let (output, proof, io_device) = prove_fib(PrivateInput::new(50));
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
     if save_to_disk {

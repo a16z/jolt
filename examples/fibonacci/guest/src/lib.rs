@@ -1,8 +1,8 @@
 #![cfg_attr(feature = "guest", no_std)]
-use jolt::{end_cycle_tracking, start_cycle_tracking, Private};
+use jolt::{end_cycle_tracking, start_cycle_tracking, PrivateInput};
 
 #[jolt::provable(heap_size = 32768, max_trace_length = 65536)]
-fn fib(n: Private<u32>) -> u128 {
+fn fib(n: PrivateInput<u32>) -> u128 {
     let mut a: u128 = 0;
     let mut b: u128 = 1;
     let mut sum: u128;
