@@ -108,7 +108,10 @@ impl<T> UnwrapOrSpoilProof<T> for Result<T, GrumpkinError> {
             Ok(v) => v,
             Err(_) => {
                 hcf();
-                panic!("unwrap_or_spoil_proof: unreachable after hcf")
+                // SAFETY: hcf() spoils the proof; the returned value is never part of a
+                // valid proof. On RISC-V hcf() returns (emits a custom instruction), so
+                // we must provide a value for the tracer to continue.
+                unsafe { core::mem::zeroed() }
             }
         }
     }
