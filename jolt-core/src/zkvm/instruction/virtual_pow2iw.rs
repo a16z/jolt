@@ -27,7 +27,6 @@ impl Flags for VirtualPow2IW {
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
         let mut flags = [false; NUM_INSTRUCTION_FLAGS];
         flags[InstructionFlags::RightOperandIsImm] = true;
-        flags[InstructionFlags::IsRdNotZero] = self.operands.rd != 0;
         flags
     }
 }

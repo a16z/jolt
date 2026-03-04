@@ -21,7 +21,8 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0xe000302f,
     format = FormatAMO,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl AMOMAXUD {
@@ -47,7 +48,7 @@ impl AMOMAXUD {
             .expect("MMU store error");
 
         // Return the original value
-        cpu.x[self.operands.rd as usize] = original_value;
+        cpu.write_register(self.operands.rd as usize, original_value);
     }
 }
 

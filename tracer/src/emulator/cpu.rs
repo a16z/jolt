@@ -402,6 +402,21 @@ impl Cpu {
         }
     }
 
+    pub fn write_register(&mut self, reg: usize, write_value: i64) {
+        debug_assert!(
+            reg < REGISTER_COUNT as usize,
+            "reg must be 0-{}. {reg}",
+            REGISTER_COUNT - 1
+        );
+        match reg {
+            0 => {
+                // 0th register is hardwired zero
+                debug_assert_eq!(self.x[reg], 0);
+            }
+            _ => self.x[reg] = write_value,
+        }
+    }
+
     /// Reads Program counter content
     pub fn read_pc(&self) -> u64 {
         self.pc

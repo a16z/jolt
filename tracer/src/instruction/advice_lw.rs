@@ -16,7 +16,8 @@ declare_riscv_instr!(
     mask   = 0,
     match  = 0,
     format = FormatAdviceLoadI,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl AdviceLW {
@@ -24,7 +25,7 @@ impl AdviceLW {
         // Read 4 bytes (word) from the advice tape
         let advice_value = advice_tape_read(cpu, 4).expect("Failed to read from advice tape");
         // Store the sign extended advice value to register rd
-        cpu.x[self.operands.rd as usize] = advice_value as i32 as i64;
+        cpu.write_register(self.operands.rd as usize, advice_value as i32 as i64);
     }
 }
 

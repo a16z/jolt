@@ -25,8 +25,10 @@ impl SRAIW {
         // operate on 32-bit values and sign-extend their 32-bit results to 64 bits. SLLIW, SRLIW,
         // and SRAIW encodings with imm[5] ≠ 0 are reserved.
         let shamt = (self.operands.imm & 0x1f) as u32;
-        cpu.x[self.operands.rd as usize] =
-            ((cpu.x[self.operands.rs1 as usize] as i32) >> shamt) as i64;
+        cpu.write_register(
+            self.operands.rd as usize,
+            ((cpu.x[self.operands.rs1 as usize] as i32) >> shamt) as i64,
+        );
     }
 }
 

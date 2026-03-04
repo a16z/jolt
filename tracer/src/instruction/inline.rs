@@ -187,6 +187,10 @@ impl RISCVInstruction for INLINE {
     fn execute(&self, cpu: &mut Cpu, ram: &mut Self::RAMAccess) {
         self.exec(cpu, ram)
     }
+
+    fn has_side_effects(&self) -> bool {
+        true
+    }
 }
 
 impl INLINE {
@@ -197,6 +201,17 @@ impl INLINE {
 
 impl RISCVTrace for INLINE {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        // If rd (rs3 in FormatInline) is x0, remap to a virtual register so the
+        // constraint system never sees rd=x0.  This keeps the special-case logic
+        // self-contained instead of requiring Instruction::trace() to know about it.
+        if self.operands.rs3 == 0 {
+            let vr = cpu.vr_allocator.allocate();
+            let mut remapped = *self;
+            remapped.operands.rs3 = *vr;
+            remapped.trace(cpu, trace);
+            return;
+        }
+
         let key = (self.opcode, self.funct3, self.funct7);
         match INLINE_REGISTRY.read() {
             Ok(registry) => match registry.get(&key) {

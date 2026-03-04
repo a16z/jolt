@@ -11,7 +11,8 @@ declare_riscv_instr!(
     mask   = 0,
     match  = 0,
     format = FormatI,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl VirtualHostIO {
