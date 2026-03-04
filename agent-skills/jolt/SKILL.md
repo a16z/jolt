@@ -4,13 +4,6 @@ description: |
   Jolt zkVM SDK expert. Activates for: jolt-sdk, #[jolt::provable], guest/host
   RISC-V programs, advice (TrustedAdvice/UntrustedAdvice/#[jolt::advice]),
   jolt-inlines-*, cycle tracking, proving/verifying pipelines.
-allowed-tools:
-  - Read
-  - Grep
-  - Glob
-  - Bash
-  - Write
-  - Edit
 ---
 
 # Jolt zkVM SDK
@@ -18,8 +11,6 @@ allowed-tools:
 You are an expert on the Jolt zkVM SDK for building provable RISC-V programs.
 Jolt proves correct execution of Rust programs compiled to RV64IMAC using
 sumcheck-based protocols and the Dory polynomial commitment scheme.
-
-Always use the **current API** shown below. Book docs may be outdated.
 
 ## Project Structure
 
@@ -506,6 +497,109 @@ fn verify_sig(
 }
 ```
 
+## Jolt CLI
+
+Install: `cargo install --path .` from the Jolt repo root, or run via
+`cargo run -p jolt -- <subcommand>`.
+
+### `jolt new <NAME> [--wasm]`
+
+Scaffold a new project (host + guest crates, toolchain, arkworks patches).
+`--wasm` adds WASM-compatible files.
+
+### `jolt build`
+
+Build a guest program for Jolt zkVM. Wraps the toolchain with Jolt-specific
+RUSTFLAGS (lower-atomic, panic=abort, medany code model, machine outliner
+disabled).
+
+```bash
+jolt build -p guest                    # no_std (default)
+jolt build -p guest --mode std         # std mode (auto-installs musl toolchain)
+jolt build -p guest --mode std --fully # build musl toolchain from source if missing
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-p, --package` | required | Package name to build |
+| `--mode` | `no-std` | `std` or `no-std` |
+| `--backtrace` | `auto` | `auto`/`enable`/`disable` — controls symbol stripping |
+| `--memory-origin` | `0x80000000` | Memory origin address |
+| `--memory-size` | `128Mi` | Total memory (human-readable sizes) |
+| `--stack-size` | `8Mi` | Stack size |
+| `--heap-size` | `64Mi` | Heap size |
+| `--fully` | false | Auto-build musl toolchain if missing |
+| `--musl-lib-path` | env `RISCV_MUSL_PATH` | Path to musl lib |
+| `--gcc-lib-path` | env `RISCV_GCC_PATH` | Path to gcc lib |
+| `-- <CARGO_ARGS>` | — | Forwarded to `cargo build` |
+
+Env vars: `JOLT_GUEST_OPT` (0/1/2/3/s/z, default 3), `JOLT_BACKTRACE=1`
+(preserve symbols for panic backtraces).
+
+### `jolt run <BINARY> [--jolt-emu <PATH>] [-- <EMU_ARGS>...]`
+
+Run an ELF binary on the Jolt emulator (`jolt-emu`). Searches PATH, then
+common locations (`target/release/jolt-emu`, `target/debug/jolt-emu`).
+Override with `--jolt-emu` or `JOLT_EMU_PATH` env var.
+
+```bash
+jolt build -p guest && jolt run target/riscv64imac-unknown-none-elf/release/guest
+```
+
+### `jolt generate target`
+
+Generate a custom RISC-V target specification JSON. Requires `--profile` or
+`--target`.
+
+```bash
+jolt generate target --profile jolt-rv64 -o my-target.json
+```
+
+### `jolt generate linker`
+
+Generate a linker script with custom memory layout.
+
+```bash
+jolt generate linker --ram-size 256Mi --heap-size 128Mi --stack-size 4Mi -o linker.ld
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ram-start` | `0x80000000` | RAM start address |
+| `--ram-size` | `128Mi` | RAM size |
+| `--heap-size` | `64Mi` | Heap size |
+| `--stack-size` | `2Mi` | Stack size |
+| `--backtrace` | `true` | Include backtrace support |
+| `--entry-point` | `_start` | Entry point symbol |
+| `-o` | `linker.ld` | Output path |
+
+### `jolt build-wasm`
+
+Preprocess all `#[jolt::provable]` functions, generate `index.html`, and run
+`wasm-pack build`. Project must have been created with `jolt new --wasm`.
+
+### `jolt-emu` (RISC-V Emulator)
+
+Standalone emulator binary (crate: `tracer`). Build with
+`cargo build -p tracer --release`.
+
+```bash
+jolt-emu ./guest.elf              # execute
+jolt-emu ./guest.elf -d           # disassemble each instruction
+jolt-emu ./guest.elf -t true      # trace mode
+```
+
+### Profiling (jolt-core binary)
+
+```bash
+cargo run --release -p jolt-core -- profile --name sha3 -f chrome
+cargo run --release -p jolt-core -- benchmark --name sha3 -s 20 -f chrome
+```
+
+Benchmark names: `sha2`, `sha3`, `sha2-chain`, `sha3-chain`, `fibonacci`,
+`btreemap`. Add `--features monitor` for CPU/memory counter tracks, or
+`--features allocative` for memory flamegraphs.
+
 ## Debugging & Profiling
 
 ### Trace Analysis
@@ -590,8 +684,6 @@ rustup target add riscv64imac-unknown-none-elf
   small for recursive code)
 - **Null pointer write**: missing `"thread"` or `"random"` jolt-sdk feature
   when guest uses threading/randomness
-- **cargo-machete false positives**: host-side inline crate deps must be in
-  `[package.metadata.cargo-machete] ignored` list
 - **Guest fails to compile on host**: use `#[jolt::provable(guest_only)]`
   for code with inline RISC-V assembly
 - **Inline crate not in host deps**: host must depend on `jolt-inlines-*`
