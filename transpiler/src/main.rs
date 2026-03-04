@@ -16,15 +16,10 @@
 //!
 //! This transpiler covers stages 1-7, which verify all sumcheck proofs:
 //! - Stages 1-6: Standard sumcheck verifications
-//! - Stage 7: HammingWeight claim reduction sumcheck
+//! - Stage 7: HammingWeight and AdviceClaimReduction sumchecks
 //!
-//! Stage 8 (PCS/Hyrax verification) is NOT transpiled because:
-//! - **Hyrax requires native curve operations**: MSM on Grumpkin must use native implementations.
-//! - **Native implementation needed**: PCS verification must be implemented directly in the
-//!   target framework using native curve operations.
-//!
-//! Note: Stage 7 does not include AdviceClaimReduction verifiers (they require state management
-//! across stages 6-7). For proofs without advice, this is complete.
+//! Stage 8 (PCS/Hyrax verification) is NOT transpiled because Hyrax requires
+//! native elliptic curve operations (MSM on Grumpkin).
 //!
 //! # Pipeline
 //!
@@ -198,7 +193,7 @@ fn main() {
         &symbolic_preprocessing,
         symbolic_proof,
         io_device,
-        None, // trusted_advice_commitment (not used in stages 1-6)
+        None, // trusted_advice_commitment (fibonacci doesn't use advice)
         transcript,
         accumulator,
     );
