@@ -31,12 +31,16 @@ impl REM {
         let dividend = cpu.x[self.operands.rs1 as usize];
         let divisor = cpu.x[self.operands.rs2 as usize];
         if divisor == 0 {
-            cpu.x[self.operands.rd as usize] = dividend;
+            cpu.write_register(self.operands.rd as usize, dividend);
         } else if dividend == cpu.most_negative() && divisor == -1 {
-            cpu.x[self.operands.rd as usize] = 0;
+            cpu.write_register(self.operands.rd as usize, 0);
         } else {
-            cpu.x[self.operands.rd as usize] = cpu.sign_extend(
-                cpu.x[self.operands.rs1 as usize].wrapping_rem(cpu.x[self.operands.rs2 as usize]),
+            cpu.write_register(
+                self.operands.rd as usize,
+                cpu.sign_extend(
+                    cpu.x[self.operands.rs1 as usize]
+                        .wrapping_rem(cpu.x[self.operands.rs2 as usize]),
+                ),
             );
         }
     }

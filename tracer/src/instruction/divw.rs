@@ -38,13 +38,16 @@ impl DIVW {
         // quotient in rd, sign-extended to 64 bits.
         let dividend = cpu.x[self.operands.rs1 as usize] as i32;
         let divisor = cpu.x[self.operands.rs2 as usize] as i32;
-        cpu.x[self.operands.rd as usize] = (if divisor == 0 {
-            -1i32
-        } else if dividend == i32::MIN && divisor == -1 {
-            dividend
-        } else {
-            dividend.wrapping_div(divisor)
-        }) as i64;
+        cpu.write_register(
+            self.operands.rd as usize,
+            (if divisor == 0 {
+                -1i32
+            } else if dividend == i32::MIN && divisor == -1 {
+                dividend
+            } else {
+                dividend.wrapping_div(divisor)
+            }) as i64,
+        );
     }
 }
 

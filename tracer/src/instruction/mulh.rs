@@ -22,16 +22,19 @@ declare_riscv_instr!(
 
 impl MULH {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MULH as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd as usize] = match cpu.xlen {
-            Xlen::Bit32 => cpu.sign_extend(
-                (cpu.x[self.operands.rs1 as usize] * cpu.x[self.operands.rs2 as usize]) >> 32,
-            ),
-            Xlen::Bit64 => {
-                (((cpu.x[self.operands.rs1 as usize] as i128)
-                    * (cpu.x[self.operands.rs2 as usize] as i128))
-                    >> 64) as i64
-            }
-        };
+        cpu.write_register(
+            self.operands.rd as usize,
+            match cpu.xlen {
+                Xlen::Bit32 => cpu.sign_extend(
+                    (cpu.x[self.operands.rs1 as usize] * cpu.x[self.operands.rs2 as usize]) >> 32,
+                ),
+                Xlen::Bit64 => {
+                    (((cpu.x[self.operands.rs1 as usize] as i128)
+                        * (cpu.x[self.operands.rs2 as usize] as i128))
+                        >> 64) as i64
+                }
+            },
+        );
     }
 }
 
@@ -53,6 +56,7 @@ impl RISCVTrace for MULH {
     ) -> Vec<Instruction> {
         let v_sx = allocator.allocate();
         let v_sy = allocator.allocate();
+        let v_tmp = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
@@ -60,9 +64,9 @@ impl RISCVTrace for MULH {
         asm.emit_i::<VirtualMovsign>(*v_sy, self.operands.rs2, 0);
         asm.emit_r::<MUL>(*v_sx, *v_sx, self.operands.rs2);
         asm.emit_r::<MUL>(*v_sy, *v_sy, self.operands.rs1);
-        asm.emit_r::<MULHU>(self.operands.rd, self.operands.rs1, self.operands.rs2);
-        asm.emit_r::<ADD>(self.operands.rd, self.operands.rd, *v_sx);
-        asm.emit_r::<ADD>(self.operands.rd, self.operands.rd, *v_sy);
+        asm.emit_r::<MULHU>(*v_tmp, self.operands.rs1, self.operands.rs2);
+        asm.emit_r::<ADD>(*v_tmp, *v_tmp, *v_sx);
+        asm.emit_r::<ADD>(self.operands.rd, *v_tmp, *v_sy);
 
         asm.finalize()
     }

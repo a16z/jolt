@@ -24,23 +24,26 @@ declare_riscv_instr!(
 impl VirtualMovsign {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMovsign as RISCVInstruction>::RAMAccess) {
         let val = cpu.x[self.operands.rs1 as usize] as u64;
-        cpu.x[self.operands.rd as usize] = match cpu.xlen {
-            Xlen::Bit32 => {
-                if val & SIGN_BIT_32 != 0 {
-                    // Should this be ALL_ONES_64?
-                    ALL_ONES_32 as i64
-                } else {
-                    0
+        cpu.write_register(
+            self.operands.rd as usize,
+            match cpu.xlen {
+                Xlen::Bit32 => {
+                    if val & SIGN_BIT_32 != 0 {
+                        // Should this be ALL_ONES_64?
+                        ALL_ONES_32 as i64
+                    } else {
+                        0
+                    }
                 }
-            }
-            Xlen::Bit64 => {
-                if val & SIGN_BIT_64 != 0 {
-                    ALL_ONES_64 as i64
-                } else {
-                    0
+                Xlen::Bit64 => {
+                    if val & SIGN_BIT_64 != 0 {
+                        ALL_ONES_64 as i64
+                    } else {
+                        0
+                    }
                 }
-            }
-        };
+            },
+        );
     }
 }
 

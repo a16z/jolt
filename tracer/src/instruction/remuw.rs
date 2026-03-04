@@ -32,11 +32,14 @@ impl REMUW {
         // including on a divide by zero.
         let dividend = cpu.x[self.operands.rs1 as usize] as u32;
         let divisor = cpu.x[self.operands.rs2 as usize] as u32;
-        cpu.x[self.operands.rd as usize] = (if divisor == 0 {
-            dividend
-        } else {
-            dividend.wrapping_rem(divisor)
-        }) as i32 as i64;
+        cpu.write_register(
+            self.operands.rd as usize,
+            (if divisor == 0 {
+                dividend
+            } else {
+                dividend.wrapping_rem(divisor)
+            }) as i32 as i64,
+        );
     }
 }
 
@@ -90,25 +93,26 @@ impl RISCVTrace for REMUW {
         // registers for zero-extended inputs
         let rs1 = allocator.allocate();
         let rs2 = allocator.allocate();
+        let v_tmp = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         // Zero-extend inputs to proper 32-bit unsigned values
         asm.emit_i::<VirtualZeroExtendWord>(*rs1, self.operands.rs1, 0);
         asm.emit_i::<VirtualZeroExtendWord>(*rs2, self.operands.rs2, 0);
         // Get quotient as untrusted advice from oracle
-        asm.emit_j::<VirtualAdvice>(self.operands.rd, 0);
+        asm.emit_j::<VirtualAdvice>(*v_tmp, 0);
         // Verify no overflow: quotient × divisor must not overflow
-        asm.emit_b::<VirtualAssertMulUNoOverflow>(self.operands.rd, *rs2, 0);
+        asm.emit_b::<VirtualAssertMulUNoOverflow>(*v_tmp, *rs2, 0);
         // Compute quotient × divisor
-        asm.emit_r::<MUL>(self.operands.rd, self.operands.rd, *rs2);
+        asm.emit_r::<MUL>(*v_tmp, *v_tmp, *rs2);
         // Verify: quotient × divisor <= dividend
-        asm.emit_b::<VirtualAssertLTE>(self.operands.rd, *rs1, 0);
+        asm.emit_b::<VirtualAssertLTE>(*v_tmp, *rs1, 0);
         // Compute remainder = dividend - quotient × divisor
         // Note: if divisor == 0, then remainder will equal dividend, which satisfies the spec
-        asm.emit_r::<SUB>(self.operands.rd, *rs1, self.operands.rd);
+        asm.emit_r::<SUB>(*v_tmp, *rs1, *v_tmp);
         // Verify: divisor == 0 || remainder < divisor (unsigned)
-        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(self.operands.rd, *rs2, 0);
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*v_tmp, *rs2, 0);
         // Sign-extend 32-bit remainder to 64 bits
-        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *v_tmp, 0);
         asm.finalize()
     }
 }

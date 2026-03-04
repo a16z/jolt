@@ -17,7 +17,8 @@ declare_riscv_instr!(
     mask   = 0xf9f0707f,
     match  = 0x1000302f,
     format = FormatR,
-    ram    = ()  // No direct RAM access - handled by expanded LD instruction
+    ram    = (),
+    side_effects = true
 );
 
 impl LRD {
@@ -31,15 +32,15 @@ impl LRD {
         // Load the doubleword from memory
         let value = cpu.mmu.load_doubleword(address);
 
-        cpu.x[self.operands.rd as usize] = match value {
+        let write_value = match value {
             Ok((doubleword, _memory_read)) => {
                 cpu.set_reservation(address, ReservationWidth::Doubleword);
-
                 // Return the 64-bit value
                 doubleword as i64
             }
             Err(_) => panic!("MMU load error"),
         };
+        cpu.write_register(self.operands.rd as usize, write_value);
     }
 }
 

@@ -7,7 +7,7 @@ This is small enough that we can use $d = 1$.
 
 ### Virtual register layout
 
-The 32 virtual registers (registers 32--63) are partitioned into three regions:
+The 96 virtual registers (registers 32--127) are partitioned into three regions:
 
 | Register(s) | Name | Purpose |
 |-------------|------|---------|
@@ -19,14 +19,14 @@ The 32 virtual registers (registers 32--63) are partitioned into three regions:
 | 37 | `mcause` | Machine trap cause (CSR 0x342) |
 | 38 | `mtval` | Machine trap value (CSR 0x343) |
 | 39 | `mstatus` | Machine status (CSR 0x300) |
-| 40--46 | *(instruction)* | Temporary registers for virtual sequences, allocated by `allocate()` |
-| 47--63 | *(inline)* | Temporary registers for [inline](../optimizations/inlines.md) sequences, allocated by `allocate_for_inline()` |
+| 40--47 | *(instruction)* | Temporary registers for virtual sequences, allocated by `allocate()` |
+| 48--127 | *(inline)* | Temporary registers for [inline](../optimizations/inlines.md) sequences, allocated by `allocate_for_inline()` |
 
 **Reserved registers** (32--39) are persistent: they retain their values across instructions and are never handed out by the allocator. The two reservation registers are used by the [LR/SC](./emulation.md#atomic-operations-lrsc) virtual sequences to track atomic reservations. The six CSR registers store M-mode control/status state for trap handling.
 
-**Instruction registers** (40--46) are a pool of 7 temporary registers used by `allocate()` within virtual sequences (e.g., for division, SC). They are released back to the pool when the virtual sequence completes.
+**Instruction registers** (40--47) are a pool of 8 temporary registers used by `allocate()` within virtual sequences (e.g., for division, SC). They are released back to the pool when the virtual sequence completes.
 
-**Inline registers** (47--63) are used by `allocate_for_inline()` for [inline](../optimizations/inlines.md) sequences. All inline registers must be zeroed at the end of the inline sequence to ensure clean state.
+**Inline registers** (48--127) are used by `allocate_for_inline()` for [inline](../optimizations/inlines.md) sequences. All inline registers must be zeroed at the end of the inline sequence to ensure clean state.
 
 ## Deviations from the Twist algorithm as described in the paper
 

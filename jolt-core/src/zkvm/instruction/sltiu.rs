@@ -27,7 +27,6 @@ impl Flags for SLTIU {
         let mut flags = [false; NUM_INSTRUCTION_FLAGS];
         flags[InstructionFlags::LeftOperandIsRs1Value] = true;
         flags[InstructionFlags::RightOperandIsImm] = true;
-        flags[InstructionFlags::IsRdNotZero] = self.operands.rd != 0;
         flags
     }
 }

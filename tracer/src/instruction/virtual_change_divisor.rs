@@ -22,18 +22,18 @@ impl VirtualChangeDivisor {
                 let dividend = cpu.x[self.operands.rs1 as usize] as i32;
                 let divisor = cpu.x[self.operands.rs2 as usize] as i32;
                 if dividend == i32::MIN && divisor == -1 {
-                    cpu.x[self.operands.rd as usize] = 1;
+                    cpu.write_register(self.operands.rd as usize, 1);
                 } else {
-                    cpu.x[self.operands.rd as usize] = divisor as i64;
+                    cpu.write_register(self.operands.rd as usize, divisor as i64);
                 }
             }
             Xlen::Bit64 => {
                 let dividend = cpu.x[self.operands.rs1 as usize];
                 let divisor = cpu.x[self.operands.rs2 as usize];
                 if dividend == i64::MIN && divisor == -1 {
-                    cpu.x[self.operands.rd as usize] = 1;
+                    cpu.write_register(self.operands.rd as usize, 1);
                 } else {
-                    cpu.x[self.operands.rd as usize] = divisor;
+                    cpu.write_register(self.operands.rd as usize, divisor);
                 }
             }
         }

@@ -9,7 +9,8 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00000063,
     format = FormatB,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl BEQ {
