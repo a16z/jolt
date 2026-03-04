@@ -185,22 +185,15 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
             match order {
                 BindingOrder::LowToHigh => {
                     for i in 0..n {
-                        if self.bound_coeffs[2 * i + 1] == self.bound_coeffs[2 * i] {
-                            self.bound_coeffs[i] = self.bound_coeffs[2 * i];
-                        } else {
-                            self.bound_coeffs[i] = self.bound_coeffs[2 * i]
-                                + r * (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]);
-                        }
+                        self.bound_coeffs[i] = self.bound_coeffs[2 * i]
+                            + r * (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]);
                     }
                 }
                 BindingOrder::HighToLow => {
                     let (left, right) = self.bound_coeffs.split_at_mut(n);
-                    left.iter_mut()
-                        .zip(right.iter())
-                        .filter(|(a, b)| a != b)
-                        .for_each(|(a, b)| {
-                            *a += r * (*b - *a);
-                        });
+                    left.iter_mut().zip(right.iter()).for_each(|(a, b)| {
+                        *a += r * (*b - *a);
+                    });
                 }
             }
         } else {
@@ -267,13 +260,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                         self.bound_coeffs.par_chunks_exact(2),
                     )
                         .into_par_iter()
-                        .with_min_len(512)
+                        .with_min_len(512 * 32 / F::NUM_BYTES)
                         .for_each(|(bound_coeff, coeffs)| {
-                            bound_coeff.write(if coeffs[1] == coeffs[0] {
-                                coeffs[0]
-                            } else {
-                                (coeffs[1] - coeffs[0]) * r + coeffs[0]
-                            });
+                            bound_coeff.write(coeffs[0] + (coeffs[1] - coeffs[0]) * r);
                         });
                     unsafe { bound_coeffs.set_len(n) };
                     self.bound_coeffs = bound_coeffs;
@@ -283,7 +272,6 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                     left.par_iter_mut()
                         .zip(right.par_iter())
                         .with_min_len(4096)
-                        .filter(|(a, b)| a != b)
                         .for_each(|(a, b)| {
                             *a += r * (*b - *a);
                         });

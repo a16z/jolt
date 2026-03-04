@@ -1,7 +1,7 @@
 use crate::{
     field::{BarrettReduce, FMAdd, JoltField},
     poly::{ra_poly::RaPolynomial, split_eq_poly::GruenSplitEqPolynomial, unipoly::UniPoly},
-    utils::accumulation::Acc5S,
+    utils::accumulation::SmallAccumS,
 };
 use core::{mem::MaybeUninit, ptr};
 use num_traits::Zero;
@@ -48,7 +48,7 @@ fn compute_mles_product_sum_evals_generic<F: JoltField>(
     /// - `pairs` and `endpoints` are scratch buffers reused across all `g`
     ///   values for a given `x_out`, to avoid repeated heap allocations.
     struct InnerAcc<F: JoltField> {
-        lanes: Vec<F::Unreduced<9>>,
+        lanes: Vec<F::UnreducedProductAccum>,
         pairs: Vec<(F, F)>,
         endpoints: Vec<F>,
     }
@@ -62,7 +62,7 @@ fn compute_mles_product_sum_evals_generic<F: JoltField>(
             // Note: `pairs` and `endpoints` are pre-sized to length `d` so that
             // we can update them by index without changing their length.
             || InnerAcc {
-                lanes: vec![F::Unreduced::<9>::zero(); d],
+                lanes: vec![F::UnreducedProductAccum::zero(); d],
                 pairs: vec![(F::zero(), F::zero()); d],
                 endpoints: vec![F::zero(); d],
             },
@@ -81,16 +81,16 @@ fn compute_mles_product_sum_evals_generic<F: JoltField>(
 
                 // Accumulate with unreduced arithmetic
                 for k in 0..d {
-                    inner.lanes[k] += e_in.mul_unreduced::<9>(inner.endpoints[k]);
+                    inner.lanes[k] += e_in.mul_to_product_accum(inner.endpoints[k]);
                 }
             },
             |_x_out, e_out, mut inner| {
                 // Reduce inner lanes, scale by e_out (unreduced), and reuse the
                 // existing `lanes` allocation as the outer accumulator
-                // `Vec<F::Unreduced<9>>`, avoiding an extra allocation.
+                // `Vec<F::UnreducedProductAccum>`, avoiding an extra allocation.
                 for k in 0..d {
-                    let reduced_k = F::from_montgomery_reduce::<9>(inner.lanes[k]);
-                    inner.lanes[k] = e_out.mul_unreduced::<9>(reduced_k);
+                    let reduced_k = F::reduce_product_accum(inner.lanes[k]);
+                    inner.lanes[k] = e_out.mul_to_product_accum(reduced_k);
                 }
                 inner.lanes
             },
@@ -102,7 +102,7 @@ fn compute_mles_product_sum_evals_generic<F: JoltField>(
             },
         )
         .into_iter()
-        .map(|x| F::from_montgomery_reduce::<9>(x) * current_scalar)
+        .map(|x| F::reduce_product_accum(x) * current_scalar)
         .collect()
 }
 
@@ -117,7 +117,7 @@ macro_rules! impl_mles_product_sum_evals_d {
 
             let current_scalar = eq_poly.get_current_scalar();
 
-            let sum_evals_arr: [F; $d] = eq_poly.par_fold_out_in_unreduced::<9, $d>(&|g| {
+            let sum_evals_arr: [F; $d] = eq_poly.par_fold_out_in_unreduced::<$d>(&|g| {
                 // Build pairs[(p0, p1); D] on the stack.
                 let pairs: [(F, F); $d] = core::array::from_fn(|i| {
                     let p0 = mles[i].get_bound_coeff(2 * g);
@@ -177,7 +177,7 @@ macro_rules! impl_mles_sum_of_products_evals_d {
 
             let current_scalar = eq_poly.get_current_scalar();
 
-            let sum_evals_arr: [F; $d] = eq_poly.par_fold_out_in_unreduced::<9, $d>(&|g| {
+            let sum_evals_arr: [F; $d] = eq_poly.par_fold_out_in_unreduced::<$d>(&|g| {
                 let mut sums = [F::zero(); $d];
 
                 for t in 0..n_products {
@@ -334,7 +334,10 @@ pub fn eval_linear_prod_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) 
 /// - Each pair satisfies `pairs[j] = (p_j(0), p_j(1))` for a linear `p_j`.
 /// - This sums the evaluations of `P(x) = ∏_j p_j(x)` into `sums` in the
 ///   layout `[P(1), P(2), ..., P(D - 1), P(∞)]`.
-pub fn eval_linear_prod_accumulate<F: JoltField>(pairs: &[(F, F)], sums: &mut [F::Unreduced<9>]) {
+pub fn eval_linear_prod_accumulate<F: JoltField>(
+    pairs: &[(F, F)],
+    sums: &mut [F::UnreducedProductAccum],
+) {
     debug_assert_eq!(pairs.len(), sums.len());
     match pairs.len() {
         2 => eval_prod_2_accumulate(pairs.try_into().unwrap(), sums),
@@ -381,9 +384,9 @@ fn eval_prod_2_assign<F: JoltField>(p: &[(F, F); 2], outputs: &mut [F]) {
 /// - `outputs[0] += P(1)`
 /// - `outputs[1] += P(∞) = ∏_j (p_j(1) - p_j(0))`
 #[inline(always)]
-fn eval_prod_2_accumulate<F: JoltField>(p: &[(F, F); 2], outputs: &mut [F::Unreduced<9>]) {
-    outputs[0] += p[0].1.mul_unreduced::<9>(p[1].1); // 1
-    outputs[1] += (p[0].1 - p[0].0).mul_unreduced::<9>(p[1].1 - p[1].0); // ∞
+fn eval_prod_2_accumulate<F: JoltField>(p: &[(F, F); 2], outputs: &mut [F::UnreducedProductAccum]) {
+    outputs[0] += p[0].1.mul_to_product_accum(p[1].1); // 1
+    outputs[1] += (p[0].1 - p[0].0).mul_to_product_accum(p[1].1 - p[1].0); // ∞
 }
 
 /// Evaluate the product of 3 linear polynomials on `U_3 = [1, 2, ∞]`.
@@ -410,14 +413,17 @@ fn eval_prod_3_assign<F: JoltField>(pairs: &[(F, F); 3], outputs: &mut [F]) {
 /// - `outputs[1] += P(2)`
 /// - `outputs[2] += P(∞)`
 #[inline(always)]
-fn eval_prod_3_accumulate<F: JoltField>(pairs: &[(F, F); 3], outputs: &mut [F::Unreduced<9>]) {
+fn eval_prod_3_accumulate<F: JoltField>(
+    pairs: &[(F, F); 3],
+    outputs: &mut [F::UnreducedProductAccum],
+) {
     let (a1, a2, a_inf) = eval_linear_prod_2_internal(pairs[0], pairs[1]);
     let (b0, b1) = pairs[2];
     let b_inf = b1 - b0;
     let b2 = b1 + b_inf;
-    outputs[0] += a1.mul_unreduced::<9>(b1);
-    outputs[1] += a2.mul_unreduced::<9>(b2);
-    outputs[2] += a_inf.mul_unreduced::<9>(b_inf);
+    outputs[0] += a1.mul_to_product_accum(b1);
+    outputs[1] += a2.mul_to_product_accum(b2);
+    outputs[2] += a_inf.mul_to_product_accum(b_inf);
 }
 
 /// Evaluate the product of 4 linear polynomials at the internal interpolation
@@ -500,7 +506,10 @@ fn eval_prod_5_assign<F: JoltField>(p: &[(F, F); 5], outputs: &mut [F]) {
 /// The product is split into a size-2 prefix and size-3 suffix. The suffix uses
 /// a single polynomial times a pair, so it reuses the existing `d = 2`
 /// quadratic extrapolator.
-pub fn eval_prod_5_accumulate<F: JoltField>(p: &[(F, F); 5], outputs: &mut [F::Unreduced<9>]) {
+pub fn eval_prod_5_accumulate<F: JoltField>(
+    p: &[(F, F); 5],
+    outputs: &mut [F::UnreducedProductAccum],
+) {
     debug_assert!(outputs.len() >= 5);
 
     // Prefix: two polynomials → degree-2 product evaluated on 1..4 via `ex2`.
@@ -528,11 +537,11 @@ pub fn eval_prod_5_accumulate<F: JoltField>(p: &[(F, F); 5], outputs: &mut [F::U
     let b4 = l4 * r4;
     let b_inf = l_inf * r_inf;
 
-    outputs[0] += a1.mul_unreduced::<9>(b1); // 1
-    outputs[1] += a2.mul_unreduced::<9>(b2); // 2
-    outputs[2] += a3.mul_unreduced::<9>(b3); // 3
-    outputs[3] += a4.mul_unreduced::<9>(b4); // 4
-    outputs[4] += a_inf.mul_unreduced::<9>(b_inf); // ∞
+    outputs[0] += a1.mul_to_product_accum(b1); // 1
+    outputs[1] += a2.mul_to_product_accum(b2); // 2
+    outputs[2] += a3.mul_to_product_accum(b3); // 3
+    outputs[3] += a4.mul_to_product_accum(b4); // 4
+    outputs[4] += a_inf.mul_to_product_accum(b_inf); // ∞
 }
 
 /// Evaluate the product of 6 linear polynomials on `U_6 = [1, 2, 3, 4, 5, ∞]`.
@@ -717,7 +726,7 @@ fn eval_prod_8_assign<F: JoltField>(p: &[(F, F); 8], outputs: &mut [F]) {
 /// - `p` is a fixed-size `[ (F, F); 8 ]`, so both sub-slices have length 4 and
 ///   correct alignment.
 /// - The sub-slices are non-overlapping.
-fn eval_prod_9_accumulate<F: JoltField>(p: &[(F, F); 9], outputs: &mut [F::Unreduced<9>]) {
+fn eval_prod_9_accumulate<F: JoltField>(p: &[(F, F); 9], outputs: &mut [F::UnreducedProductAccum]) {
     // TODO: Implement more optimal way to do this.
     // 5x4 split probably better than current 8x1 split.
     let p8 = p[0..8].try_into().unwrap();
@@ -735,15 +744,15 @@ fn eval_prod_9_accumulate<F: JoltField>(p: &[(F, F); 9], outputs: &mut [F::Unred
     let l8 = l7 + delta;
     let l_inf = delta;
 
-    outputs[0] += a1.mul_unreduced::<9>(l1);
-    outputs[1] += a2.mul_unreduced::<9>(l2);
-    outputs[2] += a3.mul_unreduced::<9>(l3);
-    outputs[3] += a4.mul_unreduced::<9>(l4);
-    outputs[4] += a5.mul_unreduced::<9>(l5);
-    outputs[5] += a6.mul_unreduced::<9>(l6);
-    outputs[6] += a7.mul_unreduced::<9>(l7);
-    outputs[7] += a8.mul_unreduced::<9>(l8);
-    outputs[8] += a_inf.mul_unreduced::<9>(l_inf);
+    outputs[0] += a1.mul_to_product_accum(l1);
+    outputs[1] += a2.mul_to_product_accum(l2);
+    outputs[2] += a3.mul_to_product_accum(l3);
+    outputs[3] += a4.mul_to_product_accum(l4);
+    outputs[4] += a5.mul_to_product_accum(l5);
+    outputs[5] += a6.mul_to_product_accum(l6);
+    outputs[6] += a7.mul_to_product_accum(l7);
+    outputs[7] += a8.mul_to_product_accum(l8);
+    outputs[8] += a_inf.mul_to_product_accum(l_inf);
 }
 
 /// Evaluate the product of 16 linear polynomials on `U_16 = [1, 2, ..., 15, ∞]`.
@@ -909,21 +918,21 @@ fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
     //
     // where `f_inf40320 = 8! * a8` and `a8` is the leading coefficient.
     // We use a signed accumulator in Montgomery form to reduce only once.
-    let mut acc: Acc5S<F> = Acc5S::zero();
+    let mut acc: SmallAccumS<F> = SmallAccumS::zero();
     let t1 = f[1] + f[7];
     acc.fmadd(&t1, &8u64);
     let t2 = f[3] + f[5];
     acc.fmadd(&t2, &56u64);
     // Coefficient +1: add the unreduced representation directly to the positive
     // accumulator instead of going through `mul_u64_unreduced(1)`.
-    acc.pos += *f_inf40320.as_unreduced_ref();
+    acc.pos += f_inf40320.to_unreduced();
 
     let t3 = f[2] + f[6];
     acc.fmadd(&t3, &(-28i64));
     acc.fmadd(&f[4], &(-70i64));
     // Coefficient -1: add the unreduced representation directly to the negative
     // accumulator instead of going through `mul_u64_unreduced(1)` with a sign.
-    acc.neg += *f[0].as_unreduced_ref();
+    acc.neg += f[0].to_unreduced();
 
     acc.barrett_reduce()
 }
@@ -946,7 +955,7 @@ fn ex16<F: JoltField>(f: &[F; 16], f_inf16_fact: F) -> F {
     // -12870 f[8], -1 f[0], + f_inf16_fact
     //
     // We again use a signed accumulator to defer reduction.
-    let mut acc: Acc5S<F> = Acc5S::zero();
+    let mut acc: SmallAccumS<F> = SmallAccumS::zero();
     let s16 = f[1] + f[15];
     acc.fmadd(&s16, &16u64);
     let s120 = f[2] + f[14];
@@ -964,8 +973,8 @@ fn ex16<F: JoltField>(f: &[F; 16], f_inf16_fact: F) -> F {
     acc.fmadd(&f[8], &(-12870i64));
     // Edge coefficient -1 and the +1 on `f_inf16_fact` can be handled by
     // direct accumulator updates, avoiding redundant scalar multiplies.
-    acc.neg += *f[0].as_unreduced_ref();
-    acc.pos += *f_inf16_fact.as_unreduced_ref();
+    acc.neg += f[0].to_unreduced();
+    acc.pos += f_inf16_fact.to_unreduced();
     acc.barrett_reduce()
 }
 
@@ -1185,7 +1194,7 @@ pub fn eval_linear_prod_naive_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut
 /// - `sums`: accumulator with layout `[1, 2, ..., D - 1, ∞]`
 fn product_eval_univariate_naive_accumulate<F: JoltField>(
     pairs: &[(F, F)],
-    sums: &mut [F::Unreduced<9>],
+    sums: &mut [F::UnreducedProductAccum],
 ) {
     let d = pairs.len();
     debug_assert_eq!(sums.len(), d);
@@ -1206,7 +1215,7 @@ fn product_eval_univariate_naive_accumulate<F: JoltField>(
         for v in cur_vals.iter() {
             acc *= *v;
         }
-        sums[idx] += *acc.as_unreduced_ref();
+        sums[idx] += acc.to_unreduced();
         // advance all to next x
         for i in 0..d {
             cur_vals[i] += pinfs[i];
@@ -1217,7 +1226,7 @@ fn product_eval_univariate_naive_accumulate<F: JoltField>(
     for pinf in pinfs.iter() {
         acc_inf *= *pinf;
     }
-    sums[d - 1] += *acc_inf.as_unreduced_ref();
+    sums[d - 1] += acc_inf.to_unreduced();
 }
 
 #[cfg(test)]

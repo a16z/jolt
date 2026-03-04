@@ -310,13 +310,13 @@ fn compute_all_G_impl<F: JoltField>(
                 (0..ram_d).map(|_| unsafe_allocate_zero_vec(K)).collect();
 
             // Reusable local unreduced accumulators (5-limb) and touched flags
-            let mut local_instruction: Vec<Vec<F::Unreduced<5>>> = (0..instruction_d)
+            let mut local_instruction: Vec<Vec<F::UnreducedMulU64>> = (0..instruction_d)
                 .map(|_| unsafe_allocate_zero_vec(K))
                 .collect();
-            let mut local_bytecode: Vec<Vec<F::Unreduced<5>>> = (0..bytecode_d)
+            let mut local_bytecode: Vec<Vec<F::UnreducedMulU64>> = (0..bytecode_d)
                 .map(|_| unsafe_allocate_zero_vec(K))
                 .collect();
-            let mut local_ram: Vec<Vec<F::Unreduced<5>>> =
+            let mut local_ram: Vec<Vec<F::UnreducedMulU64>> =
                 (0..ram_d).map(|_| unsafe_allocate_zero_vec(K)).collect();
             let mut touched_instruction: Vec<FixedBitSet> =
                 vec![FixedBitSet::with_capacity(K); instruction_d];
@@ -357,7 +357,7 @@ fn compute_all_G_impl<F: JoltField>(
                     }
 
                     // Get 4-limb unreduced representation
-                    let add = *E_lo[c_lo].as_unreduced_ref();
+                    let add = E_lo[c_lo].to_unreduced();
 
                     let ra_idx =
                         RaIndices::from_cycle(&trace[j], bytecode, memory_layout, one_hot_params);
@@ -405,19 +405,19 @@ fn compute_all_G_impl<F: JoltField>(
                 // Barrett reduce and scale by E_hi[c_hi], only for touched indices
                 for i in 0..instruction_d {
                     for k in touched_instruction[i].ones() {
-                        let reduced = F::from_barrett_reduce::<5>(local_instruction[i][k]);
+                        let reduced = F::reduce_mul_u64(local_instruction[i][k]);
                         partial_instruction[i][k] += e_hi * reduced;
                     }
                 }
                 for i in 0..bytecode_d {
                     for k in touched_bytecode[i].ones() {
-                        let reduced = F::from_barrett_reduce::<5>(local_bytecode[i][k]);
+                        let reduced = F::reduce_mul_u64(local_bytecode[i][k]);
                         partial_bytecode[i][k] += e_hi * reduced;
                     }
                 }
                 for i in 0..ram_d {
                     for k in touched_ram[i].ones() {
-                        let reduced = F::from_barrett_reduce::<5>(local_ram[i][k]);
+                        let reduced = F::reduce_mul_u64(local_ram[i][k]);
                         partial_ram[i][k] += e_hi * reduced;
                     }
                 }

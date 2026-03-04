@@ -55,21 +55,7 @@ impl<F: JoltField> EqPolynomial<F> {
         }
     }
 
-    /// Computes the zero selector: `eq(r, [0, 0, ...]) = ∏ᵢ (1 - rᵢ)`.
-    ///
-    /// This is equivalent to `mle(r, &vec![F::zero(); r.len()])` but more efficient
-    /// as it avoids allocating the zeros vector. Commonly used for Lagrange factors
-    /// when computing embeddings (e.g., advice polynomial embeddings in Dory batch openings).
-    ///
-    /// # Mathematical Interpretation
-    /// - `eq(r, 0) = ∏ᵢ (1 - rᵢ)` selects the "all-zeros" vertex of the boolean hypercube
-    /// - Returns 1 when all `rᵢ = 0`, and decays multiplicatively as more bits become non-zero
-    ///
-    /// # Arguments
-    /// - `r`: Point at which to evaluate
-    ///
-    /// # Returns
-    /// The product `∏ᵢ (1 - rᵢ)` over all elements in `r`
+    /// Computes `eq(r, 0) = ∏ᵢ (1 - rᵢ)`, selecting the all-zeros hypercube vertex.
     pub fn zero_selector<C>(r: &[C]) -> F
     where
         C: Copy + Send + Sync + Into<F>,

@@ -10,13 +10,7 @@ use crate::{
 pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
     Send + Sync + MaybeAllocative
 {
-    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
-        unimplemented!(
-            "If get_params is unimplemented, degree, num_rounds, and \
-            input_claim should be implemented directly"
-        )
-    }
-
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F>;
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize {
         self.get_params().degree()
@@ -62,7 +56,6 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     );
 

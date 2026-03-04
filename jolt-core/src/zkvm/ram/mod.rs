@@ -51,18 +51,17 @@
 
 use crate::zkvm::config::OneHotParams;
 use crate::{
-    field::{self, BarrettReduce, FMAdd, JoltField},
+    field::{BarrettReduce, FMAdd, JoltField},
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
     },
-    transcripts::Transcript,
-    utils::{accumulation::Acc6U, math::Math},
-    zkvm::witness::VirtualPolynomial,
+    utils::{accumulation::MedAccumU, math::Math},
+    zkvm::{claim_reductions::AdviceKind, witness::VirtualPolynomial},
 };
 use std::vec;
 
@@ -125,6 +124,24 @@ impl RAMPreprocessing {
     }
 }
 
+/// Computes the minimum valid `ram_K` from preprocessing and memory layout.
+///
+/// `ram_K` must be at least large enough to index all statically-known memory
+/// regions (bytecode image and I/O region). Runtime execution can only increase
+/// `ram_K` further (heap/stack accesses), never decrease it.
+pub fn compute_min_ram_K(
+    ram_preprocessing: &RAMPreprocessing,
+    memory_layout: &MemoryLayout,
+) -> usize {
+    let bytecode_end = remap_address(ram_preprocessing.min_bytecode_address, memory_layout)
+        .unwrap_or(0) as usize
+        + ram_preprocessing.bytecode_words.len();
+
+    let io_end = remap_address(RAM_START_ADDRESS, memory_layout).unwrap_or(0) as usize;
+
+    bytecode_end.max(io_end).next_power_of_two()
+}
+
 /// Returns Some(address) if there was read/write
 /// Returns None if there was no read/write
 #[inline(always)]
@@ -181,7 +198,6 @@ pub fn prover_accumulate_advice<F: JoltField>(
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
-    transcript: &mut impl Transcript,
 ) {
     let total_variables = one_hot_params.ram_k.log_2();
 
@@ -208,12 +224,7 @@ pub fn prover_accumulate_advice<F: JoltField>(
         // Single opening at r_address.
         let (point_rw, eval_rw) =
             compute_advice_opening(untrusted_advice_poly, &r_address_rw, max_size);
-        opening_accumulator.append_untrusted_advice(
-            transcript,
-            SumcheckId::RamValCheck,
-            point_rw,
-            eval_rw,
-        );
+        opening_accumulator.append_untrusted_advice(SumcheckId::RamValCheck, point_rw, eval_rw);
     }
 
     if let Some(ref trusted_advice_poly) = trusted_advice_polynomial {
@@ -222,12 +233,7 @@ pub fn prover_accumulate_advice<F: JoltField>(
         // Single opening at r_address.
         let (point_rw, eval_rw) =
             compute_advice_opening(trusted_advice_poly, &r_address_rw, max_size);
-        opening_accumulator.append_trusted_advice(
-            transcript,
-            SumcheckId::RamValCheck,
-            point_rw,
-            eval_rw,
-        );
+        opening_accumulator.append_trusted_advice(SumcheckId::RamValCheck, point_rw, eval_rw);
     }
 }
 
@@ -241,7 +247,6 @@ pub fn verifier_accumulate_advice<F: JoltField>(
     has_untrusted_advice_commitment: bool,
     has_trusted_advice_commitment: bool,
     opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-    transcript: &mut impl Transcript,
 ) {
     let total_vars = ram_K.log_2();
 
@@ -264,7 +269,7 @@ pub fn verifier_accumulate_advice<F: JoltField>(
 
         // Single opening at r_address.
         let point_rw = compute_advice_point(&r_address_rw, max_size);
-        opening_accumulator.append_untrusted_advice(transcript, SumcheckId::RamValCheck, point_rw);
+        opening_accumulator.append_untrusted_advice(SumcheckId::RamValCheck, point_rw);
     }
 
     if has_trusted_advice_commitment {
@@ -272,7 +277,7 @@ pub fn verifier_accumulate_advice<F: JoltField>(
 
         // Single opening at r_address.
         let point_rw = compute_advice_point(&r_address_rw, max_size);
-        opening_accumulator.append_trusted_advice(transcript, SumcheckId::RamValCheck, point_rw);
+        opening_accumulator.append_trusted_advice(SumcheckId::RamValCheck, point_rw);
     }
 }
 
@@ -314,52 +319,114 @@ pub fn verifier_accumulate_advice<F: JoltField>(
 ///
 /// # Parameters
 ///
-/// * `advice_opening` - Optional tuple of opening point and evaluation at that point
-/// * `advice_num_vars` - Number of variables in the advice polynomial (b in the explanation)
-/// * `advice_start` - Starting index of the advice block in memory
-/// * `memory_layout` - Memory layout for address remapping
-/// * `r_address` - Challenge points from verifier (used for selector polynomial evaluation)
-/// * `total_memory_vars` - Total number of variables for the entire memory space (l in the explanation)
+/// Compute the selector scaling factor for embedding an advice block into the full memory MLE.
 ///
-/// # Returns
-///
-/// The scaled evaluation: `eval * scaling_factor`, where the scaling factor is the selector polynomial
-/// evaluated at the challenge point. Returns zero if no advice opening is provided.
-fn calculate_advice_memory_evaluation<F: JoltField>(
-    advice_opening: Option<(OpeningPoint<BIG_ENDIAN, F>, F)>,
+/// The advice polynomial covers a contiguous power-of-two block starting at `advice_start`.
+/// Its evaluation at the suffix of `r_address` must be scaled by the selector polynomial
+/// (evaluated at the prefix of `r_address`) to get the contribution to the full memory MLE.
+pub fn compute_advice_selector<F: JoltField>(
     advice_num_vars: usize,
     advice_start: u64,
     memory_layout: &MemoryLayout,
-    r_address: &[<F as field::JoltField>::Challenge],
+    r_address: &[F::Challenge],
     total_memory_vars: usize,
 ) -> F {
-    if let Some((_, eval)) = advice_opening {
-        let num_missing_vars = total_memory_vars - advice_num_vars;
+    let num_missing_vars = total_memory_vars - advice_num_vars;
 
-        let index = remap_address(advice_start, memory_layout).unwrap();
-        let mut scaling_factor = F::one();
+    let index = remap_address(advice_start, memory_layout).unwrap();
+    let mut scaling_factor = F::one();
 
-        // Convert index to binary representation with total_memory_vars bits.
-        // For example, if index=5 and total_memory_vars=4, we get [0,1,0,1].
-        let index_binary: Vec<bool> = (0..total_memory_vars)
-            .rev()
-            .map(|i| (index >> i) & 1 == 1)
-            .collect();
+    let index_binary: Vec<bool> = (0..total_memory_vars)
+        .rev()
+        .map(|i| (index >> i) & 1 == 1)
+        .collect();
 
-        let selector_bits = &index_binary[0..num_missing_vars];
+    let selector_bits = &index_binary[0..num_missing_vars];
 
-        // Each bit determines whether to use r[i] (bit=1) or (1-r[i]) (bit=0).
-        for (i, &bit) in selector_bits.iter().enumerate() {
-            scaling_factor *= if bit {
-                r_address[i].into()
-            } else {
-                F::one() - r_address[i]
-            };
-        }
-        eval * scaling_factor
-    } else {
-        F::zero()
+    for (i, &bit) in selector_bits.iter().enumerate() {
+        scaling_factor *= if bit {
+            r_address[i].into()
+        } else {
+            F::one() - r_address[i]
+        };
     }
+    scaling_factor
+}
+
+/// Build the decomposition of advice contributions for BlindFold R1CS constraints.
+///
+/// For each advice type (untrusted/trusted) present in the accumulator, computes the
+/// negated selector scaling factor paired with the corresponding `OpeningId`.
+/// These are used by `input_claim_constraint` / `input_constraint_challenge_values`
+/// so that `init_eval` is expressed as `eval_public + Σ(selector_i * advice_opening_i)`
+/// rather than baked as a single constant (which the verifier can't compute in ZK mode).
+pub fn compute_advice_init_contributions<F: JoltField>(
+    accumulator: &dyn OpeningAccumulator<F>,
+    memory_layout: &MemoryLayout,
+    r_address: &[F::Challenge],
+    n_memory_vars: usize,
+    sumcheck_id: SumcheckId,
+) -> Vec<(F, OpeningId)> {
+    let mut contributions = Vec::new();
+
+    if accumulator
+        .get_advice_opening(AdviceKind::Untrusted, sumcheck_id)
+        .is_some()
+    {
+        let advice_num_vars = (memory_layout.max_untrusted_advice_size as usize / 8)
+            .next_power_of_two()
+            .log_2();
+        let selector = compute_advice_selector::<F>(
+            advice_num_vars,
+            memory_layout.untrusted_advice_start,
+            memory_layout,
+            r_address,
+            n_memory_vars,
+        );
+        contributions.push((-selector, OpeningId::UntrustedAdvice(sumcheck_id)));
+    }
+
+    if accumulator
+        .get_advice_opening(AdviceKind::Trusted, sumcheck_id)
+        .is_some()
+    {
+        let advice_num_vars = (memory_layout.max_trusted_advice_size as usize / 8)
+            .next_power_of_two()
+            .log_2();
+        let selector = compute_advice_selector::<F>(
+            advice_num_vars,
+            memory_layout.trusted_advice_start,
+            memory_layout,
+            r_address,
+            n_memory_vars,
+        );
+        contributions.push((-selector, OpeningId::TrustedAdvice(sumcheck_id)));
+    }
+
+    contributions
+}
+
+/// Reconstruct full init eval from public portion + advice contributions.
+///
+/// `init_eval = public_eval + Σ(selector_i * advice_eval_i)`
+///
+/// advice_contributions stores `(-selector_i, opening_id_i)`, so:
+/// `init_eval = public_eval - Σ(neg_selector_i * advice_eval_i)`
+pub fn reconstruct_full_eval<F: JoltField>(
+    public_eval: F,
+    advice_contributions: &[(F, OpeningId)],
+    accumulator: &VerifierOpeningAccumulator<F>,
+) -> F {
+    let mut eval = public_eval;
+    for (neg_selector, opening_id) in advice_contributions {
+        let advice_eval = accumulator
+            .openings
+            .get(opening_id)
+            .map(|(_, c)| *c)
+            .unwrap_or(F::zero());
+        eval -= *neg_selector * advice_eval;
+    }
+    eval
 }
 
 /// Evaluate a shifted slice of `u64` coefficients as a multilinear polynomial at `r`.
@@ -371,7 +438,7 @@ fn calculate_advice_memory_evaluation<F: JoltField>(
 /// without materializing a full length-\(K\) vector or a full `eq(r, ·)` table.
 ///
 /// Uses aligned power-of-two block decomposition with `EqPolynomial::evals_for_max_aligned_block`,
-/// and accumulates using unreduced limb arithmetic via `Acc6U`.
+/// and accumulates using unreduced limb arithmetic via `MedAccumU`.
 fn sparse_eval_u64_block<F: JoltField>(
     start_index: usize,
     values: &[u64],
@@ -391,7 +458,7 @@ fn sparse_eval_u64_block<F: JoltField>(
         debug_assert_eq!(block_evals.len(), block_size);
 
         // Accumulate this block in unreduced form, then reduce once.
-        let mut block_acc: Acc6U<F> = Acc6U::default();
+        let mut block_acc: MedAccumU<F> = MedAccumU::default();
         for j in 0..block_size {
             // FMAdd implementation skips zeros internally.
             block_acc.fmadd(&block_evals[j], &values[off + j]);
@@ -548,6 +615,16 @@ pub fn eval_io_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challe
     hi_scale * acc
 }
 
+fn check_memory_fits(label: &str, index: usize, data_len: usize, state_len: usize) {
+    let words_needed = data_len.div_ceil(8);
+    assert!(
+        index + words_needed <= state_len,
+        "{label} exceeds allocated memory: needs {words_needed} words at index {index}, \
+        but memory state only has {state_len} entries. \
+        Increase the corresponding size in MemoryConfig.",
+    );
+}
+
 /// Returns `(initial_memory_state, final_memory_state)`
 pub fn gen_ram_memory_states<F: JoltField>(
     ram_K: usize,
@@ -591,6 +668,7 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits("Trusted advice", index, program_io.trusted_advice.len(), K);
     populate_memory_states(
         index,
         &program_io.trusted_advice,
@@ -603,6 +681,12 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits(
+        "Untrusted advice",
+        index,
+        program_io.untrusted_advice.len(),
+        K,
+    );
     populate_memory_states(
         index,
         &program_io.untrusted_advice,
@@ -615,6 +699,7 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits("Input", index, program_io.inputs.len(), K);
     populate_memory_states(
         index,
         &program_io.inputs,
@@ -629,6 +714,7 @@ pub fn gen_ram_memory_states<F: JoltField>(
         &program_io.memory_layout,
     )
     .unwrap() as usize;
+    check_memory_fits("Output", index, program_io.outputs.len(), K);
     populate_memory_states(
         index,
         &program_io.outputs,
@@ -698,6 +784,18 @@ mod tests {
     use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::MemoryConfig;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
+
+    #[test]
+    #[should_panic(expected = "exceeds allocated memory")]
+    fn check_memory_fits_panics_on_overflow() {
+        check_memory_fits("Test region", 10, 24, 12);
+    }
+
+    #[test]
+    fn check_memory_fits_passes_when_within_bounds() {
+        check_memory_fits("Test region", 0, 16, 4);
+        check_memory_fits("Test region", 2, 8, 4);
+    }
 
     #[test]
     fn public_initial_ram_eval_matches_dense_mle() {
