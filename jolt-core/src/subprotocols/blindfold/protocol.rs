@@ -68,6 +68,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BlindFoldProver::prove")]
     pub fn prove<T: Transcript>(
         &self,
         real_instance: &RelaxedR1CSInstance<F, C>,
@@ -292,6 +293,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BlindFoldVerifier::verify")]
     pub fn verify<T: Transcript>(
         &self,
         proof: &BlindFoldProof<F, C>,

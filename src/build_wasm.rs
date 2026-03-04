@@ -56,11 +56,8 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
         attributes.max_trace_length as usize,
     );
 
-    let prover_preprocessing =
-        JoltProverPreprocessing::<Fr, DoryCommitmentScheme>::new(shared.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
-    let verifier_preprocessing =
-        JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::new(shared, verifier_setup);
+    let prover_preprocessing = JoltProverPreprocessing::<Fr, DoryCommitmentScheme>::new(shared);
+    let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
 
     let verifier_bytes = verifier_preprocessing.serialize_to_bytes()?;
 
