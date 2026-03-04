@@ -129,7 +129,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     fn protocol_name() -> &'static [u8];
 
     /// Extracts raw BN254 G1 generators and blinding generator from the prover setup.
-    /// Used to populate ZK Pedersen generators on shared preprocessing.
+    /// Used to derive ZK Pedersen generators from PCS setup.
     /// Returns None for PCS that don't support ZK Pedersen commitments.
     #[cfg(feature = "zk")]
     fn zk_generators_raw(

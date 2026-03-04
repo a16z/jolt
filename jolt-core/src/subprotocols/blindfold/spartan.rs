@@ -110,8 +110,7 @@ impl<F: JoltField> allocative::Allocative for BlindFoldSpartanProver<'_, F> {
 }
 
 impl<'a, F: JoltField> BlindFoldSpartanProver<'a, F> {
-    /// Create a new Spartan prover for the folded R1CS instance.
-    /// `z` layout: [u, W...] (public inputs baked into R1CS coefficients).
+    #[tracing::instrument(skip_all, name = "BlindFoldSpartanProver::new")]
     pub fn new(
         r1cs: &'a VerifierR1CS<F>,
         u: F,
@@ -315,14 +314,7 @@ impl<F: JoltField> BlindFoldSpartanProver<'_, F> {
         }
     }
 
-    /// Compute the witness contribution to Az(r), Bz(r), Cz(r)
-    ///
-    /// Returns (w_az, w_bz, w_cz) where:
-    /// - w_az = Σ_{j ∈ witness} A'[j] · W[j]
-    /// - w_bz = Σ_{j ∈ witness} B'[j] · W[j]
-    /// - w_cz = Σ_{j ∈ witness} C'[j] · W[j]
-    ///
-    /// And A'[j] = Σ_i A[i,j] · eq(r, i)
+    #[tracing::instrument(skip_all, name = "BlindFoldSpartanProver::witness_contributions")]
     pub fn witness_contributions(&self, sumcheck_challenges: &[F::Challenge]) -> (F, F, F) {
         let r: Vec<F> = sumcheck_challenges.iter().map(|c| (*c).into()).collect();
         let padded = self.r1cs.num_constraints.next_power_of_two();
@@ -432,11 +424,7 @@ pub struct BlindFoldInnerSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> BlindFoldInnerSumcheckProver<F> {
-    /// Build the inner sumcheck prover.
-    ///
-    /// `rx` — outer sumcheck challenge point (as Challenge type)
-    /// `w_padded` — padded witness vector (power-of-2 length)
-    /// `ra, rb, rc` — random linear combination scalars
+    #[tracing::instrument(skip_all, name = "BlindFoldInnerSumcheckProver::new")]
     pub fn new(
         r1cs: &VerifierR1CS<F>,
         rx: &[F::Challenge],
