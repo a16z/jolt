@@ -583,6 +583,16 @@ impl<F: JoltField> FMAdd<F, S192> for WideAccumS<F> {
     }
 }
 
+impl<F: JoltField> FMAdd<F, u64> for WideAccumS<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &u64) {
+        if *other == 0 {
+            return;
+        }
+        self.pos += (*field).mul_u64_unreduced(*other);
+    }
+}
+
 impl<F: JoltField> BarrettReduce<F> for WideAccumS<F> {
     #[inline(always)]
     fn barrett_reduce(&self) -> F {
@@ -815,6 +825,18 @@ impl FMAdd<i32, S64> for S128Sum {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct S192Sum {
     pub sum: S192,
+}
+
+impl FMAdd<i32, u64> for S192Sum {
+    #[inline(always)]
+    fn fmadd(&mut self, c: &i32, term: &u64) {
+        if *term == 0 {
+            return;
+        }
+        let c_s64 = S64::from(*c as i64);
+        let v_s64 = S64::from(*term);
+        self.sum += c_s64.mul_trunc::<1, 3>(&v_s64);
+    }
 }
 
 impl FMAdd<i32, S64> for S192Sum {

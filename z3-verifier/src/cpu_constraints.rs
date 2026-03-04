@@ -152,7 +152,6 @@ impl JoltState {
         [
             &self.left_input,
             &self.right_input,
-            &self.product,
             &self.write_lookup_output_to_rd,
             &self.write_pc_to_rd,
             &self.should_branch,
@@ -213,7 +212,6 @@ impl JoltState {
         match poly {
             VirtualPolynomial::LeftInstructionInput => &self.left_input,
             VirtualPolynomial::RightInstructionInput => &self.right_input,
-            VirtualPolynomial::Product => &self.product,
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero) => {
                 &self.instruction_flags[InstructionFlags::IsRdNotZero as usize]
             }

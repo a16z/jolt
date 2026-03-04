@@ -5,10 +5,10 @@
 //!
 //! ## Input
 //!
-//! From RA reduction sumcheck (Stage 5), we receive a single claim:
+//! From RA reduction sumcheck (Stage 4), we receive a single claim:
 //!
 //! ```text
-//! ra(r_address_stage2, r_cycle_stage5) = ra_claim_stage5
+//! ra(r_address_stage2, r_cycle_stage4) = ra_claim_stage4
 //! ```
 //!
 //! ## Identity
@@ -16,7 +16,7 @@
 //! We prove the following sumcheck identity over `c ∈ {0,1}^{log_T}`:
 //!
 //! ```text
-//! Σ_c eq(r_cycle_stage5, c) · Π_{i=0}^{d-1} ra_i(r_address_stage2_i, c) = ra_claim_stage5
+//! Σ_c eq(r_cycle_stage4, c) · Π_{i=0}^{d-1} ra_i(r_address_stage2_i, c) = ra_claim_stage4
 //! ```
 //!
 //! where:

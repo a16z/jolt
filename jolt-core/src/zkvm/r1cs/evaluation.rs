@@ -128,7 +128,6 @@ pub(crate) const PRODUCT_VIRTUAL_COEFFS_PER_J: [[i32;
 /// Boolean guards for the first group (univariate-skip base window)
 #[derive(Clone, Copy, Debug)]
 pub struct AzFirstGroup {
-    pub not_load_store: bool,         // !(Load || Store)
     pub load_a: bool,                 // Load
     pub load_b: bool,                 // Load
     pub store: bool,                  // Store
@@ -150,31 +149,29 @@ impl AzFirstGroup {
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
         acc: &mut SmallAccumU<F>,
     ) {
-        acc.fmadd(&w[0], &self.not_load_store);
-        acc.fmadd(&w[1], &self.load_a);
-        acc.fmadd(&w[2], &self.load_b);
-        acc.fmadd(&w[3], &self.store);
-        acc.fmadd(&w[4], &self.add_sub_mul);
-        acc.fmadd(&w[5], &self.not_add_sub_mul);
-        acc.fmadd(&w[6], &self.assert_flag);
-        acc.fmadd(&w[7], &self.should_jump);
-        acc.fmadd(&w[8], &self.virtual_instr_not_last);
-        acc.fmadd(&w[9], &self.must_start_sequence);
+        acc.fmadd(&w[0], &self.load_a);
+        acc.fmadd(&w[1], &self.load_b);
+        acc.fmadd(&w[2], &self.store);
+        acc.fmadd(&w[3], &self.add_sub_mul);
+        acc.fmadd(&w[4], &self.not_add_sub_mul);
+        acc.fmadd(&w[5], &self.assert_flag);
+        acc.fmadd(&w[6], &self.should_jump);
+        acc.fmadd(&w[7], &self.virtual_instr_not_last);
+        acc.fmadd(&w[8], &self.must_start_sequence);
     }
 }
 
 /// Magnitudes for the first group (kept small: bool/u64/S64)
 #[derive(Clone, Copy, Debug)]
 pub struct BzFirstGroup {
-    pub ram_addr: u64,                               // RamAddress - 0
-    pub ram_read_minus_ram_write: S64,               // RamRead - RamWrite
-    pub ram_read_minus_rd_write: S64,                // RamRead - RdWrite
-    pub rs2_minus_ram_write: S64,                    // Rs2 - RamWrite
-    pub left_lookup: u64,                            // LeftLookup - 0
-    pub left_lookup_minus_left_input: S64,           // LeftLookup - LeftInstructionInput
-    pub lookup_output_minus_one: S64,                // LookupOutput - 1
-    pub next_unexp_pc_minus_lookup_output: S64,      // NextUnexpandedPC - LookupOutput
-    pub next_pc_minus_pc_plus_one: S64,              // NextPC - (PC + 1)
+    pub ram_read_minus_ram_write: S64,          // RamRead - RamWrite
+    pub ram_read_minus_rd_write: S64,           // RamRead - RdWrite
+    pub rs2_minus_ram_write: S64,               // Rs2 - RamWrite
+    pub left_lookup: u64,                       // LeftLookup - 0
+    pub left_lookup_minus_left_input: S64,      // LeftLookup - LeftInstructionInput
+    pub lookup_output_minus_one: S64,           // LookupOutput - 1
+    pub next_unexp_pc_minus_lookup_output: S64, // NextUnexpandedPC - LookupOutput
+    pub next_pc_minus_pc_plus_one: S64,         // NextPC - (PC + 1)
     pub one_minus_do_not_update_unexpanded_pc: bool, // 1 - DoNotUpdateUnexpandedPC
 }
 
@@ -188,16 +185,15 @@ impl BzFirstGroup {
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
         acc: &mut MedAccumS<F>,
     ) {
-        acc.fmadd(&w[0], &self.ram_addr);
-        acc.fmadd(&w[1], &self.ram_read_minus_ram_write);
-        acc.fmadd(&w[2], &self.ram_read_minus_rd_write);
-        acc.fmadd(&w[3], &self.rs2_minus_ram_write);
-        acc.fmadd(&w[4], &self.left_lookup);
-        acc.fmadd(&w[5], &self.left_lookup_minus_left_input);
-        acc.fmadd(&w[6], &self.lookup_output_minus_one);
-        acc.fmadd(&w[7], &self.next_unexp_pc_minus_lookup_output);
-        acc.fmadd(&w[8], &self.next_pc_minus_pc_plus_one);
-        acc.fmadd(&w[9], &self.one_minus_do_not_update_unexpanded_pc);
+        acc.fmadd(&w[0], &self.ram_read_minus_ram_write);
+        acc.fmadd(&w[1], &self.ram_read_minus_rd_write);
+        acc.fmadd(&w[2], &self.rs2_minus_ram_write);
+        acc.fmadd(&w[3], &self.left_lookup);
+        acc.fmadd(&w[4], &self.left_lookup_minus_left_input);
+        acc.fmadd(&w[5], &self.lookup_output_minus_one);
+        acc.fmadd(&w[6], &self.next_unexp_pc_minus_lookup_output);
+        acc.fmadd(&w[7], &self.next_pc_minus_pc_plus_one);
+        acc.fmadd(&w[8], &self.one_minus_do_not_update_unexpanded_pc);
     }
 }
 
@@ -205,9 +201,9 @@ impl BzFirstGroup {
 #[derive(Clone, Copy, Debug)]
 pub struct AzSecondGroup {
     pub load_or_store: bool,          // Load || Store
+    pub not_load_store: bool,         // !(Load || Store)
     pub add: bool,                    // Add
     pub sub: bool,                    // Sub
-    pub mul: bool,                    // Mul
     pub not_add_sub_mul_advice: bool, // !(Add || Sub || Mul || Advice)
     pub write_lookup_to_rd: bool,     // write_lookup_output_to_rd_addr (Rd != 0)
     pub write_pc_to_rd: bool,         // write_pc_to_rd_addr (Rd != 0)
@@ -226,9 +222,9 @@ impl AzSecondGroup {
         acc: &mut SmallAccumU<F>,
     ) {
         acc.fmadd(&w[0], &self.load_or_store);
-        acc.fmadd(&w[1], &self.add);
-        acc.fmadd(&w[2], &self.sub);
-        acc.fmadd(&w[3], &self.mul);
+        acc.fmadd(&w[1], &self.not_load_store);
+        acc.fmadd(&w[2], &self.add);
+        acc.fmadd(&w[3], &self.sub);
         acc.fmadd(&w[4], &self.not_add_sub_mul_advice);
         acc.fmadd(&w[5], &self.write_lookup_to_rd);
         acc.fmadd(&w[6], &self.write_pc_to_rd);
@@ -241,9 +237,9 @@ impl AzSecondGroup {
 #[derive(Clone, Copy, Debug)]
 pub struct BzSecondGroup {
     pub ram_addr_minus_rs1_plus_imm: i128, // RamAddress - (Rs1 + Imm)
+    pub ram_addr: u64,                     // RamAddress - 0
     pub right_lookup_minus_add_result: S160, // RightLookup - (Left + Right)
     pub right_lookup_minus_sub_result: S160, // RightLookup - (Left - Right + 2^64)
-    pub right_lookup_minus_product: S160,  // RightLookup - Product
     pub right_lookup_minus_right_input: S160, // RightLookup - RightInput
     pub rd_write_minus_lookup_output: S64, // RdWrite - LookupOutput
     pub rd_write_minus_pc_plus_const: S64, // RdWrite - (UnexpandedPC + const)
@@ -262,9 +258,9 @@ impl BzSecondGroup {
         acc: &mut WideAccumS<F>,
     ) {
         acc.fmadd(&w[0], &self.ram_addr_minus_rs1_plus_imm);
-        acc.fmadd(&w[1], &self.right_lookup_minus_add_result);
-        acc.fmadd(&w[2], &self.right_lookup_minus_sub_result);
-        acc.fmadd(&w[3], &self.right_lookup_minus_product);
+        acc.fmadd(&w[1], &self.ram_addr);
+        acc.fmadd(&w[2], &self.right_lookup_minus_add_result);
+        acc.fmadd(&w[3], &self.right_lookup_minus_sub_result);
         acc.fmadd(&w[4], &self.right_lookup_minus_right_input);
         acc.fmadd(&w[5], &self.rd_write_minus_lookup_output);
         acc.fmadd(&w[6], &self.rd_write_minus_pc_plus_const);
@@ -301,7 +297,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         let inline_seq = flags[CircuitFlags::VirtualInstruction];
 
         AzFirstGroup {
-            not_load_store: !(ld || st),
             load_a: ld,
             load_b: ld,
             store: st,
@@ -317,7 +312,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     #[inline]
     pub fn eval_bz_first_group(&self) -> BzFirstGroup {
         BzFirstGroup {
-            ram_addr: self.row.ram_addr,
             ram_read_minus_ram_write: s64_from_diff_u64s(
                 self.row.ram_read_value,
                 self.row.ram_write_value,
@@ -353,16 +347,15 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     pub fn az_at_r_first_group(&self, w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let az = self.eval_az_first_group();
         let mut acc: SmallAccumU<F> = SmallAccumU::zero();
-        acc.fmadd(&w[0], &az.not_load_store);
-        acc.fmadd(&w[1], &az.load_a);
-        acc.fmadd(&w[2], &az.load_b);
-        acc.fmadd(&w[3], &az.store);
-        acc.fmadd(&w[4], &az.add_sub_mul);
-        acc.fmadd(&w[5], &az.not_add_sub_mul);
-        acc.fmadd(&w[6], &az.assert_flag);
-        acc.fmadd(&w[7], &az.should_jump);
-        acc.fmadd(&w[8], &az.virtual_instr_not_last);
-        acc.fmadd(&w[9], &az.must_start_sequence);
+        acc.fmadd(&w[0], &az.load_a);
+        acc.fmadd(&w[1], &az.load_b);
+        acc.fmadd(&w[2], &az.store);
+        acc.fmadd(&w[3], &az.add_sub_mul);
+        acc.fmadd(&w[4], &az.not_add_sub_mul);
+        acc.fmadd(&w[5], &az.assert_flag);
+        acc.fmadd(&w[6], &az.should_jump);
+        acc.fmadd(&w[7], &az.virtual_instr_not_last);
+        acc.fmadd(&w[8], &az.must_start_sequence);
         acc.barrett_reduce()
     }
 
@@ -370,16 +363,15 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     pub fn bz_at_r_first_group(&self, w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let bz = self.eval_bz_first_group();
         let mut acc: MedAccumS<F> = MedAccumS::zero();
-        acc.fmadd(&w[0], &bz.ram_addr);
-        acc.fmadd(&w[1], &bz.ram_read_minus_ram_write);
-        acc.fmadd(&w[2], &bz.ram_read_minus_rd_write);
-        acc.fmadd(&w[3], &bz.rs2_minus_ram_write);
-        acc.fmadd(&w[4], &bz.left_lookup);
-        acc.fmadd(&w[5], &bz.left_lookup_minus_left_input);
-        acc.fmadd(&w[6], &bz.lookup_output_minus_one);
-        acc.fmadd(&w[7], &bz.next_unexp_pc_minus_lookup_output);
-        acc.fmadd(&w[8], &bz.next_pc_minus_pc_plus_one);
-        acc.fmadd(&w[9], &bz.one_minus_do_not_update_unexpanded_pc);
+        acc.fmadd(&w[0], &bz.ram_read_minus_ram_write);
+        acc.fmadd(&w[1], &bz.ram_read_minus_rd_write);
+        acc.fmadd(&w[2], &bz.rs2_minus_ram_write);
+        acc.fmadd(&w[3], &bz.left_lookup);
+        acc.fmadd(&w[4], &bz.left_lookup_minus_left_input);
+        acc.fmadd(&w[5], &bz.lookup_output_minus_one);
+        acc.fmadd(&w[6], &bz.next_unexp_pc_minus_lookup_output);
+        acc.fmadd(&w[7], &bz.next_pc_minus_pc_plus_one);
+        acc.fmadd(&w[8], &bz.one_minus_do_not_update_unexpanded_pc);
         acc.barrett_reduce()
     }
 
@@ -412,73 +404,66 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         let mut bz_eval_s128: S128Sum = S128Sum::zero();
 
         let c0_i32 = coeffs_i32[0];
-        if az.not_load_store {
+        if az.load_a {
             az_eval_i32 += c0_i32;
         } else {
-            bz_eval_s128.fmadd(&c0_i32, &bz.ram_addr);
+            bz_eval_s128.fmadd(&c0_i32, &bz.ram_read_minus_ram_write);
         }
 
         let c1_i32 = coeffs_i32[1];
-        if az.load_a {
+        if az.load_b {
             az_eval_i32 += c1_i32;
         } else {
-            bz_eval_s128.fmadd(&c1_i32, &bz.ram_read_minus_ram_write);
+            bz_eval_s128.fmadd(&c1_i32, &bz.ram_read_minus_rd_write);
         }
 
         let c2_i32 = coeffs_i32[2];
-        if az.load_b {
+        if az.store {
             az_eval_i32 += c2_i32;
         } else {
-            bz_eval_s128.fmadd(&c2_i32, &bz.ram_read_minus_rd_write);
+            bz_eval_s128.fmadd(&c2_i32, &bz.rs2_minus_ram_write);
         }
 
         let c3_i32 = coeffs_i32[3];
-        if az.store {
+        if az.add_sub_mul {
             az_eval_i32 += c3_i32;
         } else {
-            bz_eval_s128.fmadd(&c3_i32, &bz.rs2_minus_ram_write);
+            bz_eval_s128.fmadd(&c3_i32, &bz.left_lookup);
         }
 
         let c4_i32 = coeffs_i32[4];
-        if az.add_sub_mul {
+        if az.not_add_sub_mul {
             az_eval_i32 += c4_i32;
         } else {
-            bz_eval_s128.fmadd(&c4_i32, &bz.left_lookup);
+            bz_eval_s128.fmadd(&c4_i32, &bz.left_lookup_minus_left_input);
         }
 
         let c5_i32 = coeffs_i32[5];
-        if az.not_add_sub_mul {
+        if az.assert_flag {
             az_eval_i32 += c5_i32;
         } else {
-            bz_eval_s128.fmadd(&c5_i32, &bz.left_lookup_minus_left_input);
+            bz_eval_s128.fmadd(&c5_i32, &bz.lookup_output_minus_one);
         }
 
         let c6_i32 = coeffs_i32[6];
-        if az.assert_flag {
+        if az.should_jump {
             az_eval_i32 += c6_i32;
         } else {
-            bz_eval_s128.fmadd(&c6_i32, &bz.lookup_output_minus_one);
+            bz_eval_s128.fmadd(&c6_i32, &bz.next_unexp_pc_minus_lookup_output);
         }
 
         let c7_i32 = coeffs_i32[7];
-        if az.should_jump {
+        if az.virtual_instr_not_last {
             az_eval_i32 += c7_i32;
         } else {
-            bz_eval_s128.fmadd(&c7_i32, &bz.next_unexp_pc_minus_lookup_output);
+            bz_eval_s128.fmadd(&c7_i32, &bz.next_pc_minus_pc_plus_one);
         }
 
         let c8_i32 = coeffs_i32[8];
-        if az.virtual_instr_not_last {
+        if az.must_start_sequence {
             az_eval_i32 += c8_i32;
         } else {
-            bz_eval_s128.fmadd(&c8_i32, &bz.next_pc_minus_pc_plus_one);
-        }
-
-        let c9_i32 = coeffs_i32[9];
-        if az.must_start_sequence {
-            az_eval_i32 += c9_i32;
-        } else {
-            bz_eval_s128.fmadd(&c9_i32, &bz.one_minus_do_not_update_unexpanded_pc);
+            bz_eval_s128.fmadd(&c8_i32, &bz.one_minus_do_not_update_unexpanded_pc);
         }
 
         let az_eval_s64 = S64::from_i64(az_eval_i32 as i64);
@@ -503,37 +488,36 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     pub fn assert_constraints_first_group(&self) {
         let az = self.eval_az_first_group();
         let bz = self.eval_bz_first_group();
-        self.assert_constraint_first_group(0, az.not_load_store, bz.ram_addr == 0);
         self.assert_constraint_first_group(
-            1,
+            0,
             az.load_a,
             bz.ram_read_minus_ram_write.to_i128() == 0,
         );
-        self.assert_constraint_first_group(2, az.load_b, bz.ram_read_minus_rd_write.to_i128() == 0);
-        self.assert_constraint_first_group(3, az.store, bz.rs2_minus_ram_write.to_i128() == 0);
-        self.assert_constraint_first_group(4, az.add_sub_mul, bz.left_lookup == 0);
+        self.assert_constraint_first_group(1, az.load_b, bz.ram_read_minus_rd_write.to_i128() == 0);
+        self.assert_constraint_first_group(2, az.store, bz.rs2_minus_ram_write.to_i128() == 0);
+        self.assert_constraint_first_group(3, az.add_sub_mul, bz.left_lookup == 0);
         self.assert_constraint_first_group(
-            5,
+            4,
             az.not_add_sub_mul,
             bz.left_lookup_minus_left_input.to_i128() == 0,
         );
         self.assert_constraint_first_group(
-            6,
+            5,
             az.assert_flag,
             bz.lookup_output_minus_one.to_i128() == 0,
         );
         self.assert_constraint_first_group(
-            7,
+            6,
             az.should_jump,
             bz.next_unexp_pc_minus_lookup_output.to_i128() == 0,
         );
         self.assert_constraint_first_group(
-            8,
+            7,
             az.virtual_instr_not_last,
             bz.next_pc_minus_pc_plus_one.to_i128() == 0,
         );
         self.assert_constraint_first_group(
-            9,
+            8,
             az.must_start_sequence,
             !bz.one_minus_do_not_update_unexpanded_pc,
         );
@@ -554,9 +538,9 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
 
         AzSecondGroup {
             load_or_store: (flags[CircuitFlags::Load] || flags[CircuitFlags::Store]),
+            not_load_store: !(flags[CircuitFlags::Load] || flags[CircuitFlags::Store]),
             add: flags[CircuitFlags::AddOperands],
             sub: flags[CircuitFlags::SubtractOperands],
-            mul: flags[CircuitFlags::MultiplyOperands],
             not_add_sub_mul_advice,
             write_lookup_to_rd: self.row.write_lookup_output_to_rd_addr,
             write_pc_to_rd: self.row.write_pc_to_rd_addr,
@@ -584,8 +568,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             S160::from(self.row.right_lookup) - S160::from(right_add_expected);
         let right_lookup_minus_sub_result =
             S160::from(self.row.right_lookup) - S160::from(right_sub_expected);
-        let right_lookup_minus_product =
-            S160::from(self.row.right_lookup) - S160::from(self.row.product);
         let right_lookup_minus_right_input =
             S160::from(self.row.right_lookup) - S160::from(self.row.right_input);
 
@@ -620,9 +602,9 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
 
         BzSecondGroup {
             ram_addr_minus_rs1_plus_imm,
+            ram_addr: self.row.ram_addr,
             right_lookup_minus_add_result,
             right_lookup_minus_sub_result,
-            right_lookup_minus_product,
             right_lookup_minus_right_input,
             rd_write_minus_lookup_output,
             rd_write_minus_pc_plus_const,
@@ -632,14 +614,13 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     #[inline]
-    pub fn az_at_r_second_group(&self, _w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
-        let w = _w;
+    pub fn az_at_r_second_group(&self, w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let az = self.eval_az_second_group();
         let mut acc: SmallAccumU<F> = SmallAccumU::zero();
         acc.fmadd(&w[0], &az.load_or_store);
-        acc.fmadd(&w[1], &az.add);
-        acc.fmadd(&w[2], &az.sub);
-        acc.fmadd(&w[3], &az.mul);
+        acc.fmadd(&w[1], &az.not_load_store);
+        acc.fmadd(&w[2], &az.add);
+        acc.fmadd(&w[3], &az.sub);
         acc.fmadd(&w[4], &az.not_add_sub_mul_advice);
         acc.fmadd(&w[5], &az.write_lookup_to_rd);
         acc.fmadd(&w[6], &az.write_pc_to_rd);
@@ -649,14 +630,13 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     }
 
     #[inline]
-    pub fn bz_at_r_second_group(&self, _w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
-        let w = _w;
+    pub fn bz_at_r_second_group(&self, w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let bz = self.eval_bz_second_group();
         let mut acc = WideAccumS::<F>::zero();
         acc.fmadd(&w[0], &bz.ram_addr_minus_rs1_plus_imm);
-        acc.fmadd(&w[1], &bz.right_lookup_minus_add_result);
-        acc.fmadd(&w[2], &bz.right_lookup_minus_sub_result);
-        acc.fmadd(&w[3], &bz.right_lookup_minus_product);
+        acc.fmadd(&w[1], &bz.ram_addr);
+        acc.fmadd(&w[2], &bz.right_lookup_minus_add_result);
+        acc.fmadd(&w[3], &bz.right_lookup_minus_sub_result);
         acc.fmadd(&w[4], &bz.right_lookup_minus_right_input);
         acc.fmadd(&w[5], &bz.rd_write_minus_lookup_output);
         acc.fmadd(&w[6], &bz.rd_write_minus_pc_plus_const);
@@ -701,24 +681,24 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         }
 
         let c1 = coeffs_i32[1];
-        if az.add {
+        if az.not_load_store {
             az_eval_i32 += c1;
         } else {
-            bz_eval_s192.fmadd(&c1, &bz.right_lookup_minus_add_result);
+            bz_eval_s192.fmadd(&c1, &bz.ram_addr);
         }
 
         let c2 = coeffs_i32[2];
-        if az.sub {
+        if az.add {
             az_eval_i32 += c2;
         } else {
-            bz_eval_s192.fmadd(&c2, &bz.right_lookup_minus_sub_result);
+            bz_eval_s192.fmadd(&c2, &bz.right_lookup_minus_add_result);
         }
 
         let c3 = coeffs_i32[3];
-        if az.mul {
+        if az.sub {
             az_eval_i32 += c3;
         } else {
-            bz_eval_s192.fmadd(&c3, &bz.right_lookup_minus_product);
+            bz_eval_s192.fmadd(&c3, &bz.right_lookup_minus_sub_result);
         }
 
         let c4 = coeffs_i32[4];
@@ -783,9 +763,9 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             az.load_or_store,
             bz.ram_addr_minus_rs1_plus_imm == 0i128,
         );
-        self.assert_constraint_second_group(1, az.add, bz.right_lookup_minus_add_result.is_zero());
-        self.assert_constraint_second_group(2, az.sub, bz.right_lookup_minus_sub_result.is_zero());
-        self.assert_constraint_second_group(3, az.mul, bz.right_lookup_minus_product.is_zero());
+        self.assert_constraint_second_group(1, az.not_load_store, bz.ram_addr == 0);
+        self.assert_constraint_second_group(2, az.add, bz.right_lookup_minus_add_result.is_zero());
+        self.assert_constraint_second_group(3, az.sub, bz.right_lookup_minus_sub_result.is_zero());
         self.assert_constraint_second_group(
             4,
             az.not_add_sub_mul_advice,
@@ -837,7 +817,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                 // If S128 => 7 limbs signed
                 let mut acc_left_input: MedAccumU<F> = MedAccumU::zero();
                 let mut acc_right_input: MedAccumS<F> = MedAccumS::zero();
-                let mut acc_product = WideAccumS::<F>::zero();
                 let mut acc_wl_left: SmallAccumU<F> = SmallAccumU::zero();
                 let mut acc_wp_left: SmallAccumU<F> = SmallAccumU::zero();
                 let mut acc_sb_right: SmallAccumU<F> = SmallAccumU::zero();
@@ -870,7 +849,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
 
                     acc_left_input.fmadd(&e_in, &row.left_input);
                     acc_right_input.fmadd(&e_in, &row.right_input.to_i128());
-                    acc_product.fmadd(&e_in, &row.product);
 
                     acc_wl_left.fmadd(&e_in, &(row.write_lookup_output_to_rd_addr as u64));
                     acc_wp_left.fmadd(&e_in, &(row.write_pc_to_rd_addr as u64));
@@ -904,8 +882,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     eq1_val.mul_to_product_accum(acc_left_input.barrett_reduce());
                 out_unr[JoltR1CSInputs::RightInstructionInput.to_index()] =
                     eq1_val.mul_to_product_accum(acc_right_input.barrett_reduce());
-                out_unr[JoltR1CSInputs::Product.to_index()] =
-                    eq1_val.mul_to_product_accum(acc_product.barrett_reduce());
                 out_unr[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] =
                     eq1_val.mul_to_product_accum(acc_wl_left.barrett_reduce());
                 out_unr[JoltR1CSInputs::WritePCtoRD.to_index()] =
@@ -972,71 +948,61 @@ pub struct ProductVirtualEval;
 
 impl ProductVirtualEval {
     /// Compute both fused left and right factors at r0 weights for a single cycle row.
-    /// Expected order of weights: [Instruction, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
+    /// Expected order of weights: [WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
     #[inline]
     pub fn fused_left_right_at_r<F: JoltField>(
         row: &ProductCycleInputs,
         weights_at_r0: &[F],
     ) -> (F, F) {
-        // Left: u64/u8/bool
         let mut left_acc: MedAccumU<F> = MedAccumU::zero();
-        left_acc.fmadd(&weights_at_r0[0], &row.instruction_left_input);
+        left_acc.fmadd(&weights_at_r0[0], &row.is_rd_not_zero);
         left_acc.fmadd(&weights_at_r0[1], &row.is_rd_not_zero);
-        left_acc.fmadd(&weights_at_r0[2], &row.is_rd_not_zero);
-        left_acc.fmadd(&weights_at_r0[3], &row.should_branch_lookup_output);
-        left_acc.fmadd(&weights_at_r0[4], &row.jump_flag);
+        left_acc.fmadd(&weights_at_r0[2], &row.should_branch_lookup_output);
+        left_acc.fmadd(&weights_at_r0[3], &row.jump_flag);
 
-        // Right: i128/bool
         let mut right_acc: MedAccumS<F> = MedAccumS::zero();
-        right_acc.fmadd(&weights_at_r0[0], &row.instruction_right_input);
-        right_acc.fmadd(&weights_at_r0[1], &row.write_lookup_output_to_rd_flag);
-        right_acc.fmadd(&weights_at_r0[2], &row.jump_flag);
-        right_acc.fmadd(&weights_at_r0[3], &row.should_branch_flag);
-        right_acc.fmadd(&weights_at_r0[4], &row.not_next_noop);
+        right_acc.fmadd(&weights_at_r0[0], &row.write_lookup_output_to_rd_flag);
+        right_acc.fmadd(&weights_at_r0[1], &row.jump_flag);
+        right_acc.fmadd(&weights_at_r0[2], &row.should_branch_flag);
+        right_acc.fmadd(&weights_at_r0[3], &row.not_next_noop);
 
         (left_acc.barrett_reduce(), right_acc.barrett_reduce())
     }
 
     /// Compute the fused left·right product at the j-th extended uniskip target for product virtualization.
-    /// Uses precomputed integer Lagrange coefficients over the size-5 base window and returns an S256 product.
+    /// Uses precomputed integer Lagrange coefficients over the size-4 base window and returns an S256 product.
     #[inline]
     pub fn extended_fused_product_at_j<F: JoltField>(row: &ProductCycleInputs, j: usize) -> S256 {
         let c: &[i32; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE] =
             &PRODUCT_VIRTUAL_COEFFS_PER_J[j];
 
-        // Weighted components lifted to i128
         let mut left_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
         let mut right_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
 
-        // 0: Instruction (LeftInstructionInput × RightInstructionInput)
-        left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128);
-        right_w[0] = (c[0] as i128) * row.instruction_right_input;
+        // 0: WriteLookupOutputToRD (IsRdNotZero × WriteLookupOutputToRD_flag)
+        left_w[0] = if row.is_rd_not_zero { c[0] as i128 } else { 0 };
+        right_w[0] = if row.write_lookup_output_to_rd_flag {
+            c[0] as i128
+        } else {
+            0
+        };
 
-        // 1: WriteLookupOutputToRD (IsRdNotZero × WriteLookupOutputToRD_flag)
+        // 1: WritePCtoRD (IsRdNotZero × Jump_flag)
         left_w[1] = if row.is_rd_not_zero { c[1] as i128 } else { 0 };
-        right_w[1] = if row.write_lookup_output_to_rd_flag {
-            c[1] as i128
+        right_w[1] = if row.jump_flag { c[1] as i128 } else { 0 };
+
+        // 2: ShouldBranch (LookupOutput × Branch_flag)
+        left_w[2] = (c[2] as i128) * (row.should_branch_lookup_output as i128);
+        right_w[2] = if row.should_branch_flag {
+            c[2] as i128
         } else {
             0
         };
 
-        // 2: WritePCtoRD (IsRdNotZero × Jump_flag)
-        left_w[2] = if row.is_rd_not_zero { c[2] as i128 } else { 0 };
-        right_w[2] = if row.jump_flag { c[2] as i128 } else { 0 };
+        // 3: ShouldJump (Jump_flag × (1 − NextIsNoop))
+        left_w[3] = if row.jump_flag { c[3] as i128 } else { 0 };
+        right_w[3] = if row.not_next_noop { c[3] as i128 } else { 0 };
 
-        // 3: ShouldBranch (LookupOutput × Branch_flag)
-        left_w[3] = (c[3] as i128) * (row.should_branch_lookup_output as i128);
-        right_w[3] = if row.should_branch_flag {
-            c[3] as i128
-        } else {
-            0
-        };
-
-        // 4: ShouldJump (Jump_flag × (1 − NextIsNoop))
-        left_w[4] = if row.jump_flag { c[4] as i128 } else { 0 };
-        right_w[4] = if row.not_next_noop { c[4] as i128 } else { 0 };
-
-        // Fuse in i128, then multiply as S128×S128 → S256
         let mut left_sum: i128 = 0;
         let mut right_sum: i128 = 0;
         let mut i = 0;
@@ -1050,22 +1016,20 @@ impl ProductVirtualEval {
         left_s128.mul_trunc::<2, 4>(&right_s128)
     }
 
-    /// Compute z(r_cycle) for the 9 de-duplicated factor polynomials used by Product Virtualization.
+    /// Compute z(r_cycle) for the 7 de-duplicated factor polynomials used by Product Virtualization.
     /// Order of outputs matches PRODUCT_UNIQUE_FACTOR_VIRTUALS:
-    /// 0: LeftInstructionInput (u64)
-    /// 1: RightInstructionInput (i128)
-    /// 2: IsRdNotZero (bool)
-    /// 3: OpFlags(WriteLookupOutputToRD) (bool)
-    /// 4: OpFlags(Jump) (bool)
-    /// 5: LookupOutput (u64)
-    /// 6: InstructionFlags(Branch) (bool)
-    /// 7: NextIsNoop (bool)
-    /// 8: OpFlags(VirtualInstruction) (bool) — not a product factor, opened for downstream stages
+    /// 0: IsRdNotZero (bool)
+    /// 1: OpFlags(WriteLookupOutputToRD) (bool)
+    /// 2: OpFlags(Jump) (bool)
+    /// 3: LookupOutput (u64)
+    /// 4: InstructionFlags(Branch) (bool)
+    /// 5: NextIsNoop (bool)
+    /// 6: OpFlags(VirtualInstruction) (bool) — not a product factor, opened for downstream stages
     #[tracing::instrument(skip_all, name = "ProductVirtualEval::compute_claimed_factors")]
     pub fn compute_claimed_factors<F: JoltField>(
         trace: &[tracer::instruction::Cycle],
         r_cycle: &OpeningPoint<BIG_ENDIAN, F>,
-    ) -> [F; 9] {
+    ) -> [F; 7] {
         let m = r_cycle.len() / 2;
         let (r2, r1) = r_cycle.split_at_r(m);
         let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
@@ -1077,9 +1041,6 @@ impl ProductVirtualEval {
             .map(|x1| {
                 let eq1_val = eq_one[x1];
 
-                // Accumulators for 9 outputs
-                let mut acc_left_u64: MedAccumU<F> = MedAccumU::zero();
-                let mut acc_right_i128: MedAccumS<F> = MedAccumS::zero();
                 let mut acc_rd_zero_flag: SmallAccumU<F> = SmallAccumU::zero();
                 let mut acc_wl_flag: SmallAccumU<F> = SmallAccumU::zero();
                 let mut acc_jump_flag: SmallAccumU<F> = SmallAccumU::zero();
@@ -1093,42 +1054,29 @@ impl ProductVirtualEval {
                     let idx = x1 * eq_two_len + x2;
                     let row = ProductCycleInputs::from_trace::<F>(trace, idx);
 
-                    // 0: LeftInstructionInput (u64)
-                    acc_left_u64.fmadd(&e_in, &row.instruction_left_input);
-                    // 1: RightInstructionInput (i128)
-                    acc_right_i128.fmadd(&e_in, &row.instruction_right_input);
-                    // 2: IsRdNotZero (bool)
                     acc_rd_zero_flag.fmadd(&e_in, &(row.is_rd_not_zero));
-                    // 3: OpFlags(WriteLookupOutputToRD) (bool)
                     acc_wl_flag.fmadd(&e_in, &row.write_lookup_output_to_rd_flag);
-                    // 4: OpFlags(Jump) (bool)
                     acc_jump_flag.fmadd(&e_in, &row.jump_flag);
-                    // 5: LookupOutput (u64)
                     acc_lookup_output.fmadd(&e_in, &row.should_branch_lookup_output);
-                    // 6: InstructionFlags(Branch) (bool)
                     acc_branch_flag.fmadd(&e_in, &row.should_branch_flag);
-                    // 7: NextIsNoop (bool) = !not_next_noop
                     acc_next_is_noop.fmadd(&e_in, &(!row.not_next_noop));
-                    // 8: OpFlags(VirtualInstruction) (bool)
                     acc_virtual_instr_flag.fmadd(&e_in, &row.virtual_instruction_flag);
                 }
 
-                let mut out_unr = [F::UnreducedProductAccum::zero(); 9];
-                out_unr[0] = eq1_val.mul_to_product_accum(acc_left_u64.barrett_reduce());
-                out_unr[1] = eq1_val.mul_to_product_accum(acc_right_i128.barrett_reduce());
-                out_unr[2] = eq1_val.mul_to_product_accum(acc_rd_zero_flag.barrett_reduce());
-                out_unr[3] = eq1_val.mul_to_product_accum(acc_wl_flag.barrett_reduce());
-                out_unr[4] = eq1_val.mul_to_product_accum(acc_jump_flag.barrett_reduce());
-                out_unr[5] = eq1_val.mul_to_product_accum(acc_lookup_output.barrett_reduce());
-                out_unr[6] = eq1_val.mul_to_product_accum(acc_branch_flag.barrett_reduce());
-                out_unr[7] = eq1_val.mul_to_product_accum(acc_next_is_noop.barrett_reduce());
-                out_unr[8] = eq1_val.mul_to_product_accum(acc_virtual_instr_flag.barrett_reduce());
+                let mut out_unr = [F::UnreducedProductAccum::zero(); 7];
+                out_unr[0] = eq1_val.mul_to_product_accum(acc_rd_zero_flag.barrett_reduce());
+                out_unr[1] = eq1_val.mul_to_product_accum(acc_wl_flag.barrett_reduce());
+                out_unr[2] = eq1_val.mul_to_product_accum(acc_jump_flag.barrett_reduce());
+                out_unr[3] = eq1_val.mul_to_product_accum(acc_lookup_output.barrett_reduce());
+                out_unr[4] = eq1_val.mul_to_product_accum(acc_branch_flag.barrett_reduce());
+                out_unr[5] = eq1_val.mul_to_product_accum(acc_next_is_noop.barrett_reduce());
+                out_unr[6] = eq1_val.mul_to_product_accum(acc_virtual_instr_flag.barrett_reduce());
                 out_unr
             })
             .reduce(
-                || [F::UnreducedProductAccum::zero(); 9],
+                || [F::UnreducedProductAccum::zero(); 7],
                 |mut acc, item| {
-                    for i in 0..9 {
+                    for i in 0..7 {
                         acc[i] += item[i];
                     }
                     acc

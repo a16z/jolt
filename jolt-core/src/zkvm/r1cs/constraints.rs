@@ -43,6 +43,12 @@ use strum::EnumCount as EnumCountTrait;
 use strum_macros::{EnumCount, EnumIter};
 
 pub use super::ops::{Term, LC};
+#[cfg(test)]
+use crate::field::JoltField;
+#[cfg(test)]
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+#[cfg(test)]
+use std::fmt::Write as _;
 
 /// A single R1CS constraint row
 #[derive(Clone, Copy, Debug)]
@@ -59,14 +65,12 @@ impl R1CSConstraint {
     }
 
     #[cfg(test)]
-    pub fn pretty_fmt<F: crate::field::JoltField>(
+    pub fn pretty_fmt<F: JoltField>(
         &self,
         f: &mut String,
-        flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
+        flattened_polynomials: &[MultilinearPolynomial<F>],
         step_index: usize,
     ) -> std::fmt::Result {
-        use std::fmt::Write as _;
-
         self.a.pretty_fmt(f)?;
         write!(f, " ⋅ ")?;
         self.b.pretty_fmt(f)?;
@@ -107,8 +111,6 @@ impl R1CSConstraint {
         f: &mut String,
         row: &super::inputs::R1CSCycleInputs,
     ) -> std::fmt::Result {
-        use std::fmt::Write as _;
-
         self.a.pretty_fmt(f)?;
         write!(f, " ⋅ ")?;
         self.b.pretty_fmt(f)?;
@@ -162,7 +164,6 @@ pub enum R1CSConstraintLabel {
     LeftLookupEqLeftInputOtherwise,
     RightLookupAdd,
     RightLookupSub,
-    RightLookupEqProductIfMul,
     RightLookupEqRightInputOtherwise,
     AssertLookupOne,
     RdWriteEqLookupIfWriteLookupToRd,
@@ -182,14 +183,12 @@ pub struct NamedR1CSConstraint {
 
 impl NamedR1CSConstraint {
     #[cfg(test)]
-    pub fn pretty_fmt<F: crate::field::JoltField>(
+    pub fn pretty_fmt<F: JoltField>(
         &self,
         f: &mut String,
-        flattened_polynomials: &[crate::poly::multilinear_polynomial::MultilinearPolynomial<F>],
+        flattened_polynomials: &[MultilinearPolynomial<F>],
         step_index: usize,
     ) -> std::fmt::Result {
-        use std::fmt::Write as _;
-
         writeln!(f, "[{:?}]", self.label)?;
         self.cons.pretty_fmt(f, flattened_polynomials, step_index)
     }
@@ -200,8 +199,6 @@ impl NamedR1CSConstraint {
         f: &mut String,
         row: &super::inputs::R1CSCycleInputs,
     ) -> std::fmt::Result {
-        use std::fmt::Write as _;
-
         writeln!(f, "[{:?}]", self.label)?;
         self.cons.pretty_fmt_with_row(f, row)
     }
@@ -300,11 +297,6 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
         label: R1CSConstraintLabel::RightLookupSub,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0x10000000000000000i128 } )
-    ),
-    r1cs_eq_conditional!(
-        label: R1CSConstraintLabel::RightLookupEqProductIfMul,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
-        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::Product } )
     ),
     // if !(AddOperands || SubtractOperands || MultiplyOperands || Advice) {
     //     assert!(RightLookupOperand == RightInstructionInput)
@@ -495,7 +487,6 @@ const fn complement_first_group_labels() -> [R1CSConstraintLabel; NUM_REMAINING_
 /// First group: 10 boolean-guarded eq constraints, where Bz is around 64 bits
 pub const R1CS_CONSTRAINTS_FIRST_GROUP_LABELS: [R1CSConstraintLabel;
     OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE] = [
-    R1CSConstraintLabel::RamAddrEqZeroIfNotLoadStore,
     R1CSConstraintLabel::RamReadEqRamWriteIfLoad,
     R1CSConstraintLabel::RamReadEqRdWriteIfLoad,
     R1CSConstraintLabel::Rs2EqRamWriteIfStore,
@@ -520,8 +511,8 @@ pub static R1CS_CONSTRAINTS_FIRST_GROUP: [NamedR1CSConstraint; OUTER_UNIVARIATE_
 pub static R1CS_CONSTRAINTS_SECOND_GROUP: [NamedR1CSConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
     filter_r1cs_constraints(&R1CS_CONSTRAINTS_SECOND_GROUP_LABELS);
 
-/// Domain sizing for product-virtualization univariate-skip (size-5 window)
-pub const NUM_PRODUCT_VIRTUAL: usize = 5;
+/// Domain sizing for product-virtualization univariate-skip (size-4 window)
+pub const NUM_PRODUCT_VIRTUAL: usize = 4;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE: usize = NUM_PRODUCT_VIRTUAL - 1;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
@@ -534,7 +525,6 @@ pub const PRODUCT_VIRTUAL_FIRST_ROUND_POLY_DEGREE_BOUND: usize =
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumCount, EnumIter)]
 pub enum ProductConstraintLabel {
-    Instruction,
     WriteLookupOutputToRD,
     WritePCtoRD,
     ShouldBranch,
@@ -565,14 +555,7 @@ pub struct ProductConstraint {
 /// Canonical list of the product constraints in the same order as
 /// `PRODUCT_VIRTUAL_TERMS` used by the product virtualization stage.
 pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
-    // 0: Product = LeftInstructionInput · RightInstructionInput
-    ProductConstraint {
-        label: ProductConstraintLabel::Instruction,
-        left: ProductFactorExpr::Var(VirtualPolynomial::LeftInstructionInput),
-        right: ProductFactorExpr::Var(VirtualPolynomial::RightInstructionInput),
-        output: VirtualPolynomial::Product,
-    },
-    // 1: WriteLookupOutputToRD = IsRdNotZero · OpFlags(WriteLookupOutputToRD)
+    // 0: WriteLookupOutputToRD = IsRdNotZero · OpFlags(WriteLookupOutputToRD)
     ProductConstraint {
         label: ProductConstraintLabel::WriteLookupOutputToRD,
         left: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
@@ -583,7 +566,7 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
         )),
         output: VirtualPolynomial::WriteLookupOutputToRD,
     },
-    // 2: WritePCtoRD = IsRdNotZero · OpFlags(Jump)
+    // 1: WritePCtoRD = IsRdNotZero · OpFlags(Jump)
     ProductConstraint {
         label: ProductConstraintLabel::WritePCtoRD,
         left: ProductFactorExpr::Var(VirtualPolynomial::InstructionFlags(
@@ -592,7 +575,7 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
         right: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
         output: VirtualPolynomial::WritePCtoRD,
     },
-    // 3: ShouldBranch = LookupOutput · InstructionFlags(Branch)
+    // 2: ShouldBranch = LookupOutput · InstructionFlags(Branch)
     ProductConstraint {
         label: ProductConstraintLabel::ShouldBranch,
         left: ProductFactorExpr::Var(VirtualPolynomial::LookupOutput),
@@ -601,7 +584,7 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
         )),
         output: VirtualPolynomial::ShouldBranch,
     },
-    // 4: ShouldJump = OpFlags(Jump) · (1 − NextIsNoop)
+    // 3: ShouldJump = OpFlags(Jump) · (1 − NextIsNoop)
     ProductConstraint {
         label: ProductConstraintLabel::ShouldJump,
         left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),

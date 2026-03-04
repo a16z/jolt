@@ -17,7 +17,7 @@ pub trait StreamingSumcheckWindow<F: JoltField>: Sized + MaybeAllocative + Send 
     fn initialize(shared: &mut Self::Shared, window_size: usize) -> Self;
 
     fn compute_message(
-        &self,
+        &mut self,
         shared: &Self::Shared,
         window_size: usize,
         previous_claim: F,
@@ -39,7 +39,7 @@ pub trait LinearSumcheckStage<F: JoltField>: Sized + MaybeAllocative + Send + Sy
     fn next_window(&mut self, shared: &mut Self::Shared, window_size: usize);
 
     fn compute_message(
-        &self,
+        &mut self,
         shared: &Self::Shared,
         window_size: usize,
         previous_claim: F,
@@ -170,9 +170,9 @@ where
             }
         }
 
-        if let Some(streaming) = &mut self.streaming {
+        if let Some(streaming) = self.streaming.as_mut() {
             streaming.compute_message(&self.shared, num_unbound_vars, previous_claim)
-        } else if let Some(linear) = &mut self.linear {
+        } else if let Some(linear) = self.linear.as_mut() {
             linear.compute_message(&self.shared, num_unbound_vars, previous_claim)
         } else {
             unreachable!()

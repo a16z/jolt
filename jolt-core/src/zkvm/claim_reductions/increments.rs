@@ -16,8 +16,8 @@
 //!    So effectively RamInc has **2 distinct opening points**.
 //!
 //! 2. **RdInc**: Claims are emitted from:
-//!    - `RegistersReadWriteChecking` (Stage 4): opened at `s_cycle_stage4`
-//!    - `RegistersValEvaluation` (Stage 5): opened at `s_cycle_stage5`
+//!    - `RegistersReadWriteChecking` (Stage 3): opened at `s_cycle_stage3`
+//!    - `RegistersValEvaluation` (Stage 4): opened at `s_cycle_stage4`
 //!    
 //!    So RdInc has **2 distinct opening points**.
 //!
@@ -26,20 +26,20 @@
 //! Let:
 //!   - v_1 = RamInc(r_cycle_stage2)     from RamReadWriteChecking
 //!   - v_2 = RamInc(r_cycle_stage4)     from RamValCheck
-//!   - w_1 = RdInc(s_cycle_stage4)      from RegistersReadWriteChecking  
-//!   - w_2 = RdInc(s_cycle_stage5)      from RegistersValEvaluation
+//!   - w_1 = RdInc(s_cycle_stage3)      from RegistersReadWriteChecking  
+//!   - w_2 = RdInc(s_cycle_stage4)      from RegistersValEvaluation
 //!
 //! Input claim:
 //!   v_1 + γ·v_2 + γ²·w_1 + γ³·w_2
 //!
 //! Sumcheck proves (over log T rounds):
 //!   Σ_j RamInc(j) · [eq(r_cycle_stage2, j) + γ·eq(r_cycle_stage4, j)]
-//!     + γ² · Σ_j RdInc(j) · [eq(s_cycle_stage4, j) + γ·eq(s_cycle_stage5, j)]
+//!     + γ² · Σ_j RdInc(j) · [eq(s_cycle_stage3, j) + γ·eq(s_cycle_stage4, j)]
 //!   = v_1 + γ·v_2 + γ²·w_1 + γ³·w_2
 //!
 //! After log T rounds with sumcheck challenges ρ, the final claim is:
 //!   RamInc(ρ) · [eq(r_cycle_stage2, ρ) + γ·eq(r_cycle_stage4, ρ)]
-//!     + γ² · RdInc(ρ) · [eq(s_cycle_stage4, ρ) + γ·eq(s_cycle_stage5, ρ)]
+//!     + γ² · RdInc(ρ) · [eq(s_cycle_stage3, ρ) + γ·eq(s_cycle_stage4, ρ)]
 //!
 //! The verifier computes the eq terms and recovers two openings at the SAME point ρ:
 //!   - RamInc(ρ)
@@ -82,8 +82,8 @@ pub struct IncClaimReductionSumcheckParams<F: JoltField> {
     pub n_cycle_vars: usize,
     pub r_cycle_stage2: OpeningPoint<BIG_ENDIAN, F>, // RamInc from RamReadWriteChecking
     pub r_cycle_stage4: OpeningPoint<BIG_ENDIAN, F>, // RamInc from RamValCheck
-    pub s_cycle_stage4: OpeningPoint<BIG_ENDIAN, F>, // RdInc from RegistersReadWriteChecking
-    pub s_cycle_stage5: OpeningPoint<BIG_ENDIAN, F>, // RdInc from RegistersValEvaluation
+    pub s_cycle_stage3: OpeningPoint<BIG_ENDIAN, F>, // RdInc from RegistersReadWriteChecking
+    pub s_cycle_stage4: OpeningPoint<BIG_ENDIAN, F>, // RdInc from RegistersValEvaluation
 }
 
 impl<F: JoltField> IncClaimReductionSumcheckParams<F> {
@@ -104,11 +104,11 @@ impl<F: JoltField> IncClaimReductionSumcheckParams<F> {
         let (r_cycle_stage4, _) = accumulator
             .get_committed_polynomial_opening(CommittedPolynomial::RamInc, SumcheckId::RamValCheck);
 
-        let (s_cycle_stage4, _) = accumulator.get_committed_polynomial_opening(
+        let (s_cycle_stage3, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersReadWriteChecking,
         );
-        let (s_cycle_stage5, _) = accumulator.get_committed_polynomial_opening(
+        let (s_cycle_stage4, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersValEvaluation,
         );
@@ -118,8 +118,8 @@ impl<F: JoltField> IncClaimReductionSumcheckParams<F> {
             n_cycle_vars: trace_len.log_2(),
             r_cycle_stage2,
             r_cycle_stage4,
+            s_cycle_stage3,
             s_cycle_stage4,
-            s_cycle_stage5,
         }
     }
 }
@@ -204,11 +204,11 @@ impl<F: JoltField> SumcheckInstanceParams<F> for IncClaimReductionSumcheckParams
 
         let eq_r2: F = EqPolynomial::mle(&opening_point.r, &self.r_cycle_stage2.r);
         let eq_r4: F = EqPolynomial::mle(&opening_point.r, &self.r_cycle_stage4.r);
+        let eq_s3: F = EqPolynomial::mle(&opening_point.r, &self.s_cycle_stage3.r);
         let eq_s4: F = EqPolynomial::mle(&opening_point.r, &self.s_cycle_stage4.r);
-        let eq_s5: F = EqPolynomial::mle(&opening_point.r, &self.s_cycle_stage5.r);
 
         let eq_ram_combined = eq_r2 + gamma * eq_r4;
-        let eq_rd_combined = eq_s4 + gamma * eq_s5;
+        let eq_rd_combined = eq_s3 + gamma * eq_s4;
 
         vec![eq_ram_combined, gamma_sqr * eq_rd_combined]
     }
@@ -317,8 +317,8 @@ struct IncClaimReductionPhase1State<F: JoltField> {
     // P_ram[0] = eq(r_cycle_stage2_lo, ·)
     // P_ram[1] = eq(r_cycle_stage4_lo, ·)
     P_ram: [MultilinearPolynomial<F>; 2],
-    // P_rd[0] = eq(s_cycle_stage4_lo, ·)
-    // P_rd[1] = eq(s_cycle_stage5_lo, ·)
+    // P_rd[0] = eq(s_cycle_stage3_lo, ·)
+    // P_rd[1] = eq(s_cycle_stage4_lo, ·)
     P_rd: [MultilinearPolynomial<F>; 2],
 
     // Q buffers: suffix-weighted polynomial evaluations
@@ -345,20 +345,20 @@ impl<F: JoltField> IncClaimReductionPhase1State<F> {
         // Big-endian: hi is first half, lo is second half
         let (r2_hi, r2_lo) = params.r_cycle_stage2.split_at(suffix_n_vars);
         let (r4_hi, r4_lo) = params.r_cycle_stage4.split_at(suffix_n_vars);
+        let (s3_hi, s3_lo) = params.s_cycle_stage3.split_at(suffix_n_vars);
         let (s4_hi, s4_lo) = params.s_cycle_stage4.split_at(suffix_n_vars);
-        let (s5_hi, s5_lo) = params.s_cycle_stage5.split_at(suffix_n_vars);
 
         // P buffers: prefix eq evaluations
         let P_ram_0 = EqPolynomial::evals(&r2_lo.r);
         let P_ram_1 = EqPolynomial::evals(&r4_lo.r);
-        let P_rd_0 = EqPolynomial::evals(&s4_lo.r);
-        let P_rd_1 = EqPolynomial::evals(&s5_lo.r);
+        let P_rd_0 = EqPolynomial::evals(&s3_lo.r);
+        let P_rd_1 = EqPolynomial::evals(&s4_lo.r);
 
         // Suffix eq evaluations (for computing Q)
         let eq_r2_hi = EqPolynomial::evals(&r2_hi.r);
         let eq_r4_hi = EqPolynomial::evals(&r4_hi.r);
+        let eq_s3_hi = EqPolynomial::evals(&s3_hi.r);
         let eq_s4_hi = EqPolynomial::evals(&s4_hi.r);
-        let eq_s5_hi = EqPolynomial::evals(&s5_hi.r);
 
         // Q buffers: sum over suffix indices
         let mut Q_ram_0 = unsafe_allocate_zero_vec(prefix_len);
@@ -404,8 +404,8 @@ impl<F: JoltField> IncClaimReductionPhase1State<F> {
 
                         acc_ram_0.fmadd(&eq_r2_hi[x_hi], &ram_inc);
                         acc_ram_1.fmadd(&eq_r4_hi[x_hi], &ram_inc);
-                        acc_rd_0.fmadd(&eq_s4_hi[x_hi], &rd_inc);
-                        acc_rd_1.fmadd(&eq_s5_hi[x_hi], &rd_inc);
+                        acc_rd_0.fmadd(&eq_s3_hi[x_hi], &rd_inc);
+                        acc_rd_1.fmadd(&eq_s4_hi[x_hi], &rd_inc);
                     }
 
                     q_ram_0[i] = acc_ram_0.barrett_reduce();
@@ -506,7 +506,7 @@ struct IncClaimReductionPhase2State<F: JoltField> {
     rd_inc: MultilinearPolynomial<F>,
     // Combined eq polynomials
     eq_ram: MultilinearPolynomial<F>, // eq(r_stage2, ·) + γ·eq(r_stage4, ·)
-    eq_rd: MultilinearPolynomial<F>,  // eq(s_stage4, ·) + γ·eq(s_stage5, ·)
+    eq_rd: MultilinearPolynomial<F>,  // eq(s_stage3, ·) + γ·eq(s_stage4, ·)
 }
 
 impl<F: JoltField> IncClaimReductionPhase2State<F> {
@@ -528,21 +528,21 @@ impl<F: JoltField> IncClaimReductionPhase2State<F> {
         // Compute eq evaluations for prefix bound
         let (_, r2_lo) = params.r_cycle_stage2.split_at(n_vars - prefix_n_vars);
         let (_, r4_lo) = params.r_cycle_stage4.split_at(n_vars - prefix_n_vars);
+        let (_, s3_lo) = params.s_cycle_stage3.split_at(n_vars - prefix_n_vars);
         let (_, s4_lo) = params.s_cycle_stage4.split_at(n_vars - prefix_n_vars);
-        let (_, s5_lo) = params.s_cycle_stage5.split_at(n_vars - prefix_n_vars);
 
         let eq_r2_prefix = EqPolynomial::mle_endian(&r_prefix, &r2_lo);
         let eq_r4_prefix = EqPolynomial::mle_endian(&r_prefix, &r4_lo);
+        let eq_s3_prefix = EqPolynomial::mle_endian(&r_prefix, &s3_lo);
         let eq_s4_prefix = EqPolynomial::mle_endian(&r_prefix, &s4_lo);
-        let eq_s5_prefix = EqPolynomial::mle_endian(&r_prefix, &s5_lo);
 
         // Suffix eq evaluations scaled by prefix contributions
         let (r2_hi, _) = params.r_cycle_stage2.split_at(n_vars - prefix_n_vars);
         let (r4_hi, _) = params.r_cycle_stage4.split_at(n_vars - prefix_n_vars);
+        let (s3_hi, _) = params.s_cycle_stage3.split_at(n_vars - prefix_n_vars);
         let (s4_hi, _) = params.s_cycle_stage4.split_at(n_vars - prefix_n_vars);
-        let (s5_hi, _) = params.s_cycle_stage5.split_at(n_vars - prefix_n_vars);
 
-        // Combined eq polynomials: eq_ram = eq_r2 + γ·eq_r4, eq_rd = eq_s4 + γ·eq_s5
+        // Combined eq polynomials: eq_ram = eq_r2 + γ·eq_r4, eq_rd = eq_s3 + γ·eq_s4
         let (eq_ram, eq_rd) = rayon::join(
             || {
                 let (eq_r2, eq_r4) = rayon::join(
@@ -556,13 +556,13 @@ impl<F: JoltField> IncClaimReductionPhase2State<F> {
                     .collect::<Vec<F>>()
             },
             || {
-                let (eq_s4, eq_s5) = rayon::join(
+                let (eq_s3, eq_s4) = rayon::join(
+                    || EqPolynomial::evals_serial(&s3_hi.r, Some(eq_s3_prefix)),
                     || EqPolynomial::evals_serial(&s4_hi.r, Some(eq_s4_prefix)),
-                    || EqPolynomial::evals_serial(&s5_hi.r, Some(eq_s5_prefix)),
                 );
-                eq_s4
+                eq_s3
                     .par_iter()
-                    .zip(eq_s5.par_iter())
+                    .zip(eq_s4.par_iter())
                     .map(|(e4, e5)| *e4 + gamma * e5)
                     .collect::<Vec<F>>()
             },
@@ -706,11 +706,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         // Compute eq evaluations at final point
         let eq_r2 = EqPolynomial::mle(&opening_point.r, &self.params.r_cycle_stage2.r);
         let eq_r4 = EqPolynomial::mle(&opening_point.r, &self.params.r_cycle_stage4.r);
+        let eq_s3 = EqPolynomial::mle(&opening_point.r, &self.params.s_cycle_stage3.r);
         let eq_s4 = EqPolynomial::mle(&opening_point.r, &self.params.s_cycle_stage4.r);
-        let eq_s5 = EqPolynomial::mle(&opening_point.r, &self.params.s_cycle_stage5.r);
 
         let eq_ram_combined = eq_r2 + gamma * eq_r4;
-        let eq_rd_combined = eq_s4 + gamma * eq_s5;
+        let eq_rd_combined = eq_s3 + gamma * eq_s4;
 
         // Fetch final claims from accumulator
         let (_, ram_inc_claim) = accumulator.get_committed_polynomial_opening(

@@ -1,6 +1,9 @@
 #[cfg(not(feature = "zk"))]
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use std::{
+    fs::File,
+    io::{Read, Write},
+};
 
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
@@ -43,7 +46,6 @@ pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage6_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     #[cfg(feature = "zk")]
     pub blindfold_proof: BlindFoldProof<F, C>,
     pub joint_opening_proof: PCS::Proof,
@@ -333,46 +335,45 @@ impl CanonicalSerialize for VirtualPolynomial {
             Self::RightLookupOperand => 8u8.serialize_with_mode(&mut writer, compress),
             Self::LeftInstructionInput => 9u8.serialize_with_mode(&mut writer, compress),
             Self::RightInstructionInput => 10u8.serialize_with_mode(&mut writer, compress),
-            Self::Product => 11u8.serialize_with_mode(&mut writer, compress),
-            Self::ShouldJump => 12u8.serialize_with_mode(&mut writer, compress),
-            Self::ShouldBranch => 13u8.serialize_with_mode(&mut writer, compress),
-            Self::WritePCtoRD => 14u8.serialize_with_mode(&mut writer, compress),
-            Self::WriteLookupOutputToRD => 15u8.serialize_with_mode(&mut writer, compress),
-            Self::Rd => 16u8.serialize_with_mode(&mut writer, compress),
-            Self::Imm => 17u8.serialize_with_mode(&mut writer, compress),
-            Self::Rs1Value => 18u8.serialize_with_mode(&mut writer, compress),
-            Self::Rs2Value => 19u8.serialize_with_mode(&mut writer, compress),
-            Self::RdWriteValue => 20u8.serialize_with_mode(&mut writer, compress),
-            Self::Rs1Ra => 21u8.serialize_with_mode(&mut writer, compress),
-            Self::Rs2Ra => 22u8.serialize_with_mode(&mut writer, compress),
-            Self::RdWa => 23u8.serialize_with_mode(&mut writer, compress),
-            Self::LookupOutput => 24u8.serialize_with_mode(&mut writer, compress),
-            Self::InstructionRaf => 25u8.serialize_with_mode(&mut writer, compress),
-            Self::InstructionRafFlag => 26u8.serialize_with_mode(&mut writer, compress),
+            Self::ShouldJump => 11u8.serialize_with_mode(&mut writer, compress),
+            Self::ShouldBranch => 12u8.serialize_with_mode(&mut writer, compress),
+            Self::WritePCtoRD => 13u8.serialize_with_mode(&mut writer, compress),
+            Self::WriteLookupOutputToRD => 14u8.serialize_with_mode(&mut writer, compress),
+            Self::Rd => 15u8.serialize_with_mode(&mut writer, compress),
+            Self::Imm => 16u8.serialize_with_mode(&mut writer, compress),
+            Self::Rs1Value => 17u8.serialize_with_mode(&mut writer, compress),
+            Self::Rs2Value => 18u8.serialize_with_mode(&mut writer, compress),
+            Self::RdWriteValue => 19u8.serialize_with_mode(&mut writer, compress),
+            Self::Rs1Ra => 20u8.serialize_with_mode(&mut writer, compress),
+            Self::Rs2Ra => 21u8.serialize_with_mode(&mut writer, compress),
+            Self::RdWa => 22u8.serialize_with_mode(&mut writer, compress),
+            Self::LookupOutput => 23u8.serialize_with_mode(&mut writer, compress),
+            Self::InstructionRaf => 24u8.serialize_with_mode(&mut writer, compress),
+            Self::InstructionRafFlag => 25u8.serialize_with_mode(&mut writer, compress),
             Self::InstructionRa(i) => {
-                27u8.serialize_with_mode(&mut writer, compress)?;
+                26u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
             }
-            Self::RegistersVal => 28u8.serialize_with_mode(&mut writer, compress),
-            Self::RamAddress => 29u8.serialize_with_mode(&mut writer, compress),
-            Self::RamRa => 30u8.serialize_with_mode(&mut writer, compress),
-            Self::RamReadValue => 31u8.serialize_with_mode(&mut writer, compress),
-            Self::RamWriteValue => 32u8.serialize_with_mode(&mut writer, compress),
-            Self::RamVal => 33u8.serialize_with_mode(&mut writer, compress),
-            Self::RamValInit => 34u8.serialize_with_mode(&mut writer, compress),
-            Self::RamValFinal => 35u8.serialize_with_mode(&mut writer, compress),
-            Self::RamHammingWeight => 36u8.serialize_with_mode(&mut writer, compress),
-            Self::UnivariateSkip => 37u8.serialize_with_mode(&mut writer, compress),
+            Self::RegistersVal => 27u8.serialize_with_mode(&mut writer, compress),
+            Self::RamAddress => 28u8.serialize_with_mode(&mut writer, compress),
+            Self::RamRa => 29u8.serialize_with_mode(&mut writer, compress),
+            Self::RamReadValue => 30u8.serialize_with_mode(&mut writer, compress),
+            Self::RamWriteValue => 31u8.serialize_with_mode(&mut writer, compress),
+            Self::RamVal => 32u8.serialize_with_mode(&mut writer, compress),
+            Self::RamValInit => 33u8.serialize_with_mode(&mut writer, compress),
+            Self::RamValFinal => 34u8.serialize_with_mode(&mut writer, compress),
+            Self::RamHammingWeight => 35u8.serialize_with_mode(&mut writer, compress),
+            Self::UnivariateSkip => 36u8.serialize_with_mode(&mut writer, compress),
             Self::OpFlags(flags) => {
-                38u8.serialize_with_mode(&mut writer, compress)?;
+                37u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*flags as usize).unwrap()).serialize_with_mode(&mut writer, compress)
             }
             Self::InstructionFlags(flags) => {
-                39u8.serialize_with_mode(&mut writer, compress)?;
+                38u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*flags as usize).unwrap()).serialize_with_mode(&mut writer, compress)
             }
             Self::LookupTableFlag(flag) => {
-                40u8.serialize_with_mode(&mut writer, compress)?;
+                39u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*flag).unwrap()).serialize_with_mode(&mut writer, compress)
             }
         }
@@ -391,7 +392,6 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::RightLookupOperand
             | Self::LeftInstructionInput
             | Self::RightInstructionInput
-            | Self::Product
             | Self::ShouldJump
             | Self::ShouldBranch
             | Self::WritePCtoRD
@@ -450,49 +450,48 @@ impl CanonicalDeserialize for VirtualPolynomial {
                 8 => Self::RightLookupOperand,
                 9 => Self::LeftInstructionInput,
                 10 => Self::RightInstructionInput,
-                11 => Self::Product,
-                12 => Self::ShouldJump,
-                13 => Self::ShouldBranch,
-                14 => Self::WritePCtoRD,
-                15 => Self::WriteLookupOutputToRD,
-                16 => Self::Rd,
-                17 => Self::Imm,
-                18 => Self::Rs1Value,
-                19 => Self::Rs2Value,
-                20 => Self::RdWriteValue,
-                21 => Self::Rs1Ra,
-                22 => Self::Rs2Ra,
-                23 => Self::RdWa,
-                24 => Self::LookupOutput,
-                25 => Self::InstructionRaf,
-                26 => Self::InstructionRafFlag,
-                27 => {
+                11 => Self::ShouldJump,
+                12 => Self::ShouldBranch,
+                13 => Self::WritePCtoRD,
+                14 => Self::WriteLookupOutputToRD,
+                15 => Self::Rd,
+                16 => Self::Imm,
+                17 => Self::Rs1Value,
+                18 => Self::Rs2Value,
+                19 => Self::RdWriteValue,
+                20 => Self::Rs1Ra,
+                21 => Self::Rs2Ra,
+                22 => Self::RdWa,
+                23 => Self::LookupOutput,
+                24 => Self::InstructionRaf,
+                25 => Self::InstructionRafFlag,
+                26 => {
                     let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::InstructionRa(i as usize)
                 }
-                28 => Self::RegistersVal,
-                29 => Self::RamAddress,
-                30 => Self::RamRa,
-                31 => Self::RamReadValue,
-                32 => Self::RamWriteValue,
-                33 => Self::RamVal,
-                34 => Self::RamValInit,
-                35 => Self::RamValFinal,
-                36 => Self::RamHammingWeight,
-                37 => Self::UnivariateSkip,
-                38 => {
+                27 => Self::RegistersVal,
+                28 => Self::RamAddress,
+                29 => Self::RamRa,
+                30 => Self::RamReadValue,
+                31 => Self::RamWriteValue,
+                32 => Self::RamVal,
+                33 => Self::RamValInit,
+                34 => Self::RamValFinal,
+                35 => Self::RamHammingWeight,
+                36 => Self::UnivariateSkip,
+                37 => {
                     let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
                     let flags = CircuitFlags::from_repr(discriminant)
                         .ok_or(SerializationError::InvalidData)?;
                     Self::OpFlags(flags)
                 }
-                39 => {
+                38 => {
                     let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
                     let flags = InstructionFlags::from_repr(discriminant)
                         .ok_or(SerializationError::InvalidData)?;
                     Self::InstructionFlags(flags)
                 }
-                40 => {
+                39 => {
                     let flag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::LookupTableFlag(flag as usize)
                 }
@@ -507,7 +506,6 @@ pub fn serialize_and_print_size(
     file_name: &str,
     item: &impl CanonicalSerialize,
 ) -> Result<(), SerializationError> {
-    use std::fs::File;
     let mut file = File::create(file_name)?;
     item.serialize_compressed(&mut file)?;
     let file_size_bytes = file.metadata()?.len();

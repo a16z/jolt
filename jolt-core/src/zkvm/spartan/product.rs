@@ -50,27 +50,20 @@ use tracer::instruction::Cycle;
 // We define a "combined" left and right polynomial
 // Left(x, y) = \sum_i L(y, i) * Left_i(x),
 // Right(x, y) = \sum_i R(y, i) * Right_i(x),
-// where Left_i(x) = one of the five left polynomials, Right_i(x) = one of the five right polynomials
-// Indexing is over i \in {-2, -1, 0, 1, 2}, though this gets mapped to the 0th, 1st, ..., 4th polynomial
+// where Left_i(x) = one of the four left polynomials, Right_i(x) = one of the four right polynomials
+// Indexing is over i \in {-1, 0, 1, 2} (mapped to the 0th, 1st, 2nd, 3rd polynomial)
 //
-// We also need to define the combined claim:
-// claim(y) = \sum_i L(y, i) * claim_i,
-// where claim_i is the claim of the i-th product virtualization sumcheck
+// The four product constraints are:
+// WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump
+// (The former Instruction product constraint is now handled directly in the outer sumcheck.)
 //
-// The product virtualization sumcheck is then:
+// claim(y) = \sum_i L(y, i) * claim_i
+//
 // \sum_y L(tau_high, y) * \sum_x eq(tau_low, x) * Left(x, y) * Right(x, y)
 //   = claim(tau_high)
 //
 // Final claim is:
 // L(tau_high, r0) * Eq(tau_low, r_tail^rev) * Left(r_tail, r0) * Right(r_tail, r0)
-//
-// After this, we also need to check the consistency of the Left and Right evaluations with the
-// claimed evaluations of the factor polynomials. This is done in the ProductVirtualInner sumcheck.
-//
-// TODO (Quang): this is essentially Spartan with non-zero claims. We should unify this with Spartan outer/inner.
-// Only complication is to generalize the splitting strategy
-// (i.e. Spartan outer currently does uni skip for half of the constraints,
-// whereas here we do it for all of them)
 
 /// Degree of the sumcheck round polynomials for [`ProductVirtualRemainderVerifier`].
 const PRODUCT_VIRTUAL_REMAINDER_DEGREE: usize = 3;
@@ -79,11 +72,11 @@ const PRODUCT_VIRTUAL_REMAINDER_DEGREE: usize = 3;
 pub struct ProductVirtualUniSkipParams<F: JoltField> {
     /// τ = [τ_low || τ_high]
     /// - τ_low: the cycle-point r_cycle carried from Spartan outer (length = num_cycle_vars)
-    /// - τ_high: the univariate-skip binding point sampled for the size-5 domain (length = 1)
+    /// - τ_high: the univariate-skip binding point sampled for the size-4 domain (length = 1)
     ///   Ordering matches outer: variables are MSB→LSB with τ_high last
     pub tau: Vec<F::Challenge>,
-    /// Base evaluations (claims) for the five product terms at the base domain
-    /// Order: [Product, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
+    /// Base evaluations (claims) for the four product terms at the base domain
+    /// Order: [WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
     pub base_evals: [F; NUM_PRODUCT_VIRTUAL],
 }
 
@@ -92,9 +85,8 @@ impl<F: JoltField> ProductVirtualUniSkipParams<F> {
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Self {
-        // Reuse r_cycle from Stage 1 (outer) for τ_low, and sample τ_high
         let r_cycle = opening_accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter)
+            .get_virtual_polynomial_opening(PRODUCT_CONSTRAINTS[0].output, SumcheckId::SpartanOuter)
             .0
             .r;
         let tau_high = transcript.challenge_scalar_optimized::<F>();
@@ -213,20 +205,13 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
     ///   t1(z) = Σ_{x_out} E_out[x_out] · Σ_{x_in} E_in[x_in] · left_z(x) · right_z(x),
     ///   where x is the concatenation of (x_out || x_in) in MSB→LSB order.
     ///
-    /// Lagrange fusion per target z on (current) extended window {−4,−3,3,4}:
-    /// - Compute c[0..4] = LagrangeHelper::shift_coeffs_i32(shift(z)) using the same shifted-kernel
-    ///   as outer.rs (indices correspond to the 5 base points).
-    /// - Define fused values at this z by linearly combining the 5 product witnesses with c:
+    /// Lagrange fusion per target z on the extended window:
+    /// - Compute c[0..3] = LagrangeHelper::shift_coeffs_i32(shift(z)) using the same shifted-kernel
+    ///   as outer.rs (indices correspond to the 4 base points).
+    /// - Define fused values at this z by linearly combining the 4 product witnesses with c:
     ///   left_z(x)  = Σ_i c[i] · Left_i(x)
     ///   right_z(x) = Σ_i c[i] · Right_i^eff(x)
-    ///   with Right_4^eff(x) = 1 − NextIsNoop(x) for the ShouldJump term only.
-    ///
-    /// Small-value lifting rules for integer accumulation before converting to the field:
-    /// - Instruction: LeftInstructionInput is u64 → lift to i128; RightInstructionInput is S64 → i128.
-    /// - WriteLookupOutputToRD: IsRdNotZero is bool/u8 → i32; flag is bool/u8 → i32.
-    /// - WritePCtoRD: IsRdNotZero is bool/u8 → i32; Jump flag is bool/u8 → i32.
-    /// - ShouldBranch: LookupOutput is u64 → i128; Branch flag is bool/u8 → i32.
-    /// - ShouldJump: Jump flag (left) is bool/u8 → i32; Right^eff = (1 − NextIsNoop) is bool/u8 → i32.
+    ///   with Right_3^eff(x) = 1 − NextIsNoop(x) for the ShouldJump term only.
     fn compute_univariate_skip_extended_evals(
         trace: &[Cycle],
         tau: &[F::Challenge],
@@ -446,11 +431,11 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
 
     #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        // With 4 product constraints, the unique left factors are:
+        //   [IsRdNotZero, LookupOutput, Jump]
+        // and the unique right factors are:
+        //   [WriteLookupOutputToRD, Jump, Branch, NextIsNoop]
         let left_openings = [
-            OpeningId::virt(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::SpartanProductVirtualization,
-            ),
             OpeningId::virt(
                 VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
                 SumcheckId::SpartanProductVirtualization,
@@ -466,10 +451,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
         ];
 
         let right_openings = [
-            OpeningId::virt(
-                VirtualPolynomial::RightInstructionInput,
-                SumcheckId::SpartanProductVirtualization,
-            ),
             OpeningId::virt(
                 VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
                 SumcheckId::SpartanProductVirtualization,
@@ -488,9 +469,10 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
             ),
         ];
 
-        let mut terms = Vec::with_capacity(24);
+        let mut terms = Vec::with_capacity(15);
         let mut challenge_idx = 0;
 
+        // Product terms: alpha_i * beta_j * L_i * R_j
         for left_opening in &left_openings {
             for right_opening in &right_openings {
                 terms.push(ProductTerm::scaled(
@@ -504,6 +486,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
             }
         }
 
+        // Constant terms from (1 - NextIsNoop): lambda*w[3]*alpha_i * L_i
         for left_opening in &left_openings {
             terms.push(ProductTerm::scaled(
                 ValueSource::Challenge(challenge_idx),
@@ -542,13 +525,20 @@ impl<F: JoltField> ProductVirtualRemainderParams<F> {
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
         >(&self.r0);
 
-        // Left coefficients: [w[0], w[1]+w[2], w[3], w[4]]
-        let alpha = [w[0], w[1] + w[2], w[3], w[4]];
+        // Left coefficients grouped by unique factor:
+        //   IsRdNotZero (constraints 0,1): w[0]+w[1]
+        //   LookupOutput (constraint 2):   w[2]
+        //   Jump (constraint 3):           w[3]
+        let alpha = [w[0] + w[1], w[2], w[3]];
 
-        // Right coefficients: [w[0], w[1], w[2], w[3], -w[4]]
-        let beta = [w[0], w[1], w[2], w[3], -w[4]];
+        // Right coefficients (one per unique right factor):
+        //   WriteLookupOutputToRD: w[0]
+        //   Jump:                  w[1]
+        //   Branch:                w[2]
+        //   NextIsNoop (negated):  -w[3]
+        let beta = [w[0], w[1], w[2], -w[3]];
 
-        let mut challenges = Vec::with_capacity(24);
+        let mut challenges = Vec::with_capacity(15);
 
         // Product coefficients: λ*α_i*β_j
         for alpha_i in &alpha {
@@ -557,9 +547,9 @@ impl<F: JoltField> ProductVirtualRemainderParams<F> {
             }
         }
 
-        // Constant contribution coefficients: λ*w[4]*α_i
+        // Constant contribution from (1 - NextIsNoop): λ*w[3]*α_i
         for alpha_i in &alpha {
-            challenges.push(lambda * w[4] * *alpha_i);
+            challenges.push(lambda * w[3] * *alpha_i);
         }
 
         challenges
@@ -576,17 +566,17 @@ impl<F: JoltField> ProductVirtualRemainderParams<F> {
 /// bound by this instance (low-to-high from the prover's perspective; the verifier uses the
 /// reversed vector `r_tail^rev` when evaluating Eq_τ over τ_low).
 ///
-/// Define Lagrange weights over the size-5 domain at r₀:
-///   w_i := L_i(r₀) for i ∈ {0..4} corresponding to
-///          [Instruction, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump].
+/// Define Lagrange weights over the size-4 domain at r₀:
+///   w_i := L_i(r₀) for i ∈ {0..3} corresponding to
+///          [WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump].
 ///
 /// Define fused left/right evaluations at the cycle point r_tail:
 ///   left_eval  := Σ_i w_i · eval(Left_i,  r_tail)
 ///   right_eval := Σ_i w_i · eval(Right_i, r_tail), except for ShouldJump where
-///                 Right_4^eff := 1 − NextIsNoop, i.e., use (1 − eval(NextIsNoop, r_tail)).
+///                 Right_3^eff := 1 − NextIsNoop, i.e., use (1 − eval(NextIsNoop, r_tail)).
 ///
 /// Let
-///   E_high := L(τ_high, r₀)  (Lagrange kernel over the size-5 domain)
+///   E_high := L(τ_high, r₀)  (Lagrange kernel over the size-4 domain)
 ///   E_low  := Eq_τ_low(τ_low, r_tail^rev)  (multilinear Eq kernel on the cycle variables)
 ///
 /// Then the expected final claim is
@@ -847,25 +837,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator: &VerifierOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        // Lagrange weights at r0
         let w = LagrangePolynomial::<F>::evals::<
             F::Challenge,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
         >(&self.params.r0);
 
-        // Fetch factor claims
-        let l_inst = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::SpartanProductVirtualization,
-            )
-            .1;
-        let r_inst = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RightInstructionInput,
-                SumcheckId::SpartanProductVirtualization,
-            )
-            .1;
         let is_rd_not_zero = accumulator
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
@@ -903,18 +879,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             )
             .1;
 
-        let fused_left = w[0] * l_inst
-            + w[1] * is_rd_not_zero
-            + w[2] * is_rd_not_zero
-            + w[3] * lookup_out
-            + w[4] * j_flag;
-        let fused_right = w[0] * r_inst
-            + w[1] * wl_flag
-            + w[2] * j_flag
-            + w[3] * branch_flag
-            + w[4] * (F::one() - next_is_noop);
+        let fused_left =
+            w[0] * is_rd_not_zero + w[1] * is_rd_not_zero + w[2] * lookup_out + w[3] * j_flag;
+        let fused_right =
+            w[0] * wl_flag + w[1] * j_flag + w[2] * branch_flag + w[3] * (F::one() - next_is_noop);
 
-        // Multiply by L(τ_high, r0) and Eq(τ_low, r_tail^rev)
         let tau_high = &self.params.tau[self.params.tau.len() - 1];
         let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
             F::Challenge,

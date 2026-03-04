@@ -1,10 +1,6 @@
 use std::array;
 use std::sync::Arc;
 
-use allocative::Allocative;
-use ark_std::Zero;
-use common::constants::XLEN;
-
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialBinding;
@@ -25,6 +21,9 @@ use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::witness::VirtualPolynomial;
+use allocative::Allocative;
+use ark_std::Zero;
+use common::constants::XLEN;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
@@ -35,8 +34,6 @@ const DEGREE_BOUND: usize = 2;
 pub struct InstructionLookupsClaimReductionSumcheckParams<F: JoltField> {
     pub gamma: F,
     pub gamma_sqr: F,
-    pub gamma_cub: F,
-    pub gamma_quart: F,
     pub n_cycle_vars: usize,
     pub r_spartan: OpeningPoint<BIG_ENDIAN, F>,
 }
@@ -49,8 +46,6 @@ impl<F: JoltField> InstructionLookupsClaimReductionSumcheckParams<F> {
     ) -> Self {
         let gamma = transcript.challenge_scalar::<F>();
         let gamma_sqr = gamma.square();
-        let gamma_cub = gamma_sqr * gamma;
-        let gamma_quart = gamma_sqr.square();
         let (r_spartan, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
@@ -58,8 +53,6 @@ impl<F: JoltField> InstructionLookupsClaimReductionSumcheckParams<F> {
         Self {
             gamma,
             gamma_sqr,
-            gamma_cub,
-            gamma_quart,
             n_cycle_vars: trace_len.log_2(),
             r_spartan,
         }
@@ -80,20 +73,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::SpartanOuter,
         );
-        let (_, left_instruction_input_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::LeftInstructionInput,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, right_instruction_input_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RightInstructionInput,
-            SumcheckId::SpartanOuter,
-        );
 
-        lookup_output_claim
-            + self.gamma * left_operand_claim
-            + self.gamma_sqr * right_operand_claim
-            + self.gamma_cub * left_instruction_input_claim
-            + self.gamma_quart * right_instruction_input_claim
+        lookup_output_claim + self.gamma * left_operand_claim + self.gamma_sqr * right_operand_claim
     }
 
     fn degree(&self) -> usize {
@@ -123,14 +104,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
                 VirtualPolynomial::RightLookupOperand,
                 SumcheckId::SpartanOuter,
             ),
-            OpeningId::virt(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::SpartanOuter,
-            ),
-            OpeningId::virt(
-                VirtualPolynomial::RightInstructionInput,
-                SumcheckId::SpartanOuter,
-            ),
         ])
     }
 
@@ -139,7 +112,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
         &self,
         _accumulator: &dyn OpeningAccumulator<F>,
     ) -> Vec<F> {
-        vec![self.gamma, self.gamma_sqr, self.gamma_cub, self.gamma_quart]
+        vec![self.gamma, self.gamma_sqr]
     }
 
     #[cfg(feature = "zk")]
@@ -157,14 +130,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
                 VirtualPolynomial::RightLookupOperand,
                 SumcheckId::InstructionClaimReduction,
             ),
-            OpeningId::virt(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::InstructionClaimReduction,
-            ),
-            OpeningId::virt(
-                VirtualPolynomial::RightInstructionInput,
-                SumcheckId::InstructionClaimReduction,
-            ),
         ]))
     }
 
@@ -172,13 +137,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionLookupsClaimReductio
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         let opening_point = self.normalize_opening_point(sumcheck_challenges);
         let eq_eval = EqPolynomial::<F>::mle(&opening_point.r, &self.r_spartan.r);
-        vec![
-            eq_eval,
-            eq_eval * self.gamma,
-            eq_eval * self.gamma_sqr,
-            eq_eval * self.gamma_cub,
-            eq_eval * self.gamma_quart,
-        ]
+        vec![eq_eval, eq_eval * self.gamma, eq_eval * self.gamma_sqr]
     }
 }
 
@@ -270,9 +229,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let lookup_output_claim = state.lookup_output_poly.final_sumcheck_claim();
         let left_lookup_operand_claim = state.left_lookup_operand_poly.final_sumcheck_claim();
         let right_lookup_operand_claim = state.right_lookup_operand_poly.final_sumcheck_claim();
-        let left_instruction_input_claim = state.left_instruction_input_poly.final_sumcheck_claim();
-        let right_instruction_input_claim =
-            state.right_instruction_input_poly.final_sumcheck_claim();
 
         accumulator.append_virtual(
             VirtualPolynomial::LookupOutput,
@@ -289,20 +245,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         accumulator.append_virtual(
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
-            opening_point.clone(),
-            right_lookup_operand_claim,
-        );
-        accumulator.append_virtual(
-            VirtualPolynomial::LeftInstructionInput,
-            SumcheckId::InstructionClaimReduction,
-            opening_point.clone(),
-            left_instruction_input_claim,
-        );
-        accumulator.append_virtual(
-            VirtualPolynomial::RightInstructionInput,
-            SumcheckId::InstructionClaimReduction,
             opening_point,
-            right_instruction_input_claim,
+            right_lookup_operand_claim,
         );
     }
 
@@ -341,8 +285,6 @@ impl<F: JoltField> InstructionLookupsPhase1State<F> {
 
         let gamma = params.gamma;
         let gamma_sqr = params.gamma_sqr;
-        let gamma_cub = params.gamma_cub;
-        let gamma_quart = params.gamma_quart;
 
         const BLOCK_SIZE: usize = 32;
         Q.par_chunks_mut(BLOCK_SIZE)
@@ -351,17 +293,12 @@ impl<F: JoltField> InstructionLookupsPhase1State<F> {
                 let mut q_lookup_output = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
                 let mut q_left_lookup_operand = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
                 let mut q_right_lookup_operand = [F::UnreducedMulU128Accum::zero(); BLOCK_SIZE];
-                let mut q_left_instruction_input = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
-                let mut q_right_instruction_input_pos = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
-                let mut q_right_instruction_input_neg = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
 
                 for x_hi in 0..(1 << suffix_n_vars) {
                     for i in 0..q_chunk.len() {
                         let x_lo = chunk_i * BLOCK_SIZE + i;
                         let x = x_lo + (x_hi << prefix_n_vars);
                         let cycle = &trace[x];
-                        let (left_instruction_input, right_instruction_input) =
-                            LookupQuery::<XLEN>::to_instruction_inputs(cycle);
                         let (left_lookup, right_lookup) =
                             LookupQuery::<XLEN>::to_lookup_operands(cycle);
                         let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
@@ -372,29 +309,13 @@ impl<F: JoltField> InstructionLookupsPhase1State<F> {
                             eq_suffix_evals[x_hi].mul_u64_unreduced(left_lookup);
                         q_right_lookup_operand[i] +=
                             eq_suffix_evals[x_hi].mul_u128_unreduced(right_lookup);
-
-                        q_left_instruction_input[i] +=
-                            eq_suffix_evals[x_hi].mul_u64_unreduced(left_instruction_input);
-
-                        let abs: u64 = right_instruction_input.unsigned_abs() as u64;
-                        let term = eq_suffix_evals[x_hi].mul_u64_unreduced(abs);
-                        if right_instruction_input >= 0 {
-                            q_right_instruction_input_pos[i] += term;
-                        } else {
-                            q_right_instruction_input_neg[i] += term;
-                        }
                     }
                 }
 
                 for (i, q) in q_chunk.iter_mut().enumerate() {
-                    let right_instruction_input =
-                        F::reduce_mul_u128(q_right_instruction_input_pos[i])
-                            - F::reduce_mul_u128(q_right_instruction_input_neg[i]);
                     *q = F::reduce_mul_u128(q_lookup_output[i])
                         + gamma * F::reduce_mul_u128(q_left_lookup_operand[i])
                         + gamma_sqr * F::reduce_mul_u128_accum(q_right_lookup_operand[i]);
-                    *q += gamma_cub * F::reduce_mul_u128(q_left_instruction_input[i])
-                        + gamma_quart * right_instruction_input;
                 }
             });
 
@@ -440,8 +361,6 @@ struct InstructionLookupsPhase2State<F: JoltField> {
     lookup_output_poly: MultilinearPolynomial<F>,
     left_lookup_operand_poly: MultilinearPolynomial<F>,
     right_lookup_operand_poly: MultilinearPolynomial<F>,
-    left_instruction_input_poly: MultilinearPolynomial<F>,
-    right_instruction_input_poly: MultilinearPolynomial<F>,
     eq_poly: MultilinearPolynomial<F>,
 }
 
@@ -459,14 +378,10 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
         let mut lookup_output_poly = unsafe_allocate_zero_vec(1 << n_remaining_rounds);
         let mut left_lookup_operand_poly = unsafe_allocate_zero_vec(1 << n_remaining_rounds);
         let mut right_lookup_operand_poly = unsafe_allocate_zero_vec(1 << n_remaining_rounds);
-        let mut left_instruction_input_poly = unsafe_allocate_zero_vec(1 << n_remaining_rounds);
-        let mut right_instruction_input_poly = unsafe_allocate_zero_vec(1 << n_remaining_rounds);
         (
             &mut lookup_output_poly,
             &mut left_lookup_operand_poly,
             &mut right_lookup_operand_poly,
-            &mut left_instruction_input_poly,
-            &mut right_instruction_input_poly,
             trace.par_chunks(eq_evals.len()),
         )
             .into_par_iter()
@@ -475,20 +390,13 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
                     lookup_output_eval,
                     left_lookup_operand_eval,
                     right_lookup_operand_eval,
-                    left_instruction_input_eval,
-                    right_instruction_input_eval,
                     trace_chunk,
                 )| {
                     let mut lookup_output_eval_unreduced = F::UnreducedMulU128::zero();
                     let mut left_lookup_operand_eval_unreduced = F::UnreducedMulU128::zero();
                     let mut right_lookup_operand_eval_unreduced = F::UnreducedMulU128Accum::zero();
-                    let mut left_instruction_input_eval_unreduced = F::UnreducedMulU128::zero();
-                    let mut right_instruction_input_pos_unreduced = F::UnreducedMulU128::zero();
-                    let mut right_instruction_input_neg_unreduced = F::UnreducedMulU128::zero();
 
                     for (i, cycle) in trace_chunk.iter().enumerate() {
-                        let (left_instruction_input, right_instruction_input) =
-                            LookupQuery::<XLEN>::to_instruction_inputs(cycle);
                         let (left_lookup, right_lookup) =
                             LookupQuery::<XLEN>::to_lookup_operands(cycle);
                         let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
@@ -499,17 +407,6 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
                             eq_evals[i].mul_u64_unreduced(left_lookup);
                         right_lookup_operand_eval_unreduced +=
                             eq_evals[i].mul_u128_unreduced(right_lookup);
-
-                        left_instruction_input_eval_unreduced +=
-                            eq_evals[i].mul_u64_unreduced(left_instruction_input);
-
-                        let abs: u64 = right_instruction_input.unsigned_abs() as u64;
-                        let term = eq_evals[i].mul_u64_unreduced(abs);
-                        if right_instruction_input >= 0 {
-                            right_instruction_input_pos_unreduced += term;
-                        } else {
-                            right_instruction_input_neg_unreduced += term;
-                        }
                     }
 
                     *lookup_output_eval = F::reduce_mul_u128(lookup_output_eval_unreduced);
@@ -517,11 +414,6 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
                         F::reduce_mul_u128(left_lookup_operand_eval_unreduced);
                     *right_lookup_operand_eval =
                         F::reduce_mul_u128_accum(right_lookup_operand_eval_unreduced);
-                    *left_instruction_input_eval =
-                        F::reduce_mul_u128(left_instruction_input_eval_unreduced);
-                    *right_instruction_input_eval =
-                        F::reduce_mul_u128(right_instruction_input_pos_unreduced)
-                            - F::reduce_mul_u128(right_instruction_input_neg_unreduced);
                 },
             );
 
@@ -533,8 +425,6 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
             lookup_output_poly: lookup_output_poly.into(),
             left_lookup_operand_poly: left_lookup_operand_poly.into(),
             right_lookup_operand_poly: right_lookup_operand_poly.into(),
-            left_instruction_input_poly: left_instruction_input_poly.into(),
-            right_instruction_input_poly: right_instruction_input_poly.into(),
             eq_poly: eq_suffix_evals.into(),
         }
     }
@@ -556,12 +446,6 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
             let right_lookup_operand_evals = self
                 .right_lookup_operand_poly
                 .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let left_instruction_input_evals = self
-                .left_instruction_input_poly
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let right_instruction_input_evals = self
-                .right_instruction_input_poly
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
             let eq_evals = self
                 .eq_poly
                 .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
@@ -570,9 +454,7 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
                     + eq_evals[i]
                         * (lookup_output_evals[i]
                             + params.gamma * left_lookup_operand_evals[i]
-                            + params.gamma_sqr * right_lookup_operand_evals[i]
-                            + params.gamma_cub * left_instruction_input_evals[i]
-                            + params.gamma_quart * right_instruction_input_evals[i])
+                            + params.gamma_sqr * right_lookup_operand_evals[i])
             });
         }
         UniPoly::from_evals_and_hint(previous_claim, &evals)
@@ -585,10 +467,6 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
             .bind_parallel(r_j, BindingOrder::LowToHigh);
         self.right_lookup_operand_poly
             .bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.left_instruction_input_poly
-            .bind_parallel(r_j, BindingOrder::LowToHigh);
-        self.right_instruction_input_poly
-            .bind_parallel(r_j, BindingOrder::LowToHigh);
         self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 }
@@ -600,16 +478,12 @@ impl<F: JoltField> InstructionLookupsPhase2State<F> {
 ///   LookupOutput(j)
 ///   + gamma * LeftLookupOperand(j)
 ///   + gamma^2 * RightLookupOperand(j)
-///   + gamma^3 * LeftInstructionInput(j)
-///   + gamma^4 * RightInstructionInput(j)
 /// )
 /// ```
 ///
 /// where `r_spartan` is the randomness from the log(T) rounds of Spartan outer sumcheck (stage 1).
 ///
-/// The purpose of this sumcheck is to aggregate instruction lookup claims into a single claim. It runs in
-/// parallel with the Spartan product sumcheck. This optimization eliminates the need for a separate opening
-/// of [`VirtualPolynomial::LookupOutput`] at `r_spartan`, leaving only the opening at `r_product` required.
+/// Aggregates the three instruction lookup claims into a single claim.
 pub struct InstructionLookupsClaimReductionSumcheckVerifier<F: JoltField> {
     params: InstructionLookupsClaimReductionSumcheckParams<F>,
 }
@@ -658,21 +532,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::InstructionClaimReduction,
         );
-        let (_, left_instruction_input_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::LeftInstructionInput,
-            SumcheckId::InstructionClaimReduction,
-        );
-        let (_, right_instruction_input_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RightInstructionInput,
-            SumcheckId::InstructionClaimReduction,
-        );
 
         EqPolynomial::mle(&opening_point.r, &r_spartan.r)
             * (lookup_output_claim
                 + self.params.gamma * left_lookup_operand_claim
-                + self.params.gamma_sqr * right_lookup_operand_claim
-                + self.params.gamma_cub * left_instruction_input_claim
-                + self.params.gamma_quart * right_instruction_input_claim)
+                + self.params.gamma_sqr * right_lookup_operand_claim)
     }
 
     fn cache_openings(
@@ -695,16 +559,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         );
         accumulator.append_virtual(
             VirtualPolynomial::RightLookupOperand,
-            SumcheckId::InstructionClaimReduction,
-            opening_point.clone(),
-        );
-        accumulator.append_virtual(
-            VirtualPolynomial::LeftInstructionInput,
-            SumcheckId::InstructionClaimReduction,
-            opening_point.clone(),
-        );
-        accumulator.append_virtual(
-            VirtualPolynomial::RightInstructionInput,
             SumcheckId::InstructionClaimReduction,
             opening_point,
         );

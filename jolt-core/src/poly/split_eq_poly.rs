@@ -410,6 +410,65 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         ])
     }
 
+    /// Compute the quartic polynomial s(X) = l(X) * q(X), where l(X) is the
+    /// current (linear) eq polynomial and q(X) = c + dX + eX^2 + fX^3, given:
+    /// - c, the constant term of q (i.e. q(0))
+    /// - q(2), the evaluation of q at 2
+    /// - f, the leading (cubic) coefficient of q
+    /// - the previous round claim, s(0) + s(1)
+    pub fn gruen_poly_deg_4(
+        &self,
+        q_constant: F,
+        q_at_2: F,
+        q_cubic_coeff: F,
+        s_0_plus_s_1: F,
+    ) -> UniPoly<F> {
+        // l(X) = a + bX  (linear eq polynomial)
+        // q(X) = c + dX + eX^2 + fX^3  (cubic inner polynomial)
+        // s(X) = l(X)*q(X) is degree 4, needs evaluations at {0, 1, 2, 3, 4}.
+
+        let eq_eval_1 = self.current_scalar
+            * match self.binding_order {
+                BindingOrder::LowToHigh => self.w[self.current_index - 1],
+                BindingOrder::HighToLow => self.w[self.current_index],
+            };
+        let eq_eval_0 = self.current_scalar - eq_eval_1;
+        let eq_m = eq_eval_1 - eq_eval_0;
+        let eq_eval_2 = eq_eval_1 + eq_m;
+        let eq_eval_3 = eq_eval_2 + eq_m;
+        let eq_eval_4 = eq_eval_3 + eq_m;
+
+        let c = q_constant;
+        let f = q_cubic_coeff;
+
+        // Recover q(1) from the sumcheck identity: s(0) + s(1) = claim
+        let quartic_eval_0 = eq_eval_0 * c;
+        let quartic_eval_1 = s_0_plus_s_1 - quartic_eval_0;
+        let q_1 = quartic_eval_1 / eq_eval_1;
+
+        // q(0) = c, q(1) = c+d+e+f, q(2) = c+2d+4e+8f
+        // Forward differences:  Δ0 = q(1)-q(0) = d+e+f,  Δ1 = q(2)-q(1)
+        // Second differences:   Δ²0 = Δ1-Δ0 = 2e+6f
+        // Third differences:    Δ³ = 6f  (constant for a cubic)
+        let delta_0 = q_1 - c;
+        let delta_1 = q_at_2 - q_1;
+        let delta2_0 = delta_1 - delta_0;
+        let f6 = f + f + f + f + f + f; // 6f
+                                        // q(3) = q(2) + Δ1 + Δ²0 + Δ³ = q(2) + (Δ1 + Δ²0 + 6f)
+        let delta_2 = delta_1 + delta2_0 + f6;
+        let q_3 = q_at_2 + delta_2;
+        // q(4) = q(3) + Δ2 + Δ²0 + 2*Δ³ = q(3) + (delta_2 + delta2_0 + 6f + 6f)
+        let q_4 = q_3 + delta_2 + delta2_0 + f6 + f6;
+
+        UniPoly::from_evals(&[
+            quartic_eval_0,
+            quartic_eval_1,
+            eq_eval_2 * q_at_2,
+            eq_eval_3 * q_3,
+            eq_eval_4 * q_4,
+        ])
+    }
+
     /// Compute the quadratic polynomial s(X) = l(X) * q(X), where l(X) is the
     /// current (linear) Dao-Thaler eq polynomial and q(X) = c + dx
     /// - c, the constant term of q
@@ -795,8 +854,6 @@ mod tests {
     /// Verify that evals_cached returns [1] at index 0 (eq over 0 vars).
     #[test]
     fn evals_cached_starts_with_one() {
-        use crate::poly::eq_poly::EqPolynomial;
-
         let mut rng = test_rng();
         for num_vars in 1..=10 {
             let w: Vec<<Fr as JoltField>::Challenge> =

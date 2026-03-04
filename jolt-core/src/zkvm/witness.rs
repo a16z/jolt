@@ -241,7 +241,6 @@ pub enum VirtualPolynomial {
     RightLookupOperand,
     LeftInstructionInput,
     RightInstructionInput,
-    Product,
     ShouldJump,
     ShouldBranch,
     WritePCtoRD,
