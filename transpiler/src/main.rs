@@ -174,7 +174,7 @@ fn main() {
     // variables instead of constants. This ensures the circuit is identical
     // regardless of the actual inputs/outputs.
     println!("\n=== Symbolizing IO Device ===");
-    let eval_input_words = symbolize_io_device(&io_device, &mut var_alloc);
+    let symbolized_io = symbolize_io_device(&io_device, &mut var_alloc);
     println!("  Total symbolic variables after IO: {}", var_alloc.next_idx());
 
     // Set PENDING_INITIAL_RAM: bytecode_words as constants (same program = same bytecode),
@@ -186,7 +186,7 @@ fn main() {
         .collect();
     set_pending_initial_ram(PendingInitialRamValues {
         bytecode_words: bytecode_words_ast,
-        input_words: eval_input_words,
+        input_words: symbolized_io.input_words,
     });
 
     // Create transcript for Fiat-Shamir challenges.

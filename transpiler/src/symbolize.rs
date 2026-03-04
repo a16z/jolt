@@ -1,14 +1,62 @@
 //! Symbolization of IO device for universal circuit generation.
 //!
 //! Converts concrete IO values (inputs, outputs, panic) into symbolic MleAst variables,
-//! enabling the generated circuit to be independent of specific program inputs
-//! (same-program universality).
+//! enabling the generated circuit to be independent of specific program inputs.
 
+use ark_ff::PrimeField;
 use common::jolt_device::JoltDevice;
 use jolt_core::zkvm::ram::{set_pending_io_mle, PendingIoMleValues};
 use zklean_extractor::mle_ast::MleAst;
 
 use crate::symbolic_proof::VarAllocator;
+
+/// Symbolized IO data for universal circuit generation.
+///
+/// Contains symbolic MleAst variables for all IO components (inputs, outputs, panic).
+/// Input words are used for RAM initialization; all values are also pushed to
+/// thread-locals for Poseidon preamble and eval_io_mle overrides.
+pub struct SymbolizedIo {
+    /// Symbolic input words (u64 each) for RAM initialization.
+    pub input_words: Vec<MleAst>,
+    /// Symbolic output words (u64 each).
+    pub output_words: Vec<MleAst>,
+    /// Symbolic panic value.
+    pub panic_val: MleAst,
+}
+
+/// Chunk size for Poseidon preamble (32-byte scalars).
+const PREAMBLE_CHUNK_SIZE: usize = 32;
+/// Chunk size for eval_io_mle (u64 words).
+const EVAL_CHUNK_SIZE: usize = 8;
+
+/// Convert bytes to symbolic field elements at a given chunk size.
+///
+/// - `chunk_size = 32`: For Poseidon preamble (32-byte → Fr scalar via `from_le_bytes_mod_order`)
+/// - `chunk_size = 8`: For eval_io_mle (8-byte → u64 → Fr)
+fn symbolize_bytes(
+    bytes: &[u8],
+    chunk_size: usize,
+    prefix: &str,
+    var_alloc: &mut VarAllocator,
+) -> Vec<MleAst> {
+    bytes
+        .chunks(chunk_size)
+        .enumerate()
+        .map(|(i, chunk)| {
+            let concrete = if chunk_size == PREAMBLE_CHUNK_SIZE {
+                // 32-byte chunk → Fr scalar (for Poseidon hashing)
+                let mut buf = [0u8; 32];
+                buf[..chunk.len()].copy_from_slice(chunk);
+                ark_bn254::Fr::from_le_bytes_mod_order(&buf)
+            } else {
+                // 8-byte chunk → u64 → Fr (for MLE evaluation)
+                let val = u64::from_le_bytes(chunk.try_into().unwrap());
+                ark_bn254::Fr::from(val)
+            };
+            var_alloc.alloc_with_value(&format!("{prefix}_{i}"), &concrete)
+        })
+        .collect()
+}
 
 /// Symbolize IO device data for universal circuit generation.
 ///
@@ -25,12 +73,9 @@ use crate::symbolic_proof::VarAllocator;
 /// fixed regardless of actual IO size. `fiat_shamir_preamble` applies the same
 /// padding on the prover side.
 ///
-/// Returns `eval_input_words` for use in `PENDING_INITIAL_RAM`.
-pub fn symbolize_io_device(
-    io_device: &JoltDevice,
-    var_alloc: &mut VarAllocator,
-) -> Vec<MleAst> {
-    use ark_ff::PrimeField;
+/// Returns [`SymbolizedIo`] containing all symbolic IO variables. The `input_words`
+/// field is typically used for `PENDING_INITIAL_RAM`.
+pub fn symbolize_io_device(io_device: &JoltDevice, var_alloc: &mut VarAllocator) -> SymbolizedIo {
     use crate::symbolic_traits::io_replay::push_bytes_override;
 
     let max_input = io_device.memory_layout.max_input_size as usize;
@@ -42,70 +87,26 @@ pub fn symbolize_io_device(
     let mut padded_outputs = io_device.outputs.clone();
     padded_outputs.resize(max_output, 0);
 
-    // --- 1. Preamble overrides (32-byte chunk scalars) ---
-    // These match what raw_append_bytes produces: bytes → 32-byte padded → Fr scalar.
-    let preamble_input_elements: Vec<MleAst> = padded_inputs
-        .chunks(32)
-        .enumerate()
-        .map(|(i, chunk)| {
-            let mut buf = [0u8; 32];
-            buf[..chunk.len()].copy_from_slice(chunk);
-            let concrete = ark_bn254::Fr::from_le_bytes_mod_order(&buf);
-            var_alloc.alloc_with_value(&format!("io_preamble_input_{i}"), &concrete)
-        })
-        .collect();
+    // --- 1. Preamble overrides (32-byte chunk scalars for Poseidon) ---
+    let preamble_inputs = symbolize_bytes(&padded_inputs, PREAMBLE_CHUNK_SIZE, "io_preamble_input", var_alloc);
+    let preamble_outputs = symbolize_bytes(&padded_outputs, PREAMBLE_CHUNK_SIZE, "io_preamble_output", var_alloc);
 
-    let preamble_output_elements: Vec<MleAst> = padded_outputs
-        .chunks(32)
-        .enumerate()
-        .map(|(i, chunk)| {
-            let mut buf = [0u8; 32];
-            buf[..chunk.len()].copy_from_slice(chunk);
-            let concrete = ark_bn254::Fr::from_le_bytes_mod_order(&buf);
-            var_alloc.alloc_with_value(&format!("io_preamble_output_{i}"), &concrete)
-        })
-        .collect();
-
-    // Panic → 8 bytes → 32-byte padded → Fr scalar → symbolic var
+    // Panic for preamble: 8 bytes → 32-byte padded → Fr scalar
     let panic_u64 = io_device.panic as u64;
     let mut panic_padded = [0u8; 32];
     panic_padded[..8].copy_from_slice(&panic_u64.to_le_bytes());
     let panic_concrete = ark_bn254::Fr::from_le_bytes_mod_order(&panic_padded);
-    let preamble_panic_element =
-        var_alloc.alloc_with_value("io_preamble_panic", &panic_concrete);
+    let preamble_panic = var_alloc.alloc_with_value("io_preamble_panic", &panic_concrete);
 
     // Push in the exact order fiat_shamir_preamble calls append_bytes:
     // 1. inputs, 2. outputs, 3. panic
-    push_bytes_override(preamble_input_elements);
-    push_bytes_override(preamble_output_elements);
-    push_bytes_override(vec![preamble_panic_element]);
+    push_bytes_override(preamble_inputs);
+    push_bytes_override(preamble_outputs);
+    push_bytes_override(vec![preamble_panic]);
 
-    // --- 2. eval_io_mle overrides (u64-word field elements, padded to max) ---
-    let num_input_words = max_input / 8;
-    let num_output_words = max_output / 8;
-
-    let eval_input_words: Vec<MleAst> = padded_inputs
-        .chunks(8)
-        .enumerate()
-        .take(num_input_words)
-        .map(|(i, chunk)| {
-            let val = u64::from_le_bytes(chunk.try_into().unwrap());
-            let concrete = ark_bn254::Fr::from(val);
-            var_alloc.alloc_with_value(&format!("io_eval_input_{i}"), &concrete)
-        })
-        .collect();
-
-    let eval_output_words: Vec<MleAst> = padded_outputs
-        .chunks(8)
-        .enumerate()
-        .take(num_output_words)
-        .map(|(i, chunk)| {
-            let val = u64::from_le_bytes(chunk.try_into().unwrap());
-            let concrete = ark_bn254::Fr::from(val);
-            var_alloc.alloc_with_value(&format!("io_eval_output_{i}"), &concrete)
-        })
-        .collect();
-
+    // --- 2. eval_io_mle overrides (u64-word field elements) ---
+    let eval_input_words = symbolize_bytes(&padded_inputs, EVAL_CHUNK_SIZE, "io_eval_input", var_alloc);
+    let eval_output_words = symbolize_bytes(&padded_outputs, EVAL_CHUNK_SIZE, "io_eval_output", var_alloc);
     let eval_panic_val = {
         let concrete = ark_bn254::Fr::from(io_device.panic as u64);
         var_alloc.alloc_with_value("io_eval_panic", &concrete)
@@ -114,19 +115,24 @@ pub fn symbolize_io_device(
     // Set pending IO MLE values (consumed by eval_io_mle)
     set_pending_io_mle(PendingIoMleValues {
         input_words: eval_input_words.clone(),
-        output_words: eval_output_words,
-        panic_val: eval_panic_val,
+        output_words: eval_output_words.clone(),
+        panic_val: eval_panic_val.clone(),
     });
 
     println!(
         "  Preamble: {} input chunks + {} output chunks + 1 panic",
-        max_input / 32,
-        max_output / 32,
+        max_input / PREAMBLE_CHUNK_SIZE,
+        max_output / PREAMBLE_CHUNK_SIZE,
     );
     println!(
         "  Eval: {} input words + {} output words + 1 panic",
-        num_input_words, num_output_words,
+        max_input / EVAL_CHUNK_SIZE,
+        max_output / EVAL_CHUNK_SIZE,
     );
 
-    eval_input_words
+    SymbolizedIo {
+        input_words: eval_input_words,
+        output_words: eval_output_words,
+        panic_val: eval_panic_val,
+    }
 }
