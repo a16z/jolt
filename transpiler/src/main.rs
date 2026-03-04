@@ -7,10 +7,10 @@
 //! records all arithmetic operations as an AST (Abstract Syntax Tree). This AST is then
 //! converted to target-specific code (e.g., Go for gnark).
 //!
-//! # Target
+//! # Supported Targets
 //!
-//! Go/Groth16 circuit generation via gnark.
-//! Use `--bundle-only` to stop at the AstBundle IR without generating code.
+//! - **gnark** (default): Go/Groth16 circuit generation
+//! - **ast-bundle**: Output only the AstBundle JSON (no code generation)
 //!
 //! # Scope: Stages 1-7 (All Sumcheck Verification)
 //!
@@ -37,7 +37,7 @@
 //! 7. Output witness values (captured during symbolization)
 
 use ark_serialize::CanonicalDeserialize;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -63,7 +63,17 @@ use zklean_extractor::mle_ast::{
 // Output file names (bundle is target-agnostic)
 const BUNDLE_FILENAME: &str = "stages_bundle.json";
 
-/// Transpile Jolt proofs to Gnark/Groth16 circuit code.
+/// Transpilation target backends.
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum TranspilationTarget {
+    /// Go/gnark circuit for Groth16 proving
+    #[default]
+    Gnark,
+    /// Output only the AstBundle (no code generation)
+    AstBundle,
+}
+
+/// Transpile Jolt proofs to circuit code for various proving backends.
 ///
 /// Takes a Jolt proof, io_device, and preprocessing files as input,
 /// and generates circuit code and witness data for the specified target.
@@ -83,11 +93,11 @@ struct Args {
     #[arg(long, default_value = "/tmp/jolt_verifier_preprocessing.dat")]
     preprocessing: PathBuf,
 
-    /// Stop after writing the AstBundle IR (skip Gnark code generation)
-    #[arg(long)]
-    bundle_only: bool,
+    /// Transpilation target language/framework
+    #[arg(long, short = 't', default_value = "gnark", value_enum)]
+    target: TranspilationTarget,
 
-    /// Output directory (defaults to "go/" under the transpiler crate)
+    /// Output directory (defaults to target-specific directory, e.g., "go" for gnark)
     #[arg(long, short = 'o')]
     output_dir: Option<PathBuf>,
 }
@@ -95,7 +105,10 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    println!("=== Transpiling Jolt Verifier Stages 1-7 ===\n");
+    println!(
+        "=== Transpiling Jolt Verifier Stages 1-7 to {:?} ===\n",
+        args.target
+    );
 
     // =========================================================================
     // Step 1: Load input files
@@ -297,65 +310,75 @@ fn main() {
     );
 
     // =========================================================================
-    // Step 6: Write AstBundle (target-agnostic IR)
+    // Step 6: Resolve output directory and write bundle
     // =========================================================================
-    let output_dir = args.output_dir.unwrap_or_else(||
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("go")
-    );
+    let default_output_dir = match args.target {
+        TranspilationTarget::Gnark => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("go"),
+        TranspilationTarget::AstBundle => PathBuf::from("."),
+    };
+    let output_dir = args.output_dir.clone().unwrap_or(default_output_dir);
+
+    // Save bundle to JSON (common to all targets)
     let bundle_path = output_dir.join(BUNDLE_FILENAME);
     bundle
         .write_json(&bundle_path)
         .unwrap_or_else(|e| panic!("Failed to write bundle file {bundle_path:?}: {e}"));
     println!("  Bundle written to: {bundle_path:?}");
 
-    if args.bundle_only {
-        println!("\n=== Done (IR only) ===");
-        return;
-    }
-
     // =========================================================================
-    // Step 7: Gnark code generation
+    // Step 7: Target-specific code generation
     // =========================================================================
-    // generate_circuit_from_bundle() traverses the AST and emits Go code:
-    // - Each AST node (Add, Mul, Sub, etc.) becomes an api.Add/Mul/Sub call
-    // - Common subexpressions are cached to avoid redundant computation
-    // - The circuit struct contains all witness fields
-    // - The Define() method contains all constraint logic
-    println!("\n=== Generating Gnark Circuit ===");
-    let circuit_code =
-        gnark_codegen::generate_circuit_from_bundle(&bundle, "JoltStagesCircuit");
+    match args.target {
+        TranspilationTarget::Gnark => {
+            // Generate gnark circuit
+            // generate_circuit_from_bundle() traverses the AST and emits Go code:
+            // - Each AST node (Add, Mul, Sub, etc.) becomes an api.Add/Mul/Sub call
+            // - Common subexpressions are cached to avoid redundant computation
+            // - The circuit struct contains all witness fields
+            // - The Define() method contains all constraint logic
+            println!("\n=== Generating Gnark Circuit ===");
+            let circuit_code =
+                gnark_codegen::generate_circuit_from_bundle(&bundle, "JoltStagesCircuit");
 
-    let circuit_path = output_dir.join("stages_circuit.go");
-    std::fs::write(&circuit_path, &circuit_code)
-        .unwrap_or_else(|e| panic!("Failed to write circuit file {circuit_path:?}: {e}"));
-    println!("  Circuit written to: {circuit_path:?}");
-    println!("  Circuit size: {} bytes", circuit_code.len());
+            let circuit_path = output_dir.join("stages_circuit.go");
+            std::fs::write(&circuit_path, &circuit_code)
+                .unwrap_or_else(|e| panic!("Failed to write circuit file {circuit_path:?}: {e}"));
+            println!("  Circuit written to: {circuit_path:?}");
+            println!("  Circuit size: {} bytes", circuit_code.len());
 
-    // Get witness values captured during symbolization.
-    // VarAllocator records both symbolic variables AND concrete values in a single pass,
-    // making mismatch bugs structurally impossible.
-    println!("\n=== Generating Witness Data ===");
-    let witness_values = var_alloc.witness_values();
+            // Get witness values captured during symbolization.
+            // VarAllocator records both symbolic variables AND concrete values in a single pass,
+            // making mismatch bugs structurally impossible.
+            println!("\n=== Generating Witness Data ===");
+            let witness_values = var_alloc.witness_values();
 
-    let mut witness_map: HashMap<String, String> = HashMap::new();
-    for (idx, name, _target_field) in var_alloc.descriptions_with_fields() {
-        let sanitized = gnark_codegen::sanitize_go_name(name);
-        if let Some(value) = witness_values.get(&(*idx as usize)) {
-            witness_map.insert(sanitized, value.clone());
+            let mut witness_map: HashMap<String, String> = HashMap::new();
+            for (idx, name, _target_field) in var_alloc.descriptions_with_fields() {
+                let sanitized = gnark_codegen::sanitize_go_name(name);
+                if let Some(value) = witness_values.get(&(*idx as usize)) {
+                    witness_map.insert(sanitized, value.clone());
+                }
+            }
+
+            let witness_json =
+                serde_json::to_string_pretty(&witness_map).expect("Failed to serialize witness");
+            let witness_path = output_dir.join("stages_witness.json");
+            std::fs::write(&witness_path, &witness_json)
+                .unwrap_or_else(|e| panic!("Failed to write witness file {witness_path:?}: {e}"));
+            println!("  Witness written to: {witness_path:?}");
+            println!("  Witness variables: {}", witness_map.len());
+
+            println!("\n=== SUCCESS ===");
+            println!(
+                "Stages 1-7 transpiled to Gnark. Run 'go test' in {:?} to verify.",
+                output_dir
+            );
+        }
+        TranspilationTarget::AstBundle => {
+            println!("\n=== SUCCESS ===");
+            println!("AstBundle written to: {bundle_path:?}");
+            println!("  Inputs: {}", bundle.inputs.len());
+            println!("  Constraints: {}", bundle.constraints.len());
         }
     }
-
-    let witness_json =
-        serde_json::to_string_pretty(&witness_map).expect("Failed to serialize witness");
-    let witness_path = output_dir.join("stages_witness.json");
-    std::fs::write(&witness_path, &witness_json)
-        .unwrap_or_else(|e| panic!("Failed to write witness file {witness_path:?}: {e}"));
-    println!("  Witness written to: {witness_path:?}");
-    println!("  Witness variables: {}", witness_map.len());
-
-    println!("\n=== SUCCESS ===");
-    println!(
-        "Stages 1-7 transpiled to Gnark. Run 'go test' in {:?} to verify.",
-        output_dir
-    );
 }
