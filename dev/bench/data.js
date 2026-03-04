@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772649036305,
+  "lastUpdate": 1772661055131,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -59014,6 +59014,234 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 789632,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3705db2cdfa3aa969f7cba857392780f53a755bd",
+          "message": "fix: introduce panic-free VirtualAssertEQ via Format B immediate (#1302)\n\n* feat: add VirtualSpoilProof instruction for non-panicking proof spoiling\n\nhcf() previously emitted VirtualAssertEQ(0, 1) which panics during\ntracer emulation before any proof is generated. VirtualSpoilProof\nwarns and continues, producing an unsatisfiable proof via the existing\nR1CS Assert constraint (EqualTable(0,1) = 0 != 1).\n\nEncoding: same opcode 0x5B / funct3 0b001 as VirtualAssertEQ,\ndiscriminated by funct7 (0 = AssertEQ, nonzero = SpoilProof).\n\nGuest-side hcf() now emits .insn r with funct7=1, and\nunwrap_or_spoil_proof() returns zeroed memory instead of\nunreachable!() since execution continues past hcf().\n\n* chore: update Cargo.lock\n\n* fix: address review — FormatR, hardcode 0 lookup output\n\n- Use FormatR (matches .insn r encoding) instead of FormatB\n- Hardcode to_instruction_inputs → (0, 0) and to_lookup_output → 0\n- Remove materialize_entry test (intentionally inconsistent lookup)\n\n* fix: use RangeCheckTable instead of EqualTable\n\nRangeCheck(0, 0) = 0 is consistent with the hardcoded output,\nso only the Assert constraint (output == 1) fails — single\nclean failure point.\n\n* refactor: switch VirtualAssertEQ from FormatB to FormatR\n\nB-format encodes imm in bits[31:25], so a nonzero imm would be\nmisparsed as VirtualSpoilProof. Both instructions now use R-format,\ncleanly discriminated by funct7 (0 = AssertEQ, nonzero = SpoilProof).\n\n- emit_b::<VirtualAssertEQ>(rs1, rs2, 0) → emit_r(0, rs1, rs2)\n- jolt-sdk .insn b → .insn r with funct7=0\n\n* fix: replace mem::zeroed() with T::default() in UnwrapOrSpoilProof\n\nmem::zeroed() on generic T is UB for types with validity invariants.\nAdd T: Default bound and use T::default() instead.\n\n* refactor: merge VirtualSpoilProof into VirtualAssertEQ via Format B immediate\n\nVirtualSpoilProof was a separate instruction solely to make proofs\nunsatisfiable when unwrap_or_spoil_proof() fails. This is unnecessary —\nVirtualAssertEQ with mismatched rs1/rs2 already produces an\nunsatisfiable proof via EqualTable(x,y)=0 vs Assert flag expecting 1.\n\nSwitch VirtualAssertEQ from FormatR to FormatB and use the immediate\nto distinguish assert (imm=0, panic) from spoil (imm≠0, warn). The\nhcf() inline asm encodes funct7=1 which B-type decode extracts as\nimm=32 (non-zero), correctly triggering spoil mode.\n\n* refactor: replace T::default() with panic!() in unwrap_or_spoil_proof\n\nThe code after hcf() is unreachable — panic!() satisfies the type\nchecker without requiring T: Default.\n\n* fix: only warn on spoil mode when rs1 != rs2\n\n* refactor: use .insn b encoding for hcf() to match FormatB decode\n\n* fix: return zeroed memory after hcf() instead of panicking\n\nOn RISC-V, hcf() emits a custom instruction and returns — the tracer\nmust continue execution. panic!() would abort the tracer. The returned\nvalue is irrelevant since the proof is already unsatisfiable.\n\n* fix: use panic!() after hcf() in unwrap_or_spoil_proof\n\n* refactor: use .insn b encoding for VirtualAssertEQ in check_advice macros",
+          "timestamp": "2026-03-04T15:54:35-05:00",
+          "tree_id": "24dc76b815450dac0e91619f8592f91dbec7b70c",
+          "url": "https://github.com/a16z/jolt/commit/3705db2cdfa3aa969f7cba857392780f53a755bd"
+        },
+        "date": 1772661054017,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7134,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 791980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3288,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 460600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 472044,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 469192,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7369,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 469292,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6147,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 469232,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.7962,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 471212,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.3469,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 792224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5921,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 474616,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4769,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 471804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.731,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 472388,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.8376,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1021764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.1652,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 619288,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 81.3972,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2145328,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4982,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 470344,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5384,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 460316,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.6697,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 791968,
             "unit": "KB",
             "extra": ""
           }
