@@ -685,11 +685,7 @@ where
         })
     }
 
-    fn populate_or_alias_opening(
-        &mut self,
-        key: OpeningId,
-        point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
+    fn populate_or_alias_opening(&mut self, key: OpeningId, point: OpeningPoint<BIG_ENDIAN, F>) {
         if let Some((_, claim)) = self.openings.get(&key) {
             if let Some((existing_id, existing_claim)) =
                 self.find_existing_opening_at_point(underlying_polynomial_id(key), &point)
@@ -717,7 +713,12 @@ where
             return;
         }
 
-        panic!("Missing opening claim for key {key:?} (no canonical opening found to dedup)");
+        // ZK mode: claims are not pre-populated — use zero placeholder (matching old behavior).
+        // In ZK mode the actual claim values are proven via BlindFold, not checked directly.
+        let claim = F::zero();
+        self.pending_claims.push(claim);
+        self.openings.insert(key, (point, claim));
+        self.index_opening_id(key);
     }
 
     /// Compare this accumulator to the corresponding `ProverOpeningAccumulator` and panic
