@@ -43,7 +43,7 @@ prover = [
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
 minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
 allocative = ["dep:inferno"]
-monitor = ["dep:sysinfo"]
+monitor = ["dep:sysinfo", "dep:tikv-jemallocator"]
 pprof = ["dep:pprof", "dep:prost"]
 test_incremental = []
 challenge-254-bit = []
@@ -89,6 +89,7 @@ jolt-inlines-keccak256 = { workspace = true, features = [
     "host",
 ], optional = true }
 sysinfo = { workspace = true, optional = true }
+tikv-jemallocator = { workspace = true, optional = true }
 pprof = { version = "0.15", features = [
     "prost-codec",
     "flamegraph",
