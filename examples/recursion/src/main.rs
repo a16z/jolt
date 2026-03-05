@@ -230,7 +230,7 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
 
     let verifier_preprocessing = jolt_sdk::JoltVerifierPreprocessing::<
         jolt_sdk::F,
-        jolt_sdk::Bn254Curve,
+        jolt_sdk::Curve,
         jolt_sdk::PCS,
     >::deserialize_compressed(&mut cursor)
     .unwrap();
