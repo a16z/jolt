@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772668946418,
+  "lastUpdate": 1772675396110,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -59698,6 +59698,234 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 792720,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "807c360de62dc673b6327054ccc98b6d4a0b864c",
+          "message": "fix(poly): dedup identical openings in accumulator (#1265)\n\n* fix: dedup identical openings in accumulator\n\nWhen the same polynomial is opened at the same point across sumchecks, alias the opening id so we only record/serialize a single claim and enforce consistency.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* test(zkvm): assert committed openings are proven\n\nExtend the prover-side test invariant that all appended openings are eventually\nconsumed/proven by Stage 8, covering committed and advice openings in addition\nto virtual openings.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* perf(poly): index openings by polynomial for dedup\n\nDedup checks previously scanned the full opening map. Maintain a per-polynomial\nindex of canonical openings so dedup only scans openings for the same\nunderlying polynomial.\n\nAlso hoist remap_address import for readability.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(poly): exclude advice intermediate claim from opening dedup\n\nAdviceClaimReductionCyclePhase caches an intermediate reduction claim using the\nadvice opening path. This value is not a polynomial evaluation, and it can share\nan opening point with the final advice evaluation while differing in value.\n\nTreat it as non-dedup/indexed so identical-opening dedup does not conflate it\nwith real advice polynomial openings.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(advice): store cycle-phase intermediate claim without point\n\nAdviceClaimReductionCyclePhase caches an intermediate reduction claim that is\nnot an advice polynomial evaluation. Store it with an empty OpeningPoint so it\ncannot collide with real advice openings under opening dedup.\n\nThis keeps dedup rules uniform without special-casing sumcheck ids.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* docs(advice): clarify empty-point intermediate claim\n\nDocument why AdviceClaimReductionCyclePhase is stored with an empty opening\npoint: it is a phase-boundary intermediate claim, not a polynomial opening, and\nshould not collide with the final advice opening under opening dedup.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(test): don't require empty-point advice claims in stage8 check\n\nAdviceClaimReductionCyclePhase stores a phase-boundary intermediate claim with an\nempty OpeningPoint. Exclude empty-point advice entries from the prover-side\n\"all openings proven\" test invariant, since they are not part of Stage 8.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* refactor(poly): consolidate opening dedup paths\n\nReduce repeated prover/verifier opening append branches by introducing shared helper paths for insert-or-alias and populate-or-alias. Keep committed-opening test tracking intact so test-time coverage checks remain strict while reducing code complexity.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(poly): alias verifier duplicates before transcript append\n\nEnsure verifier deduplicated openings follow prover transcript behavior by aliasing duplicate keys and returning early instead of appending an extra opening claim.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(poly): handle ZK mode in verifier opening dedup\n\nIn ZK mode, opening claims are not pre-populated into the verifier\naccumulator (they are proven via BlindFold). The dedup logic panicked\nwhen encountering an unpopulated key with no alias. Use F::zero() as\na placeholder claim, matching the old pre-dedup behavior.\n\nMade-with: Cursor\n\n---------\n\nCo-authored-by: Cursor <cursoragent@cursor.com>",
+          "timestamp": "2026-03-04T19:53:04-05:00",
+          "tree_id": "a5835f6c75af3eccb6c00861e440eeec7cc6264e",
+          "url": "https://github.com/a16z/jolt/commit/807c360de62dc673b6327054ccc98b6d4a0b864c"
+        },
+        "date": 1772675394645,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.8502,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 791024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3265,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 469220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 459952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 469260,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7332,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 471216,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6124,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 469400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.7556,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 461988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.3362,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 790400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5853,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 469396,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4748,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 462016,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.2998,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 462336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.962,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1018576,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.2661,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 617484,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 82.8214,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2130476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4834,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 470476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5237,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 469304,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.835,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 794848,
             "unit": "KB",
             "extra": ""
           }
