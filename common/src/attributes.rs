@@ -1,7 +1,7 @@
 #[cfg(feature = "std")]
 use std::collections::HashMap;
 #[cfg(feature = "std")]
-use syn::{Expr, ExprLit, Lit, Meta, MetaNameValue};
+use syn::{punctuated::Punctuated, token::Comma, Expr, ExprLit, Lit, Meta, MetaNameValue};
 
 #[cfg(feature = "std")]
 use crate::constants::{
@@ -26,7 +26,7 @@ pub struct Attributes {
 }
 
 #[cfg(feature = "std")]
-pub fn parse_attributes(attr: &syn::punctuated::Punctuated<Meta, syn::token::Comma>) -> Attributes {
+pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
     let mut attributes = HashMap::<_, u64>::new();
     let mut wasm = false;
     let mut guest_only = false;
