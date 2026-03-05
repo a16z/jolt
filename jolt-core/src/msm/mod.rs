@@ -1,27 +1,43 @@
 use std::borrow::Borrow;
+use std::ops::AddAssign;
 
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
-use ark_ec::scalar_mul::variable_base::{
-    msm_binary, msm_i128, msm_i64, msm_s128, msm_s64, msm_u128, msm_u16, msm_u32, msm_u64, msm_u8,
-    VariableBaseMSM as ArkVariableBaseMSM,
-};
-use ark_ec::{CurveGroup, ScalarMul};
-use ark_ff::biginteger::{S128, S64};
+use ark_ec::models::short_weierstrass::{Projective, SWCurveConfig};
+use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
+use ark_ec::ScalarMul;
+use jolt_field::signed::{S128, S64};
 use rayon::prelude::*;
 
-// A very light wrapper around Ark5.0 VariableBaseMSM
-pub trait VariableBaseMSM: ArkVariableBaseMSM
-where
-    Self: ScalarMul, // technically implied by ArkVariableBaseMSM, but explicitly mentioned to be
-    // consistent with current Jolt Msm implementation.
-    Self::ScalarField: JoltField,
-{
+pub mod bucket;
+pub mod typed_msm;
+
+use typed_msm::{
+    msm_binary, msm_i128, msm_i64, msm_s128, msm_s64, msm_u128, msm_u16, msm_u32, msm_u64, msm_u8,
+};
+
+/// Jolt's extended MSM trait with bucket-based accumulation and typed scalar support.
+///
+/// Provides efficient MSM for small scalar types (u8–u128, i64, i128, S64, S128) using
+/// windowed bucket accumulation in XYZZ coordinates, as well as dispatching over
+/// `MultilinearPolynomial` variants.
+pub trait VariableBaseMSM: ArkVariableBaseMSM {
+    /// Efficient accumulator type for windowed MSM (XYZZ coordinates).
+    /// Named `MsmBucket` to avoid collision with the fork's `VariableBaseMSM::Bucket`.
+    type MsmBucket: Copy
+        + Default
+        + Into<Self>
+        + for<'a> AddAssign<&'a <Self as ScalarMul>::MulBase>
+        + for<'a> AddAssign<&'a Self::MsmBucket>;
+
+    const MSM_ZERO_BUCKET: Self::MsmBucket;
+
     #[tracing::instrument(skip_all)]
     fn msm<U>(bases: &[Self::MulBase], poly: &U) -> Result<Self, ProofVerifyError>
     where
+        Self::ScalarField: JoltField,
         U: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
     {
         match poly.borrow() {
@@ -83,7 +99,7 @@ where
         bases: &[Self::MulBase],
         scalars: &[Self::ScalarField],
     ) -> Result<Self, ProofVerifyError> {
-        ArkVariableBaseMSM::msm_serial(bases, scalars)
+        ArkVariableBaseMSM::msm(bases, scalars)
             .map_err(|_bad_index| ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
@@ -159,11 +175,14 @@ where
 
     fn batch_msm<U>(bases: &[Self::MulBase], polys: &[U]) -> Vec<Self>
     where
+        Self::ScalarField: JoltField,
         U: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
     {
         polys
             .par_iter()
-            .map(|poly| VariableBaseMSM::msm(&bases[..poly.borrow().len()], poly).unwrap())
+            .map(|poly| {
+                <Self as VariableBaseMSM>::msm(&bases[..poly.borrow().len()], poly).unwrap()
+            })
             .collect()
     }
 
@@ -174,12 +193,20 @@ where
         polys
             .par_iter()
             .map(|poly| {
-                VariableBaseMSM::msm_field_elements(&bases[..poly.coeffs.len()], &poly.coeffs)
-                    .unwrap()
+                <Self as VariableBaseMSM>::msm_field_elements(
+                    &bases[..poly.coeffs.len()],
+                    &poly.coeffs,
+                )
+                .unwrap()
             })
             .collect()
     }
 }
 
-// Implement VariableBaseMSM For any type G (like G1Projective) that implements the CurveGroup trait.
-impl<F: JoltField, G: CurveGroup<ScalarField = F>> VariableBaseMSM for G {}
+impl<P: SWCurveConfig> VariableBaseMSM for Projective<P>
+where
+    P::ScalarField: JoltField,
+{
+    type MsmBucket = bucket::Bucket<P>;
+    const MSM_ZERO_BUCKET: Self::MsmBucket = bucket::Bucket::<P>::ZERO;
+}

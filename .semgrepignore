@@ -1,0 +1,9 @@
+target/
+book/
+patches/
+*.md
+*.json
+*.lock
+*.yml
+*.yaml
+*.sh

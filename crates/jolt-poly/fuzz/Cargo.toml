@@ -1,0 +1,18 @@
+[package]
+name = "jolt-poly-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-poly = { path = ".." }
+jolt-field = { path = "../../jolt-field" }
+
+[[bin]]
+name = "dense_poly_ops"
+path = "fuzz_targets/dense_poly_ops.rs"
+doc = false

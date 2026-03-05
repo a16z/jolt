@@ -1,0 +1,17 @@
+[package]
+name = "jolt-transcript-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-transcript = { path = ".." }
+
+[[bin]]
+name = "transcript_no_panic"
+path = "fuzz_targets/transcript_no_panic.rs"
+doc = false

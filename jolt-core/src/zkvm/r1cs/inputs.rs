@@ -21,8 +21,8 @@ use crate::zkvm::instruction::{
 use crate::zkvm::witness::VirtualPolynomial;
 
 use crate::field::JoltField;
-use ark_ff::biginteger::{S128, S64};
 use common::constants::XLEN;
+use jolt_field::signed::{S128, S64};
 use std::fmt::Debug;
 use tracer::instruction::Cycle;
 

@@ -37,8 +37,8 @@
 //! - Test-only `assert_constraints` methods validate that Az guards imply zero
 //!   Bz magnitudes for both groups.
 
-use ark_ff::biginteger::{S128, S160, S192, S256, S64};
 use ark_std::Zero;
+use jolt_field::signed::{S128, S160, S192, S256, S64};
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;

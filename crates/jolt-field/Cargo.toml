@@ -1,0 +1,33 @@
+[package]
+name = "jolt-field"
+version = "0.1.0"
+authors = ["Jolt Contributors"]
+edition = "2021"
+license = "MIT"
+description = "Field abstractions for the Jolt zkVM"
+
+[lints]
+workspace = true
+
+[dependencies]
+ark-ff = { workspace = true }
+ark-serialize = { workspace = true }
+ark-bn254 = { workspace = true, features = ["scalar_field"] }
+num-traits = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+allocative = { workspace = true, optional = true }
+rand = { workspace = true }
+rand_core = { workspace = true }
+
+[features]
+default = []
+challenge-254-bit = []
+
+[dev-dependencies]
+ark-std = { workspace = true }
+rand_chacha = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "field_arith"
+harness = false

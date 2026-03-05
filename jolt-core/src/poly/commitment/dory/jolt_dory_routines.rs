@@ -47,7 +47,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
         let raw_scalars: &[Fr] =
             unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
-        let results_proj = jolt_optimizations::fixed_base_vector_msm_g1(&base.0, raw_scalars);
+        let results_proj = jolt_dory::optimizations::fixed_base_vector_msm_g1(&base.0, raw_scalars);
 
         results_proj.into_iter().map(ArkG1).collect()
     }
@@ -67,7 +67,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
         let raw_scalar = unsafe { std::mem::transmute_copy::<ArkFr, Fr>(scalar) };
 
         // v[i] = v[i] + scalar * bases[i]
-        jolt_optimizations::vector_add_scalar_mul_g1_online(vs_proj, bases_proj, raw_scalar);
+        jolt_dory::optimizations::vector_add_scalar_mul_g1_online(vs_proj, bases_proj, raw_scalar);
     }
 
     fn fixed_scalar_mul_vs_then_add(vs: &mut [ArkG1], addends: &[ArkG1], scalar: &ArkFr) {
@@ -89,7 +89,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
         let raw_scalar = unsafe { std::mem::transmute_copy::<ArkFr, Fr>(scalar) };
 
         // v[i] = scalar * v[i] + addends[i]
-        jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+        jolt_dory::optimizations::vector_scalar_mul_add_gamma_g1_online(
             vs_proj,
             raw_scalar,
             addends_proj,
@@ -134,7 +134,9 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         //TODO (markosg04) this can be optimized heavily?
         let results_proj: Vec<G2Projective> = raw_scalars
             .par_iter()
-            .map(|&scalar| jolt_optimizations::glv_four_scalar_mul_online(scalar, &[base_proj])[0])
+            .map(|&scalar| {
+                jolt_dory::optimizations::glv_four_scalar_mul_online(scalar, &[base_proj])[0]
+            })
             .collect();
 
         results_proj.into_iter().map(ArkG2).collect()
@@ -155,7 +157,7 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         let raw_scalar = unsafe { std::mem::transmute_copy::<ArkFr, Fr>(scalar) };
 
         // v[i] = v[i] + scalar * bases[i]
-        jolt_optimizations::vector_add_scalar_mul_g2_online(vs_proj, bases_proj, raw_scalar);
+        jolt_dory::optimizations::vector_add_scalar_mul_g2_online(vs_proj, bases_proj, raw_scalar);
     }
 
     fn fixed_scalar_mul_vs_then_add(vs: &mut [ArkG2], addends: &[ArkG2], scalar: &ArkFr) {
@@ -177,7 +179,7 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         let raw_scalar = unsafe { std::mem::transmute_copy::<ArkFr, Fr>(scalar) };
 
         // v[i] = scalar * v[i] + addends[i]
-        jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
+        jolt_dory::optimizations::vector_scalar_mul_add_gamma_g2_online(
             vs_proj,
             raw_scalar,
             addends_proj,
