@@ -293,6 +293,9 @@ pub struct VerifierR1CS<F: JoltField> {
     pub extra_blinding_vars: Vec<Variable>,
     /// Hyrax grid layout parameters
     pub hyrax: HyraxParams,
+    /// Opening IDs placed in the output claims region, in layout-traversal order.
+    /// Empty when output claims binding is disabled.
+    pub output_claims_opening_ids: Vec<OpeningId>,
 }
 
 impl<F: JoltField> VerifierR1CS<F> {
@@ -323,6 +326,10 @@ pub struct VerifierR1CSBuilder<F: JoltField> {
     extra_output_vars: Vec<Variable>,
     extra_blinding_vars: Vec<Variable>,
     baked: BakedPublicInputs<F>,
+    /// When true, opening variables are pre-allocated in a dedicated output claims region
+    /// (between coeff rows and regular noncoeff) and their Hyrax row commitments
+    /// are externally verified against the sumcheck proof commitments.
+    bind_output_claims: bool,
 }
 
 struct RoundVariables {
@@ -331,16 +338,17 @@ struct RoundVariables {
 }
 
 impl<F: JoltField> VerifierR1CSBuilder<F> {
-    /// Create a new builder for the given stage configurations with baked public inputs
     pub fn new(stage_configs: &[StageConfig], baked: &BakedPublicInputs<F>) -> Self {
-        Self::new_with_extra(stage_configs, &[], baked)
+        Self::new_with_extra(stage_configs, &[], baked, false)
     }
 
-    /// Create a new builder with extra constraints and baked public inputs.
+    /// `bind_output_claims`: when true, opening variables are placed in a dedicated
+    /// output claims region with externally-verified Hyrax row commitments.
     pub fn new_with_extra(
         stage_configs: &[StageConfig],
         extra_constraints: &[OutputClaimConstraint],
         baked: &BakedPublicInputs<F>,
+        bind_output_claims: bool,
     ) -> Self {
         Self {
             constraints: Vec::new(),
@@ -350,6 +358,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             extra_output_vars: Vec::new(),
             extra_blinding_vars: Vec::new(),
             baked: baked.clone(),
+            bind_output_claims,
         }
     }
 
@@ -445,21 +454,52 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         let witness_start = self.next_var;
         self.next_var = witness_start + hyrax_R_coeff * hyrax_C;
 
+        let stage_configs = self.stage_configs.clone();
+        let extra_constraints = self.extra_constraints.clone();
+        let baked = self.baked.clone();
+        let layout = compute_witness_layout(&stage_configs, &extra_constraints);
+
+        // Pre-allocate opening variables in the dedicated output claims region.
+        // Scan layout to collect unique openings in first-appearance order, then
+        // assign variables at positions within the OC rows (after coeff rows).
+        let mut global_opening_vars: HashMap<OpeningId, Variable> = HashMap::new();
+        let mut output_claims_opening_ids: Vec<OpeningId> = Vec::new();
+
+        if self.bind_output_claims {
+            let oc_region_start = self.next_var;
+            let mut seen_openings = std::collections::HashSet::new();
+
+            for step in &layout {
+                let opening_ids = match step {
+                    LayoutStep::ConstraintVars { constraint, .. }
+                    | LayoutStep::ExtraConstraintVars { constraint, .. } => {
+                        &constraint.required_openings
+                    }
+                    _ => continue,
+                };
+                for id in opening_ids {
+                    if seen_openings.insert(*id) {
+                        let pos = output_claims_opening_ids.len();
+                        let var = Variable::new(oc_region_start + pos);
+                        global_opening_vars.insert(*id, var);
+                        output_claims_opening_ids.push(*id);
+                    }
+                }
+            }
+
+            let output_claims_rows = output_claims_opening_ids.len().div_ceil(hyrax_C.max(1));
+            self.next_var = oc_region_start + output_claims_rows * hyrax_C;
+        }
+        let output_claims_rows = output_claims_opening_ids.len().div_ceil(hyrax_C.max(1));
+
         let mut challenge_idx = 0usize;
         let mut batching_coeff_idx = 0usize;
         let mut output_challenge_idx = 0usize;
         let mut input_challenge_idx = 0usize;
         let mut extra_challenge_idx = 0usize;
 
-        let mut global_opening_vars: HashMap<OpeningId, Variable> = HashMap::new();
         let mut current_claim = LinearCombination::<F>::new();
         let mut pending_coeffs: Option<Vec<Variable>> = None;
-
-        let stage_configs = self.stage_configs.clone();
-        let extra_constraints = self.extra_constraints.clone();
-        let baked = self.baked.clone();
-
-        let layout = compute_witness_layout(&stage_configs, &extra_constraints);
 
         for step in &layout {
             match step {
@@ -594,8 +634,10 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         }
 
         let num_constraints = self.constraints.len();
-        let noncoeff_count = self.next_var - (witness_start + hyrax_R_coeff * hyrax_C);
-        let hyrax = compute_hyrax_params(&self.stage_configs, noncoeff_count);
+        let noncoeff_region_start =
+            witness_start + hyrax_R_coeff * hyrax_C + output_claims_rows * hyrax_C;
+        let noncoeff_count = self.next_var - noncoeff_region_start;
+        let hyrax = compute_hyrax_params(&self.stage_configs, noncoeff_count, output_claims_rows);
         let num_vars = witness_start + hyrax.R_prime * hyrax.C;
 
         let mut a = SparseR1CSMatrix::new(num_constraints, num_vars);
@@ -625,6 +667,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             extra_output_vars: self.extra_output_vars,
             extra_blinding_vars: self.extra_blinding_vars,
             hyrax,
+            output_claims_opening_ids,
         }
     }
 

@@ -49,12 +49,13 @@ impl<C: JoltCurve> PedersenGenerators<C> {
         &self,
         values: &[F],
         rng: &mut R,
-    ) -> Vec<C::G1> {
+    ) -> Vec<(C::G1, F)> {
         values
             .chunks(self.message_generators.len())
             .map(|chunk| {
                 let blinding = F::random(rng);
-                self.commit(chunk, &blinding)
+                let commitment = self.commit(chunk, &blinding);
+                (commitment, blinding)
             })
             .collect()
     }

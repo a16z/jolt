@@ -31,6 +31,8 @@ use super::spartan::{INNER_SUMCHECK_DEGREE_BOUND, SPARTAN_DEGREE_BOUND};
 pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
     pub random_instance: RelaxedR1CSInstance<F, C>,
 
+    /// Output claims row commitments from the real instance (externally verified)
+    pub output_claims_row_commitments: Vec<C::G1>,
     /// Non-coefficient W row commitments from the real instance
     pub noncoeff_row_commitments: Vec<C::G1>,
     /// Cross-term T row commitments (E grid layout)
@@ -233,6 +235,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
 
         BlindFoldProof {
             random_instance,
+            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
             noncoeff_row_commitments: real_instance.noncoeff_row_commitments.clone(),
             cross_term_row_commitments: t_row_commitments,
             spartan_proof,
@@ -304,10 +307,16 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
 
         let hyrax = &self.r1cs.hyrax;
         let (R_E, _C_E) = hyrax.e_grid(self.r1cs.num_constraints);
-        let expected_noncoeff_rows = hyrax.noncoeff_rows();
+        let expected_noncoeff_rows = hyrax.regular_noncoeff_rows();
+        let expected_oc_rows = hyrax.output_claims_rows;
 
         if proof.noncoeff_row_commitments.len() != expected_noncoeff_rows
             || proof.random_instance.noncoeff_row_commitments.len() != expected_noncoeff_rows
+        {
+            return Err(BlindFoldVerifyError::MalformedProof);
+        }
+        if proof.output_claims_row_commitments.len() != expected_oc_rows
+            || proof.random_instance.output_claims_row_commitments.len() != expected_oc_rows
         {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
@@ -318,6 +327,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let real_instance = RelaxedR1CSInstance {
             u: F::one(),
             round_commitments: input.round_commitments.clone(),
+            output_claims_row_commitments: proof.output_claims_row_commitments.clone(),
             noncoeff_row_commitments: proof.noncoeff_row_commitments.clone(),
             e_row_commitments: vec![C::G1::zero(); R_E],
             eval_commitments: input.eval_commitments.clone(),
@@ -505,6 +515,10 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
     transcript.append_bytes(b"blindfold_u", &u_bytes);
 
     transcript.append_commitments(b"blindfold_round_coms", &instance.round_commitments);
+    transcript.append_commitments(
+        b"blindfold_oc_rows",
+        &instance.output_claims_row_commitments,
+    );
     transcript.append_commitments(b"blindfold_noncoeff", &instance.noncoeff_row_commitments);
     transcript.append_commitments(b"blindfold_e_rows", &instance.e_row_commitments);
     transcript.append_commitments(b"blindfold_eval_coms", &instance.eval_commitments);
@@ -563,7 +577,7 @@ mod tests {
             round_commitments.push(commitment);
         }
 
-        let noncoeff_rows_count = hyrax.noncoeff_rows();
+        let noncoeff_rows_count = hyrax.total_noncoeff_rows();
         let mut noncoeff_row_commitments = Vec::new();
         for row in 0..noncoeff_rows_count {
             let start = R_coeff * hyrax_C + row * hyrax_C;
@@ -578,6 +592,7 @@ mod tests {
             r1cs.num_constraints,
             hyrax_C,
             round_commitments,
+            Vec::new(),
             noncoeff_row_commitments,
             Vec::new(),
             w_row_blindings,

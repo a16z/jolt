@@ -63,6 +63,9 @@ pub struct ZkStageData<F: JoltField, C: JoltCurve> {
     pub input_constraints: Vec<InputClaimConstraint>,
     pub input_constraint_challenge_values: Vec<Vec<F>>,
     pub input_claim_scaling_exponents: Vec<usize>,
+    pub output_claims: Vec<F>,
+    pub output_claims_blindings: Vec<F>,
+    pub output_claims_commitments: Vec<C::G1>,
 }
 
 /// ZK data for a uni-skip first round.
@@ -79,6 +82,9 @@ pub struct UniSkipStageData<F: JoltField, C: JoltCurve> {
     pub commitment: C::G1,
     pub input_constraint: InputClaimConstraint,
     pub input_constraint_challenge_values: Vec<F>,
+    pub output_claims: Vec<F>,
+    pub output_claims_blindings: Vec<F>,
+    pub output_claims_commitments: Vec<C::G1>,
 }
 
 /// ZK data from the PCS opening proof stage (stage 8).
@@ -239,12 +245,14 @@ pub struct HyraxParams {
     pub C: usize,
     /// Coefficient rows: next_power_of_2(total_rounds)
     pub R_coeff: usize,
-    /// Total W rows: next_power_of_2(R_coeff + noncoeff_rows)
+    /// Total W rows: next_power_of_2(R_coeff + output_claims_rows + noncoeff_rows)
     pub R_prime: usize,
-    /// Number of non-coefficient witness variables
+    /// Number of non-coefficient witness variables (excludes output claims region)
     pub noncoeff_count: usize,
     /// Total sumcheck rounds
     pub total_rounds: usize,
+    /// Rows reserved for output claims (externally-verified commitments)
+    pub output_claims_rows: usize,
 }
 
 impl HyraxParams {
@@ -270,8 +278,14 @@ impl HyraxParams {
         self.C.log_2()
     }
 
-    pub fn noncoeff_rows(&self) -> usize {
+    /// Rows used by regular (non-output-claims) noncoeff variables.
+    pub fn regular_noncoeff_rows(&self) -> usize {
         self.noncoeff_count.div_ceil(self.C)
+    }
+
+    /// Total non-coefficient rows (output claims + regular noncoeff).
+    pub fn total_noncoeff_rows(&self) -> usize {
+        self.output_claims_rows + self.regular_noncoeff_rows()
     }
 }
 
@@ -279,7 +293,11 @@ impl HyraxParams {
 ///
 /// Requires `noncoeff_count`: the number of non-coefficient witness variables,
 /// which must be computed by walking the same allocation logic as the R1CS builder.
-pub fn compute_hyrax_params(stage_configs: &[StageConfig], noncoeff_count: usize) -> HyraxParams {
+pub fn compute_hyrax_params(
+    stage_configs: &[StageConfig],
+    noncoeff_count: usize,
+    output_claims_rows: usize,
+) -> HyraxParams {
     let total_rounds: usize = stage_configs.iter().map(|s| s.num_rounds).sum();
     let max_coeffs = stage_configs
         .iter()
@@ -292,8 +310,8 @@ pub fn compute_hyrax_params(stage_configs: &[StageConfig], noncoeff_count: usize
     } else {
         total_rounds.next_power_of_two()
     };
-    let noncoeff_rows = noncoeff_count.div_ceil(C);
-    let R_prime = (R_coeff + noncoeff_rows).next_power_of_two();
+    let regular_noncoeff_rows = noncoeff_count.div_ceil(C);
+    let R_prime = (R_coeff + output_claims_rows + regular_noncoeff_rows).next_power_of_two();
 
     HyraxParams {
         C,
@@ -301,6 +319,7 @@ pub fn compute_hyrax_params(stage_configs: &[StageConfig], noncoeff_count: usize
         R_prime,
         noncoeff_count,
         total_rounds,
+        output_claims_rows,
     }
 }
 

@@ -1177,13 +1177,8 @@ impl<
             extra_constraint_challenges: stage8_data.constraint_coeffs.clone(),
         };
 
-        let builder =
-            VerifierR1CSBuilder::new_with_extra(&stage_configs, &extra_constraints, &baked);
-        let r1cs = builder.build();
-
         let mut round_commitments: Vec<C::G1> = Vec::new();
         for (stage_idx, proof) in stage_proofs.iter().enumerate() {
-            // For stages 0-1, include uni-skip commitment first
             if stage_idx < 2 {
                 let uniskip_proof = if stage_idx == 0 {
                     &self.proof.stage1_uni_skip_first_round_proof
@@ -1194,11 +1189,14 @@ impl<
                     round_commitments.push(zk_uniskip.commitment);
                 }
             }
-            // Add regular sumcheck round commitments
             if let SumcheckInstanceProof::Zk(zk_proof) = proof {
                 round_commitments.extend(zk_proof.round_commitments.iter().cloned());
             }
         }
+
+        let builder =
+            VerifierR1CSBuilder::new_with_extra(&stage_configs, &extra_constraints, &baked, true);
+        let r1cs = builder.build();
 
         let eval_commitment = PCS::eval_commitment(&self.proof.joint_opening_proof)
             .ok_or(ProofVerifyError::InvalidOpeningProof)?;

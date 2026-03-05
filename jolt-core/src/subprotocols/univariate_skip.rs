@@ -178,7 +178,9 @@ pub fn prove_uniskip_round_zk<
     instance.cache_openings(opening_accumulator, &[r0]);
 
     let output_claims = opening_accumulator.take_pending_claims();
-    let output_claims_commitments = pedersen_gens.commit_chunked(&output_claims, rng);
+    let oc_committed: Vec<_> = pedersen_gens.commit_chunked(&output_claims, rng);
+    let output_claims_commitments: Vec<_> = oc_committed.iter().map(|(c, _)| *c).collect();
+    let output_claims_blindings: Vec<_> = oc_committed.iter().map(|(_, b)| *b).collect();
     transcript.append_commitments(b"output_claims_coms", &output_claims_commitments);
 
     let input_constraint = instance.get_params().input_claim_constraint();
@@ -195,6 +197,9 @@ pub fn prove_uniskip_round_zk<
         commitment,
         input_constraint,
         input_constraint_challenge_values,
+        output_claims,
+        output_claims_blindings,
+        output_claims_commitments: output_claims_commitments.clone(),
     });
 
     ZkUniSkipFirstRoundProof::new(commitment, poly_degree, output_claims_commitments)

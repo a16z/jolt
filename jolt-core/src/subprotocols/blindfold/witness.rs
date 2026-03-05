@@ -161,6 +161,9 @@ pub struct BlindFoldWitness<F> {
     pub stages: Vec<StageWitness<F>>,
     /// Extra constraints appended after all stages (e.g., PCS binding)
     pub extra_constraints: Vec<ExtraConstraintWitness<F>>,
+    /// Output claims values placed in the dedicated OC region (layout-traversal order).
+    /// Empty when output_claims_rows == 0 (non-ZK or tests without OC binding).
+    pub output_claims_values: Vec<F>,
 }
 
 impl<F: JoltField> BlindFoldWitness<F> {
@@ -170,6 +173,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
             initial_claims: vec![initial_claim],
             stages,
             extra_constraints: Vec::new(),
+            output_claims_values: Vec::new(),
         }
     }
 
@@ -180,6 +184,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
             initial_claims,
             stages,
             extra_constraints: Vec::new(),
+            output_claims_values: Vec::new(),
         }
     }
 
@@ -193,6 +198,22 @@ impl<F: JoltField> BlindFoldWitness<F> {
             initial_claims,
             stages,
             extra_constraints,
+            output_claims_values: Vec::new(),
+        }
+    }
+
+    /// Create a new BlindFold witness with extra constraints and output claims.
+    pub fn with_output_claims(
+        initial_claims: Vec<F>,
+        stages: Vec<StageWitness<F>>,
+        extra_constraints: Vec<ExtraConstraintWitness<F>>,
+        output_claims_values: Vec<F>,
+    ) -> Self {
+        Self {
+            initial_claims,
+            stages,
+            extra_constraints,
+            output_claims_values,
         }
     }
 
@@ -216,11 +237,38 @@ impl<F: JoltField> BlindFoldWitness<F> {
 
         let hyrax_C = r1cs.hyrax.C;
         let hyrax_R_coeff = r1cs.hyrax.R_coeff;
+        let output_claims_rows = r1cs.hyrax.output_claims_rows;
         let witness_start = 1;
-        let mut noncoeff_idx = witness_start + hyrax_R_coeff * hyrax_C;
+        // Regular noncoeff starts after coeff rows AND output claims rows
+        let mut noncoeff_idx = witness_start + (hyrax_R_coeff + output_claims_rows) * hyrax_C;
+
+        // Assign output claims values into the dedicated OC region
+        let oc_region_start = witness_start + hyrax_R_coeff * hyrax_C;
+        for (i, val) in self.output_claims_values.iter().enumerate() {
+            z[oc_region_start + i] = *val;
+        }
 
         let layout = compute_witness_layout(&r1cs.stage_configs, &r1cs.extra_constraints);
+
+        // When OC region is active, pre-mark all openings that were placed there
+        // so ConstraintVars steps don't allocate duplicate slots.
         let mut assigned_openings: HashSet<OpeningId> = HashSet::new();
+        if output_claims_rows > 0 {
+            for step in &layout {
+                let opening_ids = match step {
+                    LayoutStep::ConstraintVars { constraint, .. }
+                    | LayoutStep::ExtraConstraintVars { constraint, .. } => {
+                        &constraint.required_openings
+                    }
+                    _ => continue,
+                };
+                for id in opening_ids {
+                    if assigned_openings.len() < self.output_claims_values.len() {
+                        assigned_openings.insert(*id);
+                    }
+                }
+            }
+        }
 
         for step in &layout {
             match step {
