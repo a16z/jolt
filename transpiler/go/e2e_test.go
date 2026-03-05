@@ -67,7 +67,7 @@ func TestEndToEndPipeline(t *testing.T) {
 	t.Log("--- Step 2: Transpile ---")
 	transpilerBin := filepath.Join(root, "target", "debug", "transpiler")
 	transpileTime := runCommand(t, "transpiler", root,
-		transpilerBin, "--target", "gnark",
+		transpilerBin,
 	)
 
 	// Step 3: Groth16 (subprocess to pick up regenerated circuit)
