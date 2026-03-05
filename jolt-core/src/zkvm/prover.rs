@@ -3035,7 +3035,7 @@ mod tests {
                     initial_claims: vec![initial_claim],
                     ..Default::default()
                 };
-                let builder = VerifierR1CSBuilder::<Fr>::new(&[config.clone()], &baked);
+                let builder = VerifierR1CSBuilder::<Fr>::new(std::slice::from_ref(&config), &baked);
                 let r1cs = builder.build();
                 let stage_witness = StageWitness::new(vec![round_witness]);
                 let witness = BlindFoldWitness::new(initial_claim, vec![stage_witness]);

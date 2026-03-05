@@ -180,14 +180,14 @@ impl OneHotConfig {
         }
 
         // lookups_ra_virtual_log_k_chunk must be a multiple of log_k_chunk
-        if lookups_chunk % log_k_chunk != 0 {
+        if !lookups_chunk.is_multiple_of(log_k_chunk) {
             return Err(format!(
                 "lookups_ra_virtual_log_k_chunk ({lookups_chunk}) must be a multiple of log_k_chunk ({log_k_chunk})"
             ));
         }
 
         // LOG_K must be divisible by lookups_ra_virtual_log_k_chunk
-        if LOG_K % lookups_chunk != 0 {
+        if !LOG_K.is_multiple_of(lookups_chunk) {
             return Err(format!(
                 "LOG_K ({LOG_K}) must be divisible by lookups_ra_virtual_log_k_chunk ({lookups_chunk})"
             ));

@@ -902,8 +902,8 @@ mod tests {
         let stage = StageWitness::with_final_output(vec![round], fout_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
-        let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
-        let builder = VerifierR1CSBuilder::<F>::new(&[config], &baked);
+        let baked = BakedPublicInputs::from_witness(&witness, std::slice::from_ref(&config));
+        let builder = VerifierR1CSBuilder::<F>::new(std::slice::from_ref(&config), &baked);
         let r1cs = builder.build();
 
         // 2 round constraints + 1 final output = 3
@@ -946,8 +946,8 @@ mod tests {
         let stage = StageWitness::with_final_output(vec![round], fout_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
-        let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
-        let builder = VerifierR1CSBuilder::<F>::new(&[config], &baked);
+        let baked = BakedPublicInputs::from_witness(&witness, std::slice::from_ref(&config));
+        let builder = VerifierR1CSBuilder::<F>::new(std::slice::from_ref(&config), &baked);
         let r1cs = builder.build();
 
         // 2 round constraints + 1 final output = 3 (single constraint for all evals!)
@@ -984,8 +984,8 @@ mod tests {
         let stage = StageWitness::with_final_output(vec![round], fout_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
-        let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
-        let builder = VerifierR1CSBuilder::<F>::new(&[config], &baked);
+        let baked = BakedPublicInputs::from_witness(&witness, std::slice::from_ref(&config));
+        let builder = VerifierR1CSBuilder::<F>::new(std::slice::from_ref(&config), &baked);
         let r1cs = builder.build();
 
         let z = witness.assign(&r1cs);
