@@ -4,16 +4,18 @@
 //! used throughout the Jolt zkVM ecosystem.
 
 mod field;
-pub use field::{
-    Challenge, Field, MaybeAllocative, OptimizedMul, ReductionOps, UnreducedOps, WithChallenge,
-};
+pub use field::{Challenge, Field, MaybeAllocative, OptimizedMul, WithChallenge};
+pub(crate) use field::{ReductionOps, UnreducedOps};
 
 mod accumulation;
-pub use accumulation::{BarrettReduce, FMAdd, MontgomeryReduce};
+pub(crate) use accumulation::FMAdd;
+
+pub mod limbs;
+pub use limbs::Limbs;
 
 pub mod challenge;
 
-pub mod bigint_ext;
+pub(crate) mod bigint_ext;
 
 pub mod signed;
 

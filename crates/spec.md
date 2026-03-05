@@ -109,13 +109,13 @@ jolt-openings              jolt-sumcheck
 |-------|---------|----------|--------------|
 | `jolt-transcript` | Fiat-Shamir transcripts | Yes | ~500 (done) |
 | `jolt-field` | Field arithmetic traits + arkworks impl | Yes | ~2000 (done) |
-| `jolt-poly` | Polynomial types and operations | Yes | ~3000 |
-| `jolt-openings` | Commitment scheme traits + opening accumulators | Yes | ~2500 |
-| `jolt-sumcheck` | Sumcheck protocol engine | Yes | ~2000 |
-| `jolt-spartan` | R1CS + Spartan prover/verifier | Yes | ~3000 |
-| `jolt-instructions` | RISC-V instruction set + lookup tables | No | ~8000 |
-| `jolt-dory` | Dory commitment scheme impl | No | ~1500 |
-| `jolt-zkvm` | zkVM prover/verifier orchestration | No | ~10000 |
+| `jolt-poly` | Polynomial types and operations | Yes | ~1500 (done) |
+| `jolt-openings` | Commitment scheme traits + opening accumulators | Yes | ~800 (done) |
+| `jolt-sumcheck` | Sumcheck protocol engine | Yes | ~1100 (done) |
+| `jolt-spartan` | R1CS + Spartan prover/verifier | Yes | ~925 (done) |
+| `jolt-instructions` | RISC-V instruction set + lookup tables | No | ~3000 (done) |
+| `jolt-dory` | Dory commitment scheme impl | No | ~5000 (done) |
+| `jolt-zkvm` | zkVM prover/verifier orchestration | No | ~10000 (in progress) |
 
 ---
 
@@ -131,11 +131,19 @@ Already completed. Defines `Field`, `UnreducedOps`, `ReductionOps`, `Challenge`,
 
 ---
 
-### 4.3 `jolt-poly` — Polynomial Library
+### 4.3 `jolt-poly` — Polynomial Library — **DONE**
 
 **Purpose:** Generic polynomial types and operations for multilinear, univariate, and specialized polynomials. This crate is backend-agnostic and reusable outside Jolt.
 
 **Dependencies:** `jolt-field`
+
+**Deviations from spec:**
+- `CompactPolynomial<S, F>` replaced by unified `Polynomial<T>` with `bind_to_field<F: From<T>>()` — simpler, one generic struct for all scalar types
+- `SmallScalar` trait dropped — `From<T>` bound used instead for field promotion
+- `LagrangePolynomial` not implemented (not needed by downstream crates)
+- `bind_in_place` renamed to `bind` (in-place is the default; allocating bind is `bind_to_field`)
+- `CompressedPoly<F>` added (univariate with hint-based linear term recovery, used by sumcheck)
+- `UnivariatePolynomial` trait added alongside `UnivariatePoly` concrete type
 
 #### Public API
 
@@ -156,7 +164,7 @@ pub trait MultilinearPolynomial<F: Field>: Send + Sync {
 
     /// Bind the first variable to `scalar`, reducing to $n-1$ variables.
     /// Returns a dense polynomial of half the size.
-    fn bind(&self, scalar: F) -> DensePolynomial<F>;
+    fn bind(&self, scalar: F) -> Polynomial<F>;
 
     /// Read-only access to evaluations (may allocate if compressed).
     fn evaluations(&self) -> Cow<[F]>;
@@ -165,12 +173,12 @@ pub trait MultilinearPolynomial<F: Field>: Send + Sync {
 // ── Concrete types ──────────────────────────────────────────
 
 /// Dense multilinear polynomial: stores all $2^n$ evaluations as `Vec<F>`.
-pub struct DensePolynomial<F: Field> {
+pub struct Polynomial<F: Field> {
     evaluations: Vec<F>,
     num_vars: usize,
 }
 
-impl<F: Field> DensePolynomial<F> {
+impl<F: Field> Polynomial<F> {
     pub fn new(evaluations: Vec<F>) -> Self;
     pub fn zeros(num_vars: usize) -> Self;
     pub fn random(num_vars: usize, rng: &mut impl RngCore) -> Self;
@@ -238,7 +246,7 @@ pub struct LagrangePolynomial<F: Field> { /* ... */ }
 
 - **Unit tests:** Evaluate known polynomials at known points, verify binding correctness
 - **Property tests:** For random polynomials, `evaluate(point) == bind_sequentially(point)`. Schwartz-Zippel: two distinct polys disagree at a random point with high probability.
-- **Fuzz targets:** `DensePolynomial::new` with arbitrary byte inputs, evaluate with arbitrary points
+- **Fuzz targets:** `Polynomial::new` with arbitrary byte inputs, evaluate with arbitrary points
 
 #### File Structure
 
@@ -249,7 +257,7 @@ jolt-poly/
 ├── src/
 │   ├── lib.rs              # Re-exports, module declarations
 │   ├── traits.rs           # MultilinearPolynomial trait
-│   ├── dense.rs            # DensePolynomial (with unit tests)
+│   ├── dense.rs            # Polynomial (with unit tests)
 │   ├── compact.rs          # CompactPolynomial + SmallScalar (with unit tests)
 │   ├── eq.rs               # EqPolynomial (with unit tests)
 │   ├── univariate.rs       # UnivariatePoly (with unit tests)
@@ -270,11 +278,16 @@ jolt-poly/
 
 ---
 
-### 4.4 `jolt-openings` — Commitment Scheme Traits & Opening Accumulators
+### 4.4 `jolt-openings` — Commitment Scheme Traits & Opening Accumulators — **DONE**
 
 **Purpose:** Abstract commitment scheme interfaces, opening proof accumulation, and batch reduction logic. Designed to support homomorphic (Dory, KZG), lattice-based, and hash-based (FRI) commitment schemes.
 
 **Dependencies:** `jolt-field`, `jolt-poly`, `jolt-transcript`
+
+**Deviations from spec:**
+- `VerifierOpeningAccumulator::reduce_and_verify` takes `&[PCS::BatchedProof]` (proofs passed in, not generated internally)
+- `test-utils` feature flag added for `MockCommitmentScheme` (not in original spec)
+- `rlc_combine` and `rlc_combine_scalars` added as public utilities (not in original spec)
 
 #### Commitment Scheme Trait Hierarchy
 
@@ -499,11 +512,18 @@ jolt-openings/
 
 ---
 
-### 4.5 `jolt-sumcheck` — Sumcheck Protocol Engine
+### 4.5 `jolt-sumcheck` — Sumcheck Protocol Engine — **DONE**
 
 **Purpose:** Generic implementation of the sum-check protocol, including batched and streaming variants. Reusable for any sum-check application, not just Jolt.
 
 **Dependencies:** `jolt-field`, `jolt-poly`, `jolt-transcript`
+
+**Deviations from spec:**
+- `SumcheckInstanceProver` / `SumcheckInstanceVerifier` traits replaced by simpler `SumcheckWitness` trait (witness provides `round_polynomial` + `bind`)
+- `BatchedSumcheckProof` not a separate type — batched prover returns `SumcheckProof<F>` (same structure)
+- Prover/verifier accept a `challenge_fn` closure for Fiat-Shamir flexibility instead of `&mut impl Transcript` directly
+- `WrongNumberOfRounds` error variant added (not in original spec)
+- 27 test functions (exceeds the spec's testing requirements)
 
 #### Public API
 
@@ -658,11 +678,18 @@ jolt-sumcheck/
 
 ---
 
-### 4.6 `jolt-spartan` — R1CS + Spartan Prover/Verifier
+### 4.6 `jolt-spartan` — R1CS + Spartan Prover/Verifier — **DONE**
 
 **Purpose:** Spartan-based SNARK for R1CS constraint systems. Generic over the commitment scheme and field. Usable for any R1CS system, not just Jolt.
 
 **Dependencies:** `jolt-sumcheck`, `jolt-openings`, `jolt-field`, `jolt-poly`, `jolt-transcript`
+
+**Deviations from spec:**
+- `UniformR1CS` not implemented (will be added during `jolt-zkvm` integration)
+- `SimpleR1CS` added as a sparse-triple R1CS for testing (not in original spec)
+- `SpartanProver::prove` takes the R1CS instance directly (not just the key)
+- `EvaluationMismatch` error variant added
+- `FirstRoundStrategy::UnivariateSkip` defined but implementation deferred (enum stub only)
 
 #### Public API
 
@@ -792,11 +819,20 @@ jolt-spartan/
 
 ---
 
-### 4.7 `jolt-instructions` — RISC-V Instruction Set & Lookup Tables
+### 4.7 `jolt-instructions` — RISC-V Instruction Set & Lookup Tables — **DONE**
 
 **Purpose:** Defines the Jolt instruction set (RISC-V base + virtual instructions) and their decomposition into lookup tables. This is Jolt-specific and not intended for reuse outside the project.
 
 **Dependencies:** `jolt-field`
+
+**Deviations from spec:**
+- `Instruction` trait takes `(x: u64, y: u64)` instead of `&[u64]` — more explicit for the two-operand RISC-V ISA
+- `JoltInstructionSet` is a concrete registry struct (not trait), uses O(1) opcode dispatch
+- `define_instruction!` macro generates uniform implementations — not in original spec but ensures consistency
+- `JAL`, `JALR` not included (handled by VM control flow, not as data instructions)
+- W-suffix variants (`ADDW`, `SUBW`, etc.) added for RV64 compatibility
+- 68 instructions total (exceeds original spec's list)
+- Lookup table implementations deferred (stub `lookups()` returns empty vec)
 
 #### Public API
 
@@ -932,11 +968,19 @@ jolt-instructions/
 
 ---
 
-### 4.8 `jolt-dory` — Dory Commitment Scheme
+### 4.8 `jolt-dory` — Dory Commitment Scheme — **DONE**
 
 **Purpose:** Implements `CommitmentScheme` and `HomomorphicCommitmentScheme` from `jolt-openings` using the Dory polynomial commitment scheme. Wraps the external `dory-pcs` crate. All parameters are instance-local (no globals).
 
 **Dependencies:** `jolt-openings`, `jolt-field`, `jolt-poly`, `jolt-transcript`, `dory-pcs`
+
+**Deviations from spec:**
+- `optimizations/` module added (ported from `jolt-optimizations` in the arkworks fork — GLV, batch addition, vector ops)
+- `DoryStreamingCommitter` added as a separate helper struct (not a trait method on `DoryScheme`)
+- `StreamingCommitmentScheme` trait impl is a stub (streaming done via `DoryStreamingCommitter` directly)
+- `transcript.rs` added for `JoltToDoryTranscript` adapter
+- `types.rs` added with field conversion utilities (`jolt_fr_to_ark`, `ark_to_jolt_fr`) and newtype wrappers
+- ~5000 LOC (larger than spec's ~1500 estimate due to optimizations module)
 
 #### Public API
 
@@ -1189,7 +1233,7 @@ Use `cargo-fuzz` with `libFuzzer` for security-critical code:
 | Crate | Fuzz Targets |
 |-------|-------------|
 | `jolt-field` | Deserialization of arbitrary bytes |
-| `jolt-poly` | `DensePolynomial::new` from arbitrary evaluations + evaluate at arbitrary points |
+| `jolt-poly` | `Polynomial::new` from arbitrary evaluations + evaluate at arbitrary points |
 | `jolt-sumcheck` | Verifier with arbitrary round polynomials (soundness) |
 | `jolt-openings` | Verifier with arbitrary proofs |
 

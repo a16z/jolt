@@ -16,10 +16,14 @@ rand_core = { workspace = true }
 num-traits = { workspace = true }
 
 [dev-dependencies]
-ark-bn254 = { workspace = true, features = ["scalar_field"] }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 bincode = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "poly_ops"
+harness = false
 
 [package.metadata.cargo-machete]
 ignored = ["rand"]

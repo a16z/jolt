@@ -1,272 +1,76 @@
 //! Macros for challenge field operations
 
-/// Implements standard arithmetic operators (+, -, *) for F as Field types
+/// Implements standard arithmetic operators (+, -, *) for challenge × field type pairs.
+///
+/// Generates all 4 ownership variants (val-val, val-ref, ref-val, ref-ref) for:
+/// - Challenge × Challenge: Add, Sub, Mul
+/// - Challenge × Field: Add, Sub, Mul (Mul uses mode-specific dispatch)
+/// - Field × Challenge: Add, Sub, Mul (Mul uses mode-specific dispatch)
+///
+/// `$mul_mode` is either `optimized` (uses `mul_by_hi_2limbs` for 125-bit challenges)
+/// or `standard` (converts to field element first).
 #[macro_export]
 macro_rules! impl_field_ops_inline {
     ($t:ty, $f:ty, $mul_mode:tt) => {
-        // Challenge + Challenge operations
-        impl Add<$t> for $t {
-            type Output = $f;
-            #[inline(always)]
-            fn add(self, rhs: $t) -> $f {
-                Into::<$f>::into(self) + Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a> Add<&'a $t> for $t {
-            type Output = $f;
-            #[inline(always)]
-            fn add(self, rhs: &'a $t) -> $f {
-                Into::<$f>::into(self) + Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a> Add<$t> for &'a $t {
-            type Output = $f;
-            #[inline(always)]
-            fn add(self, rhs: $t) -> $f {
-                Into::<$f>::into(self) + Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a, 'b> Add<&'b $t> for &'a $t {
-            type Output = $f;
-            #[inline(always)]
-            fn add(self, rhs: &'b $t) -> $f {
-                Into::<$f>::into(self) + Into::<$f>::into(rhs)
-            }
-        }
+        // Challenge × Challenge
+        $crate::impl_field_ops_inline!(@binop Add, add, $t, $t, $f,
+            |lhs, rhs| { Into::<$f>::into(lhs) + Into::<$f>::into(rhs) });
+        $crate::impl_field_ops_inline!(@binop Sub, sub, $t, $t, $f,
+            |lhs, rhs| { Into::<$f>::into(lhs) - Into::<$f>::into(rhs) });
+        $crate::impl_field_ops_inline!(@binop Mul, mul, $t, $t, $f,
+            |lhs, rhs| { Into::<$f>::into(lhs) * Into::<$f>::into(rhs) });
 
-        impl Sub<$t> for $t {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: $t) -> $f {
-                Into::<$f>::into(self) - Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a> Sub<&'a $t> for $t {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: &'a $t) -> $f {
-                Into::<$f>::into(self) - Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a> Sub<$t> for &'a $t {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: $t) -> $f {
-                Into::<$f>::into(self) - Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a, 'b> Sub<&'b $t> for &'a $t {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: &'b $t) -> $f {
-                Into::<$f>::into(self) - Into::<$f>::into(rhs)
-            }
-        }
+        // Challenge × Field
+        $crate::impl_field_ops_inline!(@binop Add, add, $t, $f, $f,
+            |lhs, rhs| { Into::<$f>::into(lhs) + rhs });
+        $crate::impl_field_ops_inline!(@binop Sub, sub, $t, $f, $f,
+            |lhs, rhs| { Into::<$f>::into(lhs) - rhs });
+        $crate::impl_field_ops_inline!(@binop Mul, mul, $t, $f, $f,
+            |lhs, rhs| { $crate::impl_field_ops_inline!(@mul_challenge_field $mul_mode, $f, lhs, rhs) });
 
-        impl Mul<$t> for $t {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: $t) -> $f {
-                Into::<$f>::into(self) * Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a> Mul<&'a $t> for $t {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: &'a $t) -> $f {
-                Into::<$f>::into(self) * Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a> Mul<$t> for &'a $t {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: $t) -> $f {
-                Into::<$f>::into(self) * Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a, 'b> Mul<&'b $t> for &'a $t {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: &'b $t) -> $f {
-                Into::<$f>::into(self) * Into::<$f>::into(rhs)
-            }
-        }
+        // Field × Challenge
+        $crate::impl_field_ops_inline!(@binop Add, add, $f, $t, $f,
+            |lhs, rhs| { lhs + Into::<$f>::into(rhs) });
+        $crate::impl_field_ops_inline!(@binop Sub, sub, $f, $t, $f,
+            |lhs, rhs| { lhs - Into::<$f>::into(rhs) });
+        $crate::impl_field_ops_inline!(@binop Mul, mul, $f, $t, $f,
+            |lhs, rhs| { $crate::impl_field_ops_inline!(@mul_field_challenge $mul_mode, $f, lhs, rhs) });
+    };
 
-        // Challenge + Field operations
-        impl Add<$f> for $t {
-            type Output = $f;
+    // Generates all 4 ownership variants for a single binary operator.
+    // Both $Lhs and $Rhs must be Copy.
+    (@binop $Op:ident, $method:ident, $Lhs:ty, $Rhs:ty, $Out:ty,
+        |$lhs:ident, $rhs:ident| { $($body:tt)* }) => {
+        impl $Op<$Rhs> for $Lhs {
+            type Output = $Out;
             #[inline(always)]
-            fn add(self, rhs: $f) -> $f {
-                Into::<$f>::into(self) + rhs
+            fn $method(self, rhs: $Rhs) -> $Out {
+                let ($lhs, $rhs) = (self, rhs);
+                $($body)*
             }
         }
-        impl<'a> Add<&'a $f> for $t {
-            type Output = $f;
+        impl<'a> $Op<&'a $Rhs> for $Lhs {
+            type Output = $Out;
             #[inline(always)]
-            fn add(self, rhs: &'a $f) -> $f {
-                Into::<$f>::into(self) + *rhs
+            fn $method(self, rhs: &'a $Rhs) -> $Out {
+                let ($lhs, $rhs) = (self, *rhs);
+                $($body)*
             }
         }
-        impl<'a> Add<$f> for &'a $t {
-            type Output = $f;
+        impl<'a> $Op<$Rhs> for &'a $Lhs {
+            type Output = $Out;
             #[inline(always)]
-            fn add(self, rhs: $f) -> $f {
-                Into::<$f>::into(self) + rhs
+            fn $method(self, rhs: $Rhs) -> $Out {
+                let ($lhs, $rhs) = (*self, rhs);
+                $($body)*
             }
         }
-        impl<'a, 'b> Add<&'b $f> for &'a $t {
-            type Output = $f;
+        impl<'a, 'b> $Op<&'b $Rhs> for &'a $Lhs {
+            type Output = $Out;
             #[inline(always)]
-            fn add(self, rhs: &'b $f) -> $f {
-                Into::<$f>::into(*self) + *rhs
-            }
-        }
-
-        impl Sub<$f> for $t {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: $f) -> $f {
-                Into::<$f>::into(self) - rhs
-            }
-        }
-        impl<'a> Sub<&'a $f> for $t {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: &'a $f) -> $f {
-                Into::<$f>::into(self) - *rhs
-            }
-        }
-        impl<'a> Sub<$f> for &'a $t {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: $f) -> $f {
-                Into::<$f>::into(self) - rhs
-            }
-        }
-        impl<'a, 'b> Sub<&'b $f> for &'a $t {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: &'b $f) -> $f {
-                Into::<$f>::into(*self) - *rhs
-            }
-        }
-
-        // Multiplication Challenge * Field
-        impl Mul<$f> for $t {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: $f) -> $f {
-                $crate::impl_field_ops_inline!(@mul_challenge_field $mul_mode, $f, self, rhs)
-            }
-        }
-        impl<'a> Mul<&'a $f> for $t {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: &'a $f) -> $f {
-                $crate::impl_field_ops_inline!(@mul_challenge_field $mul_mode, $f, self, *rhs)
-            }
-        }
-        impl<'a> Mul<$f> for &'a $t {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: $f) -> $f {
-                $crate::impl_field_ops_inline!(@mul_challenge_field $mul_mode, $f, *self, rhs)
-            }
-        }
-        impl<'a, 'b> Mul<&'b $f> for &'a $t {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: &'b $f) -> $f {
-                $crate::impl_field_ops_inline!(@mul_challenge_field $mul_mode, $f, *self, *rhs)
-            }
-        }
-
-        // Field + Challenge operations
-        impl Add<$t> for $f {
-            type Output = $f;
-            #[inline(always)]
-            fn add(self, rhs: $t) -> $f {
-                self + Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a> Add<&'a $t> for $f {
-            type Output = $f;
-            #[inline(always)]
-            fn add(self, rhs: &'a $t) -> $f {
-                self + Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a> Add<$t> for &'a $f {
-            type Output = $f;
-            #[inline(always)]
-            fn add(self, rhs: $t) -> $f {
-                *self + Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a, 'b> Add<&'b $t> for &'a $f {
-            type Output = $f;
-            #[inline(always)]
-            fn add(self, rhs: &'b $t) -> $f {
-                *self + Into::<$f>::into(rhs)
-            }
-        }
-
-        impl Sub<$t> for $f {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: $t) -> $f {
-                self - Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a> Sub<&'a $t> for $f {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: &'a $t) -> $f {
-                self - Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a> Sub<$t> for &'a $f {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: $t) -> $f {
-                *self - Into::<$f>::into(rhs)
-            }
-        }
-        impl<'a, 'b> Sub<&'b $t> for &'a $f {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: &'b $t) -> $f {
-                *self - Into::<$f>::into(rhs)
-            }
-        }
-
-        // Multiplication Field * Challenge with mode-specific behavior
-        impl Mul<$t> for $f {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: $t) -> $f {
-                $crate::impl_field_ops_inline!(@mul_field_challenge $mul_mode, $f, self, rhs)
-            }
-        }
-        impl<'a> Mul<&'a $t> for $f {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: &'a $t) -> $f {
-                $crate::impl_field_ops_inline!(@mul_field_challenge $mul_mode, $f, self, *rhs)
-            }
-        }
-        impl<'a> Mul<$t> for &'a $f {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: $t) -> $f {
-                $crate::impl_field_ops_inline!(@mul_field_challenge $mul_mode, $f, *self, rhs)
-            }
-        }
-        impl<'a, 'b> Mul<&'b $t> for &'a $f {
-            type Output = $f;
-            #[inline(always)]
-            fn mul(self, rhs: &'b $t) -> $f {
-                $crate::impl_field_ops_inline!(@mul_field_challenge $mul_mode, $f, *self, *rhs)
+            fn $method(self, rhs: &'b $Rhs) -> $Out {
+                let ($lhs, $rhs) = (*self, *rhs);
+                $($body)*
             }
         }
     };

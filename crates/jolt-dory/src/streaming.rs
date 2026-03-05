@@ -116,7 +116,7 @@ mod tests {
             .map(|_| Fr::random(&mut rng))
             .collect();
 
-        let poly = jolt_poly::DensePolynomial::new(evals.clone());
+        let poly = jolt_poly::Polynomial::new(evals.clone());
         let direct = DoryScheme::commit(&poly, &prover_setup);
 
         let mut streamer = DoryStreamingCommitter::new(&prover_setup, num_cols);

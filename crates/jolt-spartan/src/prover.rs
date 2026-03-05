@@ -10,7 +10,7 @@
 
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::{DensePolynomial, EqPolynomial, MultilinearPolynomial, UnivariatePoly};
+use jolt_poly::{Polynomial, EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{SumcheckClaim, SumcheckProver, SumcheckWitness};
 use jolt_transcript::Transcript;
 use num_traits::Zero;
@@ -77,7 +77,7 @@ impl SpartanProver {
             .map(|_| PCS::Field::from_u128(transcript.challenge()))
             .collect();
 
-        let eq_poly = DensePolynomial::new(EqPolynomial::new(tau).evaluations());
+        let eq_poly = Polynomial::new(EqPolynomial::new(tau).evaluations());
         let mut sc_witness = OuterSumcheckWitness {
             eq: eq_poly,
             az: az_poly,
@@ -128,16 +128,16 @@ impl SpartanProver {
     }
 }
 
-/// Pads `data` with zeros to `target_len` and wraps it as a [`DensePolynomial`].
+/// Pads `data` with zeros to `target_len` and wraps it as a [`Polynomial`].
 ///
 /// R1CS matrices and witness vectors are not necessarily power-of-two sized,
 /// but multilinear polynomials require $2^n$ evaluations. This zero-pads the
 /// evaluation table so that unused hypercube entries contribute nothing.
-fn pad_to_power_of_two<F: Field>(data: &[F], target_len: usize) -> DensePolynomial<F> {
+fn pad_to_power_of_two<F: Field>(data: &[F], target_len: usize) -> Polynomial<F> {
     let mut evals = vec![F::zero(); target_len];
     let copy_len = data.len().min(target_len);
     evals[..copy_len].copy_from_slice(&data[..copy_len]);
-    DensePolynomial::new(evals)
+    Polynomial::new(evals)
 }
 
 /// Witness for the outer Spartan sumcheck.
@@ -149,10 +149,10 @@ fn pad_to_power_of_two<F: Field>(data: &[F], target_len: usize) -> DensePolynomi
 /// (summing over the remaining Boolean hypercube) and interpolating the
 /// resulting degree-3 univariate.
 struct OuterSumcheckWitness<F: Field> {
-    eq: DensePolynomial<F>,
-    az: DensePolynomial<F>,
-    bz: DensePolynomial<F>,
-    cz: DensePolynomial<F>,
+    eq: Polynomial<F>,
+    az: Polynomial<F>,
+    bz: Polynomial<F>,
+    cz: Polynomial<F>,
 }
 
 impl<F: Field> SumcheckWitness<F> for OuterSumcheckWitness<F> {
@@ -202,9 +202,9 @@ impl<F: Field> SumcheckWitness<F> for OuterSumcheckWitness<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        self.eq.bind_in_place(challenge);
-        self.az.bind_in_place(challenge);
-        self.bz.bind_in_place(challenge);
-        self.cz.bind_in_place(challenge);
+        self.eq.bind(challenge);
+        self.az.bind(challenge);
+        self.bz.bind(challenge);
+        self.cz.bind(challenge);
     }
 }

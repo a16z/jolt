@@ -5,7 +5,7 @@ use super::decomp_4d::decompose_scalar_4d;
 use super::frobenius::frobenius_psi_power_projective;
 use super::glv_four::shamir_glv_mul_4d;
 
-/// v[i] += scalar * generators[i], using 4D GLV decomposition with Frobenius.
+/// `v[i] += scalar * generators[i]`, using 4D GLV decomposition with Frobenius.
 pub fn vector_add_scalar_mul_g2_online(
     v: &mut [G2Projective],
     generators: &[G2Projective],
@@ -27,7 +27,7 @@ pub fn vector_add_scalar_mul_g2_online(
         });
 }
 
-/// v[i] = scalar * v[i] + gamma[i], using 4D GLV decomposition with Frobenius.
+/// `v[i] = scalar * v[i] + gamma[i]`, using 4D GLV decomposition with Frobenius.
 pub fn vector_scalar_mul_add_gamma_g2_online(
     v: &mut [G2Projective],
     scalar: Fr,

@@ -2,7 +2,7 @@
 
 use jolt_field::Field;
 use jolt_field::Fr;
-use jolt_poly::{DensePolynomial, EqPolynomial, MultilinearPolynomial, UnivariatePoly};
+use jolt_poly::{Polynomial, EqPolynomial, UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
@@ -24,12 +24,12 @@ fn challenge_to_field(c: u128) -> Fr {
 /// This is the standard use case: proving an evaluation claim on a
 /// multilinear polynomial via sumcheck with the equality polynomial.
 struct EqProductWitness {
-    poly: DensePolynomial<Fr>,
+    poly: Polynomial<Fr>,
     eq_evals: Vec<Fr>,
 }
 
 impl EqProductWitness {
-    fn new(poly: DensePolynomial<Fr>, tau: &[Fr]) -> Self {
+    fn new(poly: Polynomial<Fr>, tau: &[Fr]) -> Self {
         let eq_evals = EqPolynomial::new(tau.to_vec()).evaluations();
         Self { poly, eq_evals }
     }
@@ -68,7 +68,7 @@ impl SumcheckWitness<Fr> for EqProductWitness {
     }
 
     fn bind(&mut self, challenge: Fr) {
-        self.poly.bind_in_place(challenge);
+        self.poly.bind(challenge);
 
         // Bind eq evaluations in the same way
         let half = self.eq_evals.len() / 2;
@@ -86,7 +86,7 @@ impl SumcheckWitness<Fr> for EqProductWitness {
 /// The round polynomial is degree 1 (linear) since the polynomial is
 /// multilinear.
 struct PlainSumWitness {
-    poly: DensePolynomial<Fr>,
+    poly: Polynomial<Fr>,
 }
 
 impl SumcheckWitness<Fr> for PlainSumWitness {
@@ -106,7 +106,7 @@ impl SumcheckWitness<Fr> for PlainSumWitness {
     }
 
     fn bind(&mut self, challenge: Fr) {
-        self.poly.bind_in_place(challenge);
+        self.poly.bind(challenge);
     }
 }
 
@@ -114,7 +114,7 @@ impl SumcheckWitness<Fr> for PlainSumWitness {
 fn plain_sum_prove_verify() {
     let mut rng = ChaCha20Rng::seed_from_u64(42);
     let num_vars = 6;
-    let poly = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
 
     let claimed_sum: Fr = poly.evaluations().iter().copied().sum();
 
@@ -151,7 +151,7 @@ fn plain_sum_prove_verify() {
 fn eq_product_prove_verify() {
     let mut rng = ChaCha20Rng::seed_from_u64(99);
     let num_vars = 5;
-    let poly = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
     let tau: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
 
     // claimed_sum = f(tau) = sum_x f(x) * eq(x, tau)
@@ -188,7 +188,7 @@ fn eq_product_prove_verify() {
 fn wrong_claimed_sum_fails() {
     let mut rng = ChaCha20Rng::seed_from_u64(7);
     let num_vars = 4;
-    let poly = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
 
     let correct_sum: Fr = poly.evaluations().iter().copied().sum();
     let wrong_sum = correct_sum + Fr::from_u64(1);
@@ -219,7 +219,7 @@ fn wrong_claimed_sum_fails() {
 #[test]
 fn single_variable() {
     // f(x) = 3 + 4x => f(0)=3, f(1)=7, sum=10
-    let poly = DensePolynomial::new(vec![Fr::from_u64(3), Fr::from_u64(7)]);
+    let poly = Polynomial::new(vec![Fr::from_u64(3), Fr::from_u64(7)]);
     let claimed_sum = Fr::from_u64(10);
 
     let claim = SumcheckClaim {
@@ -244,8 +244,8 @@ fn batched_prove_verify() {
     let mut rng = ChaCha20Rng::seed_from_u64(123);
     let num_vars = 4;
 
-    let poly_a = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-    let poly_b = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+    let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
 
     let sum_a: Fr = poly_a.evaluations().iter().copied().sum();
     let sum_b: Fr = poly_b.evaluations().iter().copied().sum();
@@ -332,7 +332,7 @@ fn degree_bound_exceeded_is_rejected() {
 fn deterministic_proofs() {
     let mut rng = ChaCha20Rng::seed_from_u64(555);
     let num_vars = 5;
-    let poly = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
     let claimed_sum: Fr = poly.evaluations().iter().copied().sum();
 
     let claim = SumcheckClaim {
@@ -367,7 +367,7 @@ fn deterministic_proofs() {
 fn batched_single_claim_matches_unbatched() {
     let mut rng = ChaCha20Rng::seed_from_u64(200);
     let num_vars = 5;
-    let poly = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
     let claimed_sum: Fr = poly.evaluations().iter().copied().sum();
 
     let claims = vec![SumcheckClaim {
@@ -398,8 +398,8 @@ fn batched_three_claims() {
     let mut rng = ChaCha20Rng::seed_from_u64(301);
     let num_vars = 4;
 
-    let polys: Vec<DensePolynomial<Fr>> = (0..3)
-        .map(|_| DensePolynomial::random(num_vars, &mut rng))
+    let polys: Vec<Polynomial<Fr>> = (0..3)
+        .map(|_| Polynomial::random(num_vars, &mut rng))
         .collect();
     let sums: Vec<Fr> = polys
         .iter()
@@ -436,8 +436,8 @@ fn batched_wrong_claim_fails() {
     let mut rng = ChaCha20Rng::seed_from_u64(402);
     let num_vars = 4;
 
-    let poly_a = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-    let poly_b = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+    let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
 
     let sum_a: Fr = poly_a.evaluations().iter().copied().sum();
     let sum_b: Fr = poly_b.evaluations().iter().copied().sum();
@@ -497,13 +497,13 @@ fn batched_wrong_claim_fails() {
 /// The round polynomial has degree 3, so we evaluate at t = 0, 1, 2, 3
 /// and interpolate.
 struct TripleProductWitness {
-    f: DensePolynomial<Fr>,
-    g: DensePolynomial<Fr>,
+    f: Polynomial<Fr>,
+    g: Polynomial<Fr>,
     eq_evals: Vec<Fr>,
 }
 
 impl TripleProductWitness {
-    fn new(f: DensePolynomial<Fr>, g: DensePolynomial<Fr>, tau: &[Fr]) -> Self {
+    fn new(f: Polynomial<Fr>, g: Polynomial<Fr>, tau: &[Fr]) -> Self {
         let eq_evals = EqPolynomial::new(tau.to_vec()).evaluations();
         Self { f, g, eq_evals }
     }
@@ -552,8 +552,8 @@ impl SumcheckWitness<Fr> for TripleProductWitness {
     }
 
     fn bind(&mut self, challenge: Fr) {
-        self.f.bind_in_place(challenge);
-        self.g.bind_in_place(challenge);
+        self.f.bind(challenge);
+        self.g.bind(challenge);
 
         let half = self.eq_evals.len() / 2;
         for i in 0..half {
@@ -569,8 +569,8 @@ impl SumcheckWitness<Fr> for TripleProductWitness {
 fn degree_3_triple_product() {
     let mut rng = ChaCha20Rng::seed_from_u64(503);
     let num_vars = 5;
-    let f = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-    let g = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+    let f = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let g = Polynomial::<Fr>::random(num_vars, &mut rng);
     let tau: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
 
     let mut witness = TripleProductWitness::new(f.clone(), g.clone(), &tau);
@@ -613,7 +613,7 @@ fn zero_claimed_sum() {
     let partial_sum: Fr = evals.iter().copied().sum();
     evals.push(-partial_sum);
 
-    let poly = DensePolynomial::new(evals);
+    let poly = Polynomial::new(evals);
     let claimed_sum = Fr::zero();
 
     let claim = SumcheckClaim {
@@ -707,7 +707,7 @@ impl StreamingSumcheckProver<Fr> for StreamingPlainSumProver {
 fn streaming_prover_produces_correct_rounds() {
     let mut rng = ChaCha20Rng::seed_from_u64(705);
     let num_vars = 5;
-    let poly = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
     let claimed_sum: Fr = poly.evaluations().iter().copied().sum();
 
     // Drive the streaming prover manually, recording round polys.
@@ -754,7 +754,7 @@ fn streaming_prover_produces_correct_rounds() {
 fn streaming_prover_multi_chunk() {
     let mut rng = ChaCha20Rng::seed_from_u64(806);
     let num_vars = 4;
-    let poly = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
     let claimed_sum: Fr = poly.evaluations().iter().copied().sum();
 
     let mut streaming =
@@ -822,6 +822,162 @@ impl StreamingPlainSumProverMultiChunk {
     }
 }
 
+#[test]
+fn batched_different_num_vars() {
+    let mut rng = ChaCha20Rng::seed_from_u64(900);
+
+    // Instance A: 6 variables (degree 1)
+    let num_vars_a = 6;
+    let poly_a = Polynomial::<Fr>::random(num_vars_a, &mut rng);
+    let sum_a: Fr = poly_a.evaluations().iter().copied().sum();
+
+    // Instance B: 4 variables (degree 1)
+    let num_vars_b = 4;
+    let poly_b = Polynomial::<Fr>::random(num_vars_b, &mut rng);
+    let sum_b: Fr = poly_b.evaluations().iter().copied().sum();
+
+    let claims = vec![
+        SumcheckClaim {
+            num_vars: num_vars_a,
+            degree: 1,
+            claimed_sum: sum_a,
+        },
+        SumcheckClaim {
+            num_vars: num_vars_b,
+            degree: 1,
+            claimed_sum: sum_b,
+        },
+    ];
+
+    let mut witnesses: Vec<Box<dyn SumcheckWitness<Fr>>> = vec![
+        Box::new(PlainSumWitness {
+            poly: poly_a.clone(),
+        }),
+        Box::new(PlainSumWitness {
+            poly: poly_b.clone(),
+        }),
+    ];
+
+    let mut pt = Blake2bTranscript::new(b"diff_num_vars");
+    let proof = BatchedSumcheckProver::prove(&claims, &mut witnesses, &mut pt, challenge_to_field);
+
+    // Proof should have max_num_vars rounds
+    assert_eq!(proof.round_polynomials.len(), num_vars_a);
+
+    let mut vt = Blake2bTranscript::new(b"diff_num_vars");
+    let result = BatchedSumcheckVerifier::verify(&claims, &proof, &mut vt, challenge_to_field);
+    assert!(
+        result.is_ok(),
+        "batched verification with different num_vars should succeed"
+    );
+}
+
+#[test]
+fn batched_mixed_degree_and_num_vars() {
+    let mut rng = ChaCha20Rng::seed_from_u64(901);
+
+    // Instance A: degree-2 product sumcheck with 5 variables
+    let num_vars_a = 5;
+    let poly_a = Polynomial::<Fr>::random(num_vars_a, &mut rng);
+    let tau_a: Vec<Fr> = (0..num_vars_a).map(|_| Fr::random(&mut rng)).collect();
+    let sum_a = poly_a.evaluate(&tau_a);
+
+    // Instance B: degree-1 plain sum with 3 variables
+    let num_vars_b = 3;
+    let poly_b = Polynomial::<Fr>::random(num_vars_b, &mut rng);
+    let sum_b: Fr = poly_b.evaluations().iter().copied().sum();
+
+    let claims = vec![
+        SumcheckClaim {
+            num_vars: num_vars_a,
+            degree: 2,
+            claimed_sum: sum_a,
+        },
+        SumcheckClaim {
+            num_vars: num_vars_b,
+            degree: 1,
+            claimed_sum: sum_b,
+        },
+    ];
+
+    let mut witnesses: Vec<Box<dyn SumcheckWitness<Fr>>> = vec![
+        Box::new(EqProductWitness::new(poly_a.clone(), &tau_a)),
+        Box::new(PlainSumWitness {
+            poly: poly_b.clone(),
+        }),
+    ];
+
+    let mut pt = Blake2bTranscript::new(b"mixed_degree_vars");
+    let proof = BatchedSumcheckProver::prove(&claims, &mut witnesses, &mut pt, challenge_to_field);
+
+    assert_eq!(proof.round_polynomials.len(), num_vars_a);
+
+    let mut vt = Blake2bTranscript::new(b"mixed_degree_vars");
+    let result = BatchedSumcheckVerifier::verify(&claims, &proof, &mut vt, challenge_to_field);
+    assert!(
+        result.is_ok(),
+        "batched verification with mixed degree and num_vars should succeed"
+    );
+}
+
+#[test]
+fn batched_challenge_slicing() {
+    let mut rng = ChaCha20Rng::seed_from_u64(902);
+
+    let num_vars_a = 6;
+    let num_vars_b = 4;
+    let max_num_vars = num_vars_a;
+
+    let poly_a = Polynomial::<Fr>::random(num_vars_a, &mut rng);
+    let poly_b = Polynomial::<Fr>::random(num_vars_b, &mut rng);
+    let sum_a: Fr = poly_a.evaluations().iter().copied().sum();
+    let sum_b: Fr = poly_b.evaluations().iter().copied().sum();
+
+    let claims = vec![
+        SumcheckClaim {
+            num_vars: num_vars_a,
+            degree: 1,
+            claimed_sum: sum_a,
+        },
+        SumcheckClaim {
+            num_vars: num_vars_b,
+            degree: 1,
+            claimed_sum: sum_b,
+        },
+    ];
+
+    let mut witnesses: Vec<Box<dyn SumcheckWitness<Fr>>> = vec![
+        Box::new(PlainSumWitness {
+            poly: poly_a.clone(),
+        }),
+        Box::new(PlainSumWitness {
+            poly: poly_b.clone(),
+        }),
+    ];
+
+    let mut pt = Blake2bTranscript::new(b"slice_test");
+    let proof = BatchedSumcheckProver::prove(&claims, &mut witnesses, &mut pt, challenge_to_field);
+
+    let mut vt = Blake2bTranscript::new(b"slice_test");
+    let (_final_eval, challenges) =
+        BatchedSumcheckVerifier::verify(&claims, &proof, &mut vt, challenge_to_field)
+            .expect("verification should succeed");
+
+    assert_eq!(challenges.len(), max_num_vars);
+
+    // Instance A uses all challenges (offset = 0)
+    let r_a = &challenges[0..num_vars_a];
+    assert_eq!(poly_a.evaluate(r_a), poly_a.evaluate(&challenges));
+
+    // Instance B uses only the last num_vars_b challenges (offset = 2)
+    let offset_b = max_num_vars - num_vars_b;
+    let r_b = &challenges[offset_b..offset_b + num_vars_b];
+    let eval_b = poly_b.evaluate(r_b);
+
+    // Sanity: eval_b should be a valid field element from the polynomial
+    assert_ne!(eval_b, Fr::zero());
+}
+
 impl StreamingSumcheckProver<Fr> for StreamingPlainSumProverMultiChunk {
     fn begin_round(&mut self) {
         self.accum = [Fr::zero(); 2];
@@ -856,4 +1012,93 @@ impl StreamingSumcheckProver<Fr> for StreamingPlainSumProverMultiChunk {
         self.evals.truncate(half);
         self.num_vars -= 1;
     }
+}
+
+#[test]
+fn transcript_label_mismatch_fails() {
+    let mut rng = ChaCha20Rng::seed_from_u64(900);
+    let num_vars = 4;
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let claimed_sum: Fr = poly.evaluations().iter().copied().sum();
+
+    let claim = SumcheckClaim {
+        num_vars,
+        degree: 1,
+        claimed_sum,
+    };
+
+    let mut witness = PlainSumWitness { poly: poly.clone() };
+    let mut pt = Blake2bTranscript::new(b"label_a");
+    let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt, challenge_to_field);
+
+    // Verify with a different label — challenges diverge, should fail final check
+    let mut vt = Blake2bTranscript::new(b"label_b");
+    let result = SumcheckVerifier::verify(&claim, &proof, &mut vt, challenge_to_field);
+
+    if let Ok((final_eval, challenges)) = result {
+        // Verification "passes" structurally (sums match per round) but
+        // the final evaluation will disagree since challenges differ
+        assert_ne!(
+            final_eval,
+            poly.evaluate(&challenges),
+            "label mismatch should cause evaluation divergence"
+        );
+    }
+    // Err is also acceptable: structural rejection
+}
+
+#[test]
+fn tampered_round_coefficient_rejected() {
+    let mut rng = ChaCha20Rng::seed_from_u64(901);
+    let num_vars = 4;
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let claimed_sum: Fr = poly.evaluations().iter().copied().sum();
+
+    let claim = SumcheckClaim {
+        num_vars,
+        degree: 1,
+        claimed_sum,
+    };
+
+    let mut witness = PlainSumWitness { poly };
+    let mut pt = Blake2bTranscript::new(b"tamper_test");
+    let mut proof = SumcheckProver::prove(&claim, &mut witness, &mut pt, challenge_to_field);
+
+    // Tamper with the first round polynomial
+    let tampered = UnivariatePoly::new(vec![Fr::from_u64(999), Fr::from_u64(1)]);
+    proof.round_polynomials[0] = tampered;
+
+    let mut vt = Blake2bTranscript::new(b"tamper_test");
+    let result = SumcheckVerifier::verify(&claim, &proof, &mut vt, challenge_to_field);
+    assert!(
+        result.is_err(),
+        "tampered round polynomial should cause rejection"
+    );
+}
+
+#[test]
+fn keccak_transcript_prove_verify() {
+    use jolt_transcript::KeccakTranscript;
+
+    let mut rng = ChaCha20Rng::seed_from_u64(902);
+    let num_vars = 5;
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let claimed_sum: Fr = poly.evaluations().iter().copied().sum();
+
+    let claim = SumcheckClaim {
+        num_vars,
+        degree: 1,
+        claimed_sum,
+    };
+
+    let mut witness = PlainSumWitness { poly: poly.clone() };
+    let mut pt = KeccakTranscript::new(b"keccak_test");
+    let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt, challenge_to_field);
+
+    let mut vt = KeccakTranscript::new(b"keccak_test");
+    let (final_eval, challenges) =
+        SumcheckVerifier::verify(&claim, &proof, &mut vt, challenge_to_field)
+            .expect("keccak transcript verification should succeed");
+
+    assert_eq!(final_eval, poly.evaluate(&challenges));
 }

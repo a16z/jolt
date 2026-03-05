@@ -186,6 +186,22 @@ fn test_streaming_large_polynomial() {
 - Batching reduces proof size vs individual proofs
 - Streaming uses less memory than full materialization
 
+### Current Progress
+
+| File | Status | Notes |
+|------|--------|-------|
+| `tests/integration.rs` | Exists (143 lines, 2 tests) | `blake2b_and_keccak_both_verify`, `evaluate_then_prove_then_verify` |
+| `tests/batching.rs` | Not started | |
+| `tests/streaming.rs` | Not started | |
+
+**Remaining work:**
+- Expand `integration.rs` with more protocol round-trip tests (varying degrees and variable counts)
+- Create `batching.rs` with batched sumcheck integration tests
+- Create `streaming.rs` with streaming variant tests
+- Add negative test cases (soundness) to integration tests
+
+**Note:** The code samples above reference `SumcheckInstanceProver` — the actual trait is `SumcheckWitness`. Update samples if using this task as a reference.
+
 ### Acceptance Criteria
 
 - Three integration test files created

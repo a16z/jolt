@@ -1,0 +1,28 @@
+[package]
+name = "jolt-crypto"
+version = "0.1.0"
+authors = ["Jolt Contributors"]
+edition = "2021"
+license = "MIT"
+description = "Backend-agnostic cryptographic group and commitment primitives for Jolt"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+serde = { workspace = true, features = ["derive"] }
+rand_core = { workspace = true }
+
+# Arkworks — BN254 backend (internal implementation detail)
+ark-bn254 = { workspace = true, features = ["curve"] }
+ark-ec = { workspace = true }
+ark-ff = { workspace = true }
+ark-serialize = { workspace = true }
+ark-std = { workspace = true }
+
+[dev-dependencies]
+ark-std = { workspace = true }
+rand_chacha = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+bincode = { workspace = true }

@@ -1,7 +1,7 @@
 //! Sumcheck verifier: checks round polynomials against the claimed sum.
 
 use jolt_field::Field;
-use jolt_poly::UnivariatePoly;
+use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::claim::SumcheckClaim;

@@ -10,7 +10,7 @@ use crate::bigint_ext::BigIntExt;
 use crate::challenge::Mont254BitChallenge;
 #[cfg(not(feature = "challenge-254-bit"))]
 use crate::challenge::MontU128Challenge;
-use crate::{Field, ReductionOps, UnreducedOps, WithChallenge};
+use crate::{Field, Limbs, ReductionOps, UnreducedOps, WithChallenge};
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rand_core::RngCore;
 
@@ -38,6 +38,62 @@ impl From<Fr> for ark_bn254::Fr {
     #[inline(always)]
     fn from(wrapper: Fr) -> Self {
         wrapper.0
+    }
+}
+
+impl From<bool> for Fr {
+    #[inline(always)]
+    fn from(v: bool) -> Self {
+        <Self as Field>::from_bool(v)
+    }
+}
+
+impl From<u8> for Fr {
+    #[inline(always)]
+    fn from(v: u8) -> Self {
+        <Self as Field>::from_u64(v as u64)
+    }
+}
+
+impl From<u16> for Fr {
+    #[inline(always)]
+    fn from(v: u16) -> Self {
+        <Self as Field>::from_u64(v as u64)
+    }
+}
+
+impl From<u32> for Fr {
+    #[inline(always)]
+    fn from(v: u32) -> Self {
+        <Self as Field>::from_u64(v as u64)
+    }
+}
+
+impl From<u64> for Fr {
+    #[inline(always)]
+    fn from(v: u64) -> Self {
+        <Self as Field>::from_u64(v)
+    }
+}
+
+impl From<i64> for Fr {
+    #[inline(always)]
+    fn from(v: i64) -> Self {
+        <Self as Field>::from_i64(v)
+    }
+}
+
+impl From<i128> for Fr {
+    #[inline(always)]
+    fn from(v: i128) -> Self {
+        <Self as Field>::from_i128(v)
+    }
+}
+
+impl From<u128> for Fr {
+    #[inline(always)]
+    fn from(v: u128) -> Self {
+        <Self as Field>::from_u128(v)
     }
 }
 
@@ -250,11 +306,11 @@ impl Fr {
         Fr(InnerFr::from_le_bytes_mod_order(bytes))
     }
 
-    /// Converts a `BigInt<4>` to a field element without checking that it is
+    /// Converts a limb array to a field element without checking that it is
     /// less than the modulus.
     #[inline]
-    pub fn from_bigint_unchecked(bigint: BigInt<4>) -> Option<Self> {
-        Some(Fr(bn254_ops::from_bigint_unchecked(bigint)))
+    pub fn from_bigint_unchecked(limbs: Limbs<4>) -> Option<Self> {
+        Some(Fr(bn254_ops::from_bigint_unchecked(limbs.to_bigint())))
     }
 }
 
@@ -300,29 +356,6 @@ impl Field for Fr {
 
     fn inverse(&self) -> Option<Self> {
         <InnerFr as ark_ff::Field>::inverse(&self.0).map(Fr)
-    }
-
-    fn from_bool(val: bool) -> Self {
-        if val {
-            Self::one()
-        } else {
-            Self::zero()
-        }
-    }
-
-    #[inline]
-    fn from_u8(n: u8) -> Self {
-        Fr(bn254_ops::from_u64(n as u64))
-    }
-
-    #[inline]
-    fn from_u16(n: u16) -> Self {
-        Fr(bn254_ops::from_u64(n as u64))
-    }
-
-    #[inline]
-    fn from_u32(n: u32) -> Self {
-        Fr(bn254_ops::from_u64(n as u64))
     }
 
     #[inline]
@@ -450,6 +483,131 @@ impl<const N: usize, const M: usize> crate::FMAdd<BigInt<4>, BigInt<M>> for BigI
             if i + M < N {
                 self.0[i + M] = self.0[i + M].wrapping_add(carry);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Field, ReductionOps, UnreducedOps};
+    use ark_std::rand::Rng;
+    use ark_std::test_rng;
+
+    #[test]
+    fn unreduced_mul_montgomery_reduce() {
+        let mut rng = test_rng();
+        for _ in 0..100 {
+            let a: Fr = Field::random(&mut rng);
+            let b: Fr = Field::random(&mut rng);
+            let expected = a * b;
+            let unreduced: BigInt<8> = UnreducedOps::mul_unreduced(a, b);
+            let reduced = <Fr as ReductionOps>::from_montgomery_reduce(unreduced);
+            assert_eq!(expected, reduced);
+        }
+    }
+
+    #[test]
+    fn mul_u64_unreduced_barrett_reduce() {
+        let mut rng = test_rng();
+        for _ in 0..100 {
+            let a: Fr = Field::random(&mut rng);
+            let b = rng.next_u64();
+            let expected = a * <Fr as Field>::from_u64(b);
+            let unreduced = UnreducedOps::mul_u64_unreduced(a, b);
+            let reduced = <Fr as ReductionOps>::from_barrett_reduce(unreduced);
+            assert_eq!(expected, reduced);
+        }
+    }
+
+    #[test]
+    fn mul_u128_unreduced_barrett_reduce() {
+        let mut rng = test_rng();
+        for _ in 0..100 {
+            let a: Fr = Field::random(&mut rng);
+            let b = rng.gen::<u128>();
+            let expected = a * <Fr as Field>::from_u128(b);
+            let unreduced = UnreducedOps::mul_u128_unreduced(a, b);
+            let reduced = <Fr as ReductionOps>::from_barrett_reduce(unreduced);
+            assert_eq!(expected, reduced);
+        }
+    }
+
+    #[test]
+    fn montgomery_reduction_identity() {
+        let mut rng = test_rng();
+        let one = Fr::one();
+        let zero = Fr::zero();
+
+        for _ in 0..10 {
+            let x: Fr = Field::random(&mut rng);
+            let unreduced: BigInt<8> = UnreducedOps::mul_unreduced(zero, x);
+            assert_eq!(
+                <Fr as ReductionOps>::from_montgomery_reduce(unreduced),
+                zero
+            );
+        }
+
+        for _ in 0..10 {
+            let x: Fr = Field::random(&mut rng);
+            let unreduced: BigInt<8> = UnreducedOps::mul_unreduced(one, x);
+            assert_eq!(<Fr as ReductionOps>::from_montgomery_reduce(unreduced), x);
+        }
+    }
+
+    #[test]
+    fn montgomery_constants() {
+        let _r = <Fr as ReductionOps>::MONTGOMERY_R;
+        let _r2 = <Fr as ReductionOps>::MONTGOMERY_R_SQUARE;
+    }
+
+    #[test]
+    fn unreduced_accumulation() {
+        let mut rng = test_rng();
+        let n = 10;
+        let a: Vec<Fr> = (0..n).map(|_| <Fr as Field>::random(&mut rng)).collect();
+        let b: Vec<Fr> = (0..n).map(|_| <Fr as Field>::random(&mut rng)).collect();
+        let expected: Fr = a.iter().zip(b.iter()).map(|(a, b)| *a * *b).sum();
+
+        let mut accumulator = BigInt::<8>::zero();
+        for (a_elem, b_elem) in a.iter().zip(b.iter()) {
+            let prod: BigInt<8> = UnreducedOps::mul_unreduced(*a_elem, *b_elem);
+            let mut carry = 0u64;
+            for i in 0..8 {
+                let sum = (accumulator.0[i] as u128) + (prod.0[i] as u128) + (carry as u128);
+                accumulator.0[i] = sum as u64;
+                carry = (sum >> 64) as u64;
+            }
+        }
+
+        let result = <Fr as ReductionOps>::from_montgomery_reduce(accumulator);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn unreduced_reference_access() {
+        let mut rng = test_rng();
+        for _ in 0..100 {
+            let a: Fr = Field::random(&mut rng);
+            let b: Fr = Field::random(&mut rng);
+            let unreduced_ref = UnreducedOps::as_unreduced_ref(&a);
+            let _ = unreduced_ref.0;
+            let unreduced: BigInt<8> = UnreducedOps::mul_unreduced(a, b);
+            let reduced = <Fr as ReductionOps>::from_montgomery_reduce(unreduced);
+            assert_eq!(reduced, a * b);
+        }
+    }
+
+    #[test]
+    fn reduction_with_bigint_9() {
+        let mut rng = test_rng();
+        for _ in 0..100 {
+            let a: Fr = Field::random(&mut rng);
+            let b: Fr = Field::random(&mut rng);
+            let expected = a * b;
+            let unreduced_9: BigInt<9> = UnreducedOps::mul_unreduced(a, b);
+            let reduced_9 = <Fr as ReductionOps>::from_montgomery_reduce(unreduced_9);
+            assert_eq!(reduced_9, expected);
         }
     }
 }

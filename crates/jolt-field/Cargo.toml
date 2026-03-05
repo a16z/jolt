@@ -26,3 +26,8 @@ challenge-254-bit = []
 [dev-dependencies]
 ark-std = { workspace = true }
 rand_chacha = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "field_arith"
+harness = false

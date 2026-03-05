@@ -405,6 +405,20 @@ bincode = "1.3"
 rand = "0.8"
 ```
 
+### Current Progress
+
+Not started. Blocked on `jolt-spartan` and `jolt-dory` integration maturity.
+
+**Note:** The code samples above reference APIs that may not match the actual implementations:
+- `SpartanKey::from_r1cs` — verify actual constructor signature
+- `SpartanProver::prove` / `SpartanVerifier::verify` — the actual crate uses stateless unit structs with associated functions, but type parameter order and argument list may differ
+- `DoryParams` fields (`t`, `max_num_rows`, `num_columns`) — verify against actual `DoryParams` struct in `jolt-dory`
+- `DoryScheme::new` — verify constructor
+- `UniformR1CS` — was deferred from `jolt-spartan` (only `SimpleR1CS` exists currently)
+- `FirstRoundStrategy::UnivariateSkip` — univariate skip is a stub in `jolt-spartan`
+
+Update samples to match actual APIs before implementing.
+
 ### Acceptance Criteria
 
 - Integration test file created at workspace level

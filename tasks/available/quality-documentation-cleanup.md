@@ -428,6 +428,23 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 ```
 
+### Current Progress
+
+| Subtask | Status | Notes |
+|---------|--------|-------|
+| README.md for each crate | Done | All 8 crates have READMEs |
+| Clippy clean | Done | All crates pass `cargo clippy -D warnings` |
+| Formatting | Done | All crates pass `cargo fmt --check` |
+| Benchmarks | Mostly done | 5/8 crates have benchmarks (see `quality-benchmark-suite`) |
+| Module-level docs (`//!`) | Partial | Some crates have them, not all |
+| Item-level doc comments | Partial | Public API docs added to `jolt-openings` accumulators; other crates need review |
+| LaTeX math in docs | Not started | |
+| CI configuration | Partial | `rust.yml` updated; dedicated refactored-crates workflow not yet created |
+| Crate metadata | Not started | `Cargo.toml` metadata (authors, description, keywords, categories) |
+| Dead code removal | Not started | |
+
+**Note:** The code samples in sections 1–2 reference outdated type names (`DensePolynomial`, `CompactPolynomial`, `SmallScalar`). The actual API uses `Polynomial<T>` with `DensePolynomial<F>` as a type alias and no `SmallScalar` trait. Update samples if using this task as a reference.
+
 ### Acceptance Criteria
 
 - All crates have comprehensive module and item documentation

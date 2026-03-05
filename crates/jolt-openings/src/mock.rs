@@ -7,7 +7,7 @@
 use std::marker::PhantomData;
 
 use jolt_field::Field;
-use jolt_poly::{DensePolynomial, MultilinearPolynomial};
+use jolt_poly::Polynomial;
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
@@ -71,25 +71,24 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
     fn setup_verifier(_max_size: usize) -> Self::VerifierSetup {}
 
     fn commit(
-        poly: &impl MultilinearPolynomial<Self::Field>,
+        evaluations: &[Self::Field],
         _setup: &Self::ProverSetup,
     ) -> Self::Commitment {
-        let evals = poly.evaluations();
         MockCommitment {
-            fingerprint: field_fingerprint(&evals),
-            len: evals.len(),
+            fingerprint: field_fingerprint(evaluations),
+            len: evaluations.len(),
         }
     }
 
     fn prove(
-        poly: &impl MultilinearPolynomial<Self::Field>,
+        evaluations: &[Self::Field],
         _point: &[Self::Field],
         _eval: Self::Field,
         _setup: &Self::ProverSetup,
         _transcript: &mut impl Transcript,
     ) -> Self::Proof {
         MockProof {
-            evaluations: poly.evaluations().into_owned(),
+            evaluations: evaluations.to_vec(),
         }
     }
 
@@ -109,7 +108,7 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
             });
         }
 
-        let poly = DensePolynomial::new(proof.evaluations.clone());
+        let poly = Polynomial::new(proof.evaluations.clone());
         let actual_eval = poly.evaluate(point);
         if actual_eval != eval {
             return Err(OpeningsError::VerificationFailed);
@@ -145,17 +144,17 @@ impl<F: Field> HomomorphicCommitmentScheme for MockCommitmentScheme<F> {
     }
 
     fn batch_prove(
-        polynomials: &[&dyn MultilinearPolynomial<Self::Field>],
+        evaluation_tables: &[&[Self::Field]],
         _points: &[Vec<Self::Field>],
         _evals: &[Self::Field],
         _setup: &Self::ProverSetup,
         _transcript: &mut impl Transcript,
     ) -> Self::BatchedProof {
         MockBatchedProof {
-            entries: polynomials
+            entries: evaluation_tables
                 .iter()
-                .map(|p| MockProof {
-                    evaluations: p.evaluations().into_owned(),
+                .map(|evals| MockProof {
+                    evaluations: evals.to_vec(),
                 })
                 .collect(),
         }
@@ -170,7 +169,7 @@ impl<F: Field> HomomorphicCommitmentScheme for MockCommitmentScheme<F> {
         _transcript: &mut impl Transcript,
     ) -> Result<(), OpeningsError> {
         for (i, entry) in proof.entries.iter().enumerate() {
-            let poly = DensePolynomial::new(entry.evaluations.clone());
+            let poly = Polynomial::new(entry.evaluations.clone());
             let actual_eval = poly.evaluate(&points[i]);
             if actual_eval != evals[i] {
                 return Err(OpeningsError::VerificationFailed);
@@ -194,14 +193,14 @@ mod tests {
     #[test]
     fn commit_prove_verify_roundtrip() {
         let mut rng = ChaCha20Rng::seed_from_u64(42);
-        let poly = DensePolynomial::<Fr>::random(4, &mut rng);
+        let poly = Polynomial::<Fr>::random(4, &mut rng);
         let point: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
 
-        let commitment = MockPCS::commit(&poly, &());
+        let commitment = MockPCS::commit(poly.evaluations(), &());
 
         let mut transcript_p = Blake2bTranscript::new(b"test");
-        let proof = MockPCS::prove(&poly, &point, eval, &(), &mut transcript_p);
+        let proof = MockPCS::prove(poly.evaluations(), &point, eval, &(), &mut transcript_p);
 
         let mut transcript_v = Blake2bTranscript::new(b"test");
         MockPCS::verify(&commitment, &point, eval, &proof, &(), &mut transcript_v)
@@ -211,15 +210,15 @@ mod tests {
     #[test]
     fn verify_rejects_wrong_eval() {
         let mut rng = ChaCha20Rng::seed_from_u64(99);
-        let poly = DensePolynomial::<Fr>::random(3, &mut rng);
+        let poly = Polynomial::<Fr>::random(3, &mut rng);
         let point: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
         let wrong_eval = eval + Fr::from_u64(1);
 
-        let commitment = MockPCS::commit(&poly, &());
+        let commitment = MockPCS::commit(poly.evaluations(), &());
 
         let mut transcript_p = Blake2bTranscript::new(b"test");
-        let proof = MockPCS::prove(&poly, &point, eval, &(), &mut transcript_p);
+        let proof = MockPCS::prove(poly.evaluations(), &point, eval, &(), &mut transcript_p);
 
         let mut transcript_v = Blake2bTranscript::new(b"test");
         let result = MockPCS::verify(
@@ -236,8 +235,8 @@ mod tests {
     #[test]
     fn verify_rejects_wrong_commitment() {
         let mut rng = ChaCha20Rng::seed_from_u64(77);
-        let poly1 = DensePolynomial::<Fr>::random(3, &mut rng);
-        let poly2 = DensePolynomial::<Fr>::random(3, &mut rng);
+        let poly1 = Polynomial::<Fr>::random(3, &mut rng);
+        let poly2 = Polynomial::<Fr>::random(3, &mut rng);
         let point: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
 
         let wrong_commitment = MockPCS::commit(&poly2, &());
@@ -263,8 +262,8 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(111);
         let num_vars = 4;
 
-        let polys: Vec<DensePolynomial<Fr>> = (0..3)
-            .map(|_| DensePolynomial::random(num_vars, &mut rng))
+        let polys: Vec<Polynomial<Fr>> = (0..3)
+            .map(|_| Polynomial::random(num_vars, &mut rng))
             .collect();
         let points: Vec<Vec<Fr>> = (0..3)
             .map(|_| (0..num_vars).map(|_| Fr::random(&mut rng)).collect())
@@ -275,16 +274,15 @@ mod tests {
             .map(|(p, pt)| p.evaluate(pt))
             .collect();
 
-        let poly_refs: Vec<&dyn MultilinearPolynomial<Fr>> = polys
-            .iter()
-            .map(|p| p as &dyn MultilinearPolynomial<Fr>)
-            .collect();
+        let eval_refs: Vec<&[Fr]> = polys.iter().map(|p| p.evaluations()).collect();
 
         let mut transcript_p = Blake2bTranscript::new(b"batch-test");
-        let proof = MockPCS::batch_prove(&poly_refs, &points, &evals, &(), &mut transcript_p);
+        let proof = MockPCS::batch_prove(&eval_refs, &points, &evals, &(), &mut transcript_p);
 
-        let commitments: Vec<MockCommitment> =
-            polys.iter().map(|p| MockPCS::commit(p, &())).collect();
+        let commitments: Vec<MockCommitment> = polys
+            .iter()
+            .map(|p| MockPCS::commit(p.evaluations(), &()))
+            .collect();
 
         let mut transcript_v = Blake2bTranscript::new(b"batch-test");
         MockPCS::batch_verify(
@@ -303,9 +301,9 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(222);
         let num_vars = 3;
 
-        let poly1 = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-        let poly2 = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-        let decoy = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+        let poly1 = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly2 = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let decoy = Polynomial::<Fr>::random(num_vars, &mut rng);
 
         let point1: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let point2: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
@@ -315,15 +313,14 @@ mod tests {
         let eval2 = poly2.evaluate(&point2);
         let evals = vec![eval1, eval2];
 
-        let poly_refs: Vec<&dyn MultilinearPolynomial<Fr>> =
-            vec![&poly1 as &dyn MultilinearPolynomial<Fr>, &poly2];
+        let eval_refs: Vec<&[Fr]> = vec![poly1.evaluations(), poly2.evaluations()];
 
         let mut transcript_p = Blake2bTranscript::new(b"batch-reject");
-        let proof = MockPCS::batch_prove(&poly_refs, &points, &evals, &(), &mut transcript_p);
+        let proof = MockPCS::batch_prove(&eval_refs, &points, &evals, &(), &mut transcript_p);
 
         // Use a wrong commitment for the first polynomial
-        let wrong_commitment = MockPCS::commit(&decoy, &());
-        let good_commitment = MockPCS::commit(&poly2, &());
+        let wrong_commitment = MockPCS::commit(decoy.evaluations(), &());
+        let good_commitment = MockPCS::commit(poly2.evaluations(), &());
         let commitments = vec![wrong_commitment, good_commitment];
 
         let mut transcript_v = Blake2bTranscript::new(b"batch-reject");

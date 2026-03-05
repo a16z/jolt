@@ -151,7 +151,7 @@ mod tests {
     fn rlc_combine_scalars_consistent_with_rlc_combine() {
         // Verify that rlc_combine_scalars gives the same result as evaluating
         // the rlc_combine result at a specific point.
-        use jolt_poly::{DensePolynomial, MultilinearPolynomial};
+        use jolt_poly::Polynomial;
         use rand_chacha::rand_core::SeedableRng;
         use rand_chacha::ChaCha20Rng;
 
@@ -159,9 +159,9 @@ mod tests {
         let num_vars = 3;
         let rho = Fr::from_u64(7);
 
-        let p1 = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-        let p2 = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-        let p3 = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+        let p1 = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let p2 = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let p3 = Polynomial::<Fr>::random(num_vars, &mut rng);
 
         let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
 
@@ -174,7 +174,7 @@ mod tests {
         let evals2 = p2.evaluations();
         let evals3 = p3.evaluations();
         let combined = rlc_combine(&[evals1, evals2, evals3], rho);
-        let combined_poly = DensePolynomial::new(combined);
+        let combined_poly = Polynomial::new(combined);
         let result_via_poly = combined_poly.evaluate(&point);
 
         // Method 2: evaluate first, then combine scalars

@@ -42,6 +42,20 @@ impl IdentityPolynomial {
     }
 }
 
+impl<F: Field> crate::MultilinearEvaluation<F> for IdentityPolynomial {
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn len(&self) -> usize {
+        1 << self.num_vars
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        IdentityPolynomial::evaluate(self, point)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

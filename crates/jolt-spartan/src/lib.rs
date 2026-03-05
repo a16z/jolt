@@ -131,6 +131,50 @@ mod tests {
     }
 
     #[test]
+    fn prove_and_verify_chain_multiplication() {
+        // x^2 = y, x^3 = z, x^4 = w, x^5 = v
+        // Constraint 0: A[0,1]*x * B[0,1]*x = C[0,2]*y
+        // Constraint 1: A[1,2]*y * B[1,1]*x = C[1,3]*z
+        // Constraint 2: A[2,3]*z * B[2,1]*x = C[2,4]*w
+        // Constraint 3: A[3,4]*w * B[3,1]*x = C[3,5]*v
+        let one = Fr::from_u64(1);
+        let r1cs = SimpleR1CS::new(
+            4,
+            6,
+            vec![(0, 1, one), (1, 2, one), (2, 3, one), (3, 4, one)],
+            vec![(0, 1, one), (1, 1, one), (2, 1, one), (3, 1, one)],
+            vec![(0, 2, one), (1, 3, one), (2, 4, one), (3, 5, one)],
+        );
+        let key = SpartanKey::from_r1cs(&r1cs);
+        // x=3: 1, 3, 9, 27, 81, 243
+        let witness = [
+            Fr::from_u64(1),
+            Fr::from_u64(3),
+            Fr::from_u64(9),
+            Fr::from_u64(27),
+            Fr::from_u64(81),
+            Fr::from_u64(243),
+        ];
+
+        let (proof, _) =
+            prove_helper(&r1cs, &key, &witness, b"spartan-chain").expect("proving should succeed");
+
+        let mut vt = Blake2bTranscript::new(b"spartan-chain");
+        SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &mut vt)
+            .expect("verification should succeed");
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn witness_length_mismatch_panics() {
+        let r1cs = x_squared_circuit();
+        let key = SpartanKey::from_r1cs(&r1cs);
+        // Only 2 elements instead of 3
+        let witness = [Fr::from_u64(1), Fr::from_u64(3)];
+        let _ = prove_helper(&r1cs, &key, &witness, b"spartan-mismatch");
+    }
+
+    #[test]
     fn tampered_proof_rejected() {
         let r1cs = x_squared_circuit();
         let key = SpartanKey::from_r1cs(&r1cs);

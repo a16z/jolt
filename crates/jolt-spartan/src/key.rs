@@ -4,7 +4,7 @@
 //! matrices, enabling efficient evaluation during the sumcheck protocol.
 
 use jolt_field::Field;
-use jolt_poly::DensePolynomial;
+use jolt_poly::Polynomial;
 use serde::{Deserialize, Serialize};
 
 use crate::r1cs::R1CS;
@@ -29,11 +29,11 @@ pub struct SpartanKey<F: Field> {
     /// Padded number of variables (power of two).
     pub num_variables_padded: usize,
     /// MLE of the $A$ matrix.
-    a_mle: DensePolynomial<F>,
+    a_mle: Polynomial<F>,
     /// MLE of the $B$ matrix.
-    b_mle: DensePolynomial<F>,
+    b_mle: Polynomial<F>,
     /// MLE of the $C$ matrix.
-    c_mle: DensePolynomial<F>,
+    c_mle: Polynomial<F>,
 }
 
 /// Three sparse entry lists (one per matrix A, B, C).
@@ -45,7 +45,7 @@ impl<F: Field> SpartanKey<F> {
     /// Converts each sparse matrix into a dense evaluation table of size
     /// $m' \times n'$ where $m' = 2^{\lceil \log_2 m \rceil}$ and
     /// $n' = 2^{\lceil \log_2 n \rceil}$, then wraps it as a
-    /// [`DensePolynomial`].
+    /// [`Polynomial`].
     pub fn from_r1cs(r1cs: &impl R1CS<F>) -> Self {
         let m = r1cs.num_constraints();
         let n = r1cs.num_variables();
@@ -101,15 +101,15 @@ impl<F: Field> SpartanKey<F> {
         (a_entries, b_entries, c_entries)
     }
 
-    pub fn a_mle(&self) -> &DensePolynomial<F> {
+    pub fn a_mle(&self) -> &Polynomial<F> {
         &self.a_mle
     }
 
-    pub fn b_mle(&self) -> &DensePolynomial<F> {
+    pub fn b_mle(&self) -> &Polynomial<F> {
         &self.b_mle
     }
 
-    pub fn c_mle(&self) -> &DensePolynomial<F> {
+    pub fn c_mle(&self) -> &Polynomial<F> {
         &self.c_mle
     }
 
@@ -128,12 +128,12 @@ impl<F: Field> SpartanKey<F> {
 }
 
 /// Builds a dense evaluation table from sparse `(flat_index, value)` entries.
-fn sparse_to_dense_mle<F: Field>(entries: &[(usize, F)], total: usize) -> DensePolynomial<F> {
+fn sparse_to_dense_mle<F: Field>(entries: &[(usize, F)], total: usize) -> Polynomial<F> {
     let mut evals = vec![F::zero(); total];
     for &(idx, val) in entries {
         evals[idx] = val;
     }
-    DensePolynomial::new(evals)
+    Polynomial::new(evals)
 }
 
 #[cfg(test)]
@@ -142,7 +142,7 @@ mod tests {
     use crate::r1cs::SimpleR1CS;
     use jolt_field::Field;
     use jolt_field::Fr;
-    use jolt_poly::MultilinearPolynomial;
+
 
     #[test]
     fn key_dimensions_match_r1cs() {

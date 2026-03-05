@@ -10,7 +10,6 @@
 use std::fmt::Debug;
 
 use jolt_field::Field;
-use jolt_poly::MultilinearPolynomial;
 use jolt_transcript::Transcript;
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -49,18 +48,18 @@ pub trait CommitmentScheme: Clone + Send + Sync + 'static {
     /// Generates verifier setup parameters supporting polynomials up to $2^{\texttt{max\_size}}$ evaluations.
     fn setup_verifier(max_size: usize) -> Self::VerifierSetup;
 
-    /// Commits to a multilinear polynomial, producing a binding commitment.
+    /// Commits to a multilinear polynomial given its evaluation table over the Boolean hypercube.
     fn commit(
-        poly: &impl MultilinearPolynomial<Self::Field>,
+        evaluations: &[Self::Field],
         setup: &Self::ProverSetup,
     ) -> Self::Commitment;
 
     /// Produces an opening proof that the committed polynomial evaluates to `eval` at `point`.
     ///
-    /// The transcript must be in the same state as the verifier's transcript at this
-    /// protocol step.
+    /// `evaluations` is the full evaluation table. The transcript must be in the same
+    /// state as the verifier's transcript at this protocol step.
     fn prove(
-        poly: &impl MultilinearPolynomial<Self::Field>,
+        evaluations: &[Self::Field],
         point: &[Self::Field],
         eval: Self::Field,
         setup: &Self::ProverSetup,
@@ -109,11 +108,14 @@ pub trait HomomorphicCommitmentScheme: CommitmentScheme {
 
     /// Produces a batched opening proof for multiple polynomials at their respective points.
     ///
+    /// Each entry in `evaluation_tables` is the full evaluation table of the
+    /// corresponding polynomial.
+    ///
     /// # Panics
     ///
-    /// Panics if `polynomials`, `points`, and `evals` have different lengths.
+    /// Panics if `evaluation_tables`, `points`, and `evals` have different lengths.
     fn batch_prove(
-        polynomials: &[&dyn MultilinearPolynomial<Self::Field>],
+        evaluation_tables: &[&[Self::Field]],
         points: &[Vec<Self::Field>],
         evals: &[Self::Field],
         setup: &Self::ProverSetup,

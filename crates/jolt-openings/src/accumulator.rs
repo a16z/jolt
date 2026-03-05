@@ -9,7 +9,6 @@ use std::any::Any;
 use std::collections::HashMap;
 
 use jolt_field::Field;
-use jolt_poly::{DensePolynomial, MultilinearPolynomial};
 use jolt_transcript::Transcript;
 
 use crate::error::OpeningsError;
@@ -40,26 +39,31 @@ impl<F: Field> Default for ProverOpeningAccumulator<F> {
 }
 
 impl<F: Field> ProverOpeningAccumulator<F> {
+    /// Creates an empty accumulator with no claims.
     pub fn new() -> Self {
         Self { claims: Vec::new() }
     }
 
-    /// Accumulates an opening claim for a polynomial at the given point.
-    ///
-    /// The polynomial's evaluations are cloned into the accumulator so the
-    /// caller can continue to use or mutate the polynomial.
-    pub fn accumulate(&mut self, poly: &dyn MultilinearPolynomial<F>, point: Vec<F>, eval: F) {
+    /// Accumulates an opening claim for a polynomial's evaluation table at the given point.
+    pub fn accumulate(
+        &mut self,
+        evaluations: &[F],
+        point: Vec<F>,
+        eval: F,
+    ) {
         self.claims.push(ProverClaim {
-            evaluations: poly.evaluations().into_owned(),
+            evaluations: evaluations.to_vec(),
             point,
             eval,
         });
     }
 
+    /// Returns the number of accumulated claims.
     pub fn len(&self) -> usize {
         self.claims.len()
     }
 
+    /// Returns `true` if no claims have been accumulated.
     pub fn is_empty(&self) -> bool {
         self.claims.is_empty()
     }
@@ -102,10 +106,9 @@ impl<F: Field> ProverOpeningAccumulator<F> {
 
             let combined_evals = rlc_combine(&eval_slices, rho);
             let combined_eval = rlc_combine_scalars(&evals, rho);
-            let combined_poly = DensePolynomial::new(combined_evals);
 
             let proof = PCS::batch_prove(
-                &[&combined_poly as &dyn MultilinearPolynomial<F>],
+                &[combined_evals.as_slice()],
                 &[point],
                 &[combined_eval],
                 setup,
@@ -140,6 +143,7 @@ impl<F: Field> Default for VerifierOpeningAccumulator<F> {
 }
 
 impl<F: Field> VerifierOpeningAccumulator<F> {
+    /// Creates an empty accumulator with no claims.
     pub fn new() -> Self {
         Self { claims: Vec::new() }
     }
@@ -161,10 +165,12 @@ impl<F: Field> VerifierOpeningAccumulator<F> {
         });
     }
 
+    /// Returns the number of accumulated claims.
     pub fn len(&self) -> usize {
         self.claims.len()
     }
 
+    /// Returns `true` if no claims have been accumulated.
     pub fn is_empty(&self) -> bool {
         self.claims.is_empty()
     }
@@ -317,6 +323,7 @@ mod tests {
     use crate::mock::MockCommitmentScheme;
     use jolt_field::Field;
     use jolt_field::Fr;
+    use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha20Rng;
@@ -326,12 +333,12 @@ mod tests {
     #[test]
     fn prover_accumulate_and_reduce_single_claim() {
         let mut rng = ChaCha20Rng::seed_from_u64(10);
-        let poly = DensePolynomial::<Fr>::random(3, &mut rng);
+        let poly = Polynomial::<Fr>::random(3, &mut rng);
         let point: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
 
         let mut acc = ProverOpeningAccumulator::new();
-        acc.accumulate(&poly, point, eval);
+        acc.accumulate(poly.evaluations(), point, eval);
         assert_eq!(acc.len(), 1);
 
         let mut transcript = Blake2bTranscript::new(b"test-acc");
@@ -342,15 +349,15 @@ mod tests {
     #[test]
     fn prover_groups_claims_at_same_point() {
         let mut rng = ChaCha20Rng::seed_from_u64(20);
-        let poly1 = DensePolynomial::<Fr>::random(3, &mut rng);
-        let poly2 = DensePolynomial::<Fr>::random(3, &mut rng);
+        let poly1 = Polynomial::<Fr>::random(3, &mut rng);
+        let poly2 = Polynomial::<Fr>::random(3, &mut rng);
         let point: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
         let eval1 = poly1.evaluate(&point);
         let eval2 = poly2.evaluate(&point);
 
         let mut acc = ProverOpeningAccumulator::new();
-        acc.accumulate(&poly1, point.clone(), eval1);
-        acc.accumulate(&poly2, point, eval2);
+        acc.accumulate(poly1.evaluations(), point.clone(), eval1);
+        acc.accumulate(poly2.evaluations(), point, eval2);
         assert_eq!(acc.len(), 2);
 
         let mut transcript = Blake2bTranscript::new(b"test-acc");
@@ -362,16 +369,16 @@ mod tests {
     #[test]
     fn prover_separate_proofs_for_different_points() {
         let mut rng = ChaCha20Rng::seed_from_u64(30);
-        let poly1 = DensePolynomial::<Fr>::random(3, &mut rng);
-        let poly2 = DensePolynomial::<Fr>::random(3, &mut rng);
+        let poly1 = Polynomial::<Fr>::random(3, &mut rng);
+        let poly2 = Polynomial::<Fr>::random(3, &mut rng);
         let point1: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
         let point2: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
         let eval1 = poly1.evaluate(&point1);
         let eval2 = poly2.evaluate(&point2);
 
         let mut acc = ProverOpeningAccumulator::new();
-        acc.accumulate(&poly1, point1, eval1);
-        acc.accumulate(&poly2, point2, eval2);
+        acc.accumulate(poly1.evaluations(), point1, eval1);
+        acc.accumulate(poly2.evaluations(), point2, eval2);
 
         let mut transcript = Blake2bTranscript::new(b"test-acc");
         let proofs = acc.reduce_and_prove::<MockPCS, _>(&(), &mut transcript);
@@ -399,7 +406,7 @@ mod tests {
     /// Helper: builds a prover and verifier accumulator with matching claims,
     /// runs reduce_and_prove / reduce_and_verify, and returns the verification result.
     fn prove_and_verify(
-        prover_polys: &[(DensePolynomial<Fr>, Vec<Fr>)],
+        prover_polys: &[(Polynomial<Fr>, Vec<Fr>)],
         verifier_evals: Option<&[Fr]>,
     ) -> Result<(), OpeningsError> {
         let mut prover_acc = ProverOpeningAccumulator::new();
@@ -407,9 +414,9 @@ mod tests {
 
         for (i, (poly, point)) in prover_polys.iter().enumerate() {
             let eval = poly.evaluate(point);
-            prover_acc.accumulate(poly, point.clone(), eval);
+            prover_acc.accumulate(poly.evaluations(), point.clone(), eval);
 
-            let commitment = <MockPCS as CommitmentScheme>::commit(poly, &());
+            let commitment = <MockPCS as CommitmentScheme>::commit(poly.evaluations(), &());
             let v_eval = verifier_evals.map_or(eval, |overrides| overrides[i]);
             verifier_acc.accumulate(commitment, point.clone(), v_eval);
         }
@@ -424,7 +431,7 @@ mod tests {
     #[test]
     fn e2e_single_claim_roundtrip() {
         let mut rng = ChaCha20Rng::seed_from_u64(100);
-        let poly = DensePolynomial::<Fr>::random(4, &mut rng);
+        let poly = Polynomial::<Fr>::random(4, &mut rng);
         let point: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
 
         prove_and_verify(&[(poly, point)], None).expect("single claim e2e should verify");
@@ -435,10 +442,10 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(200);
         let num_vars = 3;
 
-        let poly_a = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_b = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_c = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_d = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_c = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_d = Polynomial::<Fr>::random(num_vars, &mut rng);
 
         let point1: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let point2: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
@@ -459,9 +466,9 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(300);
         let num_vars = 3;
 
-        let poly_a = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_b = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_c = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_c = Polynomial::<Fr>::random(num_vars, &mut rng);
 
         let point1: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let point2: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
@@ -480,6 +487,27 @@ mod tests {
             result.is_err(),
             "tampered evaluation should cause rejection"
         );
+    }
+
+    #[test]
+    fn grouping_two_at_r_one_at_s() {
+        let mut rng = ChaCha20Rng::seed_from_u64(400);
+        let nv = 3;
+        let p1 = Polynomial::<Fr>::random(nv, &mut rng);
+        let p2 = Polynomial::<Fr>::random(nv, &mut rng);
+        let p3 = Polynomial::<Fr>::random(nv, &mut rng);
+        let r: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
+        let s: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
+
+        let mut acc = ProverOpeningAccumulator::new();
+        acc.accumulate(p1.evaluations(), r.clone(), p1.evaluate(&r));
+        acc.accumulate(p2.evaluations(), r.clone(), p2.evaluate(&r));
+        acc.accumulate(p3.evaluations(), s.clone(), p3.evaluate(&s));
+
+        let mut transcript = Blake2bTranscript::new(b"grouping");
+        let proofs = acc.reduce_and_prove::<MockPCS, _>(&(), &mut transcript);
+        // 2 claims at r grouped into 1 proof, 1 claim at s → 2 batched proofs total
+        assert_eq!(proofs.len(), 2);
     }
 
     use crate::traits::CommitmentScheme;

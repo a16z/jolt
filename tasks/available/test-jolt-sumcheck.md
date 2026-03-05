@@ -93,6 +93,29 @@ Example: $f(x_1, x_2) = x_1 \cdot x_2$ over $\{0,1\}^2$.
 - Round 1: $s_1(X) = \sum_{x_2} f(X, x_2) = X \cdot 0 + X \cdot 1 = X$, so $s_1 = [0, 1]$ (coefficients)
 - Verify $s_1(0) + s_1(1) = 0 + 1 = 1$ ✓
 
+### Current Progress
+
+The `jolt-sumcheck` crate already has **23 test functions** (21 unit + 2 integration):
+
+| Category | Status | Existing tests |
+|----------|--------|----------------|
+| Completeness | Done | `plain_sum_prove_verify`, `eq_product_prove_verify`, `single_variable`, `deterministic_proofs` |
+| Soundness | Done | `wrong_claimed_sum_fails`, `wrong_round_count_is_rejected`, `degree_bound_exceeded_is_rejected`, `tampered_round_coefficient_rejected`, `transcript_label_mismatch_fails` |
+| Batched | Done | `batched_prove_verify`, `batched_single_claim_matches_unbatched`, `batched_three_claims`, `batched_wrong_claim_fails`, `batched_different_num_vars`, `batched_mixed_degree_and_num_vars`, `batched_challenge_slicing` |
+| Streaming | Done | `streaming_prover_produces_correct_rounds`, `streaming_prover_multi_chunk` |
+| Edge cases | Partial | `zero_claimed_sum`, `degree_3_triple_product` |
+| Multi-backend | Done | `keccak_transcript_prove_verify`, `blake2b_and_keccak_both_verify` (integration) |
+| Property-based (proptest) | Not started | |
+| Fuzz targets | Not started | |
+| Concrete test vectors | Not started | |
+
+**Remaining work:**
+- Property-based tests with `proptest`
+- Fuzz target (`fuzz_verifier_soundness`)
+- Hardcoded concrete test vectors (regression)
+
+**Note:** The code samples above reference `SumcheckInstanceProver` — the actual trait is `SumcheckWitness`. `SumcheckClaim` fields and `SumcheckProver::prove` signature may also differ. Update samples if using this task as a reference.
+
 **Acceptance:**
 
 - Completeness tested for 1,2,5,10-variable polynomials

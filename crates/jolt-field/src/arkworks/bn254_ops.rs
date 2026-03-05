@@ -1,8 +1,8 @@
 //! BN254 Fr field arithmetic operations.
 //!
-//! Standalone implementations of field arithmetic that the arkworks fork added to
-//! `Fp` and `MontConfig`. When upstream arkworks v0.5.0 is adopted, these functions
-//! replace the fork's `Fp::mul_u64`, `Fp::from_barrett_reduce`, etc.
+//! Low-level field arithmetic (Montgomery/Barrett reduction, scalar multiplication,
+//! precomputed lookup tables) implemented directly over arkworks' `Fp` representation.
+//! These are used by the `Fr` newtype and the challenge multiplication paths.
 
 use ark_bn254::FrConfig;
 use ark_ff::{BigInt, Fp, MontConfig};
@@ -548,7 +548,7 @@ pub fn from_bigint_unchecked(r: BigInt<N>) -> Fr {
 
 /// Multiply `BigInt<N>` by `u64` and accumulate into `BigInt<5>`.
 #[inline(always)]
-pub fn mul_u64_accumulate(acc: &mut BigInt<5>, a: &BigInt<N>, b: u64) {
+pub(crate) fn mul_u64_accumulate(acc: &mut BigInt<5>, a: &BigInt<N>, b: u64) {
     let mut carry = 0u64;
     for i in 0..N {
         acc.0[i] = mac_with_carry(acc.0[i], a.0[i], b, &mut carry);

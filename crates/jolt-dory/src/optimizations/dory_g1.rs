@@ -4,7 +4,7 @@ use rayon::prelude::*;
 use super::decomp_2d::{decompose_scalar_2d, glv_endomorphism};
 use super::glv_two::shamir_glv_mul_2d;
 
-/// v[i] += scalar * generators[i], using 2D GLV decomposition.
+/// `v[i] += scalar * generators[i]`, using 2D GLV decomposition.
 pub fn vector_add_scalar_mul_g1_online(
     v: &mut [G1Projective],
     generators: &[G1Projective],
@@ -21,7 +21,7 @@ pub fn vector_add_scalar_mul_g1_online(
         });
 }
 
-/// v[i] = scalar * v[i] + gamma[i], using 2D GLV decomposition.
+/// `v[i] = scalar * v[i] + gamma[i]`, using 2D GLV decomposition.
 pub fn vector_scalar_mul_add_gamma_g1_online(
     v: &mut [G1Projective],
     scalar: Fr,

@@ -68,10 +68,22 @@ pub trait Field:
     /// Multiplicative inverse, or `None` for the zero element.
     fn inverse(&self) -> Option<Self>;
 
-    fn from_bool(val: bool) -> Self;
-    fn from_u8(n: u8) -> Self;
-    fn from_u16(n: u16) -> Self;
-    fn from_u32(n: u32) -> Self;
+    fn from_bool(val: bool) -> Self {
+        if val {
+            Self::one()
+        } else {
+            Self::zero()
+        }
+    }
+    fn from_u8(n: u8) -> Self {
+        Self::from_u64(n as u64)
+    }
+    fn from_u16(n: u16) -> Self {
+        Self::from_u64(n as u64)
+    }
+    fn from_u32(n: u32) -> Self {
+        Self::from_u64(n as u64)
+    }
     fn from_u64(n: u64) -> Self;
     /// Maps a signed integer to its canonical field representative: negative
     /// values become `p - |val|`.
@@ -116,7 +128,8 @@ pub trait Field:
 /// before reduction. This trait gives access to those raw limbs so that
 /// [`FMAdd`](crate::FMAdd) accumulators can defer reduction across many
 /// multiply-add steps, amortizing the cost.
-pub trait UnreducedOps: Field {
+#[allow(dead_code)]
+pub(crate) trait UnreducedOps: Field {
     /// Direct reference to the inner Montgomery-form limbs as `BigInt<4>`.
     fn as_unreduced_ref(&self) -> &BigInt<4>;
 
@@ -138,7 +151,8 @@ pub trait UnreducedOps: Field {
 /// - **Barrett reduction** — uses a precomputed approximate inverse of `p`;
 ///   faster when the accumulator has more than `2N` limbs because it avoids
 ///   the sequential carry chain of REDC.
-pub trait ReductionOps: UnreducedOps {
+#[allow(dead_code)]
+pub(crate) trait ReductionOps: UnreducedOps {
     /// Montgomery constant $R = 2^{256} \mod p$ (in Montgomery form).
     const MONTGOMERY_R: Self;
     /// Montgomery constant $R^2 = 2^{512} \mod p$ (in Montgomery form).

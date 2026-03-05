@@ -61,6 +61,17 @@ Create `fuzz/` directory with `cargo-fuzz` targets:
 - Hardcoded 2-variable polynomial: $f(x_1, x_2) = 1 + 2x_1 + 3x_2 + 4x_1 x_2$ (evaluations: [1, 3, 4, 10]). Verify evaluation at specific points.
 - Hardcoded 3-variable eq polynomial: verify all 8 evaluations match the product formula.
 
+### Current Progress
+
+| Category | Status | Notes |
+|----------|--------|-------|
+| Property-based tests (proptest) | Not started | |
+| Edge case tests | Partial | Some covered by inline unit tests |
+| Fuzz targets | 1 of 5 done | `fuzz/fuzz_targets/dense_poly_ops.rs` exists |
+| Regression / known-value tests | Not started | |
+
+**Note:** The code samples above reference outdated types. `CompactPolynomial` is now `Polynomial<T>` with `T: Into<F>`. `SmallScalar` trait was removed. `DensePolynomial` is a type alias for `Polynomial<F>`. Update samples if using this task as a reference.
+
 **Acceptance:**
 
 - At least 10 proptest properties across the polynomial types

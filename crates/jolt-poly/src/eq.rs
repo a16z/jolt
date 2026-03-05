@@ -107,6 +107,20 @@ impl<F: Field> EqPolynomial<F> {
     }
 }
 
+impl<F: Field> crate::MultilinearEvaluation<F> for EqPolynomial<F> {
+    fn num_vars(&self) -> usize {
+        self.point.len()
+    }
+
+    fn len(&self) -> usize {
+        1 << self.point.len()
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        EqPolynomial::evaluate(self, point)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,5 +251,40 @@ mod tests {
         let table_p = eq_p.evaluations();
         let via_tables: Fr = table.iter().zip(table_p.iter()).map(|(&a, &b)| a * b).sum();
         assert_eq!(direct, via_tables);
+    }
+
+    #[test]
+    fn eq_at_boolean_point_is_one() {
+        // eq(b, b) = 1 for any Boolean vector b ∈ {0,1}^n
+        for n in 1..=5 {
+            for idx in 0..(1 << n) {
+                let bits = index_to_bits(idx, n);
+                let eq = EqPolynomial::new(bits.clone());
+                assert_eq!(
+                    eq.evaluate(&bits),
+                    Fr::one(),
+                    "eq(b, b) != 1 for n={n}, idx={idx}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn eq_at_distinct_boolean_points_is_zero() {
+        let n = 3;
+        for i in 0..(1 << n) {
+            for j in 0..(1 << n) {
+                if i == j {
+                    continue;
+                }
+                let bi = index_to_bits(i, n);
+                let bj = index_to_bits(j, n);
+                let eq = EqPolynomial::new(bi);
+                assert!(
+                    eq.evaluate(&bj).is_zero(),
+                    "eq(b_i, b_j) != 0 for i={i}, j={j}"
+                );
+            }
+        }
     }
 }

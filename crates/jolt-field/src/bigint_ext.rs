@@ -1,8 +1,8 @@
-//! Extension methods for `ark_ff::BigInt<N>` that were previously in the arkworks fork.
+//! Extension methods for `ark_ff::BigInt<N>`.
 //!
-//! These operations — truncated multiplication, truncated addition/subtraction,
-//! zero-extension, and low-limb multiplication — are used extensively by the
-//! signed big integer types and unreduced field arithmetic.
+//! Truncated-width arithmetic (multiplication, addition/subtraction,
+//! zero-extension, low-limb multiplication) used internally by the
+//! unreduced field accumulation paths that operate on raw `BigInt` limbs.
 
 use ark_ff::BigInt;
 
@@ -10,7 +10,8 @@ use ark_ff::BigInt;
 ///
 /// All "trunc" operations compute an exact result and then keep only the
 /// low `P` limbs, silently discarding higher limbs.
-pub trait BigIntExt<const N: usize> {
+#[allow(dead_code)]
+pub(crate) trait BigIntExt<const N: usize> {
     /// Truncated multiplication: compute `self * other` and keep the low `P` limbs.
     fn mul_trunc<const M: usize, const P: usize>(&self, other: &BigInt<M>) -> BigInt<P>;
 

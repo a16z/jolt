@@ -30,6 +30,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Check crate READMEs exist
+        run: |
+          missing=()
+          for crate in jolt-field jolt-poly jolt-sumcheck jolt-openings jolt-spartan jolt-instructions jolt-transcript jolt-dory jolt-zkvm; do
+            if [ ! -f "crates/$crate/README.md" ]; then
+              missing+=("crates/$crate/README.md")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing crate READMEs: ${missing[*]}"
+            exit 1
+          fi
       - name: Check docs for crates/
         run: |
           cargo doc --no-deps --document-private-items \
@@ -92,6 +104,24 @@ jobs:
       - name: Build Wasm
         working-directory: ./jolt-core
         run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --target wasm32-unknown-unknown
+
+  test-crates:
+    runs-on: ubuntu-latest
+    name: Test modular crates
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@nextest
+      - name: Run modular crate tests
+        run: >
+          cargo nextest run --cargo-quiet
+          -p jolt-field
+          -p jolt-transcript
+          -p jolt-poly
+          -p jolt-openings
+          -p jolt-sumcheck
+          -p jolt-spartan
+          -p jolt-dory
 
   test-core:
     runs-on: ubuntu-latest

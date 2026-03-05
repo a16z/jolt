@@ -79,6 +79,50 @@ if (body.length < 50) {
 }
 
 // ---------------------------------------------------------------------------
+// Crate README freshness
+// ---------------------------------------------------------------------------
+const crateNames = [
+  "jolt-field",
+  "jolt-poly",
+  "jolt-sumcheck",
+  "jolt-openings",
+  "jolt-spartan",
+  "jolt-instructions",
+  "jolt-transcript",
+  "jolt-dory",
+  "jolt-zkvm",
+];
+
+const allChanged = [
+  ...danger.git.modified_files,
+  ...danger.git.created_files,
+  ...danger.git.deleted_files,
+];
+
+const cratesWithSrcChanges = crateNames.filter((name) =>
+  allChanged.some(
+    (f) =>
+      f.startsWith(`crates/${name}/src/`) || f === `crates/${name}/Cargo.toml`
+  )
+);
+
+const cratesWithReadmeUpdates = crateNames.filter((name) =>
+  allChanged.includes(`crates/${name}/README.md`)
+);
+
+const staleReadmes = cratesWithSrcChanges.filter(
+  (name) => !cratesWithReadmeUpdates.includes(name)
+);
+
+if (staleReadmes.length > 0) {
+  warn(
+    "These crates had source changes but their `README.md` was not updated:\n" +
+      staleReadmes.map((n) => `- \`crates/${n}/README.md\``).join("\n") +
+      "\n\nIf the public API changed, please update the README."
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CI / workflow changes
 // ---------------------------------------------------------------------------
 const workflowChanges = danger.git.modified_files.filter((f) =>

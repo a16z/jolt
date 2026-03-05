@@ -2891,6 +2891,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-crypto"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "bincode",
+ "jolt-field",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jolt-dory"
 version = "0.1.0"
 dependencies = [
@@ -2924,6 +2941,7 @@ dependencies = [
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
+ "criterion",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -3025,11 +3043,13 @@ dependencies = [
 name = "jolt-openings"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "jolt-field",
  "jolt-poly",
  "jolt-transcript",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -3047,8 +3067,8 @@ dependencies = [
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
- "ark-bn254",
  "bincode",
+ "criterion",
  "jolt-field",
  "num-traits",
  "rand 0.8.5",
@@ -3088,7 +3108,6 @@ dependencies = [
 name = "jolt-spartan"
 version = "0.1.0"
 dependencies = [
- "ark-bn254",
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
@@ -3105,6 +3124,7 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "jolt-field",
  "jolt-poly",
  "jolt-transcript",
@@ -3121,9 +3141,11 @@ name = "jolt-transcript"
 version = "0.1.0"
 dependencies = [
  "blake2",
+ "criterion",
  "digest 0.10.7",
  "hex",
  "jolt-field",
+ "num-traits",
  "sha3",
 ]
 

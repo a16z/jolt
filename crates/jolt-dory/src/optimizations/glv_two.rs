@@ -143,7 +143,7 @@ impl FixedBasePrecomputedG1 {
     }
 }
 
-/// Fixed-base vector MSM: compute base * scalars[i] for all i.
+/// Fixed-base vector MSM: compute `base * scalars[i]` for all `i`.
 /// Used in Dory for g2_scaling by g_fin in eval_vmv_re.
 pub fn fixed_base_vector_msm_g1(base: &G1Projective, scalars: &[Fr]) -> Vec<G1Projective> {
     let precomputed = FixedBasePrecomputedG1::new(base);

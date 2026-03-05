@@ -182,7 +182,7 @@ jobs:
             You are a documentation maintainer for the Jolt zkVM project.
             The Jolt book lives in `book/src/` and is an mdBook deployed to the project website.
 
-            Your job: check if this PR introduces changes that should be reflected in the book.
+            Your job: check if this PR introduces changes that should be reflected in the book or crate READMEs.
 
             Book structure:
             - `book/src/usage/` — User-facing guides (quickstart, guests/hosts, profiling, troubleshooting)
@@ -194,14 +194,19 @@ jobs:
             - `book/src/how/blindfold.md` — BlindFold ZK protocol
             - `book/src/roadmap/` — Roadmap items
 
+            Crate READMEs:
+            - Each crate in `crates/` has a `README.md` documenting its public API, feature flags, and purpose.
+            - Crates: jolt-field, jolt-poly, jolt-sumcheck, jolt-openings, jolt-spartan, jolt-instructions, jolt-transcript, jolt-dory, jolt-zkvm
+
             Check for:
             1. **API changes**: If public SDK APIs changed, does `usage/` need updating?
             2. **Architecture changes**: If the prover pipeline, polynomial types, or commitment scheme changed, do the architecture docs reflect it?
             3. **New features**: If a new feature was added, should there be a new book section?
             4. **Removed features**: If something was removed, are there stale references in the book?
             5. **Renamed types/functions**: Are there references to old names in the book?
+            6. **Crate README freshness**: If a crate's public API, feature flags, or types changed, does its `crates/<name>/README.md` reflect the changes? Flag any crate whose source was modified but whose README was not updated.
 
-            If the PR doesn't affect anything documented in the book, simply say "No book updates needed."
+            If the PR doesn't affect anything documented in the book or READMEs, simply say "No documentation updates needed."
             Do not review code quality, security, or performance.
 
   quality-review:
@@ -240,5 +245,6 @@ jobs:
             6. **Test quality**: Are tests testing the right thing? Are edge cases covered? Are test names descriptive?
             7. **Dead code**: Unused functions, types, imports, or feature-gated code that's never enabled
             8. **Import style**: Prefer `use` imports over fully qualified paths (e.g., `use std::collections::HashMap; HashMap::new()` not `std::collections::HashMap::new()`). Exception: canonical `std` paths like `std::mem::transmute`, `std::ptr`, or one-off uses where an import would be noise.
+            9. **Trait design**: Trait methods must not return concrete types — use associated types so implementations can choose their own return types. Traits that only have associated functions and no `self` receivers are likely unit-struct namespaces and should be merged into a related type. Constructors should not delegate to each other (e.g., `new()` calling `from_x()`) — pick one canonical constructor.
 
             Do not comment on security, cryptographic correctness, performance, or documentation.

@@ -176,7 +176,7 @@ mod tests {
     use super::*;
     use jolt_field::Field;
     use jolt_openings::CommitmentScheme;
-    use jolt_poly::{DensePolynomial, MultilinearPolynomial};
+    use jolt_poly::{Polynomial, MultilinearPolynomial};
     use jolt_transcript::Transcript;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -189,7 +189,7 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(400);
 
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
-        let poly = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let commitment = crate::DoryScheme::commit(&poly, &prover_setup);
 
         let serialized = serde_json::to_vec(&commitment).expect("serialize commitment");
@@ -212,7 +212,7 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(401);
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
 
-        let poly = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let eval = MultilinearPolynomial::evaluate(&poly, &point);
         let commitment = crate::DoryScheme::commit(&poly, &prover_setup);
@@ -243,7 +243,7 @@ mod tests {
 
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
 
-        let poly = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let eval = MultilinearPolynomial::evaluate(&poly, &point);
 

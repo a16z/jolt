@@ -3,7 +3,6 @@
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 
-use ark_ff::BigInt;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
     Write,
@@ -12,6 +11,7 @@ use core::cmp::Ordering;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use super::{SignedBigInt, S128, S64};
+use crate::Limbs;
 
 /// Compact signed big-integer with width `N * 64 + 32` bits.
 ///
@@ -130,6 +130,13 @@ impl<const N: usize> SignedBigIntHi32<N> {
     fn sub_assign_in_place(&mut self, rhs: &Self) {
         let neg_rhs = -*rhs;
         self.add_assign_in_place(&neg_rhs);
+    }
+
+    fn mul_assign_in_place(&mut self, rhs: &Self) {
+        let (lo, hi) = self.mul_magnitudes(rhs);
+        self.is_positive = self.is_positive == rhs.is_positive;
+        self.magnitude_lo = lo;
+        self.magnitude_hi = hi;
     }
 
     fn mul_magnitudes(&self, other: &Self) -> ([u64; N], u32) {
@@ -254,10 +261,10 @@ impl<const N: usize> SignedBigIntHi32<N> {
         (magnitude_lo, hi2, final_borrow)
     }
 
-    /// Return the unsigned magnitude as a `BigInt<NPLUS1>`.
+    /// Return the unsigned magnitude as `Limbs<NPLUS1>`.
     /// Debug-asserts `NPLUS1 == N + 1`.
     #[inline]
-    pub fn magnitude_as_bigint_nplus1<const NPLUS1: usize>(&self) -> BigInt<NPLUS1> {
+    pub fn magnitude_as_limbs_nplus1<const NPLUS1: usize>(&self) -> Limbs<NPLUS1> {
         debug_assert!(
             NPLUS1 == N + 1,
             "NPLUS1 must be N+1 for SignedBigIntHi32 magnitude pack"
@@ -267,7 +274,7 @@ impl<const N: usize> SignedBigIntHi32<N> {
             limbs[..N].copy_from_slice(&self.magnitude_lo);
         }
         limbs[N] = self.magnitude_hi as u64;
-        BigInt::<NPLUS1>(limbs)
+        Limbs::new(limbs)
     }
 
     #[inline]
@@ -305,8 +312,7 @@ impl<const N: usize> SignedBigIntHi32<N> {
             limbs[..N].copy_from_slice(self.magnitude_lo());
         }
         limbs[N] = self.magnitude_hi() as u64;
-        let mag = BigInt::<NPLUS1>(limbs);
-        SignedBigInt::from_bigint(mag, self.is_positive())
+        SignedBigInt::from_limbs(Limbs::new(limbs), self.is_positive())
     }
 }
 
@@ -324,127 +330,11 @@ impl<const N: usize> Neg for &SignedBigIntHi32<N> {
     }
 }
 
-impl<const N: usize> Add for SignedBigIntHi32<N> {
-    type Output = Self;
-    fn add(mut self, rhs: Self) -> Self::Output {
-        self.add_assign_in_place(&rhs);
-        self
-    }
-}
-
-impl<const N: usize> AddAssign for SignedBigIntHi32<N> {
-    fn add_assign(&mut self, rhs: Self) {
-        self.add_assign_in_place(&rhs);
-    }
-}
-
-impl<const N: usize> Sub for SignedBigIntHi32<N> {
-    type Output = Self;
-    fn sub(mut self, rhs: Self) -> Self::Output {
-        self.sub_assign_in_place(&rhs);
-        self
-    }
-}
-
-impl<const N: usize> SubAssign for SignedBigIntHi32<N> {
-    fn sub_assign(&mut self, rhs: Self) {
-        self.sub_assign_in_place(&rhs);
-    }
-}
-
-impl<const N: usize> Mul for SignedBigIntHi32<N> {
-    type Output = Self;
-    fn mul(self, rhs: Self) -> Self::Output {
-        let (lo, hi) = self.mul_magnitudes(&rhs);
-        let is_positive = self.is_positive == rhs.is_positive;
-        Self::new(lo, hi, is_positive)
-    }
-}
-
-impl<const N: usize> MulAssign for SignedBigIntHi32<N> {
-    fn mul_assign(&mut self, rhs: Self) {
-        *self = *self * rhs;
-    }
-}
-
-impl<const N: usize> Add<&SignedBigIntHi32<N>> for SignedBigIntHi32<N> {
-    type Output = SignedBigIntHi32<N>;
-    #[inline]
-    fn add(mut self, rhs: &SignedBigIntHi32<N>) -> Self::Output {
-        self.add_assign_in_place(rhs);
-        self
-    }
-}
-
-impl<const N: usize> Sub<&SignedBigIntHi32<N>> for SignedBigIntHi32<N> {
-    type Output = SignedBigIntHi32<N>;
-    #[inline]
-    fn sub(mut self, rhs: &SignedBigIntHi32<N>) -> Self::Output {
-        self.sub_assign_in_place(rhs);
-        self
-    }
-}
-
-impl<const N: usize> Mul<&SignedBigIntHi32<N>> for SignedBigIntHi32<N> {
-    type Output = SignedBigIntHi32<N>;
-    #[inline]
-    fn mul(self, rhs: &SignedBigIntHi32<N>) -> Self::Output {
-        let (lo, hi) = self.mul_magnitudes(rhs);
-        let is_positive = self.is_positive == rhs.is_positive;
-        Self::new(lo, hi, is_positive)
-    }
-}
-
-impl<const N: usize> AddAssign<&SignedBigIntHi32<N>> for SignedBigIntHi32<N> {
-    #[inline]
-    fn add_assign(&mut self, rhs: &SignedBigIntHi32<N>) {
-        self.add_assign_in_place(rhs);
-    }
-}
-
-impl<const N: usize> SubAssign<&SignedBigIntHi32<N>> for SignedBigIntHi32<N> {
-    #[inline]
-    fn sub_assign(&mut self, rhs: &SignedBigIntHi32<N>) {
-        self.sub_assign_in_place(rhs);
-    }
-}
-
-impl<const N: usize> MulAssign<&SignedBigIntHi32<N>> for SignedBigIntHi32<N> {
-    #[inline]
-    fn mul_assign(&mut self, rhs: &SignedBigIntHi32<N>) {
-        *self = *self * rhs;
-    }
-}
-
-impl<const N: usize> Add for &SignedBigIntHi32<N> {
-    type Output = SignedBigIntHi32<N>;
-    #[inline]
-    fn add(self, rhs: Self) -> Self::Output {
-        let mut out = *self;
-        out.add_assign_in_place(rhs);
-        out
-    }
-}
-
-impl<const N: usize> Sub for &SignedBigIntHi32<N> {
-    type Output = SignedBigIntHi32<N>;
-    #[inline]
-    fn sub(self, rhs: Self) -> Self::Output {
-        let mut out = *self;
-        out.sub_assign_in_place(rhs);
-        out
-    }
-}
-
-impl<const N: usize> Mul for &SignedBigIntHi32<N> {
-    type Output = SignedBigIntHi32<N>;
-    #[inline]
-    fn mul(self, rhs: Self) -> Self::Output {
-        let (lo, hi) = self.mul_magnitudes(rhs);
-        let is_positive = self.is_positive == rhs.is_positive;
-        SignedBigIntHi32::new(lo, hi, is_positive)
-    }
-}
+super::impl_signed_assign_ops!(SignedBigIntHi32 {
+    Add, AddAssign, add, add_assign => add_assign_in_place;
+    Sub, SubAssign, sub, sub_assign => sub_assign_in_place;
+    Mul, MulAssign, mul, mul_assign => mul_assign_in_place;
+});
 
 impl<const N: usize> PartialOrd for SignedBigIntHi32<N> {
     #[inline]
@@ -590,21 +480,21 @@ impl From<S128> for S160 {
     }
 }
 
-impl<const N: usize> From<S224> for BigInt<N> {
+impl<const N: usize> From<S224> for Limbs<N> {
     #[inline]
     #[allow(unsafe_code)]
     fn from(val: S224) -> Self {
         assert!(
             N == 4,
-            "FromS224 for BigInt<N> only supports N=4, got N={N}"
+            "From<S224> for Limbs<N> only supports N=4, got N={N}"
         );
         let lo = val.magnitude_lo();
         let hi = val.magnitude_hi() as u64;
-        let bigint4 = BigInt::<4>([lo[0], lo[1], lo[2], hi]);
+        let limbs4 = Limbs::<4>([lo[0], lo[1], lo[2], hi]);
 
-        // SAFETY: BigInt<4> and BigInt<N> have identical layout when N=4
+        // SAFETY: Limbs<4> and Limbs<N> have identical layout when N=4
         // (asserted above).
-        unsafe { (&raw const bigint4).cast::<BigInt<N>>().read() }
+        unsafe { (&raw const limbs4).cast::<Limbs<N>>().read() }
     }
 }
 

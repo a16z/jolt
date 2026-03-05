@@ -9,7 +9,8 @@
 use crate::Field;
 
 /// Fused multiply-add: `self += left * right` without intermediate reduction.
-pub trait FMAdd<Left, Right>: Sized {
+#[allow(dead_code)]
+pub(crate) trait FMAdd<Left, Right>: Sized {
     fn fmadd(&mut self, left: &Left, right: &Right);
 }
 
@@ -17,11 +18,13 @@ pub trait FMAdd<Left, Right>: Sized {
 ///
 /// Barrett reduction uses a precomputed approximate inverse of the modulus
 /// and is faster than Montgomery REDC when the accumulator exceeds `2N` limbs.
-pub trait BarrettReduce<F: Field> {
+#[allow(dead_code)]
+pub(crate) trait BarrettReduce<F: Field> {
     fn barrett_reduce(&self) -> F;
 }
 
 /// Finalizes an unreduced accumulator via Montgomery REDC.
-pub trait MontgomeryReduce<F: Field> {
+#[allow(dead_code)]
+pub(crate) trait MontgomeryReduce<F: Field> {
     fn montgomery_reduce(&self) -> F;
 }

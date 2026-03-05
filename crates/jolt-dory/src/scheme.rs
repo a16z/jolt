@@ -12,7 +12,6 @@ use dory::primitives::arithmetic::{
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use jolt_field::Fr;
 use jolt_openings::{CommitmentScheme, HomomorphicCommitmentScheme, OpeningsError};
-use jolt_poly::MultilinearPolynomial;
 use jolt_transcript::Transcript;
 
 use crate::params::DoryParams;
@@ -87,14 +86,13 @@ impl CommitmentScheme for DoryScheme {
     /// tier-1 computes per-row MSMs against G1 generators, then tier-2
     /// pairs those row commitments with G2 generators into a single GT element.
     fn commit(
-        poly: &impl MultilinearPolynomial<Fr>,
+        evaluations: &[Fr],
         setup: &Self::ProverSetup,
     ) -> Self::Commitment {
-        let num_vars = poly.num_vars();
+        let num_vars = evaluations.len().trailing_zeros() as usize;
         let sigma = num_vars.div_ceil(2);
 
-        let evals = poly.evaluations();
-        let row_commitments = commit_rows_msm(&evals, sigma, &setup.0);
+        let row_commitments = commit_rows_msm(evaluations, sigma, &setup.0);
 
         let g2_bases = &setup.0.g2_vec[..row_commitments.len()];
         let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
@@ -107,14 +105,14 @@ impl CommitmentScheme for DoryScheme {
     /// The evaluation point is reversed before passing to `dory-pcs` because
     /// Jolt uses MSB-first variable ordering while `dory-pcs` uses LSB-first.
     fn prove(
-        poly: &impl MultilinearPolynomial<Fr>,
+        evaluations: &[Fr],
         point: &[Fr],
         _eval: Fr,
         setup: &Self::ProverSetup,
         transcript: &mut impl Transcript,
     ) -> Self::Proof {
-        let wrapped = DoryPolyAdapter::from_poly(poly);
-        let num_vars = poly.num_vars();
+        let num_vars = point.len();
+        let wrapped = DoryPolyAdapter::from_evals(evaluations, num_vars);
         let sigma = num_vars.div_ceil(2);
         let nu = num_vars - sigma;
 
@@ -195,20 +193,22 @@ impl HomomorphicCommitmentScheme for DoryScheme {
 
     /// Produces one independent opening proof per polynomial.
     fn batch_prove(
-        polynomials: &[&dyn MultilinearPolynomial<Fr>],
+        evaluation_tables: &[&[Fr]],
         points: &[Vec<Fr>],
         evals: &[Fr],
         setup: &Self::ProverSetup,
         transcript: &mut impl Transcript,
     ) -> Self::BatchedProof {
-        assert_eq!(polynomials.len(), points.len());
-        assert_eq!(polynomials.len(), evals.len());
+        assert_eq!(evaluation_tables.len(), points.len());
+        assert_eq!(evaluation_tables.len(), evals.len());
 
-        let proofs: Vec<_> = polynomials
+        let proofs: Vec<_> = evaluation_tables
             .iter()
             .zip(points.iter())
             .zip(evals.iter())
-            .map(|((poly, point), eval)| prove_inner(*poly, point, *eval, setup, transcript))
+            .map(|((eval_table, point), eval)| {
+                prove_inner(eval_table, point, *eval, setup, transcript)
+            })
             .collect();
 
         DoryBatchedProof(proofs)
@@ -240,17 +240,15 @@ impl HomomorphicCommitmentScheme for DoryScheme {
     }
 }
 
-/// Internal prove implementation that works with `&dyn MultilinearPolynomial<Fr>`,
-/// needed by `batch_prove` which receives trait objects.
 fn prove_inner(
-    poly: &dyn MultilinearPolynomial<Fr>,
+    evaluations: &[Fr],
     point: &[Fr],
     eval: Fr,
     setup: &DoryProverSetup,
     transcript: &mut impl Transcript,
 ) -> DoryProof {
-    let wrapped = DoryPolyAdapter::from_dyn(poly);
-    let num_vars = poly.num_vars();
+    let num_vars = point.len();
+    let wrapped = DoryPolyAdapter::from_evals(evaluations, num_vars);
     let sigma = num_vars.div_ceil(2);
     let nu = num_vars - sigma;
 
@@ -309,17 +307,10 @@ struct DoryPolyAdapter {
 }
 
 impl DoryPolyAdapter {
-    fn from_poly(poly: &impl MultilinearPolynomial<Fr>) -> Self {
+    fn from_evals(evaluations: &[Fr], num_vars: usize) -> Self {
         Self {
-            evals: poly.evaluations().to_vec(),
-            num_vars: poly.num_vars(),
-        }
-    }
-
-    fn from_dyn(poly: &dyn MultilinearPolynomial<Fr>) -> Self {
-        Self {
-            evals: poly.evaluations().to_vec(),
-            num_vars: poly.num_vars(),
+            evals: evaluations.to_vec(),
+            num_vars,
         }
     }
 }
@@ -331,8 +322,8 @@ impl DoryPolynomial<InnerFr> for DoryPolyAdapter {
 
     fn evaluate(&self, point: &[InnerFr]) -> InnerFr {
         let native_point: Vec<Fr> = point.iter().map(ark_to_jolt_fr).collect();
-        let dense = jolt_poly::DensePolynomial::new(self.evals.clone());
-        let result = MultilinearPolynomial::evaluate(&dense, &native_point);
+        let dense = jolt_poly::Polynomial::new(self.evals.clone());
+        let result = dense.evaluate(&native_point);
         jolt_fr_to_ark(&result)
     }
 
@@ -395,7 +386,7 @@ mod tests {
     use super::*;
     use ark_ff::One;
     use jolt_field::Field;
-    use jolt_poly::DensePolynomial;
+    use jolt_poly::Polynomial;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -419,14 +410,14 @@ mod tests {
         let prover_setup = DoryScheme::setup_prover(num_vars);
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
 
-        let poly = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-        let eval = MultilinearPolynomial::evaluate(&poly, &point);
+        let eval = poly.evaluate(&point);
 
-        let commitment = DoryScheme::commit(&poly, &prover_setup);
+        let commitment = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
-        let proof = DoryScheme::prove(&poly, &point, eval, &prover_setup, &mut prove_transcript);
+        let proof = DoryScheme::prove(poly.evaluations(), &point, eval, &prover_setup, &mut prove_transcript);
 
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
         let result = DoryScheme::verify(
@@ -449,8 +440,8 @@ mod tests {
         let prover_setup = DoryScheme::setup_prover(num_vars);
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
 
-        let polys: Vec<DensePolynomial<Fr>> = (0..num_polys)
-            .map(|_| DensePolynomial::random(num_vars, &mut rng))
+        let polys: Vec<Polynomial<Fr>> = (0..num_polys)
+            .map(|_| Polynomial::random(num_vars, &mut rng))
             .collect();
 
         let points: Vec<Vec<Fr>> = (0..num_polys)
@@ -460,22 +451,19 @@ mod tests {
         let evals: Vec<Fr> = polys
             .iter()
             .zip(points.iter())
-            .map(|(p, pt)| MultilinearPolynomial::evaluate(p, pt))
+            .map(|(p, pt)| p.evaluate(pt))
             .collect();
 
         let commitments: Vec<DoryCommitment> = polys
             .iter()
-            .map(|p| DoryScheme::commit(p, &prover_setup))
+            .map(|p| DoryScheme::commit(p.evaluations(), &prover_setup))
             .collect();
 
-        let poly_refs: Vec<&dyn MultilinearPolynomial<Fr>> = polys
-            .iter()
-            .map(|p| p as &dyn MultilinearPolynomial<Fr>)
-            .collect();
+        let eval_refs: Vec<&[Fr]> = polys.iter().map(|p| p.evaluations()).collect();
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"batch-test");
         let batched_proof = DoryScheme::batch_prove(
-            &poly_refs,
+            &eval_refs,
             &points,
             &evals,
             &prover_setup,
@@ -505,8 +493,8 @@ mod tests {
         let prover_setup = DoryScheme::setup_prover(num_vars);
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
 
-        let polys: Vec<DensePolynomial<Fr>> = (0..num_polys)
-            .map(|_| DensePolynomial::random(num_vars, &mut rng))
+        let polys: Vec<Polynomial<Fr>> = (0..num_polys)
+            .map(|_| Polynomial::random(num_vars, &mut rng))
             .collect();
 
         let points: Vec<Vec<Fr>> = (0..num_polys)
@@ -516,22 +504,19 @@ mod tests {
         let evals: Vec<Fr> = polys
             .iter()
             .zip(points.iter())
-            .map(|(p, pt)| MultilinearPolynomial::evaluate(p, pt))
+            .map(|(p, pt)| p.evaluate(pt))
             .collect();
 
         let commitments: Vec<DoryCommitment> = polys
             .iter()
-            .map(|p| DoryScheme::commit(p, &prover_setup))
+            .map(|p| DoryScheme::commit(p.evaluations(), &prover_setup))
             .collect();
 
-        let poly_refs: Vec<&dyn MultilinearPolynomial<Fr>> = polys
-            .iter()
-            .map(|p| p as &dyn MultilinearPolynomial<Fr>)
-            .collect();
+        let eval_refs: Vec<&[Fr]> = polys.iter().map(|p| p.evaluations()).collect();
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"batch-bad");
         let batched_proof = DoryScheme::batch_prove(
-            &poly_refs,
+            &eval_refs,
             &points,
             &evals,
             &prover_setup,
@@ -564,8 +549,8 @@ mod tests {
 
         let prover_setup = DoryScheme::setup_prover(num_vars);
 
-        let poly_a = DensePolynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_b = DensePolynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
 
         let commit_a = DoryScheme::commit(&poly_a, &prover_setup);
         let commit_b = DoryScheme::commit(&poly_b, &prover_setup);
@@ -577,7 +562,7 @@ mod tests {
             .zip(poly_b.evaluations().iter())
             .map(|(a, b)| *a + *b)
             .collect();
-        let poly_sum = DensePolynomial::new(sum_evals);
+        let poly_sum = Polynomial::new(sum_evals);
         let commit_sum_direct = DoryScheme::commit(&poly_sum, &prover_setup);
 
         // Combine commitments with scalars [1, 1]
@@ -588,5 +573,56 @@ mod tests {
             commit_sum_direct, combined,
             "combine_commitments([1,1]) must match commitment to sum"
         );
+    }
+
+    #[test]
+    fn batch_prove_single_matches_prove() {
+        let num_vars = 3;
+        let mut rng = ChaCha20Rng::seed_from_u64(500);
+
+        let prover_setup = DoryScheme::setup_prover(num_vars);
+        let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
+
+        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+        let eval = MultilinearPolynomial::evaluate(&poly, &point);
+        let commitment = DoryScheme::commit(&poly, &prover_setup);
+
+        // Single prove/verify
+        let mut pt_single = jolt_transcript::Blake2bTranscript::new(b"single");
+        let single_proof = DoryScheme::prove(&poly, &point, eval, &prover_setup, &mut pt_single);
+        let mut vt_single = jolt_transcript::Blake2bTranscript::new(b"single");
+        DoryScheme::verify(
+            &commitment,
+            &point,
+            eval,
+            &single_proof,
+            &verifier_setup,
+            &mut vt_single,
+        )
+        .expect("single verify should succeed");
+
+        // Batch prove/verify with one polynomial
+        let poly_refs: Vec<&dyn MultilinearPolynomial<Fr, Bound = jolt_poly::Polynomial<Fr>>> =
+            vec![&poly as &dyn MultilinearPolynomial<Fr, Bound = jolt_poly::Polynomial<Fr>>];
+        let mut pt_batch = jolt_transcript::Blake2bTranscript::new(b"batch-one");
+        let batched_proof = DoryScheme::batch_prove(
+            &poly_refs,
+            &[point.clone()],
+            &[eval],
+            &prover_setup,
+            &mut pt_batch,
+        );
+
+        let mut vt_batch = jolt_transcript::Blake2bTranscript::new(b"batch-one");
+        DoryScheme::batch_verify(
+            &[commitment],
+            &[point],
+            &[eval],
+            &batched_proof,
+            &verifier_setup,
+            &mut vt_batch,
+        )
+        .expect("batch-of-one verify should succeed");
     }
 }

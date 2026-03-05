@@ -207,6 +207,25 @@ rules:
         - "**/benches/**"
         - "**/examples/**"
 
+  - id: jolt-no-ark-dep-leak
+    message: >-
+      Arkworks (ark-*) dependencies are only allowed in jolt-field (the
+      arkworks backend) and jolt-dory (exempt: direct curve access). All
+      other crates must use jolt-field re-exports (e.g. `jolt_field::Fr`)
+      instead of importing ark-* crates directly.
+    severity: ERROR
+    languages: [generic]
+    metadata:
+      category: correctness
+      confidence: HIGH
+    pattern-regex: '^ark-\w+\s*='
+    paths:
+      include:
+        - "/crates/*/Cargo.toml"
+      exclude:
+        - "/crates/jolt-field/*"
+        - "/crates/jolt-dory/*"
+
   - id: jolt-prefer-fnv-hashmap
     message: >-
       `std::collections::HashMap` uses SipHash which is slower for small

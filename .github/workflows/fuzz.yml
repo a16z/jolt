@@ -1,0 +1,74 @@
+name: Fuzz modular crates
+
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: fuzz-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz-field:
+    runs-on: ubuntu-latest
+    name: Fuzz jolt-field
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz from_bytes (30s)
+        working-directory: crates/jolt-field
+        run: cargo +nightly fuzz run from_bytes -- -max_total_time=30
+      - name: Fuzz field_arith (30s)
+        working-directory: crates/jolt-field
+        run: cargo +nightly fuzz run field_arith -- -max_total_time=30
+
+  fuzz-transcript:
+    runs-on: ubuntu-latest
+    name: Fuzz jolt-transcript
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz transcript_no_panic (30s)
+        working-directory: crates/jolt-transcript
+        run: cargo +nightly fuzz run transcript_no_panic -- -max_total_time=30
+
+  fuzz-poly:
+    runs-on: ubuntu-latest
+    name: Fuzz jolt-poly
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz dense_poly_ops (30s)
+        working-directory: crates/jolt-poly
+        run: cargo +nightly fuzz run dense_poly_ops -- -max_total_time=30
+
+  fuzz-dory:
+    runs-on: ubuntu-latest
+    name: Fuzz jolt-dory
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz deser_commitment (30s)
+        working-directory: crates/jolt-dory
+        run: cargo +nightly fuzz run deser_commitment -- -max_total_time=30

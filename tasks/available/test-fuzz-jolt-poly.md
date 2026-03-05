@@ -355,6 +355,19 @@ mkdir -p fuzz/corpus/evaluate
 echo -n "seed_input_1" > fuzz/corpus/dense_new/seed1
 ```
 
+### Current Progress
+
+| Fuzz target | Status | Notes |
+|------------|--------|-------|
+| `dense_poly_ops.rs` | Done | Exists at `fuzz/fuzz_targets/dense_poly_ops.rs` (covers construction, evaluation, and bind operations) |
+| `evaluate.rs` | Not started | May overlap with `dense_poly_ops.rs` |
+| `bind_operations.rs` | Not started | May overlap with `dense_poly_ops.rs` |
+| `compact_polynomial.rs` | Not started | |
+| `univariate_interpolation.rs` | Not started | |
+| `run-all.sh` script | Not started | |
+
+**Note:** The existing `dense_poly_ops.rs` target may already cover some of the `dense_new`, `evaluate`, and `bind_operations` targets described above. Review its contents before creating redundant targets. The code samples reference `CompactPolynomial` and `SmallScalar` — these have been replaced by `Polynomial<T>` with `T: Into<F>`. Update samples if using this task as a reference.
+
 ### Acceptance Criteria
 
 - All 5 fuzz targets created and compile successfully

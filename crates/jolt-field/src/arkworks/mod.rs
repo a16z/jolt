@@ -3,4 +3,5 @@
 //! This module contains field implementations using the arkworks library.
 
 pub mod bn254;
-pub mod bn254_ops;
+#[allow(dead_code)]
+pub(crate) mod bn254_ops;

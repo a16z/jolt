@@ -6,10 +6,10 @@
 //! binding operations.
 
 use crate::arkworks::bn254::Fr;
-use crate::{Challenge, Field, OptimizedMul};
+use crate::{Challenge, Field, Limbs, OptimizedMul};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
-use ark_ff::{BigInt, UniformRand};
+use ark_ff::UniformRand;
 use num_traits::{One, Zero};
 use rand::{Rng, RngCore};
 use std::fmt::{Debug, Display};
@@ -83,29 +83,29 @@ where
 
 impl<F: Field> Display for MontU128Challenge<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let bigint = BigInt::new(self.to_bigint_array());
-        write!(f, "{bigint}")
+        let limbs = Limbs::new(self.to_bigint_array());
+        write!(f, "{limbs}")
     }
 }
 
 impl<F: Field> Debug for MontU128Challenge<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let bigint = BigInt::new(self.to_bigint_array());
-        write!(f, "{bigint}")
+        let limbs = Limbs::new(self.to_bigint_array());
+        write!(f, "{limbs}")
     }
 }
 
 impl From<MontU128Challenge<Fr>> for Fr {
     #[inline(always)]
     fn from(challenge: MontU128Challenge<Fr>) -> Fr {
-        Fr::from_bigint_unchecked(BigInt::new(challenge.to_bigint_array())).unwrap()
+        Fr::from_bigint_unchecked(Limbs::new(challenge.to_bigint_array())).unwrap()
     }
 }
 
 impl From<&MontU128Challenge<Fr>> for Fr {
     #[inline(always)]
     fn from(challenge: &MontU128Challenge<Fr>) -> Fr {
-        Fr::from_bigint_unchecked(BigInt::new(challenge.to_bigint_array())).unwrap()
+        Fr::from_bigint_unchecked(Limbs::new(challenge.to_bigint_array())).unwrap()
     }
 }
 

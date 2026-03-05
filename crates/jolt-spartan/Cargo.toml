@@ -19,7 +19,6 @@ serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-ark-bn254 = { workspace = true, features = ["scalar_field"] }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }

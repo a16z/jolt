@@ -142,6 +142,46 @@ fn optimized_mul_trait() {
     }
 }
 
+#[test]
+fn mont_u128_max_bitmask() {
+    let challenge = MontU128Challenge::<Fr>::new(u128::MAX);
+    // Top 3 bits of high limb must be zeroed
+    assert_eq!(challenge.high & (0b111 << 61), 0);
+    assert!(challenge.high < (1u64 << 61));
+    // Low limb is untouched
+    assert_eq!(challenge.low, u64::MAX);
+}
+
+#[test]
+fn mont_u128_roundtrip_masking() {
+    let mut rng = test_rng();
+    for _ in 0..100 {
+        let v = rng.gen::<u128>();
+        let masked = v & ((1u128 << 125) - 1);
+
+        // Masking is idempotent: new(v) == new(masked)
+        let from_raw: Fr = MontU128Challenge::<Fr>::new(v).into();
+        let from_masked: Fr = MontU128Challenge::<Fr>::new(masked).into();
+        assert_eq!(from_raw, from_masked);
+    }
+
+    // Specifically, u128::MAX and its masked version produce the same field element
+    let max_challenge: Fr = MontU128Challenge::<Fr>::new(u128::MAX).into();
+    let max_masked: Fr = MontU128Challenge::<Fr>::new((1u128 << 125) - 1).into();
+    assert_eq!(max_challenge, max_masked);
+}
+
+#[test]
+fn optimized_mul_nonzero_with_zero() {
+    let mut rng = test_rng();
+    let challenge = MontU128Challenge::<Fr>::rand(&mut rng);
+
+    assert!(challenge.mul_0_optimized(Fr::zero()).is_zero());
+    assert_eq!(challenge.mul_1_optimized(Fr::one()), challenge.into());
+    assert!(challenge.mul_01_optimized(Fr::zero()).is_zero());
+    assert_eq!(challenge.mul_01_optimized(Fr::one()), challenge.into());
+}
+
 #[cfg(feature = "challenge-254-bit")]
 #[test]
 fn mont_254bit_challenge_basic() {

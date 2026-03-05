@@ -20,20 +20,3 @@ pub struct SumcheckProof<F: Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.
     pub round_polynomials: Vec<UnivariatePoly<F>>,
 }
-
-/// A batched sumcheck proof for multiple claims reduced via a random
-/// linear combination.
-///
-/// Given $m$ sumcheck claims with a shared number of variables, the
-/// batched protocol draws a random coefficient $\alpha$ from the
-/// transcript and proves the combined claim
-/// $\sum_{x} \sum_{j=0}^{m-1} \alpha^j \cdot g_j(x) = \sum_{j} \alpha^j \cdot C_j$.
-///
-/// Claims with fewer variables are implicitly padded (their witness
-/// polynomials are treated as constant in the leading variables).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct BatchedSumcheckProof<F: Field> {
-    /// The single combined sumcheck proof over the batched polynomial.
-    pub proof: SumcheckProof<F>,
-}
