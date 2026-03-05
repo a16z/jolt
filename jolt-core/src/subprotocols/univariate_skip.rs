@@ -178,10 +178,8 @@ pub fn prove_uniskip_round_zk<
     instance.cache_openings(opening_accumulator, &[r0]);
 
     let output_claims = opening_accumulator.take_pending_claims();
-    let output_claims_blinding = F::random(rng);
-    let output_claims_commitment = pedersen_gens.commit(&output_claims, &output_claims_blinding);
-
-    transcript.append_commitment(b"output_claims_commitment", &output_claims_commitment);
+    let output_claims_commitments = pedersen_gens.commit_chunked(&output_claims, rng);
+    transcript.append_commitments(b"output_claims_coms", &output_claims_commitments);
 
     let input_constraint = instance.get_params().input_claim_constraint();
     let input_constraint_challenge_values = instance
@@ -197,12 +195,9 @@ pub fn prove_uniskip_round_zk<
         commitment,
         input_constraint,
         input_constraint_challenge_values,
-        output_claims,
-        output_claims_blinding,
-        output_claims_commitment,
     });
 
-    ZkUniSkipFirstRoundProof::new(commitment, poly_degree, output_claims_commitment)
+    ZkUniSkipFirstRoundProof::new(commitment, poly_degree, output_claims_commitments)
 }
 
 /// The sumcheck proof for a univariate skip round
@@ -265,17 +260,21 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
 pub struct ZkUniSkipFirstRoundProof<F: JoltField, C: JoltCurve, T: Transcript> {
     pub commitment: C::G1,
     pub poly_degree: usize,
-    /// Pedersen commitment to output claims (Fiat-Shamir binding)
-    pub output_claims_commitment: C::G1,
+    /// Pedersen commitments to output claims, chunked to fit generator count (Fiat-Shamir binding)
+    pub output_claims_commitments: Vec<C::G1>,
     _marker: PhantomData<(F, T)>,
 }
 
 impl<F: JoltField, C: JoltCurve, T: Transcript> ZkUniSkipFirstRoundProof<F, C, T> {
-    pub fn new(commitment: C::G1, poly_degree: usize, output_claims_commitment: C::G1) -> Self {
+    pub fn new(
+        commitment: C::G1,
+        poly_degree: usize,
+        output_claims_commitments: Vec<C::G1>,
+    ) -> Self {
         Self {
             commitment,
             poly_degree,
-            output_claims_commitment,
+            output_claims_commitments,
             _marker: PhantomData,
         }
     }
@@ -301,7 +300,7 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> ZkUniSkipFirstRoundProof<F, C, T
         let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         sumcheck_instance.cache_openings(opening_accumulator, &[r0]);
 
-        transcript.append_commitment(b"output_claims_commitment", &self.output_claims_commitment);
+        transcript.append_commitments(b"output_claims_coms", &self.output_claims_commitments);
         opening_accumulator.take_pending_claims();
 
         Ok(r0)
@@ -319,14 +318,14 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> CanonicalSerialize
         self.commitment.serialize_with_mode(&mut writer, compress)?;
         self.poly_degree
             .serialize_with_mode(&mut writer, compress)?;
-        self.output_claims_commitment
+        self.output_claims_commitments
             .serialize_with_mode(writer, compress)
     }
 
     fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
         self.commitment.serialized_size(compress)
             + self.poly_degree.serialized_size(compress)
-            + self.output_claims_commitment.serialized_size(compress)
+            + self.output_claims_commitments.serialized_size(compress)
     }
 }
 
@@ -340,8 +339,13 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> CanonicalDeserialize
     ) -> Result<Self, ark_serialize::SerializationError> {
         let commitment = C::G1::deserialize_with_mode(&mut reader, compress, validate)?;
         let poly_degree = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        let output_claims_commitment = C::G1::deserialize_with_mode(reader, compress, validate)?;
-        Ok(Self::new(commitment, poly_degree, output_claims_commitment))
+        let output_claims_commitments =
+            Vec::<C::G1>::deserialize_with_mode(reader, compress, validate)?;
+        Ok(Self::new(
+            commitment,
+            poly_degree,
+            output_claims_commitments,
+        ))
     }
 }
 
@@ -350,7 +354,7 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> ark_serialize::Valid
 {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         self.commitment.check()?;
-        self.output_claims_commitment.check()
+        self.output_claims_commitments.check()
     }
 }
 

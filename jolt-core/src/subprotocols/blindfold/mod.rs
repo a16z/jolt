@@ -58,14 +58,11 @@ pub struct ZkStageData<F: JoltField, C: JoltCurve> {
     pub blinding_factors: Vec<F>,
     pub challenges: Vec<F::Challenge>,
     pub batching_coefficients: Vec<F>,
-    pub expected_evaluations: Vec<F>,
     pub output_constraints: Vec<Option<OutputClaimConstraint>>,
     pub constraint_challenge_values: Vec<Vec<F>>,
     pub input_constraints: Vec<InputClaimConstraint>,
     pub input_constraint_challenge_values: Vec<Vec<F>>,
     pub input_claim_scaling_exponents: Vec<usize>,
-    pub output_claims_blinding: F,
-    pub output_claims_commitment: C::G1,
 }
 
 /// ZK data for a uni-skip first round.
@@ -82,9 +79,6 @@ pub struct UniSkipStageData<F: JoltField, C: JoltCurve> {
     pub commitment: C::G1,
     pub input_constraint: InputClaimConstraint,
     pub input_constraint_challenge_values: Vec<F>,
-    pub output_claims: Vec<F>,
-    pub output_claims_blinding: F,
-    pub output_claims_commitment: C::G1,
 }
 
 /// ZK data from the PCS opening proof stage (stage 8).
