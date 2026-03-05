@@ -1,0 +1,32 @@
+name: Prepare Claude Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    # Trusted authors: auto-trigger on any PR event
+    # External/first-time contributors: require 'claude-review-approved' label from a CODEOWNER
+    if: |
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'OWNER' ||
+      contains(github.event.pull_request.labels.*.name, 'claude-review-approved')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Save PR metadata
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "$PR_NUMBER" > pr_number.txt
+
+      - name: Upload PR metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-metadata
+          path: pr_number.txt
+          retention-days: 1
