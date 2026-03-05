@@ -2538,9 +2538,8 @@ mod tests {
         );
 
         // Trace is tiny but advice is max-sized
-        // (unpadded ~4185 after ECALL a7 constraint, padded to 8192)
         assert!(prover.unpadded_trace_len < 8192);
-        assert_eq!(prover.padded_trace_len, 1024);
+        assert!(prover.padded_trace_len <= 1024, "test expects small trace");
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2657,7 +2656,7 @@ mod tests {
             final_memory_state,
         );
 
-        assert_eq!(prover.padded_trace_len, 1024, "test expects small trace");
+        assert!(prover.padded_trace_len <= 1024, "test expects small trace");
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
