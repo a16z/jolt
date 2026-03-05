@@ -339,14 +339,11 @@ struct RoundVariables {
 }
 
 impl<F: JoltField> VerifierR1CSBuilder<F> {
+    #[cfg(test)]
     pub fn new(stage_configs: &[StageConfig], baked: &BakedPublicInputs<F>) -> Self {
         Self::new_with_extra(stage_configs, &[], baked, Vec::new())
     }
 
-    /// `oc_blocks`: per-stage OC blocks. Each block lists opening IDs in the
-    /// order they were produced by that stage's `cache_openings`. When non-empty,
-    /// opening variables are pre-allocated in a dedicated OC region (between
-    /// coeff rows and regular noncoeff) with per-block row padding.
     pub fn new_with_extra(
         stage_configs: &[StageConfig],
         extra_constraints: &[OutputClaimConstraint],

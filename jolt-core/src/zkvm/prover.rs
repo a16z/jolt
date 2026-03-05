@@ -1650,9 +1650,15 @@ impl<
         let mut oc_blocks: Vec<Vec<OpeningId>> = Vec::new();
         for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
             if stage_idx < 2 {
-                oc_blocks.push(uniskip_stages[stage_idx].output_claim_ids.clone());
+                let ids: Vec<OpeningId> = uniskip_stages[stage_idx]
+                    .output_claims
+                    .iter()
+                    .map(|(id, _)| *id)
+                    .collect();
+                oc_blocks.push(ids);
             }
-            oc_blocks.push(zk_data.output_claim_ids.clone());
+            let ids: Vec<OpeningId> = zk_data.output_claims.iter().map(|(id, _)| *id).collect();
+            oc_blocks.push(ids);
         }
 
         let builder = VerifierR1CSBuilder::<F>::new_with_extra(
@@ -1676,21 +1682,21 @@ impl<
                 let uniskip = &uniskip_stages[stage_idx];
                 all_output_claims_commitments.extend_from_slice(&uniskip.output_claims_commitments);
                 all_output_claims_blindings.extend_from_slice(&uniskip.output_claims_blindings);
-                all_output_claims.extend_from_slice(&uniskip.output_claims);
-                // Pad to complete rows
-                let block_rows = uniskip.output_claims.len().div_ceil(hyrax_C.max(1));
+                let vals: Vec<F> = uniskip.output_claims.iter().map(|(_, v)| *v).collect();
+                all_output_claims.extend_from_slice(&vals);
+                let block_rows = vals.len().div_ceil(hyrax_C.max(1));
                 all_output_claims.resize(
-                    all_output_claims.len() + block_rows * hyrax_C - uniskip.output_claims.len(),
+                    all_output_claims.len() + block_rows * hyrax_C - vals.len(),
                     F::zero(),
                 );
             }
             all_output_claims_commitments.extend_from_slice(&zk_data.output_claims_commitments);
             all_output_claims_blindings.extend_from_slice(&zk_data.output_claims_blindings);
-            all_output_claims.extend_from_slice(&zk_data.output_claims);
-            // Pad to complete rows
-            let block_rows = zk_data.output_claims.len().div_ceil(hyrax_C.max(1));
+            let vals: Vec<F> = zk_data.output_claims.iter().map(|(_, v)| *v).collect();
+            all_output_claims.extend_from_slice(&vals);
+            let block_rows = vals.len().div_ceil(hyrax_C.max(1));
             all_output_claims.resize(
-                all_output_claims.len() + block_rows * hyrax_C - zk_data.output_claims.len(),
+                all_output_claims.len() + block_rows * hyrax_C - vals.len(),
                 F::zero(),
             );
         }

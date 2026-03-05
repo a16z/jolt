@@ -9,6 +9,8 @@ use crate::field::JoltField;
 #[cfg(feature = "zk")]
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::lagrange_poly::LagrangePolynomial;
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
@@ -177,9 +179,13 @@ pub fn prove_uniskip_round_zk<
     let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
     instance.cache_openings(opening_accumulator, &[r0]);
 
-    let output_claims = opening_accumulator.take_pending_claims();
+    let output_claim_values = opening_accumulator.take_pending_claims();
     let output_claim_ids = opening_accumulator.take_pending_claim_ids();
-    let oc_committed: Vec<_> = pedersen_gens.commit_chunked(&output_claims, rng);
+    let oc_committed: Vec<_> = pedersen_gens.commit_chunked(&output_claim_values, rng);
+    let output_claims: Vec<(OpeningId, F)> = output_claim_ids
+        .into_iter()
+        .zip(output_claim_values)
+        .collect();
     let output_claims_commitments: Vec<_> = oc_committed.iter().map(|(c, _)| *c).collect();
     let output_claims_blindings: Vec<_> = oc_committed.iter().map(|(_, b)| *b).collect();
     transcript.append_commitments(b"output_claims_coms", &output_claims_commitments);
@@ -199,7 +205,6 @@ pub fn prove_uniskip_round_zk<
         input_constraint,
         input_constraint_challenge_values,
         output_claims,
-        output_claim_ids,
         output_claims_blindings,
         output_claims_commitments: output_claims_commitments.clone(),
     });
@@ -267,7 +272,8 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
 pub struct ZkUniSkipFirstRoundProof<F: JoltField, C: JoltCurve, T: Transcript> {
     pub commitment: C::G1,
     pub poly_degree: usize,
-    /// Pedersen commitments to output claims, chunked to fit generator count (Fiat-Shamir binding)
+    /// Pedersen commitments to output claims (chunked). Serve double duty:
+    /// Fiat-Shamir bound here, then used as Hyrax OC row commitments in BlindFold.
     pub output_claims_commitments: Vec<C::G1>,
     _marker: PhantomData<(F, T)>,
 }

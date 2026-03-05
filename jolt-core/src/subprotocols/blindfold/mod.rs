@@ -63,8 +63,7 @@ pub struct ZkStageData<F: JoltField, C: JoltCurve> {
     pub input_constraints: Vec<InputClaimConstraint>,
     pub input_constraint_challenge_values: Vec<Vec<F>>,
     pub input_claim_scaling_exponents: Vec<usize>,
-    pub output_claims: Vec<F>,
-    pub output_claim_ids: Vec<OpeningId>,
+    pub output_claims: Vec<(OpeningId, F)>,
     pub output_claims_blindings: Vec<F>,
     pub output_claims_commitments: Vec<C::G1>,
 }
@@ -83,8 +82,7 @@ pub struct UniSkipStageData<F: JoltField, C: JoltCurve> {
     pub commitment: C::G1,
     pub input_constraint: InputClaimConstraint,
     pub input_constraint_challenge_values: Vec<F>,
-    pub output_claims: Vec<F>,
-    pub output_claim_ids: Vec<OpeningId>,
+    pub output_claims: Vec<(OpeningId, F)>,
     pub output_claims_blindings: Vec<F>,
     pub output_claims_commitments: Vec<C::G1>,
 }
@@ -253,7 +251,8 @@ pub struct HyraxParams {
     pub noncoeff_count: usize,
     /// Total sumcheck rounds
     pub total_rounds: usize,
-    /// Rows reserved for output claims (externally-verified commitments)
+    /// Hyrax rows between R_coeff and regular noncoeff, holding output claim values.
+    /// Row commitments come from per-stage `commit_chunked` (not fresh commitments).
     pub output_claims_rows: usize,
 }
 

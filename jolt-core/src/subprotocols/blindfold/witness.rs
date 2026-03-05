@@ -6,7 +6,9 @@
 use std::collections::HashSet;
 
 use super::r1cs::VerifierR1CS;
-use super::{OutputClaimConstraint, StageConfig};
+use super::OutputClaimConstraint;
+#[cfg(test)]
+use super::StageConfig;
 use super::{SumOfProductsVisitor, ValueSource};
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
@@ -167,7 +169,7 @@ pub struct BlindFoldWitness<F> {
 }
 
 impl<F: JoltField> BlindFoldWitness<F> {
-    /// Create a new BlindFold witness with a single initial claim (legacy API).
+    #[cfg(test)]
     pub fn new(initial_claim: F, stages: Vec<StageWitness<F>>) -> Self {
         Self {
             initial_claims: vec![initial_claim],
@@ -177,8 +179,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         }
     }
 
-    /// Create a new BlindFold witness with multiple initial claims.
-    /// Each initial claim corresponds to an independent chain in the R1CS.
+    #[cfg(test)]
     pub fn with_multiple_claims(initial_claims: Vec<F>, stages: Vec<StageWitness<F>>) -> Self {
         Self {
             initial_claims,
@@ -401,12 +402,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         z
     }
 
-    /// Create witness from compressed polynomial coefficients extracted from proof
-    ///
-    /// The compressed polynomial format from `CompressedUniPoly` stores `[c0, c2, c3, ...]`
-    /// (excluding c1, the linear term). c1 can be derived from the sum check:
-    ///   claimed_sum = g(0) + g(1) = c0 + (c0 + c1 + c2 + c3) = 2*c0 + c1 + c2 + c3
-    ///   c1 = claimed_sum - 2*c0 - c2 - c3 - ...
+    #[cfg(test)]
     pub fn from_compressed_polys(
         initial_claim: F,
         stage_configs: &[StageConfig],

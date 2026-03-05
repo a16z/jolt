@@ -271,10 +271,7 @@ pub enum BlindFoldVerifyError {
 
 pub struct BlindFoldVerifierInput<C: JoltCurve> {
     pub round_commitments: Vec<C::G1>,
-    /// Output claims row commitments extracted from stage proofs.
-    /// The verifier independently reconstructs these from the ZK sumcheck/uniskip
-    /// proofs rather than trusting the BlindFold proof, ensuring the same commitments
-    /// bound to the Fiat-Shamir transcript are used as Hyrax OC row commitments.
+    /// Hyrax OC row commitments, extracted from stage proofs (not from BlindFoldProof).
     pub output_claims_row_commitments: Vec<C::G1>,
     pub eval_commitments: Vec<C::G1>,
 }
