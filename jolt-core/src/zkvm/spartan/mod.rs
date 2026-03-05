@@ -1,6 +1,6 @@
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
-use crate::poly::opening_proof::{OpeningAccumulator, VerifierOpeningAccumulator};
+use crate::poly::opening_proof::VerifierOpeningAccumulator;
 use crate::subprotocols::univariate_skip::{UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant};
 use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
