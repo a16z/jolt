@@ -249,7 +249,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
-                preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>,
+                preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>,
             ) -> impl Fn(#(#input_types ,)* #output_type, bool, #commitment_param_in_signature jolt::RV64IMACProof) -> bool + Sync + Send
             {
                 #imports
@@ -526,7 +526,7 @@ impl MacroBuilder {
                 pub fn #preprocess_verifier_fn_name(
                     shared_preprocess: jolt::JoltSharedPreprocessing,
                     generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
-                ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>
+                ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>
                 {
                     jolt::JoltVerifierPreprocessing::new(shared_preprocess, generators)
                 }
@@ -536,7 +536,7 @@ impl MacroBuilder {
                     shared_preprocess: jolt::JoltSharedPreprocessing,
                     generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
                     blindfold_setup: jolt::BlindfoldSetup<jolt::Bn254Curve>,
-                ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>
+                ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>
                 {
                     jolt::JoltVerifierPreprocessing::new_zk(shared_preprocess, generators, blindfold_setup)
                 }
@@ -558,7 +558,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_verifier_fn_name(prover_preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>)
-                -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>
+                -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>
             {
                 #imports
                 let preprocessing = JoltVerifierPreprocessing::from(prover_preprocessing);

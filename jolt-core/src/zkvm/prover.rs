@@ -202,8 +202,6 @@ impl<
         PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
         ProofTranscript: Transcript,
     > JoltCpuProver<'a, F, C, PCS, ProofTranscript>
-where
-    C::G1: From<crate::curve::Bn254G1>,
 {
     #[allow(clippy::too_many_arguments)]
     pub fn gen_from_elf(
@@ -2093,17 +2091,15 @@ where
         &self,
     ) -> crate::subprotocols::blindfold::BlindfoldSetup<C>
     where
-        C::G1: From<crate::curve::Bn254G1>,
+        PCS: ZkEvalCommitment<C>,
     {
+        use crate::poly::commitment::pedersen::PedersenGenerators;
+        use crate::subprotocols::blindfold::BlindfoldSetup;
         use common::constants::MAX_BLINDFOLD_GENERATORS;
-        let (g1s, h1) = PCS::zk_generators_raw(&self.generators, MAX_BLINDFOLD_GENERATORS)
+
+        let (g1s, h1) = PCS::zk_generators(&self.generators, MAX_BLINDFOLD_GENERATORS)
             .expect("PCS does not support ZK Pedersen generators");
-        crate::subprotocols::blindfold::BlindfoldSetup(
-            crate::poly::commitment::pedersen::PedersenGenerators::new(
-                g1s.into_iter().map(C::G1::from).collect(),
-                C::G1::from(h1),
-            ),
-        )
+        BlindfoldSetup(PedersenGenerators::new(g1s, h1))
     }
 
     #[cfg(feature = "zk")]
@@ -2112,7 +2108,7 @@ where
         count: usize,
     ) -> crate::poly::commitment::pedersen::PedersenGenerators<C>
     where
-        C::G1: From<crate::curve::Bn254G1>,
+        PCS: ZkEvalCommitment<C>,
     {
         let mut gens: crate::poly::commitment::pedersen::PedersenGenerators<C> =
             self.blindfold_setup::<C>().into();

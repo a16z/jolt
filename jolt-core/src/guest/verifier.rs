@@ -1,4 +1,4 @@
-use crate::curve::JoltCurve;
+use crate::curve::{Bn254Curve, JoltCurve};
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
@@ -6,6 +6,8 @@ use crate::utils::errors::ProofVerifyError;
 
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::BlindfoldSetup;
 use crate::transcripts::Transcript;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
@@ -19,7 +21,7 @@ pub fn preprocess(
     guest: &Program,
     max_trace_length: usize,
     verifier_setup: <DoryCommitmentScheme as CommitmentScheme>::VerifierSetup,
-) -> JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> {
+) -> JoltVerifierPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme> {
     let shared = preprocess_shared(guest, max_trace_length);
     JoltVerifierPreprocessing::new(shared, verifier_setup)
 }
@@ -29,8 +31,8 @@ pub fn preprocess(
     guest: &Program,
     max_trace_length: usize,
     verifier_setup: <DoryCommitmentScheme as CommitmentScheme>::VerifierSetup,
-    blindfold_setup: crate::subprotocols::blindfold::BlindfoldSetup<crate::curve::Bn254Curve>,
-) -> JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> {
+    blindfold_setup: BlindfoldSetup<Bn254Curve>,
+) -> JoltVerifierPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme> {
     let shared = preprocess_shared(guest, max_trace_length);
     JoltVerifierPreprocessing::new_zk(shared, verifier_setup, blindfold_setup)
 }
@@ -54,11 +56,8 @@ pub fn verify<
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],
     proof: JoltProof<F, C, PCS, FS>,
-    preprocessing: &JoltVerifierPreprocessing<F, PCS>,
-) -> Result<(), ProofVerifyError>
-where
-    C::G1: From<crate::curve::Bn254G1>,
-{
+    preprocessing: &JoltVerifierPreprocessing<F, C, PCS>,
+) -> Result<(), ProofVerifyError> {
     use common::jolt_device::JoltDevice;
     let memory_layout = &preprocessing.shared.memory_layout;
     let memory_config = MemoryConfig {

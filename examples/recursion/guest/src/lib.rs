@@ -5,7 +5,9 @@ use jolt_sdk::{self as jolt};
 extern crate alloc;
 
 use ark_serialize::{CanonicalDeserialize, Compress, Validate};
-use jolt::{JoltDevice, JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, F, PCS};
+use jolt::{
+    Bn254Curve, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, F, PCS,
+};
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
@@ -27,8 +29,8 @@ fn verify(bytes: &[u8]) -> u32 {
     let mut cursor = std::io::Cursor::new(data_bytes);
 
     start_cycle_tracking("deserialize preprocessing");
-    let verifier_preprocessing: JoltVerifierPreprocessing<F, PCS> =
-        JoltVerifierPreprocessing::<F, PCS>::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
+    let verifier_preprocessing: JoltVerifierPreprocessing<F, Bn254Curve, PCS> =
+        JoltVerifierPreprocessing::<F, Bn254Curve, PCS>::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
     end_cycle_tracking("deserialize preprocessing");
 
     start_cycle_tracking("deserialize count of proofs");

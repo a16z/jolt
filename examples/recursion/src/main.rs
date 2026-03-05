@@ -228,11 +228,12 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
 
     let mut cursor = std::io::Cursor::new(all_groups_data);
 
-    let verifier_preprocessing =
-        jolt_sdk::JoltVerifierPreprocessing::<jolt_sdk::F, jolt_sdk::PCS>::deserialize_compressed(
-            &mut cursor,
-        )
-        .unwrap();
+    let verifier_preprocessing = jolt_sdk::JoltVerifierPreprocessing::<
+        jolt_sdk::F,
+        jolt_sdk::Bn254Curve,
+        jolt_sdk::PCS,
+    >::deserialize_compressed(&mut cursor)
+    .unwrap();
     let verifier_bytes = verifier_preprocessing.serialize_to_bytes().unwrap();
     info!(
         "✓ Verifier preprocessing deserialized successfully ({} bytes)",
@@ -295,7 +296,9 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
         jolt_sdk::guest::prover::preprocess(&guest_prog, max_trace_length);
     info!("Preprocessing guest verifier...");
     let guest_verifier_preprocessing =
-        jolt_sdk::JoltVerifierPreprocessing::from(&guest_prover_preprocessing);
+        jolt_sdk::JoltVerifierPreprocessing::<_, jolt_sdk::Bn254Curve, _>::from(
+            &guest_prover_preprocessing,
+        );
 
     let inputs = guest.inputs();
     info!("Got inputs: {inputs:?}");
@@ -487,7 +490,9 @@ fn run_recursion_proof(
     let recursion_prover_preprocessing =
         jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length);
     let recursion_verifier_preprocessing =
-        jolt_sdk::JoltVerifierPreprocessing::from(&recursion_prover_preprocessing);
+        jolt_sdk::JoltVerifierPreprocessing::<_, jolt_sdk::Bn254Curve, _>::from(
+            &recursion_prover_preprocessing,
+        );
 
     // update program_size in memory_config now that we know it
     recursion.memory_config.program_size = Some(

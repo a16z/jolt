@@ -10,12 +10,14 @@ use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitm
 use crate::poly::commitment::dory::bind_opening_inputs_zk;
 use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals};
 #[cfg(feature = "zk")]
+use crate::poly::commitment::pedersen::PedersenGenerators;
+#[cfg(feature = "zk")]
 use crate::poly::lagrange_poly::LagrangeHelper;
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::{
     pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldVerifier,
-    BlindFoldVerifierInput, ClaimBindingConfig, InputClaimConstraint, OutputClaimConstraint,
-    StageConfig, ValueSource, VerifierR1CSBuilder,
+    BlindFoldVerifierInput, BlindfoldSetup, ClaimBindingConfig, InputClaimConstraint,
+    OutputClaimConstraint, StageConfig, ValueSource, VerifierR1CSBuilder,
 };
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 #[cfg(feature = "zk")]
@@ -199,7 +201,7 @@ pub struct JoltVerifier<
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub program_io: JoltDevice,
     pub proof: JoltProof<F, C, PCS, ProofTranscript>,
-    pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+    pub preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
     pub transcript: ProofTranscript,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
@@ -226,11 +228,9 @@ impl<
         PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>,
         ProofTranscript: Transcript,
     > JoltVerifier<'a, F, C, PCS, ProofTranscript>
-where
-    C::G1: From<crate::curve::Bn254G1>,
 {
     pub fn new(
-        preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+        preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
         proof: JoltProof<F, C, PCS, ProofTranscript>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
@@ -1213,7 +1213,7 @@ where
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
         let pedersen_generators = self
             .preprocessing
-            .pedersen_generators::<C>(pedersen_generator_count);
+            .pedersen_generators(pedersen_generator_count);
         let eval_commitment_gens =
             PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
         let verifier =
@@ -1640,31 +1640,34 @@ impl JoltSharedPreprocessing {
 }
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltVerifierPreprocessing<F, PCS>
+pub struct JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
-    // Option because workspace-wide `cargo clippy --all` unifies features:
-    // fibonacci enables zk, so jolt-core is compiled with zk for ALL examples,
-    // but non-zk examples must still construct this struct without a BlindfoldSetup.
+    // Option: workspace-wide `cargo clippy --all` unifies features, so non-zk
+    // examples must still construct this struct without a BlindfoldSetup.
     #[cfg(feature = "zk")]
-    pub blindfold_setup:
-        Option<crate::subprotocols::blindfold::BlindfoldSetup<crate::curve::Bn254Curve>>,
+    pub blindfold_setup: Option<BlindfoldSetup<C>>,
+    #[cfg(not(feature = "zk"))]
+    _curve: std::marker::PhantomData<C>,
 }
 
-impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
+impl<F, C, PCS> Serializable for JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
 {
 }
 
-impl<F, PCS> JoltVerifierPreprocessing<F, PCS>
+impl<F, C, PCS> JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
 {
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
@@ -1685,17 +1688,18 @@ where
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F, PCS> {
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
+    JoltVerifierPreprocessing<F, C, PCS>
+{
     #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new")]
-    pub fn new(
-        shared: JoltSharedPreprocessing,
-        generators: PCS::VerifierSetup,
-    ) -> JoltVerifierPreprocessing<F, PCS> {
+    pub fn new(shared: JoltSharedPreprocessing, generators: PCS::VerifierSetup) -> Self {
         Self {
             generators,
             shared,
             #[cfg(feature = "zk")]
             blindfold_setup: None,
+            #[cfg(not(feature = "zk"))]
+            _curve: std::marker::PhantomData,
         }
     }
 
@@ -1704,8 +1708,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
     pub fn new_zk(
         shared: JoltSharedPreprocessing,
         generators: PCS::VerifierSetup,
-        blindfold_setup: crate::subprotocols::blindfold::BlindfoldSetup<crate::curve::Bn254Curve>,
-    ) -> JoltVerifierPreprocessing<F, PCS> {
+        blindfold_setup: BlindfoldSetup<C>,
+    ) -> Self {
         Self {
             generators,
             shared,
@@ -1714,13 +1718,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
     }
 
     #[cfg(feature = "zk")]
-    pub fn pedersen_generators<C: JoltCurve>(
-        &self,
-        count: usize,
-    ) -> crate::poly::commitment::pedersen::PedersenGenerators<C>
-    where
-        C::G1: From<crate::curve::Bn254G1>,
-    {
+    pub fn pedersen_generators(&self, count: usize) -> PedersenGenerators<C> {
         let gens = &self
             .blindfold_setup
             .as_ref()
@@ -1731,21 +1729,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
             "Requested {count} Pedersen generators but BlindfoldSetup only has {}",
             gens.message_generators.len()
         );
-        let message_generators = gens.message_generators[..count]
-            .iter()
-            .map(|g| C::G1::from(*g))
-            .collect();
-        let blinding_generator = C::G1::from(gens.blinding_generator);
-        crate::poly::commitment::pedersen::PedersenGenerators::new(
-            message_generators,
-            blinding_generator,
+        PedersenGenerators::new(
+            gens.message_generators[..count].to_vec(),
+            gens.blinding_generator,
         )
     }
 }
 
 #[cfg(feature = "prover")]
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessing<F, PCS>>
-    for JoltVerifierPreprocessing<F, PCS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>>
+    From<&JoltProverPreprocessing<F, PCS>> for JoltVerifierPreprocessing<F, C, PCS>
 {
     fn from(prover_preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
         let shared = prover_preprocessing.shared.clone();
@@ -1753,10 +1746,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessi
         #[cfg(not(feature = "zk"))]
         return Self::new(shared, generators);
         #[cfg(feature = "zk")]
-        return Self::new_zk(
-            shared,
-            generators,
-            prover_preprocessing.blindfold_setup::<crate::curve::Bn254Curve>(),
-        );
+        return Self::new_zk(shared, generators, prover_preprocessing.blindfold_setup());
     }
 }
