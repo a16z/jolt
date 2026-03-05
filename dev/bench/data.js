@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772663326852,
+  "lastUpdate": 1772668946418,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -59470,6 +59470,234 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 791280,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "11d319ed0f0457ca1b2a7571f9594f9c054a84de",
+          "message": "docs: claude code skill (#1312)\n\n* Add Jolt AI coding skill for Claude Code and Codex CLI\n\nSKILL.md with reference docs covering project setup, guest programs,\nhost API pipeline, advice system, crypto inlines, and troubleshooting.\nIncludes plugin.json manifest and curl-installable install.sh.\n\nAlso fixes outdated book docs (quickstart.md, hosts.md) to use the\ncurrent compile → preprocess_shared → preprocess_prover/verifier API.\n\n* add jolt bin\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* refactor(agent-skills): replace Jolt SDK reference skill with step-by-step workflow\n\nReplaces the comprehensive SDK reference with a focused 8-step workflow\nfor wrapping Rust functions in Jolt zero-knowledge proofs.\n\n* feat(agent-skills): add Vercel skills compatibility and auto-detect install\n\n- Add `name` field for `npx skills add a16z/jolt` compatibility\n- Auto-detect ~/.claude and ~/.codex in install.sh fallback\n- Add AI Coding Skill section to README\n\n* fix(book): revert hallucinated API changes, add skill install instructions\n\nThe original skill commit incorrectly updated book docs to use a\npreprocess_shared API that doesn't exist on main. Revert book/ to\nmain and add agent skill install instructions to quickstart, intro,\nand README.\n\n* chore: fix fallback label to include Codex, remove plugin.json\n\n* fix(book): update quickstart and hosts to current preprocessing API\n\nquickstart.md used nonexistent build_fib() API, hosts.md used\ndeprecated verifier_preprocessing_from_prover. Both now use the\ncurrent compile → preprocess_shared → preprocess_prover/verifier\npipeline.\n\n---------\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-03-04T18:07:18-05:00",
+          "tree_id": "4fb84ce72638dc9cff9a7c1418d24b8353aaade9",
+          "url": "https://github.com/a16z/jolt/commit/11d319ed0f0457ca1b2a7571f9594f9c054a84de"
+        },
+        "date": 1772668944587,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9606,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 793380,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3151,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 460980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 467844,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 471700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7301,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 469628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6005,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 469952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8761,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 461692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.3509,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 792092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5802,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 470940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4869,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 470872,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.718,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 469860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.7634,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1021264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.2233,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 602564,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 82.5071,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2136488,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4905,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 459824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5257,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 468724,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.3441,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 792720,
             "unit": "KB",
             "extra": ""
           }
