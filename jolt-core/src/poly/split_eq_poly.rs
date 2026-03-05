@@ -590,28 +590,28 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     }
 
     /// Common delayed reduction with Montgomery reduction pattern:
-    /// - inner accumulates with e_in.mul_unreduced over NUM_OUT outputs,
+    /// - inner accumulates with e_in.mul_to_product_accum over NUM_OUT outputs,
     /// - reduce once with Montgomery reduction,
-    /// - outer scales by e_out.mul_unreduced,
+    /// - outer scales by e_out.mul_to_product_accum,
     /// - reduce at end and return [F; NUM_OUT] with Montgomery reduction.
     #[inline]
-    pub fn par_fold_out_in_unreduced<const LIMBS: usize, const NUM_OUT: usize>(
+    pub fn par_fold_out_in_unreduced<const NUM_OUT: usize>(
         &self,
         per_g_values: &(impl Fn(usize) -> [F; NUM_OUT] + Sync + Send),
     ) -> [F; NUM_OUT] {
         self.par_fold_out_in(
-            || [F::Unreduced::<LIMBS>::zero(); NUM_OUT],
+            || [F::UnreducedProductAccum::zero(); NUM_OUT],
             |inner, g, _x_in, e_in| {
                 let vals = per_g_values(g);
                 for k in 0..NUM_OUT {
-                    inner[k] += e_in.mul_unreduced::<LIMBS>(vals[k]);
+                    inner[k] += e_in.mul_to_product_accum(vals[k]);
                 }
             },
             |_x_out, e_out, inner| {
-                let mut outer = [F::Unreduced::<LIMBS>::zero(); NUM_OUT];
+                let mut outer = [F::UnreducedProductAccum::zero(); NUM_OUT];
                 for k in 0..NUM_OUT {
-                    let inner_red = F::from_montgomery_reduce::<LIMBS>(inner[k]);
-                    outer[k] = e_out.mul_unreduced::<LIMBS>(inner_red);
+                    let inner_red = F::reduce_product_accum(inner[k]);
+                    outer[k] = e_out.mul_to_product_accum(inner_red);
                 }
                 outer
             },
@@ -622,7 +622,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 a
             },
         )
-        .map(F::from_montgomery_reduce::<LIMBS>)
+        .map(F::reduce_product_accum)
     }
 }
 

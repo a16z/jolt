@@ -82,10 +82,13 @@ where
         opening_point: &[<Self::Field as JoltField>::Challenge],
         _hint: Option<Self::OpeningProofHint>,
         _transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        MockProof {
-            opening_point: opening_point.to_owned(),
-        }
+    ) -> (Self::Proof, Option<Self::Field>) {
+        (
+            MockProof {
+                opening_point: opening_point.to_owned(),
+            },
+            None,
+        )
     }
 
     fn verify<ProofTranscript: Transcript>(

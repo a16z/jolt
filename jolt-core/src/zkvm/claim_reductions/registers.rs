@@ -72,11 +72,17 @@ use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialBinding;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -144,6 +150,62 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RegistersClaimReductionSumcheck
         challenges: &[<F as JoltField>::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::virt(VirtualPolynomial::RdWriteValue, SumcheckId::SpartanOuter),
+            OpeningId::virt(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter),
+            OpeningId::virt(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &dyn OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        vec![self.gamma, self.gamma_sqr]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let rd_write_value = OpeningId::virt(
+            VirtualPolynomial::RdWriteValue,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let rs1_value = OpeningId::virt(
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+        let rs2_value = OpeningId::virt(
+            VirtualPolynomial::Rs2Value,
+            SumcheckId::RegistersClaimReduction,
+        );
+
+        let eq_eval = ValueSource::Challenge(0);
+        let gamma = ValueSource::Challenge(1);
+        let gamma_sqr = ValueSource::Challenge(2);
+
+        let terms = vec![
+            ProductTerm::product(vec![eq_eval.clone(), ValueSource::Opening(rd_write_value)]),
+            ProductTerm::product(vec![
+                eq_eval.clone(),
+                gamma,
+                ValueSource::Opening(rs1_value),
+            ]),
+            ProductTerm::product(vec![eq_eval, gamma_sqr, ValueSource::Opening(rs2_value)]),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let opening_point = self.normalize_opening_point(sumcheck_challenges);
+        let eq_eval = EqPolynomial::mle(&opening_point.r, &self.r_spartan.r);
+        vec![eq_eval, self.gamma, self.gamma_sqr]
     }
 }
 
@@ -220,7 +282,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let RegistersClaimReductionPhase::Phase2(state) = &self.phase else {
@@ -235,21 +296,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let rs2_read_value_claim = state.rs2_read_value_poly.final_sumcheck_claim();
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RdWriteValue,
             SumcheckId::RegistersClaimReduction,
             opening_point.clone(),
             rd_write_value_claim,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs1Value,
             SumcheckId::RegistersClaimReduction,
             opening_point.clone(),
             rs1_read_value_claim,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs2Value,
             SumcheckId::RegistersClaimReduction,
             opening_point,
@@ -297,9 +355,9 @@ impl<F: JoltField> RegistersPhase1State<F> {
         Q.par_chunks_mut(BLOCK_SIZE)
             .enumerate()
             .for_each(|(chunk_i, q_chunk)| {
-                let mut q_rd_write_value = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
-                let mut q_rs1_read_value = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
-                let mut q_rs2_read_value = [F::Unreduced::<6>::zero(); BLOCK_SIZE];
+                let mut q_rd_write_value = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
+                let mut q_rs1_read_value = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
+                let mut q_rs2_read_value = [F::UnreducedMulU128::zero(); BLOCK_SIZE];
 
                 for x_hi in 0..(1 << suffix_n_vars) {
                     for i in 0..q_chunk.len() {
@@ -320,9 +378,9 @@ impl<F: JoltField> RegistersPhase1State<F> {
                 }
 
                 for (i, q) in q_chunk.iter_mut().enumerate() {
-                    *q = F::from_barrett_reduce(q_rd_write_value[i])
-                        + gamma * F::from_barrett_reduce(q_rs1_read_value[i])
-                        + gamma_sqr * F::from_barrett_reduce(q_rs2_read_value[i]);
+                    *q = F::reduce_mul_u128(q_rd_write_value[i])
+                        + gamma * F::reduce_mul_u128(q_rs1_read_value[i])
+                        + gamma_sqr * F::reduce_mul_u128(q_rs2_read_value[i]);
                 }
             });
 
@@ -394,9 +452,9 @@ impl<F: JoltField> RegistersPhase2State<F> {
             .into_par_iter()
             .for_each(
                 |(rd_write_value_eval, rs1_read_value_eval, rs2_read_value_eval, trace_chunk)| {
-                    let mut rd_write_value_eval_unreduced = F::Unreduced::<6>::zero();
-                    let mut rs1_read_value_eval_unreduced = F::Unreduced::<6>::zero();
-                    let mut rs2_read_value_eval_unreduced = F::Unreduced::<6>::zero();
+                    let mut rd_write_value_eval_unreduced = F::UnreducedMulU128::zero();
+                    let mut rs1_read_value_eval_unreduced = F::UnreducedMulU128::zero();
+                    let mut rs2_read_value_eval_unreduced = F::UnreducedMulU128::zero();
 
                     for (i, cycle) in trace_chunk.iter().enumerate() {
                         let rd_write_value = cycle.rd_write().unwrap_or_default().2;
@@ -410,9 +468,9 @@ impl<F: JoltField> RegistersPhase2State<F> {
                             eq_evals[i].mul_u64_unreduced(rs2_value_eval);
                     }
 
-                    *rd_write_value_eval = F::from_barrett_reduce(rd_write_value_eval_unreduced);
-                    *rs1_read_value_eval = F::from_barrett_reduce(rs1_read_value_eval_unreduced);
-                    *rs2_read_value_eval = F::from_barrett_reduce(rs2_read_value_eval_unreduced);
+                    *rd_write_value_eval = F::reduce_mul_u128(rd_write_value_eval_unreduced);
+                    *rs1_read_value_eval = F::reduce_mul_u128(rs1_read_value_eval_unreduced);
+                    *rs2_read_value_eval = F::reduce_mul_u128(rs2_read_value_eval_unreduced);
                 },
             );
 
@@ -538,26 +596,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[F::Challenge],
     ) {
         let opening_point = SumcheckInstanceVerifier::<F, T>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::RdWriteValue,
             SumcheckId::RegistersClaimReduction,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs1Value,
             SumcheckId::RegistersClaimReduction,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs2Value,
             SumcheckId::RegistersClaimReduction,
             opening_point,

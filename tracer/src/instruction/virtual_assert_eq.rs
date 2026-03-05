@@ -14,10 +14,20 @@ declare_riscv_instr!(
 
 impl VirtualAssertEQ {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertEQ as RISCVInstruction>::RAMAccess) {
-        assert_eq!(
-            cpu.x[self.operands.rs1 as usize],
-            cpu.x[self.operands.rs2 as usize]
-        );
+        if self.operands.imm == 0 {
+            assert_eq!(
+                cpu.x[self.operands.rs1 as usize],
+                cpu.x[self.operands.rs2 as usize]
+            );
+        } else {
+            let rs1 = cpu.x[self.operands.rs1 as usize];
+            let rs2 = cpu.x[self.operands.rs2 as usize];
+            if rs1 != rs2 {
+                tracing::warn!(
+                    "VirtualAssertEQ (spoil): rs1={rs1} != rs2={rs2}, proof will be unsatisfiable",
+                );
+            }
+        }
     }
 }
 

@@ -355,7 +355,7 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
         _gamma: F,
         ra_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
         wa_lookup_table: Option<&OneHotCoeffLookupTable<F>>,
-    ) -> [F::Unreduced<8>; 2] {
+    ) -> [F::UnreducedProduct; 2] {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.row().is_even());
@@ -367,10 +367,10 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
                     OneHotCoeff::evals(Some(&even.wa_coeff), Some(&odd.wa_coeff), wa_lookup_table);
                 let val_evals = [even.val_coeff, odd.val_coeff - even.val_coeff];
                 [
-                    ra_evals[0].mul_unreduced::<8>(val_evals[0])
-                        + wa_evals[0].mul_unreduced::<8>(val_evals[0] + inc_evals[0]),
-                    ra_evals[1].mul_unreduced::<8>(val_evals[1])
-                        + wa_evals[1].mul_unreduced::<8>(val_evals[1] + inc_evals[1]),
+                    ra_evals[0].mul_to_product(val_evals[0])
+                        + wa_evals[0].mul_to_product(val_evals[0] + inc_evals[0]),
+                    ra_evals[1].mul_to_product(val_evals[1])
+                        + wa_evals[1].mul_to_product(val_evals[1] + inc_evals[1]),
                 ]
             }
             (Some(even), None) => {
@@ -379,10 +379,10 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
                 let wa_evals = OneHotCoeff::evals(Some(&even.wa_coeff), None, wa_lookup_table);
                 let val_evals = [even.val_coeff, odd_val_coeff - even.val_coeff];
                 [
-                    ra_evals[0].mul_unreduced::<8>(val_evals[0])
-                        + wa_evals[0].mul_unreduced::<8>(val_evals[0] + inc_evals[0]),
-                    ra_evals[1].mul_unreduced::<8>(val_evals[1])
-                        + wa_evals[1].mul_unreduced::<8>(val_evals[1] + inc_evals[1]),
+                    ra_evals[0].mul_to_product(val_evals[0])
+                        + wa_evals[0].mul_to_product(val_evals[0] + inc_evals[0]),
+                    ra_evals[1].mul_to_product(val_evals[1])
+                        + wa_evals[1].mul_to_product(val_evals[1] + inc_evals[1]),
                 ]
             }
             (None, Some(odd)) => {
@@ -391,9 +391,9 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
                 let wa_evals = OneHotCoeff::evals(None, Some(&odd.wa_coeff), wa_lookup_table);
                 let val_evals = [even_val_coeff, odd.val_coeff - even_val_coeff];
                 [
-                    F::Unreduced::zero(),
-                    ra_evals[1].mul_unreduced::<8>(val_evals[1])
-                        + wa_evals[1].mul_unreduced::<8>(val_evals[1] + inc_evals[1]),
+                    F::UnreducedProduct::zero(),
+                    ra_evals[1].mul_to_product(val_evals[1])
+                        + wa_evals[1].mul_to_product(val_evals[1] + inc_evals[1]),
                 ]
             }
             (None, None) => panic!("Both entries are None"),
@@ -519,27 +519,27 @@ impl<F: JoltField, C: OneHotCoeff<F>> ReadWriteMatrixCycleMajor<F, RegistersCycl
                             gamma,
                         );
 
-                        [
-                            E_in_eval.mul_unreduced::<9>(inner_sum_evals[0]),
-                            E_in_eval.mul_unreduced::<9>(inner_sum_evals[1]),
-                        ]
-                    })
-                    .reduce(
-                        || [F::Unreduced::<9>::zero(); 2],
-                        |running, new| [running[0] + new[0], running[1] + new[1]],
-                    )
-                    .map(F::from_montgomery_reduce);
+                    [
+                        E_in_eval.mul_to_product_accum(inner_sum_evals[0]),
+                        E_in_eval.mul_to_product_accum(inner_sum_evals[1]),
+                    ]
+                })
+                .reduce(
+                    || [F::UnreducedProductAccum::zero(); 2],
+                    |running, new| [running[0] + new[0], running[1] + new[1]],
+                )
+                .map(F::reduce_product_accum);
 
                 [
-                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[0]),
-                    E_out_eval.mul_unreduced::<9>(outer_sum_evals[1]),
+                    E_out_eval.mul_to_product_accum(outer_sum_evals[0]),
+                    E_out_eval.mul_to_product_accum(outer_sum_evals[1]),
                 ]
             })
             .reduce(
-                || [F::Unreduced::<9>::zero(); 2],
+                || [F::UnreducedProductAccum::zero(); 2],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             )
-            .map(F::from_montgomery_reduce);
+            .map(F::reduce_product_accum);
 
         // Convert quadratic coefficients to cubic evaluations
         gruen_eq.gruen_poly_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
@@ -652,7 +652,7 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
         inc_eval: F,
         eq_eval: F,
         _gamma: F,
-    ) -> [F::Unreduced<8>; 2] {
+    ) -> [F::UnreducedProduct; 2] {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert!(even.column().is_even());
@@ -665,20 +665,15 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
                     odd.val_coeff + odd.val_coeff - even.val_coeff,
                 ];
                 [
-                    eq_eval.mul_unreduced(
+                    eq_eval.mul_to_product(
                         ra_evals[0] * val_evals[0] + wa_evals[0] * (val_evals[0] + inc_eval),
                     ),
-                    eq_eval.mul_unreduced(
+                    eq_eval.mul_to_product(
                         ra_evals[1] * val_evals[1] + wa_evals[1] * (val_evals[1] + inc_eval),
                     ),
                 ]
             }
             (Some(even), None) => {
-                // For SparseMatrixPolynomial, the absence of a matrix entry implies
-                // that its coeff has not been bound yet.
-                // The absence of an odd-row entry in the same column as even
-                // means that its implicit Val coeff is odd_checkpoint, and its implicit
-                // ra coeff is 0.
                 let ra_evals = [even.ra_coeff, -even.ra_coeff];
                 let wa_evals = [even.wa_coeff, -even.wa_coeff];
                 let val_evals = [
@@ -686,20 +681,15 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
                     odd_checkpoint + odd_checkpoint - even.val_coeff,
                 ];
                 [
-                    eq_eval.mul_unreduced(
+                    eq_eval.mul_to_product(
                         ra_evals[0] * val_evals[0] + wa_evals[0] * (val_evals[0] + inc_eval),
                     ),
-                    eq_eval.mul_unreduced(
+                    eq_eval.mul_to_product(
                         ra_evals[1] * val_evals[1] + wa_evals[1] * (val_evals[1] + inc_eval),
                     ),
                 ]
             }
             (None, Some(odd)) => {
-                // For SparseMatrixPolynomial, the absence of a matrix entry implies
-                // that its coeff has not been bound yet.
-                // The absence of an even-row entry in the same column as odd
-                // means that its implicit Val coeff is even_checkpoint, and its implicit
-                // ra coeff is 0.
                 let ra_evals = [F::zero(), odd.ra_coeff + odd.ra_coeff];
                 let wa_evals = [F::zero(), odd.wa_coeff + odd.wa_coeff];
                 let val_evals = [
@@ -707,8 +697,8 @@ impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> 
                     odd.val_coeff + odd.val_coeff - even_checkpoint,
                 ];
                 [
-                    F::Unreduced::<8>::zero(), // ra_evals[0] is zero
-                    eq_eval.mul_unreduced(
+                    F::UnreducedProduct::zero(),
+                    eq_eval.mul_to_product(
                         ra_evals[1] * val_evals[1] + wa_evals[1] * (val_evals[1] + inc_eval),
                     ),
                 ]

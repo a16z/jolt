@@ -49,7 +49,7 @@ use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::univariate_skip::uniskip_targets;
 use crate::utils::{
-    accumulation::{Acc5U, Acc6S, Acc6U, Acc7S, Acc7U, S128Sum, S192Sum},
+    accumulation::{MedAccumS, MedAccumU, S128Sum, S192Sum, SmallAccumU, WideAccumS, WideAccumU},
     math::s64_from_diff_u64s,
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
@@ -143,12 +143,12 @@ pub struct AzFirstGroup {
 impl AzFirstGroup {
     /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
     /// over the univariate-skip base window. This mirrors `az_at_r_first_group`
-    /// but keeps the result in an `Acc5U` accumulator without reducing.
+    /// but keeps the result in an `SmallAccumU` accumulator without reducing.
     #[inline(always)]
     pub fn fmadd_at_r<F: JoltField>(
         &self,
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-        acc: &mut Acc5U<F>,
+        acc: &mut SmallAccumU<F>,
     ) {
         acc.fmadd(&w[0], &self.not_load_store);
         acc.fmadd(&w[1], &self.load_a);
@@ -181,12 +181,12 @@ pub struct BzFirstGroup {
 impl BzFirstGroup {
     /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
     /// over the univariate-skip base window. This mirrors `bz_at_r_first_group`
-    /// but keeps the result in an `Acc6S` accumulator without reducing.
+    /// but keeps the result in an `MedAccumS` accumulator without reducing.
     #[inline(always)]
     pub fn fmadd_at_r<F: JoltField>(
         &self,
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-        acc: &mut Acc6S<F>,
+        acc: &mut MedAccumS<F>,
     ) {
         acc.fmadd(&w[0], &self.ram_addr);
         acc.fmadd(&w[1], &self.ram_read_minus_ram_write);
@@ -209,8 +209,8 @@ pub struct AzSecondGroup {
     pub sub: bool,                    // Sub
     pub mul: bool,                    // Mul
     pub not_add_sub_mul_advice: bool, // !(Add || Sub || Mul || Advice)
-    pub write_lookup_to_rd: bool,     // write_lookup_output_to_rd_addr (Rd != 0)
-    pub write_pc_to_rd: bool,         // write_pc_to_rd_addr (Rd != 0)
+    pub write_lookup_to_rd: bool,     // OpFlags(WriteLookupOutputToRD)
+    pub write_pc_to_rd: bool,         // OpFlags(Jump)
     pub should_branch: bool,          // ShouldBranch
     pub not_jump_or_branch: bool,     // !(Jump || ShouldBranch)
 }
@@ -218,12 +218,12 @@ pub struct AzSecondGroup {
 impl AzSecondGroup {
     /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
     /// over the univariate-skip base window. This mirrors `az_at_r_second_group`
-    /// but keeps the result in an `Acc5U` accumulator without reducing.
+    /// but keeps the result in an `SmallAccumU` accumulator without reducing.
     #[inline(always)]
     pub fn fmadd_at_r<F: JoltField>(
         &self,
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-        acc: &mut Acc5U<F>,
+        acc: &mut SmallAccumU<F>,
     ) {
         acc.fmadd(&w[0], &self.load_or_store);
         acc.fmadd(&w[1], &self.add);
@@ -254,12 +254,12 @@ pub struct BzSecondGroup {
 impl BzSecondGroup {
     /// Fused multiply-add into an unreduced accumulator using Lagrange weights `w`
     /// over the univariate-skip base window. This mirrors `bz_at_r_second_group`
-    /// but keeps the result in an `Acc7S` accumulator without reducing.
+    /// but keeps the result in a `WideAccumS` accumulator without reducing.
     #[inline(always)]
     pub fn fmadd_at_r<F: JoltField>(
         &self,
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-        acc: &mut Acc7S<F>,
+        acc: &mut WideAccumS<F>,
     ) {
         acc.fmadd(&w[0], &self.ram_addr_minus_rs1_plus_imm);
         acc.fmadd(&w[1], &self.right_lookup_minus_add_result);
@@ -352,7 +352,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     #[inline]
     pub fn az_at_r_first_group(&self, w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let az = self.eval_az_first_group();
-        let mut acc: Acc5U<F> = Acc5U::zero();
+        let mut acc: SmallAccumU<F> = SmallAccumU::zero();
         acc.fmadd(&w[0], &az.not_load_store);
         acc.fmadd(&w[1], &az.load_a);
         acc.fmadd(&w[2], &az.load_b);
@@ -369,7 +369,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     #[inline]
     pub fn bz_at_r_first_group(&self, w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let bz = self.eval_bz_first_group();
-        let mut acc: Acc6S<F> = Acc6S::zero();
+        let mut acc: MedAccumS<F> = MedAccumS::zero();
         acc.fmadd(&w[0], &bz.ram_addr);
         acc.fmadd(&w[1], &bz.ram_read_minus_ram_write);
         acc.fmadd(&w[2], &bz.ram_read_minus_rd_write);
@@ -390,8 +390,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     pub fn fmadd_first_group_at_r(
         &self,
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-        acc_az: &mut Acc5U<F>,
-        acc_bz: &mut Acc6S<F>,
+        acc_az: &mut SmallAccumU<F>,
+        acc_bz: &mut MedAccumS<F>,
     ) {
         let az = self.eval_az_first_group();
         az.fmadd_at_r(w, acc_az);
@@ -558,8 +558,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             sub: flags[CircuitFlags::SubtractOperands],
             mul: flags[CircuitFlags::MultiplyOperands],
             not_add_sub_mul_advice,
-            write_lookup_to_rd: self.row.write_lookup_output_to_rd_addr,
-            write_pc_to_rd: self.row.write_pc_to_rd_addr,
+            write_lookup_to_rd: flags[CircuitFlags::WriteLookupOutputToRD],
+            write_pc_to_rd: flags[CircuitFlags::Jump],
             should_branch: self.row.should_branch,
             not_jump_or_branch: next_update_otherwise,
         }
@@ -635,7 +635,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     pub fn az_at_r_second_group(&self, _w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let w = _w;
         let az = self.eval_az_second_group();
-        let mut acc: Acc5U<F> = Acc5U::zero();
+        let mut acc: SmallAccumU<F> = SmallAccumU::zero();
         acc.fmadd(&w[0], &az.load_or_store);
         acc.fmadd(&w[1], &az.add);
         acc.fmadd(&w[2], &az.sub);
@@ -652,7 +652,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     pub fn bz_at_r_second_group(&self, _w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let w = _w;
         let bz = self.eval_bz_second_group();
-        let mut acc: Acc7S<F> = Acc7S::zero();
+        let mut acc = WideAccumS::<F>::zero();
         acc.fmadd(&w[0], &bz.ram_addr_minus_rs1_plus_imm);
         acc.fmadd(&w[1], &bz.right_lookup_minus_add_result);
         acc.fmadd(&w[2], &bz.right_lookup_minus_sub_result);
@@ -672,8 +672,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     pub fn fmadd_second_group_at_r(
         &self,
         w: &[F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
-        acc_az: &mut Acc5U<F>,
-        acc_bz: &mut Acc7S<F>,
+        acc_az: &mut SmallAccumU<F>,
+        acc_bz: &mut WideAccumS<F>,
     ) {
         let az = self.eval_az_second_group();
         az.fmadd_at_r(w, acc_az);
@@ -835,31 +835,30 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                 // If u64 => 6 limbs unsigned
                 // If i128 => 6 limbs signed
                 // If S128 => 7 limbs signed
-                let mut acc_left_input: Acc6U<F> = Acc6U::zero();
-                let mut acc_right_input: Acc6S<F> = Acc6S::zero();
-                let mut acc_product: Acc7S<F> = Acc7S::zero();
-                let mut acc_wl_left: Acc5U<F> = Acc5U::zero();
-                let mut acc_wp_left: Acc5U<F> = Acc5U::zero();
-                let mut acc_sb_right: Acc5U<F> = Acc5U::zero();
-                let mut acc_pc: Acc6U<F> = Acc6U::zero();
-                let mut acc_unexpanded_pc: Acc6U<F> = Acc6U::zero();
-                let mut acc_imm: Acc6S<F> = Acc6S::zero();
-                let mut acc_ram_address: Acc6U<F> = Acc6U::zero();
-                let mut acc_rs1_value: Acc6U<F> = Acc6U::zero();
-                let mut acc_rs2_value: Acc6U<F> = Acc6U::zero();
-                let mut acc_rd_write_value: Acc6U<F> = Acc6U::zero();
-                let mut acc_ram_read_value: Acc6U<F> = Acc6U::zero();
-                let mut acc_ram_write_value: Acc6U<F> = Acc6U::zero();
-                let mut acc_left_lookup_operand: Acc6U<F> = Acc6U::zero();
-                let mut acc_right_lookup_operand: Acc7U<F> = Acc7U::zero();
-                let mut acc_next_unexpanded_pc: Acc6U<F> = Acc6U::zero();
-                let mut acc_next_pc: Acc6U<F> = Acc6U::zero();
-                let mut acc_lookup_output: Acc6U<F> = Acc6U::zero();
-                let mut acc_sj_flag: Acc5U<F> = Acc5U::zero();
-                let mut acc_next_is_virtual: Acc5U<F> = Acc5U::zero();
-                let mut acc_next_is_first_in_sequence: Acc5U<F> = Acc5U::zero();
-                let mut acc_flags: Vec<Acc5U<F>> =
-                    (0..NUM_CIRCUIT_FLAGS).map(|_| Acc5U::zero()).collect();
+                let mut acc_left_input: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_right_input: MedAccumS<F> = MedAccumS::zero();
+                let mut acc_product = WideAccumS::<F>::zero();
+                let mut acc_sb_right: SmallAccumU<F> = SmallAccumU::zero();
+                let mut acc_pc: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_unexpanded_pc: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_imm: MedAccumS<F> = MedAccumS::zero();
+                let mut acc_ram_address: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_rs1_value: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_rs2_value: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_rd_write_value: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_ram_read_value: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_ram_write_value: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_left_lookup_operand: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_right_lookup_operand: WideAccumU<F> = WideAccumU::zero();
+                let mut acc_next_unexpanded_pc: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_next_pc: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_lookup_output: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_sj_flag: SmallAccumU<F> = SmallAccumU::zero();
+                let mut acc_next_is_virtual: SmallAccumU<F> = SmallAccumU::zero();
+                let mut acc_next_is_first_in_sequence: SmallAccumU<F> = SmallAccumU::zero();
+                let mut acc_flags: Vec<SmallAccumU<F>> = (0..NUM_CIRCUIT_FLAGS)
+                    .map(|_| SmallAccumU::zero())
+                    .collect();
 
                 let eq_two_len = eq_two.len();
                 for x2 in 0..eq_two_len {
@@ -871,8 +870,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     acc_right_input.fmadd(&e_in, &row.right_input.to_i128());
                     acc_product.fmadd(&e_in, &row.product);
 
-                    acc_wl_left.fmadd(&e_in, &(row.write_lookup_output_to_rd_addr as u64));
-                    acc_wp_left.fmadd(&e_in, &(row.write_pc_to_rd_addr as u64));
                     acc_sb_right.fmadd(&e_in, &row.should_branch);
 
                     acc_pc.fmadd(&e_in, &row.pc);
@@ -897,63 +894,59 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     }
                 }
 
-                let mut out_unr: [F::Unreduced<9>; NUM_R1CS_INPUTS] =
-                    [F::Unreduced::<9>::zero(); NUM_R1CS_INPUTS];
+                let mut out_unr: [F::UnreducedProductAccum; NUM_R1CS_INPUTS] =
+                    [F::UnreducedProductAccum::zero(); NUM_R1CS_INPUTS];
                 out_unr[JoltR1CSInputs::LeftInstructionInput.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_left_input.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_left_input.barrett_reduce());
                 out_unr[JoltR1CSInputs::RightInstructionInput.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_right_input.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_right_input.barrett_reduce());
                 out_unr[JoltR1CSInputs::Product.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_product.barrett_reduce());
-                out_unr[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_wl_left.barrett_reduce());
-                out_unr[JoltR1CSInputs::WritePCtoRD.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_wp_left.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_product.barrett_reduce());
                 out_unr[JoltR1CSInputs::ShouldBranch.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_sb_right.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_sb_right.barrett_reduce());
                 out_unr[JoltR1CSInputs::PC.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_pc.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_pc.barrett_reduce());
                 out_unr[JoltR1CSInputs::UnexpandedPC.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_unexpanded_pc.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_unexpanded_pc.barrett_reduce());
                 out_unr[JoltR1CSInputs::Imm.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_imm.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_imm.barrett_reduce());
                 out_unr[JoltR1CSInputs::RamAddress.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_ram_address.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_ram_address.barrett_reduce());
                 out_unr[JoltR1CSInputs::Rs1Value.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_rs1_value.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_rs1_value.barrett_reduce());
                 out_unr[JoltR1CSInputs::Rs2Value.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_rs2_value.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_rs2_value.barrett_reduce());
                 out_unr[JoltR1CSInputs::RdWriteValue.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_rd_write_value.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_rd_write_value.barrett_reduce());
                 out_unr[JoltR1CSInputs::RamReadValue.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_ram_read_value.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_ram_read_value.barrett_reduce());
                 out_unr[JoltR1CSInputs::RamWriteValue.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_ram_write_value.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_ram_write_value.barrett_reduce());
                 out_unr[JoltR1CSInputs::LeftLookupOperand.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_left_lookup_operand.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_left_lookup_operand.barrett_reduce());
                 out_unr[JoltR1CSInputs::RightLookupOperand.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_right_lookup_operand.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_right_lookup_operand.barrett_reduce());
                 out_unr[JoltR1CSInputs::NextUnexpandedPC.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_next_unexpanded_pc.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_next_unexpanded_pc.barrett_reduce());
                 out_unr[JoltR1CSInputs::NextPC.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_next_pc.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_next_pc.barrett_reduce());
                 out_unr[JoltR1CSInputs::LookupOutput.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_lookup_output.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_lookup_output.barrett_reduce());
                 out_unr[JoltR1CSInputs::ShouldJump.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_sj_flag.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_sj_flag.barrett_reduce());
                 out_unr[JoltR1CSInputs::NextIsVirtual.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_next_is_virtual.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_next_is_virtual.barrett_reduce());
                 out_unr[JoltR1CSInputs::NextIsFirstInSequence.to_index()] =
-                    eq1_val.mul_unreduced::<9>(acc_next_is_first_in_sequence.barrett_reduce());
+                    eq1_val.mul_to_product_accum(acc_next_is_first_in_sequence.barrett_reduce());
                 for flag in CircuitFlags::iter() {
                     let idx = JoltR1CSInputs::OpFlags(flag).to_index();
                     let f_idx = flag as usize;
-                    out_unr[idx] = eq1_val.mul_unreduced::<9>(acc_flags[f_idx].barrett_reduce());
+                    out_unr[idx] = eq1_val.mul_to_product_accum(acc_flags[f_idx].barrett_reduce());
                 }
                 out_unr
             })
             .reduce(
-                || [F::Unreduced::<9>::zero(); NUM_R1CS_INPUTS],
+                || [F::UnreducedProductAccum::zero(); NUM_R1CS_INPUTS],
                 |mut acc, item| {
                     for i in 0..NUM_R1CS_INPUTS {
                         acc[i] += item[i];
@@ -961,7 +954,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     acc
                 },
             )
-            .map(|unr| F::from_montgomery_reduce::<9>(unr))
+            .map(|unr| F::reduce_product_accum(unr))
     }
 }
 
@@ -971,27 +964,23 @@ pub struct ProductVirtualEval;
 
 impl ProductVirtualEval {
     /// Compute both fused left and right factors at r0 weights for a single cycle row.
-    /// Expected order of weights: [Instruction, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
+    /// Expected order of weights: [Instruction, ShouldBranch, ShouldJump]
     #[inline]
     pub fn fused_left_right_at_r<F: JoltField>(
         row: &ProductCycleInputs,
         weights_at_r0: &[F],
     ) -> (F, F) {
-        // Left: u64/u8/bool
-        let mut left_acc: Acc6U<F> = Acc6U::zero();
+        // Left: u64/bool
+        let mut left_acc: MedAccumU<F> = MedAccumU::zero();
         left_acc.fmadd(&weights_at_r0[0], &row.instruction_left_input);
-        left_acc.fmadd(&weights_at_r0[1], &row.is_rd_not_zero);
-        left_acc.fmadd(&weights_at_r0[2], &row.is_rd_not_zero);
-        left_acc.fmadd(&weights_at_r0[3], &row.should_branch_lookup_output);
-        left_acc.fmadd(&weights_at_r0[4], &row.jump_flag);
+        left_acc.fmadd(&weights_at_r0[1], &row.should_branch_lookup_output);
+        left_acc.fmadd(&weights_at_r0[2], &row.jump_flag);
 
         // Right: i128/bool
-        let mut right_acc: Acc6S<F> = Acc6S::zero();
+        let mut right_acc: MedAccumS<F> = MedAccumS::zero();
         right_acc.fmadd(&weights_at_r0[0], &row.instruction_right_input);
-        right_acc.fmadd(&weights_at_r0[1], &row.write_lookup_output_to_rd_flag);
-        right_acc.fmadd(&weights_at_r0[2], &row.jump_flag);
-        right_acc.fmadd(&weights_at_r0[3], &row.should_branch_flag);
-        right_acc.fmadd(&weights_at_r0[4], &row.not_next_noop);
+        right_acc.fmadd(&weights_at_r0[1], &row.should_branch_flag);
+        right_acc.fmadd(&weights_at_r0[2], &row.not_next_noop);
 
         (left_acc.barrett_reduce(), right_acc.barrett_reduce())
     }
@@ -1011,29 +1000,17 @@ impl ProductVirtualEval {
         left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128);
         right_w[0] = (c[0] as i128) * row.instruction_right_input;
 
-        // 1: WriteLookupOutputToRD (IsRdNotZero × WriteLookupOutputToRD_flag)
-        left_w[1] = if row.is_rd_not_zero { c[1] as i128 } else { 0 };
-        right_w[1] = if row.write_lookup_output_to_rd_flag {
+        // 1: ShouldBranch (LookupOutput × Branch_flag)
+        left_w[1] = (c[1] as i128) * (row.should_branch_lookup_output as i128);
+        right_w[1] = if row.should_branch_flag {
             c[1] as i128
         } else {
             0
         };
 
-        // 2: WritePCtoRD (IsRdNotZero × Jump_flag)
-        left_w[2] = if row.is_rd_not_zero { c[2] as i128 } else { 0 };
-        right_w[2] = if row.jump_flag { c[2] as i128 } else { 0 };
-
-        // 3: ShouldBranch (LookupOutput × Branch_flag)
-        left_w[3] = (c[3] as i128) * (row.should_branch_lookup_output as i128);
-        right_w[3] = if row.should_branch_flag {
-            c[3] as i128
-        } else {
-            0
-        };
-
-        // 4: ShouldJump (Jump_flag × (1 − NextIsNoop))
-        left_w[4] = if row.jump_flag { c[4] as i128 } else { 0 };
-        right_w[4] = if row.not_next_noop { c[4] as i128 } else { 0 };
+        // 2: ShouldJump (Jump_flag × (1 − NextIsNoop))
+        left_w[2] = if row.jump_flag { c[2] as i128 } else { 0 };
+        right_w[2] = if row.not_next_noop { c[2] as i128 } else { 0 };
 
         // Fuse in i128, then multiply as S128×S128 → S256
         let mut left_sum: i128 = 0;
@@ -1049,22 +1026,21 @@ impl ProductVirtualEval {
         left_s128.mul_trunc::<2, 4>(&right_s128)
     }
 
-    /// Compute z(r_cycle) for the 9 de-duplicated factor polynomials used by Product Virtualization.
+    /// Compute z(r_cycle) for the 8 de-duplicated factor polynomials used by Product Virtualization.
     /// Order of outputs matches PRODUCT_UNIQUE_FACTOR_VIRTUALS:
     /// 0: LeftInstructionInput (u64)
     /// 1: RightInstructionInput (i128)
-    /// 2: IsRdNotZero (bool)
+    /// 2: OpFlags(Jump) (bool)
     /// 3: OpFlags(WriteLookupOutputToRD) (bool)
-    /// 4: OpFlags(Jump) (bool)
-    /// 5: LookupOutput (u64)
-    /// 6: InstructionFlags(Branch) (bool)
-    /// 7: NextIsNoop (bool)
-    /// 8: OpFlags(VirtualInstruction) (bool) — not a product factor, opened for downstream stages
+    /// 4: LookupOutput (u64)
+    /// 5: InstructionFlags(Branch) (bool)
+    /// 6: NextIsNoop (bool)
+    /// 7: OpFlags(VirtualInstruction) (bool) — not a product factor, opened for downstream stages
     #[tracing::instrument(skip_all, name = "ProductVirtualEval::compute_claimed_factors")]
     pub fn compute_claimed_factors<F: JoltField>(
         trace: &[tracer::instruction::Cycle],
         r_cycle: &OpeningPoint<BIG_ENDIAN, F>,
-    ) -> [F; 9] {
+    ) -> [F; 8] {
         let m = r_cycle.len() / 2;
         let (r2, r1) = r_cycle.split_at_r(m);
         let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
@@ -1076,16 +1052,15 @@ impl ProductVirtualEval {
             .map(|x1| {
                 let eq1_val = eq_one[x1];
 
-                // Accumulators for 9 outputs
-                let mut acc_left_u64: Acc6U<F> = Acc6U::zero();
-                let mut acc_right_i128: Acc6S<F> = Acc6S::zero();
-                let mut acc_rd_zero_flag: Acc5U<F> = Acc5U::zero();
-                let mut acc_wl_flag: Acc5U<F> = Acc5U::zero();
-                let mut acc_jump_flag: Acc5U<F> = Acc5U::zero();
-                let mut acc_lookup_output: Acc6U<F> = Acc6U::zero();
-                let mut acc_branch_flag: Acc5U<F> = Acc5U::zero();
-                let mut acc_next_is_noop: Acc5U<F> = Acc5U::zero();
-                let mut acc_virtual_instr_flag: Acc5U<F> = Acc5U::zero();
+                // Accumulators for 8 outputs
+                let mut acc_left_u64: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_right_i128: MedAccumS<F> = MedAccumS::zero();
+                let mut acc_wl_flag: SmallAccumU<F> = SmallAccumU::zero();
+                let mut acc_jump_flag: SmallAccumU<F> = SmallAccumU::zero();
+                let mut acc_lookup_output: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_branch_flag: SmallAccumU<F> = SmallAccumU::zero();
+                let mut acc_next_is_noop: SmallAccumU<F> = SmallAccumU::zero();
+                let mut acc_virtual_instr_flag: SmallAccumU<F> = SmallAccumU::zero();
 
                 for x2 in 0..eq_two_len {
                     let e_in = eq_two[x2];
@@ -1096,43 +1071,40 @@ impl ProductVirtualEval {
                     acc_left_u64.fmadd(&e_in, &row.instruction_left_input);
                     // 1: RightInstructionInput (i128)
                     acc_right_i128.fmadd(&e_in, &row.instruction_right_input);
-                    // 2: IsRdNotZero (bool)
-                    acc_rd_zero_flag.fmadd(&e_in, &(row.is_rd_not_zero));
+                    // 2: OpFlags(Jump) (bool)
+                    acc_jump_flag.fmadd(&e_in, &row.jump_flag);
                     // 3: OpFlags(WriteLookupOutputToRD) (bool)
                     acc_wl_flag.fmadd(&e_in, &row.write_lookup_output_to_rd_flag);
-                    // 4: OpFlags(Jump) (bool)
-                    acc_jump_flag.fmadd(&e_in, &row.jump_flag);
-                    // 5: LookupOutput (u64)
+                    // 4: LookupOutput (u64)
                     acc_lookup_output.fmadd(&e_in, &row.should_branch_lookup_output);
-                    // 6: InstructionFlags(Branch) (bool)
+                    // 5: InstructionFlags(Branch) (bool)
                     acc_branch_flag.fmadd(&e_in, &row.should_branch_flag);
-                    // 7: NextIsNoop (bool) = !not_next_noop
+                    // 6: NextIsNoop (bool) = !not_next_noop
                     acc_next_is_noop.fmadd(&e_in, &(!row.not_next_noop));
-                    // 8: OpFlags(VirtualInstruction) (bool)
+                    // 7: OpFlags(VirtualInstruction) (bool)
                     acc_virtual_instr_flag.fmadd(&e_in, &row.virtual_instruction_flag);
                 }
 
-                let mut out_unr = [F::Unreduced::<9>::zero(); 9];
-                out_unr[0] = eq1_val.mul_unreduced::<9>(acc_left_u64.barrett_reduce());
-                out_unr[1] = eq1_val.mul_unreduced::<9>(acc_right_i128.barrett_reduce());
-                out_unr[2] = eq1_val.mul_unreduced::<9>(acc_rd_zero_flag.barrett_reduce());
-                out_unr[3] = eq1_val.mul_unreduced::<9>(acc_wl_flag.barrett_reduce());
-                out_unr[4] = eq1_val.mul_unreduced::<9>(acc_jump_flag.barrett_reduce());
-                out_unr[5] = eq1_val.mul_unreduced::<9>(acc_lookup_output.barrett_reduce());
-                out_unr[6] = eq1_val.mul_unreduced::<9>(acc_branch_flag.barrett_reduce());
-                out_unr[7] = eq1_val.mul_unreduced::<9>(acc_next_is_noop.barrett_reduce());
-                out_unr[8] = eq1_val.mul_unreduced::<9>(acc_virtual_instr_flag.barrett_reduce());
+                let mut out_unr = [F::UnreducedProductAccum::zero(); 8];
+                out_unr[0] = eq1_val.mul_to_product_accum(acc_left_u64.barrett_reduce());
+                out_unr[1] = eq1_val.mul_to_product_accum(acc_right_i128.barrett_reduce());
+                out_unr[2] = eq1_val.mul_to_product_accum(acc_jump_flag.barrett_reduce());
+                out_unr[3] = eq1_val.mul_to_product_accum(acc_wl_flag.barrett_reduce());
+                out_unr[4] = eq1_val.mul_to_product_accum(acc_lookup_output.barrett_reduce());
+                out_unr[5] = eq1_val.mul_to_product_accum(acc_branch_flag.barrett_reduce());
+                out_unr[6] = eq1_val.mul_to_product_accum(acc_next_is_noop.barrett_reduce());
+                out_unr[7] = eq1_val.mul_to_product_accum(acc_virtual_instr_flag.barrett_reduce());
                 out_unr
             })
             .reduce(
-                || [F::Unreduced::<9>::zero(); 9],
+                || [F::UnreducedProductAccum::zero(); 8],
                 |mut acc, item| {
-                    for i in 0..9 {
+                    for i in 0..8 {
                         acc[i] += item[i];
                     }
                     acc
                 },
             )
-            .map(|unr| F::from_montgomery_reduce::<9>(unr))
+            .map(|unr| F::reduce_product_accum(unr))
     }
 }

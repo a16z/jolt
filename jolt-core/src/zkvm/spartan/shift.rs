@@ -100,11 +100,17 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, PolynomialId, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::subprotocols::sumcheck_claim::{
     CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
     VerifierEvaluablePolynomial,
@@ -197,6 +203,120 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
     ) -> OpeningPoint<BIG_ENDIAN, F> {
         normalize_opening_point(challenges)
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        let next_unexpanded_pc = OpeningId::virt(
+            VirtualPolynomial::NextUnexpandedPC,
+            SumcheckId::SpartanOuter,
+        );
+        let next_pc = OpeningId::virt(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
+        let next_is_virtual =
+            OpeningId::virt(VirtualPolynomial::NextIsVirtual, SumcheckId::SpartanOuter);
+        let next_is_first_in_sequence = OpeningId::virt(
+            VirtualPolynomial::NextIsFirstInSequence,
+            SumcheckId::SpartanOuter,
+        );
+        let next_is_noop = OpeningId::virt(
+            VirtualPolynomial::NextIsNoop,
+            SumcheckId::SpartanProductVirtualization,
+        );
+
+        let terms = vec![
+            ProductTerm::single(ValueSource::Opening(next_unexpanded_pc)),
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(next_pc)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(1),
+                vec![ValueSource::Opening(next_is_virtual)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(2),
+                vec![ValueSource::Opening(next_is_first_in_sequence)],
+            ),
+            ProductTerm::single(ValueSource::Challenge(3)), // gamma[4] constant term
+            ProductTerm::scaled(
+                ValueSource::Challenge(4),
+                vec![ValueSource::Opening(next_is_noop)],
+            ), // -gamma[4] * next_is_noop
+        ];
+        InputClaimConstraint::sum_of_products(terms)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        vec![
+            self.gamma_powers[1],
+            self.gamma_powers[2],
+            self.gamma_powers[3],
+            self.gamma_powers[4],
+            -self.gamma_powers[4],
+        ]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        let unexpanded_pc =
+            OpeningId::virt(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanShift);
+        let pc = OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        let is_virtual = OpeningId::virt(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanShift,
+        );
+        let is_first_in_sequence = OpeningId::virt(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
+            SumcheckId::SpartanShift,
+        );
+        let is_noop = OpeningId::virt(
+            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
+            SumcheckId::SpartanShift,
+        );
+
+        let terms = vec![
+            ProductTerm::scaled(
+                ValueSource::Challenge(0),
+                vec![ValueSource::Opening(unexpanded_pc)],
+            ),
+            ProductTerm::scaled(ValueSource::Challenge(1), vec![ValueSource::Opening(pc)]),
+            ProductTerm::scaled(
+                ValueSource::Challenge(2),
+                vec![ValueSource::Opening(is_virtual)],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(3),
+                vec![ValueSource::Opening(is_first_in_sequence)],
+            ),
+            ProductTerm::single(ValueSource::Challenge(4)),
+            ProductTerm::scaled(
+                ValueSource::Challenge(5),
+                vec![ValueSource::Opening(is_noop)],
+            ),
+        ];
+
+        Some(OutputClaimConstraint::sum_of_products(terms))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let r = normalize_opening_point::<F>(sumcheck_challenges);
+        let eq_plus_one_outer =
+            EqPlusOnePolynomial::<F>::new(self.r_outer.r.to_vec()).evaluate(&r.r);
+        let eq_plus_one_product =
+            EqPlusOnePolynomial::<F>::new(self.r_product.r.to_vec()).evaluate(&r.r);
+
+        let gamma_powers = &self.gamma_powers;
+
+        vec![
+            gamma_powers[0] * eq_plus_one_outer,
+            gamma_powers[1] * eq_plus_one_outer,
+            gamma_powers[2] * eq_plus_one_outer,
+            gamma_powers[3] * eq_plus_one_outer,
+            gamma_powers[4] * eq_plus_one_product,
+            -gamma_powers[4] * eq_plus_one_product,
+        ]
+    }
 }
 
 fn normalize_opening_point<F: JoltField>(
@@ -273,7 +393,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let ShiftSumcheckPhase::Phase2(state) = &self.phase else {
@@ -288,35 +407,30 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
 
         let opening_point = normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
             unexpanded_pc_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::PC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
             pc_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
             SumcheckId::SpartanShift,
             opening_point.clone(),
             is_virtual_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
             SumcheckId::SpartanShift,
             opening_point.clone(),
             is_first_in_sequence_eval,
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
             opening_point,
@@ -427,36 +541,30 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for ShiftSumche
     fn cache_openings(
         &self,
         accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut T,
         sumcheck_challenges: &[<F as JoltField>::Challenge],
     ) {
         let opening_point = normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::PC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
             opening_point,
@@ -599,10 +707,12 @@ impl<F: JoltField> Phase1State<F> {
                     ),
                 )| {
                     let chunk_len = Q_0_for_r_outer_chunk.len();
-                    let mut Q_0_for_r_outer_unreduced = [F::Unreduced::<9>::zero(); BLOCK_SIZE];
-                    let mut Q_1_for_r_outer_unreduced = [F::Unreduced::<9>::zero(); BLOCK_SIZE];
-                    let mut Q_0_for_r_prod_unreduced = [F::Unreduced::<5>::zero(); BLOCK_SIZE];
-                    let mut Q_1_for_r_prod_unreduced = [F::Unreduced::<5>::zero(); BLOCK_SIZE];
+                    let mut Q_0_for_r_outer_unreduced =
+                        [F::UnreducedProductAccum::zero(); BLOCK_SIZE];
+                    let mut Q_1_for_r_outer_unreduced =
+                        [F::UnreducedProductAccum::zero(); BLOCK_SIZE];
+                    let mut Q_0_for_r_prod_unreduced = [F::UnreducedMulU64::zero(); BLOCK_SIZE];
+                    let mut Q_1_for_r_prod_unreduced = [F::UnreducedMulU64::zero(); BLOCK_SIZE];
 
                     for x_hi in 0..1 << suffix_n_vars {
                         for i in 0..chunk_len {
@@ -625,29 +735,27 @@ impl<F: JoltField> Phase1State<F> {
                                 v += params.gamma_powers[3];
                             }
                             Q_0_for_r_outer_unreduced[i] +=
-                                v.mul_unreduced::<9>(suffix_0_for_r_outer[x_hi]);
+                                v.mul_to_product_accum(suffix_0_for_r_outer[x_hi]);
                             Q_1_for_r_outer_unreduced[i] +=
-                                v.mul_unreduced::<9>(suffix_1_for_r_outer[x_hi]);
+                                v.mul_to_product_accum(suffix_1_for_r_outer[x_hi]);
 
                             // Q += suffix * (1 - is_noop)
                             if !is_noop {
                                 Q_0_for_r_prod_unreduced[i] +=
-                                    *suffix_0_for_r_prod[x_hi].as_unreduced_ref();
+                                    suffix_0_for_r_prod[x_hi].to_unreduced();
                                 Q_1_for_r_prod_unreduced[i] +=
-                                    *suffix_1_for_r_prod[x_hi].as_unreduced_ref();
+                                    suffix_1_for_r_prod[x_hi].to_unreduced();
                             }
                         }
                     }
 
                     for i in 0..chunk_len {
                         Q_0_for_r_outer_chunk[i] =
-                            F::from_montgomery_reduce(Q_0_for_r_outer_unreduced[i]);
+                            F::reduce_product_accum(Q_0_for_r_outer_unreduced[i]);
                         Q_1_for_r_outer_chunk[i] =
-                            F::from_montgomery_reduce(Q_1_for_r_outer_unreduced[i]);
-                        Q_0_for_r_prod_chunk[i] =
-                            F::from_barrett_reduce(Q_0_for_r_prod_unreduced[i]);
-                        Q_1_for_r_prod_chunk[i] =
-                            F::from_barrett_reduce(Q_1_for_r_prod_unreduced[i]);
+                            F::reduce_product_accum(Q_1_for_r_outer_unreduced[i]);
+                        Q_0_for_r_prod_chunk[i] = F::reduce_mul_u64(Q_0_for_r_prod_unreduced[i]);
+                        Q_1_for_r_prod_chunk[i] = F::reduce_mul_u64(Q_1_for_r_prod_unreduced[i]);
                     }
                 },
             );
@@ -782,11 +890,11 @@ impl<F: JoltField> Phase2State<F> {
                     is_noop_eval,
                     trace_chunk,
                 )| {
-                    let mut unexpanded_pc_eval_unreduced = F::Unreduced::<5>::zero();
-                    let mut pc_eval_unreduced = F::Unreduced::<6>::zero();
-                    let mut is_virtual_eval_unreduced = F::Unreduced::<5>::zero();
-                    let mut is_first_in_sequence_eval_unreduced = F::Unreduced::<5>::zero();
-                    let mut is_noop_eval_unreduced = F::Unreduced::<5>::zero();
+                    let mut unexpanded_pc_eval_unreduced = F::UnreducedMulU64::zero();
+                    let mut pc_eval_unreduced = F::UnreducedMulU128::zero();
+                    let mut is_virtual_eval_unreduced = F::UnreducedMulU64::zero();
+                    let mut is_first_in_sequence_eval_unreduced = F::UnreducedMulU64::zero();
+                    let mut is_noop_eval_unreduced = F::UnreducedMulU64::zero();
 
                     for (i, cycle) in trace_chunk.iter().enumerate() {
                         let ShiftSumcheckCycleState {
@@ -800,22 +908,22 @@ impl<F: JoltField> Phase2State<F> {
                         unexpanded_pc_eval_unreduced += eq_eval.mul_u64_unreduced(unexpanded_pc);
                         pc_eval_unreduced += eq_eval.mul_u64_unreduced(pc);
                         if is_virtual {
-                            is_virtual_eval_unreduced += *eq_eval.as_unreduced_ref();
+                            is_virtual_eval_unreduced += eq_eval.to_unreduced();
                         }
                         if is_first_in_sequence {
-                            is_first_in_sequence_eval_unreduced += *eq_eval.as_unreduced_ref();
+                            is_first_in_sequence_eval_unreduced += eq_eval.to_unreduced();
                         }
                         if is_noop {
-                            is_noop_eval_unreduced += *eq_eval.as_unreduced_ref();
+                            is_noop_eval_unreduced += eq_eval.to_unreduced();
                         }
                     }
 
-                    *unexpanded_pc_eval = F::from_barrett_reduce(unexpanded_pc_eval_unreduced);
-                    *pc_eval = F::from_barrett_reduce(pc_eval_unreduced);
-                    *is_virtual_eval = F::from_barrett_reduce(is_virtual_eval_unreduced);
+                    *unexpanded_pc_eval = F::reduce_mul_u64(unexpanded_pc_eval_unreduced);
+                    *pc_eval = F::reduce_mul_u128(pc_eval_unreduced);
+                    *is_virtual_eval = F::reduce_mul_u64(is_virtual_eval_unreduced);
                     *is_first_in_sequence_eval =
-                        F::from_barrett_reduce(is_first_in_sequence_eval_unreduced);
-                    *is_noop_eval = F::from_barrett_reduce(is_noop_eval_unreduced);
+                        F::reduce_mul_u64(is_first_in_sequence_eval_unreduced);
+                    *is_noop_eval = F::reduce_mul_u64(is_noop_eval_unreduced);
                 },
             );
 

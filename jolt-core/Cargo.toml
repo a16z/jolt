@@ -24,6 +24,7 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
 default = ["host"]
+zk = ["dory/zk"]
 host = [
     "prover",
     "dep:jolt-inlines-sha2",
@@ -36,7 +37,7 @@ prover = [
     "ark-std/parallel",
     "dory/backends",
     "dory/cache", # This includes `parallel` feature
-    "dory/disk-persistence"
+    "dory/disk-persistence",
 ]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
@@ -49,22 +50,19 @@ challenge-254-bit = []
 
 [dependencies]
 ark-bn254.workspace = true
-ark-grumpkin.workspace = true
 jolt-optimizations.workspace = true
 ark-ec.workspace = true
 ark-ff.workspace = true
 ark-serialize.workspace = true
-ark-serialize-derive.workspace = true
 ark-std.workspace = true
 clap.workspace = true
 fixedbitset.workspace = true
 itertools.workspace = true
-num-integer.workspace = true
 num-derive.workspace = true
 num.workspace = true
 num-traits.workspace = true
 postcard = { workspace = true, features = ["use-std"] }
-rand.workspace = true
+rand = { workspace = true, features = ["std", "std_rng"] }
 rand_chacha.workspace = true
 rand_core.workspace = true
 rayon = { workspace = true, optional = true }
@@ -82,14 +80,10 @@ eyre.workspace = true
 common.workspace = true
 tracer = { workspace = true, default-features = false, features = ["std"] }
 bincode.workspace = true
-rand_distr.workspace = true
-anyhow.workspace = true
 derive_more.workspace = true
-paste.workspace = true
 dory.workspace = true
 allocative.workspace = true
 inferno = { workspace = true, optional = true }
-jolt-platform = { workspace = true, features = ["std"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [
     "host",
@@ -101,8 +95,9 @@ pprof = { version = "0.15", features = [
     "frame-pointer",
 ], optional = true }
 prost = { version = "0.14", optional = true }
-bytemuck.workspace = true
-bytemuck_derive.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["prost"]
 
 [dev-dependencies]
 criterion.workspace = true

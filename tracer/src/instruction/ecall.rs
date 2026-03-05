@@ -24,7 +24,8 @@ declare_riscv_instr!(
     mask   = 0xffff_ffff,
     match  = 0x0000_0073,
     format = FormatI,
-    ram    = ()
+    ram    = (),
+    side_effects = true
 );
 
 impl ECALL {
@@ -81,7 +82,9 @@ impl RISCVTrace for ECALL {
         asm.emit_i::<SLLI>(vr_mstatus, *three, 11);
         drop(three);
 
-        asm.emit_i::<JALR>(0, v_trap_handler_reg, 0);
+        // Use virtual register for rd to discard write value
+        let jalr_rd = allocator.allocate();
+        asm.emit_i::<JALR>(*jalr_rd, v_trap_handler_reg, 0);
 
         asm.finalize()
     }

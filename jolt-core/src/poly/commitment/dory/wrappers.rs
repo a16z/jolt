@@ -1,7 +1,6 @@
 //! Type conversions and wrappers between Jolt types and final-dory's arkworks backend
 
 use crate::{
-    field::JoltField,
     msm::VariableBaseMSM,
     poly::{
         commitment::dory::{DoryContext, DoryGlobals, DoryLayout},
@@ -48,37 +47,38 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
     }
 
     fn evaluate(&self, point: &[ArkFr]) -> ArkFr {
-        let native_point: Vec<<Fr as JoltField>::Challenge> = point
-            .par_iter()
-            .map(|p| {
-                let f_val: Fr = ark_to_jolt(p);
-                unsafe { std::mem::transmute_copy(&f_val) }
-            })
-            .collect();
+        // Dory uses little-endian variable order; reverse to match Jolt's big-endian order.
+        // Use Fr directly (not Challenge type) to avoid type mismatch issues.
+        let native_point: Vec<Fr> = point.iter().rev().map(ark_to_jolt).collect();
         let result = PolynomialEvaluation::evaluate(self, native_point.as_slice());
         jolt_to_ark(&result)
     }
 
-    fn commit<E, _M1>(
+    fn commit<E, Mo, _M1>(
         &self,
         _nu: usize,
         sigma: usize,
         setup: &ProverSetup<E>,
-    ) -> Result<(E::GT, Vec<E::G1>), DoryError>
+    ) -> Result<(E::GT, Vec<E::G1>, ArkFr), DoryError>
     where
         E: PairingCurve,
+        Mo: dory::Mode,
         _M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = ArkFr>,
+        E::GT: DoryGroup<Scalar = ArkFr>,
     {
         let num_cols = 1 << sigma;
 
-        // Perform an MSM per row of the polynomial's matrix representation
         let row_commitments = commit_tier_1::<E>(self, &setup.g1_vec, num_cols)?;
 
         let g2_bases = &setup.g2_vec[..row_commitments.len()];
         let commitment = E::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-        Ok((commitment, row_commitments))
+        // In ZK mode, blind the tier-2 commitment with r_d1 * HT
+        let r_d1: ArkFr = Mo::sample();
+        let commitment = Mo::mask(commitment, &setup.ht, &r_d1);
+
+        Ok((commitment, row_commitments, r_d1))
     }
 }
 

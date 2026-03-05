@@ -222,7 +222,11 @@ impl Emulator {
 
         for header in &section_headers {
             match header.sh_type {
-                1 => program_data_section_headers.push(header),
+                // SHT_PROGBITS (1): .text, .data, .rodata, .got, etc.
+                // SHT_INIT_ARRAY (14): .init_array - constructor function pointers
+                // SHT_FINI_ARRAY (15): .fini_array - destructor function pointers
+                // SHT_PREINIT_ARRAY (16): .preinit_array - early constructor pointers
+                1 | 14 | 15 | 16 => program_data_section_headers.push(header),
                 2 => symbol_table_section_headers.push(header),
                 3 => string_table_section_headers.push(header),
                 _ => {}

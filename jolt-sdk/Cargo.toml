@@ -17,14 +17,12 @@ edition = "2021"
 [features]
 default = ["jolt-platform/random"]
 debug = ["zeroos?/debug"]
+zk = ["jolt-core/zk"]
 
 host = [
     "jolt-core/default",
     "jolt-platform/std",
-    "dep:tracer",
     "dep:common",
-    "dep:ark-ec",
-    "dep:ark-bn254",
     "postcard/use-std",
     "serde/std",
 ]
@@ -40,14 +38,11 @@ guest-std = [
     "jolt-sdk-macros/guest-std",
     "serde/std",
     "zeroos-std",
-    "debug",
 ]
 
 guest-verifier = [
     "guest-std",
-    "dep:tracer",
     "dep:common",
-    "dep:ark-bn254",
     "jolt-core/minimal",
 ]
 
@@ -88,27 +83,21 @@ zeroos-std = [
 jolt-platform.workspace = true
 postcard.workspace = true
 bytemuck.workspace = true
-bytemuck_derive.workspace = true
 serde = { version = "1.0", default-features = false, features = ["derive"] }
-embedded-io = { version = "0.6", default-features = false }
-ark-ec = { workspace = true, default-features = false, optional = true }
-ark-bn254 = { workspace = true, default-features = false, optional = true }
 
 jolt-sdk-macros.workspace = true
 # Host-only dependencies
 common = { workspace = true, optional = true }
 jolt-core = { workspace = true, default-features = false, optional = true }
-tracer = { workspace = true, optional = true }
-rand = { workspace = true, optional = true }
 zeroos = { workspace = true, optional = true }
 cfg-if = { workspace = true }
 
-[dev-dependencies]
-hex-literal.workspace = true
-
 [target.'cfg(all(target_arch = "riscv64"))'.dependencies]
 riscv = { workspace = true }
-zeroos = { workspace = true, default-features = false, features = ["debug", "arch-riscv", "alloc-linked-list"]}
+zeroos = { workspace = true, default-features = false, features = ["arch-riscv", "alloc-linked-list"]}
+
+[target.'cfg(all(target_arch = "riscv64", target_os = "none"))'.dependencies]
+zeroos = { workspace = true, default-features = false, features = ["runtime-nostd", "panic"]}
 
 [target.'cfg(all(target_arch = "riscv64", target_os = "linux"))'.dependencies]
 zeroos = { workspace = true, default-features = false, features = ["os-linux"]}

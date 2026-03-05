@@ -12,7 +12,6 @@ jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
 	"thread",
 	"stdout",
 ] }
-ark-ff = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 alloy-eips = { workspace = true }

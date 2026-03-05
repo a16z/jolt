@@ -19,7 +19,10 @@ impl AUIPC {
     fn exec(&self, cpu: &mut Cpu, _: &mut <AUIPC as RISCVInstruction>::RAMAccess) {
         let pc = self.address as i64;
         let imm = normalize_imm(self.operands.imm, &cpu.xlen);
-        cpu.x[self.operands.rd as usize] = cpu.sign_extend(pc.wrapping_add(imm));
+        cpu.write_register(
+            self.operands.rd as usize,
+            cpu.sign_extend(pc.wrapping_add(imm)),
+        );
     }
 }
 

@@ -25,12 +25,12 @@ impl VirtualShiftRightBitmask {
             Xlen::Bit32 => {
                 let shift = cpu.x[self.operands.rs1 as usize] as u64 & 0x1F;
                 let ones = (1u64 << (32 - shift)) - 1;
-                cpu.x[self.operands.rd as usize] = (ones << shift) as i64;
+                cpu.write_register(self.operands.rd as usize, (ones << shift) as i64);
             }
             Xlen::Bit64 => {
                 let shift = cpu.x[self.operands.rs1 as usize] as u64 & 0x3F;
                 let ones = (1u128 << (64 - shift)) - 1;
-                cpu.x[self.operands.rd as usize] = (ones << shift) as i64;
+                cpu.write_register(self.operands.rd as usize, (ones << shift) as i64);
             }
         }
     }

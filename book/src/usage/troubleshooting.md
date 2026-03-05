@@ -63,5 +63,103 @@ fn inline_asm() -> (i32, u32, i32, u32) {
 ```
 
 
+## Null Pointer Write / "Unknown memory mapping: 0x0"
+If you see `Null pointer write detected (store to 0x0)` or `Illegal device store: Unknown memory mapping: 0x0`, it means your guest program crashed. This happens when musl's `abort()` cannot deliver a signal and falls back to writing to a null pointer.
+
+The most common cause is a missing jolt-sdk feature. If your guest uses:
+- **rayon or threading** — add `"thread"` to your jolt-sdk features
+- **randomness (getrandom)** — add `"random"` to your jolt-sdk features
+
+```toml
+[dependencies]
+jolt = { package = "jolt-sdk", features = ["guest-std", "thread", "random"] }
+```
+
+To diagnose which syscall is failing, add the `"debug"` feature to enable syscall logging:
+```toml
+jolt = { package = "jolt-sdk", features = ["guest-std", "debug"] }
+```
+This prints every syscall the guest makes (e.g. `[syscall] SYS_clone`), which helps identify which capability is missing.
+
+## Release runs with fat LTO fail a lookup-table test
+
+If `cargo nextest run --release -p jolt-core` fails at:
+
+```
+'zkvm::lookup_table::equal::test::prefix_suffix' panicked at jolt-core/src/zkvm/lookup_table/test.rs:108:17:
+assertion `left == right` failed
+```
+
+this appears to be a **fat LTO** miscompile in the current compiler pass pipeline. 
+This class of miscompilations is generally tracked in [rust-lang/rust#116941](https://github.com/rust-lang/rust/issues/116941).
+
+**Workarounds**
+
+- Prefer **thin LTO** (default in `Cargo.toml`):
+  - `profile.release.lto = "thin"`
+- If you must keep fat LTO, disable LLVM prepopulate passes (use Cargo’s profile override
+  to avoid applying LTO to proc-macro/build scripts):
+  - `CARGO_PROFILE_RELEASE_LTO=fat RUSTFLAGS="-C no-prepopulate-passes"`
+
+These avoid the miscompile while keeping release runs functional.
+
+## LTO Configuration Details
+
+We have investigated three primary LTO configurations.
+
+### 1. `lto = "fat"` (Problematic)
+
+Enabling "fat" LTO without additional flags triggers a compiler miscompilation in the current toolchain.
+
+To reproduce:
+```bash
+CARGO_PROFILE_RELEASE_LTO=fat cargo nextest run --release -p jolt-core -E 'test(=zkvm::lookup_table::equal::test::prefix_suffix)'
+```
+
+You will see an error similar to:
+```text
+thread 'zkvm::lookup_table::equal::test::prefix_suffix' panicked at jolt-core/src/zkvm/lookup_table/test.rs:108:17:
+assertion `left == right` failed
+  left: 3421757210433941145757981284077922153733430471292915370254709621273756639318
+ right: 15993602859885613318374216934674599210221976492830069114166327961258944178919
+```
+
+### 2. `lto = "thin"` (Recommended)
+
+The above error can be fixed by setting `lto = "thin"`. You can verify with:
+
+```bash
+CARGO_PROFILE_RELEASE_LTO=thin cargo nextest run --release -p jolt-core -E 'test(=zkvm::lookup_table::equal::test::prefix_suffix)'
+```
+
+### 3. `lto = "fat"` with `-C no-prepopulate-passes`
+
+If you must use fat LTO, adding `RUSTFLAGS="-C no-prepopulate-passes"` prevents the miscompilation described above. However, this flag alters the guest ELF code generation, which can increase the execution trace length slightly.
+
+This may cause tests with tight trace length limits—such as `advice_e2e_dory`—to fail.
+
+To reproduce:
+```bash
+CARGO_PROFILE_RELEASE_LTO=fat RUSTFLAGS="-C no-prepopulate-passes" cargo nextest run --release -p jolt-core -E 'test(=zkvm::prover::tests::advice_e2e_dory)'
+```
+
+You will see a trace length error:
+```text
+    thread 'zkvm::prover::tests::advice_e2e_dory' panicked at jolt-core/src/zkvm/prover.rs:336:13:
+    Execution trace length (105501 cycles, padded to 131072) exceeds max_trace_length (65536) configured in MemoryConfig. Increase max_trace_length to at least 131072.
+```
+
+To fix this, simply increase the `max_trace_length` in the failing test setup. For example, in `advice_e2e_dory`:
+
+```diff
+let shared_preprocessing = JoltSharedPreprocessing::new(
+    bytecode.clone(),
+    io_device.memory_layout.clone(),
+    init_memory_state,
+-   1 << 16,
++   1 << 17,
+);
+```
+
 ## Getting Help
 If none of the above solve the problem, please create a Github issue with a detailed bug report including the Jolt commit hash, the hardware or container configuration used, and a minimal guest program to reproduce the bug.
