@@ -250,25 +250,10 @@ impl<F: JoltField> BlindFoldWitness<F> {
 
         let layout = compute_witness_layout(&r1cs.stage_configs, &r1cs.extra_constraints);
 
-        // When OC region is active, pre-mark all openings that were placed there
-        // so ConstraintVars steps don't allocate duplicate slots.
-        let mut assigned_openings: HashSet<OpeningId> = HashSet::new();
-        if output_claims_rows > 0 {
-            for step in &layout {
-                let opening_ids = match step {
-                    LayoutStep::ConstraintVars { constraint, .. }
-                    | LayoutStep::ExtraConstraintVars { constraint, .. } => {
-                        &constraint.required_openings
-                    }
-                    _ => continue,
-                };
-                for id in opening_ids {
-                    if assigned_openings.len() < self.output_claims_values.len() {
-                        assigned_openings.insert(*id);
-                    }
-                }
-            }
-        }
+        // Pre-mark openings that live in the OC region so ConstraintVars steps
+        // don't allocate duplicate noncoeff slots.
+        let mut assigned_openings: HashSet<OpeningId> =
+            r1cs.output_claims_opening_ids.iter().copied().collect();
 
         for step in &layout {
             match step {

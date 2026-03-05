@@ -178,6 +178,7 @@ pub fn prove_uniskip_round_zk<
     instance.cache_openings(opening_accumulator, &[r0]);
 
     let output_claims = opening_accumulator.take_pending_claims();
+    let output_claim_ids = opening_accumulator.take_pending_claim_ids();
     let oc_committed: Vec<_> = pedersen_gens.commit_chunked(&output_claims, rng);
     let output_claims_commitments: Vec<_> = oc_committed.iter().map(|(c, _)| *c).collect();
     let output_claims_blindings: Vec<_> = oc_committed.iter().map(|(_, b)| *b).collect();
@@ -198,6 +199,7 @@ pub fn prove_uniskip_round_zk<
         input_constraint,
         input_constraint_challenge_values,
         output_claims,
+        output_claim_ids,
         output_claims_blindings,
         output_claims_commitments: output_claims_commitments.clone(),
     });

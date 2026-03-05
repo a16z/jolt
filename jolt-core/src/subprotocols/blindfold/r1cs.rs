@@ -326,10 +326,11 @@ pub struct VerifierR1CSBuilder<F: JoltField> {
     extra_output_vars: Vec<Variable>,
     extra_blinding_vars: Vec<Variable>,
     baked: BakedPublicInputs<F>,
-    /// When true, opening variables are pre-allocated in a dedicated output claims region
-    /// (between coeff rows and regular noncoeff) and their Hyrax row commitments
-    /// are externally verified against the sumcheck proof commitments.
-    bind_output_claims: bool,
+    /// Per-stage OC blocks: each block lists the opening IDs in the order they
+    /// were produced by that stage's `cache_openings`. Each block occupies
+    /// `ceil(len/C)` complete Hyrax rows. The per-stage Pedersen commitments
+    /// map 1:1 to these rows.
+    oc_blocks: Vec<Vec<OpeningId>>,
 }
 
 struct RoundVariables {
@@ -339,16 +340,18 @@ struct RoundVariables {
 
 impl<F: JoltField> VerifierR1CSBuilder<F> {
     pub fn new(stage_configs: &[StageConfig], baked: &BakedPublicInputs<F>) -> Self {
-        Self::new_with_extra(stage_configs, &[], baked, false)
+        Self::new_with_extra(stage_configs, &[], baked, Vec::new())
     }
 
-    /// `bind_output_claims`: when true, opening variables are placed in a dedicated
-    /// output claims region with externally-verified Hyrax row commitments.
+    /// `oc_blocks`: per-stage OC blocks. Each block lists opening IDs in the
+    /// order they were produced by that stage's `cache_openings`. When non-empty,
+    /// opening variables are pre-allocated in a dedicated OC region (between
+    /// coeff rows and regular noncoeff) with per-block row padding.
     pub fn new_with_extra(
         stage_configs: &[StageConfig],
         extra_constraints: &[OutputClaimConstraint],
         baked: &BakedPublicInputs<F>,
-        bind_output_claims: bool,
+        oc_blocks: Vec<Vec<OpeningId>>,
     ) -> Self {
         Self {
             constraints: Vec::new(),
@@ -358,7 +361,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             extra_output_vars: Vec::new(),
             extra_blinding_vars: Vec::new(),
             baked: baked.clone(),
-            bind_output_claims,
+            oc_blocks,
         }
     }
 
@@ -460,37 +463,29 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         let layout = compute_witness_layout(&stage_configs, &extra_constraints);
 
         // Pre-allocate opening variables in the dedicated output claims region.
-        // Scan layout to collect unique openings in first-appearance order, then
-        // assign variables at positions within the OC rows (after coeff rows).
+        // Each OC block occupies ceil(len/C) full Hyrax rows, matching per-stage
+        // commit_chunked output so that per-stage Pedersen commitments can serve
+        // directly as Hyrax row commitments.
         let mut global_opening_vars: HashMap<OpeningId, Variable> = HashMap::new();
         let mut output_claims_opening_ids: Vec<OpeningId> = Vec::new();
 
-        if self.bind_output_claims {
-            let oc_region_start = self.next_var;
-            let mut seen_openings = std::collections::HashSet::new();
-
-            for step in &layout {
-                let opening_ids = match step {
-                    LayoutStep::ConstraintVars { constraint, .. }
-                    | LayoutStep::ExtraConstraintVars { constraint, .. } => {
-                        &constraint.required_openings
-                    }
-                    _ => continue,
-                };
-                for id in opening_ids {
-                    if seen_openings.insert(*id) {
-                        let pos = output_claims_opening_ids.len();
-                        let var = Variable::new(oc_region_start + pos);
-                        global_opening_vars.insert(*id, var);
-                        output_claims_opening_ids.push(*id);
-                    }
+        let oc_region_start = self.next_var;
+        let mut oc_block_offset = 0;
+        for block in &self.oc_blocks {
+            for (pos_in_block, id) in block.iter().enumerate() {
+                if !global_opening_vars.contains_key(id) {
+                    let var = Variable::new(oc_region_start + oc_block_offset + pos_in_block);
+                    global_opening_vars.insert(*id, var);
+                    output_claims_opening_ids.push(*id);
                 }
             }
-
-            let output_claims_rows = output_claims_opening_ids.len().div_ceil(hyrax_C.max(1));
-            self.next_var = oc_region_start + output_claims_rows * hyrax_C;
+            let block_rows = block.len().div_ceil(hyrax_C.max(1));
+            oc_block_offset += block_rows * hyrax_C;
         }
-        let output_claims_rows = output_claims_opening_ids.len().div_ceil(hyrax_C.max(1));
+        let output_claims_rows = oc_block_offset / hyrax_C.max(1);
+        if !self.oc_blocks.is_empty() {
+            self.next_var = oc_region_start + oc_block_offset;
+        }
 
         let mut challenge_idx = 0usize;
         let mut batching_coeff_idx = 0usize;

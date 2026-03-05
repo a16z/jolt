@@ -1,4 +1,6 @@
 #[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
 use crate::zkvm::{claim_reductions::advice::ReductionPhase, config::OneHotConfig};
 #[cfg(not(target_arch = "wasm32"))]
@@ -1643,34 +1645,55 @@ impl<
             extra_constraint_challenges: stage8_data.constraint_coeffs.clone(),
         };
 
+        // Build OC blocks from stage data: each block lists opening IDs in the order
+        // they were produced by that stage's cache_openings/take_pending_claims.
+        let mut oc_blocks: Vec<Vec<OpeningId>> = Vec::new();
+        for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
+            if stage_idx < 2 {
+                oc_blocks.push(uniskip_stages[stage_idx].output_claim_ids.clone());
+            }
+            oc_blocks.push(zk_data.output_claim_ids.clone());
+        }
+
         let builder = VerifierR1CSBuilder::<F>::new_with_extra(
             &stage_configs,
             &extra_constraints,
             &baked,
-            true,
+            oc_blocks.clone(),
         );
         let r1cs = builder.build();
 
-        // Collect output claims values in the same order the R1CS builder placed them
-        // in the OC region: unique openings in layout-traversal first-appearance order.
-        let all_output_claims: Vec<F> = r1cs
-            .output_claims_opening_ids
-            .iter()
-            .map(|id| self.opening_accumulator.get_opening(*id))
-            .collect();
+        // Per-stage commitments from prove_zk/prove_uniskip_round_zk are the Hyrax OC
+        // row commitments — same generators, same blindings, same values.
+        let mut all_output_claims_commitments: Vec<C::G1> = Vec::new();
+        let mut all_output_claims_blindings: Vec<F> = Vec::new();
+        // OC values laid out per-block with per-block row padding (matching Hyrax grid)
+        let hyrax_C = r1cs.hyrax.C;
+        let mut all_output_claims: Vec<F> = Vec::new();
 
-        // Collect OC row commitments and blindings from stage data.
-        // Each stage's commit_chunked produced commitments over its pending_claims.
-        // We need to re-commit in layout order since the OC region ordering may differ.
-        let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
-        let pedersen_generators_for_oc = self
-            .preprocessing
-            .pedersen_generators(pedersen_generator_count);
-        let oc_committed: Vec<_> =
-            pedersen_generators_for_oc.commit_chunked(&all_output_claims, &mut rng);
-        let all_output_claims_commitments: Vec<C::G1> =
-            oc_committed.iter().map(|(c, _)| *c).collect();
-        let all_output_claims_blindings: Vec<F> = oc_committed.iter().map(|(_, b)| *b).collect();
+        for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
+            if stage_idx < 2 {
+                let uniskip = &uniskip_stages[stage_idx];
+                all_output_claims_commitments.extend_from_slice(&uniskip.output_claims_commitments);
+                all_output_claims_blindings.extend_from_slice(&uniskip.output_claims_blindings);
+                all_output_claims.extend_from_slice(&uniskip.output_claims);
+                // Pad to complete rows
+                let block_rows = uniskip.output_claims.len().div_ceil(hyrax_C.max(1));
+                all_output_claims.resize(
+                    all_output_claims.len() + block_rows * hyrax_C - uniskip.output_claims.len(),
+                    F::zero(),
+                );
+            }
+            all_output_claims_commitments.extend_from_slice(&zk_data.output_claims_commitments);
+            all_output_claims_blindings.extend_from_slice(&zk_data.output_claims_blindings);
+            all_output_claims.extend_from_slice(&zk_data.output_claims);
+            // Pad to complete rows
+            let block_rows = zk_data.output_claims.len().div_ceil(hyrax_C.max(1));
+            all_output_claims.resize(
+                all_output_claims.len() + block_rows * hyrax_C - zk_data.output_claims.len(),
+                F::zero(),
+            );
+        }
 
         let extra_opening_values: Vec<F> = stage8_data
             .opening_ids
@@ -3289,6 +3312,7 @@ mod tests {
 
         let verifier_input = BlindFoldVerifierInput {
             round_commitments: real_instance.round_commitments.clone(),
+            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 

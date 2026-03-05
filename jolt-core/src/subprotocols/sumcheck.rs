@@ -322,6 +322,7 @@ impl BatchedSumcheck {
         }
 
         let output_claims = opening_accumulator.take_pending_claims();
+        let output_claim_ids = opening_accumulator.take_pending_claim_ids();
         let oc_committed: Vec<_> = pedersen_gens.commit_chunked(&output_claims, rng);
         let output_claims_commitments: Vec<_> = oc_committed.iter().map(|(c, _)| *c).collect();
         let output_claims_blindings: Vec<_> = oc_committed.iter().map(|(_, b)| *b).collect();
@@ -376,6 +377,7 @@ impl BatchedSumcheck {
             input_constraint_challenge_values,
             input_claim_scaling_exponents,
             output_claims,
+            output_claim_ids,
             output_claims_blindings,
             output_claims_commitments: output_claims_commitments.clone(),
         });

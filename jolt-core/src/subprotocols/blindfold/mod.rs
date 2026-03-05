@@ -64,6 +64,7 @@ pub struct ZkStageData<F: JoltField, C: JoltCurve> {
     pub input_constraint_challenge_values: Vec<Vec<F>>,
     pub input_claim_scaling_exponents: Vec<usize>,
     pub output_claims: Vec<F>,
+    pub output_claim_ids: Vec<OpeningId>,
     pub output_claims_blindings: Vec<F>,
     pub output_claims_commitments: Vec<C::G1>,
 }
@@ -83,6 +84,7 @@ pub struct UniSkipStageData<F: JoltField, C: JoltCurve> {
     pub input_constraint: InputClaimConstraint,
     pub input_constraint_challenge_values: Vec<F>,
     pub output_claims: Vec<F>,
+    pub output_claim_ids: Vec<OpeningId>,
     pub output_claims_blindings: Vec<F>,
     pub output_claims_commitments: Vec<C::G1>,
 }

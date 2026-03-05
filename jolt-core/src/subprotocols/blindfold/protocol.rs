@@ -31,8 +31,6 @@ use super::spartan::{INNER_SUMCHECK_DEGREE_BOUND, SPARTAN_DEGREE_BOUND};
 pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
     pub random_instance: RelaxedR1CSInstance<F, C>,
 
-    /// Output claims row commitments from the real instance (externally verified)
-    pub output_claims_row_commitments: Vec<C::G1>,
     /// Non-coefficient W row commitments from the real instance
     pub noncoeff_row_commitments: Vec<C::G1>,
     /// Cross-term T row commitments (E grid layout)
@@ -235,7 +233,6 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
 
         BlindFoldProof {
             random_instance,
-            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
             noncoeff_row_commitments: real_instance.noncoeff_row_commitments.clone(),
             cross_term_row_commitments: t_row_commitments,
             spartan_proof,
@@ -274,6 +271,11 @@ pub enum BlindFoldVerifyError {
 
 pub struct BlindFoldVerifierInput<C: JoltCurve> {
     pub round_commitments: Vec<C::G1>,
+    /// Output claims row commitments extracted from stage proofs.
+    /// The verifier independently reconstructs these from the ZK sumcheck/uniskip
+    /// proofs rather than trusting the BlindFold proof, ensuring the same commitments
+    /// bound to the Fiat-Shamir transcript are used as Hyrax OC row commitments.
+    pub output_claims_row_commitments: Vec<C::G1>,
     pub eval_commitments: Vec<C::G1>,
 }
 
@@ -315,7 +317,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
-        if proof.output_claims_row_commitments.len() != expected_oc_rows
+        if input.output_claims_row_commitments.len() != expected_oc_rows
             || proof.random_instance.output_claims_row_commitments.len() != expected_oc_rows
         {
             return Err(BlindFoldVerifyError::MalformedProof);
@@ -327,7 +329,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let real_instance = RelaxedR1CSInstance {
             u: F::one(),
             round_commitments: input.round_commitments.clone(),
-            output_claims_row_commitments: proof.output_claims_row_commitments.clone(),
+            output_claims_row_commitments: input.output_claims_row_commitments.clone(),
             noncoeff_row_commitments: proof.noncoeff_row_commitments.clone(),
             e_row_commitments: vec![C::G1::zero(); R_E],
             eval_commitments: input.eval_commitments.clone(),
@@ -617,6 +619,7 @@ mod tests {
 
         let verifier_input = BlindFoldVerifierInput {
             round_commitments: real_instance.round_commitments.clone(),
+            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 
@@ -687,6 +690,7 @@ mod tests {
 
         let verifier_input = BlindFoldVerifierInput {
             round_commitments: real_instance.round_commitments.clone(),
+            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 
@@ -785,6 +789,7 @@ mod tests {
 
         let verifier_input = BlindFoldVerifierInput {
             round_commitments: real_instance.round_commitments.clone(),
+            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 
@@ -828,6 +833,7 @@ mod tests {
 
         let verifier_input = BlindFoldVerifierInput {
             round_commitments: real_instance.round_commitments.clone(),
+            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 
@@ -871,6 +877,7 @@ mod tests {
 
         let verifier_input = BlindFoldVerifierInput {
             round_commitments: real_instance.round_commitments.clone(),
+            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 
