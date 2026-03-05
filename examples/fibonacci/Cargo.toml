@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jolt-sdk = { workspace = true, features = ["host"] }
+jolt-sdk = { workspace = true, features = ["host", "zk"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
-guest = { package = "fibonacci-guest", path = "./guest" }
+guest = { package = "fibonacci-guest", path = "./guest", features = ["zk"] }
 

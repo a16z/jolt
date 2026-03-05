@@ -14,19 +14,34 @@ use crate::zkvm::verifier::JoltVerifierPreprocessing;
 use common::jolt_device::MemoryConfig;
 use common::jolt_device::MemoryLayout;
 
+#[cfg(not(feature = "zk"))]
 pub fn preprocess(
     guest: &Program,
     max_trace_length: usize,
     verifier_setup: <DoryCommitmentScheme as CommitmentScheme>::VerifierSetup,
 ) -> JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> {
+    let shared = preprocess_shared(guest, max_trace_length);
+    JoltVerifierPreprocessing::new(shared, verifier_setup)
+}
+
+#[cfg(feature = "zk")]
+pub fn preprocess(
+    guest: &Program,
+    max_trace_length: usize,
+    verifier_setup: <DoryCommitmentScheme as CommitmentScheme>::VerifierSetup,
+    blindfold_setup: crate::subprotocols::blindfold::BlindfoldSetup<crate::curve::Bn254Curve>,
+) -> JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> {
+    let shared = preprocess_shared(guest, max_trace_length);
+    JoltVerifierPreprocessing::new_zk(shared, verifier_setup, blindfold_setup)
+}
+
+fn preprocess_shared(guest: &Program, max_trace_length: usize) -> JoltSharedPreprocessing {
     let (bytecode, memory_init, program_size) = guest.decode();
 
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    let shared =
-        JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init, max_trace_length);
-    JoltVerifierPreprocessing::new(shared, verifier_setup)
+    JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init, max_trace_length)
 }
 
 pub fn verify<

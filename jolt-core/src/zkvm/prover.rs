@@ -2114,12 +2114,10 @@ where
     where
         C::G1: From<crate::curve::Bn254G1>,
     {
-        let (g1s, h1) = PCS::zk_generators_raw(&self.generators, count)
-            .expect("PCS does not support ZK Pedersen generators");
-        crate::poly::commitment::pedersen::PedersenGenerators::new(
-            g1s.into_iter().map(C::G1::from).collect(),
-            C::G1::from(h1),
-        )
+        let mut gens: crate::poly::commitment::pedersen::PedersenGenerators<C> =
+            self.blindfold_setup::<C>().into();
+        gens.message_generators.truncate(count);
+        gens
     }
 
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {

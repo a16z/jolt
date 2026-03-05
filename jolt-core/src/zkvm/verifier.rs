@@ -1647,9 +1647,12 @@ where
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
+    // Option because workspace-wide `cargo clippy --all` unifies features:
+    // fibonacci enables zk, so jolt-core is compiled with zk for ALL examples,
+    // but non-zk examples must still construct this struct without a BlindfoldSetup.
     #[cfg(feature = "zk")]
     pub blindfold_setup:
-        Option<crate::poly::commitment::pedersen::BlindfoldSetup<crate::curve::Bn254Curve>>,
+        Option<crate::subprotocols::blindfold::BlindfoldSetup<crate::curve::Bn254Curve>>,
 }
 
 impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
@@ -1697,12 +1700,17 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
     }
 
     #[cfg(feature = "zk")]
-    pub fn with_blindfold_setup(
-        mut self,
-        setup: crate::poly::commitment::pedersen::BlindfoldSetup<crate::curve::Bn254Curve>,
-    ) -> Self {
-        self.blindfold_setup = Some(setup);
-        self
+    #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new_zk")]
+    pub fn new_zk(
+        shared: JoltSharedPreprocessing,
+        generators: PCS::VerifierSetup,
+        blindfold_setup: crate::subprotocols::blindfold::BlindfoldSetup<crate::curve::Bn254Curve>,
+    ) -> JoltVerifierPreprocessing<F, PCS> {
+        Self {
+            generators,
+            shared,
+            blindfold_setup: Some(blindfold_setup),
+        }
     }
 
     #[cfg(feature = "zk")]
@@ -1713,12 +1721,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
     where
         C::G1: From<crate::curve::Bn254G1>,
     {
-        let setup = self.blindfold_setup.as_ref().expect(
-            "BlindfoldSetup not provided. \
-             Use JoltVerifierPreprocessing::from(&prover_preprocessing) \
-             or pass Some(prover_preprocessing.blindfold_setup()) to new().",
-        );
-        let gens = &setup.0;
+        let gens = &self
+            .blindfold_setup
+            .as_ref()
+            .expect("BlindfoldSetup required for ZK mode")
+            .0;
         assert!(
             count <= gens.message_generators.len(),
             "Requested {count} Pedersen generators but BlindfoldSetup only has {}",
@@ -1741,13 +1748,15 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessi
     for JoltVerifierPreprocessing<F, PCS>
 {
     fn from(prover_preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
+        let shared = prover_preprocessing.shared.clone();
         let generators = PCS::setup_verifier(&prover_preprocessing.generators);
-        let result = Self::new(prover_preprocessing.shared.clone(), generators);
+        #[cfg(not(feature = "zk"))]
+        return Self::new(shared, generators);
         #[cfg(feature = "zk")]
-        let result = {
-            let setup = prover_preprocessing.blindfold_setup::<crate::curve::Bn254Curve>();
-            result.with_blindfold_setup(setup)
-        };
-        result
+        return Self::new_zk(
+            shared,
+            generators,
+            prover_preprocessing.blindfold_setup::<crate::curve::Bn254Curve>(),
+        );
     }
 }

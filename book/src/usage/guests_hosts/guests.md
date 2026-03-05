@@ -88,13 +88,11 @@ Host (`src/main.rs`):
 ```rust
 use jolt_sdk::PrivateInput;
 
-// Setup: functions with PrivateInput<T> params get a 3-arg preprocess_verifier
+// Setup: when `zk` feature is enabled, preprocess_verifier takes a BlindfoldSetup
+let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
 let blindfold_setup = prover_preprocessing.blindfold_setup();
-let verifier_preprocessing = guest::preprocess_verifier_fib(
-    shared_preprocessing,
-    prover_preprocessing.generators.to_verifier_setup(),
-    blindfold_setup,
-);
+let verifier_preprocessing =
+    guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup, blindfold_setup);
 
 // Prover receives the private input
 let (output, proof, io_device) = prove_fib(PrivateInput::new(50));
@@ -113,7 +111,7 @@ By default, the prover reveals polynomial evaluations in the clear. To produce *
 
 `PrivateInput<T>` is only available with the `zk` feature enabled. If you use `UntrustedAdvice<T>` without `zk`, the verifier won't receive the inputs, but the proof itself does not hide them cryptographically.
 
-When a guest function has `PrivateInput<T>` parameters, the generated `preprocess_verifier_*` function takes a third `BlindfoldSetup` argument. Functions without `PrivateInput<T>` get a simpler 2-argument signature.
+When the `zk` feature is enabled, the generated `preprocess_verifier_*` function takes a third `BlindfoldSetup` argument. Without `zk`, it takes only `shared` and `generators`.
 
 ### Advice inputs vs. runtime advice
 

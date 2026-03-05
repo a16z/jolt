@@ -43,19 +43,11 @@ struct MacroBuilder {
     pub_func_args: Vec<(Ident, Box<Type>)>,
     trusted_func_args: Vec<(Ident, Box<Type>)>,
     untrusted_func_args: Vec<(Ident, Box<Type>)>,
-    has_private_inputs: bool,
 }
 
 impl MacroBuilder {
     fn new(attr: AttributeArgs, func: ItemFn) -> Self {
         let (pub_func_args, trusted_func_args, untrusted_func_args) = Self::get_func_args(&func);
-        let has_private_inputs = func.sig.inputs.iter().any(|arg| {
-            if let syn::FnArg::Typed(PatType { ty, .. }) = arg {
-                Self::is_private_input_type(ty)
-            } else {
-                false
-            }
-        });
         #[cfg(feature = "guest-std")]
         let std = true;
         #[cfg(not(feature = "guest-std"))]
@@ -68,7 +60,6 @@ impl MacroBuilder {
             pub_func_args,
             trusted_func_args,
             untrusted_func_args,
-            has_private_inputs,
         }
     }
 
@@ -516,38 +507,43 @@ impl MacroBuilder {
     }
 
     fn make_preprocess_verifier_func(&self) -> TokenStream2 {
-        let imports = self.make_imports();
-
         let fn_name = self.get_func_name();
         let preprocess_verifier_fn_name =
             Ident::new(&format!("preprocess_verifier_{fn_name}"), fn_name.span());
+        let mod_name = Ident::new(
+            &format!("__jolt_preprocess_verifier_{fn_name}"),
+            fn_name.span(),
+        );
 
-        if self.has_private_inputs {
-            quote! {
-                #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            #[allow(unexpected_cfgs)]
+            mod #mod_name {
+                #[allow(unused_imports)]
+                use super::*;
+
+                #[cfg(not(feature = "zk"))]
+                pub fn #preprocess_verifier_fn_name(
+                    shared_preprocess: jolt::JoltSharedPreprocessing,
+                    generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
+                ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>
+                {
+                    jolt::JoltVerifierPreprocessing::new(shared_preprocess, generators)
+                }
+
+                #[cfg(feature = "zk")]
                 pub fn #preprocess_verifier_fn_name(
                     shared_preprocess: jolt::JoltSharedPreprocessing,
                     generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
                     blindfold_setup: jolt::BlindfoldSetup<jolt::Bn254Curve>,
                 ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>
                 {
-                    #imports
-                    JoltVerifierPreprocessing::new(shared_preprocess, generators)
-                        .with_blindfold_setup(blindfold_setup)
+                    jolt::JoltVerifierPreprocessing::new_zk(shared_preprocess, generators, blindfold_setup)
                 }
             }
-        } else {
-            quote! {
-                #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-                pub fn #preprocess_verifier_fn_name(
-                    shared_preprocess: jolt::JoltSharedPreprocessing,
-                    generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
-                ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>
-                {
-                    #imports
-                    JoltVerifierPreprocessing::new(shared_preprocess, generators)
-                }
-            }
+
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub use #mod_name::#preprocess_verifier_fn_name;
         }
     }
 
@@ -1140,15 +1136,6 @@ impl MacroBuilder {
             if let Some(last_segment) = type_path.path.segments.last() {
                 return last_segment.ident == "UntrustedAdvice"
                     || last_segment.ident == "PrivateInput";
-            }
-        }
-        false
-    }
-
-    fn is_private_input_type(ty: &Type) -> bool {
-        if let Type::Path(type_path) = ty {
-            if let Some(last_segment) = type_path.path.segments.last() {
-                return last_segment.ident == "PrivateInput";
             }
         }
         false
