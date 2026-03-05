@@ -19,7 +19,7 @@ use jolt_core::{
         Serializable,
     },
 };
-use syn::{Attribute, ItemFn, Meta, PathSegment};
+use syn::{punctuated::Punctuated, Attribute, ItemFn, Meta, PathSegment, Token};
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 
 struct FunctionAttributes {
@@ -93,10 +93,11 @@ fn extract_provable_functions() -> Vec<FunctionAttributes> {
         .filter_map(|item| {
             if let syn::Item::Fn(ItemFn { attrs, sig, .. }) = item {
                 if let Some(provable_attr) = attrs.iter().find(|attr| is_provable(attr)) {
-                    let meta = provable_attr.parse_meta().expect("Unable to parse meta");
-                    if let Meta::List(meta_list) = meta {
-                        let attributes =
-                            parse_attributes(&meta_list.nested.iter().cloned().collect());
+                    if let Meta::List(meta_list) = &provable_attr.meta {
+                        let parsed: Punctuated<Meta, Token![,]> = meta_list
+                            .parse_args_with(Punctuated::parse_terminated)
+                            .expect("Unable to parse attribute args");
+                        let attributes = parse_attributes(&parsed);
                         return Some(FunctionAttributes {
                             func_name: sig.ident.to_string(),
                             attributes,
@@ -110,8 +111,8 @@ fn extract_provable_functions() -> Vec<FunctionAttributes> {
 }
 
 fn is_provable(attr: &Attribute) -> bool {
-    if attr.path.segments.len() == 2 {
-        let segments: Vec<&PathSegment> = attr.path.segments.iter().collect();
+    if attr.path().segments.len() == 2 {
+        let segments: Vec<&PathSegment> = attr.path().segments.iter().collect();
         if let [first, second] = segments.as_slice() {
             return first.ident == "jolt" && second.ident == "provable";
         }
