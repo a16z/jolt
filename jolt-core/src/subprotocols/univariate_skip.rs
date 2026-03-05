@@ -272,8 +272,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
 pub struct ZkUniSkipFirstRoundProof<F: JoltField, C: JoltCurve, T: Transcript> {
     pub commitment: C::G1,
     pub poly_degree: usize,
-    /// Pedersen commitments to output claims (chunked). Serve double duty:
-    /// Fiat-Shamir bound here, then used as Hyrax OC row commitments in BlindFold.
+    /// Pedersen commitments to output claims, chunked to fit generator count
     pub output_claims_commitments: Vec<C::G1>,
     _marker: PhantomData<(F, T)>,
 }

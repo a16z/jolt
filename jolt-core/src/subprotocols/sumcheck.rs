@@ -606,8 +606,7 @@ pub struct ZkSumcheckProof<F: JoltField, C: JoltCurve, ProofTranscript: Transcri
     pub round_commitments: Vec<C::G1>,
     /// Polynomial degrees for each round (public info needed for R1CS construction)
     pub poly_degrees: Vec<usize>,
-    /// Pedersen commitments to output claims (chunked). Serve double duty:
-    /// Fiat-Shamir bound here, then used as Hyrax OC row commitments in BlindFold.
+    /// Pedersen commitments to output claims, chunked to fit generator count
     pub output_claims_commitments: Vec<C::G1>,
     _marker: PhantomData<(F, ProofTranscript)>,
 }
