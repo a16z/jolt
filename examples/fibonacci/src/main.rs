@@ -1,4 +1,4 @@
-use jolt_sdk::{serialize_and_print_size, PrivateInput};
+use jolt_sdk::serialize_and_print_size;
 use std::time::Instant;
 use tracing::info;
 
@@ -14,9 +14,8 @@ pub fn main() {
 
     let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
     let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
-    let blindfold_setup = prover_preprocessing.blindfold_setup();
     let verifier_preprocessing =
-        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup, Some(blindfold_setup));
+        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup, None);
 
     if save_to_disk {
         serialize_and_print_size(
@@ -30,17 +29,17 @@ pub fn main() {
     let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
 
-    let program_summary = guest::analyze_fib(PrivateInput::new(10));
+    let program_summary = guest::analyze_fib(10);
     program_summary
         .write_to_file("fib_10.txt".into())
         .expect("should write");
 
     let trace_file = "/tmp/fib_trace.bin";
-    guest::trace_fib_to_file(trace_file, PrivateInput::new(50));
+    guest::trace_fib_to_file(trace_file, 50);
     info!("Trace file written to: {trace_file}.");
 
     let now = Instant::now();
-    let (output, proof, io_device) = prove_fib(PrivateInput::new(50));
+    let (output, proof, io_device) = prove_fib(50);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
     if save_to_disk {
@@ -50,8 +49,7 @@ pub fn main() {
             .expect("Could not serialize io_device.");
     }
 
-    // n is private — verifier doesn't receive it
-    let is_valid = verify_fib(output, io_device.panic, proof);
+    let is_valid = verify_fib(50, output, io_device.panic, proof);
     info!("output: {output}");
     info!("valid: {is_valid}");
 }

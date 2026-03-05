@@ -7,4 +7,4 @@ edition = "2021"
 guest = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["zk"] }
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
