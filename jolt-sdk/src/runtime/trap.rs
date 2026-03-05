@@ -2,7 +2,7 @@ extern crate zeroos;
 
 use zeroos::arch::riscv::TrapFrame;
 
-use riscv::interrupt::Exception;
+use riscv::interrupt::machine::Exception;
 
 #[inline(always)]
 fn mcause_is_interrupt(mcause: usize) -> bool {
