@@ -1648,9 +1648,8 @@ where
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
     #[cfg(feature = "zk")]
-    pub zk_generator_g1s: Vec<crate::curve::Bn254G1>,
-    #[cfg(feature = "zk")]
-    pub zk_generator_h1: crate::curve::Bn254G1,
+    pub blindfold_setup:
+        Option<crate::poly::commitment::pedersen::BlindfoldSetup<crate::curve::Bn254Curve>>,
 }
 
 impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
@@ -1693,10 +1692,17 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
             generators,
             shared,
             #[cfg(feature = "zk")]
-            zk_generator_g1s: Vec::new(),
-            #[cfg(feature = "zk")]
-            zk_generator_h1: Default::default(),
+            blindfold_setup: None,
         }
+    }
+
+    #[cfg(feature = "zk")]
+    pub fn with_blindfold_setup(
+        mut self,
+        setup: crate::poly::commitment::pedersen::BlindfoldSetup<crate::curve::Bn254Curve>,
+    ) -> Self {
+        self.blindfold_setup = Some(setup);
+        self
     }
 
     #[cfg(feature = "zk")]
@@ -1707,18 +1713,22 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F
     where
         C::G1: From<crate::curve::Bn254G1>,
     {
-        assert!(
-            count <= self.zk_generator_g1s.len(),
-            "Requested {count} Pedersen generators but verifier preprocessing only has {}. \
+        let setup = self.blindfold_setup.as_ref().expect(
+            "BlindfoldSetup not provided. \
              Use JoltVerifierPreprocessing::from(&prover_preprocessing) \
-             (or verifier_preprocessing_from_prover_*) to populate ZK generators.",
-            self.zk_generator_g1s.len()
+             or pass Some(prover_preprocessing.blindfold_setup()) to new().",
         );
-        let message_generators = self.zk_generator_g1s[..count]
+        let gens = &setup.0;
+        assert!(
+            count <= gens.message_generators.len(),
+            "Requested {count} Pedersen generators but BlindfoldSetup only has {}",
+            gens.message_generators.len()
+        );
+        let message_generators = gens.message_generators[..count]
             .iter()
             .map(|g| C::G1::from(*g))
             .collect();
-        let blinding_generator = C::G1::from(self.zk_generator_h1);
+        let blinding_generator = C::G1::from(gens.blinding_generator);
         crate::poly::commitment::pedersen::PedersenGenerators::new(
             message_generators,
             blinding_generator,
@@ -1732,19 +1742,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessi
 {
     fn from(prover_preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
         let generators = PCS::setup_verifier(&prover_preprocessing.generators);
+        let result = Self::new(prover_preprocessing.shared.clone(), generators);
         #[cfg(feature = "zk")]
-        let (zk_generator_g1s, zk_generator_h1) = {
-            const MAX_ZK_PEDERSEN_GENERATORS: usize = 128;
-            PCS::zk_generators_raw(&prover_preprocessing.generators, MAX_ZK_PEDERSEN_GENERATORS)
-                .unwrap_or_else(|| (Vec::new(), Default::default()))
+        let result = {
+            let setup = prover_preprocessing.blindfold_setup::<crate::curve::Bn254Curve>();
+            result.with_blindfold_setup(setup)
         };
-        Self {
-            generators,
-            shared: prover_preprocessing.shared.clone(),
-            #[cfg(feature = "zk")]
-            zk_generator_g1s,
-            #[cfg(feature = "zk")]
-            zk_generator_h1,
-        }
+        result
     }
 }

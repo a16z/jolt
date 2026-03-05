@@ -51,6 +51,29 @@ impl<C: JoltCurve> PedersenGenerators<C> {
     }
 }
 
+/// Serializable wrapper around [`PedersenGenerators`] for setup transfer.
+///
+/// Shared between prover and verifier: the prover derives it from `ProverSetup`,
+/// the verifier receives it out-of-band (serialized or via `From<&JoltProverPreprocessing>`).
+#[cfg(feature = "zk")]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct BlindfoldSetup<C: JoltCurve>(pub PedersenGenerators<C>);
+
+#[cfg(feature = "zk")]
+impl<C: JoltCurve> std::ops::Deref for BlindfoldSetup<C> {
+    type Target = PedersenGenerators<C>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(feature = "zk")]
+impl<C: JoltCurve> From<BlindfoldSetup<C>> for PedersenGenerators<C> {
+    fn from(setup: BlindfoldSetup<C>) -> Self {
+        setup.0
+    }
+}
+
 #[cfg(test)]
 impl PedersenGenerators<crate::curve::Bn254Curve> {
     /// Test-only: derives generators from hash-to-curve. Production code uses Dory URS.

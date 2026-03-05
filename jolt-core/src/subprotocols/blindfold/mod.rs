@@ -39,33 +39,12 @@ pub use witness::{
     BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, RoundWitness, StageWitness,
 };
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
-use crate::poly::commitment::pedersen::PedersenGenerators;
+#[cfg(feature = "zk")]
+pub use crate::poly::commitment::pedersen::BlindfoldSetup;
 use crate::poly::opening_proof::OpeningId;
 use crate::utils::math::Math;
-
-/// Serializable wrapper around [`PedersenGenerators`] for setup transfer.
-///
-/// Shared between prover and verifier: the prover derives it from `ProverSetup`,
-/// the verifier receives it out-of-band (serialized or via `From<&JoltProverPreprocessing>`).
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BlindfoldSetup<C: JoltCurve>(pub PedersenGenerators<C>);
-
-impl<C: JoltCurve> std::ops::Deref for BlindfoldSetup<C> {
-    type Target = PedersenGenerators<C>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<C: JoltCurve> From<BlindfoldSetup<C>> for PedersenGenerators<C> {
-    fn from(setup: BlindfoldSetup<C>) -> Self {
-        setup.0
-    }
-}
 
 /// ZK data collected during `prove_zk` for a single batched sumcheck stage.
 ///
