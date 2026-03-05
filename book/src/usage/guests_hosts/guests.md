@@ -55,13 +55,20 @@ A program can use any combination of these input types. To access the inner valu
 
 ### Private inputs (ZK)
 
-When you need inputs that are cryptographically hidden from the verifier, use `PrivateInput<T>`. Enable the `zk` feature on `jolt-sdk` in both the guest and host.
+When you need inputs that are cryptographically hidden from the verifier, use `PrivateInput<T>`. You must enable the `zk` feature on `jolt-sdk` in **both** the guest and host crates. You can scaffold a ZK-ready project with `jolt new my-project --zk`.
 
 Guest `Cargo.toml`:
 
 ```toml
 [dependencies]
 jolt = { package = "jolt-sdk", features = ["zk"] }
+```
+
+Host `Cargo.toml`:
+
+```toml
+[dependencies]
+jolt-sdk = { features = ["host", "zk"] }
 ```
 
 Guest (`guest/src/lib.rs`):
@@ -106,7 +113,7 @@ For a complete example of advice inputs, see the [merkle-tree example](https://g
 
 ### Zero knowledge
 
-By default, the prover reveals polynomial evaluations in the clear. To produce **zero-knowledge** proofs where the verifier learns nothing beyond the validity of the output, enable the `zk` Cargo feature on `jolt-core` (or pass `--features zk` to the SDK). This activates the [BlindFold](../../how/blindfold.md) protocol, which commits all sumcheck round polynomials via Pedersen and proves correctness via Nova folding + Spartan.
+By default, the prover reveals polynomial evaluations in the clear. To produce **zero-knowledge** proofs where the verifier learns nothing beyond the validity of the output, enable the `zk` feature on `jolt-sdk` in **both** the guest and host crates. This activates the [BlindFold](../../how/blindfold.md) protocol, which commits all sumcheck round polynomials via Pedersen and proves correctness via Nova folding + Spartan.
 
 `PrivateInput<T>` is only available with the `zk` feature enabled. If you use `UntrustedAdvice<T>` without `zk`, the verifier won't receive the inputs, but the proof itself does not hide them cryptographically.
 
