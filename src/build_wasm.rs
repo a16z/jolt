@@ -221,10 +221,10 @@ fn generate_wasm_verify_rs(func_names: &[String]) -> Result<()> {
     code.push_str(
         r#"use wasm_bindgen::prelude::*;
 use jolt_sdk::{
-    Bn254Curve, F, PCS, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, Serializable,
+    Curve, F, PCS, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, Serializable,
 };
 
-type VerifierPreprocessing = JoltVerifierPreprocessing<F, Bn254Curve, PCS>;
+type VerifierPreprocessing = JoltVerifierPreprocessing<F, Curve, PCS>;
 "#,
     );
 
