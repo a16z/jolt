@@ -143,11 +143,15 @@ pub fn display_panic_backtrace(emulator_state: &Emulator) {
     };
 
     // Get panic location from most recent frame
-    let panic_info = if !call_stack.is_empty() && emulator_state.elf_path.is_some() {
-        if let Ok(loader) = addr2line::Loader::new(emulator_state.elf_path.as_ref().unwrap()) {
-            let last_frame = call_stack.back().unwrap();
-            resolve_frame(&loader, last_frame)
-                .map(|resolved| (resolved.function_name, resolved.location))
+    let panic_info = if !call_stack.is_empty() {
+        if let Some(elf_path) = emulator_state.elf_path.as_ref() {
+            if let Ok(loader) = addr2line::Loader::new(elf_path) {
+                let last_frame = call_stack.back().unwrap();
+                resolve_frame(&loader, last_frame)
+                    .map(|resolved| (resolved.function_name, resolved.location))
+            } else {
+                None
+            }
         } else {
             None
         }
