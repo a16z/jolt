@@ -53,6 +53,7 @@ fn run_nostd(target_dir: &str, should_panic: bool) {
     let verifier_preprocessing = guest_nostd::preprocess_verifier_panic_backtrace_nostd(
         shared_preprocessing,
         prover_preprocessing.generators.to_verifier_setup(),
+        None,
     );
 
     let prove = guest_nostd::build_prover_panic_backtrace_nostd(program, prover_preprocessing);
@@ -91,6 +92,7 @@ fn run_std(target_dir: &str, should_panic: bool) {
     let verifier_preprocessing = guest_std::preprocess_verifier_panic_backtrace_std(
         shared_preprocessing,
         prover_preprocessing.generators.to_verifier_setup(),
+        None,
     );
 
     let prove = guest_std::build_prover_panic_backtrace_std(program, prover_preprocessing);

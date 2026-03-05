@@ -32,6 +32,8 @@ pub const DEFAULT_MAX_INPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_TRACE_LENGTH: u64 = 1 << 24;
 
+pub const MAX_BLINDFOLD_GENERATORS: usize = 128;
+
 // Layout of the witness (where || denotes concatenation):
 //     advice || inputs || outputs || panic || termination || padding || RAM
 // Layout of VM memory:

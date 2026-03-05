@@ -9,6 +9,7 @@ use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitm
 #[cfg(feature = "zk")]
 use crate::poly::commitment::dory::bind_opening_inputs_zk;
 use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals};
+use crate::poly::commitment::pedersen::PedersenGenerators;
 #[cfg(feature = "zk")]
 use crate::poly::lagrange_poly::LagrangeHelper;
 #[cfg(feature = "zk")]
@@ -199,7 +200,7 @@ pub struct JoltVerifier<
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub program_io: JoltDevice,
     pub proof: JoltProof<F, C, PCS, ProofTranscript>,
-    pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+    pub preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
     pub transcript: ProofTranscript,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
@@ -226,11 +227,9 @@ impl<
         PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>,
         ProofTranscript: Transcript,
     > JoltVerifier<'a, F, C, PCS, ProofTranscript>
-where
-    C::G1: From<crate::curve::Bn254G1>,
 {
     pub fn new(
-        preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+        preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
         proof: JoltProof<F, C, PCS, ProofTranscript>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
@@ -1213,7 +1212,7 @@ where
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
         let pedersen_generators = self
             .preprocessing
-            .pedersen_generators::<C>(pedersen_generator_count);
+            .pedersen_generators(pedersen_generator_count);
         let eval_commitment_gens =
             PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
         let verifier =
@@ -1639,30 +1638,47 @@ impl JoltSharedPreprocessing {
     }
 }
 
+/// Serializable wrapper around [`PedersenGenerators`] for ZK setup transfer.
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct BlindfoldSetup<C: JoltCurve>(pub PedersenGenerators<C>);
+
+impl<C: JoltCurve> std::ops::Deref for BlindfoldSetup<C> {
+    type Target = PedersenGenerators<C>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<C: JoltCurve> From<BlindfoldSetup<C>> for PedersenGenerators<C> {
+    fn from(setup: BlindfoldSetup<C>) -> Self {
+        setup.0
+    }
+}
+
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltVerifierPreprocessing<F, PCS>
+pub struct JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
-    #[cfg(feature = "zk")]
-    pub zk_generator_g1s: Vec<crate::curve::Bn254G1>,
-    #[cfg(feature = "zk")]
-    pub zk_generator_h1: crate::curve::Bn254G1,
+    pub blindfold_setup: Option<BlindfoldSetup<C>>,
 }
 
-impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
+impl<F, C, PCS> Serializable for JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
 {
 }
 
-impl<F, PCS> JoltVerifierPreprocessing<F, PCS>
+impl<F, C, PCS> JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
 {
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
@@ -1683,66 +1699,52 @@ where
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F, PCS> {
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
+    JoltVerifierPreprocessing<F, C, PCS>
+{
     #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new")]
     pub fn new(
         shared: JoltSharedPreprocessing,
         generators: PCS::VerifierSetup,
-    ) -> JoltVerifierPreprocessing<F, PCS> {
+        blindfold_setup: Option<BlindfoldSetup<C>>,
+    ) -> Self {
         Self {
             generators,
             shared,
-            #[cfg(feature = "zk")]
-            zk_generator_g1s: Vec::new(),
-            #[cfg(feature = "zk")]
-            zk_generator_h1: Default::default(),
+            blindfold_setup,
         }
     }
 
     #[cfg(feature = "zk")]
-    pub fn pedersen_generators<C: JoltCurve>(
-        &self,
-        count: usize,
-    ) -> crate::poly::commitment::pedersen::PedersenGenerators<C>
-    where
-        C::G1: From<crate::curve::Bn254G1>,
-    {
+    pub fn pedersen_generators(&self, count: usize) -> PedersenGenerators<C> {
+        let gens = &self
+            .blindfold_setup
+            .as_ref()
+            .expect("BlindfoldSetup required for ZK mode")
+            .0;
         assert!(
-            count <= self.zk_generator_g1s.len(),
-            "Requested {count} Pedersen generators but verifier preprocessing only has {}",
-            self.zk_generator_g1s.len()
+            count <= gens.message_generators.len(),
+            "Requested {count} Pedersen generators but BlindfoldSetup only has {}",
+            gens.message_generators.len()
         );
-        let message_generators = self.zk_generator_g1s[..count]
-            .iter()
-            .map(|g| C::G1::from(*g))
-            .collect();
-        let blinding_generator = C::G1::from(self.zk_generator_h1);
-        crate::poly::commitment::pedersen::PedersenGenerators::new(
-            message_generators,
-            blinding_generator,
+        PedersenGenerators::new(
+            gens.message_generators[..count].to_vec(),
+            gens.blinding_generator,
         )
     }
 }
 
 #[cfg(feature = "prover")]
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessing<F, PCS>>
-    for JoltVerifierPreprocessing<F, PCS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>>
+    From<&JoltProverPreprocessing<F, C, PCS>> for JoltVerifierPreprocessing<F, C, PCS>
 {
-    fn from(prover_preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
+    fn from(prover_preprocessing: &JoltProverPreprocessing<F, C, PCS>) -> Self {
+        let shared = prover_preprocessing.shared.clone();
         let generators = PCS::setup_verifier(&prover_preprocessing.generators);
+        #[cfg(not(feature = "zk"))]
+        let blindfold_setup = None;
         #[cfg(feature = "zk")]
-        let (zk_generator_g1s, zk_generator_h1) = {
-            const MAX_ZK_PEDERSEN_GENERATORS: usize = 128;
-            PCS::zk_generators_raw(&prover_preprocessing.generators, MAX_ZK_PEDERSEN_GENERATORS)
-                .unwrap_or_else(|| (Vec::new(), Default::default()))
-        };
-        Self {
-            generators,
-            shared: prover_preprocessing.shared.clone(),
-            #[cfg(feature = "zk")]
-            zk_generator_g1s,
-            #[cfg(feature = "zk")]
-            zk_generator_h1,
-        }
+        let blindfold_setup = Some(prover_preprocessing.blindfold_setup());
+        Self::new(shared, generators, blindfold_setup)
     }
 }

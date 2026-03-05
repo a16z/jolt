@@ -42,7 +42,8 @@ If inside an existing Rust library repo, propose:
 > "I'll create `<library-name>-jolt/` here with the proof scaffold and import your library as a path dependency. Sound good?"
 
 ```bash
-jolt new <project-name>
+jolt new <project-name>        # standard mode
+jolt new <project-name> --zk   # with UntrustedAdvice + BlindFold ZK support
 ```
 
 This generates a workspace with a `fib` example — replace it by renaming `fib` → `<fn>` throughout `src/main.rs` and `guest/src/lib.rs`. Preserve the `[patch.crates-io]` block in the root `Cargo.toml` (required arkworks patches).
@@ -69,7 +70,11 @@ Include `"thread"` for rayon/parallel, `"stdout"` for `println!`. No `cfg_attr` 
 - `max_trace_length = N` — computation clearly exceeds ~16M cycles
 - `stack_size = N` — deep recursion
 
-**Private inputs** (`UntrustedAdvice`): prover-only arguments — wrap in `jolt::UntrustedAdvice<T>`:
+**Prover-only inputs** — two options depending on whether you need cryptographic privacy:
+
+- `jolt::UntrustedAdvice<T>` — prover-only; excluded from the verifier API but values may be recoverable from the proof
+- `jolt::PrivateInput<T>` — same underlying type, but signals that `zk` is enabled and values are cryptographically hidden via BlindFold
+
 ```rust
 #[jolt::provable]
 fn my_fn(public: u64, secret: jolt::UntrustedAdvice<[u8; 32]>) -> bool {
@@ -77,9 +82,11 @@ fn my_fn(public: u64, secret: jolt::UntrustedAdvice<[u8; 32]>) -> bool {
     // ...
 }
 ```
-Host prove call: `prove(..., UntrustedAdvice::new(val))`. The generated verifier signature omits the secret entirely. Add `use jolt_sdk::UntrustedAdvice;` to the host. `TrustedAdvice<T>` is the alternative for data committed by a third party — it requires a `commit_trusted_advice_<fn>(...)` host call and the commitment is passed to the verifier.
+Host prove call: `prove(..., UntrustedAdvice::new(val))`. The generated verifier signature omits the advice entirely. Add `use jolt_sdk::UntrustedAdvice;` to the host.
 
-`UntrustedAdvice` alone is **not** cryptographically zero-knowledge — without the `zk` feature, advice evaluations appear in plaintext in the proof (see Step 7).
+For `PrivateInput<T>`, enable `zk` on both guest and host (see Step 7).
+
+`TrustedAdvice<T>` is the alternative for data committed by a third party — it requires a `commit_trusted_advice_<fn>(...)` host call and the commitment is passed to the verifier.
 
 **Dependencies** — add to `guest/Cargo.toml`. When wrapping an existing repo, add `<library> = { path = "../.." }`. Avoid `default-features = false` unless you know the library supports it — disabled default features can expose conditionally-compiled modules that still reference missing optional deps. For crypto, prefer `jolt-inlines-sha2`, `jolt-inlines-keccak256`, `jolt-inlines-secp256k1`.
 
@@ -111,9 +118,8 @@ pub fn main() {
     let mut program = guest::compile_<fn>(target_dir);
     let shared = guest::preprocess_shared_<fn>(&mut program);
     let prover_prep = guest::preprocess_prover_<fn>(shared.clone());
-    let verifier_prep = guest::preprocess_verifier_<fn>(
-        shared, prover_prep.generators.to_verifier_setup(),
-    );
+    let verifier_setup = prover_prep.generators.to_verifier_setup();
+    let verifier_prep = guest::preprocess_verifier_<fn>(shared, verifier_setup, None);
     let prove = guest::build_prover_<fn>(program, prover_prep);
     let verify = guest::build_verifier_<fn>(verifier_prep);
 
@@ -151,9 +157,22 @@ If `max_trace_length` is 2^24 or above, warn the user and ask how to proceed:
 RUST_LOG=info cargo run --release
 ```
 
-For **full zero-knowledge** (hides witness via BlindFold protocol), add `"zk"` to the host's jolt-sdk features in the root `Cargo.toml`:
+For **full zero-knowledge** (hides witness via BlindFold protocol), enable `zk` in **both** crates. Use `jolt new --zk` to scaffold a ZK project, or add manually:
+
+Host `Cargo.toml`:
 ```toml
 jolt-sdk = { git = "https://github.com/a16z/jolt", features = ["host", "zk"] }
+```
+
+Guest `Cargo.toml`:
+```toml
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", features = ["zk"] }
+```
+
+In the host, pass `BlindfoldSetup` to verifier preprocessing:
+```rust
+let blindfold_setup = prover_prep.blindfold_setup();
+let verifier_prep = guest::preprocess_verifier_<fn>(shared, verifier_setup, Some(blindfold_setup));
 ```
 
 Preprocessing runs once on first invocation and is not included in "Prover runtime". Diagnose failures:
