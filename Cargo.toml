@@ -242,7 +242,7 @@ getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = f
 ctor = { version = "0.6" }
 hex-literal = "0.4.1"
 hex = "0.4.3"
-spinners = { version = "4.1.1", default-features = false }
+spinners = { version = "4.2.0", default-features = false }
 
 # Testing
 criterion = { version = "0.5.1", features = ["html_reports"] }
