@@ -7,5 +7,5 @@ edition = "2021"
 jolt-sdk = { workspace = true, features = ["host", "zk"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
-guest = { package = "fibonacci-guest", path = "./guest", features = ["zk"] }
+guest = { package = "fibonacci-guest", path = "./guest" }
 
