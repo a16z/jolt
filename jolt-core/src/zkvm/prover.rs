@@ -158,6 +158,8 @@ use crate::zkvm::r1cs::constraints::{
     OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
     PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
+#[cfg(feature = "zk")]
+use crate::zkvm::verifier::BlindfoldSetup;
 
 /// Jolt CPU prover for RV64IMAC.
 pub struct JoltCpuProver<
@@ -167,7 +169,7 @@ pub struct JoltCpuProver<
     PCS: StreamingCommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 > {
-    pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+    pub preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
     pub program_io: JoltDevice,
     pub lazy_trace: LazyTraceIterator,
     pub trace: Arc<Vec<Cycle>>,
@@ -205,7 +207,7 @@ impl<
 {
     #[allow(clippy::too_many_arguments)]
     pub fn gen_from_elf(
-        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
         elf_contents: &[u8],
         inputs: &[u8],
         untrusted_advice: &[u8],
@@ -348,7 +350,7 @@ impl<
     }
 
     pub fn gen_from_trace(
-        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
         lazy_trace: LazyTraceIterator,
         mut trace: Vec<Cycle>,
         mut program_io: JoltDevice,
@@ -439,7 +441,7 @@ impl<
         #[cfg(feature = "zk")]
         let pedersen_generators = {
             use common::constants::MAX_BLINDFOLD_GENERATORS;
-            preprocessing.pedersen_generators::<C>(MAX_BLINDFOLD_GENERATORS)
+            preprocessing.pedersen_generators(MAX_BLINDFOLD_GENERATORS)
         };
 
         Self {
@@ -1701,7 +1703,7 @@ impl<
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
         let pedersen_generators = self
             .preprocessing
-            .pedersen_generators::<C>(pedersen_generator_count);
+            .pedersen_generators(pedersen_generator_count);
         let eval_commitments =
             vec![PCS::eval_commitment(joint_opening_proof).expect("missing eval commitment")];
 
@@ -2061,18 +2063,20 @@ fn write_instance_flamegraph_svg(
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProverPreprocessing<F: JoltField, PCS: CommitmentScheme<Field = F>> {
+pub struct JoltProverPreprocessing<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>> {
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
+    _curve: std::marker::PhantomData<C>,
 }
 
-impl<F, PCS> JoltProverPreprocessing<F, PCS>
+impl<F, C, PCS> JoltProverPreprocessing<F, C, PCS>
 where
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::gen")]
-    pub fn new(shared: JoltSharedPreprocessing) -> JoltProverPreprocessing<F, PCS> {
+    pub fn new(shared: JoltSharedPreprocessing) -> Self {
         use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
         let max_T: usize = shared.max_padded_trace_length.next_power_of_two();
         let max_log_T = max_T.log_2();
@@ -2083,18 +2087,18 @@ where
         };
         let generators = PCS::setup_prover(max_log_k_chunk + max_log_T);
 
-        JoltProverPreprocessing { generators, shared }
+        JoltProverPreprocessing {
+            generators,
+            shared,
+            _curve: std::marker::PhantomData,
+        }
     }
 
     #[cfg(feature = "zk")]
-    pub fn blindfold_setup<C: crate::curve::JoltCurve>(
-        &self,
-    ) -> crate::subprotocols::blindfold::BlindfoldSetup<C>
+    pub fn blindfold_setup(&self) -> BlindfoldSetup<C>
     where
         PCS: ZkEvalCommitment<C>,
     {
-        use crate::poly::commitment::pedersen::PedersenGenerators;
-        use crate::subprotocols::blindfold::BlindfoldSetup;
         use common::constants::MAX_BLINDFOLD_GENERATORS;
 
         let (g1s, h1) = PCS::zk_generators(&self.generators, MAX_BLINDFOLD_GENERATORS)
@@ -2103,15 +2107,11 @@ where
     }
 
     #[cfg(feature = "zk")]
-    pub fn pedersen_generators<C: crate::curve::JoltCurve>(
-        &self,
-        count: usize,
-    ) -> crate::poly::commitment::pedersen::PedersenGenerators<C>
+    pub fn pedersen_generators(&self, count: usize) -> PedersenGenerators<C>
     where
         PCS: ZkEvalCommitment<C>,
     {
-        let mut gens: crate::poly::commitment::pedersen::PedersenGenerators<C> =
-            self.blindfold_setup::<C>().into();
+        let mut gens: PedersenGenerators<C> = self.blindfold_setup().into();
         gens.message_generators.truncate(count);
         gens
     }
@@ -2134,8 +2134,8 @@ where
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> Serializable
-    for JoltProverPreprocessing<F, PCS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>> Serializable
+    for JoltProverPreprocessing<F, C, PCS>
 {
 }
 
@@ -2144,6 +2144,7 @@ mod tests {
     use ark_bn254::Fr;
     use serial_test::serial;
 
+    use crate::curve::Bn254Curve;
     use crate::host;
     use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
     #[cfg(feature = "zk")]
@@ -2190,7 +2191,7 @@ mod tests {
     }
 
     fn commit_trusted_advice_preprocessing_only(
-        preprocessing: &JoltProverPreprocessing<Fr, DoryCommitmentScheme>,
+        preprocessing: &JoltProverPreprocessing<Fr, Bn254Curve, DoryCommitmentScheme>,
         trusted_advice_bytes: &[u8],
     ) -> (
         <DoryCommitmentScheme as CommitmentScheme>::Commitment,

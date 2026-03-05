@@ -9,15 +9,14 @@ use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitm
 #[cfg(feature = "zk")]
 use crate::poly::commitment::dory::bind_opening_inputs_zk;
 use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals};
-#[cfg(feature = "zk")]
 use crate::poly::commitment::pedersen::PedersenGenerators;
 #[cfg(feature = "zk")]
 use crate::poly::lagrange_poly::LagrangeHelper;
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::{
     pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldVerifier,
-    BlindFoldVerifierInput, BlindfoldSetup, ClaimBindingConfig, InputClaimConstraint,
-    OutputClaimConstraint, StageConfig, ValueSource, VerifierR1CSBuilder,
+    BlindFoldVerifierInput, ClaimBindingConfig, InputClaimConstraint, OutputClaimConstraint,
+    StageConfig, ValueSource, VerifierR1CSBuilder,
 };
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 #[cfg(feature = "zk")]
@@ -1639,6 +1638,23 @@ impl JoltSharedPreprocessing {
     }
 }
 
+/// Serializable wrapper around [`PedersenGenerators`] for ZK setup transfer.
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct BlindfoldSetup<C: JoltCurve>(pub PedersenGenerators<C>);
+
+impl<C: JoltCurve> std::ops::Deref for BlindfoldSetup<C> {
+    type Target = PedersenGenerators<C>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<C: JoltCurve> From<BlindfoldSetup<C>> for PedersenGenerators<C> {
+    fn from(setup: BlindfoldSetup<C>) -> Self {
+        setup.0
+    }
+}
+
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltVerifierPreprocessing<F, C, PCS>
 where
@@ -1648,12 +1664,7 @@ where
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
-    // Option: workspace-wide `cargo clippy --all` unifies features, so non-zk
-    // examples must still construct this struct without a BlindfoldSetup.
-    #[cfg(feature = "zk")]
     pub blindfold_setup: Option<BlindfoldSetup<C>>,
-    #[cfg(not(feature = "zk"))]
-    _curve: std::marker::PhantomData<C>,
 }
 
 impl<F, C, PCS> Serializable for JoltVerifierPreprocessing<F, C, PCS>
@@ -1692,28 +1703,15 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
     JoltVerifierPreprocessing<F, C, PCS>
 {
     #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new")]
-    pub fn new(shared: JoltSharedPreprocessing, generators: PCS::VerifierSetup) -> Self {
-        Self {
-            generators,
-            shared,
-            #[cfg(feature = "zk")]
-            blindfold_setup: None,
-            #[cfg(not(feature = "zk"))]
-            _curve: std::marker::PhantomData,
-        }
-    }
-
-    #[cfg(feature = "zk")]
-    #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new_zk")]
-    pub fn new_zk(
+    pub fn new(
         shared: JoltSharedPreprocessing,
         generators: PCS::VerifierSetup,
-        blindfold_setup: BlindfoldSetup<C>,
+        blindfold_setup: Option<BlindfoldSetup<C>>,
     ) -> Self {
         Self {
             generators,
             shared,
-            blindfold_setup: Some(blindfold_setup),
+            blindfold_setup,
         }
     }
 
@@ -1738,14 +1736,15 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
 
 #[cfg(feature = "prover")]
 impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>>
-    From<&JoltProverPreprocessing<F, PCS>> for JoltVerifierPreprocessing<F, C, PCS>
+    From<&JoltProverPreprocessing<F, C, PCS>> for JoltVerifierPreprocessing<F, C, PCS>
 {
-    fn from(prover_preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
+    fn from(prover_preprocessing: &JoltProverPreprocessing<F, C, PCS>) -> Self {
         let shared = prover_preprocessing.shared.clone();
         let generators = PCS::setup_verifier(&prover_preprocessing.generators);
         #[cfg(not(feature = "zk"))]
-        return Self::new(shared, generators);
+        let blindfold_setup = None;
         #[cfg(feature = "zk")]
-        return Self::new_zk(shared, generators, prover_preprocessing.blindfold_setup());
+        let blindfold_setup = Some(prover_preprocessing.blindfold_setup());
+        Self::new(shared, generators, blindfold_setup)
     }
 }

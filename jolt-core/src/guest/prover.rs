@@ -1,5 +1,5 @@
 use super::program::Program;
-use crate::curve::JoltCurve;
+use crate::curve::{Bn254Curve, JoltCurve};
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
@@ -16,7 +16,7 @@ use tracer::JoltDevice;
 pub fn preprocess(
     guest: &Program,
     max_trace_length: usize,
-) -> JoltProverPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> {
+) -> JoltProverPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme> {
     use crate::zkvm::verifier::JoltSharedPreprocessing;
 
     let (bytecode, memory_init, program_size) = guest.decode();
@@ -44,7 +44,7 @@ pub fn prove<
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     trusted_advice_hint: Option<<PCS as CommitmentScheme>::OpeningProofHint>,
     output_bytes: &mut [u8],
-    preprocessing: &JoltProverPreprocessing<F, PCS>,
+    preprocessing: &JoltProverPreprocessing<F, C, PCS>,
 ) -> (
     JoltProof<F, C, PCS, FS>,
     JoltDevice,

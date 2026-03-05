@@ -555,7 +555,7 @@ pub fn main() {
     let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
     let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
     let verifier_preprocessing =
-        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup);
+        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup, None);
 
     let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);

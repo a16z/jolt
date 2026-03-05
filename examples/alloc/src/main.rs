@@ -12,6 +12,7 @@ pub fn main() {
     let verifier_preprocessing = guest::preprocess_verifier_alloc(
         shared_preprocessing,
         prover_preprocessing.generators.to_verifier_setup(),
+        None,
     );
 
     let prove_alloc = guest::build_prover_alloc(program, prover_preprocessing);

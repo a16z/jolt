@@ -21,6 +21,5 @@ pub use jolt_core::AdviceTape;
 pub use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 pub use jolt_core::poly::commitment::dory::{DoryContext, DoryGlobals};
 pub use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
-#[cfg(feature = "zk")]
-pub use jolt_core::subprotocols::blindfold::BlindfoldSetup;
 pub use jolt_core::zkvm::ram::populate_memory_states;
+pub use jolt_core::zkvm::verifier::BlindfoldSetup;

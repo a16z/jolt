@@ -3,11 +3,10 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
 use crate::utils::errors::ProofVerifyError;
+use crate::zkvm::verifier::BlindfoldSetup;
 
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
-#[cfg(feature = "zk")]
-use crate::subprotocols::blindfold::BlindfoldSetup;
 use crate::transcripts::Transcript;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
@@ -16,25 +15,14 @@ use crate::zkvm::verifier::JoltVerifierPreprocessing;
 use common::jolt_device::MemoryConfig;
 use common::jolt_device::MemoryLayout;
 
-#[cfg(not(feature = "zk"))]
 pub fn preprocess(
     guest: &Program,
     max_trace_length: usize,
     verifier_setup: <DoryCommitmentScheme as CommitmentScheme>::VerifierSetup,
+    blindfold_setup: Option<BlindfoldSetup<Bn254Curve>>,
 ) -> JoltVerifierPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme> {
     let shared = preprocess_shared(guest, max_trace_length);
-    JoltVerifierPreprocessing::new(shared, verifier_setup)
-}
-
-#[cfg(feature = "zk")]
-pub fn preprocess(
-    guest: &Program,
-    max_trace_length: usize,
-    verifier_setup: <DoryCommitmentScheme as CommitmentScheme>::VerifierSetup,
-    blindfold_setup: BlindfoldSetup<Bn254Curve>,
-) -> JoltVerifierPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme> {
-    let shared = preprocess_shared(guest, max_trace_length);
-    JoltVerifierPreprocessing::new_zk(shared, verifier_setup, blindfold_setup)
+    JoltVerifierPreprocessing::new(shared, verifier_setup, blindfold_setup)
 }
 
 fn preprocess_shared(guest: &Program, max_trace_length: usize) -> JoltSharedPreprocessing {

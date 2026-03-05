@@ -188,7 +188,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_prover_fn_name(
                 program: jolt::host::Program,
-                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
+                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>,
             ) -> #return_type
             {
                 #imports
@@ -494,7 +494,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_prover_fn_name(shared_preprocessing: jolt::JoltSharedPreprocessing)
-                -> jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>
+                -> jolt::JoltProverPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>
             {
                 #imports
                 let prover_preprocessing = JoltProverPreprocessing::new(
@@ -510,40 +510,17 @@ impl MacroBuilder {
         let fn_name = self.get_func_name();
         let preprocess_verifier_fn_name =
             Ident::new(&format!("preprocess_verifier_{fn_name}"), fn_name.span());
-        let mod_name = Ident::new(
-            &format!("__jolt_preprocess_verifier_{fn_name}"),
-            fn_name.span(),
-        );
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            #[allow(unexpected_cfgs)]
-            mod #mod_name {
-                #[allow(unused_imports)]
-                use super::*;
-
-                #[cfg(not(feature = "zk"))]
-                pub fn #preprocess_verifier_fn_name(
-                    shared_preprocess: jolt::JoltSharedPreprocessing,
-                    generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
-                ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>
-                {
-                    jolt::JoltVerifierPreprocessing::new(shared_preprocess, generators)
-                }
-
-                #[cfg(feature = "zk")]
-                pub fn #preprocess_verifier_fn_name(
-                    shared_preprocess: jolt::JoltSharedPreprocessing,
-                    generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
-                    blindfold_setup: jolt::BlindfoldSetup<jolt::Bn254Curve>,
-                ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>
-                {
-                    jolt::JoltVerifierPreprocessing::new_zk(shared_preprocess, generators, blindfold_setup)
-                }
+            pub fn #preprocess_verifier_fn_name(
+                shared_preprocess: jolt::JoltSharedPreprocessing,
+                generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
+                blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Bn254Curve>>,
+            ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>
+            {
+                jolt::JoltVerifierPreprocessing::new(shared_preprocess, generators, blindfold_setup)
             }
-
-            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub use #mod_name::#preprocess_verifier_fn_name;
         }
     }
 
@@ -557,7 +534,7 @@ impl MacroBuilder {
         );
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_verifier_fn_name(prover_preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>)
+            pub fn #preprocess_verifier_fn_name(prover_preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>)
                 -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>
             {
                 #imports
@@ -578,7 +555,7 @@ impl MacroBuilder {
             return quote! {
                 #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
                 pub fn #commit_fn_name(
-                    _preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
+                    _preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>,
                 ) -> (Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
                       Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>)
                 {
@@ -601,7 +578,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #commit_fn_name(
                 #(#trusted_advice_inputs,)*
-                preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
+                preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>,
             ) -> (Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
                   Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>)
             {
@@ -704,7 +681,7 @@ impl MacroBuilder {
             #[allow(clippy::too_many_arguments)]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
-                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
+                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::Bn254Curve, jolt::PCS>,
                 #inputs
                 #commitment_param
             ) -> #prove_output_ty {

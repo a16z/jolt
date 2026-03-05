@@ -16,7 +16,7 @@ pub fn main() {
     let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
     let blindfold_setup = prover_preprocessing.blindfold_setup();
     let verifier_preprocessing =
-        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup, blindfold_setup);
+        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup, Some(blindfold_setup));
 
     if save_to_disk {
         serialize_and_print_size(

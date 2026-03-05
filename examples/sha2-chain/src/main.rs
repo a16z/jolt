@@ -12,6 +12,7 @@ pub fn main() {
     let verifier_preprocessing = guest::preprocess_verifier_sha2_chain(
         shared_preprocessing,
         prover_preprocessing.generators.to_verifier_setup(),
+        None,
     );
 
     let prove_sha2_chain = guest::build_prover_sha2_chain(program, prover_preprocessing);
