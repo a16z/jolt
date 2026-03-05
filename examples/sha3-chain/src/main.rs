@@ -11,6 +11,7 @@ pub fn main() {
     let verifier_preprocessing = guest::preprocess_verifier_sha3_chain(
         shared_preprocessing,
         prover_preprocessing.generators.to_verifier_setup(),
+        None,
     );
 
     let prove_sha3_chain = guest::build_prover_sha3_chain(program, prover_preprocessing);

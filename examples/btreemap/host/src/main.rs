@@ -29,6 +29,7 @@ pub fn btreemap() {
         guest::preprocess_verifier_btreemap(
             shared_preprocessing,
             prover_preprocessing.generators.to_verifier_setup(),
+            None,
         )
     });
 

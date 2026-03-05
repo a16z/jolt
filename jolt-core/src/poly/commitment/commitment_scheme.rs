@@ -127,17 +127,6 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     ) -> Result<(), ProofVerifyError>;
 
     fn protocol_name() -> &'static [u8];
-
-    /// Extracts raw BN254 G1 generators and blinding generator from the prover setup.
-    /// Used to derive ZK Pedersen generators from PCS setup.
-    /// Returns None for PCS that don't support ZK Pedersen commitments.
-    #[cfg(feature = "zk")]
-    fn zk_generators_raw(
-        _setup: &Self::ProverSetup,
-        _count: usize,
-    ) -> Option<(Vec<crate::curve::Bn254G1>, crate::curve::Bn254G1)> {
-        None
-    }
 }
 
 pub trait ZkEvalCommitment<C: JoltCurve>: CommitmentScheme {
@@ -149,6 +138,13 @@ pub trait ZkEvalCommitment<C: JoltCurve>: CommitmentScheme {
 
     /// Returns the generators used for evaluation commitments in the verifier setup.
     fn eval_commitment_gens_verifier(setup: &Self::VerifierSetup) -> Option<(C::G1, C::G1)>;
+
+    /// Extracts G1 generators and blinding generator from the prover setup for Pedersen commitments.
+    /// Returns None for PCS that don't support ZK Pedersen commitments.
+    #[cfg(feature = "zk")]
+    fn zk_generators(_setup: &Self::ProverSetup, _count: usize) -> Option<(Vec<C::G1>, C::G1)> {
+        None
+    }
 }
 
 pub trait StreamingCommitmentScheme: CommitmentScheme {

@@ -4,6 +4,8 @@
 
 Jolt is **fast** (state-of-the-art performance on CPU) and relatively **simple** (thanks to its lookup-centric architecture).
 
+**AI coding agents**: Install the Jolt [agent skill](https://vercel.com/docs/agent-resources/skills) to let Claude Code, Cursor, Codex, etc. wrap Rust functions in Jolt proofs: `npx skills add a16z/jolt`
+
 This book has the following top-level sections:
 1. Intro (you are here)
 2. [Usage](./usage/usage.md) (how to use Jolt in your applications)
