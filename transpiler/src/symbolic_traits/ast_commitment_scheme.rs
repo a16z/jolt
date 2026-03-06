@@ -139,7 +139,7 @@ impl CommitmentScheme for AstCommitmentScheme {
         _opening_point: &[<Self::Field as JoltField>::Challenge],
         _hint: Option<Self::OpeningProofHint>,
         _transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
+    ) -> (Self::Proof, Option<Self::Field>) {
         panic!("AstCommitmentScheme::prove should never be called during verification")
     }
 

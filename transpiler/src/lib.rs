@@ -87,7 +87,7 @@ pub mod symbolic_traits;
 
 pub use gnark_codegen::{generate_circuit_from_bundle, sanitize_go_name};
 pub use symbolic_proof::{symbolize_proof, VarAllocator};
-pub use symbolic_traits::{AstCommitmentScheme, AstOpeningAccumulator, PoseidonAstTranscript};
+pub use symbolic_traits::{AstCommitmentScheme, AstCurve, AstOpeningAccumulator, PoseidonAstTranscript};
 
 // Re-export transcript types based on feature flags (matching jolt-core pattern)
 // This allows main.rs to use the selected transcript without conditional imports

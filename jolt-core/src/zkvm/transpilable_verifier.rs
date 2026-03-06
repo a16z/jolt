@@ -87,7 +87,7 @@ use crate::zkvm::{
 use crate::{
     field::JoltField,
     poly::opening_proof::{
-        OpeningAccumulator, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+        OpeningAccumulator, OpeningPoint, SumcheckId, VerifierOpeningAccumulator,
     },
     pprof_scope,
     subprotocols::{
@@ -97,6 +97,8 @@ use crate::{
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
 };
+#[cfg(not(feature = "zk"))]
+use crate::poly::opening_proof::BIG_ENDIAN;
 use tracer::JoltDevice;
 
 /// Generic wrapper around `RamValCheckSumcheckParams` that implements `SumcheckInstanceVerifier`
@@ -109,13 +111,14 @@ struct GenericRamValCheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> GenericRamValCheckVerifier<F> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         initial_ram_state: &[u64],
         program_io: &JoltDevice,
         ram_preprocessing: &crate::zkvm::ram::RAMPreprocessing,
         trace_len: usize,
         ram_K: usize,
-        rw_config: &crate::zkvm::config::ReadWriteConfig,
+        _rw_config: &crate::zkvm::config::ReadWriteConfig,
         gamma: F,
         opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
@@ -146,7 +149,7 @@ impl<F: JoltField> GenericRamValCheckVerifier<F> {
         );
 
         #[cfg(not(feature = "zk"))]
-        let _ = (ram_preprocessing, program_io, rw_config);
+        let _ = (ram_preprocessing, program_io, _rw_config);
 
         let params = RamValCheckSumcheckParams {
             T: trace_len,
@@ -304,6 +307,7 @@ impl<
         );
 
         let zk_mode = proof.stage1_sumcheck_proof.is_zk();
+        #[allow(unused_mut)]
         let mut opening_accumulator =
             VerifierOpeningAccumulator::new(proof.trace_length.log_2(), zk_mode);
 

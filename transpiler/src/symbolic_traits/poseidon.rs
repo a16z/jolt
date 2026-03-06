@@ -34,13 +34,11 @@
 //! with Blake2b (the default), all challenge values will differ and verification
 //! will fail silently (assertions won't be zero).
 
-use ark_ec::CurveGroup;
 use ark_serialize::CanonicalSerialize;
 use jolt_core::field::JoltField;
 use jolt_core::transcripts::Transcript;
 use zklean_extractor::mle_ast::{
-    set_pending_challenge, take_pending_append, take_pending_commitment_chunks,
-    take_pending_point_elements, MleAst,
+    set_pending_challenge, take_pending_append, take_pending_commitment_chunks, MleAst,
 };
 
 /// Symbolic Poseidon transcript for AST-based transpilation.
@@ -176,23 +174,6 @@ impl Transcript for PoseidonAstTranscript {
             // Fallback for non-MleAst types (shouldn't happen in transpilation)
             self.hash_and_update(MleAst::from_u64(0));
         }
-    }
-
-    fn raw_append_point<G: CurveGroup>(&mut self, _point: &G) {
-        // Symbolic path: check for pending point elements set via set_pending_point_elements()
-        if let Some(elements) = take_pending_point_elements() {
-            self.append_field_elements(&elements);
-            return;
-        }
-
-        // No pending point elements. set_pending_point_elements() was never called.
-        // The concrete fallback was removed because it contained byte-reversal (.rev())
-        // that mismatches the concrete PoseidonTranscript (which no longer reverses).
-        // If point support is needed, wire up set_pending_point_elements() properly.
-        panic!(
-            "PoseidonAstTranscript::raw_append_point: no pending point elements. \
-             Call set_pending_point_elements() before raw_append_point() during symbolic execution."
-        );
     }
 
     // === Override append_serializable to handle AstCommitment chunks ===
