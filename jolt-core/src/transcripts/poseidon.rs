@@ -358,7 +358,10 @@ mod tests {
         let state_33 = t2.state;
 
         // Adding one byte should produce different state (different chunk boundary)
-        assert_ne!(state_32, state_33, "32-byte and 33-byte inputs should differ");
+        assert_ne!(
+            state_32, state_33,
+            "32-byte and 33-byte inputs should differ"
+        );
 
         // Test 3: Determinism for multi-chunk input
         let mut t3 = TestTranscript::new(b"chunk_test");
@@ -428,9 +431,11 @@ mod tests {
         // Batch determinism
         let mut t_batch2 = TestTranscript::new(b"batch_test");
         t_batch2.append_scalars(b"s", &scalars);
-        assert_eq!(t_batch.state, t_batch2.state, "Batch should be deterministic");
+        assert_eq!(
+            t_batch.state, t_batch2.state,
+            "Batch should be deterministic"
+        );
     }
-
 
     // ============================================================================
     // Challenge Methods Tests
@@ -477,7 +482,10 @@ mod tests {
         let challenges2: Vec<Fr> = transcript2.challenge_vector(5);
 
         assert_eq!(challenges1.len(), 5);
-        assert_eq!(challenges1, challenges2, "challenge_vector should be deterministic");
+        assert_eq!(
+            challenges1, challenges2,
+            "challenge_vector should be deterministic"
+        );
 
         // Test 2: Collision resistance (challenges are distinct)
         let unique_challenges: HashSet<Fr> = challenges1.iter().copied().collect();
@@ -609,7 +617,8 @@ mod tests {
             let challenge2: Fr = transcript2.challenge_scalar();
 
             assert_eq!(
-                challenge1, challenge2,
+                challenge1,
+                challenge2,
                 "Determinism failed for label={:?}",
                 std::str::from_utf8(label).unwrap()
             );
@@ -677,5 +686,4 @@ mod tests {
             "Different initialization labels should produce different states"
         );
     }
-
 }

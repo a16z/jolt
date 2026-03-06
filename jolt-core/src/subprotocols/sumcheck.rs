@@ -392,7 +392,12 @@ impl BatchedSumcheck {
         )
     }
 
-    pub fn verify<F: JoltField, C: JoltCurve, ProofTranscript: Transcript, A: OpeningAccumulator<F>>(
+    pub fn verify<
+        F: JoltField,
+        C: JoltCurve,
+        ProofTranscript: Transcript,
+        A: OpeningAccumulator<F>,
+    >(
         proof: &SumcheckInstanceProof<F, C, ProofTranscript>,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>>,
         opening_accumulator: &mut A,

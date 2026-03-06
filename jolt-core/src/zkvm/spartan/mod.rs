@@ -17,7 +17,12 @@ pub mod outer;
 pub mod product;
 pub mod shift;
 
-pub fn verify_stage1_uni_skip<F: JoltField, C: JoltCurve, T: Transcript, A: OpeningAccumulator<F>>(
+pub fn verify_stage1_uni_skip<
+    F: JoltField,
+    C: JoltCurve,
+    T: Transcript,
+    A: OpeningAccumulator<F>,
+>(
     proof: &UniSkipFirstRoundProofVariant<F, C, T>,
     key: &UniformSpartanKey<F>,
     opening_accumulator: &mut A,
@@ -41,7 +46,12 @@ pub fn verify_stage1_uni_skip<F: JoltField, C: JoltCurve, T: Transcript, A: Open
     Ok((verifier.params, challenge))
 }
 
-pub fn verify_stage2_uni_skip<F: JoltField, C: JoltCurve, T: Transcript, A: OpeningAccumulator<F>>(
+pub fn verify_stage2_uni_skip<
+    F: JoltField,
+    C: JoltCurve,
+    T: Transcript,
+    A: OpeningAccumulator<F>,
+>(
     proof: &UniSkipFirstRoundProofVariant<F, C, T>,
     opening_accumulator: &mut A,
     transcript: &mut T,

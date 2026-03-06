@@ -223,7 +223,11 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
 
     /// Verify only the univariate-skip first round.
     /// Returns the challenge derived during verification.
-    pub fn verify<const N: usize, const FIRST_ROUND_POLY_NUM_COEFFS: usize, A: OpeningAccumulator<F>>(
+    pub fn verify<
+        const N: usize,
+        const FIRST_ROUND_POLY_NUM_COEFFS: usize,
+        A: OpeningAccumulator<F>,
+    >(
         proof: &Self,
         sumcheck_instance: &dyn SumcheckInstanceVerifier<F, T, A>,
         opening_accumulator: &mut A,

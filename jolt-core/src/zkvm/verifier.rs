@@ -479,8 +479,9 @@ where
             &self.opening_accumulator,
         );
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>> =
-            vec![&spartan_outer_remaining];
+        let instances: Vec<
+            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
+        > = vec![&spartan_outer_remaining];
 
         let (batching_coefficients, r_stage1) = BatchedSumcheck::verify(
             &self.proof.stage1_sumcheck_proof,
@@ -592,7 +593,9 @@ where
             &self.proof.rw_config,
         );
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>> = vec![
+        let instances: Vec<
+            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
+        > = vec![
             &ram_read_write_checking,
             &spartan_product_virtual_remainder,
             &instruction_claim_reduction,
@@ -672,7 +675,9 @@ where
             &mut self.transcript,
         );
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>> = vec![
+        let instances: Vec<
+            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
+        > = vec![
             &spartan_shift,
             &spartan_instruction_input,
             &spartan_registers_claim_reduction,
@@ -756,8 +761,9 @@ where
             &self.opening_accumulator,
         );
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>> =
-            vec![&registers_read_write_checking, &ram_val_check];
+        let instances: Vec<
+            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
+        > = vec![&registers_read_write_checking, &ram_val_check];
 
         let (batching_coefficients, r_stage4) = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
@@ -822,7 +828,9 @@ where
         let registers_val_evaluation =
             RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>> = vec![
+        let instances: Vec<
+            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
+        > = vec![
             &lookups_read_raf,
             &ram_ra_reduction,
             &registers_val_evaluation,
@@ -928,7 +936,9 @@ where
             ));
         }
 
-        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>> = vec![
+        let mut instances: Vec<
+            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
+        > = vec![
             &bytecode_read_raf,
             &booleanity,
             &ram_hamming_booleanity,
@@ -1246,8 +1256,9 @@ where
             &mut self.transcript,
         );
 
-        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>> =
-            vec![&hw_verifier];
+        let mut instances: Vec<
+            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
+        > = vec![&hw_verifier];
         if let Some(advice_reduction_verifier_trusted) =
             self.advice_reduction_verifier_trusted.as_mut()
         {

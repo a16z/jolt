@@ -31,19 +31,11 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript, A: OpeningAccumu
     }
 
     /// Expected final claim after binding to the provided instance-local r slice.
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F;
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F;
 
     /// Enqueue any openings needed after sumcheck completes.
     /// r is the instance-local slice; instance normalizes internally.
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    );
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]);
 }
 
 /// Params shared between prover and verifier.

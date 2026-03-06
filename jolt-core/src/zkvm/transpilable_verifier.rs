@@ -44,10 +44,12 @@ use std::iter::zip;
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+#[cfg(not(feature = "zk"))]
+use crate::poly::opening_proof::BIG_ENDIAN;
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 use crate::zkvm::claim_reductions::{
-    AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier,
-    ReductionPhase, RegistersClaimReductionSumcheckVerifier,
+    AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier, ReductionPhase,
+    RegistersClaimReductionSumcheckVerifier,
 };
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::{
@@ -67,8 +69,7 @@ use crate::zkvm::{
         compute_min_ram_K, hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
-        read_write_checking::RamReadWriteCheckingVerifier,
-        val_check::RamValCheckSumcheckParams,
+        read_write_checking::RamReadWriteCheckingVerifier, val_check::RamValCheckSumcheckParams,
         verifier_accumulate_advice,
     },
     registers::{
@@ -97,8 +98,6 @@ use crate::{
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
 };
-#[cfg(not(feature = "zk"))]
-use crate::poly::opening_proof::BIG_ENDIAN;
 use tracer::JoltDevice;
 
 /// Generic wrapper around `RamValCheckSumcheckParams` that implements `SumcheckInstanceVerifier`
@@ -175,11 +174,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let (r_val, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
@@ -204,11 +199,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         inc_claim * wa_claim * (lt_eval + self.params.gamma)
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let r_cycle_prime = self.params.normalize_opening_point(sumcheck_challenges);
 
         let r_rw = accumulator
@@ -458,12 +449,13 @@ impl<
     }
 
     fn verify_stage1(&mut self) -> Result<(), ProofVerifyError> {
-        let (uni_skip_params, _uni_skip_challenge) = verify_stage1_uni_skip::<F, C, ProofTranscript, A>(
-            &self.proof.stage1_uni_skip_first_round_proof,
-            &self.spartan_key,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (uni_skip_params, _uni_skip_challenge) =
+            verify_stage1_uni_skip::<F, C, ProofTranscript, A>(
+                &self.proof.stage1_uni_skip_first_round_proof,
+                &self.spartan_key,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+            )?;
 
         let spartan_outer_remaining = OuterRemainingSumcheckVerifier::new(
             self.spartan_key,
@@ -475,22 +467,24 @@ impl<
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> =
             vec![&spartan_outer_remaining];
 
-        let (_batching_coefficients, _r_stage1) = BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-            &self.proof.stage1_sumcheck_proof,
-            instances,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (_batching_coefficients, _r_stage1) =
+            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
+                &self.proof.stage1_sumcheck_proof,
+                instances,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+            )?;
 
         Ok(())
     }
 
     fn verify_stage2(&mut self) -> Result<(), ProofVerifyError> {
-        let (uni_skip_params, _uni_skip_challenge) = verify_stage2_uni_skip::<F, C, ProofTranscript, A>(
-            &self.proof.stage2_uni_skip_first_round_proof,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (uni_skip_params, _uni_skip_challenge) =
+            verify_stage2_uni_skip::<F, C, ProofTranscript, A>(
+                &self.proof.stage2_uni_skip_first_round_proof,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+            )?;
 
         let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
             &self.opening_accumulator,
@@ -536,12 +530,13 @@ impl<
             &ram_output_check,
         ];
 
-        let (_batching_coefficients, _r_stage2) = BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-            &self.proof.stage2_sumcheck_proof,
-            instances,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (_batching_coefficients, _r_stage2) =
+            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
+                &self.proof.stage2_sumcheck_proof,
+                instances,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+            )?;
 
         Ok(())
     }
@@ -566,12 +561,13 @@ impl<
             &spartan_registers_claim_reduction,
         ];
 
-        let (_batching_coefficients, _r_stage3) = BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-            &self.proof.stage3_sumcheck_proof,
-            instances,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (_batching_coefficients, _r_stage3) =
+            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
+                &self.proof.stage3_sumcheck_proof,
+                instances,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+            )?;
 
         Ok(())
     }
@@ -612,12 +608,13 @@ impl<
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> =
             vec![&registers_read_write_checking, &ram_val_check];
 
-        let (_batching_coefficients, _r_stage4) = BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-            &self.proof.stage4_sumcheck_proof,
-            instances,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (_batching_coefficients, _r_stage4) =
+            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
+                &self.proof.stage4_sumcheck_proof,
+                instances,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+            )?;
 
         Ok(())
     }
@@ -646,12 +643,13 @@ impl<
             &registers_val_evaluation,
         ];
 
-        let (_batching_coefficients, _r_stage5) = BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-            &self.proof.stage5_sumcheck_proof,
-            instances,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (_batching_coefficients, _r_stage5) =
+            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
+                &self.proof.stage5_sumcheck_proof,
+                instances,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+            )?;
 
         Ok(())
     }
@@ -726,12 +724,13 @@ impl<
             instances.push(advice);
         }
 
-        let (_batching_coefficients, _r_stage6) = BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-            &self.proof.stage6_sumcheck_proof,
-            instances,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (_batching_coefficients, _r_stage6) =
+            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
+                &self.proof.stage6_sumcheck_proof,
+                instances,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+            )?;
 
         Ok(())
     }
@@ -771,12 +770,13 @@ impl<
             }
         }
 
-        let (_batching_coefficients, _r_stage7) = BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-            &self.proof.stage7_sumcheck_proof,
-            instances,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (_batching_coefficients, _r_stage7) =
+            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
+                &self.proof.stage7_sumcheck_proof,
+                instances,
+                &mut self.opening_accumulator,
+                &mut self.transcript,
+            )?;
 
         Ok(())
     }

@@ -12,8 +12,8 @@ use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+    LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 #[cfg(feature = "zk")]
@@ -633,11 +633,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let opening_point = SumcheckInstanceVerifier::<F, T, A>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
@@ -675,11 +671,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
                 + self.params.gamma_quart * right_instruction_input_claim)
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let opening_point = SumcheckInstanceVerifier::<F, T, A>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
