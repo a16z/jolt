@@ -437,6 +437,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_append_point_batch_vs_single() {
+        // Test infinity handling and batch vs single behavior
+        use crate::curve::Bn254G1;
+        use ark_bn254::G1Projective;
+        use ark_std::UniformRand;
+
+        let mut rng = ark_std::test_rng();
+        let infinity = Bn254G1::default();
+
+        // Test 1: Infinity should not panic and should update state
+        let mut t1 = TestTranscript::new(b"infinity_test");
+        t1.append_commitment(b"pt", &infinity);
+        assert_eq!(t1.n_rounds, 2, "Label + point = 2 rounds");
+
+        // Test 2: Infinity should be deterministic
+        let mut t2 = TestTranscript::new(b"infinity_test");
+        t2.append_commitment(b"pt", &infinity);
+        assert_eq!(t1.state, t2.state, "Infinity should be deterministic");
+
+        // Test 3: Infinity differs from non-infinity
+        let mut t3 = TestTranscript::new(b"infinity_test");
+        let non_infinity = Bn254G1(G1Projective::rand(&mut rng));
+        t3.append_commitment(b"pt", &non_infinity);
+        assert_ne!(t1.state, t3.state, "Infinity vs non-infinity should differ");
+
+        // Test 4: Batch and sequential appends differ (different label handling)
+        let points: Vec<Bn254G1> =
+            (0..3).map(|_| Bn254G1(G1Projective::rand(&mut rng))).collect();
+
+        let mut t_batch = TestTranscript::new(b"batch_test");
+        t_batch.append_commitments(b"pts", &points);
+
+        let mut t_sequential = TestTranscript::new(b"batch_test");
+        for point in &points {
+            t_sequential.append_commitment(b"pts", point);
+        }
+
+        assert_ne!(
+            t_batch.state, t_sequential.state,
+            "Batch and sequential appends should differ (different label handling)"
+        );
+
+        // Batch determinism
+        let mut t_batch2 = TestTranscript::new(b"batch_test");
+        t_batch2.append_commitments(b"pts", &points);
+        assert_eq!(t_batch.state, t_batch2.state, "Batch should be deterministic");
+    }
+
     // ============================================================================
     // Challenge Methods Tests
     // ============================================================================

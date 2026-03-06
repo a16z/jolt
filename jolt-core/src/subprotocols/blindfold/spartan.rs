@@ -13,7 +13,8 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, BIG_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator,
+    BIG_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
@@ -381,14 +382,18 @@ impl<'a, F: JoltField> BlindFoldSpartanVerifier<'a, F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T, VerifierOpeningAccumulator<F>>
     for BlindFoldSpartanVerifier<'_, F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
-    fn expected_output_claim(&self, _accumulator: &A, _sumcheck_challenges: &[F::Challenge]) -> F {
+    fn expected_output_claim(
+        &self,
+        _accumulator: &VerifierOpeningAccumulator<F>,
+        _sumcheck_challenges: &[F::Challenge],
+    ) -> F {
         // The BlindFold verifier handles the final claim verification
         // after receiving witness and error contributions
         unreachable!(
@@ -396,7 +401,11 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         )
     }
 
-    fn cache_openings(&self, _accumulator: &mut A, _sumcheck_challenges: &[F::Challenge]) {
+    fn cache_openings(
+        &self,
+        _accumulator: &mut VerifierOpeningAccumulator<F>,
+        _sumcheck_challenges: &[F::Challenge],
+    ) {
         // Opening verification is handled by BlindFold after sumcheck
     }
 }
