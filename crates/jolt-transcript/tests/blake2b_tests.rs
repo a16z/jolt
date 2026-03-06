@@ -4,7 +4,6 @@ mod common;
 
 use jolt_transcript::Blake2bTranscript;
 
-// Generate the standardized test suite for Blake2bTranscript
 transcript_tests!(Blake2bTranscript);
 
 #[test]

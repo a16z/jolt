@@ -6,6 +6,8 @@ use ark_ec::{AdditiveGroup, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, Zero};
 use jolt_field::Field;
 
+use jolt_transcript::{AppendToTranscript, Transcript};
+
 use crate::JoltGroup;
 
 use super::field_to_fr;
@@ -104,14 +106,25 @@ impl<'de> serde::Deserialize<'de> for Bn254G2 {
     }
 }
 
+impl AppendToTranscript for Bn254G2 {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        use ark_serialize::CanonicalSerialize;
+        let mut buf = Vec::new();
+        self.0
+            .serialize_compressed(&mut buf)
+            .expect("G2 serialization cannot fail");
+        transcript.append_bytes(&buf);
+    }
+}
+
 impl JoltGroup for Bn254G2 {
     #[inline(always)]
-    fn zero() -> Self {
+    fn identity() -> Self {
         Self(G2Projective::zero())
     }
 
     #[inline(always)]
-    fn is_zero(&self) -> bool {
+    fn is_identity(&self) -> bool {
         self.0.is_zero()
     }
 

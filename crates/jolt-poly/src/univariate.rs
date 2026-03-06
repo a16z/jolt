@@ -242,9 +242,6 @@ impl<F: Field> UnivariatePoly<F> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Arithmetic operator impls
-// ---------------------------------------------------------------------------
 
 impl<F: Field> Neg for UnivariatePoly<F> {
     type Output = Self;

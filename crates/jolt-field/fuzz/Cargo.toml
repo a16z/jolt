@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "jolt-field-fuzz"
 version = "0.0.0"

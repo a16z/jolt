@@ -1,3 +1,8 @@
+//! 2D GLV scalar decomposition for BN254 G1.
+//!
+//! Decomposes a scalar `k` into `k = k0 + k1 * lambda (mod n)` where `lambda`
+//! is the GLV endomorphism eigenvalue, halving the bit-length of each component.
+
 use ark_bn254::{Fq, Fr, G1Projective};
 use ark_ff::{BigInteger, MontFp, PrimeField};
 use num_bigint::{BigInt, BigUint, Sign};
@@ -5,7 +10,7 @@ use num_integer::Integer;
 use num_traits::{One, Signed};
 use std::ops::AddAssign;
 
-/// GLV endomorphism coefficient for BN254 G1: β such that [λ]P = (β·x, y)
+/// GLV endomorphism coefficient for BN254 G1: `β` such that `[λ]P = (β·x, y)`
 const ENDO_COEFF: Fq =
     MontFp!("21888242871839275220042445260109153167277707414472061641714758635765020556616");
 
@@ -24,7 +29,7 @@ const SCALAR_DECOMP_COEFFS: [(bool, <Fr as PrimeField>::BigInt); 4] = [
 ];
 
 /// Decompose a BN254 scalar into two ~128-bit components via GLV lattice reduction.
-/// Returns (coefficients, signs) where signs[i] = true means positive.
+/// Returns (coefficients, signs) where `signs[i]` = true means positive.
 pub fn decompose_scalar_2d(scalar: Fr) -> ([<Fr as PrimeField>::BigInt; 2], [bool; 2]) {
     let scalar_bytes = scalar.into_bigint().to_bytes_be();
     let scalar_bigint = BigInt::from_bytes_be(Sign::Plus, &scalar_bytes);

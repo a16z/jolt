@@ -34,6 +34,29 @@ The crate implements `CommitmentScheme`, `HomomorphicCommitmentScheme`, and `Str
 
 - **`DoryStreamingCommitter`** — Incremental commitment builder. Process polynomial chunks via `stream_chunk`, then finalize into a `DoryCommitment`.
 
+### Optimizations
+
+The `optimizations` module provides BN254-specific elliptic curve operations:
+- **GLV 2D** (G1) and **GLV 4D** (G2 via Frobenius endomorphism) scalar multiplication
+- **Batch affine addition** via Montgomery's inversion trick
+- **Vector-scalar operations** for Dory inner-product argument rounds
+
+## Dependency Position
+
+```
+jolt-field ─┐
+jolt-poly  ─┤
+jolt-transcript ─┼─► jolt-dory
+jolt-crypto ─┤
+jolt-openings ─┘
+```
+
+Used by `jolt-zkvm` and `jolt-core`.
+
+## Feature Flags
+
+This crate has no feature flags.
+
 ## License
 
 MIT

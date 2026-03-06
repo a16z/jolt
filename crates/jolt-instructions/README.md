@@ -40,6 +40,14 @@ This crate defines the instruction abstraction layer for the Jolt lookup argumen
 
 - **`tables`** — Lookup table implementations backing the instructions
 
+## Dependency Position
+
+`jolt-instructions` depends only on `jolt-field` and `serde`. It is used by `jolt-zkvm` and `jolt-core`.
+
+## Feature Flags
+
+This crate has no feature flags.
+
 ## License
 
 MIT

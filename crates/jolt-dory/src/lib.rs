@@ -3,9 +3,9 @@
 //! This crate wraps the external `dory-pcs` crate behind the commitment scheme
 //! traits from `jolt-openings`, providing:
 //!
-//! - [`CommitmentScheme`](jolt_openings::CommitmentScheme) -- commit, prove, verify
-//! - [`HomomorphicCommitmentScheme`](jolt_openings::HomomorphicCommitmentScheme) -- batch proofs via RLC
-//! - [`StreamingCommitmentScheme`](jolt_openings::StreamingCommitmentScheme) -- chunked commitment
+//! - [`CommitmentScheme`](jolt_openings::CommitmentScheme) -- commit, open, verify
+//! - [`AdditivelyHomomorphic`](jolt_openings::AdditivelyHomomorphic) -- linear combination of commitments
+//! - [`StreamingCommitment`](jolt_openings::StreamingCommitment) -- chunked commitment
 //!
 //! # Instance-local parameters
 //!
@@ -38,6 +38,5 @@ pub use params::DoryParams;
 pub use scheme::DoryScheme;
 pub use streaming::DoryStreamingCommitter;
 pub use types::{
-    DoryBatchedProof, DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup,
-    DoryVerifierSetup,
+    DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,
 };

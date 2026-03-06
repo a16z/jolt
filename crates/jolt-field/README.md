@@ -46,6 +46,10 @@ The crate also provides optimized arithmetic primitives — Barrett and Montgome
 
 The `signed` module provides fixed-width signed big integers (`S64`, `S128`, `S192`, `S256`, `S96`, `S160`, `S224`) with truncating arithmetic, used internally for accumulator bookkeeping.
 
+## Dependency Position
+
+`jolt-field` is a **leaf crate** with no internal Jolt dependencies. All other `jolt-*` crates depend on it.
+
 ## Feature Flags
 
 | Flag | Default | Description |

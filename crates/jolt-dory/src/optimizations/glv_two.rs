@@ -1,3 +1,8 @@
+//! 2D GLV scalar multiplication for BN254 G1.
+//!
+//! Uses Strauss-Shamir interleaving of the two half-length scalars from the
+//! 2D decomposition. Includes a precomputed Shamir table variant for fixed-base MSM.
+
 use ark_bn254::{Fr, G1Projective};
 use ark_ec::AdditiveGroup;
 use ark_ff::{BigInteger, PrimeField};

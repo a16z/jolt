@@ -2,9 +2,10 @@
 
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::Transcript;
 
 use crate::claim::SumcheckClaim;
+use crate::handler::{ClearRoundHandler, RoundHandler};
 use crate::proof::SumcheckProof;
 
 /// Trait that a concrete witness must implement to participate in the
@@ -38,28 +39,50 @@ pub trait SumcheckWitness<F: Field>: Send + Sync {
 /// Stateless sumcheck prover engine.
 ///
 /// Orchestrates the interaction between a [`SumcheckWitness`] and a
-/// [`Transcript`], producing a [`SumcheckProof`].
+/// [`Transcript`], producing a proof artifact determined by the
+/// [`RoundHandler`] strategy.
 pub struct SumcheckProver;
 
 impl SumcheckProver {
-    /// Executes the sumcheck prover protocol.
+    /// Executes the sumcheck prover protocol with a pluggable round handler.
+    ///
+    /// The handler controls how round polynomials are absorbed into the
+    /// transcript and what proof artifact is produced. Use
+    /// [`ClearRoundHandler`] for standard (non-ZK) proofs or a committed
+    /// handler (from `jolt-blindfold`) for ZK proofs.
     ///
     /// For each of the `claim.num_vars` rounds:
     /// 1. Queries the witness for the round polynomial $s_i(X)$.
-    /// 2. Absorbs the round polynomial coefficients into the transcript.
+    /// 2. Delegates to `handler.absorb_round_poly()` for transcript binding.
     /// 3. Squeezes a challenge $r_i$ from the transcript.
     /// 4. Binds the witness at $r_i$.
+    pub fn prove_with_handler<F, T, H>(
+        claim: &SumcheckClaim<F>,
+        witness: &mut impl SumcheckWitness<F>,
+        transcript: &mut T,
+        challenge_fn: impl Fn(T::Challenge) -> F,
+        mut handler: H,
+    ) -> H::Proof
+    where
+        F: Field,
+        T: Transcript,
+        H: RoundHandler<F>,
+    {
+        for _round in 0..claim.num_vars {
+            let round_poly = witness.round_polynomial();
+            handler.absorb_round_poly(&round_poly, transcript);
+            let challenge = challenge_fn(transcript.challenge());
+            handler.on_challenge(challenge);
+            witness.bind(challenge);
+        }
+        handler.finalize()
+    }
+
+    /// Executes the sumcheck prover with cleartext round handling.
     ///
-    /// Returns a [`SumcheckProof`] containing all $n$ round polynomials.
-    ///
-    /// # Parameters
-    ///
-    /// * `claim` -- the public sumcheck claim.
-    /// * `witness` -- mutable witness implementing [`SumcheckWitness`].
-    /// * `transcript` -- Fiat-Shamir transcript shared with the verifier.
-    /// * `challenge_fn` -- converts the transcript's opaque challenge type
-    ///   into a field element. Typically `|c| F::from_u128(c)` when
-    ///   `T::Challenge = u128`.
+    /// Convenience wrapper around [`prove_with_handler`](Self::prove_with_handler)
+    /// using [`ClearRoundHandler`]. Polynomial coefficients are appended
+    /// directly to the transcript.
     pub fn prove<F, T>(
         claim: &SumcheckClaim<F>,
         witness: &mut impl SumcheckWitness<F>,
@@ -70,27 +93,12 @@ impl SumcheckProver {
         F: Field,
         T: Transcript,
     {
-        let mut round_polynomials = Vec::with_capacity(claim.num_vars);
-
-        for _round in 0..claim.num_vars {
-            let round_poly = witness.round_polynomial();
-            append_poly_to_transcript(&round_poly, transcript);
-
-            let challenge = challenge_fn(transcript.challenge());
-            witness.bind(challenge);
-            round_polynomials.push(round_poly);
-        }
-
-        SumcheckProof { round_polynomials }
-    }
-}
-
-#[inline]
-fn append_poly_to_transcript<F: Field, T: Transcript>(
-    poly: &UnivariatePoly<F>,
-    transcript: &mut T,
-) {
-    for coeff in poly.coefficients() {
-        coeff.append_to_transcript(transcript);
+        Self::prove_with_handler(
+            claim,
+            witness,
+            transcript,
+            challenge_fn,
+            ClearRoundHandler::with_capacity(claim.num_vars),
+        )
     }
 }

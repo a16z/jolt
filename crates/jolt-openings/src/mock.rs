@@ -1,35 +1,38 @@
 //! Mock polynomial commitment scheme for testing.
 //!
 //! [`MockCommitmentScheme`] implements [`CommitmentScheme`] and
-//! [`HomomorphicCommitmentScheme`] without any cryptographic security.
-//! It is intended solely for testing accumulator and reduction logic.
+//! [`AdditivelyHomomorphic`] with true additive homomorphism.
+//! It is intended solely for testing reduction and trait logic.
 
 use std::marker::PhantomData;
 
+use jolt_crypto::Commitment;
 use jolt_field::Field;
 use jolt_poly::Polynomial;
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
 use crate::error::OpeningsError;
-use crate::traits::{CommitmentScheme, HomomorphicCommitmentScheme};
+use crate::traits::{AdditivelyHomomorphic, CommitmentScheme};
 
 /// A trivial commitment scheme for testing infrastructure.
 ///
-/// - **Commitment**: fingerprint of the evaluation table via `Hash`.
+/// - **Commitment**: stores the full evaluation table.
 /// - **Proof**: the full evaluation table, allowing the verifier to re-evaluate.
 ///
-/// Provides no hiding, binding, or soundness guarantees.
+/// Truly homomorphic: `combine` computes the linear combination of evaluations.
+/// Provides no hiding or soundness guarantees.
 #[derive(Clone, Debug)]
 pub struct MockCommitmentScheme<F: Field>(PhantomData<F>);
 
-/// Mock commitment: a `Hash`-based fingerprint of the evaluations.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MockCommitment {
-    /// Hash fingerprint of the evaluation table.
-    pub fingerprint: u64,
-    /// Number of evaluations.
-    pub len: usize,
+/// Mock commitment storing the full evaluation table.
+///
+/// This allows `combine` to compute the actual linear combination of
+/// polynomials, making the mock truly additively homomorphic.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct MockCommitment<F: Field> {
+    evaluations: Vec<F>,
 }
 
 /// Mock proof: carries the full evaluation table for re-evaluation.
@@ -39,48 +42,23 @@ pub struct MockProof<F: Field> {
     evaluations: Vec<F>,
 }
 
-/// Mock batched proof: one sub-proof per polynomial.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct MockBatchedProof<F: Field> {
-    entries: Vec<MockProof<F>>,
-}
-
-/// Deterministic fingerprint of field element evaluations.
-fn field_fingerprint<F: Field>(evals: &[F]) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    evals.hash(&mut hasher);
-    hasher.finish()
+impl<F: Field> Commitment for MockCommitmentScheme<F> {
+    type Output = MockCommitment<F>;
 }
 
 impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
     type Field = F;
-    type Commitment = MockCommitment;
     type Proof = MockProof<F>;
     type ProverSetup = ();
     type VerifierSetup = ();
 
-    fn protocol_name() -> &'static str {
-        "mock-pcs"
-    }
-
-    fn setup_prover(_max_size: usize) -> Self::ProverSetup {}
-
-    fn setup_verifier(_max_size: usize) -> Self::VerifierSetup {}
-
-    fn commit(
-        evaluations: &[Self::Field],
-        _setup: &Self::ProverSetup,
-    ) -> Self::Commitment {
+    fn commit(evaluations: &[Self::Field], _setup: &Self::ProverSetup) -> Self::Output {
         MockCommitment {
-            fingerprint: field_fingerprint(evaluations),
-            len: evaluations.len(),
+            evaluations: evaluations.to_vec(),
         }
     }
 
-    fn prove(
+    fn open(
         evaluations: &[Self::Field],
         _point: &[Self::Field],
         _eval: Self::Field,
@@ -93,21 +71,22 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
     }
 
     fn verify(
-        commitment: &Self::Commitment,
+        commitment: &Self::Output,
         point: &[Self::Field],
         eval: Self::Field,
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut impl Transcript,
     ) -> Result<(), OpeningsError> {
-        let fp = field_fingerprint(&proof.evaluations);
-        if commitment.fingerprint != fp || commitment.len != proof.evaluations.len() {
+        // Check binding: proof evaluations must match commitment
+        if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::CommitmentMismatch {
-                expected: format!("{}", commitment.fingerprint),
-                actual: format!("{fp}"),
+                expected: format!("len={}", commitment.evaluations.len()),
+                actual: format!("len={}", proof.evaluations.len()),
             });
         }
 
+        // Check evaluation correctness
         let poly = Polynomial::new(proof.evaluations.clone());
         let actual_eval = poly.evaluate(point);
         if actual_eval != eval {
@@ -118,80 +97,43 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
     }
 }
 
-impl<F: Field> HomomorphicCommitmentScheme for MockCommitmentScheme<F> {
-    type BatchedProof = MockBatchedProof<F>;
-
-    fn combine_commitments(
-        commitments: &[Self::Commitment],
-        scalars: &[Self::Field],
-    ) -> Self::Commitment {
+impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
+    fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
-        let len = commitments.first().map_or(0, |c| c.len);
+        let len = commitments.first().map_or(0, |c| c.evaluations.len());
 
-        // Combine fingerprints deterministically via hashing
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        for (c, s) in commitments.iter().zip(scalars.iter()) {
-            c.fingerprint.hash(&mut hasher);
-            s.hash(&mut hasher);
+        let mut result = vec![F::zero(); len];
+        for (c, &s) in commitments.iter().zip(scalars.iter()) {
+            for (r, &e) in result.iter_mut().zip(c.evaluations.iter()) {
+                *r += s * e;
+            }
         }
 
         MockCommitment {
-            fingerprint: hasher.finish(),
-            len,
+            evaluations: result,
         }
-    }
-
-    fn batch_prove(
-        evaluation_tables: &[&[Self::Field]],
-        _points: &[Vec<Self::Field>],
-        _evals: &[Self::Field],
-        _setup: &Self::ProverSetup,
-        _transcript: &mut impl Transcript,
-    ) -> Self::BatchedProof {
-        MockBatchedProof {
-            entries: evaluation_tables
-                .iter()
-                .map(|evals| MockProof {
-                    evaluations: evals.to_vec(),
-                })
-                .collect(),
-        }
-    }
-
-    fn batch_verify(
-        _commitments: &[Self::Commitment],
-        points: &[Vec<Self::Field>],
-        evals: &[Self::Field],
-        proof: &Self::BatchedProof,
-        _setup: &Self::VerifierSetup,
-        _transcript: &mut impl Transcript,
-    ) -> Result<(), OpeningsError> {
-        for (i, entry) in proof.entries.iter().enumerate() {
-            let poly = Polynomial::new(entry.evaluations.clone());
-            let actual_eval = poly.evaluate(&points[i]);
-            if actual_eval != evals[i] {
-                return Err(OpeningsError::VerificationFailed);
-            }
-        }
-        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{OpeningReduction, ProverClaim, RlcReduction, VerifierClaim};
     use jolt_field::Field;
     use jolt_field::Fr;
+    use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha20Rng;
 
     type MockPCS = MockCommitmentScheme<Fr>;
 
+    fn challenge_fn(c: u128) -> Fr {
+        Fr::from_u128(c)
+    }
+
     #[test]
-    fn commit_prove_verify_roundtrip() {
+    fn commit_open_verify_roundtrip() {
         let mut rng = ChaCha20Rng::seed_from_u64(42);
         let poly = Polynomial::<Fr>::random(4, &mut rng);
         let point: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
@@ -200,7 +142,7 @@ mod tests {
         let commitment = MockPCS::commit(poly.evaluations(), &());
 
         let mut transcript_p = Blake2bTranscript::new(b"test");
-        let proof = MockPCS::prove(poly.evaluations(), &point, eval, &(), &mut transcript_p);
+        let proof = MockPCS::open(poly.evaluations(), &point, eval, &(), &mut transcript_p);
 
         let mut transcript_v = Blake2bTranscript::new(b"test");
         MockPCS::verify(&commitment, &point, eval, &proof, &(), &mut transcript_v)
@@ -218,7 +160,7 @@ mod tests {
         let commitment = MockPCS::commit(poly.evaluations(), &());
 
         let mut transcript_p = Blake2bTranscript::new(b"test");
-        let proof = MockPCS::prove(poly.evaluations(), &point, eval, &(), &mut transcript_p);
+        let proof = MockPCS::open(poly.evaluations(), &point, eval, &(), &mut transcript_p);
 
         let mut transcript_v = Blake2bTranscript::new(b"test");
         let result = MockPCS::verify(
@@ -239,11 +181,11 @@ mod tests {
         let poly2 = Polynomial::<Fr>::random(3, &mut rng);
         let point: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
 
-        let wrong_commitment = MockPCS::commit(&poly2, &());
+        let wrong_commitment = MockPCS::commit(poly2.evaluations(), &());
         let eval = poly1.evaluate(&point);
 
         let mut transcript_p = Blake2bTranscript::new(b"test");
-        let proof = MockPCS::prove(&poly1, &point, eval, &(), &mut transcript_p);
+        let proof = MockPCS::open(poly1.evaluations(), &point, eval, &(), &mut transcript_p);
 
         let mut transcript_v = Blake2bTranscript::new(b"test");
         let result = MockPCS::verify(
@@ -254,89 +196,194 @@ mod tests {
             &(),
             &mut transcript_v,
         );
-        assert!(result.is_err());
+        assert!(result.is_err(), "wrong commitment should be rejected");
     }
 
     #[test]
-    fn batch_prove_verify_multiple_polynomials() {
-        let mut rng = ChaCha20Rng::seed_from_u64(111);
-        let num_vars = 4;
+    fn combine_is_homomorphic() {
+        let mut rng = ChaCha20Rng::seed_from_u64(55);
+        let poly_a = Polynomial::<Fr>::random(3, &mut rng);
+        let poly_b = Polynomial::<Fr>::random(3, &mut rng);
 
-        let polys: Vec<Polynomial<Fr>> = (0..3)
-            .map(|_| Polynomial::random(num_vars, &mut rng))
-            .collect();
-        let points: Vec<Vec<Fr>> = (0..3)
-            .map(|_| (0..num_vars).map(|_| Fr::random(&mut rng)).collect())
-            .collect();
-        let evals: Vec<Fr> = polys
+        let ca = MockPCS::commit(poly_a.evaluations(), &());
+        let cb = MockPCS::commit(poly_b.evaluations(), &());
+
+        let sum_evals: Vec<Fr> = poly_a
+            .evaluations()
             .iter()
-            .zip(points.iter())
-            .map(|(p, pt)| p.evaluate(pt))
+            .zip(poly_b.evaluations().iter())
+            .map(|(a, b)| *a + *b)
             .collect();
+        let c_sum_direct = MockPCS::commit(&sum_evals, &());
+        let c_sum_combined = MockPCS::combine(&[ca, cb], &[Fr::from_u64(1), Fr::from_u64(1)]);
 
-        let eval_refs: Vec<&[Fr]> = polys.iter().map(|p| p.evaluations()).collect();
+        assert_eq!(c_sum_direct, c_sum_combined);
+    }
 
-        let mut transcript_p = Blake2bTranscript::new(b"batch-test");
-        let proof = MockPCS::batch_prove(&eval_refs, &points, &evals, &(), &mut transcript_p);
+    /// Builds prover and verifier claims, reduces via RLC, opens/verifies reduced claims.
+    fn prove_and_verify(
+        prover_polys: &[(Polynomial<Fr>, Vec<Fr>)],
+        verifier_evals: Option<&[Fr]>,
+    ) -> Result<(), OpeningsError> {
+        let mut prover_claims = Vec::new();
+        let mut verifier_claims = Vec::new();
 
-        let commitments: Vec<MockCommitment> = polys
+        for (i, (poly, point)) in prover_polys.iter().enumerate() {
+            let eval = poly.evaluate(point);
+            prover_claims.push(ProverClaim {
+                evaluations: poly.evaluations().to_vec(),
+                point: point.clone(),
+                eval,
+            });
+
+            let commitment = MockPCS::commit(poly.evaluations(), &());
+            let v_eval = verifier_evals.map_or(eval, |overrides| overrides[i]);
+            verifier_claims.push(VerifierClaim {
+                commitment,
+                point: point.clone(),
+                eval: v_eval,
+            });
+        }
+
+        // Prover: reduce + open
+        let mut transcript_p = Blake2bTranscript::new(b"e2e-test");
+        let (reduced_prover, ()) =
+            <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
+                prover_claims,
+                &mut transcript_p,
+                challenge_fn,
+            );
+        let proofs: Vec<_> = reduced_prover
             .iter()
-            .map(|p| MockPCS::commit(p.evaluations(), &()))
+            .map(|claim| {
+                MockPCS::open(
+                    &claim.evaluations,
+                    &claim.point,
+                    claim.eval,
+                    &(),
+                    &mut transcript_p,
+                )
+            })
             .collect();
 
-        let mut transcript_v = Blake2bTranscript::new(b"batch-test");
-        MockPCS::batch_verify(
-            &commitments,
-            &points,
-            &evals,
-            &proof,
+        // Verifier: reduce + verify
+        let mut transcript_v = Blake2bTranscript::new(b"e2e-test");
+        let reduced_verifier = <RlcReduction as OpeningReduction<MockPCS>>::reduce_verifier(
+            verifier_claims,
             &(),
             &mut transcript_v,
-        )
-        .expect("valid batch proof should verify");
+            challenge_fn,
+        )?;
+
+        assert_eq!(reduced_verifier.len(), proofs.len());
+
+        for (claim, proof) in reduced_verifier.iter().zip(proofs.iter()) {
+            MockPCS::verify(
+                &claim.commitment,
+                &claim.point,
+                claim.eval,
+                proof,
+                &(),
+                &mut transcript_v,
+            )?;
+        }
+
+        Ok(())
     }
 
     #[test]
-    fn batch_verify_rejects_wrong_commitment() {
-        let mut rng = ChaCha20Rng::seed_from_u64(222);
+    fn e2e_single_claim_roundtrip() {
+        let mut rng = ChaCha20Rng::seed_from_u64(100);
+        let poly = Polynomial::<Fr>::random(4, &mut rng);
+        let point: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
+
+        prove_and_verify(&[(poly, point)], None).expect("single claim e2e should verify");
+    }
+
+    #[test]
+    fn e2e_multiple_claims_shared_and_distinct_points() {
+        let mut rng = ChaCha20Rng::seed_from_u64(200);
         let num_vars = 3;
 
-        let poly1 = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let poly2 = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let decoy = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_c = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_d = Polynomial::<Fr>::random(num_vars, &mut rng);
 
         let point1: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let point2: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-        let points = vec![point1.clone(), point2.clone()];
 
-        let eval1 = poly1.evaluate(&point1);
-        let eval2 = poly2.evaluate(&point2);
-        let evals = vec![eval1, eval2];
+        let claims = vec![
+            (poly_a, point1.clone()),
+            (poly_b, point1),
+            (poly_c, point2.clone()),
+            (poly_d, point2),
+        ];
 
-        let eval_refs: Vec<&[Fr]> = vec![poly1.evaluations(), poly2.evaluations()];
+        prove_and_verify(&claims, None).expect("multi-claim e2e should verify");
+    }
 
-        let mut transcript_p = Blake2bTranscript::new(b"batch-reject");
-        let proof = MockPCS::batch_prove(&eval_refs, &points, &evals, &(), &mut transcript_p);
+    #[test]
+    fn e2e_rejects_tampered_evaluation() {
+        let mut rng = ChaCha20Rng::seed_from_u64(300);
+        let num_vars = 3;
 
-        // Use a wrong commitment for the first polynomial
-        let wrong_commitment = MockPCS::commit(decoy.evaluations(), &());
-        let good_commitment = MockPCS::commit(poly2.evaluations(), &());
-        let commitments = vec![wrong_commitment, good_commitment];
+        let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let poly_c = Polynomial::<Fr>::random(num_vars, &mut rng);
 
-        let mut transcript_v = Blake2bTranscript::new(b"batch-reject");
-        // batch_verify checks evaluations, not fingerprints, so tamper the eval instead
-        let tampered_evals = vec![eval1 + Fr::from_u64(1), eval2];
-        let result = MockPCS::batch_verify(
-            &commitments,
-            &points,
-            &tampered_evals,
-            &proof,
-            &(),
-            &mut transcript_v,
-        );
+        let point1: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+        let point2: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+
+        let eval_a = poly_a.evaluate(&point1);
+        let eval_b = poly_b.evaluate(&point1);
+        let eval_c = poly_c.evaluate(&point2);
+
+        let tampered_evals = [eval_a, eval_b + Fr::from_u64(1), eval_c];
+
+        let claims = vec![(poly_a, point1.clone()), (poly_b, point1), (poly_c, point2)];
+
+        let result = prove_and_verify(&claims, Some(&tampered_evals));
         assert!(
             result.is_err(),
-            "batch_verify should reject tampered evaluation"
+            "tampered evaluation should cause rejection"
         );
+    }
+
+    #[test]
+    fn reduction_groups_claims_at_same_point() {
+        let mut rng = ChaCha20Rng::seed_from_u64(400);
+        let nv = 3;
+        let p1 = Polynomial::<Fr>::random(nv, &mut rng);
+        let p2 = Polynomial::<Fr>::random(nv, &mut rng);
+        let p3 = Polynomial::<Fr>::random(nv, &mut rng);
+        let r: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
+        let s: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
+
+        let claims = vec![
+            ProverClaim {
+                evaluations: p1.evaluations().to_vec(),
+                point: r.clone(),
+                eval: p1.evaluate(&r),
+            },
+            ProverClaim {
+                evaluations: p2.evaluations().to_vec(),
+                point: r.clone(),
+                eval: p2.evaluate(&r),
+            },
+            ProverClaim {
+                evaluations: p3.evaluations().to_vec(),
+                point: s.clone(),
+                eval: p3.evaluate(&s),
+            },
+        ];
+
+        let mut transcript = Blake2bTranscript::new(b"grouping");
+        let (reduced, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
+            claims,
+            &mut transcript,
+            challenge_fn,
+        );
+        assert_eq!(reduced.len(), 2, "two distinct points → two reduced claims");
     }
 }

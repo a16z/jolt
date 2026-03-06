@@ -33,6 +33,8 @@ members = [
   "crates/jolt-instructions",
   "crates/jolt-dory",
   "crates/jolt-crypto",
+  "crates/jolt-ir",
+  "crates/jolt-blindfold",
   "crates/jolt-zkvm",
   "jolt-core",
   "tracer",

@@ -2,7 +2,7 @@
 
 use jolt_field::Field;
 use jolt_field::Fr;
-use jolt_poly::{Polynomial, EqPolynomial, UnivariatePoly, UnivariatePolynomial};
+use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
@@ -662,19 +662,7 @@ impl StreamingSumcheckProver<Fr> for StreamingPlainSumProver {
     }
 
     fn process_chunk(&mut self, chunk: &[Fr]) {
-        // Chunks are contiguous segments of the evaluation table.
-        // We need to figure out which entries belong to the low half
-        // (first half of the table) vs the high half.
-        //
-        // We track how many elements have been processed so far via
-        // the accumulator state indirectly. Instead, the simplest
-        // correct approach: the caller always passes the full table
-        // as a single chunk or split arbitrarily — we use `evals`
-        // directly in finish_round and just accumulate here.
-        //
-        // For this test implementation, process_chunk accumulates
-        // (index, value) pairs. We use the chunk offset approach:
-        // the caller passes the full eval table as one chunk.
+        // Test impl: expects the full table as a single chunk.
         let half = self.evals.len() / 2;
         for (local_idx, &val) in chunk.iter().enumerate() {
             if local_idx < half {

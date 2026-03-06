@@ -48,10 +48,13 @@ external: ark-* (a16z fork), dory-pcs, tracer, common
 
 ## Findings
 
-#### (1) Coupling of PIOP to Opening Proofs — **ADDRESSED**
+#### (1) Coupling of PIOP to Opening Proofs — **ADDRESSED (redesigned)**
 - ~~Commitment phase and opening proof data structures / traits assume a dory-like commitment scheme~~
 - ~~Heavily coupling to the standard homomorphism technique~~
-- `jolt-openings` now defines a generic three-tier trait hierarchy: `CommitmentScheme` (base), `HomomorphicCommitmentScheme` (additive, e.g. Dory/KZG), `StreamingCommitmentScheme` (chunked). Lattice and hash schemes can implement `CommitmentScheme` without the homomorphic extension.
+- `jolt-crypto` defines backend-agnostic group and commitment abstractions: `JoltGroup` (additive group with MSM), `PairingGroup` (bilinear maps), `JoltCommitment` (vector commitment trait). `Pedersen<G>` provides a blanket `JoltCommitment` impl for any `JoltGroup`. BN254 concrete types (`Bn254G1`, `Bn254G2`, `Bn254GT`) wrap arkworks behind `#[repr(transparent)]` newtypes with zero API leakage, gated behind a `bn254` feature flag (default on).
+- `jolt-openings` defines PCS traits: `CommitmentScheme: Commitment` (+ open/verify) → `AdditivelyHomomorphic` (+ combine) → `StreamingCommitment` (+ incremental). No batching baked into PCS — batching is a reduction strategy.
+- `OpeningReduction` trait separates claim transformation from proving. `RlcReduction` provided for homomorphic PCS. Protocol-specific reductions (e.g., sumcheck-based) implemented by `jolt-zkvm`.
+- No accumulators, no statefulness. Claims are plain data, collected by the caller.
 
 #### (2) Dory Globals — **ADDRESSED**
 - ~~`dory_globals.rs` uses 9 `static mut OnceLock<usize>` variables with `unsafe` blocks~~
@@ -79,10 +82,11 @@ external: ark-* (a16z fork), dory-pcs, tracer, common
 - `SignedBigInt` types moved into `jolt-field/src/signed/`
 - **Remaining:** Still using the fork for `ark-ff`, `ark-ec`, `ark-bn254`, `ark-serialize`. See [migration.md](./migration.md) phases 2-6 for the plan.
 
-#### (7) Spartan bespoke-ness — **ADDRESSED**
+#### (7) Spartan bespoke-ness — **ADDRESSED (clarified scope)**
 - ~~`zkvm/spartan/outer.rs` dark arts~~
-- `jolt-spartan` is a standalone crate with generic `R1CS<F>` trait. Any R1CS system can use it, not just Jolt.
-- Constants are scoped to the crate. `FirstRoundStrategy` enum replaces hard-coded domain size constants.
+- `jolt-spartan` is a standalone generic Spartan SNARK crate with `R1CS<F>` trait. It serves BlindFold (verifier R1CS after Nova folding), recursive verification, and any other "prove R1CS via Spartan" use case.
+- The main zkVM outer sumcheck remains as custom code in `jolt-zkvm` — its specialized evaluation path (lazy `UniformSpartanKey`, two constraint groups, univariate skip with Jolt-specific domain sizes, streaming rounds) is too tightly coupled to Jolt's uniform constraint structure for a generic Spartan crate. It uses `jolt-sumcheck` for the protocol and `jolt-ir` for constraint definitions, but with its own evaluation logic.
+- Constants are scoped. `FirstRoundStrategy` enum replaces hard-coded domain size constants.
 - Decoupled from streaming sumcheck internals.
 
 #### (8) Lack of sum-check testing — **ADDRESSED**
@@ -90,10 +94,10 @@ external: ark-* (a16z fork), dory-pcs, tracer, common
 - Integration tests in `tests/integration.rs`
 - Criterion benchmarks in `benches/sumcheck_prove.rs`
 
-#### (9) Bespoke opening point reduction logic — **ADDRESSED**
+#### (9) Bespoke opening point reduction logic — **ADDRESSED (redesigned)**
 - ~~`OpeningPoint<const E: Endianness, F>` with const generic for endianness~~
-- `jolt-openings` accumulators are clean, stateless collectors. `accumulate()` → `reduce_and_prove()`/`reduce_and_verify()`. Point grouping is automatic (hash-based). RLC reduction is a separate utility (`rlc_combine`, `rlc_combine_scalars`).
-- No DAG structure, no endianness generics. Simple, flat API.
+- `jolt-openings` defines `OpeningReduction<PCS>` trait: a stateless claim transformation (many claims → fewer claims). Output type equals input type, so reductions compose. `RlcReduction` groups by point and combines via `AdditivelyHomomorphic::combine`. Protocol-specific reductions (sumcheck-based) live in `jolt-zkvm`.
+- No DAG structure, no endianness generics, no accumulators. Claims are plain data (`ProverClaim`, `VerifierClaim`), collected by the caller in `Vec`s.
 
 #### (10) Duplicated constants across tracer and jolt-inlines — **PARTIALLY ADDRESSED**
 - `jolt-instructions` centralizes all opcodes in `opcodes.rs` (68 unique opcode constants)
@@ -103,6 +107,28 @@ external: ark-* (a16z fork), dory-pcs, tracer, common
 - Still requires boilerplate
 - Infrastructure for auto-generating e2e tests from `examples/` not yet built
 - Will be addressed during `jolt-zkvm` crate development
+
+#### (12) Fragmented symbolic IR for sumcheck expressions — **NOT YET ADDRESSED**
+
+Every sumcheck instance in Jolt has a mathematical expression that defines how its claim composes from polynomial openings and challenges. Today, this formula is written **four separate times** in four incompatible formats:
+
+1. **Imperative Rust** — `SumcheckInstanceParams::input_claim()` (`jolt-core/src/subprotocols/sumcheck_verifier.rs:54`) computes the scalar value at runtime. Hand-written per-sumcheck. Any change here must be mirrored in (2).
+
+2. **BlindFold sum-of-products** — `SumcheckInstanceParams::input_claim_constraint()` / `output_claim_constraint()` (`jolt-core/src/subprotocols/sumcheck_verifier.rs:59,65`) returns `OutputClaimConstraint` (defined in `jolt-core/src/subprotocols/blindfold/output_constraint.rs`) as `ProductTerm` / `ValueSource` structs for the BlindFold R1CS. Hand-written per-sumcheck. Must be kept in perfect sync with (1) — the CLAUDE.md calls this out as a **critical invariant**.
+
+3. **MleAst symbolic field** — `zklean-extractor/src/mle_ast.rs` implements `JoltField` by recording operations as AST nodes in a global mutable arena. Running the verifier with `F = MleAst` captures the full computation for Lean4 extraction. Also extended by the gnark transpiler (PR [#1322](https://github.com/a16z/jolt/pull/1322)) to generate Groth16 circuits. Re-derives claim formulas from scratch by symbolic execution.
+
+4. **ClaimExpr tree** — `SumcheckFrontend::input_output_claims()` (`jolt-core/src/subprotocols/sumcheck_claim.rs:279-281`) returns yet another AST (`ClaimExpr<F>` with `Constant`, `Var`, `Add`, `Mul`, `Sub` nodes) used by `zklean-extractor/src/sumchecks.rs` for Lean4 claim extraction. Separate from (2) and (3).
+
+**Consequences:**
+- **Sync hazard:** Any modification to a sumcheck claim formula requires updating up to 4 implementations. The BlindFold invariant (`input_claim()` ↔ `input_claim_constraint()`) is the most dangerous — desynchronization causes R1CS unsatisfiability that only surfaces in ZK mode e2e tests.
+- **No shared IR:** BlindFold cannot consume `ClaimExpr`, and `ClaimExpr` cannot produce `OutputClaimConstraint`. MleAst cannot be used by BlindFold. Each system is a silo.
+- **Global mutable state:** MleAst uses a `static OnceLock<RwLock<Vec<Node>>>` arena, violating the crate design principle of no global state.
+- **New backends require new IRs:** Adding GPU kernel compilation, recursion circuits, or additional formal verification targets would require yet another representation of the same formulas.
+
+**Resolution:** A new `jolt-ir` crate provides a single expression IR that is the **source of truth** for all sumcheck claim formulas. Developers write each formula once; all backends (runtime evaluation, BlindFold R1CS, Lean4, circuit transpilation, GPU kernels) are derived from that IR via a visitor pattern. See spec §4.10.
+
+Additionally, `jolt-ir` replaces the compile-time `LC` / `lc!` / `r1cs_eq_conditional!` constraint authoring system used by the main zkVM's Spartan outer sumcheck (`jolt-core/src/zkvm/r1cs/`). The 12-variant `LC` enum and custom macros are replaced by `ExprBuilder` arithmetic, which produces readable degree-2 expressions that are factored into bilinear pairs at init time for the fused evaluator. This means the R1CS backend in `jolt-ir` serves both BlindFold (sparse matrix emission for `jolt-spartan`) and the main zkVM (bilinear factorization for the lazy evaluator). See spec §4.10 "Replacing compile-time R1CS constraints".
 
 ---
 
@@ -115,12 +141,14 @@ Extract into new crates under `crates/`. While doing so address each observation
 | `jolt-transcript` | **Done** | `Transcript` trait, `AppendToTranscript`, Blake2b/Keccak impls | — |
 | `jolt-field` | **Done** | `Field`, `UnreducedOps`, `ReductionOps`, `Challenge`, `OptimizedMul`, accumulation traits, signed bigints | — |
 | `jolt-poly` | **Done** | `MultilinearPolynomial`, `Polynomial<T>`, `EqPolynomial`, `UnivariatePoly`, `CompressedPoly`, `IdentityPolynomial` | `jolt-field` |
-| `jolt-openings` | **Done** | `CommitmentScheme`, `HomomorphicCommitmentScheme`, `StreamingCommitmentScheme`, accumulators, RLC | `jolt-field`, `jolt-poly`, `jolt-transcript` |
+| `jolt-crypto` | **Done** | `JoltGroup`, `PairingGroup`, `JoltCommitment`, `Pedersen<G>`, `PedersenSetup<G>`, `Bn254`, `Bn254G1`, `Bn254G2`, `Bn254GT` | `jolt-field`, `jolt-transcript` |
+| `jolt-openings` | **Redesign pending** | `CommitmentScheme`, `AdditivelyHomomorphic`, `StreamingCommitment`, `OpeningReduction`, `RlcReduction`, claim types, RLC utilities | `jolt-crypto`, `jolt-field`, `jolt-poly`, `jolt-transcript` |
 | `jolt-sumcheck` | **Done** | `SumcheckProver`, `SumcheckVerifier`, `BatchedSumcheckProver/Verifier`, `StreamingSumcheckProver`, `SumcheckWitness` | `jolt-field`, `jolt-poly`, `jolt-transcript` |
 | `jolt-spartan` | **Done** | `R1CS` trait, `SimpleR1CS`, `SpartanKey`, `SpartanProver`, `SpartanVerifier`, `FirstRoundStrategy` | `jolt-sumcheck`, `jolt-openings`, `jolt-field`, `jolt-poly`, `jolt-transcript` |
 | `jolt-instructions` | **Done** | `Instruction`, `LookupTable`, `JoltInstructionSet`, `TableId`, `LookupQuery`, 68 RV64IMAC instructions | `jolt-field` |
 | `jolt-dory` | **Done** | `DoryScheme`, `DoryParams`, commitment/proof types, streaming, optimizations | `jolt-openings`, `jolt-field`, `jolt-poly`, `jolt-transcript`, `dory-pcs` |
-| `jolt-zkvm` | **In progress** | zkvm sumchecks (ram, registers, bytecode, claim reductions), prover/verifier | `jolt-sumcheck`, `jolt-openings`, `jolt-spartan`, `jolt-instructions` |
+| `jolt-ir` | **Proposed** | `Expr`, `ExprBuilder`, `ClaimDefinition`, `ExprVisitor`, normalization passes, evaluation/R1CS/Lean4 backends | `jolt-field` |
+| `jolt-zkvm` | **In progress** | zkvm sumchecks (ram, registers, bytecode, claim reductions), prover/verifier | `jolt-sumcheck`, `jolt-openings`, `jolt-spartan`, `jolt-instructions`, `jolt-ir` |
 
 **Note:** `jolt-math` (originally proposed) was dropped. Its functionality was absorbed into `jolt-field` (accumulation traits) and `jolt-poly` (polynomial-level utilities).
 
@@ -158,11 +186,13 @@ crates/<name>/
 | Crate | README | benches | tests/ | fuzz |
 |-------|--------|---------|--------|------|
 | jolt-field | Yes | Yes | Yes | Yes |
+| jolt-crypto | Yes | Yes | Yes | Yes |
 | jolt-poly | Yes | Yes | — | Yes |
 | jolt-sumcheck | Yes | Yes | Yes | — |
 | jolt-openings | Yes | Yes | — | — |
 | jolt-spartan | Yes | — | — | — |
 | jolt-transcript | Yes | Yes | Yes | Yes |
+| jolt-ir | — | — | — | — |
 | jolt-dory | Yes | — | — | Yes |
 | jolt-instructions | Yes | — | — | — |
 
@@ -185,7 +215,7 @@ Traits are the crate's public API boundary. Concrete structs implement traits bu
 
 #### 3. Minimal, justified dependencies
 
-- Internal crates form a strict DAG: `jolt-transcript` → `jolt-field` → `jolt-poly` → `jolt-sumcheck` / `jolt-openings` → `jolt-spartan` / `jolt-dory`.
+- Internal crates form a strict DAG: `jolt-transcript` → `jolt-field` → `jolt-poly` / `jolt-ir` → `jolt-sumcheck` / `jolt-openings` → `jolt-spartan` / `jolt-dory`.
 - Each crate depends only on the internal crates it directly uses. No transitive dependency shortcuts.
 - External dependencies are workspace-managed. Dev-only crates (`rand`, `rand_chacha`, `criterion`) go in `[dev-dependencies]` and are annotated for `cargo-machete` when needed.
 
@@ -269,6 +299,9 @@ Per the CI `comments-review` policy:
 - Can use pedantic clippy / more static code analysis
 
 ### Future features
-- **Recursion:** Clearer APIs make it easier to compose different types over the same traits, extend prover/verifier, and simplify the transpiler / wrapping project.
+- **Recursion:** `jolt-ir`'s unified IR means the gnark/Groth16 transpiler (PR [#1322](https://github.com/a16z/jolt/pull/1322)) consumes the same `Expr` as BlindFold and the standard verifier — no separate symbolic execution pass needed for claim formulas. For wrapping the Jolt verifier in Spartan (recursive verification), the verifier's computation is expressed as `Expr`s, normalized to R1CS via the R1CS backend, and proved with `jolt-spartan`'s generic Spartan.
 - **Lattices/hashes:** Decoupling the PIOP from the rest of the code allows easier integration of new primitives
-- **ZK:** Blindfold can be a separate crate
+- **ZK:** BlindFold consumes `jolt-ir`'s sum-of-products normalization instead of hand-written `OutputClaimConstraint` structs. `jolt-blindfold` orchestrates committed sumcheck (via `CommittedRoundHandler`, generic over `JoltCommitment`), Nova folding, and Spartan proof over the verifier R1CS (via `jolt-spartan`).
+- **GPU/hardware acceleration:** `jolt-ir`'s kernel IR enables a sumcheck kernel compiler that targets CPU, Metal, CUDA, or WebGPU from a single expression definition
+- **Formal verification:** `jolt-ir`'s Lean4 backend replaces `MleAst`'s global-arena approach with structured, instance-local expression trees
+- **Constraint authoring:** The compile-time `LC`/`lc!`/`r1cs_eq_conditional!` macro system is replaced by `ExprBuilder` arithmetic, giving readable constraint definitions while preserving evaluation performance via bilinear factorization at init time

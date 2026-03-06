@@ -9,9 +9,7 @@ macro_rules! impl_transcript {
         #[cfg(test)]
         #[derive(Clone, Default)]
         struct TestState {
-            /// Complete history of transcript states.
             state_history: Vec<[u8; 32]>,
-            /// Expected state history for verification.
             expected_state_history: Option<Vec<[u8; 32]>>,
         }
 
@@ -48,7 +46,7 @@ macro_rules! impl_transcript {
         }
 
         impl $name {
-            /// Creates a hasher initialized with current state and round counter.
+            /// Returns a hasher seeded with `state || round_counter` for domain separation.
             #[inline]
             fn hasher(&self) -> $hasher {
                 let mut round_bytes = [0u8; 32];
@@ -58,7 +56,7 @@ macro_rules! impl_transcript {
                     .chain_update(round_bytes)
             }
 
-            /// Loads arbitrary byte lengths using ceil(out/32) hash invocations.
+            /// Fills `out` with challenge bytes, using `ceil(len / 32)` hash invocations.
             fn challenge_bytes(&mut self, out: &mut [u8]) {
                 let mut remaining = out.len();
                 let mut offset = 0;
@@ -76,7 +74,7 @@ macro_rules! impl_transcript {
                 out[offset..offset + remaining].copy_from_slice(&final_chunk[..remaining]);
             }
 
-            /// Loads exactly 32 bytes from the transcript.
+            /// Squeezes exactly 32 bytes from the transcript state.
             #[inline]
             fn challenge_bytes32(&mut self, out: &mut [u8; 32]) {
                 let hash: [u8; 32] = self.hasher().finalize().into();

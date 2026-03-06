@@ -41,6 +41,7 @@ impl SpartanVerifier {
     pub fn verify<PCS, T>(
         key: &SpartanKey<PCS::Field>,
         proof: &SpartanProof<PCS::Field, PCS>,
+        verifier_setup: &PCS::VerifierSetup,
         transcript: &mut T,
     ) -> Result<(), SpartanError>
     where
@@ -76,24 +77,17 @@ impl SpartanVerifier {
             return Err(SpartanError::EvaluationMismatch);
         }
 
-        // Verify Az, Bz, Cz evaluations against the matrix MLEs and witness.
-        // For each matrix M in {A, B, C}:
-        //   M_tilde(r_x, r_y) should equal the inner product of
-        //   M's MLE evaluated at (r_x || r_y) with the witness.
-        // In the simplified protocol we verify the witness opening proof
-        // at a fresh point sampled after the sumcheck.
+        // Sample a witness evaluation point and verify the opening proof
         let witness_point: Vec<PCS::Field> = (0..key.num_witness_vars())
             .map(|_| PCS::Field::from_u128(transcript.challenge()))
             .collect();
 
-        // Verify the witness opening proof
-        let verifier_setup = PCS::setup_verifier(key.num_variables_padded);
         PCS::verify(
             &proof.witness_commitment,
             &witness_point,
             proof.witness_eval,
             &proof.witness_opening_proof,
-            &verifier_setup,
+            verifier_setup,
             transcript,
         )?;
 

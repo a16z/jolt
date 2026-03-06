@@ -30,9 +30,27 @@ This crate implements the sumcheck interactive proof protocol for multilinear po
 - **`SumcheckVerifier`** — Verifies a `SumcheckProof` against a claim. Returns the final evaluation and the vector of challenges on success.
 - **`BatchedSumcheckVerifier`** — Verifies a batched sumcheck proof.
 
+### Round Handlers
+
+- **`RoundHandler<F>`** — Prover-side strategy for absorbing round polynomials into the transcript.
+- **`RoundVerifier<F>`** — Verifier-side strategy for checking round data.
+- **`ClearRoundHandler`** / **`ClearRoundVerifier`** — Cleartext implementations (coefficients appended directly). The committed-mode implementations live in `jolt-blindfold`.
+
 ### Errors
 
 - **`SumcheckError`** — Error type with variants: `RoundCheckFailed`, `FinalEvalMismatch`, `DegreeBoundExceeded`, `WrongNumberOfRounds`.
+
+## Dependency Position
+
+```
+jolt-field ─┐
+jolt-poly  ─┼─► jolt-sumcheck ─► jolt-blindfold, jolt-spartan, jolt-zkvm
+jolt-transcript ─┘
+```
+
+## Feature Flags
+
+This crate has no feature flags.
 
 ## License
 

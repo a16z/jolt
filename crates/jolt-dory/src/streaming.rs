@@ -1,13 +1,13 @@
 //! Streaming (chunked) commitment for the Dory scheme.
 //!
-//! Implements [`StreamingCommitmentScheme`] to allow committing to large
+//! Implements [`StreamingCommitment`] to allow committing to large
 //! polynomials one chunk at a time, without materializing the full
 //! evaluation table in memory.
 
 use dory::backends::arkworks::G1Routines;
 use dory::primitives::arithmetic::{DoryRoutines, Group as DoryGroup, PairingCurve};
 use jolt_field::Fr;
-use jolt_openings::StreamingCommitmentScheme;
+use jolt_openings::StreamingCommitment;
 
 use crate::scheme::DoryScheme;
 use crate::types::{jolt_fr_to_ark, DoryCommitment, DoryPartialCommitment, DoryProverSetup};
@@ -16,25 +16,25 @@ type InnerFr = dory::backends::arkworks::ArkFr;
 type InnerG1 = dory::backends::arkworks::ArkG1;
 type InnerBN254 = dory::backends::arkworks::BN254;
 
-impl StreamingCommitmentScheme for DoryScheme {
+impl StreamingCommitment for DoryScheme {
     type PartialCommitment = DoryPartialCommitment;
 
-    fn begin_streaming(_setup: &Self::ProverSetup) -> Self::PartialCommitment {
+    fn begin(_setup: &Self::ProverSetup) -> Self::PartialCommitment {
         DoryPartialCommitment {
             row_commitments: Vec::new(),
         }
     }
 
-    fn stream_chunk(partial: &mut Self::PartialCommitment, chunk: &[Fr]) {
-        // The `StreamingCommitmentScheme` trait does not pass the prover setup
-        // to `stream_chunk`, so we cannot compute the actual Pedersen MSM here.
+    fn feed(partial: &mut Self::PartialCommitment, chunk: &[Fr]) {
+        // The `StreamingCommitment` trait does not pass the prover setup
+        // to `feed`, so we cannot compute the actual Pedersen MSM here.
         // We store a zero placeholder. For production use, prefer
         // [`DoryStreamingCommitter`] which carries the setup reference.
         let _ = chunk;
         partial.row_commitments.push(InnerG1::identity());
     }
 
-    fn finalize_streaming(partial: Self::PartialCommitment) -> Self::Commitment {
+    fn finish(partial: Self::PartialCommitment) -> Self::Output {
         // Without setup access, we cannot compute the multi-pairing.
         // Return the identity commitment as a placeholder.
         let _ = &partial.row_commitments;
@@ -45,7 +45,7 @@ impl StreamingCommitmentScheme for DoryScheme {
 /// Streaming commitment helper that carries the prover setup reference,
 /// enabling actual MSM computation per chunk.
 ///
-/// Use this instead of the `StreamingCommitmentScheme` trait methods when
+/// Use this instead of the `StreamingCommitment` trait methods when
 /// the prover setup is available at the call site.
 pub struct DoryStreamingCommitter<'a> {
     setup: &'a DoryProverSetup,
@@ -117,7 +117,7 @@ mod tests {
             .collect();
 
         let poly = jolt_poly::Polynomial::new(evals.clone());
-        let direct = DoryScheme::commit(&poly, &prover_setup);
+        let direct = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut streamer = DoryStreamingCommitter::new(&prover_setup, num_cols);
         for row in evals.chunks(num_cols) {

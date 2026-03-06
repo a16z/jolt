@@ -1,6 +1,6 @@
 //! Serialization round-trip tests for all BN254 types.
 
-use jolt_crypto::{Bn254, Bn254G1, Bn254G2, Bn254GT, JoltGroup, PairingGroup};
+use jolt_crypto::{Bn254, Bn254G1, Bn254G2, Bn254GT, JoltGroup, PairingGroup, PedersenSetup};
 use jolt_field::{Field, Fr};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -24,12 +24,12 @@ fn g1_bincode_roundtrip() {
 }
 
 #[test]
-fn g1_zero_roundtrip() {
-    let z = Bn254G1::zero();
+fn g1_identity_roundtrip() {
+    let z = Bn254G1::identity();
     let bytes = bincode::serialize(&z).expect("serialize");
     let recovered: Bn254G1 = bincode::deserialize(&bytes).expect("deserialize");
     assert_eq!(z, recovered);
-    assert!(recovered.is_zero());
+    assert!(recovered.is_identity());
 }
 
 #[test]
@@ -86,4 +86,48 @@ fn multiple_g1_elements_roundtrip() {
     let bytes = bincode::serialize(&elements).expect("serialize");
     let recovered: Vec<Bn254G1> = bincode::deserialize(&bytes).expect("deserialize");
     assert_eq!(elements, recovered);
+}
+
+#[test]
+fn g2_identity_roundtrip() {
+    let z = Bn254G2::identity();
+    let bytes = bincode::serialize(&z).expect("serialize");
+    let recovered: Bn254G2 = bincode::deserialize(&bytes).expect("deserialize");
+    assert_eq!(z, recovered);
+    assert!(recovered.is_identity());
+}
+
+#[test]
+fn gt_identity_roundtrip() {
+    let z = Bn254GT::identity();
+    let bytes = bincode::serialize(&z).expect("serialize");
+    let recovered: Bn254GT = bincode::deserialize(&bytes).expect("deserialize");
+    assert_eq!(z, recovered);
+    assert!(recovered.is_identity());
+}
+
+#[test]
+fn pedersen_setup_bincode_roundtrip() {
+    let mut rng = ChaCha20Rng::seed_from_u64(200);
+    let gens: Vec<Bn254G1> = (0..5).map(|_| Bn254::random_g1(&mut rng)).collect();
+    let blinding = Bn254::random_g1(&mut rng);
+    let setup = PedersenSetup::new(gens, blinding);
+
+    let bytes = bincode::serialize(&setup).expect("serialize");
+    let recovered: PedersenSetup<Bn254G1> = bincode::deserialize(&bytes).expect("deserialize");
+    assert_eq!(setup.message_generators, recovered.message_generators);
+    assert_eq!(setup.blinding_generator, recovered.blinding_generator);
+}
+
+#[test]
+fn pedersen_setup_json_roundtrip() {
+    let mut rng = ChaCha20Rng::seed_from_u64(201);
+    let gens: Vec<Bn254G1> = (0..3).map(|_| Bn254::random_g1(&mut rng)).collect();
+    let blinding = Bn254::random_g1(&mut rng);
+    let setup = PedersenSetup::new(gens, blinding);
+
+    let json = serde_json::to_string(&setup).expect("serialize");
+    let recovered: PedersenSetup<Bn254G1> = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(setup.message_generators, recovered.message_generators);
+    assert_eq!(setup.blinding_generator, recovered.blinding_generator);
 }

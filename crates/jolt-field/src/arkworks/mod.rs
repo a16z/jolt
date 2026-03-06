@@ -1,6 +1,7 @@
-//! Arkworks backend implementations for JoltField
+//! Arkworks-backed field implementations.
 //!
-//! This module contains field implementations using the arkworks library.
+//! Provides the BN254 scalar field (`Fr`) and its low-level arithmetic
+//! (Montgomery/Barrett reduction, precomputed lookup tables, sparse multiplication).
 
 pub mod bn254;
 #[allow(dead_code)]

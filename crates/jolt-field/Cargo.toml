@@ -12,7 +12,7 @@ workspace = true
 [dependencies]
 ark-ff = { workspace = true }
 ark-serialize = { workspace = true }
-ark-bn254 = { workspace = true, features = ["scalar_field"] }
+ark-bn254 = { workspace = true, features = ["scalar_field"], optional = true }
 num-traits = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 allocative = { workspace = true, optional = true }
@@ -20,7 +20,8 @@ rand = { workspace = true }
 rand_core = { workspace = true }
 
 [features]
-default = []
+default = ["bn254"]
+bn254 = ["dep:ark-bn254"]
 challenge-254-bit = []
 
 [dev-dependencies]

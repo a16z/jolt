@@ -1,3 +1,8 @@
+//! 4D GLV scalar decomposition for BN254 G2.
+//!
+//! Uses a precomputed lookup table of power-of-2 decompositions to split a scalar
+//! into four ~64-bit components for the Frobenius-based 4D GLV multiplication.
+
 use super::constants::POWER_OF_2_DECOMPOSITIONS;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};

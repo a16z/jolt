@@ -18,7 +18,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// target group $\mathbb{G}_T$ of the BN254 pairing). The commitment is
 /// computed as a multi-pairing of row-level Pedersen commitments in $\mathbb{G}_1$
 /// with the SRS generators in $\mathbb{G}_2$.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DoryCommitment(pub ArkGT);
 
 impl Serialize for DoryCommitment {
@@ -51,14 +51,6 @@ impl<'de> Deserialize<'de> for DoryProof {
         canonical_deserialize(deserializer).map(Self)
     }
 }
-
-/// Batched opening proof for multiple polynomials.
-///
-/// A vector of individual Dory proofs, one per polynomial in the batch.
-/// Batch verification uses random linear combination (RLC) to reduce
-/// multiple claims to a single check.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DoryBatchedProof(pub Vec<DoryProof>);
 
 /// Prover-side structured reference string (SRS) for Dory.
 ///
@@ -176,7 +168,7 @@ mod tests {
     use super::*;
     use jolt_field::Field;
     use jolt_openings::CommitmentScheme;
-    use jolt_poly::{Polynomial, MultilinearPolynomial};
+    use jolt_poly::Polynomial;
     use jolt_transcript::Transcript;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -190,7 +182,7 @@ mod tests {
 
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let commitment = crate::DoryScheme::commit(&poly, &prover_setup);
+        let commitment = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let serialized = serde_json::to_vec(&commitment).expect("serialize commitment");
         let deserialized: DoryCommitment =
@@ -214,12 +206,17 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-        let eval = MultilinearPolynomial::evaluate(&poly, &point);
-        let commitment = crate::DoryScheme::commit(&poly, &prover_setup);
+        let eval = poly.evaluate(&point);
+        let commitment = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-vs");
-        let proof =
-            crate::DoryScheme::prove(&poly, &point, eval, &prover_setup, &mut prove_transcript);
+        let proof = crate::DoryScheme::open(
+            poly.evaluations(),
+            &point,
+            eval,
+            &prover_setup,
+            &mut prove_transcript,
+        );
 
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-vs");
         let result = crate::DoryScheme::verify(
@@ -237,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn dory_batched_proof_serde_round_trip() {
+    fn dory_proof_serde_round_trip() {
         let num_vars = 2;
         let mut rng = ChaCha20Rng::seed_from_u64(402);
 
@@ -245,35 +242,34 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-        let eval = MultilinearPolynomial::evaluate(&poly, &point);
+        let eval = poly.evaluate(&point);
 
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
-        let proof = crate::DoryScheme::prove(&poly, &point, eval, &prover_setup, &mut transcript);
+        let proof = crate::DoryScheme::open(
+            poly.evaluations(),
+            &point,
+            eval,
+            &prover_setup,
+            &mut transcript,
+        );
 
-        let batched = DoryBatchedProof(vec![proof]);
-
-        let serialized = serde_json::to_vec(&batched).expect("serialize batched proof");
-        let deserialized: DoryBatchedProof =
-            serde_json::from_slice(&serialized).expect("deserialize batched proof");
-
-        assert_eq!(batched.0.len(), deserialized.0.len());
+        let serialized = serde_json::to_vec(&proof).expect("serialize proof");
+        let deserialized: DoryProof =
+            serde_json::from_slice(&serialized).expect("deserialize proof");
 
         // Verify the deserialized proof is functionally valid
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
-        let commitment = crate::DoryScheme::commit(&poly, &prover_setup);
+        let commitment = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
         let result = crate::DoryScheme::verify(
             &commitment,
             &point,
             eval,
-            &deserialized.0[0],
+            &deserialized,
             &verifier_setup,
             &mut verify_transcript,
         );
-        assert!(
-            result.is_ok(),
-            "deserialized batched proof must verify correctly"
-        );
+        assert!(result.is_ok(), "deserialized proof must verify correctly");
     }
 }

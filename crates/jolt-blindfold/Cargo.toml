@@ -1,0 +1,22 @@
+[package]
+name = "jolt-blindfold"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "ZK layer for Jolt sumcheck: committed round handlers and BlindFold accumulator"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-transcript = { path = "../jolt-transcript" }
+jolt-sumcheck = { path = "../jolt-sumcheck" }
+jolt-crypto = { path = "../jolt-crypto" }
+rand_core = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+num-traits = { workspace = true }
+rand_chacha = { workspace = true }

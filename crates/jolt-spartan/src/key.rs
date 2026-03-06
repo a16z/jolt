@@ -143,7 +143,6 @@ mod tests {
     use jolt_field::Field;
     use jolt_field::Fr;
 
-
     #[test]
     fn key_dimensions_match_r1cs() {
         let r1cs = SimpleR1CS::<Fr>::new(

@@ -12,15 +12,17 @@ This crate provides multilinear and univariate polynomial representations used t
 
 ### Core Traits
 
-- **`MultilinearPolynomial<F>`** — A multilinear polynomial in `n` variables, represented by its `2^n` evaluations over the Boolean hypercube `{0,1}^n`. Provides `evaluate`, `bind` (fix a variable), and `evaluations` (materialized table).
+- **`MultilinearEvaluation<F>`** — Point evaluation interface for multilinear polynomials. Provides `num_vars()`, `len()`, and `evaluate(point)` without coupling to data layout. Implemented by `Polynomial<F>`, `EqPolynomial<F>`, and `IdentityPolynomial`.
+
+- **`MultilinearBinding<F>`** — In-place variable binding for sumcheck. Provides `bind(scalar)` which fixes the first variable, halving the evaluation table. Implemented by `Polynomial<F>`.
 
 - **`UnivariatePolynomial<F>`** — Shared interface for univariate polynomial types (`UnivariatePoly`, `CompressedPoly`). Provides `degree()`. Evaluation and coefficient access are inherent methods because the compressed form requires an external hint.
 
 ### Polynomial Types
 
-- **`Polynomial<F>`** — Full evaluation table stored as `Vec<F>`. Supports in-place variable binding, random generation, and serde. This is the workhorse type for sumcheck.
+- **`Polynomial<F: Field>`** — Full evaluation table stored as `Vec<F>`. Supports in-place variable binding (`bind`), evaluation, random generation, arithmetic operators, and serde. This is the workhorse type for sumcheck.
 
-- **`CompactPolynomial<T, F>`** — Stores evaluations as small scalars (`T: SmallScalar` — `bool`, `u8`, `u16`, `u32`, `u64`, `i64`, `i128`, `u128`) and promotes to field elements on demand. Reduces memory by up to 32x compared to `Polynomial`.
+- **`Polynomial<T>` (compact mode)** — When `T` is a small primitive (`bool`, `u8`, `u16`, `u32`, `u64`, `i64`, `i128`, `u128`), stores evaluations in their native representation and promotes to field elements on demand via `bind_to_field`. Reduces memory by up to 32x compared to `Polynomial<F>`.
 
 - **`UnivariatePoly<F>`** — Coefficient-form univariate polynomial. Supports evaluation, Lagrange interpolation, degree queries, and compression via `compress()`. Used for sumcheck round polynomials. Implements `UnivariatePolynomial`.
 

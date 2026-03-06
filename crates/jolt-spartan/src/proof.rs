@@ -19,7 +19,7 @@ use jolt_sumcheck::SumcheckProof;
 /// 4. An opening proof for the witness polynomial.
 pub struct SpartanProof<F: Field, PCS: CommitmentScheme> {
     /// Commitment to the multilinear extension of the witness vector.
-    pub witness_commitment: PCS::Commitment,
+    pub witness_commitment: PCS::Output,
     /// Sumcheck proof for the outer Spartan sumcheck.
     pub sumcheck_proof: SumcheckProof<F>,
     /// Evaluation of the witness polynomial $\tilde{z}(r_y)$ at the inner challenge point.

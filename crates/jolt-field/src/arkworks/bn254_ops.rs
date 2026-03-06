@@ -47,8 +47,6 @@ const N: usize = 4;
 const MODULUS: [u64; N] = <FrConfig as MontConfig<N>>::MODULUS.0;
 const INV: u64 = <FrConfig as MontConfig<N>>::INV;
 const R: BigInt<N> = <FrConfig as MontConfig<N>>::R;
-// R^2 mod p — needed for from_bigint (standard → Montgomery) but currently
-// handled by Fp::new(). Kept for completeness.
 #[allow(dead_code)]
 const R2: BigInt<N> = <FrConfig as MontConfig<N>>::R2;
 

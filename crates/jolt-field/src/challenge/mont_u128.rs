@@ -22,9 +22,7 @@ use std::ops::{Add, Mul, Sub};
 #[derive(Copy, Clone, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct MontU128Challenge<F: Field> {
-    /// Low 64 bits of the 125-bit value
     pub low: u64,
-    /// High 61 bits of the 125-bit value (top 3 bits always zero)
     pub high: u64,
     _marker: PhantomData<F>,
 }

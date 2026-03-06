@@ -29,6 +29,14 @@ Two hash backends are provided. Both produce 128-bit challenges (drawn from `u12
 - **`Blake2bTranscript`** — Uses Blake2b-256. Default choice for Jolt proofs.
 - **`KeccakTranscript`** — Uses Keccak-256. EVM-compatible for on-chain verification.
 
+## Dependency Position
+
+`jolt-transcript` depends on `jolt-field` (for the blanket `AppendToTranscript` impl on `Field` types). It is used by `jolt-crypto`, `jolt-sumcheck`, `jolt-openings`, `jolt-dory`, `jolt-blindfold`, and `jolt-zkvm`.
+
+## Feature Flags
+
+This crate has no feature flags. Test-only functionality (`compare_to`) is gated behind `#[cfg(test)]`.
+
 ## License
 
 MIT OR Apache-2.0

@@ -29,7 +29,6 @@ pub struct Polynomial<T> {
     num_vars: usize,
 }
 
-
 impl<T> Polynomial<T> {
     /// Creates a polynomial from its evaluations over the Boolean hypercube.
     ///
@@ -54,21 +53,25 @@ impl<T> Polynomial<T> {
         }
     }
 
+    /// Number of variables `n`. The polynomial has `2^n` evaluations.
     #[inline]
     pub fn num_vars(&self) -> usize {
         self.num_vars
     }
 
+    /// Number of evaluations (`2^n`).
     #[inline]
     pub fn len(&self) -> usize {
         self.coefficients.len()
     }
 
+    /// Returns `true` if the polynomial has no evaluations.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.coefficients.is_empty()
     }
 
+    /// The raw evaluation table over the Boolean hypercube.
     #[inline]
     pub fn coefficients(&self) -> &[T] {
         &self.coefficients
@@ -205,11 +208,13 @@ impl<F: Field> Polynomial<F> {
         self.coefficients[0]
     }
 
+    /// The evaluation table as a shared slice.
     #[inline]
     pub fn evaluations(&self) -> &[F] {
         &self.coefficients
     }
 
+    /// The evaluation table as a mutable slice.
     #[inline]
     pub fn evaluations_mut(&mut self) -> &mut [F] {
         &mut self.coefficients
@@ -712,8 +717,6 @@ mod tests {
         let ref_result = &poly * s;
         assert_eq!(owned_result, ref_result);
     }
-
-    // ── Compact (non-field T) tests ────────────────────────────────
 
     #[test]
     fn compact_u8_bind_to_field_matches_dense() {

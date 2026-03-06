@@ -96,9 +96,7 @@ impl<const N: usize> Limbs<N> {
         borrow
     }
 
-    // -- Truncated arithmetic (migrated from BigIntExt) -----------------------
-
-    /// Truncated multiplication: `self * other`, keeping the low `P` limbs.
+        /// Truncated multiplication: `self * other`, keeping the low `P` limbs.
     #[inline]
     pub fn mul_trunc<const M: usize, const P: usize>(&self, other: &Limbs<M>) -> Limbs<P> {
         let mut res = Limbs::<P>::zero();
@@ -198,8 +196,6 @@ impl<const N: usize> Limbs<N> {
     }
 }
 
-// -- Conversions --------------------------------------------------------------
-
 impl<const N: usize> From<u64> for Limbs<N> {
     #[inline]
     fn from(val: u64) -> Self {
@@ -228,8 +224,6 @@ impl<const N: usize> AsRef<[u64]> for Limbs<N> {
     }
 }
 
-// -- Ordering -----------------------------------------------------------------
-
 impl<const N: usize> PartialOrd for Limbs<N> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -252,8 +246,6 @@ impl<const N: usize> Ord for Limbs<N> {
     }
 }
 
-// -- Formatting ---------------------------------------------------------------
-
 impl<const N: usize> core::fmt::Debug for Limbs<N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Limbs([")?;
@@ -269,7 +261,6 @@ impl<const N: usize> core::fmt::Debug for Limbs<N> {
 
 impl<const N: usize> core::fmt::Display for Limbs<N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Display as hex starting from the most significant limb
         let mut started = false;
         for &limb in self.0.iter().rev() {
             if !started {
@@ -287,8 +278,6 @@ impl<const N: usize> core::fmt::Display for Limbs<N> {
         Ok(())
     }
 }
-
-// -- Serialization ------------------------------------------------------------
 
 impl<const N: usize> ark_serialize::CanonicalSerialize for Limbs<N> {
     #[inline]
@@ -323,8 +312,6 @@ impl<const N: usize> ark_serialize::CanonicalDeserialize for Limbs<N> {
         BigInt::<N>::deserialize_with_mode(reader, compress, validate).map(Limbs::from)
     }
 }
-
-// -- Internal helper ----------------------------------------------------------
 
 /// Core schoolbook multiplication accumulator.
 ///

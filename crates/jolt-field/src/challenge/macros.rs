@@ -1,4 +1,4 @@
-//! Macros for challenge field operations
+//! Generates arithmetic operator impls for `Challenge x Field` type pairs.
 
 /// Implements standard arithmetic operators (+, -, *) for challenge × field type pairs.
 ///

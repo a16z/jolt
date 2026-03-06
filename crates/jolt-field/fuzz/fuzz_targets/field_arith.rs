@@ -25,7 +25,7 @@ fuzz_target!(|data: &[u8]| {
 
     // inverse must not panic
     if !a.is_zero() {
-        let inv = a.inverse();
+        let inv = a.inverse().expect("nonzero element must have inverse");
         assert_eq!(a * inv, Fr::from_u64(1));
     }
 

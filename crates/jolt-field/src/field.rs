@@ -168,10 +168,10 @@ pub(crate) trait ReductionOps: UnreducedOps {
 ///
 /// Challenges are drawn from a transcript and used as random scalars in
 /// batching (RLC) and sumcheck. Two implementations exist:
-/// - [`MontU128Challenge`](crate::challenge::MontU128Challenge) — 125-bit
-///   range, avoids full-width Montgomery reduction (default).
-/// - [`Mont254BitChallenge`](crate::challenge::Mont254BitChallenge) — full
-///   254-bit field element, used when the wider range is needed.
+/// - `MontU128Challenge` — 125-bit range, avoids full-width Montgomery
+///   reduction (default).
+/// - `Mont254BitChallenge` — full 254-bit field element, used when the wider
+///   range is needed.
 pub trait Challenge<F: Field>:
     Copy
     + Send

@@ -2,9 +2,21 @@ use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
 use jolt_field::Field;
+use jolt_transcript::AppendToTranscript;
 use serde::{Deserialize, Serialize};
 
-/// Additive cryptographic group suitable for commitments.
+/// Cryptographic group suitable for commitments.
+///
+/// Not necessarily an elliptic curve — the trait is intentionally general
+/// enough for lattice-based or other algebraic groups. The group operation
+/// uses additive notation (`Add`/`Sub`), but this is purely conventional;
+/// the underlying algebra may be multiplicative.
+///
+/// All elements are `Copy` and thread-safe. Implementors must provide
+/// scalar multiplication and multi-scalar multiplication (MSM).
+///
+/// Requires [`AppendToTranscript`] so group elements can be absorbed into
+/// Fiat-Shamir transcripts (e.g., Pedersen commitments in ZK sumcheck).
 pub trait JoltGroup:
     Clone
     + Copy
@@ -23,12 +35,13 @@ pub trait JoltGroup:
     + SubAssign
     + Serialize
     + for<'de> Deserialize<'de>
+    + AppendToTranscript
 {
-    /// Additive identity.
-    fn zero() -> Self;
+    /// Group identity element.
+    fn identity() -> Self;
 
     /// Returns `true` if this element is the identity.
-    fn is_zero(&self) -> bool;
+    fn is_identity(&self) -> bool;
 
     /// Returns `self + self`.
     fn double(&self) -> Self;

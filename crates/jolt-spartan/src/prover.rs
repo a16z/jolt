@@ -10,7 +10,7 @@
 
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::{Polynomial, EqPolynomial, UnivariatePoly};
+use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{SumcheckClaim, SumcheckProver, SumcheckWitness};
 use jolt_transcript::Transcript;
 use num_traits::Zero;
@@ -66,7 +66,7 @@ impl SpartanProver {
         let bz_poly = pad_to_power_of_two(&bz, key.num_constraints_padded);
         let cz_poly = pad_to_power_of_two(&cz, key.num_constraints_padded);
 
-        let witness_commitment = PCS::commit(&witness_poly, pcs_setup);
+        let witness_commitment = PCS::commit(witness_poly.evaluations(), pcs_setup);
 
         // Absorb commitment into transcript for Fiat-Shamir binding
         transcript.append_bytes(format!("{witness_commitment:?}").as_bytes());
@@ -108,8 +108,8 @@ impl SpartanProver {
             .collect();
         let witness_eval = witness_poly.evaluate(&witness_point);
 
-        let witness_opening_proof = PCS::prove(
-            &witness_poly,
+        let witness_opening_proof = PCS::open(
+            witness_poly.evaluations(),
             &witness_point,
             witness_eval,
             pcs_setup,

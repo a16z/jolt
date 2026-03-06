@@ -87,7 +87,7 @@ mod tests {
             prove_helper(&r1cs, &key, &witness, b"spartan-test").expect("proving should succeed");
 
         let mut verifier_transcript = Blake2bTranscript::new(b"spartan-test");
-        SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &mut verifier_transcript)
+        SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut verifier_transcript)
             .expect("verification should succeed");
     }
 
@@ -126,7 +126,7 @@ mod tests {
             prove_helper(&r1cs, &key, &witness, b"spartan-multi").expect("proving should succeed");
 
         let mut verifier_transcript = Blake2bTranscript::new(b"spartan-multi");
-        SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &mut verifier_transcript)
+        SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut verifier_transcript)
             .expect("verification should succeed");
     }
 
@@ -160,7 +160,7 @@ mod tests {
             prove_helper(&r1cs, &key, &witness, b"spartan-chain").expect("proving should succeed");
 
         let mut vt = Blake2bTranscript::new(b"spartan-chain");
-        SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &mut vt)
+        SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
             .expect("verification should succeed");
     }
 
@@ -186,7 +186,8 @@ mod tests {
         proof.az_eval += Fr::from_u64(1);
 
         let mut verifier_transcript = Blake2bTranscript::new(b"spartan-tamper");
-        let result = SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &mut verifier_transcript);
+        let result =
+            SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut verifier_transcript);
         assert!(result.is_err(), "tampered proof should be rejected");
     }
 }

@@ -38,6 +38,22 @@ The implementation is generic over the commitment scheme and transcript, allowin
 
 - **`SpartanError`** — Error type with variants: `ConstraintViolation`, `Sumcheck`, `Opening`, `EvaluationMismatch`.
 
+## Dependency Position
+
+```
+jolt-field ─┐
+jolt-poly  ─┤
+jolt-transcript ─┼─► jolt-spartan
+jolt-sumcheck ─┤
+jolt-openings ─┘
+```
+
+Used by `jolt-zkvm` and `jolt-core`.
+
+## Feature Flags
+
+This crate has no feature flags.
+
 ## License
 
 MIT

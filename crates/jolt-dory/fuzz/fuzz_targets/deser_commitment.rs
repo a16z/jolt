@@ -1,5 +1,5 @@
 #![no_main]
-use jolt_dory::{DoryBatchedProof, DoryCommitment, DoryProof};
+use jolt_dory::{DoryCommitment, DoryProof};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -8,6 +8,4 @@ fuzz_target!(|data: &[u8]| {
     let _ = bincode::deserialize::<DoryCommitment>(data);
     let _ = serde_json::from_slice::<DoryProof>(data);
     let _ = bincode::deserialize::<DoryProof>(data);
-    let _ = serde_json::from_slice::<DoryBatchedProof>(data);
-    let _ = bincode::deserialize::<DoryBatchedProof>(data);
 });

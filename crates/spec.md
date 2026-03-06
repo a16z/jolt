@@ -22,7 +22,7 @@ This spec defines a **clean-room rewrite** of jolt-core into a modular crate wor
 
 - Rewriting `common`, `tracer`, `jolt-sdk`, or `jolt-platform` (out of scope, though minor modifications are allowed)
 - Performance regression — the rewrite must match or exceed current performance
-- New features — no new cryptographic functionality, just restructuring
+- New features — no new cryptographic functionality. `jolt-ir` consolidates existing representations (not new crypto), and the kernel IR is deferred.
 
 ---
 
@@ -74,19 +74,30 @@ jolt-transcript              (no deps)
         ▼
    jolt-field                (jolt-transcript)
         │
-        ▼
-   jolt-poly                 (jolt-field)
-        │
-        ├──────────────────────────┐
-        ▼                          ▼
-jolt-openings              jolt-sumcheck
-(jolt-field, jolt-poly,    (jolt-field, jolt-poly,
- jolt-transcript)           jolt-transcript)
-        │                          │
-        ├──────────┬───────────────┘
-        ▼          ▼
+        ├───────────┐
+        ▼           │
+   jolt-crypto      │         (jolt-field, jolt-transcript)
+        │           │
+        ├───────────┼─────────────────┐
+        ▼           ▼                 ▼
+   jolt-poly   jolt-ir          jolt-blindfold
+   (jolt-field) (jolt-field)    (jolt-crypto, jolt-sumcheck)
+        │           │
+        ├───────────┤
+        │           │
+        ├──────┐    │
+        ▼      ▼    │
+jolt-openings  jolt-sumcheck ◄────┘
+(jolt-crypto,  (jolt-field, jolt-poly,
+ jolt-field,    jolt-transcript,
+ jolt-poly,     jolt-ir)
+ jolt-trscpt)
+        │              │
+        ├──────┬───────┘
+        ▼      ▼
    jolt-spartan
-   (jolt-sumcheck, jolt-openings)
+   (jolt-sumcheck, jolt-openings,
+    jolt-ir)
         │
         ▼
    jolt-instructions
@@ -96,11 +107,12 @@ jolt-openings              jolt-sumcheck
    jolt-zkvm
    (jolt-spartan, jolt-sumcheck,
     jolt-openings, jolt-instructions,
-    jolt-field, jolt-poly, jolt-transcript)
+    jolt-ir, jolt-field, jolt-crypto,
+    jolt-poly, jolt-transcript)
         │
-        ├──► jolt-dory     (jolt-openings, dory-pcs)
-        ├──► jolt-kzg      (jolt-openings, ark-poly-commit)  [future]
-        └──► jolt-hyperkzg (jolt-openings)                   [future]
+        ├──► jolt-dory     (jolt-openings, jolt-crypto, dory-pcs)
+        ├──► jolt-kzg      (jolt-openings, jolt-crypto)  [future]
+        └──► jolt-hyperkzg (jolt-openings)                [future]
 ```
 
 ### 3.2 Crate Summary
@@ -109,10 +121,12 @@ jolt-openings              jolt-sumcheck
 |-------|---------|----------|--------------|
 | `jolt-transcript` | Fiat-Shamir transcripts | Yes | ~500 (done) |
 | `jolt-field` | Field arithmetic traits + arkworks impl | Yes | ~2000 (done) |
+| `jolt-crypto` | Group, pairing, and commitment abstractions | Yes | ~1200 (done) |
 | `jolt-poly` | Polynomial types and operations | Yes | ~1500 (done) |
 | `jolt-openings` | Commitment scheme traits + opening accumulators | Yes | ~800 (done) |
 | `jolt-sumcheck` | Sumcheck protocol engine | Yes | ~1100 (done) |
 | `jolt-spartan` | R1CS + Spartan prover/verifier | Yes | ~925 (done) |
+| `jolt-ir` | Symbolic expression IR for sumcheck claims | Yes | ~1500 |
 | `jolt-instructions` | RISC-V instruction set + lookup tables | No | ~3000 (done) |
 | `jolt-dory` | Dory commitment scheme impl | No | ~5000 (done) |
 | `jolt-zkvm` | zkVM prover/verifier orchestration | No | ~10000 (in progress) |
@@ -128,6 +142,128 @@ Already completed. Defines `Transcript` and `AppendToTranscript` traits with Bla
 ### 4.2 `jolt-field` — **DONE**
 
 Already completed. Defines `Field`, `UnreducedOps`, `ReductionOps`, `Challenge`, `WithChallenge`, `OptimizedMul`, accumulation traits (`FMAdd`, `BarrettReduce`, `MontgomeryReduce`), and arkworks BN254 implementation. See `crates/jolt-field/`.
+
+---
+
+### 4.2b `jolt-crypto` — Backend-Agnostic Cryptographic Primitives — **DONE**
+
+**Purpose:** Backend-agnostic cryptographic group and commitment abstractions for the Jolt proving system. Defines the core group traits (`JoltGroup`, `PairingGroup`) and a vector commitment interface (`JoltCommitment`) that the rest of the stack programs against. The BN254 implementation wraps arkworks internally, but no arkworks types appear in the public API.
+
+**Dependencies:** `jolt-field`, `jolt-transcript`
+
+**Dependency position:**
+
+```
+jolt-field ← jolt-crypto ← jolt-openings, jolt-dory, jolt-blindfold, jolt-zkvm
+             jolt-transcript ↗
+```
+
+**Design decisions:**
+- **Additive notation everywhere.** `JoltGroup` uses `Add`/`Sub`/`Neg` for the group operation, even for GT (where "addition" maps to Fq12 multiplication). This gives uniform code for any group without the caller needing to know the underlying algebra.
+- **`identity()`/`is_identity()` naming.** Instead of `zero()`/`is_zero()`, to stay notation-agnostic.
+- **MSM lives on `JoltGroup`.** Every group gets `msm()` — no need for separate `g1_msm`/`g2_msm` methods on the pairing type.
+- **Generators and randomness are PCS concerns.** `Bn254::g1_generator()`, `random_g1()` are inherent methods on the concrete `Bn254` type, not on `PairingGroup`. Different PCS have different generator requirements; the trait shouldn't prescribe them.
+- **`AppendToTranscript` supertrait on `JoltGroup`.** Group elements must be absorbable into Fiat-Shamir transcripts (needed for committed sumcheck, Pedersen commitments in BlindFold).
+- **`JoltCommitment` is a separate trait.** Defines `Setup`, `Commitment`, `capacity()`, `commit()`, `verify()`. Protocol code is generic over this trait, enabling Pedersen, hash-based, or lattice commitments.
+- **`Pedersen<G>` blanket impl.** Any `JoltGroup` automatically gets Pedersen commitments via `impl<G: JoltGroup> JoltCommitment for Pedersen<G>`. No per-backend boilerplate.
+- **`PairingGroup` has `type ScalarField: Field`.** Associates the scalar field with the pairing, enabling generic code to work with field elements without a separate generic parameter.
+- **`bn254` feature flag (default).** All arkworks dependencies are optional, gated behind `bn254`. Without it, the crate compiles to trait definitions only — enforcing that the public API is genuinely backend-agnostic.
+- **`#[repr(transparent)]` newtypes.** `Bn254G1`, `Bn254G2`, `Bn254GT` wrap arkworks projective points with zero overhead. Custom `Serialize`/`Deserialize` impls delegate to arkworks canonical serialization internally while presenting serde externally.
+
+#### Core Traits
+
+```rust
+/// Cryptographic group suitable for commitments.
+/// Additive notation — the underlying algebra may be multiplicative (GT).
+pub trait JoltGroup:
+    Copy + Debug + Default + Eq + Send + Sync + 'static
+    + Add<Output = Self> + Sub<Output = Self> + Neg<Output = Self>
+    + for<'a> Add<&'a Self, Output = Self> + for<'a> Sub<&'a Self, Output = Self>
+    + AddAssign + SubAssign
+    + Serialize + for<'de> Deserialize<'de>
+    + AppendToTranscript
+{
+    fn identity() -> Self;
+    fn is_identity(&self) -> bool;
+    fn double(&self) -> Self;
+    fn scalar_mul<F: Field>(&self, scalar: &F) -> Self;
+    fn msm<F: Field>(bases: &[Self], scalars: &[F]) -> Self;
+}
+
+/// Pairing-friendly group for bilinear-map-based schemes (Dory, KZG).
+pub trait PairingGroup: Clone + Sync + Send + 'static {
+    type ScalarField: Field;
+    type G1: JoltGroup;
+    type G2: JoltGroup;
+    type GT: JoltGroup;
+
+    fn pairing(g1: &Self::G1, g2: &Self::G2) -> Self::GT;
+    fn multi_pairing(g1s: &[Self::G1], g2s: &[Self::G2]) -> Self::GT;
+}
+
+/// Backend-agnostic vector commitment.
+pub trait JoltCommitment: Clone + Send + Sync + 'static {
+    type Setup: Clone + Send + Sync;
+    type Commitment: Copy + Debug + Default + Eq + Send + Sync + 'static
+        + Serialize + for<'de> Deserialize<'de> + AppendToTranscript;
+
+    fn capacity(setup: &Self::Setup) -> usize;
+    fn commit<F: Field>(setup: &Self::Setup, values: &[F], blinding: &F) -> Self::Commitment;
+    fn verify<F: Field>(setup: &Self::Setup, commitment: &Self::Commitment,
+        values: &[F], blinding: &F) -> bool;
+}
+```
+
+#### Pedersen Commitment
+
+```rust
+/// Blanket JoltCommitment for any JoltGroup.
+/// C = Σᵢ values[i] * generators[i] + blinding * H
+impl<G: JoltGroup> JoltCommitment for Pedersen<G> {
+    type Setup = PedersenSetup<G>;  // message_generators + blinding_generator
+    type Commitment = G;
+    // ...
+}
+```
+
+#### BN254 Concrete Types
+
+| Type | Wraps | Notes |
+|------|-------|-------|
+| `Bn254` | — | `PairingGroup` impl; inherent: `g1_generator()`, `g2_generator()`, `random_g1()` |
+| `Bn254G1` | `G1Projective` | `JoltGroup` with arkworks MSM (`msm_bigint`) |
+| `Bn254G2` | `G2Projective` | `JoltGroup` with arkworks MSM |
+| `Bn254GT` | `Fq12` | `JoltGroup` with additive notation (Add=mul, Neg=inv, identity=ONE) |
+
+#### Testing
+
+64 tests across 4 test modules (group laws, pairing, Pedersen, serialization), 14 criterion benchmarks, 3 fuzz targets (deserialization safety, group arithmetic invariants, Pedersen commitment properties).
+
+#### Directory Layout
+
+```
+crates/jolt-crypto/
+├── Cargo.toml
+├── src/
+│   ├── lib.rs              # Re-exports
+│   ├── group.rs            # JoltGroup trait
+│   ├── pairing.rs          # PairingGroup trait
+│   ├── commitment.rs       # JoltCommitment trait
+│   ├── pedersen.rs         # Pedersen<G> + PedersenSetup<G>
+│   └── arkworks/
+│       └── bn254/
+│           ├── mod.rs      # Bn254, PairingGroup impl, field_to_fr bridge
+│           ├── g1.rs       # Bn254G1: JoltGroup
+│           ├── g2.rs       # Bn254G2: JoltGroup
+│           └── gt.rs       # Bn254GT: JoltGroup (additive notation)
+├── tests/
+│   ├── group_laws.rs       # G1/G2 algebraic properties (22 tests)
+│   ├── pairing.rs          # Bilinearity, GT group laws (17 tests)
+│   ├── pedersen.rs         # Commit/verify, homomorphism, binding (11 tests)
+│   └── serialization.rs   # JSON/bincode roundtrips (14 tests)
+├── benches/crypto.rs       # 14 criterion benchmarks
+└── fuzz/fuzz_targets/      # 3 fuzz targets
+```
 
 ---
 
@@ -278,70 +414,63 @@ jolt-poly/
 
 ---
 
-### 4.4 `jolt-openings` — Commitment Scheme Traits & Opening Accumulators — **DONE**
+### 4.4 `jolt-openings` — Polynomial Commitment Scheme Traits & Opening Reduction — **REDESIGN**
 
-**Purpose:** Abstract commitment scheme interfaces, opening proof accumulation, and batch reduction logic. Designed to support homomorphic (Dory, KZG), lattice-based, and hash-based (FRI) commitment schemes.
+**Purpose:** Abstract polynomial commitment scheme (PCS) interfaces, opening claim types, and reduction traits for batching claims. Designed to support homomorphic (EC, lattice), and hash-based (FRI) commitment schemes without leaking implementation details. The crate is intentionally thin — it defines abstractions and provides reusable primitives, not protocol-level orchestration.
 
-**Dependencies:** `jolt-field`, `jolt-poly`, `jolt-transcript`
+**Dependencies:** `jolt-field`, `jolt-poly`, `jolt-crypto`, `jolt-transcript`
 
-**Deviations from spec:**
-- `VerifierOpeningAccumulator::reduce_and_verify` takes `&[PCS::BatchedProof]` (proofs passed in, not generated internally)
-- `test-utils` feature flag added for `MockCommitmentScheme` (not in original spec)
-- `rlc_combine` and `rlc_combine_scalars` added as public utilities (not in original spec)
+**Key design decisions (vs. previous spec):**
+- **No accumulators.** The old `ProverOpeningAccumulator` / `VerifierOpeningAccumulator` are removed. Claims are plain data (`Vec<ProverClaim>`, `Vec<VerifierClaim>`), collected by the caller and passed to reduction functions. No statefulness.
+- **Reduction is separate from proving.** The `OpeningReduction` trait defines a *claim transformation* (many claims → fewer claims), not a proving step. After reduction, the caller opens each remaining claim individually via `CommitmentScheme::open` / `verify`. Reductions compose.
+- **No batching baked into PCS traits.** `batch_prove` / `batch_verify` are removed from the trait hierarchy. Batching is a reduction strategy (`RlcReduction`), not a PCS property. The PCS only ever opens single claims.
+- **`Commitment` base trait from jolt-crypto.** `CommitmentScheme` extends `jolt_crypto::Commitment`, sharing the `Output` associated type. This avoids duplicating commitment output bounds and connects the PCS to the vector commitment hierarchy.
+- **`VerifierClaim` is fully typed.** No `Box<dyn Any>` type erasure. The commitment type is a generic parameter, enforced at compile time.
 
-#### Commitment Scheme Trait Hierarchy
+#### Trait Hierarchy
+
+`CommitmentScheme` extends `jolt_crypto::Commitment`, which provides the shared `Output` type (the commitment value). The full hierarchy across jolt-crypto and jolt-openings:
+
+```
+                    Commitment              (jolt-crypto: just Output type)
+                   /          \
+    VectorCommitment            CommitmentScheme    (jolt-openings: + open/verify)
+          |                          |
+  BlindableCommitment        AdditivelyHomomorphic  (+ combine)
+                                     |
+                             StreamingCommitment    (+ incremental)
+```
+
+#### PCS Traits
 
 ```rust
-// ── Base trait: every commitment scheme implements this ─────
+use jolt_crypto::Commitment;
 
-/// A polynomial commitment scheme (PCS).
+/// Multilinear polynomial commitment scheme.
 ///
-/// The minimal interface: commit to a polynomial, produce an opening proof
-/// at a point, and verify the proof. No assumptions about algebraic structure
-/// of commitments.
-pub trait CommitmentScheme: Clone + Send + Sync + 'static {
-    /// The field over which polynomials are defined.
+/// Extends `Commitment` (from jolt-crypto) with opening proofs: the ability
+/// to prove and verify that a committed polynomial evaluates to a claimed
+/// value at a given point. No algebraic structure is assumed on commitments —
+/// this trait covers group-based (Dory, KZG), lattice-based, and hash-based
+/// (FRI, Brakedown) schemes.
+pub trait CommitmentScheme: Commitment {
     type Field: Field;
-
-    /// Opaque commitment value (e.g., group element, Merkle root, lattice vector).
-    type Commitment: Clone + Send + Sync + Debug + Serialize + DeserializeOwned;
-
-    /// Opening proof for a single polynomial at a single point.
     type Proof: Clone + Send + Sync + Serialize + DeserializeOwned;
-
-    /// Prover-side setup parameters.
     type ProverSetup: Clone + Send + Sync;
-
-    /// Verifier-side setup parameters.
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
 
-    /// Human-readable protocol name (for transcript domain separation).
-    fn protocol_name() -> &'static str;
+    fn commit(evals: &[Self::Field], setup: &Self::ProverSetup) -> Self::Output;
 
-    /// Generate prover parameters for polynomials of at most `max_size` evaluations.
-    fn setup_prover(max_size: usize) -> Self::ProverSetup;
-
-    /// Generate verifier parameters.
-    fn setup_verifier(max_size: usize) -> Self::VerifierSetup;
-
-    /// Commit to a polynomial.
-    fn commit(
-        poly: &impl MultilinearPolynomial<Self::Field>,
-        setup: &Self::ProverSetup,
-    ) -> Self::Commitment;
-
-    /// Produce an opening proof: the polynomial evaluates to `eval` at `point`.
-    fn prove(
-        poly: &impl MultilinearPolynomial<Self::Field>,
+    fn open(
+        evals: &[Self::Field],
         point: &[Self::Field],
         eval: Self::Field,
         setup: &Self::ProverSetup,
         transcript: &mut impl Transcript,
     ) -> Self::Proof;
 
-    /// Verify an opening proof.
     fn verify(
-        commitment: &Self::Commitment,
+        commitment: &Self::Output,
         point: &[Self::Field],
         eval: Self::Field,
         proof: &Self::Proof,
@@ -350,115 +479,93 @@ pub trait CommitmentScheme: Clone + Send + Sync + 'static {
     ) -> Result<(), OpeningsError>;
 }
 
-// ── Extension: additively homomorphic schemes ───────────────
-
-/// Commitment scheme where commitments can be combined linearly.
+/// Commitments live in an additive group and can be linearly combined.
 ///
-/// This enables batch opening proofs via random linear combination (RLC):
-/// given commitments $C_1, \ldots, C_k$ and a random $\rho$, the verifier
-/// checks a single opening of $C_1 + \rho C_2 + \cdots + \rho^{k-1} C_k$.
-pub trait HomomorphicCommitmentScheme: CommitmentScheme {
-    /// Batched opening proof for multiple polynomials.
-    type BatchedProof: Clone + Send + Sync + Serialize + DeserializeOwned;
-
-    /// Linearly combine commitments: $\sum_i \text{scalars}_i \cdot C_i$.
-    fn combine_commitments(
-        commitments: &[Self::Commitment],
+/// This is the algebraic property that enables batch reduction via RLC.
+/// For EC-based PCS, `combine` is MSM. For lattice-based PCS, the
+/// operation may be more involved.
+pub trait AdditivelyHomomorphic: CommitmentScheme {
+    fn combine(
+        commitments: &[Self::Output],
         scalars: &[Self::Field],
-    ) -> Self::Commitment;
-
-    /// Produce a batched opening proof for multiple polynomials at possibly
-    /// different points.
-    fn batch_prove(
-        polynomials: &[&dyn MultilinearPolynomial<Self::Field>],
-        points: &[Vec<Self::Field>],
-        evals: &[Self::Field],
-        setup: &Self::ProverSetup,
-        transcript: &mut impl Transcript,
-    ) -> Self::BatchedProof;
-
-    /// Verify a batched opening proof.
-    fn batch_verify(
-        commitments: &[Self::Commitment],
-        points: &[Vec<Self::Field>],
-        evals: &[Self::Field],
-        proof: &Self::BatchedProof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript,
-    ) -> Result<(), OpeningsError>;
+    ) -> Self::Output;
 }
 
-// ── Extension: streaming commitment ─────────────────────────
+/// Commit incrementally without materializing the full evaluation table.
+pub trait StreamingCommitment: CommitmentScheme {
+    type Partial: Clone + Send + Sync;
 
-/// Commitment scheme that supports chunked/streaming commitment for
-/// memory efficiency with large polynomials.
-pub trait StreamingCommitmentScheme: CommitmentScheme {
-    /// Intermediate state for a partial commitment.
-    type PartialCommitment: Clone + Send + Sync;
-
-    /// Begin a streaming commitment.
-    fn begin_streaming(setup: &Self::ProverSetup) -> Self::PartialCommitment;
-
-    /// Feed a chunk of evaluations.
-    fn stream_chunk(
-        partial: &mut Self::PartialCommitment,
-        chunk: &[Self::Field],
-    );
-
-    /// Finalize the streaming commitment.
-    fn finalize_streaming(partial: Self::PartialCommitment) -> Self::Commitment;
+    fn begin(setup: &Self::ProverSetup) -> Self::Partial;
+    fn feed(partial: &mut Self::Partial, chunk: &[Self::Field]);
+    fn finish(partial: Self::Partial) -> Self::Output;
 }
 ```
 
-#### Opening Accumulator
+#### Claim Types
+
+Plain data, no behavior. Collected by the caller (typically `jolt-zkvm`) into `Vec`s.
 
 ```rust
-/// Accumulates opening claims during proving, then reduces them to a
-/// minimal set of opening proofs via random linear combination.
+/// A leaf claim the prover needs to open via PCS.
+pub struct ProverClaim<F: Field> {
+    pub evaluations: Vec<F>,
+    pub point: Vec<F>,
+    pub eval: F,
+}
+
+/// A leaf claim the verifier needs to check via PCS.
+pub struct VerifierClaim<F: Field, C> {
+    pub commitment: C,
+    pub point: Vec<F>,
+    pub eval: F,
+}
+```
+
+#### Opening Reduction Trait
+
+Reduction is a *claim transformation*, not a proving step. It takes many claims and produces fewer equivalent claims. The PCS then opens each remaining claim individually. Reductions compose because the output type equals the input type.
+
+```rust
+/// Transforms multiple opening claims into fewer equivalent claims.
 ///
-/// The accumulator tracks a DAG of opening points and polynomials,
-/// batching where possible to minimize the number of PCS calls.
-pub struct ProverOpeningAccumulator<F: Field> { /* ... */ }
+/// The reduction may draw Fiat-Shamir challenges (e.g., RLC) or run
+/// sub-protocols (e.g., sumcheck-based reduction). Implementations
+/// define the strategy. The trait is implemented by callers (jolt-zkvm)
+/// for protocol-specific reductions, with `RlcReduction` provided as
+/// a default for homomorphic schemes.
+pub trait OpeningReduction<PCS: CommitmentScheme> {
+    /// Proof artifact from the reduction itself, if any.
+    /// `()` for deterministic reductions like RLC.
+    type ReductionProof: Clone + Send + Sync + Serialize + DeserializeOwned;
 
-impl<F: Field> ProverOpeningAccumulator<F> {
-    pub fn new() -> Self;
-
-    /// Register a polynomial + point + evaluation for later batching.
-    pub fn accumulate(
-        &mut self,
-        poly: &dyn MultilinearPolynomial<F>,
-        point: Vec<F>,
-        eval: F,
-    );
-
-    /// Reduce all accumulated claims and produce opening proofs.
-    pub fn reduce_and_prove<PCS: HomomorphicCommitmentScheme<Field = F>>(
-        self,
-        setup: &PCS::ProverSetup,
+    fn reduce_prover(
+        claims: Vec<ProverClaim<PCS::Field>>,
         transcript: &mut impl Transcript,
-    ) -> Vec<PCS::BatchedProof>;
-}
+    ) -> (Vec<ProverClaim<PCS::Field>>, Self::ReductionProof);
 
-/// Verifier-side accumulator: collects commitments + claimed evaluations,
-/// then batch-verifies.
-pub struct VerifierOpeningAccumulator<F: Field> { /* ... */ }
-
-impl<F: Field> VerifierOpeningAccumulator<F> {
-    pub fn new() -> Self;
-
-    pub fn accumulate(
-        &mut self,
-        commitment: &impl Clone, // type-erased, stored as Any
-        point: Vec<F>,
-        eval: F,
-    );
-
-    pub fn reduce_and_verify<PCS: HomomorphicCommitmentScheme<Field = F>>(
-        self,
-        setup: &PCS::VerifierSetup,
+    fn reduce_verifier(
+        claims: Vec<VerifierClaim<PCS::Field, PCS::Output>>,
+        proof: &Self::ReductionProof,
         transcript: &mut impl Transcript,
-    ) -> Result<(), OpeningsError>;
+    ) -> Result<Vec<VerifierClaim<PCS::Field, PCS::Output>>, OpeningsError>;
 }
+```
+
+Example reductions:
+
+| Reduction | Bound | Input | Output | `ReductionProof` |
+|-----------|-------|-------|--------|------------------|
+| `RlcReduction` | `PCS: AdditivelyHomomorphic` | N claims at K points | K claims (one per point) | `()` |
+| `SumcheckReduction` (jolt-zkvm) | `PCS: CommitmentScheme` | K claims at K points | 1 claim at a single point | `SumcheckProof<F>` |
+
+#### RLC Utilities
+
+```rust
+/// RLC of polynomial evaluation tables using Horner's method.
+pub fn rlc_combine<F: Field>(polynomials: &[&[F]], rho: F) -> Vec<F>;
+
+/// RLC of scalar evaluations using Horner's method.
+pub fn rlc_combine_scalars<F: Field>(evals: &[F], rho: F) -> F;
 ```
 
 #### Error Type
@@ -480,11 +587,31 @@ pub enum OpeningsError {
 }
 ```
 
+#### Protocol Usage (in jolt-zkvm)
+
+```rust
+// Each protocol stage returns its leaf claims
+let (proof1, leaves1) = stage1::prove(&witnesses, &mut transcript);
+let (proof2, leaves2) = stage2::prove(&stage1.forwarded, &mut transcript);
+
+// Collect all leaf claims
+let all_leaves = [leaves1, leaves2].concat();
+
+// Reduce: RLC groups claims by point, combines via homomorphism
+let (reduced, _) = RlcReduction::reduce_prover(all_leaves, &mut transcript);
+
+// Open each reduced claim individually via PCS
+let opening_proofs: Vec<_> = reduced.iter().map(|claim| {
+    PCS::open(&claim.evaluations, &claim.point, claim.eval, &setup, &mut transcript)
+}).collect();
+```
+
 #### Testing
 
-- **Unit tests:** Accumulate mock openings, verify reduction produces correct batches
-- **Property tests:** For any set of random polynomials and random points, `accumulate → reduce → verify` succeeds. Modifying any evaluation causes verification failure.
-- **Integration tests:** Round-trip with `jolt-dory` (prove + verify)
+- **Unit tests:** RLC combine correctness (Horner, commutativity with evaluation), reduction grouping, claim round-trips
+- **Property tests:** For any random claims, `reduce → open → verify` succeeds; tampered evaluations cause rejection
+- **Integration tests:** Round-trip with `MockCommitmentScheme`, round-trip with `jolt-dory`
+- **Benchmarks:** `rlc_combine`, `rlc_combine_scalars` at various polynomial counts and sizes
 
 #### File Structure
 
@@ -493,21 +620,20 @@ jolt-openings/
 ├── Cargo.toml
 ├── README.md
 ├── src/
-│   ├── lib.rs
-│   ├── traits.rs           # CommitmentScheme, HomomorphicCommitmentScheme, StreamingCommitmentScheme
-│   ├── accumulator.rs      # ProverOpeningAccumulator, VerifierOpeningAccumulator
-│   ├── reduction.rs        # RLC batch reduction logic
-│   └── error.rs            # OpeningsError
-├── tests/                  # Integration tests
-│   ├── commitment_api.rs   # Test trait implementations
-│   ├── accumulator.rs      # Test accumulator round-trips
-│   └── batching.rs         # Test batch operations
+│   ├── lib.rs              # re-exports
+│   ├── traits.rs           # CommitmentScheme, AdditivelyHomomorphic, StreamingCommitment
+│   ├── claims.rs           # ProverClaim, VerifierClaim
+│   ├── reduction.rs        # OpeningReduction trait + RlcReduction impl
+│   ├── rlc.rs              # rlc_combine, rlc_combine_scalars
+│   ├── error.rs            # OpeningsError
+│   └── mock.rs             # MockCommitmentScheme (test-utils feature)
+├── tests/
+│   └── reduction.rs        # Integration tests for reduction round-trips
 ├── fuzz/
 │   └── fuzz_targets/
-│       ├── verify_proof.rs
-│       └── accumulator.rs
+│       └── rlc.rs
 └── benches/
-    └── opening.rs
+    └── rlc.rs
 ```
 
 ---
@@ -678,9 +804,16 @@ jolt-sumcheck/
 
 ---
 
-### 4.6 `jolt-spartan` — R1CS + Spartan Prover/Verifier — **DONE**
+### 4.6 `jolt-spartan` — Generic Spartan SNARK — **DONE**
 
-**Purpose:** Spartan-based SNARK for R1CS constraint systems. Generic over the commitment scheme and field. Usable for any R1CS system, not just Jolt.
+**Purpose:** Generic Spartan-based SNARK for arbitrary R1CS constraint systems. Proves satisfaction of R1CS constraints produced by any source (jolt-ir R1CS backend, hand-written, etc.). Generic over the commitment scheme and field.
+
+**Scope:** `jolt-spartan` is a general-purpose Spartan implementation for arbitrary R1CS. It does **not** implement the main zkVM's outer sumcheck, which uses a specialized evaluation path (`UniformSpartanKey` with lazy constraint evaluation, two constraint groups, univariate skip with Jolt-specific domain sizes). The main zkVM outer sumcheck stays as custom code in `jolt-zkvm`, using `jolt-sumcheck` for the protocol and `jolt-ir` for constraint definitions.
+
+`jolt-spartan` serves three consumers:
+1. **BlindFold** — proves the verifier R1CS after Nova folding. Requires relaxed R1CS support.
+2. **Recursive verification** — proving Jolt verifier execution as R1CS (constraints produced by jolt-ir).
+3. **Standalone use** — any R1CS satisfaction proof outside Jolt.
 
 **Dependencies:** `jolt-sumcheck`, `jolt-openings`, `jolt-field`, `jolt-poly`, `jolt-transcript`
 
@@ -1121,6 +1254,16 @@ pub enum JoltError {
 }
 ```
 
+#### Constraint Definitions
+
+`jolt-zkvm` defines all uniform R1CS constraints and sumcheck claim formulas using `jolt-ir`'s `ExprBuilder`. This replaces the compile-time `lc!` / `r1cs_eq_conditional!` macro system with natural arithmetic expressions. At initialization:
+
+1. Each constraint is built as a `ClaimDefinition` via `ExprBuilder`
+2. Degree-2 constraints are factored into bilinear `(a, b)` pairs for the fused evaluator
+3. `SumOfProducts` form is cached for BlindFold R1CS emission
+
+The main zkVM outer sumcheck uses the factored bilinear pairs with a specialized evaluation path (`evaluate_inner_sum_product_at_point`), NOT `jolt-spartan`. This is a performance-critical design decision: the lazy evaluation avoids materializing full R1CS matrices.
+
 #### Internal Modules
 
 The zkVM contains Jolt-specific protocol logic that implements `SumcheckInstanceProver` for various sub-protocols:
@@ -1130,8 +1273,9 @@ The zkVM contains Jolt-specific protocol logic that implements `SumcheckInstance
 - **Bytecode checking** — program code verification
 - **Claim reductions** — batching claims from different sub-protocols
 - **Instruction lookups** — connecting execution trace to lookup tables
+- **Spartan outer** — specialized outer sumcheck with univariate skip (custom, not `jolt-spartan`)
 
-Each of these implements the `SumcheckInstanceProver` trait from `jolt-sumcheck`, keeping the sumcheck engine generic while the witness-generation logic is Jolt-specific.
+Each sub-protocol implements `SumcheckInstanceProver` from `jolt-sumcheck` and provides its claim formula as a `ClaimDefinition` from `jolt-ir`. The sumcheck engine is generic; witness-generation and constraint evaluation are Jolt-specific.
 
 #### File Structure
 
@@ -1157,6 +1301,16 @@ jolt-zkvm/
 │   ├── bytecode/           # Bytecode verification
 │   │   ├── mod.rs
 │   │   └── read_checking.rs
+│   ├── r1cs/               # Uniform R1CS (jolt-ir-based constraint definitions)
+│   │   ├── mod.rs
+│   │   ├── constraints.rs   # ClaimDefinitions for all 19 constraints
+│   │   ├── inputs.rs        # Variable map (OpeningBinding metadata)
+│   │   └── key.rs           # UniformSpartanKey (lazy evaluation)
+│   ├── spartan/             # Specialized outer sumcheck (NOT jolt-spartan)
+│   │   ├── mod.rs
+│   │   ├── outer.rs         # Outer sumcheck with univariate skip
+│   │   ├── product.rs       # Product virtualization sumcheck
+│   │   └── shift.rs         # Shift sumcheck
 │   ├── claim_reductions/   # Claim batching
 │   │   ├── mod.rs
 │   │   ├── advice.rs
@@ -1176,6 +1330,516 @@ jolt-zkvm/
 │       └── trace_verify.rs
 └── benches/
     └── proving.rs
+```
+
+---
+
+### 4.10 `jolt-ir` — Symbolic Expression IR for Sumcheck Claims
+
+**Purpose:** Provide a single expression IR that serves as the **source of truth** for all sumcheck claim formulas across every backend: runtime evaluation, BlindFold ZK (R1CS generation), formal verification (Lean4), circuit transpilation (gnark/Groth16), and GPU kernel compilation. Eliminates the sync hazard between redundant hand-written representations (see RFC finding 12).
+
+**Dependencies:** `jolt-field`
+
+**Motivation and prior art:**
+
+Today, every sumcheck instance in Jolt encodes its claim formula in up to four separate, incompatible representations:
+
+1. `SumcheckInstanceParams::input_claim()` — imperative Rust computing a scalar `F` value at runtime (`jolt-core/src/subprotocols/sumcheck_verifier.rs:54`)
+2. `SumcheckInstanceParams::input_claim_constraint()` / `output_claim_constraint()` — hand-written `OutputClaimConstraint` structs (`jolt-core/src/subprotocols/blindfold/output_constraint.rs`) using `ProductTerm` / `ValueSource` for BlindFold R1CS generation
+3. `MleAst` — a symbolic field type (`zklean-extractor/src/mle_ast.rs`) that implements `JoltField` and records operations as AST nodes in a global mutable arena, used for Lean4 extraction and extended by the gnark transpiler (PR [#1322](https://github.com/a16z/jolt/pull/1322))
+4. `ClaimExpr<F>` — an expression tree (`jolt-core/src/subprotocols/sumcheck_claim.rs:139-145`) with `Constant`, `Var`, `Add`, `Mul`, `Sub` nodes, used by `SumcheckFrontend` for Lean4 claim extraction
+
+These representations must all compute the same formula. Desynchronization between (1) and (2) causes BlindFold R1CS unsatisfiability — a critical invariant called out in CLAUDE.md. Each new backend (GPU kernels, recursion circuits) would require adding yet another representation.
+
+`jolt-ir` consolidates all four into a single IR. Developers define each formula **once** using an `ExprBuilder` API. All backends consume that definition via a `ExprVisitor` trait. The formula is pure data — no field arithmetic, no side effects, no global state.
+
+#### Philosophy
+
+**The IR is the source of truth for claim-level expressions.** The standard verifier's runtime evaluation, BlindFold's R1CS constraints, the Lean4 extractor, and the circuit transpiler all derive their output from the same `Expr`. No hand-written parallel implementations.
+
+**The IR does NOT own verifier orchestration logic.** Transcript operations, stage sequencing, commitment verification, and point normalization remain as Rust code in `jolt-sumcheck` / `jolt-zkvm`. The IR covers the ~20 formulas (one per sumcheck instance) that define claim composition, not the entire verifier pipeline.
+
+**Tracing is complementary, not replaced.** For full-verifier capture (gnark transpilation, comprehensive Lean4 extraction), the `MleAst` tracing approach (running the verifier with a symbolic field type) remains appropriate. But tracing now *consumes* the canonical `Expr` when it encounters a claim check, rather than re-deriving the formula from scratch. The tracing infrastructure (`TracingField`) may live in a separate `jolt-ir-trace` crate that depends on `jolt-field` and `jolt-ir`.
+
+#### Public API
+
+```rust
+// ── Variables ───────────────────────────────────────────────
+
+/// A symbolic variable in a sumcheck claim expression.
+///
+/// Variables are late-bound: they carry an identifier but no
+/// concrete value. Each backend resolves variables differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Var {
+    /// The evaluation of a polynomial at the sumcheck challenge point.
+    /// The `u32` is an opaque identifier assigned by the sumcheck framework.
+    Opening(u32),
+    /// A Fiat-Shamir challenge value (batching coefficient, etc.).
+    Challenge(u32),
+}
+
+// ── Expression nodes ────────────────────────────────────────
+
+/// A node in a symbolic field expression DAG.
+///
+/// Constants are `i128`, covering all practical field constants
+/// without making the IR generic over `F`. Backends promote to
+/// the target field during evaluation.
+#[derive(Debug, Clone, Copy)]
+pub enum ExprNode {
+    Constant(i128),
+    Var(Var),
+    Neg(ExprId),
+    Add(ExprId, ExprId),
+    Mul(ExprId, ExprId),
+    Sub(ExprId, ExprId),
+}
+
+/// Stable index into an expression arena.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExprId(u32);
+
+/// Instance-local expression arena. No global state.
+pub struct ExprArena {
+    nodes: Vec<ExprNode>,
+}
+
+/// A complete symbolic expression: arena + root node.
+pub struct Expr {
+    arena: ExprArena,
+    root: ExprId,
+}
+
+// ── Builder (ergonomic construction) ────────────────────────
+
+/// Builder for constructing expressions with operator overloading.
+///
+/// Usage:
+/// ```
+/// let mut b = ExprBuilder::new();
+/// let h = b.opening(0);
+/// let gamma = b.challenge(0);
+/// let expr = b.build(gamma * (h * h - h));
+/// ```
+pub struct ExprBuilder {
+    arena: ExprArena,
+}
+
+impl ExprBuilder {
+    pub fn new() -> Self;
+    pub fn opening(&self, id: u32) -> ExprHandle<'_>;
+    pub fn challenge(&self, id: u32) -> ExprHandle<'_>;
+    pub fn constant(&self, val: i128) -> ExprHandle<'_>;
+    pub fn zero(&self) -> ExprHandle<'_>;
+    pub fn one(&self) -> ExprHandle<'_>;
+    pub fn build(self, root: ExprHandle<'_>) -> Expr;
+}
+
+/// A handle to a node in the builder, supporting `+`, `-`, `*`.
+#[derive(Clone, Copy)]
+pub struct ExprHandle<'a> { /* builder ref + ExprId */ }
+
+impl Add for ExprHandle<'_> { type Output = Self; /* ... */ }
+impl Sub for ExprHandle<'_> { type Output = Self; /* ... */ }
+impl Mul for ExprHandle<'_> { type Output = Self; /* ... */ }
+impl Neg for ExprHandle<'_> { type Output = Self; /* ... */ }
+
+// ── Claim definition ────────────────────────────────────────
+
+/// A sumcheck claim formula with variable binding metadata.
+///
+/// This is the primary artifact that sumcheck instances produce.
+/// It replaces the dual `input_claim()` + `input_claim_constraint()`
+/// pattern with a single definition.
+pub struct ClaimDefinition {
+    /// The symbolic expression.
+    pub expr: Expr,
+    /// Maps Opening(id) → external polynomial identity.
+    pub opening_bindings: Vec<OpeningBinding>,
+    /// Maps Challenge(id) → how to obtain the challenge value.
+    pub challenge_bindings: Vec<ChallengeBinding>,
+}
+
+pub struct OpeningBinding {
+    pub var_id: u32,
+    /// Opaque tag identifying the polynomial (interpreted by jolt-zkvm).
+    pub polynomial_tag: u64,
+    /// Opaque tag identifying the sumcheck this opening belongs to.
+    pub sumcheck_tag: u64,
+}
+
+pub struct ChallengeBinding {
+    pub var_id: u32,
+    pub source: ChallengeSource,
+}
+
+pub enum ChallengeSource {
+    /// A batching coefficient (gamma power, RLC scalar, etc.)
+    BatchingCoefficient(usize),
+    /// A sumcheck challenge from a specific round.
+    SumcheckChallenge(usize),
+    /// A runtime-computed value passed by the caller.
+    Derived,
+}
+
+// ── Visitor trait (backend extension point) ─────────────────
+
+/// Walk an expression tree, producing a result per node.
+///
+/// Backends implement this to consume expressions:
+/// - `EvaluateVisitor<F>`: concrete field evaluation
+/// - `SopVisitor`: sum-of-products normalization
+/// - `LeanVisitor`: Lean4 code emission
+/// - `CircuitVisitor`: circuit constraint emission
+pub trait ExprVisitor {
+    type Output;
+    fn visit_constant(&mut self, val: i128) -> Self::Output;
+    fn visit_var(&mut self, var: Var) -> Self::Output;
+    fn visit_neg(&mut self, inner: Self::Output) -> Self::Output;
+    fn visit_add(&mut self, lhs: Self::Output, rhs: Self::Output) -> Self::Output;
+    fn visit_sub(&mut self, lhs: Self::Output, rhs: Self::Output) -> Self::Output;
+    fn visit_mul(&mut self, lhs: Self::Output, rhs: Self::Output) -> Self::Output;
+}
+
+impl Expr {
+    /// Apply a visitor to the expression DAG (bottom-up).
+    pub fn visit<V: ExprVisitor>(&self, visitor: &mut V) -> V::Output;
+}
+
+// ── Normalization ───────────────────────────────────────────
+
+/// Sum-of-products normal form.
+///
+/// Every expression can be mechanically expanded to:
+/// $\sum_i c_i \cdot \prod_j f_{ij}$
+///
+/// This form maps directly to R1CS multiplication gates and
+/// replaces the hand-written `OutputClaimConstraint`.
+pub struct SumOfProducts {
+    pub terms: Vec<SopTerm>,
+}
+
+pub struct SopTerm {
+    pub coefficient: SopValue,
+    pub factors: Vec<SopValue>,
+}
+
+pub enum SopValue {
+    Constant(i128),
+    Opening(u32),
+    Challenge(u32),
+}
+
+impl Expr {
+    /// Expand into sum-of-products form via distribution.
+    pub fn to_sum_of_products(&self) -> SumOfProducts;
+    /// Fold constant sub-expressions.
+    pub fn fold_constants(&self) -> Expr;
+    /// Deduplicate structurally identical subtrees.
+    pub fn eliminate_common_subexpressions(&self) -> Expr;
+}
+```
+
+#### Backends
+
+**1. Evaluate** (`backends/evaluate.rs`)
+
+Evaluates an `Expr` to a concrete `F` value given opening and challenge slices. This replaces hand-written `input_claim()` methods on `SumcheckInstanceParams`.
+
+```rust
+impl Expr {
+    pub fn evaluate<F: Field>(&self, openings: &[F], challenges: &[F]) -> F;
+}
+```
+
+**2. R1CS** (`backends/r1cs.rs`)
+
+Converts a `SumOfProducts` to R1CS constraints. This backend serves two consumers:
+
+1. **BlindFold verifier R1CS** — replaces the `R1csConstraintVisitor` in `jolt-core/src/subprotocols/blindfold/r1cs.rs`. Emits sparse A/B/C matrices consumed by `jolt-spartan`.
+2. **Main zkVM uniform R1CS** — replaces the compile-time `LC` / `lc!` / `r1cs_eq_conditional!` constraint system in `jolt-core/src/zkvm/r1cs/`. See "Replacing compile-time R1CS constraints" below.
+
+```rust
+impl SumOfProducts {
+    pub fn to_r1cs_constraints(&self, ...) -> Vec<R1csConstraint>;
+    pub fn estimate_aux_var_count(&self) -> usize;
+}
+```
+
+For degree-2 expressions (which all current uniform constraints are), the backend can also extract the bilinear factorization `(LC_a, LC_b)` directly, enabling the fused dot-product evaluation path used by `UniformSpartanKey::evaluate_inner_sum_product_at_point`.
+
+**3. Lean4** (`backends/lean.rs`)
+
+Emits Lean4 syntax for an `Expr`. Replaces the `MleAst` → string formatting pipeline in `zklean-extractor`. Instance-local (no global arena).
+
+```rust
+impl Expr {
+    pub fn to_lean4(&self, config: &LeanConfig) -> String;
+}
+```
+
+**4. Circuit** (`backends/circuit.rs`)
+
+Emits circuit constraints (gnark Go code, or a generic circuit IR) from an `Expr`. Replaces the `MemoizedCodeGen` pipeline in PR [#1322](https://github.com/a16z/jolt/pull/1322)'s transpiler for the claim-formula portion.
+
+```rust
+impl Expr {
+    pub fn to_circuit<E: CircuitEmitter>(&self, emitter: &mut E);
+}
+```
+
+#### How `SumcheckInstanceParams` Changes
+
+In `jolt-zkvm`, the trait that defines sumcheck parameters currently requires dual implementations:
+
+```rust
+// BEFORE (jolt-core, current):
+pub trait SumcheckInstanceParams<F: JoltField> {
+    fn input_claim(&self, acc: &dyn OpeningAccumulator<F>) -> F;         // imperative
+    fn input_claim_constraint(&self) -> InputClaimConstraint;            // symbolic (BlindFold)
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint>;  // symbolic (BlindFold)
+    // ... challenge value methods ...
+}
+```
+
+With `jolt-ir`, this becomes:
+
+```rust
+// AFTER (jolt-zkvm, with jolt-ir):
+pub trait SumcheckInstanceParams<F: Field> {
+    fn input_claim_definition(&self) -> ClaimDefinition;
+    fn output_claim_definition(&self) -> Option<ClaimDefinition>;
+
+    // Derived — not hand-written:
+    fn input_claim(&self, openings: &[F], challenges: &[F]) -> F {
+        self.input_claim_definition().expr.evaluate(openings, challenges)
+    }
+}
+```
+
+The sync hazard is eliminated structurally: there is exactly one definition per claim, and all backends derive from it.
+
+#### Replacing compile-time R1CS constraints
+
+Beyond sumcheck claim formulas, `jolt-ir` also replaces the compile-time constraint authoring system used by the main zkVM's Spartan outer sumcheck. Today, this system consists of:
+
+- **`LC` enum** (`jolt-core/src/zkvm/r1cs/ops.rs`) — 12 variants (`Zero`, `Const`, `Terms1`..`Terms5`, `Terms1Const`..`Terms5Const`) to be `const fn`-compatible. Every operation (`dot_product`, `mul_by_const`, `accumulate_evaluations`) is a 12-arm match.
+- **`lc!` macro** — builds `LC` values at compile time from `JoltR1CSInputs`.
+- **`r1cs_eq_conditional!` macro** — builds equality-conditional constraints: `condition * (left - right) = 0`.
+- **`R1CS_CONSTRAINTS` static array** — 19 named constraints, each an `(LC, LC)` pair.
+- **`JoltR1CSInputs` enum** — 37 input variables with a hand-maintained canonical ordering.
+
+With `jolt-ir`, each constraint is authored with `ExprBuilder`:
+
+```rust
+// BEFORE (macro DSL, ~4 lines but hard to read):
+r1cs_eq_conditional!(
+    label: R1CSConstraintLabel::RamAddrEqRs1PlusImmIfLoadStore,
+    if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) }
+       + { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
+    => ( { JoltR1CSInputs::RamAddress } )
+       == ( { JoltR1CSInputs::Rs1Value } + { JoltR1CSInputs::Imm } )
+)
+
+// AFTER (jolt-ir, natural arithmetic):
+fn ram_addr_if_load_store(v: &VarMap) -> ClaimDefinition {
+    let b = ExprBuilder::new();
+    let load  = b.opening(v.load);
+    let store = b.opening(v.store);
+    let addr  = b.opening(v.ram_addr);
+    let rs1   = b.opening(v.rs1);
+    let imm   = b.opening(v.imm);
+    let expr = b.build((load + store) * (addr - rs1 - imm));
+    ClaimDefinition { expr, opening_bindings: /* ... */, challenge_bindings: vec![] }
+}
+```
+
+**Evaluation performance is preserved.** Every current constraint is degree 2 (root is `Mul(linear, linear)`). At init time, the `Expr` is factored back into `(Vec<(var_id, coeff)>, Vec<(var_id, coeff)>)` — the bilinear form. The `UniformSpartanKey::evaluate_inner_sum_product_at_point` method uses these factored pairs with the same fused dot-product logic. The 12-variant `LC` enum is replaced by a simpler `SmallVec`-based representation since `const fn` compatibility is no longer required.
+
+**What jolt-ir replaces vs. what stays:**
+
+| Current | jolt-ir replacement |
+|---------|--------------------|
+| `LC` enum (12 variants) | `Expr` → factored at init to bilinear pairs |
+| `lc!` macro | `ExprBuilder` arithmetic operators |
+| `r1cs_eq_conditional!` macro | `ExprBuilder::build(condition * (left - right))` |
+| `R1CS_CONSTRAINTS` static array | `Vec<ClaimDefinition>` built at init |
+| `JoltR1CSInputs` enum (as indices) | `OpeningBinding` metadata on `ClaimDefinition` |
+| `OutputClaimConstraint` / `ProductTerm` | `SumOfProducts` (mechanically derived) |
+| `ValueSource` enum | `SopValue` enum (isomorphic) |
+
+**What is NOT replaced:**
+- `R1CSCycleInputs` / witness materialization from trace (runtime data, not constraints)
+- `evaluate_inner_sum_product_at_point` evaluation logic (stays, consumes jolt-ir-derived data)
+- Constraint grouping metadata (first/second group labels for univariate skip)
+- `UniformSpartanKey` struct (sources constraints differently, same evaluation strategy)
+- `ProductConstraint` definitions (trivially expressed as `left * right - output` in jolt-ir)
+
+#### jolt-spartan's role
+
+`jolt-spartan` is a **generic Spartan SNARK over arbitrary R1CS**. It does NOT implement the main zkVM's outer sumcheck, which is too specialized (lazy evaluation via `UniformSpartanKey`, univariate skip, streaming rounds, two constraint groups).
+
+`jolt-spartan` serves:
+1. **BlindFold** — proves the verifier R1CS (produced by jolt-ir's R1CS backend) after Nova folding. Requires relaxed R1CS support (`Az ∘ Bz = u·Cz + E`).
+2. **Recursive verification** — expressing the Jolt verifier as R1CS via jolt-ir and proving it with standard Spartan.
+3. **Any future "prove R1CS via Spartan" use case** — the crate is genuinely reusable.
+
+The main zkVM outer sumcheck stays as custom code in `jolt-zkvm`, using `jolt-sumcheck` for the protocol and `jolt-ir` for the constraint definitions, but with its own specialized evaluation path.
+
+The dependency flow:
+```
+jolt-ir (constraint definitions, R1CS backend)
+    ↓
+jolt-spartan (generic Spartan prover/verifier)
+    ↓
+jolt-blindfold (ZK orchestration: folding + committed Spartan)
+```
+
+The main zkVM bypasses `jolt-spartan` but uses `jolt-ir` and `jolt-sumcheck`.
+
+#### Concrete example: Booleanity
+
+The booleanity sumcheck (`jolt-core/src/subprotocols/booleanity.rs`) proves that all RA polynomials are Boolean: $0 = \sum_{k,j} eq(r,k) \cdot eq(r,j) \cdot \sum_i \gamma^i \cdot (H_i^2 - H_i)$.
+
+**Before** (4 representations):
+```rust
+// (1) Runtime value — hand-written
+fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F { F::zero() }
+
+// (2) BlindFold constraint — hand-written, must match (1)
+fn input_claim_constraint(&self) -> InputClaimConstraint { InputClaimConstraint::default() }
+
+// (2b) BlindFold output — hand-written, 30 lines of ProductTerm construction
+fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+    let mut terms = Vec::with_capacity(2 * n);
+    for (i, poly) in self.polynomial_types.iter().enumerate() {
+        let opening = OpeningId::committed(*poly, SumcheckId::Booleanity);
+        terms.push(ProductTerm::scaled(ValueSource::Challenge(2*i),
+            vec![ValueSource::Opening(opening), ValueSource::Opening(opening)]));
+        terms.push(ProductTerm::scaled(ValueSource::Challenge(2*i + 1),
+            vec![ValueSource::Opening(opening)]));
+    }
+    Some(OutputClaimConstraint::sum_of_products(terms))
+}
+```
+
+**After** (1 definition):
+```rust
+fn input_claim_definition(&self) -> ClaimDefinition {
+    // Input is zero — the booleanity relation sums to 0
+    let b = ExprBuilder::new();
+    ClaimDefinition { expr: b.build(b.zero()), ..default() }
+}
+
+fn output_claim_definition(&self) -> Option<ClaimDefinition> {
+    let mut b = ExprBuilder::new();
+    let mut sum = b.zero();
+    for i in 0..self.polynomial_types.len() {
+        let h = b.opening(i as u32);
+        let gamma_sq  = b.challenge(2 * i as u32);      // eq_eval · γ²ⁱ
+        let neg_gamma = b.challenge(2 * i as u32 + 1);   // -eq_eval · γ²ⁱ
+        sum = sum + gamma_sq * h * h + neg_gamma * h;
+    }
+    Some(ClaimDefinition {
+        expr: b.build(sum),
+        opening_bindings: /* one per polynomial */,
+        challenge_bindings: /* one per challenge */,
+    })
+}
+```
+
+This single definition feeds all backends:
+- Standard verifier: `def.expr.evaluate(&opening_values, &challenge_values)` → `F`
+- BlindFold: `def.expr.to_sum_of_products().to_r1cs_constraints(...)` → R1CS gates
+- Lean4: `def.expr.to_lean4(&config)` → Lean4 code
+- Circuit: `def.expr.to_circuit(&mut gnark_emitter)` → Go code
+
+#### Kernel IR (optional, for GPU compilation)
+
+Separately from claim-level expressions, `jolt-ir` may also host a **kernel IR** for describing how sumcheck round polynomials are computed from evaluation tables. This covers the ~70% of sumchecks that follow the pattern:
+
+$$\text{round\_poly}(t) = \sum_{x} f(\text{table}_0[2x+t],\; \text{table}_1[2x+t],\; \ldots,\; \text{eq}[2x+t])$$
+
+The kernel IR reuses the same `Expr` type but with different variable semantics (table positions instead of scalar openings):
+
+```rust
+pub struct SumcheckKernel {
+    /// Per-point combination expression (variables are table lookups).
+    pub combination: Expr,
+    /// Metadata about each polynomial table.
+    pub tables: Vec<TableDescriptor>,
+    /// Maximum degree of the round polynomial.
+    pub degree: usize,
+}
+
+pub struct TableDescriptor {
+    pub var_id: u32,
+    pub role: TableRole,
+}
+
+pub enum TableRole {
+    /// Full evaluation table, bound in-place each round.
+    Dense,
+    /// Eq polynomial (supports split-eq / sqrt-space optimization).
+    Eq,
+    /// Compact table (small scalar type, promoted on bind).
+    Compact { scalar_bytes: usize },
+    /// Precomputed table (invariant across rounds).
+    Static,
+}
+```
+
+A CPU executor interprets the kernel in a map-reduce loop. A GPU executor compiles it into a Metal/CUDA kernel. Hand-tuned kernels (for the ~30% of sumchecks with non-standard patterns like `SharedRaPolynomials` or multi-phase binding) implement `SumcheckWitness` directly, bypassing the kernel IR.
+
+The kernel IR is optional and may be deferred to a later phase. The claim IR is the priority.
+
+#### Testing
+
+- **Unit tests:** Expression construction, operator overloading, arena integrity
+- **Property tests:** For random expressions, `evaluate()` matches manual computation. `to_sum_of_products()` evaluates to the same value as the original expression.
+- **Round-trip tests:** `Expr` → `SumOfProducts` → `evaluate()` ≡ `Expr` → `evaluate()`
+- **Backend consistency tests:** For each sumcheck claim definition, verify that `evaluate()`, `to_sum_of_products().evaluate()`, and `to_lean4()` (parsed and evaluated) all agree.
+- **CSE tests:** Verify that `eliminate_common_subexpressions()` produces a smaller DAG but identical evaluation.
+
+#### Delivery phases
+
+The crate is built incrementally (see `crates/tasks/`):
+
+1. **Core IR** (task 01) — expr, builder, claim, visitor, normalize. No backends, no `jolt-field` dep.
+2. **Evaluate backend** (task 02) — `Expr::evaluate<F>()`. Adds `jolt-field` dep. Enables standard-mode verifier.
+3. **R1CS backend** (task 03) — `SumOfProducts::emit_r1cs()`. Enables BlindFold ZK mode.
+4. **Lean4 backend** (task 04) — `Expr::to_lean4()`. Enables zklean-extractor migration.
+5. **Circuit backend** (task 05) — `CircuitEmitter` trait. Enables gnark transpiler migration.
+6. **Downstream integration** (task 06) — migrate `SumcheckInstanceParams` in jolt-zkvm.
+
+The kernel IR (`SumcheckKernel`, `TableDescriptor`) is deferred until GPU integration begins.
+
+#### File Structure
+
+```
+jolt-ir/
+├── Cargo.toml
+├── README.md
+├── src/
+│   ├── lib.rs              # Re-exports: Expr, ExprBuilder, ClaimDefinition, ExprVisitor
+│   ├── expr.rs             # ExprNode, ExprId, ExprArena, Expr
+│   ├── builder.rs          # ExprBuilder, ExprHandle, operator impls
+│   ├── claim.rs            # ClaimDefinition, OpeningBinding, ChallengeBinding
+│   ├── visitor.rs          # ExprVisitor trait, Expr::visit()
+│   ├── normalize.rs        # SumOfProducts, to_sum_of_products(), fold_constants(), CSE
+│   └── backends/
+│       ├── mod.rs
+│       ├── evaluate.rs     # EvaluateVisitor — Expr → F
+│       ├── r1cs.rs         # SoP → R1CS constraints
+│       ├── lean.rs         # Expr → Lean4 string
+│       └── circuit.rs      # Expr → circuit IR
+├── tests/
+│   ├── expr_eval.rs        # Expression evaluation tests
+│   ├── sop_consistency.rs  # SoP matches direct evaluation
+│   └── backend_agree.rs    # All backends agree on same input
+└── benches/
+    └── normalize.rs        # SoP expansion benchmarks
 ```
 
 ---
@@ -1211,6 +1875,7 @@ Every crate implements three levels of testing:
 | `jolt-openings` | Accumulator logic, RLC batching | Commitment round-trips, batch operations | Proof verification |
 | `jolt-sumcheck` | Round verification, degree checks | Protocol completeness, batching, streaming | Arbitrary round polynomials |
 | `jolt-spartan` | R1CS satisfaction, key gen | E2E R1CS proving, uniform R1CS, uni-skip | R1CS verification, witness |
+| `jolt-ir` | Expr construction, operator overloads, arena | SoP consistency, backend agreement | — |
 | `jolt-instructions` | Each instruction's `execute` | Instruction set coverage, lookup consistency | Instruction decoding |
 | `jolt-dory` | Basic commit/open | Full protocol flows, streaming commitment | Commitment verification |
 | `jolt-zkvm` | Subprotocol logic | Small program proving, claim reductions | Trace verification |
@@ -1222,6 +1887,7 @@ Use `proptest` for generating random inputs and checking invariants:
 | Crate | Properties |
 |-------|-----------|
 | `jolt-poly` | `evaluate(bind_all(r)) == evaluate(r)`, Schwartz-Zippel |
+| `jolt-ir` | `Expr::evaluate() == Expr::to_sum_of_products().evaluate()` for random expressions |
 | `jolt-sumcheck` | Completeness (honest prover always passes), soundness (cheating fails w.h.p.) |
 | `jolt-spartan` | Satisfiable witness → valid proof, unsatisfiable → rejection |
 | `jolt-instructions` | `execute` matches wrapping native ops, lookup decomposition reconstructs correctly |
@@ -1274,15 +1940,17 @@ Phase 0 (setup):
 
 Phase 1a (implementation, parallel):
   implement-jolt-poly
+  implement-jolt-ir         (needs jolt-field only)
   implement-jolt-instructions     (needs jolt-field only)
 
 Phase 1b (testing, after 1a):
   test-jolt-poly-integration
+  test-jolt-ir-integration
   test-jolt-instructions-integration
   test-fuzz-jolt-poly
 
-Phase 2a (implementation, after jolt-poly):
-  implement-jolt-sumcheck         (needs jolt-poly)
+Phase 2a (implementation, after jolt-poly + jolt-ir):
+  implement-jolt-sumcheck         (needs jolt-poly, jolt-ir)
   implement-jolt-openings         (needs jolt-poly)
 
 Phase 2b (testing, after 2a):
@@ -1292,7 +1960,7 @@ Phase 2b (testing, after 2a):
   test-fuzz-jolt-openings
 
 Phase 3a (implementation, after 2a):
-  implement-jolt-spartan          (needs jolt-sumcheck + jolt-openings)
+  implement-jolt-spartan          (needs jolt-sumcheck + jolt-openings + jolt-ir)
   implement-jolt-dory             (needs jolt-openings)
 
 Phase 3b (testing, after 3a):
@@ -1323,16 +1991,18 @@ workspace           : implement-scaffold-workspace      : none                  
 
 # Implementation tasks (implementer role)
 src/poly/           : implement-jolt-poly               : none                     : Polynomial types and operations
+ir/                 : implement-jolt-ir           : none                     : Symbolic expression IR for sumcheck claims
 src/zkvm/instruction: implement-jolt-instructions       : none                     : RISC-V instructions + lookup tables
-src/subprotocols/   : implement-jolt-sumcheck           : jolt-poly                : Sumcheck protocol engine
+src/subprotocols/   : implement-jolt-sumcheck           : jolt-poly,jolt-ir  : Sumcheck protocol engine
 src/poly/commitment : implement-jolt-openings           : jolt-poly                : Commitment scheme traits + accumulators
-src/zkvm/spartan    : implement-jolt-spartan            : jolt-sumcheck,jolt-openings : Spartan R1CS prover/verifier
+src/zkvm/spartan    : implement-jolt-spartan            : jolt-sumcheck,jolt-openings,jolt-ir : Spartan R1CS prover/verifier
 src/poly/dory       : implement-jolt-dory               : jolt-openings            : Dory commitment scheme
-src/zkvm/           : implement-jolt-zkvm               : jolt-spartan,jolt-sumcheck,jolt-openings,jolt-instructions,jolt-dory : zkVM prover/verifier
+src/zkvm/           : implement-jolt-zkvm               : jolt-spartan,jolt-sumcheck,jolt-openings,jolt-instructions,jolt-dory,jolt-ir : zkVM prover/verifier
 integration         : implement-integrate-workspace     : all                      : Wire crates together in workspace
 
 # Test tasks (tester role)
 tests               : test-jolt-poly-integration        : jolt-poly                : Integration tests for jolt-poly
+tests               : test-jolt-ir-integration    : jolt-ir            : Integration tests for jolt-ir
 tests               : test-jolt-instructions-integration : jolt-instructions        : Integration tests for jolt-instructions
 tests               : test-jolt-sumcheck-integration    : jolt-sumcheck            : Integration tests for jolt-sumcheck
 tests               : test-jolt-openings-integration    : jolt-openings            : Integration tests for jolt-openings
@@ -1342,6 +2012,7 @@ tests               : test-jolt-zkvm-integration        : jolt-zkvm             
 
 # Fuzz test tasks (tester role)
 fuzz                : test-fuzz-jolt-poly               : jolt-poly                : Fuzz testing for jolt-poly
+fuzz                : test-fuzz-jolt-ir           : jolt-ir            : Fuzz testing for jolt-ir
 fuzz                : test-fuzz-jolt-sumcheck           : jolt-sumcheck            : Fuzz testing for jolt-sumcheck
 fuzz                : test-fuzz-jolt-openings           : jolt-openings            : Fuzz testing for jolt-openings
 
@@ -1423,6 +2094,7 @@ crates/
 ├── jolt-openings/
 ├── jolt-sumcheck/
 ├── jolt-spartan/
+├── jolt-ir/
 ├── jolt-instructions/
 ├── jolt-dory/
 ├── jolt-kzg/           # (future)
@@ -1450,3 +2122,9 @@ These should be resolved during implementation, not before:
 4. **Exact Dory wrapping boundary** — how much of `dory-pcs` gets re-exposed vs. hidden behind the trait? Resolved during `jolt-dory` implementation.
 
 5. **Shared constants between `jolt-instructions` and `tracer`** — the RFC flags duplicated opcodes. A shared `jolt-opcodes` crate or a constants module in `common/` could solve this. Deferred unless it becomes a blocker.
+
+6. **Kernel IR scope in jolt-ir** — the kernel IR (`SumcheckKernel`, `TableDescriptor`) for GPU compilation is optional. It reuses the same `Expr` type as claim definitions but with different variable semantics (table positions vs. scalar openings). Decision: include the types in `jolt-ir` but defer backend implementations (CPU executor, GPU compiler) until the GPU integration work begins.
+
+7. **TracingField placement** — the `MleAst`-style symbolic field type (for capturing full verifier traces) could live in `jolt-ir` or a separate `jolt-ir-trace` crate. Tentatively a separate crate to keep `jolt-ir` dependency-minimal (just `jolt-field`). The tracing crate would depend on both `jolt-field` and `jolt-ir`.
+
+8. **OpeningBinding / ChallengeBinding opacity** — `jolt-ir` uses opaque `u64` tags for polynomial and sumcheck identifiers. These are interpreted by `jolt-zkvm` which maps them to concrete `CommittedPolynomial`/`VirtualPolynomial`/`SumcheckId` enums. The boundary should be clean: `jolt-ir` never imports from `jolt-zkvm`.

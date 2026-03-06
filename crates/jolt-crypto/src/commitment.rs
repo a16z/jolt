@@ -1,9 +1,22 @@
 use std::fmt::Debug;
 
 use jolt_field::Field;
-use serde::{Deserialize, Serialize};
+use jolt_transcript::AppendToTranscript;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-/// Backend-agnostic vector commitment scheme.
+/// Base commitment abstraction: defines only the output type.
+///
+/// This is the root of the commitment trait hierarchy, shared by both
+/// vector commitments ([`JoltCommitment`], `VectorCommitment`) and
+/// polynomial commitment schemes (`jolt_openings::CommitmentScheme`).
+/// The `Output` associated type is the single piece of connective tissue
+/// between these different levels of abstraction.
+pub trait Commitment {
+    /// The commitment value (e.g., a group element, a Merkle root, a lattice vector).
+    type Output: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
+}
+
+/// Backend-agnostic vector commitment.
 ///
 /// Abstracts the ability to commit to a vector of field elements with a
 /// blinding factor. ZK protocols (BlindFold, sumcheck) should be generic
@@ -18,6 +31,9 @@ pub trait JoltCommitment: Clone + Send + Sync + 'static {
     type Setup: Clone + Send + Sync;
 
     /// The commitment output (e.g., a group element, a lattice vector).
+    ///
+    /// Requires [`AppendToTranscript`] so commitments can be absorbed
+    /// into Fiat-Shamir transcripts during ZK sumcheck.
     type Commitment: Clone
         + Copy
         + Debug
@@ -27,7 +43,8 @@ pub trait JoltCommitment: Clone + Send + Sync + 'static {
         + Sync
         + 'static
         + Serialize
-        + for<'de> Deserialize<'de>;
+        + for<'de> Deserialize<'de>
+        + AppendToTranscript;
 
     /// Maximum number of values this setup can commit to.
     fn capacity(setup: &Self::Setup) -> usize;

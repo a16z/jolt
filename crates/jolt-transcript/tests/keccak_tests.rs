@@ -4,7 +4,6 @@ mod common;
 
 use jolt_transcript::KeccakTranscript;
 
-// Generate the standardized test suite for KeccakTranscript
 transcript_tests!(KeccakTranscript);
 
 #[test]

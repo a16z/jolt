@@ -1,6 +1,6 @@
 //! Generic sumcheck protocol engine for interactive and non-interactive proofs.
 //!
-//! This crate provides a clean, implementation of the sumcheck
+//! This crate provides a clean implementation of the sumcheck
 //! protocol, the workhorse of modern SNARK constructions. It is
 //! backend-agnostic: any field, transcript, and witness representation
 //! can be plugged in.
@@ -24,11 +24,13 @@
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
 //! | [`batched`] | Batched prover/verifier via random linear combination |
 //! | [`streaming`] | [`StreamingSumcheckProver`] trait for memory-constrained provers |
+//! | [`handler`] | [`RoundHandler`] / [`RoundVerifier`] — strategy traits for clear vs. committed mode |
 //! | [`error`] | [`SumcheckError`] variants |
 
 pub mod batched;
 pub mod claim;
 pub mod error;
+pub mod handler;
 pub mod proof;
 pub mod prover;
 pub mod streaming;
@@ -37,6 +39,7 @@ pub mod verifier;
 pub use batched::{BatchedSumcheckProver, BatchedSumcheckVerifier};
 pub use claim::SumcheckClaim;
 pub use error::SumcheckError;
+pub use handler::{ClearRoundHandler, ClearRoundVerifier, RoundHandler, RoundVerifier};
 pub use proof::SumcheckProof;
 pub use prover::{SumcheckProver, SumcheckWitness};
 pub use streaming::StreamingSumcheckProver;

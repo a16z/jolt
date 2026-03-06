@@ -1,3 +1,5 @@
+//! Vector-scalar operations on G1 using 2D GLV, for Dory inner-product argument rounds.
+
 use ark_bn254::{Fr, G1Projective};
 use rayon::prelude::*;
 

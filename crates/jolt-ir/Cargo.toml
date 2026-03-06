@@ -1,0 +1,23 @@
+[package]
+name = "jolt-ir"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Symbolic expression IR for sumcheck claim formulas in the Jolt zkVM"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field", default-features = false }
+
+[dev-dependencies]
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+rand = { workspace = true }
+rand_core = { workspace = true }
+rand_chacha = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "ir_ops"
+harness = false

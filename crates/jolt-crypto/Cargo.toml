@@ -9,20 +9,30 @@ description = "Backend-agnostic cryptographic group and commitment primitives fo
 [lints]
 workspace = true
 
+[features]
+default = ["bn254"]
+bn254 = ["dep:ark-bn254", "dep:ark-ec", "dep:ark-ff", "dep:ark-serialize", "dep:ark-std"]
+
 [dependencies]
 jolt-field = { path = "../jolt-field" }
-serde = { workspace = true, features = ["derive"] }
+jolt-transcript = { path = "../jolt-transcript" }
+serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
 
-# Arkworks — BN254 backend (internal implementation detail)
-ark-bn254 = { workspace = true, features = ["curve"] }
-ark-ec = { workspace = true }
-ark-ff = { workspace = true }
-ark-serialize = { workspace = true }
-ark-std = { workspace = true }
+# Arkworks — BN254 backend (internal, gated behind `bn254` feature)
+ark-bn254 = { workspace = true, features = ["curve"], optional = true }
+ark-ec = { workspace = true, optional = true }
+ark-ff = { workspace = true, optional = true }
+ark-serialize = { workspace = true, optional = true }
+ark-std = { workspace = true, optional = true }
 
 [dev-dependencies]
 ark-std = { workspace = true }
 rand_chacha = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 bincode = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "crypto"
+harness = false

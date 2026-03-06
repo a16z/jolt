@@ -2840,6 +2840,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-blindfold"
+version = "0.1.0"
+dependencies = [
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "num-traits",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "serde",
+]
+
+[[package]]
 name = "jolt-core"
 version = "0.1.0"
 dependencies = [
@@ -2900,7 +2915,9 @@ dependencies = [
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
  "bincode",
+ "criterion",
  "jolt-field",
+ "jolt-transcript",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde",
@@ -2917,6 +2934,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
  "dory-pcs",
+ "jolt-crypto",
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
@@ -3040,10 +3058,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-ir"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "jolt-field",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+]
+
+[[package]]
 name = "jolt-openings"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "jolt-crypto",
  "jolt-field",
  "jolt-poly",
  "jolt-transcript",

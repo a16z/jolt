@@ -27,6 +27,7 @@ impl<F: Field> EqPolynomial<F> {
         Self { point }
     }
 
+    /// Number of variables `n` in the fixed point `r`.
     pub fn num_vars(&self) -> usize {
         self.point.len()
     }

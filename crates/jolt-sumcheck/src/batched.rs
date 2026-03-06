@@ -9,10 +9,11 @@
 
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::Transcript;
 
 use crate::claim::SumcheckClaim;
 use crate::error::SumcheckError;
+use crate::handler::{ClearRoundHandler, ClearRoundVerifier, RoundHandler, RoundVerifier};
 use crate::proof::SumcheckProof;
 use crate::prover::SumcheckWitness;
 
@@ -29,26 +30,26 @@ use crate::prover::SumcheckWitness;
 pub struct BatchedSumcheckProver;
 
 impl BatchedSumcheckProver {
-    /// Proves a batch of sumcheck claims.
+    /// Proves a batch of sumcheck claims with a pluggable round handler.
     ///
-    /// Claims may have different `num_vars` and `degree` bounds. Shorter
-    /// instances are front-padded with dummy rounds (constant polynomial
-    /// $H(X) = \text{claim}/2$) so all instances finish at the same global
-    /// round.
+    /// The handler controls how combined round polynomials are absorbed
+    /// into the transcript and what proof artifact is produced.
     ///
     /// # Panics
     ///
     /// Panics if `claims` is empty or if `claims` and `witnesses` have
     /// different lengths.
-    pub fn prove<F, T>(
+    pub fn prove_with_handler<F, T, H>(
         claims: &[SumcheckClaim<F>],
         witnesses: &mut [Box<dyn SumcheckWitness<F>>],
         transcript: &mut T,
         challenge_fn: impl Fn(T::Challenge) -> F,
-    ) -> SumcheckProof<F>
+        mut handler: H,
+    ) -> H::Proof
     where
         F: Field,
         T: Transcript,
+        H: RoundHandler<F>,
     {
         assert!(!claims.is_empty(), "must have at least one claim");
         assert_eq!(
@@ -62,12 +63,8 @@ impl BatchedSumcheckProver {
 
         let alpha = challenge_fn(transcript.challenge());
 
-        // Front-loaded offsets: instance i becomes active at global round
-        // (max_num_vars - num_vars_i) and runs through round (max_num_vars - 1).
         let offsets: Vec<usize> = claims.iter().map(|c| max_num_vars - c.num_vars).collect();
 
-        // Scale each claim by 2^(max_num_vars - num_vars) to account for
-        // the dummy variables that are summed out trivially.
         let mut individual_claims: Vec<F> = claims
             .iter()
             .zip(offsets.iter())
@@ -78,10 +75,7 @@ impl BatchedSumcheckProver {
             .inverse()
             .expect("2 is invertible in any prime field of order > 2");
 
-        let mut round_polynomials = Vec::with_capacity(max_num_vars);
-
         for round in 0..max_num_vars {
-            // Compute per-instance round polynomials.
             let instance_polys: Vec<UnivariatePoly<F>> = witnesses
                 .iter()
                 .enumerate()
@@ -90,8 +84,6 @@ impl BatchedSumcheckProver {
                     if active {
                         witness.round_polynomial()
                     } else {
-                        // Dummy round: H(X) = claim/2 (constant).
-                        // Satisfies H(0) + H(1) = claim.
                         UnivariatePoly::new(vec![individual_claims[i] * two_inv])
                     }
                 })
@@ -115,26 +107,51 @@ impl BatchedSumcheckProver {
                 .collect();
             let combined_poly = UnivariatePoly::interpolate(&points);
 
-            append_poly_to_transcript(&combined_poly, transcript);
+            handler.absorb_round_poly(&combined_poly, transcript);
             let challenge = challenge_fn(transcript.challenge());
+            handler.on_challenge(challenge);
 
-            // Update per-instance running claims.
             for (i, poly) in instance_polys.iter().enumerate() {
                 individual_claims[i] = poly.evaluate(challenge);
             }
 
-            // Bind only active witnesses.
             for (i, witness) in witnesses.iter_mut().enumerate() {
                 let active = round >= offsets[i] && round < offsets[i] + claims[i].num_vars;
                 if active {
                     witness.bind(challenge);
                 }
             }
-
-            round_polynomials.push(combined_poly);
         }
 
-        SumcheckProof { round_polynomials }
+        handler.finalize()
+    }
+
+    /// Proves a batch of sumcheck claims with cleartext round handling.
+    ///
+    /// Convenience wrapper using [`ClearRoundHandler`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `claims` is empty or if `claims` and `witnesses` have
+    /// different lengths.
+    pub fn prove<F, T>(
+        claims: &[SumcheckClaim<F>],
+        witnesses: &mut [Box<dyn SumcheckWitness<F>>],
+        transcript: &mut T,
+        challenge_fn: impl Fn(T::Challenge) -> F,
+    ) -> SumcheckProof<F>
+    where
+        F: Field,
+        T: Transcript,
+    {
+        let max_num_vars = claims.iter().map(|c| c.num_vars).max().unwrap_or(0);
+        Self::prove_with_handler(
+            claims,
+            witnesses,
+            transcript,
+            challenge_fn,
+            ClearRoundHandler::with_capacity(max_num_vars),
+        )
     }
 }
 
@@ -146,28 +163,26 @@ impl BatchedSumcheckProver {
 pub struct BatchedSumcheckVerifier;
 
 impl BatchedSumcheckVerifier {
-    /// Verifies a batched sumcheck proof.
+    /// Verifies a batched sumcheck proof with a pluggable round verifier.
     ///
     /// Returns `(v, r)` on success, where `v` is the combined final
     /// evaluation and `r` is the full challenge vector of length
     /// `max(num_vars)`.
     ///
-    /// To extract the challenge slice for claim `i`, take
-    /// `r[offset_i..offset_i + num_vars_i]` where
-    /// `offset_i = max_num_vars - num_vars_i`.
-    ///
     /// # Errors
     ///
     /// Returns [`SumcheckError`] if verification fails.
-    pub fn verify<F, T>(
+    pub fn verify_with_handler<F, T, V>(
         claims: &[SumcheckClaim<F>],
-        proof: &SumcheckProof<F>,
+        round_proofs: &[V::RoundProof],
         transcript: &mut T,
         challenge_fn: impl Fn(T::Challenge) -> F,
+        verifier: &V,
     ) -> Result<(F, Vec<F>), SumcheckError>
     where
         F: Field,
         T: Transcript,
+        V: RoundVerifier<F>,
     {
         assert!(!claims.is_empty(), "must have at least one claim");
 
@@ -190,17 +205,39 @@ impl BatchedSumcheckVerifier {
             claimed_sum: combined_sum,
         };
 
-        crate::verifier::SumcheckVerifier::verify(&combined_claim, proof, transcript, challenge_fn)
+        crate::verifier::SumcheckVerifier::verify_with_handler(
+            &combined_claim,
+            round_proofs,
+            transcript,
+            challenge_fn,
+            verifier,
+        )
     }
-}
 
-#[inline]
-fn append_poly_to_transcript<F: Field, T: Transcript>(
-    poly: &UnivariatePoly<F>,
-    transcript: &mut T,
-) {
-    for coeff in poly.coefficients() {
-        coeff.append_to_transcript(transcript);
+    /// Verifies a batched sumcheck proof with cleartext verification.
+    ///
+    /// Convenience wrapper using [`ClearRoundVerifier`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SumcheckError`] if verification fails.
+    pub fn verify<F, T>(
+        claims: &[SumcheckClaim<F>],
+        proof: &SumcheckProof<F>,
+        transcript: &mut T,
+        challenge_fn: impl Fn(T::Challenge) -> F,
+    ) -> Result<(F, Vec<F>), SumcheckError>
+    where
+        F: Field,
+        T: Transcript,
+    {
+        Self::verify_with_handler(
+            claims,
+            &proof.round_polynomials,
+            transcript,
+            challenge_fn,
+            &ClearRoundVerifier,
+        )
     }
 }
 

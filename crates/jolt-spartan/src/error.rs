@@ -13,9 +13,11 @@ pub enum SpartanError {
     #[error("R1CS constraint violation at index {0}")]
     ConstraintViolation(usize),
 
+    /// A sumcheck sub-protocol failed (degree bound, round check, etc.).
     #[error("sumcheck failed: {0}")]
     Sumcheck(#[from] jolt_sumcheck::SumcheckError),
 
+    /// The polynomial opening proof did not verify.
     #[error("opening proof failed: {0}")]
     Opening(#[from] jolt_openings::OpeningsError),
 

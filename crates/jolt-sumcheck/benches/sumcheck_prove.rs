@@ -2,7 +2,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_field::{Field, Fr};
-use jolt_poly::{Polynomial, EqPolynomial, UnivariatePoly};
+use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::batched::BatchedSumcheckProver;
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_sumcheck::prover::{SumcheckProver, SumcheckWitness};

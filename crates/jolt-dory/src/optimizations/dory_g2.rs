@@ -1,3 +1,5 @@
+//! Vector-scalar operations on G2 using 4D GLV with Frobenius, for Dory inner-product argument rounds.
+
 use ark_bn254::{Fr, G2Projective};
 use rayon::prelude::*;
 

@@ -1,0 +1,34 @@
+[workspace]
+
+[package]
+name = "jolt-crypto-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-crypto = { path = ".." }
+jolt-field = { path = "../../jolt-field" }
+serde_json = "1"
+bincode = "1"
+rand_chacha = "0.3"
+rand_core = "0.6"
+
+[[bin]]
+name = "deser_group"
+path = "fuzz_targets/deser_group.rs"
+doc = false
+
+[[bin]]
+name = "group_arith"
+path = "fuzz_targets/group_arith.rs"
+doc = false
+
+[[bin]]
+name = "pedersen_commit"
+path = "fuzz_targets/pedersen_commit.rs"
+doc = false

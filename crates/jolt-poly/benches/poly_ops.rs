@@ -2,7 +2,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_field::{Field, Fr};
-use jolt_poly::{Polynomial, EqPolynomial};
+use jolt_poly::{EqPolynomial, Polynomial};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 

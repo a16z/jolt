@@ -3,12 +3,11 @@
 //! Three tiers of polynomial commitment scheme (PCS) interfaces:
 //!
 //! 1. [`CommitmentScheme`] — base trait for commit, open, and verify.
-//! 2. [`HomomorphicCommitmentScheme`] — extends base with additive homomorphism,
-//!    enabling batch proofs via random linear combination (RLC).
-//! 3. [`StreamingCommitmentScheme`] — extends base with incremental/chunked commitment.
+//!    Extends [`jolt_crypto::Commitment`] to inherit the `Output` associated type.
+//! 2. [`AdditivelyHomomorphic`] — commitments can be linearly combined.
+//! 3. [`StreamingCommitment`] — incremental/chunked commitment.
 
-use std::fmt::Debug;
-
+use jolt_crypto::Commitment;
 use jolt_field::Field;
 use jolt_transcript::Transcript;
 use serde::{de::DeserializeOwned, Serialize};
@@ -21,14 +20,18 @@ use crate::error::OpeningsError;
 /// $f : \mathbb{F}^n \to \mathbb{F}$ and later prove that $f(r) = v$
 /// for a verifier-chosen point $r \in \mathbb{F}^n$.
 ///
+/// Extends [`Commitment`] from `jolt-crypto` — the `Output` associated type
+/// serves as the commitment value, shared with the vector commitment hierarchy.
+///
 /// No algebraic structure is assumed on commitments — this trait covers
 /// both hash-based (FRI, Brakedown) and group-based (KZG, Dory) schemes.
-pub trait CommitmentScheme: Clone + Send + Sync + 'static {
+///
+/// Setup parameters are provided externally (not created by the trait).
+/// Concrete types (e.g., `DoryScheme`) may provide inherent `setup_prover`/
+/// `setup_verifier` methods, but these are not part of the generic interface.
+pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
     /// Scalar field of the polynomial.
     type Field: Field;
-
-    /// An opaque binding commitment to a polynomial.
-    type Commitment: Clone + Send + Sync + Debug + Serialize + DeserializeOwned + PartialEq;
 
     /// A proof that a committed polynomial evaluates to a claimed value at a given point.
     type Proof: Clone + Send + Sync + Serialize + DeserializeOwned;
@@ -39,26 +42,14 @@ pub trait CommitmentScheme: Clone + Send + Sync + 'static {
     /// Verifier-side structured reference string or setup material.
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
 
-    /// Protocol name for domain separation in transcripts.
-    fn protocol_name() -> &'static str;
-
-    /// Generates prover setup parameters supporting polynomials up to $2^{\texttt{max\_size}}$ evaluations.
-    fn setup_prover(max_size: usize) -> Self::ProverSetup;
-
-    /// Generates verifier setup parameters supporting polynomials up to $2^{\texttt{max\_size}}$ evaluations.
-    fn setup_verifier(max_size: usize) -> Self::VerifierSetup;
-
     /// Commits to a multilinear polynomial given its evaluation table over the Boolean hypercube.
-    fn commit(
-        evaluations: &[Self::Field],
-        setup: &Self::ProverSetup,
-    ) -> Self::Commitment;
+    fn commit(evaluations: &[Self::Field], setup: &Self::ProverSetup) -> Self::Output;
 
     /// Produces an opening proof that the committed polynomial evaluates to `eval` at `point`.
     ///
     /// `evaluations` is the full evaluation table. The transcript must be in the same
     /// state as the verifier's transcript at this protocol step.
-    fn prove(
+    fn open(
         evaluations: &[Self::Field],
         point: &[Self::Field],
         eval: Self::Field,
@@ -72,7 +63,7 @@ pub trait CommitmentScheme: Clone + Send + Sync + 'static {
     ///
     /// Returns [`OpeningsError::VerificationFailed`] if the proof is invalid.
     fn verify(
-        commitment: &Self::Commitment,
+        commitment: &Self::Output,
         point: &[Self::Field],
         eval: Self::Field,
         proof: &Self::Proof,
@@ -83,58 +74,21 @@ pub trait CommitmentScheme: Clone + Send + Sync + 'static {
 
 /// Additively homomorphic commitment scheme (e.g., Dory, KZG).
 ///
-/// When commitments live in an additive group, multiple opening claims at the
-/// same evaluation point can be batched into a single proof via random linear
-/// combination:
+/// When commitments live in an additive group, they can be linearly combined:
 ///
-/// $$C_{\text{combined}} = \sum_{i=0}^{k-1} \rho^i \cdot C_i, \quad
-///   v_{\text{combined}} = \sum_{i=0}^{k-1} \rho^i \cdot v_i$$
+/// $$C_{\text{combined}} = \sum_{i=0}^{k-1} s_i \cdot C_i$$
 ///
-/// where $\rho$ is a Fiat-Shamir challenge.
-pub trait HomomorphicCommitmentScheme: CommitmentScheme {
-    /// A batched opening proof covering multiple polynomials.
-    type BatchedProof: Clone + Send + Sync + Serialize + DeserializeOwned;
-
+/// This algebraic property enables batch reduction strategies like
+/// [`RlcReduction`](crate::RlcReduction), but batching itself is not
+/// part of this trait — it is a reduction concern.
+pub trait AdditivelyHomomorphic: CommitmentScheme {
     /// Computes a linear combination of commitments:
     /// $C = \sum_i s_i \cdot C_i$.
     ///
     /// # Panics
     ///
     /// Panics if `commitments` and `scalars` have different lengths.
-    fn combine_commitments(
-        commitments: &[Self::Commitment],
-        scalars: &[Self::Field],
-    ) -> Self::Commitment;
-
-    /// Produces a batched opening proof for multiple polynomials at their respective points.
-    ///
-    /// Each entry in `evaluation_tables` is the full evaluation table of the
-    /// corresponding polynomial.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `evaluation_tables`, `points`, and `evals` have different lengths.
-    fn batch_prove(
-        evaluation_tables: &[&[Self::Field]],
-        points: &[Vec<Self::Field>],
-        evals: &[Self::Field],
-        setup: &Self::ProverSetup,
-        transcript: &mut impl Transcript,
-    ) -> Self::BatchedProof;
-
-    /// Verifies a batched opening proof.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`OpeningsError::VerificationFailed`] if any claim in the batch is invalid.
-    fn batch_verify(
-        commitments: &[Self::Commitment],
-        points: &[Vec<Self::Field>],
-        evals: &[Self::Field],
-        proof: &Self::BatchedProof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript,
-    ) -> Result<(), OpeningsError>;
+    fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output;
 }
 
 /// Streaming (chunked) commitment scheme.
@@ -142,16 +96,23 @@ pub trait HomomorphicCommitmentScheme: CommitmentScheme {
 /// Allows committing to a polynomial incrementally, one chunk of evaluations
 /// at a time, without materializing the full evaluation table. Useful for
 /// large polynomials that exceed available memory (e.g., Dory tier-1/tier-2).
-pub trait StreamingCommitmentScheme: CommitmentScheme {
+///
+/// The prover setup is passed explicitly to [`feed`](Self::feed) and
+/// [`finish`](Self::finish) — no lifetime or ownership gymnastics required.
+pub trait StreamingCommitment: CommitmentScheme {
     /// Intermediate state accumulated during streaming.
     type PartialCommitment: Clone + Send + Sync;
 
     /// Begins a streaming commitment session.
-    fn begin_streaming(setup: &Self::ProverSetup) -> Self::PartialCommitment;
+    fn begin(setup: &Self::ProverSetup) -> Self::PartialCommitment;
 
     /// Feeds the next chunk of evaluations into the partial commitment.
-    fn stream_chunk(partial: &mut Self::PartialCommitment, chunk: &[Self::Field]);
+    fn feed(
+        partial: &mut Self::PartialCommitment,
+        chunk: &[Self::Field],
+        setup: &Self::ProverSetup,
+    );
 
     /// Finalizes the streaming session, producing the full commitment.
-    fn finalize_streaming(partial: Self::PartialCommitment) -> Self::Commitment;
+    fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output;
 }

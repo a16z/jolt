@@ -1,7 +1,7 @@
 //! Dory polynomial commitment scheme implementing the `jolt-openings` traits.
 //!
 //! [`DoryScheme`] wraps the `dory-pcs` crate behind the [`CommitmentScheme`] and
-//! [`HomomorphicCommitmentScheme`] trait interfaces, using instance-local
+//! [`AdditivelyHomomorphic`] trait interfaces, using instance-local
 //! [`DoryParams`] instead of global state.
 
 use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
@@ -10,15 +10,15 @@ use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
+use jolt_crypto::Commitment;
 use jolt_field::Fr;
-use jolt_openings::{CommitmentScheme, HomomorphicCommitmentScheme, OpeningsError};
+use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_transcript::Transcript;
 
 use crate::params::DoryParams;
 use crate::transcript::JoltToDoryTranscript;
 use crate::types::{
-    ark_to_jolt_fr, jolt_fr_to_ark, DoryBatchedProof, DoryCommitment, DoryProof, DoryProverSetup,
-    DoryVerifierSetup,
+    ark_to_jolt_fr, jolt_fr_to_ark, DoryCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,
 };
 
 type InnerFr = dory::backends::arkworks::ArkFr;
@@ -30,17 +30,6 @@ type InnerBN254 = dory::backends::arkworks::BN254;
 /// Wraps the `dory-pcs` arkworks backend behind the `jolt-openings` trait
 /// hierarchy. Each `DoryScheme` instance carries its own [`DoryParams`],
 /// eliminating the need for global mutable state.
-///
-/// # Usage
-///
-/// ```ignore
-/// use jolt_dory::{DoryScheme, DoryParams};
-/// use jolt_openings::CommitmentScheme;
-///
-/// let params = DoryParams::from_dimensions(4, 4);
-/// let scheme = DoryScheme::new(params);
-/// let prover_setup = DoryScheme::setup_prover(4);
-/// ```
 #[derive(Clone)]
 pub struct DoryScheme {
     params: DoryParams,
@@ -56,39 +45,35 @@ impl DoryScheme {
     pub fn params(&self) -> &DoryParams {
         &self.params
     }
-}
-
-impl CommitmentScheme for DoryScheme {
-    type Field = Fr;
-    type Commitment = DoryCommitment;
-    type Proof = DoryProof;
-    type ProverSetup = DoryProverSetup;
-    type VerifierSetup = DoryVerifierSetup;
-
-    fn protocol_name() -> &'static str {
-        "Dory"
-    }
 
     /// Generates prover SRS (G1/G2 generator vectors) from a deterministic
     /// SHA3-seeded RNG. `max_num_vars` is the maximum polynomial size
     /// ($\log_2$ of evaluations) that can be committed.
-    fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
+    pub fn setup_prover(max_num_vars: usize) -> DoryProverSetup {
         DoryProverSetup(ArkworksProverSetup::new_from_urs(max_num_vars))
     }
 
     /// Derives the verifier SRS (a subset of the prover SRS).
-    fn setup_verifier(max_num_vars: usize) -> Self::VerifierSetup {
+    pub fn setup_verifier(max_num_vars: usize) -> DoryVerifierSetup {
         let prover_setup = Self::setup_prover(max_num_vars);
         DoryVerifierSetup(prover_setup.0.to_verifier_setup())
     }
+}
+
+impl Commitment for DoryScheme {
+    type Output = DoryCommitment;
+}
+
+impl CommitmentScheme for DoryScheme {
+    type Field = Fr;
+    type Proof = DoryProof;
+    type ProverSetup = DoryProverSetup;
+    type VerifierSetup = DoryVerifierSetup;
 
     /// Commits to a multilinear polynomial via two-tier Dory:
     /// tier-1 computes per-row MSMs against G1 generators, then tier-2
     /// pairs those row commitments with G2 generators into a single GT element.
-    fn commit(
-        evaluations: &[Fr],
-        setup: &Self::ProverSetup,
-    ) -> Self::Commitment {
+    fn commit(evaluations: &[Fr], setup: &Self::ProverSetup) -> Self::Output {
         let num_vars = evaluations.len().trailing_zeros() as usize;
         let sigma = num_vars.div_ceil(2);
 
@@ -104,7 +89,7 @@ impl CommitmentScheme for DoryScheme {
     ///
     /// The evaluation point is reversed before passing to `dory-pcs` because
     /// Jolt uses MSB-first variable ordering while `dory-pcs` uses LSB-first.
-    fn prove(
+    fn open(
         evaluations: &[Fr],
         point: &[Fr],
         _eval: Fr,
@@ -141,7 +126,7 @@ impl CommitmentScheme for DoryScheme {
 
     /// Verifies an opening proof against a commitment, point, and claimed evaluation.
     fn verify(
-        commitment: &Self::Commitment,
+        commitment: &Self::Output,
         point: &[Fr],
         eval: Fr,
         proof: &Self::Proof,
@@ -165,14 +150,9 @@ impl CommitmentScheme for DoryScheme {
     }
 }
 
-impl HomomorphicCommitmentScheme for DoryScheme {
-    type BatchedProof = DoryBatchedProof;
-
+impl AdditivelyHomomorphic for DoryScheme {
     /// Computes $\sum_i s_i \cdot C_i$ in GT, used for RLC batching.
-    fn combine_commitments(
-        commitments: &[Self::Commitment],
-        scalars: &[Self::Field],
-    ) -> Self::Commitment {
+    fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(
             commitments.len(),
             scalars.len(),
@@ -190,89 +170,6 @@ impl HomomorphicCommitmentScheme for DoryScheme {
 
         DoryCommitment(combined)
     }
-
-    /// Produces one independent opening proof per polynomial.
-    fn batch_prove(
-        evaluation_tables: &[&[Fr]],
-        points: &[Vec<Fr>],
-        evals: &[Fr],
-        setup: &Self::ProverSetup,
-        transcript: &mut impl Transcript,
-    ) -> Self::BatchedProof {
-        assert_eq!(evaluation_tables.len(), points.len());
-        assert_eq!(evaluation_tables.len(), evals.len());
-
-        let proofs: Vec<_> = evaluation_tables
-            .iter()
-            .zip(points.iter())
-            .zip(evals.iter())
-            .map(|((eval_table, point), eval)| {
-                prove_inner(eval_table, point, *eval, setup, transcript)
-            })
-            .collect();
-
-        DoryBatchedProof(proofs)
-    }
-
-    /// Verifies each proof in the batch independently.
-    fn batch_verify(
-        commitments: &[Self::Commitment],
-        points: &[Vec<Fr>],
-        evals: &[Fr],
-        proof: &Self::BatchedProof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript,
-    ) -> Result<(), OpeningsError> {
-        assert_eq!(commitments.len(), points.len());
-        assert_eq!(commitments.len(), evals.len());
-        assert_eq!(commitments.len(), proof.0.len());
-
-        for (((c, p), e), pf) in commitments
-            .iter()
-            .zip(points.iter())
-            .zip(evals.iter())
-            .zip(proof.0.iter())
-        {
-            DoryScheme::verify(c, p, *e, pf, setup, transcript)?;
-        }
-
-        Ok(())
-    }
-}
-
-fn prove_inner(
-    evaluations: &[Fr],
-    point: &[Fr],
-    eval: Fr,
-    setup: &DoryProverSetup,
-    transcript: &mut impl Transcript,
-) -> DoryProof {
-    let num_vars = point.len();
-    let wrapped = DoryPolyAdapter::from_evals(evaluations, num_vars);
-    let sigma = num_vars.div_ceil(2);
-    let nu = num_vars - sigma;
-
-    let row_commitments = commit_rows_msm(&wrapped.evals, sigma, &setup.0);
-
-    let ark_point: Vec<InnerFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
-    let _ = eval;
-
-    let mut dory_transcript = JoltToDoryTranscript::new(transcript);
-
-    let (proof, _blind) =
-        dory::prove::<InnerFr, InnerBN254, G1Routines, G2Routines, _, _, Transparent>(
-            &wrapped,
-            &ark_point,
-            row_commitments,
-            <InnerFr as DoryField>::zero(),
-            nu,
-            sigma,
-            &setup.0,
-            &mut dory_transcript,
-        )
-        .expect("Dory proof generation should not fail");
-
-    DoryProof(proof)
 }
 
 /// Computes row-level Pedersen commitments (tier-1) for a flattened evaluation vector.
@@ -398,12 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_name() {
-        assert_eq!(DoryScheme::protocol_name(), "Dory");
-    }
-
-    #[test]
-    fn commit_prove_verify_round_trip() {
+    fn commit_open_verify_round_trip() {
         let num_vars = 4;
         let mut rng = ChaCha20Rng::seed_from_u64(42);
 
@@ -417,7 +309,13 @@ mod tests {
         let commitment = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
-        let proof = DoryScheme::prove(poly.evaluations(), &point, eval, &prover_setup, &mut prove_transcript);
+        let proof = DoryScheme::open(
+            poly.evaluations(),
+            &point,
+            eval,
+            &prover_setup,
+            &mut prove_transcript,
+        );
 
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
         let result = DoryScheme::verify(
@@ -432,117 +330,6 @@ mod tests {
     }
 
     #[test]
-    fn batch_prove_verify_round_trip() {
-        let num_vars = 3;
-        let num_polys = 3;
-        let mut rng = ChaCha20Rng::seed_from_u64(100);
-
-        let prover_setup = DoryScheme::setup_prover(num_vars);
-        let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
-
-        let polys: Vec<Polynomial<Fr>> = (0..num_polys)
-            .map(|_| Polynomial::random(num_vars, &mut rng))
-            .collect();
-
-        let points: Vec<Vec<Fr>> = (0..num_polys)
-            .map(|_| (0..num_vars).map(|_| Fr::random(&mut rng)).collect())
-            .collect();
-
-        let evals: Vec<Fr> = polys
-            .iter()
-            .zip(points.iter())
-            .map(|(p, pt)| p.evaluate(pt))
-            .collect();
-
-        let commitments: Vec<DoryCommitment> = polys
-            .iter()
-            .map(|p| DoryScheme::commit(p.evaluations(), &prover_setup))
-            .collect();
-
-        let eval_refs: Vec<&[Fr]> = polys.iter().map(|p| p.evaluations()).collect();
-
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"batch-test");
-        let batched_proof = DoryScheme::batch_prove(
-            &eval_refs,
-            &points,
-            &evals,
-            &prover_setup,
-            &mut prove_transcript,
-        );
-
-        assert_eq!(batched_proof.0.len(), num_polys);
-
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"batch-test");
-        let result = DoryScheme::batch_verify(
-            &commitments,
-            &points,
-            &evals,
-            &batched_proof,
-            &verifier_setup,
-            &mut verify_transcript,
-        );
-        assert!(result.is_ok(), "Batch verification failed: {result:?}");
-    }
-
-    #[test]
-    fn batch_verify_rejects_wrong_eval() {
-        let num_vars = 2;
-        let num_polys = 2;
-        let mut rng = ChaCha20Rng::seed_from_u64(200);
-
-        let prover_setup = DoryScheme::setup_prover(num_vars);
-        let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
-
-        let polys: Vec<Polynomial<Fr>> = (0..num_polys)
-            .map(|_| Polynomial::random(num_vars, &mut rng))
-            .collect();
-
-        let points: Vec<Vec<Fr>> = (0..num_polys)
-            .map(|_| (0..num_vars).map(|_| Fr::random(&mut rng)).collect())
-            .collect();
-
-        let evals: Vec<Fr> = polys
-            .iter()
-            .zip(points.iter())
-            .map(|(p, pt)| p.evaluate(pt))
-            .collect();
-
-        let commitments: Vec<DoryCommitment> = polys
-            .iter()
-            .map(|p| DoryScheme::commit(p.evaluations(), &prover_setup))
-            .collect();
-
-        let eval_refs: Vec<&[Fr]> = polys.iter().map(|p| p.evaluations()).collect();
-
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"batch-bad");
-        let batched_proof = DoryScheme::batch_prove(
-            &eval_refs,
-            &points,
-            &evals,
-            &prover_setup,
-            &mut prove_transcript,
-        );
-
-        // Tamper with the second evaluation
-        let mut bad_evals = evals;
-        bad_evals[1] += Fr::one();
-
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"batch-bad");
-        let result = DoryScheme::batch_verify(
-            &commitments,
-            &points,
-            &bad_evals,
-            &batched_proof,
-            &verifier_setup,
-            &mut verify_transcript,
-        );
-        assert!(
-            result.is_err(),
-            "Batch verification should reject tampered eval"
-        );
-    }
-
-    #[test]
     fn combine_commitments_homomorphic() {
         let num_vars = 2;
         let mut rng = ChaCha20Rng::seed_from_u64(300);
@@ -552,8 +339,8 @@ mod tests {
         let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
         let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
 
-        let commit_a = DoryScheme::commit(&poly_a, &prover_setup);
-        let commit_b = DoryScheme::commit(&poly_b, &prover_setup);
+        let commit_a = DoryScheme::commit(poly_a.evaluations(), &prover_setup);
+        let commit_b = DoryScheme::commit(poly_b.evaluations(), &prover_setup);
 
         // Commit to sum polynomial directly
         let sum_evals: Vec<Fr> = poly_a
@@ -562,67 +349,14 @@ mod tests {
             .zip(poly_b.evaluations().iter())
             .map(|(a, b)| *a + *b)
             .collect();
-        let poly_sum = Polynomial::new(sum_evals);
-        let commit_sum_direct = DoryScheme::commit(&poly_sum, &prover_setup);
+        let commit_sum_direct = DoryScheme::commit(&sum_evals, &prover_setup);
 
         // Combine commitments with scalars [1, 1]
-        let combined =
-            DoryScheme::combine_commitments(&[commit_a, commit_b], &[Fr::one(), Fr::one()]);
+        let combined = DoryScheme::combine(&[commit_a, commit_b], &[Fr::one(), Fr::one()]);
 
         assert_eq!(
             commit_sum_direct, combined,
-            "combine_commitments([1,1]) must match commitment to sum"
+            "combine([1,1]) must match commitment to sum"
         );
-    }
-
-    #[test]
-    fn batch_prove_single_matches_prove() {
-        let num_vars = 3;
-        let mut rng = ChaCha20Rng::seed_from_u64(500);
-
-        let prover_setup = DoryScheme::setup_prover(num_vars);
-        let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
-
-        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-        let eval = MultilinearPolynomial::evaluate(&poly, &point);
-        let commitment = DoryScheme::commit(&poly, &prover_setup);
-
-        // Single prove/verify
-        let mut pt_single = jolt_transcript::Blake2bTranscript::new(b"single");
-        let single_proof = DoryScheme::prove(&poly, &point, eval, &prover_setup, &mut pt_single);
-        let mut vt_single = jolt_transcript::Blake2bTranscript::new(b"single");
-        DoryScheme::verify(
-            &commitment,
-            &point,
-            eval,
-            &single_proof,
-            &verifier_setup,
-            &mut vt_single,
-        )
-        .expect("single verify should succeed");
-
-        // Batch prove/verify with one polynomial
-        let poly_refs: Vec<&dyn MultilinearPolynomial<Fr, Bound = jolt_poly::Polynomial<Fr>>> =
-            vec![&poly as &dyn MultilinearPolynomial<Fr, Bound = jolt_poly::Polynomial<Fr>>];
-        let mut pt_batch = jolt_transcript::Blake2bTranscript::new(b"batch-one");
-        let batched_proof = DoryScheme::batch_prove(
-            &poly_refs,
-            &[point.clone()],
-            &[eval],
-            &prover_setup,
-            &mut pt_batch,
-        );
-
-        let mut vt_batch = jolt_transcript::Blake2bTranscript::new(b"batch-one");
-        DoryScheme::batch_verify(
-            &[commitment],
-            &[point],
-            &[eval],
-            &batched_proof,
-            &verifier_setup,
-            &mut vt_batch,
-        )
-        .expect("batch-of-one verify should succeed");
     }
 }
