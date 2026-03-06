@@ -513,35 +513,7 @@ impl BatchedSumcheck {
             transcript.append_scalar(b"sumcheck_claim", &input_claim);
         });
 
-        // Debug output for intermediate value comparison testing.
-        // When enabled, prints transcript state and derived challenges to verify
-        // transpiled circuits compute identical Fiat-Shamir values.
-        #[cfg(feature = "debug-expected-output")]
-        {
-            transcript.debug_state("before_batching_coeffs");
-        }
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
-
-        // Debug: Print batching coefficients for transpilation verification.
-        // These coefficients are used to combine multiple sumcheck instances into a single
-        // batched claim. Values printed here should match those computed in the transpiled
-        // gnark circuit to verify Fiat-Shamir transcript continuity.
-        #[cfg(feature = "debug-expected-output")]
-        {
-            use ark_serialize::CanonicalSerialize;
-            fn to_decimal<T: CanonicalSerialize>(val: &T) -> String {
-                let mut bytes = Vec::new();
-                val.serialize_compressed(&mut bytes).unwrap();
-                num_bigint::BigUint::from_bytes_le(&bytes).to_string()
-            }
-            eprintln!("=== BATCHING COEFFS DEBUG ===");
-            eprintln!("num_sumcheck_instances = {}", sumcheck_instances.len());
-            for (i, coeff) in batching_coeffs.iter().enumerate() {
-                eprintln!("batching_coeff[{}] = {}", i, to_decimal(coeff));
-            }
-            transcript.debug_state("after_batching_coeffs");
-            eprintln!("=== END BATCHING DEBUG ===");
-        }
 
         let claim: F = sumcheck_instances
             .iter()
@@ -568,34 +540,6 @@ impl BatchedSumcheck {
             .sum();
 
         opening_accumulator.flush_to_transcript(transcript);
-
-        // Debug: Compare sumcheck verification claims.
-        // The output_claim (from the sumcheck proof) should equal the expected_output_claim
-        // (computed from batched evaluations). The difference should be zero; any non-zero
-        // value indicates a verification failure. Printed for debugging transpiled circuits.
-        #[cfg(feature = "debug-expected-output")]
-        {
-            use ark_serialize::CanonicalSerialize;
-            fn to_decimal<T: CanonicalSerialize>(val: &T) -> String {
-                let mut bytes = Vec::new();
-                val.serialize_compressed(&mut bytes).unwrap();
-                num_bigint::BigUint::from_bytes_le(&bytes).to_string()
-            }
-            eprintln!("=== SUMCHECK VERIFY DEBUG ===");
-            eprintln!(
-                "output_claim (from sumcheck) = {}",
-                to_decimal(&output_claim)
-            );
-            eprintln!(
-                "expected_output_claim (batched) = {}",
-                to_decimal(&expected_output_claim)
-            );
-            eprintln!(
-                "difference = {}",
-                to_decimal(&(output_claim - expected_output_claim))
-            );
-            eprintln!("=== END SUMCHECK DEBUG ===");
-        }
 
         if output_claim != expected_output_claim {
             return Err(ProofVerifyError::SumcheckVerificationError);
@@ -656,26 +600,6 @@ impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTrans
             let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
             r.push(r_i);
             e = self.compressed_polys[i].eval_from_hint(&e, &r_i);
-        }
-
-        // Debug: Print all sumcheck round challenges for transcript verification.
-        // These challenges (r_0, r_1, ..., r_{n-1}) are generated via Fiat-Shamir from
-        // the transcript state. Values printed here should match those computed in the
-        // transpiled gnark circuit to verify correct challenge derivation.
-        #[cfg(feature = "debug-expected-output")]
-        {
-            use ark_serialize::CanonicalSerialize;
-            fn to_decimal<T: CanonicalSerialize>(val: &T) -> String {
-                let mut bytes = Vec::new();
-                val.serialize_compressed(&mut bytes).unwrap();
-                num_bigint::BigUint::from_bytes_le(&bytes).to_string()
-            }
-            eprintln!("=== SUMCHECK CHALLENGES DEBUG ===");
-            eprintln!("num_rounds = {}", num_rounds);
-            for (i, r_i) in r.iter().enumerate() {
-                eprintln!("sumcheck_challenge[{}] = {}", i, to_decimal(r_i));
-            }
-            eprintln!("=== END CHALLENGES DEBUG ===");
         }
 
         Ok((e, r))

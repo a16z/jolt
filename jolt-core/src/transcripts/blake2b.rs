@@ -206,14 +206,6 @@ impl Transcript for Blake2bTranscript {
         q_powers
     }
 
-    fn debug_state(&self, label: &str) {
-        println!(
-            "TRANSCRIPT DEBUG [{}]: n_rounds={}, state={:02x?}",
-            label,
-            self.n_rounds,
-            &self.state[..8]
-        );
-    }
 }
 
 #[cfg(test)]

@@ -23,7 +23,6 @@ num-bigint = "0.4"
 
 [features]
 default = []
-debug-expected-output = ["jolt-core/debug-expected-output"]
 # Transcript features - must match proof generation
 # Only one can be enabled at a time (enforced by jolt-core)
 transcript-poseidon = ["jolt-core/transcript-poseidon"]
