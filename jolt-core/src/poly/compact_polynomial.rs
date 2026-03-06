@@ -14,7 +14,8 @@ use std::ops::Index;
 /// 2. `bound_coeffs` is a vector of field elements (e.g. big scalars)
 ///
 /// They are often initialized with `coeffs` and then converted to `bound_coeffs`
-/// when binding the polynomial.
+/// when binding the polynomial. After the first bind, `coeffs` is dropped to
+/// free memory since all subsequent binds operate on `bound_coeffs`.
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
     num_vars: usize,
