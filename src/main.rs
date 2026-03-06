@@ -500,9 +500,9 @@ fn display_greeting() {
 }
 
 fn display_sysinfo() {
-    let mut sys = System::new_all();
-
-    sys.refresh_all();
+    let mut sys = System::new();
+    sys.refresh_memory();
+    sys.refresh_cpu_all();
 
     println!(
         "OS:             {}",

@@ -3,6 +3,7 @@ use common::{constants, jolt_device::MemoryConfig};
 /// Groups the constants used for a specific instruction set / decomposition strategy / memory
 /// layout. Jolt currently just has one of these, but we abstract over them here for future
 /// compatibility.
+#[allow(dead_code)]
 pub trait JoltParameterSet {
     /// The architecture size.
     const XLEN: usize;
