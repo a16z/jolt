@@ -173,7 +173,7 @@ pub struct JoltCpuProver<
 > {
     pub preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
     pub program_io: JoltDevice,
-    pub lazy_trace: LazyTraceIterator,
+    pub lazy_trace: Option<LazyTraceIterator>,
     pub trace: Arc<Vec<Cycle>>,
     pub advice: JoltAdvice<F, PCS>,
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
@@ -449,7 +449,7 @@ impl<
         Self {
             preprocessing,
             program_io,
-            lazy_trace,
+            lazy_trace: Some(lazy_trace),
             trace: trace.into(),
             advice: JoltAdvice {
                 untrusted_advice_polynomial: None,
@@ -503,6 +503,8 @@ impl<
         );
 
         let (commitments, mut opening_proof_hints) = self.generate_and_commit_witness_polynomials();
+        // Free emulator memory — lazy_trace only needed for streaming commit
+        self.lazy_trace.take();
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
 
@@ -679,9 +681,10 @@ impl<
                 polys.len()
             );
 
-            // Materialize the trace for non-streaming commit
             let trace: Vec<Cycle> = self
                 .lazy_trace
+                .as_ref()
+                .expect("lazy_trace consumed")
                 .clone()
                 .pad_using(T, |_| Cycle::NoOp)
                 .collect();
@@ -719,6 +722,8 @@ impl<
             let mut row_commitments: Vec<Vec<PCS::ChunkState>> = vec![vec![]; num_rows];
 
             self.lazy_trace
+                .as_ref()
+                .expect("lazy_trace consumed")
                 .clone()
                 .pad_using(T, |_| Cycle::NoOp)
                 .iter_chunks(row_len)
