@@ -33,7 +33,7 @@ The guest has a real heap — `Vec`, `String`, alloc types work freely inside th
 
 ```bash
 jolt --version  # check if installed
-cargo install --git https://github.com/a16z/jolt --force jolt-sdk  # if not
+cargo install --git https://github.com/a16z/jolt --force jolt  # if not
 ```
 
 #### Step 4 — Scaffold
@@ -65,10 +65,13 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", features = 
 ```
 Include `"thread"` for rayon/parallel, `"stdout"` for `println!`. No `cfg_attr` needed in the lib file.
 
-**Macro parameters** — use `#[jolt::provable]` bare; only add:
-- `heap_size = N` — large heap allocations
-- `max_trace_length = N` — computation clearly exceeds ~16M cycles
-- `stack_size = N` — deep recursion
+**Macro parameters** — use `#[jolt::provable]` bare; only add parameters when you have a reason:
+
+| Parameter | Default | When to change | How to pick a value |
+|-----------|---------|----------------|---------------------|
+| `stack_size` | 4096 | `stack overflow` | Start at 8388608 (8 MB, matches Linux default); reduce in the optimization pass. |
+| `max_trace_length` | 2^22 | `max_trace_length exceeded` | Run `analyze_<fn>` to get actual cycle count, round up to next power of 2. **Proving time and memory scale with this** — tighten in Step 9. |
+| `heap_size` | 32 MB | `heap allocation failed` | Estimate peak live allocations; halve until it fails, then double back. |
 
 **Prover-only inputs** — two options depending on whether you need cryptographic privacy:
 
@@ -181,7 +184,7 @@ Preprocessing runs once on first invocation and is not included in "Prover runti
 |-------|-----|
 | `max_trace_length exceeded` | Add `max_trace_length = N` (tight power of 2 — proving time scales with this) |
 | `heap allocation failed` | Add `heap_size = N` |
-| `stack overflow` | Add `stack_size = N`; the default 4096 bytes is only enough for simple loops — size appropriately for the code's complexity |
+| `stack overflow` | Increase `stack_size`; start at 8388608 (8 MB) if not already set |
 | `Illegal instruction` | Rewrite floats as fixed-point |
 | `could not find crate` | Find no_std alternative or switch to std mode |
 | `does not implement Serialize` | Add `#[derive(serde::Serialize, serde::Deserialize)]` |
@@ -189,3 +192,42 @@ Preprocessing runs once on first invocation and is not included in "Prover runti
 #### Step 8 — Summarize
 
 Tell the user: what function was made provable, what type adaptations were applied and why, std or no_std mode, and how to run it.
+
+Once the proof runs end-to-end, **always offer a performance optimization pass**:
+
+> "The proof works! Want me to optimize it? I can tighten `max_trace_length` to reduce memory and proving time, profile which sections dominate cycle count, and offload expensive witness computation."
+
+#### Step 9 — Optimize (offer after Step 8 succeeds)
+
+Work through these in order:
+
+**1. Tighten `max_trace_length`** — run `guest::analyze_<fn>(<inputs>)`, find the actual cycle count, set `max_trace_length` to the smallest power of 2 above it. Proving time and peak memory are both proportional — a 2× reduction is a 2× speedup.
+
+**2. Find the bottleneck** — add `start_cycle_tracking` / `end_cycle_tracking` (see Step 5) around major sections and run `analyze_<fn>` again. Focus on whichever section consumes >50% of cycles.
+
+**3. Offload expensive witness computation** — if a section is expensive to compute but cheap to verify (sorting, hashing, witness generation), convert it to `#[jolt::advice]`. The advice function runs on the host outside the proof; the guest only verifies the result:
+```rust
+#[jolt::advice]
+fn sort_array(input: &[u64]) -> jolt::UntrustedAdvice<Vec<u64>> {
+    let mut v = input.to_vec();
+    v.sort_unstable();
+    v
+}
+
+#[jolt::provable]
+fn my_fn(input: &[u64]) -> bool {
+    let adv = sort_array(input);
+    let sorted = &*adv;
+    // O(n) verification: sorted order + length
+    jolt::check_advice!(sorted.windows(2).all(|w| w[0] <= w[1]));
+    jolt::check_advice!(sorted.len() == input.len());
+    true
+}
+```
+
+**4. Use crypto inlines** — for SHA-2, Keccak, secp256k1, replace standard crate calls with `jolt-inlines-*` (constraint-native, fraction of the cycle cost):
+```toml
+jolt-inlines-sha2 = { git = "https://github.com/a16z/jolt" }
+```
+
+**5. Trim `stack_size` and `heap_size`** — over-allocation doesn't cost cycles but does increase peak prover memory. Lower to actual usage once `max_trace_length` is tight.
