@@ -35,7 +35,7 @@ use crate::transcripts::Blake2bTranscript;
 #[cfg(feature = "transcript-keccak")]
 use crate::transcripts::KeccakTranscript;
 #[cfg(feature = "transcript-poseidon")]
-use crate::transcripts::PoseidonTranscriptFr;
+use crate::transcripts::PoseidonTranscript;
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
@@ -207,11 +207,11 @@ pub fn fiat_shamir_preamble(
 }
 
 #[cfg(all(feature = "prover", feature = "transcript-poseidon"))]
-pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscriptFr>;
+pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
 #[cfg(feature = "transcript-poseidon")]
-pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscriptFr>;
+pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
 #[cfg(feature = "transcript-poseidon")]
-pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscriptFr>;
+pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
 
 #[cfg(all(feature = "prover", feature = "transcript-keccak"))]
 pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, KeccakTranscript>;

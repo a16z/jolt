@@ -43,7 +43,7 @@ use jolt_core::zkvm::transpilable_verifier::TranspilableVerifier;
 use jolt_core::zkvm::verifier::JoltVerifierPreprocessing;
 use jolt_core::zkvm::RV64IMACProof;
 use transpiler::{
-    gnark_codegen, symbolize_proof, AstCommitmentScheme, AstOpeningAccumulator,
+    gnark_codegen, symbolize_proof, AstCommitmentScheme, AstCurve, AstOpeningAccumulator,
     SelectedAstTranscript,
 };
 use zklean_extractor::mle_ast::{
@@ -186,6 +186,7 @@ fn main() {
     println!("\n=== Creating TranspilableVerifier ===");
     let verifier = TranspilableVerifier::<
         MleAst,
+        AstCurve,
         AstCommitmentScheme,
         SelectedAstTranscript,
         AstOpeningAccumulator,
@@ -253,8 +254,7 @@ fn main() {
         let fr_count = bundle.count_inputs_for_field(TargetField::Fr);
         let fq_count = bundle.count_inputs_for_field(TargetField::Fq);
         eprintln!(
-            "⚠️  Bundle contains {} non-native field variables (and {} native Fr variables).",
-            fq_count, fr_count
+            "⚠️  Bundle contains {fq_count} non-native field variables (and {fr_count} native Fr variables).",
         );
         eprintln!("    Non-native field codegen is not yet implemented. Codegen will panic.");
     }
@@ -338,8 +338,7 @@ fn main() {
 
             println!("\n=== SUCCESS ===");
             println!(
-                "Stages 1-7 transpiled to Gnark. Run 'go test' in {:?} to verify.",
-                output_dir
+                "Stages 1-7 transpiled to Gnark. Run 'go test' in {output_dir:?} to verify.",
             );
         }
         TranspilationTarget::AstBundle => {

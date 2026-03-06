@@ -31,9 +31,11 @@
 //! ```
 
 pub mod ast_commitment_scheme;
+pub mod ast_curve;
 pub mod opening_accumulator;
 pub mod poseidon;
 
 pub use ast_commitment_scheme::AstCommitmentScheme;
+pub use ast_curve::AstCurve;
 pub use opening_accumulator::AstOpeningAccumulator;
 pub use poseidon::PoseidonAstTranscript;
