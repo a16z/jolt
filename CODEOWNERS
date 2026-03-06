@@ -28,6 +28,7 @@ common/ @moodlezoup @sagar-a16z
 
 # Documentation
 book/ @moodlezoup
+README.md @moodlezoup @markosg04 @0xAndoroid
 
 # Examples and integration tests
 examples/ @sagar-a16z @0xAndoroid @moodlezoup
@@ -41,3 +42,15 @@ jolt-platform/ @sagar-a16z @0xAndoroid
 
 # Scripts and tooling
 scripts/ @0xAndoroid
+
+# AI
+.claude/ @moodlezoup @markosg04 @0xAndoroid
+agent-skills/ @moodlezoup @markosg04 @0xAndoroid
+CLAUDE.md @moodlezoup @markosg04 @0xAndoroid
+
+# Binary
+src/ @sagar-a16z
+
+# Cargo
+Cargo.toml @moodlezoup @markosg04 @0xAndoroid
+Cargo.lock @moodlezoup @markosg04 @0xAndoroid
