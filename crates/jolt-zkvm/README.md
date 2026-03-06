@@ -34,7 +34,7 @@ jolt-instructions ─┘
 
 ## Feature Flags
 
-None yet. Feature flags will be migrated from `jolt-core` as the refactor progresses.
+None yet.
 
 ## License
 

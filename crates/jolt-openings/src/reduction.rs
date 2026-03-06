@@ -22,10 +22,6 @@ use crate::claims::{ProverClaim, VerifierClaim};
 use crate::error::OpeningsError;
 use crate::traits::{AdditivelyHomomorphic, CommitmentScheme};
 
-// ---------------------------------------------------------------------------
-// OpeningReduction trait
-// ---------------------------------------------------------------------------
-
 #[allow(clippy::type_complexity)]
 /// Transforms a batch of opening claims into fewer claims.
 ///
@@ -50,6 +46,11 @@ pub trait OpeningReduction<PCS: CommitmentScheme> {
     /// Reduces prover-side claims.
     ///
     /// Returns the reduced claims and any proof artifact.
+    ///
+    /// **Precondition:** the transcript must already contain all claim data
+    /// (commitments, points, evaluations) that needs to be bound by
+    /// Fiat-Shamir. The reduction draws challenges from the transcript
+    /// without absorbing claims itself.
     fn reduce_prover<T: Transcript>(
         claims: Vec<ProverClaim<PCS::Field>>,
         transcript: &mut T,
@@ -60,6 +61,9 @@ pub trait OpeningReduction<PCS: CommitmentScheme> {
     ///
     /// Returns the reduced claims or an error if the reduction detects
     /// inconsistency.
+    ///
+    /// **Precondition:** same transcript state requirement as
+    /// [`reduce_prover`](Self::reduce_prover).
     fn reduce_verifier<T: Transcript>(
         claims: Vec<VerifierClaim<PCS::Field, PCS::Output>>,
         proof: &Self::ReductionProof,
@@ -67,10 +71,6 @@ pub trait OpeningReduction<PCS: CommitmentScheme> {
         challenge_fn: impl Fn(T::Challenge) -> PCS::Field,
     ) -> Result<Vec<VerifierClaim<PCS::Field, PCS::Output>>, OpeningsError>;
 }
-
-// ---------------------------------------------------------------------------
-// RlcReduction
-// ---------------------------------------------------------------------------
 
 /// Random linear combination (RLC) reduction for additively homomorphic PCS.
 ///
@@ -80,8 +80,10 @@ pub trait OpeningReduction<PCS: CommitmentScheme> {
 ///   C_{\text{batch}} = \sum_{i=0}^{k-1} \rho^i \cdot C_i, \quad
 ///   v_{\text{batch}} = \sum_{i=0}^{k-1} \rho^i \cdot v_i$$
 ///
-/// where $\rho$ is a Fiat-Shamir challenge drawn per group. Produces one
-/// reduced claim per distinct evaluation point.
+/// where $\rho$ is a Fiat-Shamir challenge drawn independently per group.
+/// Using separate challenges (rather than a single global $\rho$) allows
+/// groups to be reduced in parallel. Produces one reduced claim per
+/// distinct evaluation point.
 ///
 /// The reduction is deterministic given the transcript state, so
 /// [`ReductionProof`](OpeningReduction::ReductionProof) is `()`.
@@ -103,6 +105,12 @@ impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
         let mut reduced = Vec::with_capacity(groups.len());
 
         for (point, group_claims) in groups {
+            debug_assert!(
+                group_claims.iter().all(|c| c.evaluations.len().is_power_of_two()
+                    && c.evaluations.len() == 1 << c.point.len()),
+                "evaluation table size must equal 2^num_vars"
+            );
+
             let rho = challenge_fn(transcript.challenge());
 
             let eval_slices: Vec<&[PCS::Field]> = group_claims
@@ -158,10 +166,6 @@ impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
         Ok(reduced)
     }
 }
-
-// ---------------------------------------------------------------------------
-// RLC utility functions
-// ---------------------------------------------------------------------------
 
 /// Computes the RLC of polynomial evaluation tables.
 ///
@@ -219,19 +223,15 @@ pub fn rlc_combine_scalars<F: Field>(evals: &[F], rho: F) -> F {
     result
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Computes $[1, \rho, \rho^2, \ldots, \rho^{n-1}]$.
+///
+/// Used by the verifier path to call `PCS::combine` with explicit scalars.
+/// The prover path computes the same linear combination implicitly via
+/// [`rlc_combine`]'s Horner evaluation.
 fn rho_powers<F: Field>(rho: F, n: usize) -> Vec<F> {
-    let mut powers = Vec::with_capacity(n);
-    let mut current = F::from_u64(1);
-    for _ in 0..n {
-        powers.push(current);
-        current *= rho;
-    }
-    powers
+    std::iter::successors(Some(F::from_u64(1)), |prev| Some(*prev * rho))
+        .take(n)
+        .collect()
 }
 
 type PointGroup<F> = Vec<(Vec<F>, Vec<ProverClaim<F>>)>;
@@ -258,7 +258,7 @@ fn group_prover_claims_by_point<F: Field>(claims: Vec<ProverClaim<F>>) -> PointG
 /// Groups verifier claims by evaluation point using exact equality.
 ///
 /// Returns `(point, claims)` pairs preserving insertion order.
-fn group_verifier_claims_by_point<F: Field, C: PartialEq>(
+fn group_verifier_claims_by_point<F: Field, C>(
     claims: Vec<VerifierClaim<F, C>>,
 ) -> VerifierPointGroup<F, C> {
     let mut groups: VerifierPointGroup<F, C> = Vec::new();
@@ -274,10 +274,6 @@ fn group_verifier_claims_by_point<F: Field, C: PartialEq>(
 
     groups
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

@@ -27,6 +27,9 @@ pub mod arkworks;
 #[cfg(feature = "bn254")]
 pub use arkworks::bn254::Fr;
 
+#[cfg(feature = "dory-pcs")]
+mod dory_interop;
+
 #[cfg(all(feature = "bn254", not(feature = "challenge-254-bit")))]
 pub type DefaultChallenge<F> = challenge::MontU128Challenge<F>;
 #[cfg(all(feature = "bn254", feature = "challenge-254-bit"))]

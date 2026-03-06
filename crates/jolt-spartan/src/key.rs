@@ -36,16 +36,12 @@ pub struct SpartanKey<F: Field> {
     c_mle: Polynomial<F>,
 }
 
-/// Three sparse entry lists (one per matrix A, B, C).
-type SparseEntryTriple<F> = (Vec<(usize, F)>, Vec<(usize, F)>, Vec<(usize, F)>);
-
 impl<F: Field> SpartanKey<F> {
     /// Builds a [`SpartanKey`] from an R1CS instance.
     ///
-    /// Converts each sparse matrix into a dense evaluation table of size
-    /// $m' \times n'$ where $m' = 2^{\lceil \log_2 m \rceil}$ and
-    /// $n' = 2^{\lceil \log_2 n \rceil}$, then wraps it as a
-    /// [`Polynomial`].
+    /// Uses the R1CS sparse entry API to construct dense MLE tables in a
+    /// single pass over each matrix's nonzero entries, avoiding the $O(n)$
+    /// basis-vector probing of the default implementation.
     pub fn from_r1cs(r1cs: &impl R1CS<F>) -> Self {
         let m = r1cs.num_constraints();
         let n = r1cs.num_variables();
@@ -53,11 +49,9 @@ impl<F: Field> SpartanKey<F> {
         let n_padded = n.next_power_of_two();
         let total = m_padded * n_padded;
 
-        let (az_entries, bz_entries, cz_entries) = Self::extract_sparse_entries(r1cs, n_padded);
-
-        let a_mle = sparse_to_dense_mle(&az_entries, total);
-        let b_mle = sparse_to_dense_mle(&bz_entries, total);
-        let c_mle = sparse_to_dense_mle(&cz_entries, total);
+        let a_mle = sparse_entries_to_mle(&r1cs.sparse_entries_a(), n_padded, total);
+        let b_mle = sparse_entries_to_mle(&r1cs.sparse_entries_b(), n_padded, total);
+        let c_mle = sparse_entries_to_mle(&r1cs.sparse_entries_c(), n_padded, total);
 
         Self {
             num_constraints: m,
@@ -68,37 +62,6 @@ impl<F: Field> SpartanKey<F> {
             b_mle,
             c_mle,
         }
-    }
-
-    /// Extracts sparse entries from the R1CS by computing matrix-vector products
-    /// with standard basis vectors.
-    fn extract_sparse_entries(r1cs: &impl R1CS<F>, n_padded: usize) -> SparseEntryTriple<F> {
-        let m = r1cs.num_constraints();
-        let n = r1cs.num_variables();
-        let mut a_entries = Vec::new();
-        let mut b_entries = Vec::new();
-        let mut c_entries = Vec::new();
-
-        for j in 0..n {
-            let mut basis = vec![F::zero(); n];
-            basis[j] = F::one();
-            let (a_col, b_col, c_col) = r1cs.multiply_witness(&basis);
-
-            for i in 0..m {
-                let flat_idx = i * n_padded + j;
-                if !a_col[i].is_zero() {
-                    a_entries.push((flat_idx, a_col[i]));
-                }
-                if !b_col[i].is_zero() {
-                    b_entries.push((flat_idx, b_col[i]));
-                }
-                if !c_col[i].is_zero() {
-                    c_entries.push((flat_idx, c_col[i]));
-                }
-            }
-        }
-
-        (a_entries, b_entries, c_entries)
     }
 
     pub fn a_mle(&self) -> &Polynomial<F> {
@@ -125,13 +88,36 @@ impl<F: Field> SpartanKey<F> {
     pub fn num_witness_vars(&self) -> usize {
         self.num_variables_padded.trailing_zeros() as usize
     }
+
+    /// Evaluates all three matrix MLEs at a combined point $(r_x, r_y)$.
+    ///
+    /// Each matrix MLE has $\log_2(m') + \log_2(n')$ variables, where the first
+    /// $\log_2(m')$ correspond to the constraint index and the last $\log_2(n')$
+    /// correspond to the variable index.
+    pub fn evaluate_matrix_mles(&self, r_x: &[F], r_y: &[F]) -> (F, F, F) {
+        let mut point = Vec::with_capacity(r_x.len() + r_y.len());
+        point.extend_from_slice(r_x);
+        point.extend_from_slice(r_y);
+        (
+            self.a_mle.evaluate(&point),
+            self.b_mle.evaluate(&point),
+            self.c_mle.evaluate(&point),
+        )
+    }
 }
 
-/// Builds a dense evaluation table from sparse `(flat_index, value)` entries.
-fn sparse_to_dense_mle<F: Field>(entries: &[(usize, F)], total: usize) -> Polynomial<F> {
+/// Builds a dense MLE from sparse `(row, col, value)` entries.
+///
+/// Computes the flat index `row * n_padded + col` for each entry and scatters
+/// into a dense evaluation table of size `total = m_padded * n_padded`.
+fn sparse_entries_to_mle<F: Field>(
+    entries: &[(usize, usize, F)],
+    n_padded: usize,
+    total: usize,
+) -> Polynomial<F> {
     let mut evals = vec![F::zero(); total];
-    for &(idx, val) in entries {
-        evals[idx] = val;
+    for &(row, col, val) in entries {
+        evals[row * n_padded + col] = val;
     }
     Polynomial::new(evals)
 }

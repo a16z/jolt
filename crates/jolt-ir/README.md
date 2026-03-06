@@ -48,7 +48,9 @@ Expressions are stored as flat arrays of `ExprNode` variants, referenced by `Exp
 The `ExprVisitor` trait provides bottom-up traversal. Each backend implements 6 methods (one per node type):
 
 - **Evaluate** (`backends/evaluate.rs`): computes `F` values from concrete openings and challenges
-- **R1CS** (`backends/r1cs.rs`): emits A*B=C constraints for BlindFold ZK mode
+- **R1CS** (`backends/r1cs.rs`): emits A·B=C constraints for BlindFold ZK mode
+- **Circuit** (`backends/circuit.rs`): `CircuitEmitter` trait for transpilation to external circuit frameworks (gnark, bellman, plonky2)
+- **Lean4** (`backends/lean.rs`): emits Lean4 syntax with CSE-aware `let` bindings
 
 ### Sum-of-products normalization
 
@@ -72,6 +74,6 @@ Unlike the `MleAst` global arena (`static OnceLock<RwLock<Vec<Node>>>`), each `E
 
 ## Crate boundaries
 
-`jolt-ir` is consumed only by `jolt-zkvm`. The sumcheck and spartan crates remain generic protocol implementations with no `jolt-ir` dependency. Claim formulas are defined in `jolt-zkvm` and passed to protocol crates as evaluated values or R1CS constraints.
+`jolt-ir` is consumed by `jolt-spartan` (via `ir_r1cs` bridge) and `jolt-zkvm`. The sumcheck crate remains a generic protocol implementation with no `jolt-ir` dependency.
 
 The IR does **not** own verifier orchestration (transcript sequencing, commitment schemes, opening proofs). That stays as Rust code in `jolt-zkvm`.

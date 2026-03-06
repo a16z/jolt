@@ -30,3 +30,6 @@ pub use pedersen::{Pedersen, PedersenSetup};
 pub mod arkworks;
 #[cfg(feature = "bn254")]
 pub use arkworks::bn254::{Bn254, Bn254G1, Bn254G2, Bn254GT};
+
+#[cfg(feature = "dory-pcs")]
+pub mod dory_interop;

@@ -1,8 +1,7 @@
 //! Instance-local Dory parameters.
 //!
-//! Unlike the global `DoryGlobals` in jolt-core, `DoryParams` stores all
-//! Dory matrix shape parameters on the struct itself, enabling multiple
-//! independent Dory instances within a single process.
+//! `DoryParams` stores all Dory matrix shape parameters on the struct itself,
+//! enabling multiple independent Dory instances within a single process.
 
 use serde::{Deserialize, Serialize};
 

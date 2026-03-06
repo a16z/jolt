@@ -2,24 +2,25 @@
 
 **Status:** Not started
 **Phase:** 4a (during jolt-zkvm implementation)
-**Dependencies:** Tasks 01 + 02 (core IR + evaluate backend) at minimum. Task 03 (R1CS backend) for BlindFold.
+**Dependencies:** Tasks 01–05 (core IR + all backends)
 **Blocks:** Completion of the refactoring
 
 ## Objective
 
-Migrate `jolt-zkvm` to consume `jolt-ir` claim definitions, replacing the dual-implementation pattern.
+Migrate `jolt-zkvm` and `jolt-spartan` to consume `jolt-ir` claim definitions, replacing the dual-implementation pattern.
 
-## Architecture decision
+## Architecture
 
-Only `jolt-zkvm` depends on `jolt-ir`. The sumcheck and spartan crates remain generic protocol implementations:
-
+- **jolt-spartan** — depends on `jolt-ir`. Uses `jolt-ir`'s R1CS types as its native constraint representation. Claim formulas for outer/shift/product sumchecks are expressed as `Expr` and emitted via `SumOfProducts::emit_r1cs()`.
 - **jolt-sumcheck** — generic sumcheck protocol. Does not touch claim formulas. No `jolt-ir` dependency.
-- **jolt-spartan** — generic Spartan IOP. Claim formulas for outer/shift/product sumchecks are defined in `jolt-zkvm`, not inside spartan. No `jolt-ir` dependency.
-- **jolt-zkvm** — the orchestrator. Defines all claim formulas via `ClaimDefinition`, passes concrete evaluation results and R1CS constraints to sumcheck/spartan.
-
-This keeps jolt-sumcheck and jolt-spartan reusable and the IR dependency contained to the one crate that actually defines claim formulas.
+- **jolt-zkvm** — the orchestrator. Defines all claim formulas via `ClaimDefinition`, passes concrete evaluation results to sumcheck and R1CS constraints to spartan.
 
 ## Scope
+
+### jolt-spartan
+- Add `jolt-ir` dependency
+- Replace hand-written R1CS constraint types with `jolt-ir::R1csConstraint<F>` / `LinearCombination<F>`
+- Spartan outer/shift claim formulas expressed as `Expr` → `SumOfProducts` → `emit_r1cs()`
 
 ### jolt-zkvm
 - Add `jolt-ir` dependency
@@ -29,13 +30,9 @@ This keeps jolt-sumcheck and jolt-spartan reusable and the IR dependency contain
   - Default `input_claim()` calls `evaluate()` on the definition
 - Migrate all ~20 implementations (booleanity, RAM r/w, registers, instruction RA, spartan outer/shift, claim reductions, etc.)
 - BlindFold: `ZkStageData` stores `ClaimDefinition` instead of `OutputClaimConstraint`
-- Spartan outer/shift claim formulas move from jolt-spartan into jolt-zkvm, expressed as `ClaimDefinition`s
 
 ### zklean-extractor (future)
 - Replace `ClaimExpr` consumption with `jolt-ir::Expr::to_lean4()`
-
-### gnark-transpiler (future, PR #1322)
-- Replace `MemoizedCodeGen` for claim formulas with `jolt-ir::Expr::to_circuit()`
 
 ## Verification
 
@@ -49,3 +46,4 @@ This keeps jolt-sumcheck and jolt-spartan reusable and the IR dependency contain
 - `jolt-core/src/subprotocols/booleanity.rs:87-161` — migration example
 - `jolt-core/src/zkvm/ram/read_write_checking.rs:67-228` — migration example
 - `jolt-core/src/subprotocols/blindfold/mod.rs:53-68` — `ZkStageData` with `OutputClaimConstraint`
+- `jolt-core/src/subprotocols/blindfold/output_constraint.rs` — current `ValueSource`/`ProductTerm`/`OutputClaimConstraint` (replaced by `jolt-ir` types)

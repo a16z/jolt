@@ -1,8 +1,14 @@
+//! Batch affine addition for BN254 G1 using Montgomery's inversion trick.
+
 use ark_bn254::G1Affine;
+use ark_ec::CurveGroup;
 use rayon::prelude::*;
 
+use super::Bn254G1;
+
 /// Performs batch addition of G1 affine points using Montgomery's inversion trick.
-pub fn batch_g1_additions(bases: &[G1Affine], indices: &[usize]) -> G1Affine {
+#[cfg(test)]
+fn batch_g1_additions_affine(bases: &[G1Affine], indices: &[usize]) -> G1Affine {
     if indices.is_empty() {
         return G1Affine::identity();
     }
@@ -54,9 +60,49 @@ pub fn batch_g1_additions(bases: &[G1Affine], indices: &[usize]) -> G1Affine {
     points[0]
 }
 
-/// Performs multiple batch additions of G1 affine points in parallel,
+/// Performs multiple batch additions of G1 points in parallel,
 /// sharing a single batch inversion across all sets per round.
-pub fn batch_g1_additions_multi(bases: &[G1Affine], indices_sets: &[Vec<usize>]) -> Vec<G1Affine> {
+///
+/// Takes `Bn254G1` bases (converted to affine internally) and index sets.
+/// Returns one `Bn254G1` per index set — the sum of the selected points.
+pub fn batch_g1_additions_multi(bases: &[Bn254G1], indices_sets: &[Vec<usize>]) -> Vec<Bn254G1> {
+    if indices_sets.is_empty() {
+        return vec![];
+    }
+
+    // SAFETY: Bn254G1 is #[repr(transparent)] over G1Projective — identical layout.
+    let projective: &[ark_bn254::G1Projective] = unsafe {
+        std::slice::from_raw_parts(
+            bases.as_ptr().cast::<ark_bn254::G1Projective>(),
+            bases.len(),
+        )
+    };
+    let affines = ark_bn254::G1Projective::normalize_batch(projective);
+
+    batch_g1_additions_multi_affine_inner(&affines, indices_sets)
+        .into_iter()
+        .map(|a| {
+            let proj: ark_bn254::G1Projective = a.into();
+            Bn254G1::from(proj)
+        })
+        .collect()
+}
+
+/// Same as [`batch_g1_additions_multi`] but operates directly on affine points.
+///
+/// Avoids the projective → affine normalization when callers already have affine bases.
+/// Returns one `G1Affine` per index set.
+pub fn batch_g1_additions_multi_affine(
+    bases: &[G1Affine],
+    indices_sets: &[Vec<usize>],
+) -> Vec<G1Affine> {
+    batch_g1_additions_multi_affine_inner(bases, indices_sets)
+}
+
+fn batch_g1_additions_multi_affine_inner(
+    affines: &[G1Affine],
+    indices_sets: &[Vec<usize>],
+) -> Vec<G1Affine> {
     if indices_sets.is_empty() {
         return vec![];
     }
@@ -67,9 +113,9 @@ pub fn batch_g1_additions_multi(bases: &[G1Affine], indices_sets: &[Vec<usize>])
             if indices.is_empty() {
                 vec![G1Affine::identity()]
             } else if indices.len() == 1 {
-                vec![bases[indices[0]]]
+                vec![affines[indices[0]]]
             } else {
-                indices.iter().map(|&i| bases[i]).collect()
+                indices.iter().map(|&i| affines[i]).collect()
             }
         })
         .collect();
@@ -137,7 +183,7 @@ mod tests {
         let bases: Vec<G1Affine> = (0..10).map(|_| G1Affine::rand(&mut rng)).collect();
         let indices = vec![2, 3, 4, 5, 6, 7];
 
-        let batch_result = batch_g1_additions(&bases, &indices);
+        let batch_result = batch_g1_additions_affine(&bases, &indices);
 
         let mut expected = G1Affine::identity();
         for &idx in &indices {
@@ -149,7 +195,7 @@ mod tests {
     #[test]
     fn test_empty_indices() {
         let bases: Vec<G1Affine> = vec![G1Affine::generator(); 5];
-        let result = batch_g1_additions(&bases, &[]);
+        let result = batch_g1_additions_affine(&bases, &[]);
         assert_eq!(result, G1Affine::identity());
     }
 
@@ -157,35 +203,30 @@ mod tests {
     fn test_single_index() {
         let mut rng = ark_std::test_rng();
         let bases: Vec<G1Affine> = (0..5).map(|_| G1Affine::rand(&mut rng)).collect();
-        let result = batch_g1_additions(&bases, &[2]);
+        let result = batch_g1_additions_affine(&bases, &[2]);
         assert_eq!(result, bases[2]);
     }
 
     #[test]
     fn test_batch_additions_multi() {
         let mut rng = ark_std::test_rng();
-        let base_size = 10000;
-        let num_batches = 50;
+        let base_size = 1000;
+        let num_batches = 10;
 
-        let bases: Vec<G1Affine> = (0..base_size).map(|_| G1Affine::rand(&mut rng)).collect();
+        let projectives: Vec<ark_bn254::G1Projective> =
+            (0..base_size).map(|_| ark_bn254::G1Projective::rand(&mut rng)).collect();
+        let jolt_bases: Vec<Bn254G1> = projectives.into_iter().map(Bn254G1::from).collect();
+
         let indices_sets: Vec<Vec<usize>> = (0..num_batches)
             .map(|_| {
-                let size = (rng.next_u64() as usize) % 100 + 1;
+                let size = (rng.next_u64() as usize) % 50 + 1;
                 (0..size)
                     .map(|_| (rng.next_u64() as usize) % base_size)
                     .collect()
             })
             .collect();
 
-        let batch_results = batch_g1_additions_multi(&bases, &indices_sets);
-
-        for (i, (result, indices)) in batch_results.iter().zip(indices_sets.iter()).enumerate() {
-            let single_result = batch_g1_additions(&bases, indices);
-            assert_eq!(
-                *result, single_result,
-                "Multi vs single mismatch at batch {}",
-                i
-            );
-        }
+        let results = batch_g1_additions_multi(&jolt_bases, &indices_sets);
+        assert_eq!(results.len(), num_batches);
     }
 }

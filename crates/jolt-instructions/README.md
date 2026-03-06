@@ -42,7 +42,7 @@ This crate defines the instruction abstraction layer for the Jolt lookup argumen
 
 ## Dependency Position
 
-`jolt-instructions` depends only on `jolt-field` and `serde`. It is used by `jolt-zkvm` and `jolt-core`.
+`jolt-instructions` depends only on `jolt-field` and `serde`. It is used by `jolt-zkvm`.
 
 ## Feature Flags
 

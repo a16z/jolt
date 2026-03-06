@@ -1,0 +1,27 @@
+[workspace]
+
+[package]
+name = "jolt-spartan-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-spartan = { path = ".." }
+jolt-field = { path = "../../jolt-field" }
+jolt-openings = { path = "../../jolt-openings", features = ["test-utils"] }
+jolt-transcript = { path = "../../jolt-transcript" }
+
+[[bin]]
+name = "proof_tamper"
+path = "fuzz_targets/proof_tamper.rs"
+doc = false
+
+[[bin]]
+name = "witness_reject"
+path = "fuzz_targets/witness_reject.rs"
+doc = false

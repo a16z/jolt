@@ -24,13 +24,16 @@ mod backends;
 mod builder;
 mod claim;
 mod expr;
+mod kernel;
 mod normalize;
 mod visitor;
 
 pub use builder::{ExprBuilder, ExprHandle};
 pub use claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
 pub use expr::{Expr, ExprArena, ExprId, ExprNode, Var};
+pub use kernel::{KernelDescriptor, KernelShape, TensorSplit};
 pub use normalize::{SopTerm, SopValue, SumOfProducts};
 pub use visitor::ExprVisitor;
 
+pub use backends::circuit::CircuitEmitter;
 pub use backends::r1cs::{LcTerm, LinearCombination, R1csConstraint, R1csEmission, R1csVar};

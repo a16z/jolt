@@ -23,6 +23,50 @@ pub trait R1CS<F: Field> {
     ///
     /// Returns three vectors, each of length [`num_constraints`](R1CS::num_constraints).
     fn multiply_witness(&self, witness: &[F]) -> (Vec<F>, Vec<F>, Vec<F>);
+
+    /// Returns sparse entries of the $A$ matrix as `(row, col, value)` triples.
+    ///
+    /// Default implementation probes via basis-vector multiplication ($O(n \cdot m)$).
+    /// Implementations with direct access to the sparse representation should
+    /// override this for $O(\text{nnz})$ performance.
+    fn sparse_entries_a(&self) -> Vec<(usize, usize, F)> {
+        self.extract_column_entries(0)
+    }
+
+    /// Returns sparse entries of the $B$ matrix as `(row, col, value)` triples.
+    fn sparse_entries_b(&self) -> Vec<(usize, usize, F)> {
+        self.extract_column_entries(1)
+    }
+
+    /// Returns sparse entries of the $C$ matrix as `(row, col, value)` triples.
+    fn sparse_entries_c(&self) -> Vec<(usize, usize, F)> {
+        self.extract_column_entries(2)
+    }
+
+    /// Default sparse entry extraction via basis-vector probing.
+    /// `matrix_index`: 0 = A, 1 = B, 2 = C.
+    #[doc(hidden)]
+    fn extract_column_entries(&self, matrix_index: usize) -> Vec<(usize, usize, F)> {
+        let m = self.num_constraints();
+        let n = self.num_variables();
+        let mut entries = Vec::new();
+        for j in 0..n {
+            let mut basis = vec![F::zero(); n];
+            basis[j] = F::one();
+            let (az, bz, cz) = self.multiply_witness(&basis);
+            let col = match matrix_index {
+                0 => az,
+                1 => bz,
+                _ => cz,
+            };
+            for (i, &val) in col.iter().enumerate().take(m) {
+                if !val.is_zero() {
+                    entries.push((i, j, val));
+                }
+            }
+        }
+        entries
+    }
 }
 
 /// A sparse R1CS representation for testing and small circuits.
@@ -93,6 +137,18 @@ impl<F: Field> R1CS<F> for SimpleR1CS<F> {
         let bz = sparse_matvec(&self.b_entries, witness, self.num_constraints);
         let cz = sparse_matvec(&self.c_entries, witness, self.num_constraints);
         (az, bz, cz)
+    }
+
+    fn sparse_entries_a(&self) -> Vec<(usize, usize, F)> {
+        self.a_entries.clone()
+    }
+
+    fn sparse_entries_b(&self) -> Vec<(usize, usize, F)> {
+        self.b_entries.clone()
+    }
+
+    fn sparse_entries_c(&self) -> Vec<(usize, usize, F)> {
+        self.c_entries.clone()
     }
 }
 

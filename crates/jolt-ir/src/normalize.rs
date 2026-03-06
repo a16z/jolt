@@ -63,9 +63,6 @@ impl SopTerm {
 ///
 /// This is the canonical representation for R1CS emission and BlindFold
 /// constraint construction. Produced by `Expr::to_sum_of_products()`.
-///
-/// Equivalent to the existing `OutputClaimConstraint` / `ProductTerm` types,
-/// but derived mechanically from the expression tree rather than hand-written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SumOfProducts {
     pub terms: Vec<SopTerm>,
@@ -136,7 +133,7 @@ impl Expr {
     ///
     /// Mechanically distributes multiplication over addition and folds
     /// constant factors into term coefficients. The result maps directly to
-    /// R1CS constraints and BlindFold `ProductTerm`s.
+    /// R1CS constraints.
     ///
     /// # Example
     ///

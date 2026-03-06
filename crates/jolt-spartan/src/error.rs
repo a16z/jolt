@@ -21,8 +21,15 @@ pub enum SpartanError {
     #[error("opening proof failed: {0}")]
     Opening(#[from] jolt_openings::OpeningsError),
 
-    /// The final sumcheck evaluation does not match the expected value
+    /// The outer sumcheck final evaluation does not match the expected value
     /// derived from the matrix MLEs and equality polynomial.
-    #[error("evaluation mismatch: the sumcheck final value does not match the MLE evaluations")]
-    EvaluationMismatch,
+    #[error(
+        "outer evaluation mismatch: the sumcheck final value does not match the MLE evaluations"
+    )]
+    OuterEvaluationMismatch,
+
+    /// The inner sumcheck final evaluation does not match the expected value
+    /// derived from the combined matrix MLE and witness polynomial evaluations.
+    #[error("inner evaluation mismatch: combined_matrix_eval * witness_eval != inner_final_eval")]
+    InnerEvaluationMismatch,
 }

@@ -74,30 +74,30 @@ jolt-transcript              (no deps)
         ▼
    jolt-field                (jolt-transcript)
         │
-        ├───────────┐
-        ▼           │
-   jolt-crypto      │         (jolt-field, jolt-transcript)
+        ├───────────┬──────────────────┐
+        ▼           │                  ▼
+   jolt-crypto      │            jolt-compute      (jolt-field)
         │           │
         ├───────────┼─────────────────┐
         ▼           ▼                 ▼
-   jolt-poly   jolt-ir          jolt-blindfold
-   (jolt-field) (jolt-field)    (jolt-crypto, jolt-sumcheck)
+   jolt-poly   jolt-ir ──────► jolt-gnark    jolt-blindfold
+   (jolt-field) (jolt-field)   (jolt-ir)    (jolt-crypto, jolt-sumcheck)
         │           │
-        ├───────────┤
         │           │
         ├──────┐    │
         ▼      ▼    │
 jolt-openings  jolt-sumcheck ◄────┘
 (jolt-crypto,  (jolt-field, jolt-poly,
- jolt-field,    jolt-transcript,
- jolt-poly,     jolt-ir)
+ jolt-field,    jolt-transcript)
+ jolt-poly,
  jolt-trscpt)
         │              │
-        ├──────┬───────┘
-        ▼      ▼
-   jolt-spartan
-   (jolt-sumcheck, jolt-openings,
-    jolt-ir)
+        ├──────┬───────┤
+        ▼      ▼       │
+   jolt-spartan         │
+   (jolt-sumcheck,      │
+    jolt-openings,      │
+    jolt-ir) ◄──────────┘
         │
         ▼
    jolt-instructions
@@ -108,11 +108,16 @@ jolt-openings  jolt-sumcheck ◄────┘
    (jolt-spartan, jolt-sumcheck,
     jolt-openings, jolt-instructions,
     jolt-ir, jolt-field, jolt-crypto,
-    jolt-poly, jolt-transcript)
+    jolt-poly, jolt-transcript,
+    jolt-compute)
         │
         ├──► jolt-dory     (jolt-openings, jolt-crypto, dory-pcs)
         ├──► jolt-kzg      (jolt-openings, jolt-crypto)  [future]
-        └──► jolt-hyperkzg (jolt-openings)                [future]
+        ├──► jolt-hyperkzg (jolt-openings)                [future]
+        │
+        ├──► jolt-metal    (jolt-compute, jolt-ir, jolt-field) [future]
+        ├──► jolt-cuda     (jolt-compute, jolt-ir, jolt-field) [future]
+        └──► jolt-webgpu   (jolt-compute, jolt-ir, jolt-field) [future]
 ```
 
 ### 3.2 Crate Summary
@@ -123,13 +128,18 @@ jolt-openings  jolt-sumcheck ◄────┘
 | `jolt-field` | Field arithmetic traits + arkworks impl | Yes | ~2000 (done) |
 | `jolt-crypto` | Group, pairing, and commitment abstractions | Yes | ~1200 (done) |
 | `jolt-poly` | Polynomial types and operations | Yes | ~1500 (done) |
-| `jolt-openings` | Commitment scheme traits + opening accumulators | Yes | ~800 (done) |
+| `jolt-openings` | PCS traits, claim types, opening reduction | Yes | ~800 (done) |
 | `jolt-sumcheck` | Sumcheck protocol engine | Yes | ~1100 (done) |
 | `jolt-spartan` | R1CS + Spartan prover/verifier | Yes | ~925 (done) |
-| `jolt-ir` | Symbolic expression IR for sumcheck claims | Yes | ~1500 |
+| `jolt-ir` | Symbolic expression IR for sumcheck claims | Yes | ~1500 (done) |
+| `jolt-compute` | Backend-agnostic compute device abstraction | Yes | ~400 (planned) |
+| `jolt-gnark` | gnark/Go circuit codegen via `CircuitEmitter` | Yes | ~490 (done) |
 | `jolt-instructions` | RISC-V instruction set + lookup tables | No | ~3000 (done) |
 | `jolt-dory` | Dory commitment scheme impl | No | ~5000 (done) |
 | `jolt-zkvm` | zkVM prover/verifier orchestration | No | ~10000 (in progress) |
+| `jolt-metal` | Metal GPU compute backend | No | TBD (future) |
+| `jolt-cuda` | CUDA GPU compute backend | No | TBD (future) |
+| `jolt-webgpu` | WebGPU compute backend | No | TBD (future) |
 
 ---
 
@@ -225,6 +235,8 @@ impl<G: JoltGroup> JoltCommitment for Pedersen<G> {
     // ...
 }
 ```
+
+**Open question (for jolt-blindfold):** Should `Pedersen<G>` also implement `CommitmentScheme` from `jolt-openings`? This would make it a full PCS for small vectors (e.g., BlindFold round polynomials), but jolt-crypto cannot depend on jolt-openings (dependency direction). Options: (a) implement in a downstream crate via a newtype wrapper, (b) keep Pedersen as a vector commitment only and handle opening proofs separately in BlindFold, (c) define a `PedersenPCS` adapter in jolt-openings or jolt-blindfold.
 
 #### BN254 Concrete Types
 
@@ -414,11 +426,19 @@ jolt-poly/
 
 ---
 
-### 4.4 `jolt-openings` — Polynomial Commitment Scheme Traits & Opening Reduction — **REDESIGN**
+### 4.4 `jolt-openings` — Polynomial Commitment Scheme Traits & Opening Reduction — **DONE**
 
 **Purpose:** Abstract polynomial commitment scheme (PCS) interfaces, opening claim types, and reduction traits for batching claims. Designed to support homomorphic (EC, lattice), and hash-based (FRI) commitment schemes without leaking implementation details. The crate is intentionally thin — it defines abstractions and provides reusable primitives, not protocol-level orchestration.
 
 **Dependencies:** `jolt-field`, `jolt-poly`, `jolt-crypto`, `jolt-transcript`
+
+**Deviations from spec:**
+- `rlc.rs` merged into `reduction.rs` (RLC utilities live alongside the reduction trait)
+- `OpeningReduction` methods take a `challenge_fn: impl Fn(T::Challenge) -> PCS::Field` for generic transcript challenge conversion (matches sumcheck pattern)
+- `StreamingCommitment::feed` and `finish` take `&Self::ProverSetup` (enables real implementations without workaround structs)
+- `MockCommitmentScheme<F>` stores full evaluations in `MockCommitment<F>` (truly homomorphic, not hash-based)
+- 18 unit tests in the crate (mock: 8, reduction: 10)
+- `CommitmentScheme` also requires `Clone + Send + Sync + 'static` (needed for protocol use)
 
 **Key design decisions (vs. previous spec):**
 - **No accumulators.** The old `ProverOpeningAccumulator` / `VerifierOpeningAccumulator` are removed. Claims are plain data (`Vec<ProverClaim>`, `Vec<VerifierClaim>`), collected by the caller and passed to reduction functions. No statefulness.
@@ -493,11 +513,11 @@ pub trait AdditivelyHomomorphic: CommitmentScheme {
 
 /// Commit incrementally without materializing the full evaluation table.
 pub trait StreamingCommitment: CommitmentScheme {
-    type Partial: Clone + Send + Sync;
+    type PartialCommitment: Clone + Send + Sync;
 
-    fn begin(setup: &Self::ProverSetup) -> Self::Partial;
-    fn feed(partial: &mut Self::Partial, chunk: &[Self::Field]);
-    fn finish(partial: Self::Partial) -> Self::Output;
+    fn begin(setup: &Self::ProverSetup) -> Self::PartialCommitment;
+    fn feed(partial: &mut Self::PartialCommitment, chunk: &[Self::Field], setup: &Self::ProverSetup);
+    fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output;
 }
 ```
 
@@ -538,15 +558,17 @@ pub trait OpeningReduction<PCS: CommitmentScheme> {
     /// `()` for deterministic reductions like RLC.
     type ReductionProof: Clone + Send + Sync + Serialize + DeserializeOwned;
 
-    fn reduce_prover(
+    fn reduce_prover<T: Transcript>(
         claims: Vec<ProverClaim<PCS::Field>>,
-        transcript: &mut impl Transcript,
+        transcript: &mut T,
+        challenge_fn: impl Fn(T::Challenge) -> PCS::Field,
     ) -> (Vec<ProverClaim<PCS::Field>>, Self::ReductionProof);
 
-    fn reduce_verifier(
+    fn reduce_verifier<T: Transcript>(
         claims: Vec<VerifierClaim<PCS::Field, PCS::Output>>,
         proof: &Self::ReductionProof,
-        transcript: &mut impl Transcript,
+        transcript: &mut T,
+        challenge_fn: impl Fn(T::Challenge) -> PCS::Field,
     ) -> Result<Vec<VerifierClaim<PCS::Field, PCS::Output>>, OpeningsError>;
 }
 ```
@@ -623,10 +645,9 @@ jolt-openings/
 │   ├── lib.rs              # re-exports
 │   ├── traits.rs           # CommitmentScheme, AdditivelyHomomorphic, StreamingCommitment
 │   ├── claims.rs           # ProverClaim, VerifierClaim
-│   ├── reduction.rs        # OpeningReduction trait + RlcReduction impl
-│   ├── rlc.rs              # rlc_combine, rlc_combine_scalars
+│   ├── reduction.rs        # OpeningReduction trait, RlcReduction impl, rlc_combine, rlc_combine_scalars
 │   ├── error.rs            # OpeningsError
-│   └── mock.rs             # MockCommitmentScheme (test-utils feature)
+│   └── mock.rs             # MockCommitmentScheme (test-utils feature, truly homomorphic)
 ├── tests/
 │   └── reduction.rs        # Integration tests for reduction round-trips
 ├── fuzz/
@@ -1103,14 +1124,13 @@ jolt-instructions/
 
 ### 4.8 `jolt-dory` — Dory Commitment Scheme — **DONE**
 
-**Purpose:** Implements `CommitmentScheme` and `HomomorphicCommitmentScheme` from `jolt-openings` using the Dory polynomial commitment scheme. Wraps the external `dory-pcs` crate. All parameters are instance-local (no globals).
+**Purpose:** Implements `CommitmentScheme`, `AdditivelyHomomorphic`, and `StreamingCommitment` from `jolt-openings` using the Dory polynomial commitment scheme. Wraps the external `dory-pcs` crate. All parameters are instance-local (no globals).
 
-**Dependencies:** `jolt-openings`, `jolt-field`, `jolt-poly`, `jolt-transcript`, `dory-pcs`
+**Dependencies:** `jolt-openings`, `jolt-crypto`, `jolt-field`, `jolt-poly`, `jolt-transcript`, `dory-pcs`
 
 **Deviations from spec:**
 - `optimizations/` module added (ported from `jolt-optimizations` in the arkworks fork — GLV, batch addition, vector ops)
-- `DoryStreamingCommitter` added as a separate helper struct (not a trait method on `DoryScheme`)
-- `StreamingCommitmentScheme` trait impl is a stub (streaming done via `DoryStreamingCommitter` directly)
+- `StreamingCommitment` trait impl is fully functional (setup passed to `feed`/`finish`)
 - `transcript.rs` added for `JoltToDoryTranscript` adapter
 - `types.rs` added with field conversion utilities (`jolt_fr_to_ark`, `ark_to_jolt_fr`) and newtype wrappers
 - ~5000 LOC (larger than spec's ~1500 estimate due to optimizations module)
@@ -1138,23 +1158,27 @@ impl DoryScheme {
     pub fn new(params: DoryParams) -> Self;
 }
 
+impl Commitment for DoryScheme {
+    type Output = DoryCommitment;
+}
+
 impl CommitmentScheme for DoryScheme {
-    type Field = ark_bn254::Fr; // via jolt-field arkworks impl
-    type Commitment = DoryCommitment;
+    type Field = Fr; // jolt-field's Fr
     type Proof = DoryProof;
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
     // ... all trait methods
 }
 
-impl HomomorphicCommitmentScheme for DoryScheme {
-    type BatchedProof = DoryBatchedProof;
-    // ... all trait methods
+impl AdditivelyHomomorphic for DoryScheme {
+    fn combine(commitments: &[DoryCommitment], scalars: &[Fr]) -> DoryCommitment;
 }
 
-impl StreamingCommitmentScheme for DoryScheme {
+impl StreamingCommitment for DoryScheme {
     type PartialCommitment = DoryPartialCommitment;
-    // ... all trait methods
+    fn begin(setup: &DoryProverSetup) -> DoryPartialCommitment;
+    fn feed(partial: &mut DoryPartialCommitment, chunk: &[Fr], setup: &DoryProverSetup);
+    fn finish(partial: DoryPartialCommitment, setup: &DoryProverSetup) -> DoryCommitment;
 }
 ```
 
@@ -1190,7 +1214,81 @@ jolt-dory/
 
 ---
 
-### 4.9 `jolt-zkvm` — zkVM Prover/Verifier
+### 4.9 `jolt-compute` — Backend-Agnostic Compute Device Abstraction — **PLANNED**
+
+**Purpose:** Defines buffer management and parallel primitives on typed field-element buffers, abstracting over CPU and GPU compute backends. No awareness of sumcheck, polynomials, or cryptographic protocols — purely a compute-infrastructure crate. See [backend_agnostic.md](./backend_agnostic.md) for the full design rationale.
+
+**Dependencies:** `jolt-field`
+
+**Design principles:**
+- **Zero overhead for CPU.** `CpuBackend` uses `Buffer<T> = Vec<T>`. After monomorphization, all trait methods compile to direct function calls — identical codegen to hand-written Rayon code.
+- **Protocol-layer ignorance.** Primitives are named for what they compute (`interpolate_pairs`, `pairwise_reduce`, `product_table`), not what protocol uses them.
+- **Compact buffer support.** Buffers are generic over element type (`u8`, `bool`, `i64`, `F`), matching `jolt-poly`'s `Polynomial<T>` pattern. Compact buffers use up to 32x less device memory.
+- **Opaque kernel compilation.** `CompiledKernel` is an associated type. Each backend compiles from `jolt-ir::KernelDescriptor` via an inherent `compile` method — jolt-compute does not depend on jolt-ir.
+- **Delayed modular reduction.** Both CPU and GPU backends accumulate multiply-add results as wide integers internally, reducing once per accumulation group. This is an implementation detail of `pairwise_reduce`, not exposed in the trait.
+
+#### Core Trait
+
+```rust
+pub trait Scalar: Copy + Send + Sync + 'static {}
+
+pub trait ComputeBackend: Send + Sync + 'static {
+    type Buffer<T: Scalar>: Send + Sync;
+    type CompiledKernel: Send + Sync;
+
+    // Buffer management
+    fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T>;
+    fn download<T: Scalar>(&self, buf: &Self::Buffer<T>) -> Vec<T>;
+    fn alloc<T: Scalar>(&self, len: usize) -> Self::Buffer<T>;
+    fn len<T: Scalar>(&self, buf: &Self::Buffer<T>) -> usize;
+
+    // Parallel primitives
+    fn interpolate_pairs<T, F>(&self, buf: Self::Buffer<T>, scalar: F) -> Self::Buffer<F>
+    where T: Scalar, F: Field + From<T>;
+
+    fn pairwise_reduce<F: Field>(
+        &self,
+        inputs: &[&Self::Buffer<F>],
+        weights: &Self::Buffer<F>,
+        kernel: &Self::CompiledKernel,
+        degree: usize,
+    ) -> Vec<F>;
+
+    fn product_table<F: Field>(&self, point: &[F]) -> Self::Buffer<F>;
+}
+```
+
+#### Integration with jolt-ir
+
+`jolt-ir` defines `KernelDescriptor` with two shapes:
+- `ProductSum { num_inputs_per_product, num_products }` — explicit fast-path for the dominant product-of-linear-interpolants pattern (~80% of prover time)
+- `Custom { expr, num_inputs }` — escape hatch for bespoke compositions (RAM read-write phases, Spartan outer)
+
+Each backend compiles `KernelDescriptor` into its `CompiledKernel` type at setup time. For `ProductSum`, GPU backends generate D-specialized kernels with fully unrolled product evaluation. For `Custom`, they either interpret the Expr or generate shader source via the `CircuitEmitter` visitor pattern.
+
+#### Integration with jolt-zkvm
+
+`jolt-zkvm` witness implementations are generic over `B: ComputeBackend`. The `SumcheckWitness` trait (in jolt-sumcheck) is unchanged — it returns `UnivariatePoly<F>` to the host. The compute backend is invisible to the protocol layer.
+
+#### File Structure
+
+```
+jolt-compute/
+├── Cargo.toml
+├── README.md
+├── src/
+│   ├── lib.rs              # Scalar, ComputeBackend, DeviceBuffer traits
+│   ├── cpu.rs              # CpuBackend, CpuKernel (Rayon-based)
+│   └── error.rs            # ComputeError
+├── tests/
+│   └── cpu_backend.rs      # CpuBackend correctness tests
+└── benches/
+    └── primitives.rs       # interpolate_pairs, pairwise_reduce benchmarks
+```
+
+---
+
+### 4.10 `jolt-zkvm` — zkVM Prover/Verifier
 
 **Purpose:** The top-level zkVM that orchestrates all sub-crates into a complete proving system. This is Jolt-specific and replaces the old `jolt-core`. It is the last crate to be built.
 
@@ -1201,10 +1299,10 @@ jolt-dory/
 ```rust
 // ── Core prover/verifier ────────────────────────────────────
 
-pub struct JoltProver<PCS: CommitmentScheme> { /* ... */ }
+pub struct JoltProver<PCS: CommitmentScheme, B: ComputeBackend> { /* ... */ }
 
-impl<PCS: HomomorphicCommitmentScheme> JoltProver<PCS> {
-    pub fn new(config: ProverConfig, pcs_setup: PCS::ProverSetup) -> Self;
+impl<PCS: HomomorphicCommitmentScheme, B: ComputeBackend> JoltProver<PCS, B> {
+    pub fn new(config: ProverConfig, pcs_setup: PCS::ProverSetup, backend: B) -> Self;
 
     pub fn prove<T: Transcript>(
         &self,
@@ -1581,13 +1679,32 @@ impl Expr {
 
 **4. Circuit** (`backends/circuit.rs`)
 
-Emits circuit constraints (gnark Go code, or a generic circuit IR) from an `Expr`. Replaces the `MemoizedCodeGen` pipeline in PR [#1322](https://github.com/a16z/jolt/pull/1322)'s transpiler for the claim-formula portion.
+Provides `CircuitEmitter`, a trait for emitting circuit constraints from an `Expr`. Each target framework (gnark, bellman, plonky2) implements this trait. The `to_circuit` method uses cached DAG traversal so shared subexpressions (after CSE) are emitted exactly once.
 
 ```rust
+/// Backend-specific circuit emitter.
+pub trait CircuitEmitter {
+    type Wire;
+    fn constant(&mut self, val: i128) -> Self::Wire;
+    fn variable(&mut self, var: Var) -> Self::Wire;
+    fn neg(&mut self, inner: Self::Wire) -> Self::Wire;
+    fn add(&mut self, lhs: Self::Wire, rhs: Self::Wire) -> Self::Wire;
+    fn sub(&mut self, lhs: Self::Wire, rhs: Self::Wire) -> Self::Wire;
+    fn mul(&mut self, lhs: Self::Wire, rhs: Self::Wire) -> Self::Wire;
+}
+
 impl Expr {
-    pub fn to_circuit<E: CircuitEmitter>(&self, emitter: &mut E);
+    pub fn to_circuit<E: CircuitEmitter>(&self, emitter: &mut E) -> E::Wire;
 }
 ```
+
+`CircuitEmitter` is structurally identical to `ExprVisitor` but uses circuit-domain naming. Internally, `to_circuit` bridges through `ExprVisitor` via an adapter — no code duplication.
+
+**5. gnark codegen** (`jolt-gnark` crate, separate from `jolt-ir`)
+
+A dedicated `jolt-gnark` crate implements `CircuitEmitter` for gnark/Go code generation. This ports the claim-formula codegen from PR [#1322](https://github.com/a16z/jolt/pull/1322)'s `transpiler/src/gnark_codegen.rs` to consume `jolt-ir::Expr` instead of `MleAst`. The gnark emitter produces Go expressions like `api.Add(l, r)`, `api.Mul(l, r)`, etc.
+
+The full verifier symbolic execution pipeline (MleAst tracing, symbolic transcript, Poseidon circuit integration) remains in the transpiler crate. `jolt-gnark` only covers claim-formula emission — the transpiler can consume it for claim-level codegen while retaining its own orchestration-level tracing.
 
 #### How `SumcheckInstanceParams` Changes
 
@@ -1792,7 +1909,7 @@ pub enum TableRole {
 
 A CPU executor interprets the kernel in a map-reduce loop. A GPU executor compiles it into a Metal/CUDA kernel. Hand-tuned kernels (for the ~30% of sumchecks with non-standard patterns like `SharedRaPolynomials` or multi-phase binding) implement `SumcheckWitness` directly, bypassing the kernel IR.
 
-The kernel IR is optional and may be deferred to a later phase. The claim IR is the priority.
+The kernel IR is now a concrete part of the design. `KernelDescriptor` and `KernelShape` (with `ProductSum` and `Custom` variants) define the fused map-reduce computation for GPU and CPU backend compilation. `TensorSplit` captures the split-eq $\sqrt{N}$ decomposition for thread hierarchy mapping. See [backend_agnostic.md](./backend_agnostic.md) for the full compute backend design that consumes these types.
 
 #### Testing
 
@@ -1950,7 +2067,7 @@ Phase 1b (testing, after 1a):
   test-fuzz-jolt-poly
 
 Phase 2a (implementation, after jolt-poly + jolt-ir):
-  implement-jolt-sumcheck         (needs jolt-poly, jolt-ir)
+  implement-jolt-sumcheck         (needs jolt-poly)
   implement-jolt-openings         (needs jolt-poly)
 
 Phase 2b (testing, after 2a):
@@ -1993,7 +2110,7 @@ workspace           : implement-scaffold-workspace      : none                  
 src/poly/           : implement-jolt-poly               : none                     : Polynomial types and operations
 ir/                 : implement-jolt-ir           : none                     : Symbolic expression IR for sumcheck claims
 src/zkvm/instruction: implement-jolt-instructions       : none                     : RISC-V instructions + lookup tables
-src/subprotocols/   : implement-jolt-sumcheck           : jolt-poly,jolt-ir  : Sumcheck protocol engine
+src/subprotocols/   : implement-jolt-sumcheck           : jolt-poly          : Sumcheck protocol engine
 src/poly/commitment : implement-jolt-openings           : jolt-poly                : Commitment scheme traits + accumulators
 src/zkvm/spartan    : implement-jolt-spartan            : jolt-sumcheck,jolt-openings,jolt-ir : Spartan R1CS prover/verifier
 src/poly/dory       : implement-jolt-dory               : jolt-openings            : Dory commitment scheme

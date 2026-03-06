@@ -108,7 +108,7 @@ external: ark-* (a16z fork), dory-pcs, tracer, common
 - Infrastructure for auto-generating e2e tests from `examples/` not yet built
 - Will be addressed during `jolt-zkvm` crate development
 
-#### (12) Fragmented symbolic IR for sumcheck expressions — **NOT YET ADDRESSED**
+#### (12) Fragmented symbolic IR for sumcheck expressions — **PARTIALLY ADDRESSED**
 
 Every sumcheck instance in Jolt has a mathematical expression that defines how its claim composes from polynomial openings and challenges. Today, this formula is written **four separate times** in four incompatible formats:
 
@@ -130,6 +130,18 @@ Every sumcheck instance in Jolt has a mathematical expression that defines how i
 
 Additionally, `jolt-ir` replaces the compile-time `LC` / `lc!` / `r1cs_eq_conditional!` constraint authoring system used by the main zkVM's Spartan outer sumcheck (`jolt-core/src/zkvm/r1cs/`). The 12-variant `LC` enum and custom macros are replaced by `ExprBuilder` arithmetic, which produces readable degree-2 expressions that are factored into bilinear pairs at init time for the fused evaluator. This means the R1CS backend in `jolt-ir` serves both BlindFold (sparse matrix emission for `jolt-spartan`) and the main zkVM (bilinear factorization for the lazy evaluator). See spec §4.10 "Replacing compile-time R1CS constraints".
 
+**Current status:** `jolt-ir` is complete with all five backends (evaluate, R1CS, Lean4, circuit transpilation) plus integration tests, fuzz targets, and benchmarks. `jolt-gnark` implements `CircuitEmitter` for gnark/Go code generation. **Remaining:** Downstream integration (task 06) — migrate `jolt-zkvm` and `jolt-spartan` to consume `jolt-ir` claim definitions, replacing the dual-implementation pattern. `KernelDescriptor` and `KernelShape` for GPU kernel compilation are planned (see finding 13).
+
+#### (13) CPU-only prover with no compute backend abstraction — **PLANNED**
+
+The prover is CPU-only via Rayon. Sumcheck round polynomial computation and polynomial binding — the two operations that dominate prover time — are embarrassingly parallel map-reduce patterns that would benefit significantly from GPU acceleration (Metal, CUDA, WebGPU). However, the current code tightly couples these operations to `Vec<F>` storage and Rayon iterators, making GPU integration infeasible without a rewrite.
+
+**Resolution:** A new `jolt-compute` crate defines a `ComputeBackend` trait with typed buffer management and parallel primitives (`interpolate_pairs`, `pairwise_reduce`, `product_table`). The trait is protocol-agnostic — no mention of sumcheck. `CpuBackend` compiles to identical code after monomorphization (zero overhead). GPU backend crates (`jolt-metal`, `jolt-cuda`, `jolt-webgpu`) compile `jolt-ir::KernelDescriptor` into target-specific kernels at setup time. `jolt-zkvm` witness implementations are generic over `B: ComputeBackend`.
+
+`KernelDescriptor` in `jolt-ir` has two shapes: `ProductSum` (explicit fast-path for the dominant product-of-linear-interpolants pattern, ~80% of prover time) and `Custom` (escape hatch for bespoke compositions like RAM read-write phases). Both CPU and GPU backends use delayed modular reduction internally. Buffers are generic over element type, matching `jolt-poly`'s `Polynomial<T>` pattern, enabling 32x memory savings for compact polynomial storage on GPU.
+
+See [backend_agnostic.md](./backend_agnostic.md) for the full design and spec §4.9 for the crate specification.
+
 ---
 
 ## Plan to address
@@ -142,13 +154,18 @@ Extract into new crates under `crates/`. While doing so address each observation
 | `jolt-field` | **Done** | `Field`, `UnreducedOps`, `ReductionOps`, `Challenge`, `OptimizedMul`, accumulation traits, signed bigints | — |
 | `jolt-poly` | **Done** | `MultilinearPolynomial`, `Polynomial<T>`, `EqPolynomial`, `UnivariatePoly`, `CompressedPoly`, `IdentityPolynomial` | `jolt-field` |
 | `jolt-crypto` | **Done** | `JoltGroup`, `PairingGroup`, `JoltCommitment`, `Pedersen<G>`, `PedersenSetup<G>`, `Bn254`, `Bn254G1`, `Bn254G2`, `Bn254GT` | `jolt-field`, `jolt-transcript` |
-| `jolt-openings` | **Redesign pending** | `CommitmentScheme`, `AdditivelyHomomorphic`, `StreamingCommitment`, `OpeningReduction`, `RlcReduction`, claim types, RLC utilities | `jolt-crypto`, `jolt-field`, `jolt-poly`, `jolt-transcript` |
+| `jolt-openings` | **Done** | `CommitmentScheme`, `AdditivelyHomomorphic`, `StreamingCommitment`, `OpeningReduction`, `RlcReduction`, claim types, RLC utilities | `jolt-crypto`, `jolt-field`, `jolt-poly`, `jolt-transcript` |
 | `jolt-sumcheck` | **Done** | `SumcheckProver`, `SumcheckVerifier`, `BatchedSumcheckProver/Verifier`, `StreamingSumcheckProver`, `SumcheckWitness` | `jolt-field`, `jolt-poly`, `jolt-transcript` |
 | `jolt-spartan` | **Done** | `R1CS` trait, `SimpleR1CS`, `SpartanKey`, `SpartanProver`, `SpartanVerifier`, `FirstRoundStrategy` | `jolt-sumcheck`, `jolt-openings`, `jolt-field`, `jolt-poly`, `jolt-transcript` |
 | `jolt-instructions` | **Done** | `Instruction`, `LookupTable`, `JoltInstructionSet`, `TableId`, `LookupQuery`, 68 RV64IMAC instructions | `jolt-field` |
 | `jolt-dory` | **Done** | `DoryScheme`, `DoryParams`, commitment/proof types, streaming, optimizations | `jolt-openings`, `jolt-field`, `jolt-poly`, `jolt-transcript`, `dory-pcs` |
-| `jolt-ir` | **Proposed** | `Expr`, `ExprBuilder`, `ClaimDefinition`, `ExprVisitor`, normalization passes, evaluation/R1CS/Lean4 backends | `jolt-field` |
-| `jolt-zkvm` | **In progress** | zkvm sumchecks (ram, registers, bytecode, claim reductions), prover/verifier | `jolt-sumcheck`, `jolt-openings`, `jolt-spartan`, `jolt-instructions`, `jolt-ir` |
+| `jolt-ir` | **Done** | `Expr`, `ExprBuilder`, `ClaimDefinition`, `ExprVisitor`, `CircuitEmitter`, normalization passes, evaluate/R1CS/Lean4/circuit backends | `jolt-field` |
+| `jolt-gnark` | **Done** | `GnarkEmitter` implementing `CircuitEmitter` for gnark/Go codegen, `sanitize_go_name` | `jolt-ir` |
+| `jolt-zkvm` | **In progress** | zkvm sumchecks (ram, registers, bytecode, claim reductions), prover/verifier | `jolt-sumcheck`, `jolt-openings`, `jolt-spartan`, `jolt-instructions`, `jolt-ir`, `jolt-compute` |
+| `jolt-compute` | **Planned** | `ComputeBackend`, `Scalar`, `CpuBackend` — backend-agnostic buffer management and parallel primitives | `jolt-field` |
+| `jolt-metal` | **Future** | Metal GPU compute backend | `jolt-compute`, `jolt-ir`, `jolt-field` |
+| `jolt-cuda` | **Future** | CUDA GPU compute backend | `jolt-compute`, `jolt-ir`, `jolt-field` |
+| `jolt-webgpu` | **Future** | WebGPU compute backend | `jolt-compute`, `jolt-ir`, `jolt-field` |
 
 **Note:** `jolt-math` (originally proposed) was dropped. Its functionality was absorbed into `jolt-field` (accumulation traits) and `jolt-poly` (polynomial-level utilities).
 
@@ -192,7 +209,8 @@ crates/<name>/
 | jolt-openings | Yes | Yes | — | — |
 | jolt-spartan | Yes | — | — | — |
 | jolt-transcript | Yes | Yes | Yes | Yes |
-| jolt-ir | — | — | — | — |
+| jolt-ir | Yes | Yes | Yes | Yes |
+| jolt-gnark | — | — | Yes (inline) | — |
 | jolt-dory | Yes | — | — | Yes |
 | jolt-instructions | Yes | — | — | — |
 
@@ -215,7 +233,7 @@ Traits are the crate's public API boundary. Concrete structs implement traits bu
 
 #### 3. Minimal, justified dependencies
 
-- Internal crates form a strict DAG: `jolt-transcript` → `jolt-field` → `jolt-poly` / `jolt-ir` → `jolt-sumcheck` / `jolt-openings` → `jolt-spartan` / `jolt-dory`.
+- Internal crates form a strict DAG: `jolt-transcript` → `jolt-field` → `jolt-poly` / `jolt-ir` → `jolt-sumcheck` / `jolt-openings` → `jolt-spartan` (`+jolt-ir`) / `jolt-dory`. `jolt-gnark` depends only on `jolt-ir`. Note: `jolt-sumcheck` does NOT depend on `jolt-ir` — it is a generic protocol crate. Only `jolt-spartan` and `jolt-zkvm` consume `jolt-ir`.
 - Each crate depends only on the internal crates it directly uses. No transitive dependency shortcuts.
 - External dependencies are workspace-managed. Dev-only crates (`rand`, `rand_chacha`, `criterion`) go in `[dev-dependencies]` and are annotated for `cargo-machete` when needed.
 
@@ -301,7 +319,7 @@ Per the CI `comments-review` policy:
 ### Future features
 - **Recursion:** `jolt-ir`'s unified IR means the gnark/Groth16 transpiler (PR [#1322](https://github.com/a16z/jolt/pull/1322)) consumes the same `Expr` as BlindFold and the standard verifier — no separate symbolic execution pass needed for claim formulas. For wrapping the Jolt verifier in Spartan (recursive verification), the verifier's computation is expressed as `Expr`s, normalized to R1CS via the R1CS backend, and proved with `jolt-spartan`'s generic Spartan.
 - **Lattices/hashes:** Decoupling the PIOP from the rest of the code allows easier integration of new primitives
-- **ZK:** BlindFold consumes `jolt-ir`'s sum-of-products normalization instead of hand-written `OutputClaimConstraint` structs. `jolt-blindfold` orchestrates committed sumcheck (via `CommittedRoundHandler`, generic over `JoltCommitment`), Nova folding, and Spartan proof over the verifier R1CS (via `jolt-spartan`).
+- **ZK:** BlindFold consumes `jolt-ir`'s sum-of-products normalization instead of hand-written `OutputClaimConstraint` structs. `jolt-blindfold` orchestrates committed sumcheck (via `CommittedRoundHandler`, generic over `JoltCommitment`), Nova folding, and Spartan proof over the verifier R1CS (via `jolt-spartan`). **Open question:** Should `Pedersen<G>` from `jolt-crypto` implement `CommitmentScheme` from `jolt-openings` (for BlindFold round polynomial commitments)? The dependency direction prevents this in jolt-crypto itself — a `PedersenPCS` adapter in jolt-blindfold or jolt-openings may be needed.
 - **GPU/hardware acceleration:** `jolt-ir`'s kernel IR enables a sumcheck kernel compiler that targets CPU, Metal, CUDA, or WebGPU from a single expression definition
 - **Formal verification:** `jolt-ir`'s Lean4 backend replaces `MleAst`'s global-arena approach with structured, instance-local expression trees
 - **Constraint authoring:** The compile-time `LC`/`lc!`/`r1cs_eq_conditional!` macro system is replaced by `ExprBuilder` arithmetic, giving readable constraint definitions while preserving evaluation performance via bilinear factorization at init time

@@ -3,8 +3,10 @@
 //! The verifier:
 //! 1. Replays the Fiat-Shamir transcript to derive the same challenges as the prover.
 //! 2. Verifies the outer sumcheck proof.
-//! 3. Checks the final sumcheck evaluation against the MLE evaluations.
-//! 4. Verifies the witness polynomial opening proof.
+//! 3. Checks the final outer sumcheck evaluation against the MLE evaluations.
+//! 4. Verifies the inner sumcheck proof.
+//! 5. Checks the inner sumcheck evaluation against the matrix MLEs and witness opening.
+//! 6. Verifies the witness polynomial opening proof.
 
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -30,10 +32,13 @@ impl SpartanVerifier {
     ///
     /// 1. Absorb the witness commitment into the transcript.
     /// 2. Sample $\tau$ and verify the outer sumcheck.
-    /// 3. At the sumcheck challenge point $r_x$, check:
+    /// 3. At the outer sumcheck challenge point $r_x$, check:
     ///    $$\widetilde{eq}(r_x, \tau) \cdot (\widetilde{Az}(r_x) \cdot \widetilde{Bz}(r_x) - \widetilde{Cz}(r_x)) = v$$
-    ///    where $v$ is the final sumcheck evaluation.
-    /// 4. Sample a witness evaluation point $r_y$ and verify the opening proof.
+    /// 4. Absorb evaluation claims, sample $\rho_A, \rho_B, \rho_C$.
+    /// 5. Verify inner sumcheck with claim $\rho_A \cdot az + \rho_B \cdot bz + \rho_C \cdot cz$.
+    /// 6. At inner challenge $r_y$, check the final evaluation against
+    ///    matrix MLEs and witness evaluation.
+    /// 7. Verify the witness opening proof at $r_y$.
     ///
     /// # Errors
     ///
@@ -58,33 +63,64 @@ impl SpartanVerifier {
             .collect();
 
         // Verify the outer sumcheck
-        let claim = SumcheckClaim {
+        let outer_claim = SumcheckClaim {
             num_vars: num_sc_vars,
             degree: 3,
             claimed_sum: PCS::Field::zero(),
         };
 
-        let (final_eval, challenges) =
-            SumcheckVerifier::verify(&claim, &proof.sumcheck_proof, transcript, |c: u128| {
-                PCS::Field::from_u128(c)
-            })?;
+        let (outer_final_eval, r_x) = SumcheckVerifier::verify(
+            &outer_claim,
+            &proof.outer_sumcheck_proof,
+            transcript,
+            |c: u128| PCS::Field::from_u128(c),
+        )?;
 
-        // Check the final evaluation:
-        // eq(r_x, tau) * (Az(r_x) * Bz(r_x) - Cz(r_x)) == final_eval
-        let eq_eval = EqPolynomial::new(tau).evaluate(&challenges);
+        // Check the outer final evaluation:
+        // eq(r_x, tau) * (Az(r_x) * Bz(r_x) - Cz(r_x)) == outer_final_eval
+        let eq_eval = EqPolynomial::new(tau).evaluate(&r_x);
         let expected = eq_eval * (proof.az_eval * proof.bz_eval - proof.cz_eval);
-        if expected != final_eval {
-            return Err(SpartanError::EvaluationMismatch);
+        if expected != outer_final_eval {
+            return Err(SpartanError::OuterEvaluationMismatch);
         }
 
-        // Sample a witness evaluation point and verify the opening proof
-        let witness_point: Vec<PCS::Field> = (0..key.num_witness_vars())
-            .map(|_| PCS::Field::from_u128(transcript.challenge()))
-            .collect();
+        // Absorb evaluation claims into transcript
+        transcript.append(&proof.az_eval);
+        transcript.append(&proof.bz_eval);
+        transcript.append(&proof.cz_eval);
 
+        // Sample random linear combination coefficients
+        let rho_a = PCS::Field::from_u128(transcript.challenge());
+        let rho_b = PCS::Field::from_u128(transcript.challenge());
+        let rho_c = PCS::Field::from_u128(transcript.challenge());
+
+        // Verify the inner sumcheck
+        let num_witness_vars = key.num_witness_vars();
+        let inner_claim = SumcheckClaim {
+            num_vars: num_witness_vars,
+            degree: 2,
+            claimed_sum: rho_a * proof.az_eval + rho_b * proof.bz_eval + rho_c * proof.cz_eval,
+        };
+
+        let (inner_final_eval, r_y) = SumcheckVerifier::verify(
+            &inner_claim,
+            &proof.inner_sumcheck_proof,
+            transcript,
+            |c: u128| PCS::Field::from_u128(c),
+        )?;
+
+        // Evaluate matrix MLEs at (r_x, r_y) and check inner sumcheck final evaluation
+        let (a_eval, b_eval, c_eval) = key.evaluate_matrix_mles(&r_x, &r_y);
+        let combined_matrix_eval = rho_a * a_eval + rho_b * b_eval + rho_c * c_eval;
+
+        if combined_matrix_eval * proof.witness_eval != inner_final_eval {
+            return Err(SpartanError::InnerEvaluationMismatch);
+        }
+
+        // Verify PCS opening at r_y (derived from inner sumcheck challenges)
         PCS::verify(
             &proof.witness_commitment,
-            &witness_point,
+            &r_y,
             proof.witness_eval,
             &proof.witness_opening_proof,
             verifier_setup,

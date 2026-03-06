@@ -9,10 +9,9 @@
 //!
 //! # Instance-local parameters
 //!
-//! Unlike the old `dory_globals.rs` approach which used `static mut` global state,
-//! this crate stores all Dory matrix shape parameters in [`DoryParams`], carried
-//! on the [`DoryScheme`] instance. This allows multiple independent Dory instances
-//! within a single process.
+//! All Dory matrix shape parameters are stored in [`DoryParams`], carried on the
+//! [`DoryScheme`] instance, enabling multiple independent Dory instances within a
+//! single process.
 //!
 //! # Example
 //!
@@ -36,7 +35,6 @@ mod transcript;
 
 pub use params::DoryParams;
 pub use scheme::DoryScheme;
-pub use streaming::DoryStreamingCommitter;
 pub use types::{
     DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,
 };

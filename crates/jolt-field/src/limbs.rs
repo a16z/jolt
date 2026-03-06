@@ -96,7 +96,7 @@ impl<const N: usize> Limbs<N> {
         borrow
     }
 
-        /// Truncated multiplication: `self * other`, keeping the low `P` limbs.
+    /// Truncated multiplication: `self * other`, keeping the low `P` limbs.
     #[inline]
     pub fn mul_trunc<const M: usize, const P: usize>(&self, other: &Limbs<M>) -> Limbs<P> {
         let mut res = Limbs::<P>::zero();

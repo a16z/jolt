@@ -34,6 +34,8 @@ members = [
   "crates/jolt-dory",
   "crates/jolt-crypto",
   "crates/jolt-ir",
+  "crates/jolt-compute",
+  "crates/jolt-gnark",
   "crates/jolt-blindfold",
   "crates/jolt-zkvm",
   "jolt-core",

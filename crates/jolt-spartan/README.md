@@ -30,6 +30,11 @@ The implementation is generic over the commitment scheme and transcript, allowin
 
 - **`SpartanProof<F, PCS>`** — Contains the witness commitment, sumcheck proof, matrix evaluations (`az_eval`, `bz_eval`, `cz_eval`), witness evaluation, and opening proof.
 
+### jolt-ir Bridge
+
+- **`ir_r1cs`** — Implements `R1CS` for `jolt_ir::R1csEmission`, so expressions built with `ExprBuilder` can be proved directly via Spartan.
+- **`build_witness`** — Assembles a witness vector from an `R1csEmission` and concrete opening values.
+
 ### Univariate Skip
 
 - **`FirstRoundStrategy`** — Optimization for the first sumcheck round using univariate polynomial evaluation instead of the standard multilinear approach.
@@ -45,10 +50,11 @@ jolt-field ─┐
 jolt-poly  ─┤
 jolt-transcript ─┼─► jolt-spartan
 jolt-sumcheck ─┤
-jolt-openings ─┘
+jolt-openings ─┤
+jolt-ir ───────┘
 ```
 
-Used by `jolt-zkvm` and `jolt-core`.
+Used by `jolt-zkvm`.
 
 ## Feature Flags
 

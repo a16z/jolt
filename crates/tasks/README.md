@@ -9,15 +9,17 @@ Task specifications for the `jolt-ir` crate (RFC finding 12, spec §4.10).
     │
     ├──► 02-backend-evaluate    ✅ DONE
     │       │
-    │       └──► 07-testing-and-fuzz (integration + fuzz + README + benches)
+    │       └──► 07-testing-and-fuzz ✅ DONE (integration + fuzz + README + benches)
     │
     ├──► 03-backend-r1cs        ✅ DONE
     │
-    ├──► 04-backend-lean        — deferred (no consumer ready)
+    ├──► 04-backend-lean        ✅ DONE
     │
-    ├──► 05-backend-circuit     — deferred (no consumer ready)
+    ├──► 05-backend-circuit     ✅ DONE
+    │       │
+    │       └──► 08-jolt-gnark-crate  ✅ DONE (GnarkEmitter + sanitize_go_name + 14 tests)
     │
-    └──► 06-integrate-downstream ← Wire into jolt-zkvm only. Last step.
+    └──► 06-integrate-downstream ← Wire into jolt-zkvm + jolt-spartan
 ```
 
 ## Recommended execution order
@@ -25,19 +27,19 @@ Task specifications for the `jolt-ir` crate (RFC finding 12, spec §4.10).
 1. **Task 01** — core IR: expr, builder, claim, visitor, normalize ✅
 2. **Task 02** — evaluate backend (needs `jolt-field` dep) ✅
 3. **Task 03** — R1CS backend (needed for BlindFold ZK mode) ✅
-4. **Task 07** — hardening: integration tests, fuzz targets, README, benches
-5. **Task 06** — integrate into jolt-zkvm (migrate SumcheckInstanceParams)
-6. **Tasks 04, 05** — Lean4 and circuit backends (defer until those consumers are ready)
+4. **Task 07** — hardening: integration tests, fuzz targets, README, benches ✅
+5. **Task 04** — Lean4 code generation backend ✅
+6. **Task 05** — Circuit transpilation backend (CircuitEmitter trait) ✅
+7. **Task 08** — `jolt-gnark` crate: gnark `CircuitEmitter` implementation (port from PR #1322) ✅
+8. **Task 06** — integrate into jolt-zkvm + jolt-spartan (migrate SumcheckInstanceParams)
 
 ## Architecture decision: downstream dependency scope
 
-Only `jolt-zkvm` depends on `jolt-ir`. The sumcheck and spartan crates remain generic:
+Both `jolt-zkvm` and `jolt-spartan` depend on `jolt-ir`. The sumcheck crate remains generic:
 
 - **jolt-sumcheck** — generic sumcheck protocol. Does not touch claim formulas. No `jolt-ir` dependency.
-- **jolt-spartan** — generic Spartan IOP. Claim formulas for outer/shift/product sumchecks are provided by jolt-zkvm, not defined inside spartan. No `jolt-ir` dependency.
+- **jolt-spartan** — depends on `jolt-ir`. Uses `jolt-ir`'s R1CS types as its native constraint representation.
 - **jolt-zkvm** — orchestrator. Defines all ~20 claim formulas as `ClaimDefinition`s using `jolt-ir`. Passes them to sumcheck/spartan as needed.
-
-This keeps the protocol crates reusable and the IR dependency contained to the one crate that actually defines claim formulas.
 
 ## Philosophy
 

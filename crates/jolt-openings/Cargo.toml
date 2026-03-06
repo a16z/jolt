@@ -3,7 +3,7 @@ name = "jolt-openings"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Commitment scheme traits and opening proof accumulators for the Jolt zkVM"
+description = "Polynomial commitment scheme traits and opening reduction for the Jolt zkVM"
 
 [lints]
 workspace = true
@@ -11,12 +11,13 @@ workspace = true
 [dependencies]
 jolt-crypto = { path = "../jolt-crypto" }
 jolt-field = { path = "../jolt-field" }
-jolt-poly = { path = "../jolt-poly" }
+jolt-poly = { path = "../jolt-poly", optional = true }
 jolt-transcript = { path = "../jolt-transcript" }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+jolt-poly = { path = "../jolt-poly" }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }
@@ -30,4 +31,4 @@ harness = false
 ignored = ["rand"]
 
 [features]
-test-utils = []
+test-utils = ["jolt-poly"]

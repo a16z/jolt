@@ -2855,6 +2855,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-compute"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "jolt-field",
+ "jolt-poly",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+]
+
+[[package]]
 name = "jolt-core"
 version = "0.1.0"
 dependencies = [
@@ -2916,10 +2930,15 @@ dependencies = [
  "ark-std 0.5.0",
  "bincode",
  "criterion",
+ "dory-pcs",
  "jolt-field",
  "jolt-transcript",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "rayon",
  "serde",
  "serde_json",
 ]
@@ -2928,23 +2947,16 @@ dependencies = [
 name = "jolt-dory"
 version = "0.1.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
- "ark-std 0.5.0",
+ "criterion",
  "dory-pcs",
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
- "num-bigint",
- "num-integer",
- "num-traits",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
- "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -2960,11 +2972,19 @@ dependencies = [
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
  "criterion",
+ "dory-pcs",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde",
+]
+
+[[package]]
+name = "jolt-gnark"
+version = "0.1.0"
+dependencies = [
+ "jolt-ir",
 ]
 
 [[package]]
@@ -3138,7 +3158,9 @@ dependencies = [
 name = "jolt-spartan"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "jolt-field",
+ "jolt-ir",
  "jolt-openings",
  "jolt-poly",
  "jolt-sumcheck",
@@ -3146,6 +3168,7 @@ dependencies = [
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
+ "rayon",
  "serde",
  "thiserror 2.0.18",
 ]

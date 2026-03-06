@@ -247,12 +247,11 @@ mod tests {
 
         // Prover: reduce + open
         let mut transcript_p = Blake2bTranscript::new(b"e2e-test");
-        let (reduced_prover, ()) =
-            <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
-                prover_claims,
-                &mut transcript_p,
-                challenge_fn,
-            );
+        let (reduced_prover, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
+            prover_claims,
+            &mut transcript_p,
+            challenge_fn,
+        );
         let proofs: Vec<_> = reduced_prover
             .iter()
             .map(|claim| {

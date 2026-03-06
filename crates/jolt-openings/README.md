@@ -37,7 +37,7 @@ The crate is intentionally thin: PCS traits, claim types, a reduction trait, and
 
 - **`AdditivelyHomomorphic: CommitmentScheme`** — Commitments can be linearly combined. Single method: `combine(commitments, scalars) -> Output`. Enables RLC-based reduction.
 
-- **`StreamingCommitment: CommitmentScheme`** — Incremental commitment: `begin`, `feed`, `finish`. For polynomials that exceed memory.
+- **`StreamingCommitment: CommitmentScheme`** — Incremental commitment: `begin`, `feed(partial, chunk, setup)`, `finish(partial, setup)`. Setup is passed explicitly to each step. For polynomials that exceed memory.
 
 ### Claim Types
 
@@ -69,7 +69,11 @@ use jolt_openings::{CommitmentScheme, OpeningReduction, RlcReduction, ProverClai
 let leaves: Vec<ProverClaim<F>> = protocol_stages(&mut transcript);
 
 // Reduce: group by point, combine via RLC
-let (reduced, _) = RlcReduction::reduce_prover(leaves, &mut transcript);
+// challenge_fn converts transcript challenges to field elements
+let challenge_fn = |c: u128| F::from_u128(c);
+let (reduced, _) = <RlcReduction as OpeningReduction<MyPCS>>::reduce_prover(
+    leaves, &mut transcript, challenge_fn,
+);
 
 // Open each reduced claim individually via PCS
 let proofs: Vec<_> = reduced.iter().map(|claim| {
@@ -81,7 +85,7 @@ let proofs: Vec<_> = reduced.iter().map(|claim| {
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `test-utils` | No | Enables the `mock` module with a hash-based mock commitment scheme for testing |
+| `test-utils` | No | Enables the `mock` module with a truly homomorphic mock commitment scheme for testing |
 
 ## Dependency Position
 

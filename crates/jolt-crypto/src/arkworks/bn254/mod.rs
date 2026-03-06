@@ -8,6 +8,9 @@ mod g1;
 mod g2;
 mod gt;
 
+pub mod batch_addition;
+pub mod glv;
+
 pub use g1::Bn254G1;
 pub use g2::Bn254G2;
 pub use gt::Bn254GT;

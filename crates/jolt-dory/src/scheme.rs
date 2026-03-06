@@ -10,45 +10,55 @@ use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
-use jolt_crypto::Commitment;
+use jolt_crypto::{Bn254GT, Commitment};
 use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_transcript::Transcript;
 
 use crate::params::DoryParams;
 use crate::transcript::JoltToDoryTranscript;
-use crate::types::{
-    ark_to_jolt_fr, jolt_fr_to_ark, DoryCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,
-};
+use crate::types::{DoryCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup};
 
 type InnerFr = dory::backends::arkworks::ArkFr;
 type InnerGT = dory::backends::arkworks::ArkGT;
 type InnerBN254 = dory::backends::arkworks::BN254;
 
-/// Dory polynomial commitment scheme with instance-local parameters.
+/// Converts a `jolt_field::Fr` to the dory-pcs `ArkFr` wrapper.
 ///
-/// Wraps the `dory-pcs` arkworks backend behind the `jolt-openings` trait
-/// hierarchy. Each `DoryScheme` instance carries its own [`DoryParams`],
-/// eliminating the need for global mutable state.
+/// # Safety
+///
+/// Both `jolt_field::Fr` and `ArkFr` are `#[repr(transparent)]` over
+/// `ark_bn254::Fr`, guaranteeing identical memory layout.
+#[inline]
+pub(crate) fn jolt_fr_to_ark(f: &Fr) -> InnerFr {
+    // SAFETY: jolt_field::Fr is repr(transparent) over ark_bn254::Fr,
+    // and ArkFr is repr(transparent) over ark_bn254::Fr.
+    unsafe { std::mem::transmute_copy(f) }
+}
+
+/// Converts a dory-pcs `ArkFr` back to a `jolt_field::Fr`.
+#[inline]
+pub(crate) fn ark_to_jolt_fr(ark: &InnerFr) -> Fr {
+    // SAFETY: Same layout guarantee as jolt_fr_to_ark.
+    unsafe { std::mem::transmute_copy(ark) }
+}
+
+/// Dory polynomial commitment scheme with instance-local parameters.
 #[derive(Clone)]
 pub struct DoryScheme {
     params: DoryParams,
 }
 
 impl DoryScheme {
-    /// Creates a new Dory scheme instance with the given parameters.
     pub fn new(params: DoryParams) -> Self {
         Self { params }
     }
 
-    /// Returns a reference to the scheme's parameters.
     pub fn params(&self) -> &DoryParams {
         &self.params
     }
 
-    /// Generates prover SRS (G1/G2 generator vectors) from a deterministic
-    /// SHA3-seeded RNG. `max_num_vars` is the maximum polynomial size
-    /// ($\log_2$ of evaluations) that can be committed.
+    /// Generates prover SRS from a deterministic SHA3-seeded RNG.
     pub fn setup_prover(max_num_vars: usize) -> DoryProverSetup {
         DoryProverSetup(ArkworksProverSetup::new_from_urs(max_num_vars))
     }
@@ -70,9 +80,6 @@ impl CommitmentScheme for DoryScheme {
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
 
-    /// Commits to a multilinear polynomial via two-tier Dory:
-    /// tier-1 computes per-row MSMs against G1 generators, then tier-2
-    /// pairs those row commitments with G2 generators into a single GT element.
     fn commit(evaluations: &[Fr], setup: &Self::ProverSetup) -> Self::Output {
         let num_vars = evaluations.len().trailing_zeros() as usize;
         let sigma = num_vars.div_ceil(2);
@@ -82,13 +89,11 @@ impl CommitmentScheme for DoryScheme {
         let g2_bases = &setup.0.g2_vec[..row_commitments.len()];
         let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
 
-        DoryCommitment(tier_2)
+        // SAFETY: ArkGT is repr(transparent) over Fq12, same as Bn254GT.
+        let gt: Bn254GT = unsafe { std::mem::transmute(tier_2) };
+        DoryCommitment(gt)
     }
 
-    /// Generates an opening proof for `poly` at `point`.
-    ///
-    /// The evaluation point is reversed before passing to `dory-pcs` because
-    /// Jolt uses MSB-first variable ordering while `dory-pcs` uses LSB-first.
     fn open(
         evaluations: &[Fr],
         point: &[Fr],
@@ -103,7 +108,6 @@ impl CommitmentScheme for DoryScheme {
 
         let row_commitments = commit_rows_msm(&wrapped.evals, sigma, &setup.0);
 
-        // dory-pcs expects the point in reversed order relative to Jolt convention
         let ark_point: Vec<InnerFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
 
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
@@ -124,7 +128,6 @@ impl CommitmentScheme for DoryScheme {
         DoryProof(proof)
     }
 
-    /// Verifies an opening proof against a commitment, point, and claimed evaluation.
     fn verify(
         commitment: &Self::Output,
         point: &[Fr],
@@ -136,10 +139,13 @@ impl CommitmentScheme for DoryScheme {
         let ark_point: Vec<InnerFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let ark_eval = jolt_fr_to_ark(&eval);
 
+        // SAFETY: Bn254GT is repr(transparent) over Fq12, same as ArkGT.
+        let ark_commitment: InnerGT = unsafe { std::mem::transmute(commitment.0) };
+
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
         dory::verify::<InnerFr, InnerBN254, G1Routines, G2Routines, _>(
-            commitment.0,
+            ark_commitment,
             ark_eval,
             &ark_point,
             &proof.0,
@@ -151,7 +157,6 @@ impl CommitmentScheme for DoryScheme {
 }
 
 impl AdditivelyHomomorphic for DoryScheme {
-    /// Computes $\sum_i s_i \cdot C_i$ in GT, used for RLC batching.
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(
             commitments.len(),
@@ -164,18 +169,18 @@ impl AdditivelyHomomorphic for DoryScheme {
             .zip(scalars.iter())
             .map(|(c, s)| {
                 let ark_s = jolt_fr_to_ark(s);
-                ark_s * c.0
+                // SAFETY: Bn254GT is repr(transparent) over Fq12, same as ArkGT.
+                let ark_gt: InnerGT = unsafe { std::mem::transmute(c.0) };
+                ark_s * ark_gt
             })
             .fold(InnerGT::identity(), |acc, x| acc + x);
 
-        DoryCommitment(combined)
+        // SAFETY: reverse transmute.
+        let gt: Bn254GT = unsafe { std::mem::transmute(combined) };
+        DoryCommitment(gt)
     }
 }
 
-/// Computes row-level Pedersen commitments (tier-1) for a flattened evaluation vector.
-///
-/// Chunks the evaluations into rows of `2^sigma` elements each, then computes
-/// an MSM against the G1 generators for each row.
 fn commit_rows_msm(
     evals: &[Fr],
     sigma: usize,
@@ -193,11 +198,6 @@ fn commit_rows_msm(
         .collect()
 }
 
-/// Owned adapter providing dory-pcs trait implementations for polynomial
-/// evaluations without violating the orphan rule.
-///
-/// Materializes the evaluations as `Vec<Fr>` so we have owned data that
-/// dory-pcs can operate on.
 struct DoryPolyAdapter {
     evals: Vec<Fr>,
     num_vars: usize,
@@ -256,8 +256,6 @@ impl DoryPolynomial<InnerFr> for DoryPolyAdapter {
 
 impl MultilinearLagrange<InnerFr> for DoryPolyAdapter {
     fn vector_matrix_product(&self, left_vec: &[InnerFr], nu: usize, sigma: usize) -> Vec<InnerFr> {
-        use ark_ff::Zero as _;
-
         let num_cols = 1usize << sigma;
         let num_rows = 1usize << nu;
         let left_native: Vec<Fr> = left_vec.iter().map(ark_to_jolt_fr).collect();
@@ -281,7 +279,6 @@ impl MultilinearLagrange<InnerFr> for DoryPolyAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_ff::One;
     use jolt_field::Field;
     use jolt_poly::Polynomial;
     use rand_chacha::ChaCha20Rng;
@@ -303,7 +300,9 @@ mod tests {
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+        let point: Vec<Fr> = (0..num_vars)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
         let eval = poly.evaluate(&point);
 
         let commitment = DoryScheme::commit(poly.evaluations(), &prover_setup);
@@ -342,7 +341,6 @@ mod tests {
         let commit_a = DoryScheme::commit(poly_a.evaluations(), &prover_setup);
         let commit_b = DoryScheme::commit(poly_b.evaluations(), &prover_setup);
 
-        // Commit to sum polynomial directly
         let sum_evals: Vec<Fr> = poly_a
             .evaluations()
             .iter()
@@ -351,7 +349,6 @@ mod tests {
             .collect();
         let commit_sum_direct = DoryScheme::commit(&sum_evals, &prover_setup);
 
-        // Combine commitments with scalars [1, 1]
         let combined = DoryScheme::combine(&[commit_a, commit_b], &[Fr::one(), Fr::one()]);
 
         assert_eq!(

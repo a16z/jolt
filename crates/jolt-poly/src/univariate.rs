@@ -242,7 +242,6 @@ impl<F: Field> UnivariatePoly<F> {
     }
 }
 
-
 impl<F: Field> Neg for UnivariatePoly<F> {
     type Output = Self;
 

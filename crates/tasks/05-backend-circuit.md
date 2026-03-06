@@ -1,6 +1,6 @@
 # Task 05: backend-circuit
 
-**Status:** Not started
+**Status:** Done
 **Phase:** After task 01
 **Dependencies:** `jolt-ir` core (task 01)
 **Blocks:** gnark transpiler migration (PR #1322 follow-up)

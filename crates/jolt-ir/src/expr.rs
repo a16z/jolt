@@ -26,10 +26,8 @@ pub enum Var {
 /// coefficients) enter the expression as `Var::Challenge` variables, resolved
 /// to `F` at evaluation time via `ChallengeBinding`.
 ///
-/// This matches the existing `ValueSource::Constant(i128)` convention in the
-/// BlindFold `OutputClaimConstraint` code. If a future claim formula needs a
-/// compile-time field constant larger than `i128`, model it as a
-/// `Var::Challenge` with `ChallengeSource::Derived`.
+/// If a future claim formula needs a compile-time field constant larger than
+/// `i128`, model it as a `Var::Challenge` with `ChallengeSource::Derived`.
 ///
 /// No `Div` or `Inv` variants — claim expressions never require division.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

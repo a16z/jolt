@@ -37,6 +37,20 @@ impl Debug for Bn254GT {
     }
 }
 
+impl From<Fq12> for Bn254GT {
+    #[inline(always)]
+    fn from(inner: Fq12) -> Self {
+        Self(inner)
+    }
+}
+
+impl From<Bn254GT> for Fq12 {
+    #[inline(always)]
+    fn from(w: Bn254GT) -> Self {
+        w.0
+    }
+}
+
 impl Default for Bn254GT {
     #[inline(always)]
     fn default() -> Self {

@@ -6,15 +6,15 @@ Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 ## Overview
 
-This crate wraps the [Dory](https://eprint.iacr.org/2020/1274) polynomial commitment scheme for use in Jolt. Dory is a pairing-based PCS over BN254 with transparent setup, logarithmic proof size, and logarithmic verification time. It supports streaming commitment (for polynomials larger than memory) and batched opening proofs.
+This crate wraps the [Dory](https://eprint.iacr.org/2020/1274) polynomial commitment scheme for use in Jolt. Dory is a pairing-based PCS over BN254 with transparent setup, logarithmic proof size, and logarithmic verification time. It supports streaming commitment (for polynomials larger than memory) and additive homomorphism for batch opening reduction.
 
-The crate implements `CommitmentScheme`, `HomomorphicCommitmentScheme`, and `StreamingCommitmentScheme` from `jolt-openings`, making it a drop-in PCS backend for Spartan and other protocol components.
+The crate implements `CommitmentScheme`, `AdditivelyHomomorphic`, and `StreamingCommitment` from `jolt-openings`, making it a drop-in PCS backend for Spartan and other protocol components.
 
 ## Public API
 
 ### Commitment Scheme
 
-- **`DoryScheme`** — Main entry point. Constructed from `DoryParams`, implements all three commitment scheme traits. Methods: `new(params)`, `params()`, plus all trait methods (`commit`, `prove`, `verify`, `batch_prove`, `batch_verify`, `combine_commitments`, streaming operations).
+- **`DoryScheme`** — Main entry point. Constructed from `DoryParams`, implements all three commitment scheme traits. Inherent methods: `setup_prover(num_vars)`, `setup_verifier(num_vars)`. Trait methods: `commit`, `open`, `verify`, `combine`, `begin`/`feed`/`finish`.
 
 ### Parameters
 
@@ -24,15 +24,10 @@ The crate implements `CommitmentScheme`, `HomomorphicCommitmentScheme`, and `Str
 
 - **`DoryCommitment`** — A commitment (BN254 pairing target element `GT`).
 - **`DoryProof`** — A single opening proof.
-- **`DoryBatchedProof`** — A vector of opening proofs for batched verification.
 - **`DoryProverSetup`** — Prover structured reference string (SRS).
-- **`DoryVerifierSetup`** — Verifier SRS.
+- **`DoryVerifierSetup`** — Verifier SRS (serializable).
 - **`DoryPartialCommitment`** — Intermediate state for streaming commitment.
-- **`DoryHint`** — Auxiliary data for streaming finalization.
-
-### Streaming
-
-- **`DoryStreamingCommitter`** — Incremental commitment builder. Process polynomial chunks via `stream_chunk`, then finalize into a `DoryCommitment`.
+- **`DoryHint`** — Auxiliary data (row commitments) reusable for opening proofs.
 
 ### Optimizations
 
@@ -51,7 +46,7 @@ jolt-crypto ─┤
 jolt-openings ─┘
 ```
 
-Used by `jolt-zkvm` and `jolt-core`.
+Used by `jolt-zkvm`.
 
 ## Feature Flags
 

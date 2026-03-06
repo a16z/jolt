@@ -15,6 +15,7 @@ mod compressed_univariate;
 mod cpu_polynomial;
 mod eq;
 mod identity;
+pub mod lagrange;
 mod multilinear;
 mod univariate;
 

@@ -1,6 +1,6 @@
 # Task 04: backend-lean
 
-**Status:** Not started
+**Status:** Done
 **Phase:** After task 01
 **Dependencies:** `jolt-ir` core (task 01)
 **Blocks:** `zklean-extractor` migration

@@ -1,22 +1,18 @@
 //! Streaming (chunked) commitment for the Dory scheme.
-//!
-//! Implements [`StreamingCommitment`] to allow committing to large
-//! polynomials one chunk at a time, without materializing the full
-//! evaluation table in memory.
 
 use dory::backends::arkworks::G1Routines;
-use dory::primitives::arithmetic::{DoryRoutines, Group as DoryGroup, PairingCurve};
+use dory::primitives::arithmetic::{DoryRoutines, PairingCurve};
+use jolt_crypto::Bn254GT;
 use jolt_field::Fr;
 use jolt_openings::StreamingCommitment;
 
-use crate::scheme::DoryScheme;
-use crate::types::{jolt_fr_to_ark, DoryCommitment, DoryPartialCommitment, DoryProverSetup};
+use crate::scheme::jolt_fr_to_ark;
+use crate::types::{DoryCommitment, DoryPartialCommitment};
 
 type InnerFr = dory::backends::arkworks::ArkFr;
-type InnerG1 = dory::backends::arkworks::ArkG1;
 type InnerBN254 = dory::backends::arkworks::BN254;
 
-impl StreamingCommitment for DoryScheme {
+impl StreamingCommitment for crate::DoryScheme {
     type PartialCommitment = DoryPartialCommitment;
 
     fn begin(_setup: &Self::ProverSetup) -> Self::PartialCommitment {
@@ -25,86 +21,42 @@ impl StreamingCommitment for DoryScheme {
         }
     }
 
-    fn feed(partial: &mut Self::PartialCommitment, chunk: &[Fr]) {
-        // The `StreamingCommitment` trait does not pass the prover setup
-        // to `feed`, so we cannot compute the actual Pedersen MSM here.
-        // We store a zero placeholder. For production use, prefer
-        // [`DoryStreamingCommitter`] which carries the setup reference.
-        let _ = chunk;
-        partial.row_commitments.push(InnerG1::identity());
-    }
-
-    fn finish(partial: Self::PartialCommitment) -> Self::Output {
-        // Without setup access, we cannot compute the multi-pairing.
-        // Return the identity commitment as a placeholder.
-        let _ = &partial.row_commitments;
-        DoryCommitment(<InnerBN254 as PairingCurve>::multi_pair_g2_setup(&[], &[]))
-    }
-}
-
-/// Streaming commitment helper that carries the prover setup reference,
-/// enabling actual MSM computation per chunk.
-///
-/// Use this instead of the `StreamingCommitment` trait methods when
-/// the prover setup is available at the call site.
-pub struct DoryStreamingCommitter<'a> {
-    setup: &'a DoryProverSetup,
-    num_columns: usize,
-    row_commitments: Vec<InnerG1>,
-}
-
-impl<'a> DoryStreamingCommitter<'a> {
-    /// Creates a new streaming committer with the given setup and column count.
-    ///
-    /// `num_columns` must match the Dory matrix width (number of G1 generators
-    /// used per row MSM).
-    pub fn new(setup: &'a DoryProverSetup, num_columns: usize) -> Self {
-        Self {
-            setup,
-            num_columns,
-            row_commitments: Vec::new(),
-        }
-    }
-
-    /// Processes one row of polynomial evaluations, computing its Pedersen commitment.
-    ///
-    /// `chunk.len()` must equal `num_columns`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `chunk.len() != num_columns`.
-    pub fn process_chunk(&mut self, chunk: &[Fr]) {
-        assert_eq!(
-            chunk.len(),
-            self.num_columns,
-            "chunk length must match num_columns"
-        );
-
-        let g1_bases = &self.setup.0.g1_vec[..self.num_columns];
+    fn feed(partial: &mut Self::PartialCommitment, chunk: &[Fr], setup: &Self::ProverSetup) {
+        let g1_bases = &setup.0.g1_vec[..chunk.len()];
         let scalars: Vec<InnerFr> = chunk.iter().map(jolt_fr_to_ark).collect();
         let row_commitment = G1Routines::msm(g1_bases, &scalars);
-        self.row_commitments.push(row_commitment);
+        // SAFETY: ArkG1 is repr(transparent) over G1Projective, same as Bn254G1.
+        let jolt_commitment: jolt_crypto::Bn254G1 = unsafe { std::mem::transmute(row_commitment) };
+        partial.row_commitments.push(jolt_commitment);
     }
 
-    /// Finalizes the streaming session, computing the tier-2 multi-pairing commitment.
-    pub fn finalize(self) -> DoryCommitment {
-        let g2_bases = &self.setup.0.g2_vec[..self.row_commitments.len()];
+    fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output {
+        // SAFETY: Bn254G1 is repr(transparent) over G1Projective, same as ArkG1.
+        let ark_row_commitments: Vec<dory::backends::arkworks::ArkG1> = unsafe {
+            std::mem::transmute(partial.row_commitments)
+        };
+        let g2_bases = &setup.0.g2_vec[..ark_row_commitments.len()];
         let tier_2 =
-            <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&self.row_commitments, g2_bases);
-        DoryCommitment(tier_2)
+            <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&ark_row_commitments, g2_bases);
+        // SAFETY: ArkGT is repr(transparent) over Fq12, same as Bn254GT.
+        let gt: Bn254GT = unsafe { std::mem::transmute(tier_2) };
+        DoryCommitment(gt)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use jolt_field::Field;
-    use jolt_openings::CommitmentScheme;
+    use jolt_openings::{CommitmentScheme, StreamingCommitment};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
+    use jolt_field::Fr;
+
+    use crate::DoryScheme;
+
     #[test]
-    fn streaming_committer_matches_direct() {
+    fn streaming_matches_direct() {
         let num_vars: usize = 4;
         let num_cols = 1usize << num_vars.div_ceil(2);
         let num_rows = 1usize << (num_vars - num_vars.div_ceil(2));
@@ -113,17 +65,17 @@ mod tests {
         let prover_setup = DoryScheme::setup_prover(num_vars);
 
         let evals: Vec<Fr> = (0..num_rows * num_cols)
-            .map(|_| Fr::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
 
         let poly = jolt_poly::Polynomial::new(evals.clone());
         let direct = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
-        let mut streamer = DoryStreamingCommitter::new(&prover_setup, num_cols);
+        let mut partial = DoryScheme::begin(&prover_setup);
         for row in evals.chunks(num_cols) {
-            streamer.process_chunk(row);
+            DoryScheme::feed(&mut partial, row, &prover_setup);
         }
-        let streamed = streamer.finalize();
+        let streamed = DoryScheme::finish(partial, &prover_setup);
 
         assert_eq!(
             direct, streamed,

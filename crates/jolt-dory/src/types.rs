@@ -1,42 +1,38 @@
 //! Wrapper types for dory-pcs types used in the public API.
 //!
-//! These wrappers bridge between `dory-pcs`'s arkworks backend types and
-//! the trait bounds required by `jolt-openings::CommitmentScheme`. In particular,
-//! dory-pcs types use arkworks `CanonicalSerialize`/`CanonicalDeserialize` while
-//! `jolt-openings` traits require `serde::Serialize`/`serde::Deserialize`. The
-//! wrappers provide serde implementations by delegating to canonical serialization.
+//! These wrappers bridge between `dory-pcs`'s types and the trait bounds
+//! required by `jolt-openings::CommitmentScheme`.
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use dory::backends::arkworks::{
-    ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
-};
+use dory::backends::arkworks::{ArkDoryProof, ArkworksProverSetup, ArkworksVerifierSetup};
+use dory::primitives::serialization::{DoryDeserialize, DorySerialize};
+use jolt_crypto::{Bn254G1, Bn254GT};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Commitment produced by the Dory scheme.
 ///
-/// Wraps a `dory-pcs` pairing target element `ArkGT` (an element of the
-/// target group $\mathbb{G}_T$ of the BN254 pairing). The commitment is
-/// computed as a multi-pairing of row-level Pedersen commitments in $\mathbb{G}_1$
-/// with the SRS generators in $\mathbb{G}_2$.
+/// Wraps a BN254 pairing target element (`Bn254GT`). The commitment is
+/// computed as a multi-pairing of row-level Pedersen commitments in G1
+/// with the SRS generators in G2.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DoryCommitment(pub ArkGT);
+pub struct DoryCommitment(pub Bn254GT);
 
 impl Serialize for DoryCommitment {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        canonical_serialize(&self.0, serializer)
+        dory_serialize(&self.0, serializer)
     }
 }
 
 impl<'de> Deserialize<'de> for DoryCommitment {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        canonical_deserialize(deserializer).map(Self)
+        dory_deserialize(deserializer).map(Self)
     }
 }
 
 /// Opening proof for a single polynomial.
 ///
-/// Wraps the `dory-pcs` proof structure, which contains the inner-product
-/// argument transcript for a Dory opening at a given evaluation point.
+/// Wraps the `dory-pcs` proof structure. Serialization uses the arkworks
+/// backend's concrete `ArkDoryProof` type since the generic `DoryProof`
+/// doesn't derive serialization traits.
 #[derive(Clone, Debug)]
 pub struct DoryProof(pub ArkDoryProof);
 
@@ -54,31 +50,27 @@ impl<'de> Deserialize<'de> for DoryProof {
 
 /// Prover-side structured reference string (SRS) for Dory.
 ///
-/// Contains the $\mathbb{G}_1$ and $\mathbb{G}_2$ generator vectors used for
-/// computing Pedersen commitments and generating opening proofs.
+/// Uses the arkworks backend wrapper for disk-persistence and
+/// deterministic setup support via `new_from_urs()`.
 #[derive(Clone)]
 pub struct DoryProverSetup(pub ArkworksProverSetup);
 
-// SAFETY: `ArkworksProverSetup` contains only group element vectors (`Vec<ArkG1>`,
-// `Vec<ArkG2>`) which are `Send + Sync`. The inner `ProverSetup<BN254>` lacks the
-// auto-trait markers only because of arkworks type-level plumbing, not due to any
-// actual thread-safety hazard.
+// SAFETY: ArkworksProverSetup contains only group element vectors which are plain data.
+// The missing auto-traits come from arkworks type-level plumbing.
 unsafe impl Send for DoryProverSetup {}
-// SAFETY: Same rationale as `Send` impl above.
+// SAFETY: Same rationale as Send impl above.
 unsafe impl Sync for DoryProverSetup {}
 
 /// Verifier-side structured reference string (SRS) for Dory.
 ///
 /// A subset of the prover SRS sufficient for verifying opening proofs.
-/// Serializable for transmission to verifiers.
 #[derive(Clone)]
 pub struct DoryVerifierSetup(pub ArkworksVerifierSetup);
 
-// SAFETY: `ArkworksVerifierSetup` contains only group elements, field elements,
-// and pairing target elements, all of which are plain data without interior
-// mutability. The missing auto-traits are an artifact of arkworks generics.
+// SAFETY: ArkworksVerifierSetup contains only group elements and field elements,
+// all plain data without interior mutability.
 unsafe impl Send for DoryVerifierSetup {}
-// SAFETY: Same rationale as `Send` impl above.
+// SAFETY: Same rationale as Send impl above.
 unsafe impl Sync for DoryVerifierSetup {}
 
 impl Serialize for DoryVerifierSetup {
@@ -94,57 +86,17 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
 }
 
 /// Row-level commitments used as an opening proof hint.
-///
-/// During commitment, Dory computes a Pedersen commitment per row of the
-/// polynomial coefficient matrix. These row commitments can be reused when
-/// generating an opening proof, avoiding redundant MSM computation.
 #[derive(Clone, Debug)]
-pub struct DoryHint(pub Vec<ArkG1>);
+pub struct DoryHint(pub Vec<Bn254G1>);
 
 /// Partial commitment state accumulated during streaming.
-///
-/// Stores the row-level $\mathbb{G}_1$ commitments computed so far during
-/// a streaming commitment session.
 #[derive(Clone)]
 pub struct DoryPartialCommitment {
     /// Row commitments accumulated from processed chunks.
-    pub row_commitments: Vec<ArkG1>,
+    pub row_commitments: Vec<Bn254G1>,
 }
 
-// SAFETY: `ArkG1` elements are plain curve points (projective coordinates)
-// with no interior mutability. The missing auto-traits are inherited from
-// arkworks type parameters, not due to any actual thread-safety hazard.
-unsafe impl Send for DoryPartialCommitment {}
-// SAFETY: `ArkG1` elements are plain curve points with no interior mutability.
-unsafe impl Sync for DoryPartialCommitment {}
-
-/// Converts a `jolt_field::Fr` to the dory-pcs `ArkFr` wrapper.
-///
-/// # Safety
-///
-/// Both `jolt_field::Fr` and `ArkFr` are `#[repr(transparent)]` over
-/// `ark_bn254::Fr`, guaranteeing identical memory layout.
-#[inline]
-pub fn jolt_fr_to_ark(f: &jolt_field::Fr) -> ArkFr {
-    // SAFETY: jolt_field::Fr is repr(transparent) over ark_bn254::Fr,
-    // and ArkFr is repr(transparent) over ark_bn254::Fr.
-    unsafe { std::mem::transmute_copy(f) }
-}
-
-/// Converts a dory-pcs `ArkFr` back to a `jolt_field::Fr`.
-///
-/// # Safety
-///
-/// Same layout guarantee as [`jolt_fr_to_ark`].
-#[inline]
-pub fn ark_to_jolt_fr(ark: &ArkFr) -> jolt_field::Fr {
-    // SAFETY: ArkFr is repr(transparent) over ark_bn254::Fr,
-    // and jolt_field::Fr is repr(transparent) over ark_bn254::Fr.
-    unsafe { std::mem::transmute_copy(ark) }
-}
-
-/// Serializes an arkworks `CanonicalSerialize` type via serde by encoding to bytes.
-fn canonical_serialize<T: CanonicalSerialize, S: Serializer>(
+fn dory_serialize<T: DorySerialize, S: Serializer>(
     value: &T,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
@@ -155,8 +107,25 @@ fn canonical_serialize<T: CanonicalSerialize, S: Serializer>(
     serializer.serialize_bytes(&buf)
 }
 
-/// Deserializes an arkworks `CanonicalDeserialize` type via serde by decoding from bytes.
-fn canonical_deserialize<'de, T: CanonicalDeserialize, D: Deserializer<'de>>(
+fn dory_deserialize<'de, T: DoryDeserialize, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<T, D::Error> {
+    let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
+    T::deserialize_compressed(&buf[..]).map_err(serde::de::Error::custom)
+}
+
+fn canonical_serialize<T: ark_serialize::CanonicalSerialize, S: Serializer>(
+    value: &T,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let mut buf = Vec::new();
+    value
+        .serialize_compressed(&mut buf)
+        .map_err(serde::ser::Error::custom)?;
+    serializer.serialize_bytes(&buf)
+}
+
+fn canonical_deserialize<'de, T: ark_serialize::CanonicalDeserialize, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<T, D::Error> {
     let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
@@ -200,12 +169,13 @@ mod tests {
         let deserialized: DoryVerifierSetup =
             serde_json::from_slice(&serialized).expect("deserialize verifier setup");
 
-        // Verify functional equivalence: both setups produce the same verification result
         let mut rng = ChaCha20Rng::seed_from_u64(401);
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+        let point: Vec<Fr> = (0..num_vars)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
         let eval = poly.evaluate(&point);
         let commitment = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
@@ -241,7 +211,9 @@ mod tests {
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+        let point: Vec<Fr> = (0..num_vars)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
         let eval = poly.evaluate(&point);
 
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
@@ -257,7 +229,6 @@ mod tests {
         let deserialized: DoryProof =
             serde_json::from_slice(&serialized).expect("deserialize proof");
 
-        // Verify the deserialized proof is functionally valid
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
         let commitment = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 

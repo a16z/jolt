@@ -50,7 +50,6 @@ impl<F: Field> ExprVisitor for EvaluateVisitor<'_, F> {
 impl Expr {
     /// Evaluate the expression with concrete field values for openings and challenges.
     ///
-    /// Replaces the hand-written `SumcheckInstanceParams::input_claim()` methods.
     /// Panics if an `Opening(id)` or `Challenge(id)` index is out of bounds.
     pub fn evaluate<F: Field>(&self, openings: &[F], challenges: &[F]) -> F {
         let mut visitor = EvaluateVisitor {

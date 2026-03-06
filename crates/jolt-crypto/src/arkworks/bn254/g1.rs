@@ -31,6 +31,13 @@ impl From<G1Projective> for Bn254G1 {
     }
 }
 
+impl From<Bn254G1> for G1Projective {
+    #[inline(always)]
+    fn from(w: Bn254G1) -> Self {
+        w.0
+    }
+}
+
 impl Add for Bn254G1 {
     type Output = Self;
     #[inline(always)]
