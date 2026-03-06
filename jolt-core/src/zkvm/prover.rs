@@ -1312,8 +1312,7 @@ impl<
 
         let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
             ram_ra_virtual_params,
-            &self.trace,
-            &self.program_io.memory_layout,
+            &shared_ra_indices,
             &self.one_hot_params,
         );
         let mut lookups_ra_virtual =

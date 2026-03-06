@@ -45,9 +45,7 @@
 //!
 //! Variables are bound low-to-high, matching the polynomial layout.
 
-use common::jolt_device::MemoryLayout;
 use std::sync::Arc;
-use tracer::instruction::Cycle;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
@@ -56,6 +54,7 @@ use crate::poly::opening_proof::{
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::ra_poly::RaPolynomial;
+use crate::poly::shared_ra_polys::RaIndices;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 #[cfg(feature = "zk")]
@@ -66,7 +65,6 @@ use crate::subprotocols::mles_product_sum::compute_mles_product_sum;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::zkvm::config::OneHotParams;
-use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::{
     field::JoltField,
@@ -199,34 +197,32 @@ pub struct RamRaVirtualSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> RamRaVirtualSumcheckProver<F> {
+    /// Initialize from shared RA indices (avoids re-reading trace for RAM indices).
     #[tracing::instrument(skip_all, name = "RamRaVirtualSumcheckProver::initialize")]
     pub fn initialize(
         params: RamRaVirtualParams<F>,
-        trace: &[Cycle],
-        memory_layout: &MemoryLayout,
+        shared_indices: &Arc<Vec<RaIndices>>,
         one_hot_params: &OneHotParams,
     ) -> Self {
-        // Precompute EQ tables for each address chunk
         let eq_tables: Vec<Vec<F>> = params
             .r_address_chunks
             .iter()
             .map(|chunk| EqPolynomial::evals(chunk))
             .collect();
 
-        // Create eq polynomial with Gruen optimization for r_cycle_reduced
         let eq_poly = GruenSplitEqPolynomial::new(&params.r_cycle.r, BindingOrder::LowToHigh);
 
-        // Create ra_i polynomials for each decomposition chunk
+        let instruction_d = one_hot_params.instruction_d;
+        let bytecode_d = one_hot_params.bytecode_d;
+        let ram_offset = instruction_d + bytecode_d;
+
         let ra_i_polys: Vec<RaPolynomial<u8, F>> = (0..params.d)
             .into_par_iter()
             .zip(eq_tables.into_par_iter())
             .map(|(i, eq_table)| {
-                let ra_i_indices: Vec<Option<u8>> = trace
+                let ra_i_indices: Vec<Option<u8>> = shared_indices
                     .par_iter()
-                    .map(|cycle| {
-                        remap_address(cycle.ram_access().address() as u64, memory_layout)
-                            .map(|address| one_hot_params.ram_address_chunk(address, i))
-                    })
+                    .map(|ra| ra.get_index(ram_offset + i, one_hot_params))
                     .collect();
                 RaPolynomial::new(Arc::new(ra_i_indices), eq_table)
             })
