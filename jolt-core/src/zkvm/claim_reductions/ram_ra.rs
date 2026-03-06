@@ -55,8 +55,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         unipoly::UniPoly,
     },
@@ -739,11 +738,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let r_cycle_reduced: Vec<_> = sumcheck_challenges.iter().rev().copied().collect();
 
         // Compute eq_combined(r_cycle_reduced) at the fixed aligned address point.
@@ -765,11 +760,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         eq_combined * ra_claim_reduced
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         // Cache the reduced RA opening point for RA virtualization.
         // The address part is fixed to the aligned `r_address`; the cycle part is the sumcheck's
         // reduced cycle point.

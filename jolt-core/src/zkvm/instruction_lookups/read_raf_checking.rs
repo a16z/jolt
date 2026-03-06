@@ -22,8 +22,7 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
         split_eq_poly::GruenSplitEqPolynomial,
@@ -1321,11 +1320,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         // Verifier's RHS reconstruction from virtual claims at r:
         //
         // Computes Val and RafVal contributions at r_address, forms EQ(r_cycle)
@@ -1394,11 +1389,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         eq_eval_r_reduction * ra_claim * (val_claim + self.params.gamma * raf_claim)
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let r_sumcheck = self.params.normalize_opening_point(sumcheck_challenges);
         // Verifier requests the virtual openings that the prover must provide
         // for this sumcheck (same set as published by the prover-side cache).

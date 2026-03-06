@@ -235,16 +235,20 @@ pub fn fiat_shamir_preamble(
 }
 
 #[cfg(all(feature = "prover", feature = "transcript-poseidon"))]
-pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
+pub type RV64IMACProver<'a> =
+    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
 #[cfg(feature = "transcript-poseidon")]
-pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
+pub type RV64IMACVerifier<'a> =
+    JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
 #[cfg(feature = "transcript-poseidon")]
 pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
 
 #[cfg(all(feature = "prover", feature = "transcript-keccak"))]
-pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, KeccakTranscript>;
+pub type RV64IMACProver<'a> =
+    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, KeccakTranscript>;
 #[cfg(feature = "transcript-keccak")]
-pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, KeccakTranscript>;
+pub type RV64IMACVerifier<'a> =
+    JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, KeccakTranscript>;
 #[cfg(feature = "transcript-keccak")]
 pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, KeccakTranscript>;
 
@@ -256,13 +260,15 @@ pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, KeccakT
         feature = "transcript-blake2b"
     ))
 ))]
-pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACProver<'a> =
+    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
 #[cfg(not(any(
     feature = "transcript-poseidon",
     feature = "transcript-keccak",
     feature = "transcript-blake2b"
 )))]
-pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACVerifier<'a> =
+    JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
 #[cfg(not(any(
     feature = "transcript-poseidon",
     feature = "transcript-keccak",
@@ -271,9 +277,11 @@ pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentS
 pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
 
 #[cfg(all(feature = "prover", feature = "transcript-blake2b"))]
-pub type RV64IMACProver<'a> = JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACProver<'a> =
+    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
 #[cfg(feature = "transcript-blake2b")]
-pub type RV64IMACVerifier<'a> = JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACVerifier<'a> =
+    JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
 #[cfg(feature = "transcript-blake2b")]
 pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
 

@@ -17,8 +17,7 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -728,11 +727,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let (r_address_prime, r_cycle_prime) = opening_point.split_at(self.params.log_K);
         // r_cycle is bound LowToHigh, so reverse

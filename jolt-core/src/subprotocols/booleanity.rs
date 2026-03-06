@@ -556,11 +556,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let ra_claims: Vec<F> = self
             .params
             .polynomial_types
@@ -587,11 +583,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
                 .sum::<F>()
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_sparse(
             self.params.polynomial_types.clone(),

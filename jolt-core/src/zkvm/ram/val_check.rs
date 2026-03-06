@@ -496,11 +496,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         // LT(r_cycle′, r_cycle) term for (1), computed the same way as ValEvaluation verifier.
         let (r_val, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
@@ -526,11 +522,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         inc_claim * wa_claim * (lt_eval + self.params.gamma)
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let r_cycle_prime = self.params.normalize_opening_point(sumcheck_challenges);
 
         // r_address from RamVal/RamReadWriteChecking.

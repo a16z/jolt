@@ -144,7 +144,7 @@ impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, MleAst>, MleAst) {
-        self.get_opening(&OpeningId::virtual_poly(polynomial, sumcheck))
+        self.get_opening(&OpeningId::virt(polynomial, sumcheck))
     }
 
     fn get_committed_polynomial_opening(
@@ -175,7 +175,7 @@ impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
         opening_point: OpeningPoint<BIG_ENDIAN, MleAst>,
     ) {
         self.store_opening(
-            &OpeningId::virtual_poly(polynomial, sumcheck),
+            &OpeningId::virt(polynomial, sumcheck),
             opening_point.r,
         );
     }
@@ -254,7 +254,7 @@ mod tests {
         // CRITICAL: new_with_claims must correctly store all claims
         let claims = vec![
             (
-                OpeningId::virtual_poly(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
+                OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
                 MleAst::from_u64(100),
             ),
             (
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn test_append_virtual_updates_point() {
         let claims = vec![(
-            OpeningId::virtual_poly(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
+            OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
             MleAst::from_u64(100),
         )];
 
@@ -301,7 +301,7 @@ mod tests {
         );
 
         // Verify point was stored
-        let key = OpeningId::virtual_poly(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
+        let key = OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
         let (stored_point, _) = accumulator.openings.get(&key).unwrap();
         assert_eq!(stored_point.len(), 2);
         assert_eq!(stored_point[0].root(), point_values[0].root());

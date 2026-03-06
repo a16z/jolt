@@ -16,7 +16,8 @@ use crate::poly::multiquadratic_poly::MultiquadraticPolynomial;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+    LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
@@ -695,11 +696,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let r1cs_input_evals = ALL_R1CS_INPUTS.map(|input| {
             accumulator
                 .get_virtual_polynomial_opening((&input).into(), SumcheckId::SpartanOuter)
@@ -736,20 +733,22 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
             eprintln!("=== expected_output_claim DEBUG ===");
             eprintln!("inner_sum_prod = {}", to_decimal(&inner_sum_prod));
             eprintln!("tau_high_bound_r0 = {}", to_decimal(&tau_high_bound_r0));
-            eprintln!("tau_bound_r_tail_reversed = {}", to_decimal(&tau_bound_r_tail_reversed));
+            eprintln!(
+                "tau_bound_r_tail_reversed = {}",
+                to_decimal(&tau_bound_r_tail_reversed)
+            );
             let result = tau_high_bound_r0 * tau_bound_r_tail_reversed * inner_sum_prod;
-            eprintln!("expected_output_claim (unbatched) = {}", to_decimal(&result));
+            eprintln!(
+                "expected_output_claim (unbatched) = {}",
+                to_decimal(&result)
+            );
             eprintln!("=== END DEBUG ===");
         }
 
         tau_high_bound_r0 * tau_bound_r_tail_reversed * inner_sum_prod
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
         for input in &ALL_R1CS_INPUTS {
             accumulator.append_virtual(

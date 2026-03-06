@@ -30,10 +30,7 @@ use crate::{
     field::JoltField,
     poly::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            BIG_ENDIAN,
-        },
+        opening_proof::{OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN},
     },
     transcripts::Transcript,
     utils::math::Math,
@@ -745,11 +742,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         let (_, r_cycle) = r.split_at(self.params.K.log_2());
 
@@ -789,11 +782,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         result
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             VirtualPolynomial::RamVal,

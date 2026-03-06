@@ -388,11 +388,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        _accumulator: &A,
-        _sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, _accumulator: &A, _sumcheck_challenges: &[F::Challenge]) -> F {
         // The BlindFold verifier handles the final claim verification
         // after receiving witness and error contributions
         unreachable!(
@@ -400,11 +396,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         )
     }
 
-    fn cache_openings(
-        &self,
-        _accumulator: &mut A,
-        _sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, _accumulator: &mut A, _sumcheck_challenges: &[F::Challenge]) {
         // Opening verification is handled by BlindFold after sumcheck
     }
 }

@@ -12,7 +12,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+            LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -369,11 +370,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         &self.params
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &A,
-        sumcheck_challenges: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
         let r = self.params.normalize_opening_point(sumcheck_challenges);
         let eq_eval = EqPolynomial::mle_endian(&self.params.r_cycle, &r);
 
@@ -398,11 +395,7 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
         eq_eval * ra_acc
     }
 
-    fn cache_openings(
-        &self,
-        accumulator: &mut A,
-        sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
 
         // Compute r_address_chunks with proper padding
