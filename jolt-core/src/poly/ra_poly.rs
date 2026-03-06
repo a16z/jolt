@@ -23,6 +23,7 @@ pub enum RaPolynomial<I: Into<usize> + Copy + Default + Send + Sync + 'static, F
     Round1(RaPolynomialRound1<I, F>),
     Round2(RaPolynomialRound2<I, F>),
     Round3(RaPolynomialRound3<I, F>),
+    Round4(RaPolynomialRound4<I, F>),
     RoundN(MultilinearPolynomial<F>),
 }
 
@@ -41,6 +42,7 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> RaPo
             Self::Round1(mle) => mle.get_bound_coeff(j),
             Self::Round2(mle) => mle.get_bound_coeff(j),
             Self::Round3(mle) => mle.get_bound_coeff(j),
+            Self::Round4(mle) => mle.get_bound_coeff(j),
             Self::RoundN(mle) => mle.get_bound_coeff(j),
         }
     }
@@ -51,6 +53,7 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> RaPo
             Self::Round1(mle) => mle.len(),
             Self::Round2(mle) => mle.len(),
             Self::Round3(mle) => mle.len(),
+            Self::Round4(mle) => mle.len(),
             Self::RoundN(mle) => mle.len(),
         }
     }
@@ -72,7 +75,8 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> Poly
             Self::None => panic!("RaPolynomial::bind called on None"),
             Self::Round1(mle) => *self = Self::Round2(mem::take(mle).bind(r, order)),
             Self::Round2(mle) => *self = Self::Round3(mem::take(mle).bind(r, order)),
-            Self::Round3(mle) => *self = Self::RoundN(mem::take(mle).bind(r, order)),
+            Self::Round3(mle) => *self = Self::Round4(mem::take(mle).bind(r, order)),
+            Self::Round4(mle) => *self = Self::RoundN(mem::take(mle).bind(r, order)),
             Self::RoundN(mle) => mle.bind_parallel(r, order),
         };
     }
@@ -282,8 +286,7 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
     }
 
     #[tracing::instrument(skip_all, name = "RaPolynomialRound3::bind")]
-    fn bind(self, r2: F::Challenge, _binding_order: BindingOrder) -> MultilinearPolynomial<F> {
-        // Construct lookup tables.
+    fn bind(self, r2: F::Challenge, _binding_order: BindingOrder) -> RaPolynomialRound4<I, F> {
         let eq_0_r2 = EqPolynomial::mle(&[F::zero()], &[r2]);
         let eq_1_r2 = EqPolynomial::mle(&[F::one()], &[r2]);
         let mut F_000: Vec<F> = self.F_00.clone();
@@ -304,76 +307,11 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
         F_101.par_iter_mut().for_each(|f| *f *= eq_1_r2);
         F_111.par_iter_mut().for_each(|f| *f *= eq_1_r2);
 
-        let lookup_indices = &self.lookup_indices;
-        let n = lookup_indices.len() / 8;
-        let mut res = unsafe_allocate_zero_vec(n);
-
-        let chunk_size = 1 << 16;
-
-        // Eval ra_i(r, r0, r1, j) for all j in the hypercube.
-        match self.binding_order {
-            BindingOrder::HighToLow => {
-                res.par_chunks_mut(chunk_size).enumerate().for_each(
-                    |(chunk_index, evals_chunk)| {
-                        for (j, eval) in zip(chunk_index * chunk_size.., evals_chunk) {
-                            let H_000 = lookup_indices[j].map_or(F::zero(), |i| F_000[i.into()]);
-                            let H_001 =
-                                lookup_indices[j + n].map_or(F::zero(), |i| F_001[i.into()]);
-                            let H_010 =
-                                lookup_indices[j + n * 2].map_or(F::zero(), |i| F_010[i.into()]);
-                            let H_011 =
-                                lookup_indices[j + n * 3].map_or(F::zero(), |i| F_011[i.into()]);
-                            let H_100 =
-                                lookup_indices[j + n * 4].map_or(F::zero(), |i| F_100[i.into()]);
-                            let H_101 =
-                                lookup_indices[j + n * 5].map_or(F::zero(), |i| F_101[i.into()]);
-                            let H_110 =
-                                lookup_indices[j + n * 6].map_or(F::zero(), |i| F_110[i.into()]);
-                            let H_111 =
-                                lookup_indices[j + n * 7].map_or(F::zero(), |i| F_111[i.into()]);
-                            *eval = H_000 + H_010 + H_100 + H_110 + H_001 + H_011 + H_101 + H_111;
-                        }
-                    },
-                );
-            }
-            BindingOrder::LowToHigh => {
-                res.par_chunks_mut(chunk_size).enumerate().for_each(
-                    |(chunk_index, evals_chunk)| {
-                        for (j, eval) in zip(chunk_index * chunk_size.., evals_chunk) {
-                            let H_000 =
-                                lookup_indices[8 * j].map_or(F::zero(), |i| F_000[i.into()]);
-                            let H_100 =
-                                lookup_indices[8 * j + 1].map_or(F::zero(), |i| F_100[i.into()]);
-                            let H_010 =
-                                lookup_indices[8 * j + 2].map_or(F::zero(), |i| F_010[i.into()]);
-                            let H_110 =
-                                lookup_indices[8 * j + 3].map_or(F::zero(), |i| F_110[i.into()]);
-                            let H_001 =
-                                lookup_indices[8 * j + 4].map_or(F::zero(), |i| F_001[i.into()]);
-                            let H_101 =
-                                lookup_indices[8 * j + 5].map_or(F::zero(), |i| F_101[i.into()]);
-                            let H_011 =
-                                lookup_indices[8 * j + 6].map_or(F::zero(), |i| F_011[i.into()]);
-                            let H_111 =
-                                lookup_indices[8 * j + 7].map_or(F::zero(), |i| F_111[i.into()]);
-                            *eval = H_000 + H_010 + H_100 + H_110 + H_001 + H_011 + H_101 + H_111;
-                        }
-                    },
-                );
-            }
+        RaPolynomialRound4 {
+            tables: [F_000, F_100, F_010, F_110, F_001, F_101, F_011, F_111],
+            lookup_indices: self.lookup_indices,
+            binding_order: self.binding_order,
         }
-
-        drop_in_background_thread(self.lookup_indices);
-        drop_in_background_thread(F_000);
-        drop_in_background_thread(F_100);
-        drop_in_background_thread(F_010);
-        drop_in_background_thread(F_110);
-        drop_in_background_thread(F_001);
-        drop_in_background_thread(F_101);
-        drop_in_background_thread(F_011);
-        drop_in_background_thread(F_111);
-
-        res.into()
     }
 
     #[inline]
@@ -399,6 +337,122 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
                     self.lookup_indices[4 * j + 3].map_or(F::zero(), |i| self.F_11[i.into()]);
                 H_00 + H_10 + H_01 + H_11
             }
+        }
+    }
+}
+
+/// Round 4: 8 eq tables, delays materialization one more round.
+#[derive(Allocative, Default, Clone, Debug, PartialEq)]
+pub struct RaPolynomialRound4<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
+{
+    tables: [Vec<F>; 8],
+    lookup_indices: Arc<Vec<Option<I>>>,
+    binding_order: BindingOrder,
+}
+
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
+    RaPolynomialRound4<I, F>
+{
+    fn len(&self) -> usize {
+        self.lookup_indices.len() / 8
+    }
+
+    #[tracing::instrument(skip_all, name = "RaPolynomialRound4::bind")]
+    fn bind(self, r3: F::Challenge, _binding_order: BindingOrder) -> MultilinearPolynomial<F> {
+        let eq_0_r3 = EqPolynomial::mle(&[F::zero()], &[r3]);
+        let eq_1_r3 = EqPolynomial::mle(&[F::one()], &[r3]);
+
+        // 16 groups: [0..8) for bit3=0 (eq_0_r3), [8..16) for bit3=1 (eq_1_r3)
+        let [t0, t1, t2, t3, t4, t5, t6, t7] = self.tables;
+        let mut tables: [Vec<F>; 16] = [
+            t0.clone(),
+            t1.clone(),
+            t2.clone(),
+            t3.clone(),
+            t4.clone(),
+            t5.clone(),
+            t6.clone(),
+            t7.clone(),
+            t0,
+            t1,
+            t2,
+            t3,
+            t4,
+            t5,
+            t6,
+            t7,
+        ];
+
+        let (lo, hi) = tables.split_at_mut(8);
+        rayon::join(
+            || {
+                lo.par_iter_mut()
+                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r3))
+            },
+            || {
+                hi.par_iter_mut()
+                    .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r3))
+            },
+        );
+
+        let lookup_indices = &self.lookup_indices;
+        let n = lookup_indices.len() / 16;
+        let mut res: Vec<F> = unsafe_allocate_zero_vec(n);
+
+        let chunk_size = 1 << 16;
+        match self.binding_order {
+            BindingOrder::HighToLow => {
+                res.par_chunks_mut(chunk_size).enumerate().for_each(
+                    |(chunk_index, evals_chunk)| {
+                        for (j, eval) in zip(chunk_index * chunk_size.., evals_chunk) {
+                            *eval = (0..16)
+                                .map(|seg| {
+                                    lookup_indices[seg * n + j]
+                                        .map_or(F::zero(), |i| tables[seg][i.into()])
+                                })
+                                .sum();
+                        }
+                    },
+                );
+            }
+            BindingOrder::LowToHigh => {
+                res.par_chunks_mut(chunk_size).enumerate().for_each(
+                    |(chunk_index, evals_chunk)| {
+                        for (j, eval) in zip(chunk_index * chunk_size.., evals_chunk) {
+                            *eval = (0..16)
+                                .map(|offset| {
+                                    lookup_indices[16 * j + offset]
+                                        .map_or(F::zero(), |i| tables[offset][i.into()])
+                                })
+                                .sum();
+                        }
+                    },
+                );
+            }
+        }
+
+        drop_in_background_thread(self.lookup_indices);
+        res.into()
+    }
+
+    #[inline]
+    fn get_bound_coeff(&self, j: usize) -> F {
+        match self.binding_order {
+            BindingOrder::HighToLow => {
+                let n = self.lookup_indices.len() / 8;
+                (0..8)
+                    .map(|seg| {
+                        self.lookup_indices[seg * n + j]
+                            .map_or(F::zero(), |i| self.tables[seg][i.into()])
+                    })
+                    .sum()
+            }
+            BindingOrder::LowToHigh => (0..8)
+                .map(|offset| {
+                    self.lookup_indices[8 * j + offset]
+                        .map_or(F::zero(), |i| self.tables[offset][i.into()])
+                })
+                .sum(),
         }
     }
 }
