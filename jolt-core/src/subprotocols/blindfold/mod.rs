@@ -42,6 +42,7 @@ pub use witness::{
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
+
 use crate::utils::math::Math;
 
 /// ZK data collected during `prove_zk` for a single batched sumcheck stage.

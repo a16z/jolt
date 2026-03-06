@@ -12,6 +12,7 @@ pub fn main() {
     let verifier_preprocessing = guest::preprocess_verifier_rand(
         shared_preprocessing,
         prover_preprocessing.generators.to_verifier_setup(),
+        None,
     );
 
     let prove = guest::build_prover_rand(program, prover_preprocessing);

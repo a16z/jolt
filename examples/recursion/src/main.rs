@@ -228,11 +228,12 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
 
     let mut cursor = std::io::Cursor::new(all_groups_data);
 
-    let verifier_preprocessing =
-        jolt_sdk::JoltVerifierPreprocessing::<jolt_sdk::F, jolt_sdk::PCS>::deserialize_compressed(
-            &mut cursor,
-        )
-        .unwrap();
+    let verifier_preprocessing = jolt_sdk::JoltVerifierPreprocessing::<
+        jolt_sdk::F,
+        jolt_sdk::Curve,
+        jolt_sdk::PCS,
+    >::deserialize_compressed(&mut cursor)
+    .unwrap();
     let verifier_bytes = verifier_preprocessing.serialize_to_bytes().unwrap();
     info!(
         "✓ Verifier preprocessing deserialized successfully ({} bytes)",

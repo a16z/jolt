@@ -102,7 +102,7 @@ impl RAMPreprocessing {
             .unwrap_or(0)
             + (BYTES_PER_INSTRUCTION as u64 - 1);
 
-        let num_words = max_bytecode_address.next_multiple_of(8) / 8 - min_bytecode_address / 8 + 1;
+        let num_words = max_bytecode_address.div_ceil(8) - min_bytecode_address / 8 + 1;
         let mut bytecode_words = vec![0u64; num_words as usize];
         // Convert bytes into words and populate `bytecode_words`
         for chunk in

@@ -36,6 +36,7 @@ pub fn main() {
     let verifier_preprocessing = guest::preprocess_verifier_recover(
         shared_preprocessing,
         prover_preprocessing.generators.to_verifier_setup(),
+        None,
     );
 
     if save_to_disk {

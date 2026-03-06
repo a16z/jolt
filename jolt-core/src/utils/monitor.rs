@@ -21,14 +21,15 @@ impl MetricsMonitor {
             .spawn(move || {
                 let interval = Duration::from_millis((interval_secs * 1000.0) as u64);
 
-                let mut system = System::new_all();
+                let mut system = System::new();
+                system.refresh_cpu_all();
+                system.refresh_memory();
 
                 thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
 
-                // TODO: Spawn a thread to monitor intel pcm for memory bandwidth
-
                 while !stop_flag_clone.load(Ordering::Relaxed) {
-                    system.refresh_all();
+                    system.refresh_cpu_all();
+                    system.refresh_memory();
 
                     // Collect metrics
                     let memory_gb = memory_stats().unwrap().physical_mem as f64 / 1_073_741_824.0;

@@ -108,7 +108,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                 assert_eq!(combined, mle_eval);
                 r.push(F::from_u64(rng.next_u64()));
 
-                if r.len() % 2 == 0 {
+                if r.len().is_multiple_of(2) {
                     Prefixes::update_checkpoints::<XLEN, F, F>(
                         &mut prefix_checkpoints,
                         r[r.len() - 2],
