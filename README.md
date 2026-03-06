@@ -50,6 +50,12 @@ Updates:
 
 For developers looking to build using Jolt, check out the [Quickstart guide](https://jolt.a16zcrypto.com/usage/quickstart.html).
 
+If you use [Claude Code](https://claude.ai/claude-code) for AI-assisted development, install the Jolt skill to get a `/jolt` command that wraps any Rust function in a zero-knowledge proof:
+
+```bash
+mkdir -p ~/.claude/skills/jolt && curl -fsSL https://raw.githubusercontent.com/a16z/jolt/main/agent-skills/jolt/SKILL.md -o ~/.claude/skills/jolt/SKILL.md
+```
+
 For developers looking to contribute to Jolt, follow the instructions below.
 
 ## Installation
