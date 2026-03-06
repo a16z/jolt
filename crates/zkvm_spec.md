@@ -678,10 +678,12 @@ The IR-driven approach means BlindFold R1CS constraints are **automatically deri
 
 2. **Advice polynomials:** ✅ Modeled as two composed `SumcheckReduction`s. Phase 1 (stage 6) produces an intermediate `ProverClaim` whose `evaluations` field is the partially-bound polynomial. Phase 2 (stage 7) consumes that claim and constructs its witness from the evaluation table. No shared mutable state; claims are the only inter-stage data. See §3.6.
 
-### Remaining
+3. **Streaming commitment context:** ✅ Dropped — the PCS traits are fully generic now. No DoryContext-specific abstraction needed.
 
-3. **Streaming commitment context:** DoryContext management (main vs. advice) for streaming commits. This is PCS-specific — should it be abstracted or kept as DoryScheme-specific logic?
-
-4. **Witness memory lifetime:** In the current architecture, witness polynomials must live until stage 8 (for opening). With `ComputeBackend`, buffers might live on GPU memory. What is the ownership model?
+4. **Witness memory lifetime:** ✅ Resolved. Dual-buffer model:
+   - **Original evaluations** stay on CPU as `Vec<F>`. Created during witness generation, committed via streaming, held until `extract_claims()` moves them into `ProverClaim.evaluations`.
+   - **Working buffers** for sumcheck live as `B::Buffer<F>` (potentially GPU). The `SumcheckCompute` witness holds these and binds them during rounds. Discarded after the stage completes.
+   - **Stage 8** operates purely on CPU: `ProverClaim.evaluations` is `Vec<F>`, `RlcReduction` combines them, `PCS::open` consumes the result.
+   - This doubles memory for committed polynomials (same as jolt-core status quo). GPU transfer is one-way (CPU → GPU at stage start). `ProverClaim` stays non-generic over backend.
 
 5. **Kernel compilation timing:** Should kernels be compiled during preprocessing (AOT, cached across proofs) or per-proof? Preprocessing is cleaner but requires knowing `num_vars` at setup time.

@@ -137,17 +137,21 @@ impl ComputeBackend for CpuBackend {
         let half = n / 2;
         let num_inputs = inputs.len();
 
+        let new_accs = || -> Vec<F::Accumulator> {
+            (0..num_outputs)
+                .map(|_| F::Accumulator::default())
+                .collect()
+        };
+
         #[cfg(feature = "parallel")]
         {
             if half >= PAR_THRESHOLD {
                 use rayon::prelude::*;
 
-                // Parallel reduce: each thread accumulates a local sum, then
-                // we reduce across threads.
-                let sums: Vec<F> = (0..half)
+                let accs = (0..half)
                     .into_par_iter()
                     .fold(
-                        || vec![F::zero(); num_outputs],
+                        new_accs,
                         |mut acc, i| {
                             let mut lo = Vec::with_capacity(num_inputs);
                             let mut hi = Vec::with_capacity(num_inputs);
@@ -159,26 +163,23 @@ impl ComputeBackend for CpuBackend {
                             let evals = kernel.evaluate(&lo, &hi, degree);
                             let w = weights[i];
                             for (a, e) in acc.iter_mut().zip(evals.iter()) {
-                                *a += w * *e;
+                                a.fmadd(w, *e);
                             }
                             acc
                         },
                     )
-                    .reduce(
-                        || vec![F::zero(); num_outputs],
-                        |mut a, b| {
-                            for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                                *ai += *bi;
-                            }
-                            a
-                        },
-                    );
+                    .reduce(new_accs, |mut a, b| {
+                        for (ai, bi) in a.iter_mut().zip(b) {
+                            ai.merge(bi);
+                        }
+                        a
+                    });
 
-                return sums;
+                return accs.into_iter().map(FieldAccumulator::reduce).collect();
             }
         }
 
-        let mut sums = vec![F::zero(); num_outputs];
+        let mut accs = new_accs();
         let mut lo = Vec::with_capacity(num_inputs);
         let mut hi = Vec::with_capacity(num_inputs);
 
@@ -192,12 +193,12 @@ impl ComputeBackend for CpuBackend {
 
             let evals = kernel.evaluate(&lo, &hi, degree);
             let w = weights[i];
-            for (s, e) in sums.iter_mut().zip(evals.iter()) {
-                *s += w * *e;
+            for (a, e) in accs.iter_mut().zip(evals.iter()) {
+                a.fmadd(w, *e);
             }
         }
 
-        sums
+        accs.into_iter().map(FieldAccumulator::reduce).collect()
     }
 
     fn product_table<F: Field>(&self, point: &[F]) -> Vec<F> {

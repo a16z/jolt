@@ -10,14 +10,14 @@ use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
-use jolt_crypto::{Bn254GT, Commitment};
+use jolt_crypto::{Bn254G1, Bn254GT, Commitment};
 use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_transcript::Transcript;
 
 use crate::params::DoryParams;
 use crate::transcript::JoltToDoryTranscript;
-use crate::types::{DoryCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup};
+use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
 
 type InnerFr = dory::backends::arkworks::ArkFr;
 type InnerGT = dory::backends::arkworks::ArkGT;
@@ -79,8 +79,10 @@ impl CommitmentScheme for DoryScheme {
     type Proof = DoryProof;
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
+    type Polynomial = jolt_poly::Polynomial<Fr>;
+    type OpeningHint = DoryHint;
 
-    fn commit(evaluations: &[Fr], setup: &Self::ProverSetup) -> Self::Output {
+    fn commit(evaluations: &[Fr], setup: &Self::ProverSetup) -> (Self::Output, Self::OpeningHint) {
         let num_vars = evaluations.len().trailing_zeros() as usize;
         let sigma = num_vars.div_ceil(2);
 
@@ -91,22 +93,38 @@ impl CommitmentScheme for DoryScheme {
 
         // SAFETY: ArkGT is repr(transparent) over Fq12, same as Bn254GT.
         let gt: Bn254GT = unsafe { std::mem::transmute(tier_2) };
-        DoryCommitment(gt)
+
+        // SAFETY: ArkG1 is repr(transparent) over G1Projective, same as Bn254G1.
+        let hint_rows: Vec<Bn254G1> = row_commitments
+            .into_iter()
+            .map(|g1| unsafe { std::mem::transmute(g1) })
+            .collect();
+
+        (DoryCommitment(gt), DoryHint(hint_rows))
     }
 
     fn open(
-        evaluations: &[Fr],
+        poly: &Self::Polynomial,
         point: &[Fr],
         _eval: Fr,
         setup: &Self::ProverSetup,
+        hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript,
     ) -> Self::Proof {
         let num_vars = point.len();
-        let wrapped = DoryPolyAdapter::from_evals(evaluations, num_vars);
+        let wrapped = DoryPolyAdapter::from_evals(poly.evaluations(), num_vars);
         let sigma = num_vars.div_ceil(2);
         let nu = num_vars - sigma;
 
-        let row_commitments = commit_rows_msm(&wrapped.evals, sigma, &setup.0);
+        let row_commitments = match hint {
+            Some(h) => {
+                // SAFETY: Bn254G1 is repr(transparent) over G1Projective, same as ArkG1.
+                h.0.into_iter()
+                    .map(|g1| unsafe { std::mem::transmute(g1) })
+                    .collect()
+            }
+            None => commit_rows_msm(poly.evaluations(), sigma, &setup.0),
+        };
 
         let ark_point: Vec<InnerFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
 
@@ -178,6 +196,33 @@ impl AdditivelyHomomorphic for DoryScheme {
         // SAFETY: reverse transmute.
         let gt: Bn254GT = unsafe { std::mem::transmute(combined) };
         DoryCommitment(gt)
+    }
+
+    fn combine_hints(
+        hints: Vec<Self::OpeningHint>,
+        scalars: &[Self::Field],
+    ) -> Self::OpeningHint {
+        assert_eq!(hints.len(), scalars.len());
+        if hints.is_empty() {
+            return DoryHint::default();
+        }
+
+        let num_rows = hints[0].0.len();
+        let mut combined = vec![Bn254G1::default(); num_rows];
+
+        for (hint, scalar) in hints.iter().zip(scalars.iter()) {
+            let ark_s = jolt_fr_to_ark(scalar);
+            for (dst, src) in combined.iter_mut().zip(hint.0.iter()) {
+                // SAFETY: Bn254G1 and ArkG1 are both repr(transparent) over G1Projective.
+                let ark_g1: dory::backends::arkworks::ArkG1 =
+                    unsafe { std::mem::transmute(*src) };
+                let scaled = G1Routines::scalar_mul(&ark_g1, &ark_s);
+                let scaled_bn: Bn254G1 = unsafe { std::mem::transmute(scaled) };
+                *dst += scaled_bn;
+            }
+        }
+
+        DoryHint(combined)
     }
 }
 
@@ -305,14 +350,15 @@ mod tests {
             .collect();
         let eval = poly.evaluate(&point);
 
-        let commitment = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
         let proof = DoryScheme::open(
-            poly.evaluations(),
+            &poly,
             &point,
             eval,
             &prover_setup,
+            Some(hint),
             &mut prove_transcript,
         );
 
@@ -338,8 +384,8 @@ mod tests {
         let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
         let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
 
-        let commit_a = DoryScheme::commit(poly_a.evaluations(), &prover_setup);
-        let commit_b = DoryScheme::commit(poly_b.evaluations(), &prover_setup);
+        let (commit_a, _) = DoryScheme::commit(poly_a.evaluations(), &prover_setup);
+        let (commit_b, _) = DoryScheme::commit(poly_b.evaluations(), &prover_setup);
 
         let sum_evals: Vec<Fr> = poly_a
             .evaluations()
@@ -347,7 +393,7 @@ mod tests {
             .zip(poly_b.evaluations().iter())
             .map(|(a, b)| *a + *b)
             .collect();
-        let commit_sum_direct = DoryScheme::commit(&sum_evals, &prover_setup);
+        let (commit_sum_direct, _) = DoryScheme::commit(&sum_evals, &prover_setup);
 
         let combined = DoryScheme::combine(&[commit_a, commit_b], &[Fr::one(), Fr::one()]);
 

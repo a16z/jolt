@@ -96,17 +96,22 @@ external: ark-* (a16z fork), dory-pcs, tracer, common
 
 #### (9) Bespoke opening point reduction logic — **ADDRESSED (redesigned)**
 - ~~`OpeningPoint<const E: Endianness, F>` with const generic for endianness~~
-- `jolt-openings` defines `OpeningReduction<PCS>` trait: a stateless claim transformation (many claims → fewer claims). Output type equals input type, so reductions compose. `RlcReduction` groups by point and combines via `AdditivelyHomomorphic::combine`. Protocol-specific reductions (sumcheck-based) live in `jolt-zkvm`.
+- `jolt-openings` defines `OpeningReduction<PCS>` trait: a stateless claim transformation (many claims → fewer claims). Output type equals input type, so reductions compose. `RlcReduction` groups by point and combines via `AdditivelyHomomorphic::combine`.
+- `jolt-sumcheck` defines `SumcheckReduction<F>` trait: a claim reduction performed via sumcheck (many claims → fewer claims + `SumcheckProof`). Implementations provide protocol-specific witness construction via `build_witnesses()`. Used for advice polynomial reduction (two composed phases: cycle vars → address vars). Output claims carry partially-bound polynomials in `evaluations`, enabling phase composition.
 - No DAG structure, no endianness generics, no accumulators. Claims are plain data (`ProverClaim`, `VerifierClaim`), collected by the caller in `Vec`s.
 
 #### (10) Duplicated constants across tracer and jolt-inlines — **PARTIALLY ADDRESSED**
 - `jolt-instructions` centralizes all opcodes in `opcodes.rs` (68 unique opcode constants)
 - **Remaining:** Tracer and jolt-inlines may still duplicate some opcode values. Need to make them import from `jolt-instructions`.
 
-#### (11) End-to-end tests — **NOT YET ADDRESSED**
-- Still requires boilerplate
-- Infrastructure for auto-generating e2e tests from `examples/` not yet built
-- Will be addressed during `jolt-zkvm` crate development
+#### (11) End-to-end tests — **PLANNED (strategy defined)**
+- A 5-level testing strategy is defined in [zkvm_spec.md](./zkvm_spec.md) §6:
+  - **Level 1:** IR expression unit tests (each `ClaimDefinition` evaluated on known inputs)
+  - **Level 2:** Witness/`SumcheckCompute` unit tests (compute round polys, check degree/sum)
+  - **Level 3:** Per-stage integration tests (single stage prove+verify with mock commitments)
+  - **Level 4:** Multi-stage pipeline tests (stages 1–7 in sequence, real transcript)
+  - **Level 5:** Full e2e tests (trace → proof → verify for small RISC-V programs)
+- Infrastructure for auto-generating e2e tests from `examples/` deferred to post-`jolt-zkvm`
 
 #### (12) Fragmented symbolic IR for sumcheck expressions — **PARTIALLY ADDRESSED**
 
@@ -130,15 +135,15 @@ Every sumcheck instance in Jolt has a mathematical expression that defines how i
 
 Additionally, `jolt-ir` replaces the compile-time `LC` / `lc!` / `r1cs_eq_conditional!` constraint authoring system used by the main zkVM's Spartan outer sumcheck (`jolt-core/src/zkvm/r1cs/`). The 12-variant `LC` enum and custom macros are replaced by `ExprBuilder` arithmetic, which produces readable degree-2 expressions that are factored into bilinear pairs at init time for the fused evaluator. This means the R1CS backend in `jolt-ir` serves both BlindFold (sparse matrix emission for `jolt-spartan`) and the main zkVM (bilinear factorization for the lazy evaluator). See spec §4.10 "Replacing compile-time R1CS constraints".
 
-**Current status:** `jolt-ir` is complete with all five backends (evaluate, R1CS, Lean4, circuit transpilation) plus integration tests, fuzz targets, and benchmarks. `jolt-gnark` implements `CircuitEmitter` for gnark/Go code generation. **Remaining:** Downstream integration (task 06) — migrate `jolt-zkvm` and `jolt-spartan` to consume `jolt-ir` claim definitions, replacing the dual-implementation pattern. `KernelDescriptor` and `KernelShape` for GPU kernel compilation are planned (see finding 13).
+**Current status:** `jolt-ir` is complete with all five backends (evaluate, R1CS, Lean4, circuit transpilation) plus integration tests, fuzz targets, and benchmarks. `jolt-wrapper` subsumes the former `jolt-gnark` crate and provides `GnarkAstEmitter` for gnark/Go code generation plus full symbolic execution / AST capture pipeline. `KernelDescriptor` with `ProductSum` and `Custom` shapes is implemented; `jolt-cpu-kernels` compiles descriptors to `CpuKernel<F>`. **Remaining:** Downstream integration (task 06) — migrate `jolt-zkvm` and `jolt-spartan` to consume `jolt-ir` claim definitions, replacing the dual-implementation pattern.
 
-#### (13) CPU-only prover with no compute backend abstraction — **PLANNED**
+#### (13) CPU-only prover with no compute backend abstraction — **ADDRESSED**
 
-The prover is CPU-only via Rayon. Sumcheck round polynomial computation and polynomial binding — the two operations that dominate prover time — are embarrassingly parallel map-reduce patterns that would benefit significantly from GPU acceleration (Metal, CUDA, WebGPU). However, the current code tightly couples these operations to `Vec<F>` storage and Rayon iterators, making GPU integration infeasible without a rewrite.
-
-**Resolution:** A new `jolt-compute` crate defines a `ComputeBackend` trait with typed buffer management and parallel primitives (`interpolate_pairs`, `pairwise_reduce`, `product_table`). The trait is protocol-agnostic — no mention of sumcheck. `CpuBackend` compiles to identical code after monomorphization (zero overhead). GPU backend crates (`jolt-metal`, `jolt-cuda`, `jolt-webgpu`) compile `jolt-ir::KernelDescriptor` into target-specific kernels at setup time. `jolt-zkvm` witness implementations are generic over `B: ComputeBackend`.
-
-`KernelDescriptor` in `jolt-ir` has two shapes: `ProductSum` (explicit fast-path for the dominant product-of-linear-interpolants pattern, ~80% of prover time) and `Custom` (escape hatch for bespoke compositions like RAM read-write phases). Both CPU and GPU backends use delayed modular reduction internally. Buffers are generic over element type, matching `jolt-poly`'s `Polynomial<T>` pattern, enabling 32x memory savings for compact polynomial storage on GPU.
+- `jolt-compute` defines `ComputeBackend` trait with typed buffer management and parallel primitives (`interpolate_pairs`, `pairwise_reduce`, `product_table`). Protocol-agnostic — no mention of sumcheck. `CpuBackend` compiles to identical code after monomorphization (zero overhead).
+- `jolt-cpu-kernels` compiles `jolt-ir::KernelDescriptor` → `CpuKernel<F>` closures with specialization for D=4,8,16 + generic + Custom `Expr` stack-machine.
+- `KernelDescriptor` in `jolt-ir` has two shapes: `ProductSum` (explicit fast-path, ~80% of prover time) and `Custom` (escape hatch for bespoke compositions). Both CPU and GPU backends use delayed modular reduction internally. Buffers generic over element type for compact polynomial storage.
+- GPU backend crates (`jolt-metal`, `jolt-cuda`, `jolt-webgpu`) will compile `KernelDescriptor` into target-specific kernels at setup time.
+- `jolt-zkvm` witness implementations will be generic over `B: ComputeBackend`.
 
 See [backend_agnostic.md](./backend_agnostic.md) for the full design and spec §4.9 for the crate specification.
 
@@ -155,17 +160,21 @@ Extract into new crates under `crates/`. While doing so address each observation
 | `jolt-poly` | **Done** | `MultilinearPolynomial`, `Polynomial<T>`, `EqPolynomial`, `UnivariatePoly`, `CompressedPoly`, `IdentityPolynomial` | `jolt-field` |
 | `jolt-crypto` | **Done** | `JoltGroup`, `PairingGroup`, `JoltCommitment`, `Pedersen<G>`, `PedersenSetup<G>`, `Bn254`, `Bn254G1`, `Bn254G2`, `Bn254GT` | `jolt-field`, `jolt-transcript` |
 | `jolt-openings` | **Done** | `CommitmentScheme`, `AdditivelyHomomorphic`, `StreamingCommitment`, `OpeningReduction`, `RlcReduction`, claim types, RLC utilities | `jolt-crypto`, `jolt-field`, `jolt-poly`, `jolt-transcript` |
-| `jolt-sumcheck` | **Done** | `SumcheckProver`, `SumcheckVerifier`, `BatchedSumcheckProver/Verifier`, `StreamingSumcheckProver`, `SumcheckWitness` | `jolt-field`, `jolt-poly`, `jolt-transcript` |
+| `jolt-sumcheck` | **Done** | `SumcheckProver`, `SumcheckVerifier`, `BatchedSumcheckProver/Verifier`, `StreamingSumcheckProver`, `SumcheckCompute`, `SumcheckReduction` | `jolt-field`, `jolt-poly`, `jolt-transcript`, `jolt-openings` |
 | `jolt-spartan` | **Done** | `R1CS` trait, `SimpleR1CS`, `SpartanKey`, `SpartanProver`, `SpartanVerifier`, `FirstRoundStrategy` | `jolt-sumcheck`, `jolt-openings`, `jolt-field`, `jolt-poly`, `jolt-transcript` |
 | `jolt-instructions` | **Done** | `Instruction`, `LookupTable`, `JoltInstructionSet`, `TableId`, `LookupQuery`, 68 RV64IMAC instructions | `jolt-field` |
 | `jolt-dory` | **Done** | `DoryScheme`, `DoryParams`, commitment/proof types, streaming, optimizations | `jolt-openings`, `jolt-field`, `jolt-poly`, `jolt-transcript`, `dory-pcs` |
 | `jolt-ir` | **Done** | `Expr`, `ExprBuilder`, `ClaimDefinition`, `ExprVisitor`, `CircuitEmitter`, normalization passes, evaluate/R1CS/Lean4/circuit backends | `jolt-field` |
-| `jolt-gnark` | **Done** | `GnarkEmitter` implementing `CircuitEmitter` for gnark/Go codegen, `sanitize_go_name` | `jolt-ir` |
+| `jolt-wrapper` | **Done** | Verifier wrapping: `SymbolicField`, `AstBundle`, `AstEmitter`, `GnarkAstEmitter` — symbolic execution + pluggable codegen (gnark/Groth16, future backends). Subsumes former `jolt-gnark`. | `jolt-field`, `jolt-ir` |
 | `jolt-zkvm` | **In progress** | zkvm sumchecks (ram, registers, bytecode, claim reductions), prover/verifier | `jolt-sumcheck`, `jolt-openings`, `jolt-spartan`, `jolt-instructions`, `jolt-ir`, `jolt-compute` |
-| `jolt-compute` | **Planned** | `ComputeBackend`, `Scalar`, `CpuBackend` — backend-agnostic buffer management and parallel primitives | `jolt-field` |
-| `jolt-metal` | **Future** | Metal GPU compute backend | `jolt-compute`, `jolt-ir`, `jolt-field` |
-| `jolt-cuda` | **Future** | CUDA GPU compute backend | `jolt-compute`, `jolt-ir`, `jolt-field` |
-| `jolt-webgpu` | **Future** | WebGPU compute backend | `jolt-compute`, `jolt-ir`, `jolt-field` |
+| `jolt-compute` | **Done** | `ComputeBackend`, `Scalar`, `CpuBackend` — backend-agnostic buffer management and parallel primitives | `jolt-field` |
+| `jolt-cpu-kernels` | **Done** | Compiles `KernelDescriptor` → `CpuKernel<F>`. Specialized D=4,8,16 + generic + Custom Expr stack-machine | `jolt-compute`, `jolt-ir`, `jolt-field` |
+| `jolt-metal` | **Future** | Metal GPU compute backend (`ComputeBackend` impl) | `jolt-compute`, `jolt-field` |
+| `jolt-metal-kernels` | **Future** | Compiles `KernelDescriptor` → Metal compute pipelines | `jolt-compute`, `jolt-ir`, `jolt-field` |
+| `jolt-cuda` | **Future** | CUDA GPU compute backend (`ComputeBackend` impl) | `jolt-compute`, `jolt-field` |
+| `jolt-cuda-kernels` | **Future** | Compiles `KernelDescriptor` → CUDA PTX modules | `jolt-compute`, `jolt-ir`, `jolt-field` |
+| `jolt-webgpu` | **Future** | WebGPU compute backend (`ComputeBackend` impl) | `jolt-compute`, `jolt-field` |
+| `jolt-webgpu-kernels` | **Future** | Compiles `KernelDescriptor` → WebGPU compute shaders | `jolt-compute`, `jolt-ir`, `jolt-field` |
 
 **Note:** `jolt-math` (originally proposed) was dropped. Its functionality was absorbed into `jolt-field` (accumulation traits) and `jolt-poly` (polynomial-level utilities).
 
@@ -210,8 +219,10 @@ crates/<name>/
 | jolt-spartan | Yes | — | — | — |
 | jolt-transcript | Yes | Yes | Yes | Yes |
 | jolt-ir | Yes | Yes | Yes | Yes |
-| jolt-gnark | — | — | Yes (inline) | — |
-| jolt-dory | Yes | — | — | Yes |
+| jolt-wrapper | Yes | — | Yes | — |
+| jolt-dory | Yes | Yes | Yes | Yes |
+| jolt-compute | Yes | Yes | Yes | — |
+| jolt-cpu-kernels | Yes | — | Yes | — |
 | jolt-instructions | Yes | — | — | — |
 
 ### Design principles
@@ -233,7 +244,7 @@ Traits are the crate's public API boundary. Concrete structs implement traits bu
 
 #### 3. Minimal, justified dependencies
 
-- Internal crates form a strict DAG: `jolt-transcript` → `jolt-field` → `jolt-poly` / `jolt-ir` → `jolt-sumcheck` / `jolt-openings` → `jolt-spartan` (`+jolt-ir`) / `jolt-dory`. `jolt-gnark` depends only on `jolt-ir`. Note: `jolt-sumcheck` does NOT depend on `jolt-ir` — it is a generic protocol crate. Only `jolt-spartan` and `jolt-zkvm` consume `jolt-ir`.
+- Internal crates form a strict DAG: `jolt-transcript` → `jolt-field` → `jolt-poly` / `jolt-ir` → `jolt-openings` → `jolt-sumcheck` (`+jolt-openings` for `SumcheckReduction`) → `jolt-spartan` (`+jolt-ir`) / `jolt-dory`. `jolt-wrapper` depends on `jolt-field` + `jolt-ir`. `jolt-compute` depends only on `jolt-field`. Note: `jolt-sumcheck` depends on `jolt-openings` (for claim types used by `SumcheckReduction`) but does NOT depend on `jolt-ir` — it is a generic protocol crate. Only `jolt-spartan` and `jolt-zkvm` consume `jolt-ir`.
 - Each crate depends only on the internal crates it directly uses. No transitive dependency shortcuts.
 - External dependencies are workspace-managed. Dev-only crates (`rand`, `rand_chacha`, `criterion`) go in `[dev-dependencies]` and are annotated for `cargo-machete` when needed.
 

@@ -69,7 +69,7 @@ mod tests {
             .collect();
 
         let poly = jolt_poly::Polynomial::new(evals.clone());
-        let direct = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (direct, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut partial = DoryScheme::begin(&prover_setup);
         for row in evals.chunks(num_cols) {

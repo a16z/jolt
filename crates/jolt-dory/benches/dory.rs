@@ -67,10 +67,11 @@ fn bench_open(c: &mut Criterion) {
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-open");
                         DoryScheme::open(
-                            poly.evaluations(),
+                            &poly,
                             &point,
                             eval,
                             &setup,
+                            None,
                             &mut transcript,
                         )
                     },
@@ -98,14 +99,15 @@ fn bench_verify(c: &mut Criterion) {
                         let point: Vec<Fr> =
                             (0..nv).map(|_| <Fr as Field>::random(&mut rng)).collect();
                         let eval = poly.evaluate(&point);
-                        let commitment = DoryScheme::commit(poly.evaluations(), &setup);
+                        let (commitment, _) = DoryScheme::commit(poly.evaluations(), &setup);
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-verify");
                         let proof = DoryScheme::open(
-                            poly.evaluations(),
+                            &poly,
                             &point,
                             eval,
                             &setup,
+                            None,
                             &mut transcript,
                         );
                         (commitment, point, eval, proof)
@@ -168,8 +170,8 @@ fn bench_combine(c: &mut Criterion) {
         let mut rng = ChaCha20Rng::seed_from_u64(0);
         let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
         let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let commit_a = DoryScheme::commit(poly_a.evaluations(), &setup);
-        let commit_b = DoryScheme::commit(poly_b.evaluations(), &setup);
+        let (commit_a, _) = DoryScheme::commit(poly_a.evaluations(), &setup);
+        let (commit_b, _) = DoryScheme::commit(poly_b.evaluations(), &setup);
         let s_a = Fr::random(&mut rng);
         let s_b = Fr::random(&mut rng);
 

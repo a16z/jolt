@@ -23,11 +23,20 @@
 //! | [`handler`] | [`CommittedRoundHandler`], [`CommittedRoundVerifier`] |
 //! | [`proof`] | [`CommittedSumcheckProof`], [`CommittedRoundData`] |
 //! | [`accumulator`] | [`BlindFoldAccumulator`] — collects ZK stage data |
+//! | [`verifier_r1cs`] | Verifier R1CS encoding deferred sumcheck checks |
+//! | [`folding`] | Nova folding — commitment-agnostic relaxed R1CS folding |
 
 pub mod accumulator;
+pub mod folding;
 pub mod handler;
 pub mod proof;
+pub mod verifier_r1cs;
 
 pub use accumulator::BlindFoldAccumulator;
+pub use folding::{
+    check_relaxed_satisfaction, compute_cross_term, fold_instances, fold_scalar, fold_witnesses,
+    sample_random_witness, RelaxedInstance, RelaxedWitness,
+};
 pub use handler::{CommittedRoundHandler, CommittedRoundVerifier};
 pub use proof::{CommittedRoundData, CommittedSumcheckOutput, CommittedSumcheckProof};
+pub use verifier_r1cs::{BakedPublicInputs, StageConfig};

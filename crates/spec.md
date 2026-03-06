@@ -80,17 +80,24 @@ jolt-transcript              (no deps)
         │           │
         ├───────────┼─────────────────┐
         ▼           ▼                 ▼
-   jolt-poly   jolt-ir ──────► jolt-gnark    jolt-blindfold
-   (jolt-field) (jolt-field)   (jolt-ir)    (jolt-crypto, jolt-sumcheck)
-        │           │
+   jolt-poly   jolt-ir ──────► jolt-wrapper    jolt-blindfold
+   (jolt-field) (jolt-field)   (jolt-field,    (jolt-crypto, jolt-sumcheck)
+        │           │           jolt-ir)
         │           │
         ├──────┐    │
+        ▼      │    │
+jolt-openings  │    │
+(jolt-crypto,  │    │
+ jolt-field,   │    │
+ jolt-poly,    │    │
+ jolt-trscpt)  │    │
+        │      │    │
+        ├──────┤    │
         ▼      ▼    │
-jolt-openings  jolt-sumcheck ◄────┘
-(jolt-crypto,  (jolt-field, jolt-poly,
- jolt-field,    jolt-transcript)
- jolt-poly,
- jolt-trscpt)
+   jolt-sumcheck ◄──┘
+   (jolt-field, jolt-poly,
+    jolt-transcript,
+    jolt-openings)
         │              │
         ├──────┬───────┤
         ▼      ▼       │
@@ -129,11 +136,12 @@ jolt-openings  jolt-sumcheck ◄────┘
 | `jolt-crypto` | Group, pairing, and commitment abstractions | Yes | ~1200 (done) |
 | `jolt-poly` | Polynomial types and operations | Yes | ~1500 (done) |
 | `jolt-openings` | PCS traits, claim types, opening reduction | Yes | ~800 (done) |
-| `jolt-sumcheck` | Sumcheck protocol engine | Yes | ~1100 (done) |
+| `jolt-sumcheck` | Sumcheck protocol engine + `SumcheckReduction` trait | Yes | ~1100 (done) |
 | `jolt-spartan` | R1CS + Spartan prover/verifier | Yes | ~925 (done) |
 | `jolt-ir` | Symbolic expression IR for sumcheck claims | Yes | ~1500 (done) |
-| `jolt-compute` | Backend-agnostic compute device abstraction | Yes | ~400 (planned) |
-| `jolt-gnark` | gnark/Go circuit codegen via `CircuitEmitter` | Yes | ~490 (done) |
+| `jolt-compute` | Backend-agnostic compute device abstraction | Yes | ~400 (done) |
+| `jolt-cpu-kernels` | CPU kernel compiler: IR descriptors → CpuKernel closures | Yes | ~350 (done) |
+| `jolt-wrapper` | Verifier wrapping: symbolic execution, AST capture, pluggable codegen | Yes | ~1200 (done) |
 | `jolt-instructions` | RISC-V instruction set + lookup tables | No | ~3000 (done) |
 | `jolt-dory` | Dory commitment scheme impl | No | ~5000 (done) |
 | `jolt-zkvm` | zkVM prover/verifier orchestration | No | ~10000 (in progress) |

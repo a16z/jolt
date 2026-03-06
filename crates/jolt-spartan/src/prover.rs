@@ -75,7 +75,7 @@ impl SpartanProver {
         let bz_poly = pad_to_power_of_two(&bz, key.num_constraints_padded);
         let cz_poly = pad_to_power_of_two(&cz, key.num_constraints_padded);
 
-        let witness_commitment = PCS::commit(witness_poly.evaluations(), pcs_setup);
+        let (witness_commitment, _hint) = PCS::commit(witness_poly.evaluations(), pcs_setup);
 
         // Absorb commitment into transcript for Fiat-Shamir binding
         transcript.append_bytes(format!("{witness_commitment:?}").as_bytes());
@@ -172,11 +172,13 @@ impl SpartanProver {
         // Evaluate the original (unconsumed) witness polynomial at r_y
         let witness_eval = witness_poly.evaluate(&r_y);
 
+        let pcs_poly: PCS::Polynomial = witness_poly.evaluations().to_vec().into();
         let witness_opening_proof = PCS::open(
-            witness_poly.evaluations(),
+            &pcs_poly,
             &r_y,
             witness_eval,
             pcs_setup,
+            None,
             transcript,
         );
 

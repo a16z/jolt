@@ -86,7 +86,7 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
 }
 
 /// Row-level commitments used as an opening proof hint.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DoryHint(pub Vec<Bn254G1>);
 
 /// Partial commitment state accumulated during streaming.
@@ -151,7 +151,7 @@ mod tests {
 
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let commitment = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (commitment, _) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let serialized = serde_json::to_vec(&commitment).expect("serialize commitment");
         let deserialized: DoryCommitment =
@@ -177,14 +177,15 @@ mod tests {
             .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
-        let commitment = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (commitment, hint) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-vs");
         let proof = crate::DoryScheme::open(
-            poly.evaluations(),
+            &poly,
             &point,
             eval,
             &prover_setup,
+            Some(hint),
             &mut prove_transcript,
         );
 
@@ -218,10 +219,11 @@ mod tests {
 
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
         let proof = crate::DoryScheme::open(
-            poly.evaluations(),
+            &poly,
             &point,
             eval,
             &prover_setup,
+            None,
             &mut transcript,
         );
 
@@ -230,7 +232,7 @@ mod tests {
             serde_json::from_slice(&serialized).expect("deserialize proof");
 
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
-        let commitment = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (commitment, _) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
         let result = crate::DoryScheme::verify(

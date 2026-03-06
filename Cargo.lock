@@ -2846,6 +2846,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-field",
  "jolt-poly",
+ "jolt-spartan",
  "jolt-sumcheck",
  "jolt-transcript",
  "num-traits",
@@ -2978,13 +2979,6 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde",
-]
-
-[[package]]
-name = "jolt-gnark"
-version = "0.1.0"
-dependencies = [
- "jolt-ir",
 ]
 
 [[package]]
@@ -3200,6 +3194,22 @@ dependencies = [
  "jolt-field",
  "num-traits",
  "sha3",
+]
+
+[[package]]
+name = "jolt-wrapper"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-ir",
+ "jolt-transcript",
+ "num-bigint",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -14,6 +14,7 @@ jolt-poly = { path = "../jolt-poly" }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-crypto = { path = "../jolt-crypto" }
+jolt-spartan = { path = "../jolt-spartan" }
 rand_core = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 

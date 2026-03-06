@@ -42,8 +42,9 @@ fn reduce_open_verify<T: Transcript<Challenge = u128>>(
             point: point.clone(),
             eval,
         });
+        let (commitment, _) = MockPCS::commit(poly.evaluations(), &());
         verifier_claims.push(VerifierClaim {
-            commitment: MockPCS::commit(poly.evaluations(), &()),
+            commitment,
             point: point.clone(),
             eval,
         });
@@ -58,7 +59,10 @@ fn reduce_open_verify<T: Transcript<Challenge = u128>>(
     );
     let proofs: Vec<_> = reduced_p
         .iter()
-        .map(|c| MockPCS::open(&c.evaluations, &c.point, c.eval, &(), &mut transcript_p))
+        .map(|c| {
+            let poly: Polynomial<Fr> = c.evaluations.clone().into();
+            MockPCS::open(&poly, &c.point, c.eval, &(), None, &mut transcript_p)
+        })
         .collect();
 
     // Verifier side
@@ -194,14 +198,16 @@ fn tampered_eval_detected() {
     ];
 
     // Verifier has tampered eval for poly_b
+    let (com_a, _) = MockPCS::commit(poly_a.evaluations(), &());
+    let (com_b, _) = MockPCS::commit(poly_b.evaluations(), &());
     let verifier_claims = vec![
         VerifierClaim {
-            commitment: MockPCS::commit(poly_a.evaluations(), &()),
+            commitment: com_a,
             point: point.clone(),
             eval: eval_a,
         },
         VerifierClaim {
-            commitment: MockPCS::commit(poly_b.evaluations(), &()),
+            commitment: com_b,
             point: point.clone(),
             eval: eval_b + Fr::from_u64(1), // tampered
         },
@@ -216,7 +222,10 @@ fn tampered_eval_detected() {
     );
     let proofs: Vec<_> = reduced_p
         .iter()
-        .map(|c| MockPCS::open(&c.evaluations, &c.point, c.eval, &(), &mut transcript_p))
+        .map(|c| {
+            let poly: Polynomial<Fr> = c.evaluations.clone().into();
+            MockPCS::open(&poly, &c.point, c.eval, &(), None, &mut transcript_p)
+        })
         .collect();
 
     // Verifier reduces with tampered claims

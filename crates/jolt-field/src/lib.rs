@@ -8,6 +8,9 @@ pub use field::{Challenge, Field, MaybeAllocative, OptimizedMul, WithChallenge};
 #[cfg(feature = "bn254")]
 pub(crate) use field::{ReductionOps, UnreducedOps};
 
+mod accumulator;
+pub use accumulator::{FieldAccumulator, NaiveAccumulator};
+
 mod accumulation;
 #[cfg(feature = "bn254")]
 pub(crate) use accumulation::FMAdd;
@@ -26,6 +29,8 @@ pub mod signed;
 pub mod arkworks;
 #[cfg(feature = "bn254")]
 pub use arkworks::bn254::Fr;
+#[cfg(feature = "bn254")]
+pub use arkworks::wide_accumulator::WideAccumulator;
 
 #[cfg(feature = "dory-pcs")]
 mod dory_interop;

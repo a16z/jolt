@@ -6,3 +6,4 @@
 pub mod bn254;
 #[allow(dead_code)]
 pub(crate) mod bn254_ops;
+pub mod wide_accumulator;

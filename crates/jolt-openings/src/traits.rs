@@ -23,8 +23,22 @@ use crate::error::OpeningsError;
 /// Extends [`Commitment`] from `jolt-crypto` — the `Output` associated type
 /// serves as the commitment value, shared with the vector commitment hierarchy.
 ///
-/// No algebraic structure is assumed on commitments — this trait covers
-/// both hash-based (FRI, Brakedown) and group-based (KZG, Dory) schemes.
+/// ## Polynomial representation
+///
+/// The [`Polynomial`](Self::Polynomial) associated type allows PCS backends to
+/// accept richer polynomial representations than flat evaluation tables. Schemes
+/// with streaming or lazy evaluation (e.g., Dory's matrix-based vector-matrix
+/// product) avoid full materialization by using a structured polynomial type.
+/// The `From<Vec<F>>` bound ensures that materialized evaluation tables (e.g.,
+/// from [`rlc_combine`](crate::rlc_combine)) can always be converted.
+///
+/// ## Opening hints
+///
+/// The [`OpeningHint`](Self::OpeningHint) captures auxiliary data produced
+/// during commitment that accelerates opening proof generation. For example,
+/// Dory's commit phase produces row-level Pedersen commitments (G1 elements)
+/// that are reused during `open` to avoid redundant MSM. Schemes without
+/// commit-phase hints set `OpeningHint = ()`.
 ///
 /// Setup parameters are provided externally (not created by the trait).
 /// Concrete types (e.g., `DoryScheme`) may provide inherent `setup_prover`/
@@ -42,18 +56,46 @@ pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
     /// Verifier-side structured reference string or setup material.
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
 
+    /// Polynomial representation accepted by [`open`](Self::open).
+    ///
+    /// Simple schemes use `jolt_poly::Polynomial<F>` (evaluation table with
+    /// bind/evaluate). Schemes with streaming optimizations (e.g., Dory's
+    /// vector-matrix product over lazily-generated rows) use richer types.
+    ///
+    /// `From<Vec<F>>` ensures materialized evaluation tables (produced by
+    /// RLC reduction) can always be passed to `open`.
+    type Polynomial: Send + Sync + From<Vec<Self::Field>>;
+
+    /// Auxiliary data from the commit phase, reused during opening proofs.
+    ///
+    /// For Dory: row-level Pedersen commitments (avoids redundant MSM in `open`).
+    /// For schemes without commit-phase hints: `()`.
+    type OpeningHint: Clone + Send + Sync + Default;
+
     /// Commits to a multilinear polynomial given its evaluation table over the Boolean hypercube.
-    fn commit(evaluations: &[Self::Field], setup: &Self::ProverSetup) -> Self::Output;
+    ///
+    /// Returns both the commitment and an opening hint. Callers that discard
+    /// the hint can pattern-match with `let (commitment, _) = PCS::commit(...)`.
+    fn commit(
+        evaluations: &[Self::Field],
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint);
 
     /// Produces an opening proof that the committed polynomial evaluates to `eval` at `point`.
     ///
-    /// `evaluations` is the full evaluation table. The transcript must be in the same
-    /// state as the verifier's transcript at this protocol step.
+    /// `poly` is the polynomial representation — either a materialized evaluation table
+    /// (via `Vec<F>::into()`) or a richer streaming type. The transcript must be in the
+    /// same state as the verifier's transcript at this protocol step.
+    ///
+    /// When `hint` is `Some`, the implementation reuses commit-phase auxiliary data
+    /// (e.g., row commitments) to avoid redundant computation. When `None`,
+    /// implementations that need hints must recompute them internally.
     fn open(
-        evaluations: &[Self::Field],
+        poly: &Self::Polynomial,
         point: &[Self::Field],
         eval: Self::Field,
         setup: &Self::ProverSetup,
+        hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript,
     ) -> Self::Proof;
 
@@ -89,6 +131,21 @@ pub trait AdditivelyHomomorphic: CommitmentScheme {
     ///
     /// Panics if `commitments` and `scalars` have different lengths.
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output;
+
+    /// Homomorphic combination of opening proof hints.
+    ///
+    /// Computes the same linear combination as [`combine`](Self::combine) but
+    /// over hints instead of commitments. For Dory, this combines row-level
+    /// Pedersen commitments via scalar-mul-add (much cheaper than recomputing
+    /// row commitments for the combined polynomial from scratch).
+    ///
+    /// Default: returns the zero hint. Suitable for `OpeningHint = ()`.
+    fn combine_hints(
+        _hints: Vec<Self::OpeningHint>,
+        _scalars: &[Self::Field],
+    ) -> Self::OpeningHint {
+        Self::OpeningHint::default()
+    }
 }
 
 /// Streaming (chunked) commitment scheme.

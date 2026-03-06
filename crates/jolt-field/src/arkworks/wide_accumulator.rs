@@ -44,7 +44,7 @@ impl FieldAccumulator for WideAccumulator {
         // Both a and b are in Montgomery form: 4 limbs each.
         // Schoolbook product is 8 limbs; accumulated into 9 limbs.
         self.limbs
-            .fmadd_trunc::<4, 4>(&a.inner_limbs(), &b.inner_limbs());
+            .fmadd::<4, 4>(&a.inner_limbs(), &b.inner_limbs());
     }
 
     #[inline]

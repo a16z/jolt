@@ -312,9 +312,26 @@ impl Fr {
     pub fn from_bigint_unchecked(limbs: Limbs<4>) -> Option<Self> {
         Some(Fr(bn254_ops::from_bigint_unchecked(limbs.to_bigint())))
     }
+
+    /// Access the internal Montgomery-form limbs.
+    ///
+    /// Used by [`WideAccumulator`](super::wide_accumulator::WideAccumulator)
+    /// for deferred-reduction fused multiply-add.
+    #[inline(always)]
+    pub fn inner_limbs(self) -> Limbs<4> {
+        Limbs((self.0).0 .0)
+    }
+
+    /// Construct from the inner arkworks element.
+    #[inline(always)]
+    pub(crate) fn from_inner(inner: InnerFr) -> Self {
+        Fr(inner)
+    }
 }
 
 impl Field for Fr {
+    type Accumulator = super::wide_accumulator::WideAccumulator;
+
     const NUM_BYTES: usize = 32;
 
     fn to_bytes(&self) -> Vec<u8> {

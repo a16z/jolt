@@ -221,6 +221,12 @@ impl<F: Field> Polynomial<F> {
     }
 }
 
+impl<F: Field> From<Vec<F>> for Polynomial<F> {
+    fn from(evaluations: Vec<F>) -> Self {
+        Self::new(evaluations)
+    }
+}
+
 impl<F: Field> crate::MultilinearEvaluation<F> for Polynomial<F> {
     #[inline]
     fn num_vars(&self) -> usize {

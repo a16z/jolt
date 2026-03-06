@@ -151,10 +151,6 @@ fn pipeline_round_trip<T: Transcript<Challenge = u128>>(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Category 1: RLC Reduction → Dory
-// ---------------------------------------------------------------------------
-
 #[test]
 fn single_claim_through_pipeline() {
     let num_vars = 3;
@@ -257,10 +253,6 @@ fn mixed_shared_and_distinct_points() {
     .expect("mixed-points pipeline must verify");
 }
 
-// ---------------------------------------------------------------------------
-// Category 2: Hint propagation
-// ---------------------------------------------------------------------------
-
 #[test]
 fn hint_threading_matches_hintless() {
     let num_vars = 3;
@@ -349,10 +341,6 @@ fn combined_hint_consistency() {
     .expect("RLC-combined commitment+hint must verify");
 }
 
-// ---------------------------------------------------------------------------
-// Category 3: Both hint code paths
-// ---------------------------------------------------------------------------
-
 #[test]
 fn both_hint_paths_verify() {
     let num_vars = 3;
@@ -380,10 +368,6 @@ fn both_hint_paths_verify() {
         .unwrap_or_else(|e| panic!("use_hints={use_hints} must verify: {e}"));
     }
 }
-
-// ---------------------------------------------------------------------------
-// Category 4: Transcript
-// ---------------------------------------------------------------------------
 
 #[test]
 fn both_transcript_backends() {
@@ -479,10 +463,6 @@ fn transcript_mismatch_causes_failure() {
         "mismatched transcript labels must cause verification failure"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Category 5: Negative cases
-// ---------------------------------------------------------------------------
 
 #[test]
 fn tampered_eval_after_reduction() {
@@ -728,10 +708,6 @@ fn extra_claim_causes_fiat_shamir_mismatch() {
         "extra verifier claim must cause Fiat-Shamir mismatch"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Category 6: Property-based
-// ---------------------------------------------------------------------------
 
 #[test]
 fn property_random_claims_always_verify() {

@@ -267,4 +267,109 @@ mod tests {
         assert!(code.contains("api.Mul("));
         assert!(code.contains("AssertIsEqual("));
     }
+
+    #[test]
+    fn byte_reverse_codegen() {
+        let _session = ArenaSession::new();
+        use crate::arena::{self, Atom, Node};
+
+        let x = SymbolicField::variable(0, "x");
+        let reversed_id = arena::alloc(Node::ByteReverse(x.into_edge()));
+        let reversed_edge = Atom::Node(reversed_id);
+
+        let mut allocator = VarAllocator::new();
+        let _ = allocator.input("x");
+        allocator.assert_zero(reversed_edge);
+
+        let bundle = allocator.finish();
+        let mut emitter = GnarkAstEmitter::new();
+        bundle.emit(&mut emitter);
+
+        let code = emitter.finish();
+        assert!(code.contains("byteReverse("), "expected byteReverse call: {code}");
+        assert!(code.contains("circuit.X"), "expected circuit.X reference: {code}");
+        assert!(code.contains("AssertIsEqual("));
+    }
+
+    #[test]
+    fn truncate_128_codegen() {
+        let _session = ArenaSession::new();
+        use crate::arena::{self, Atom, Node};
+
+        let x = SymbolicField::variable(0, "x");
+        let truncated_id = arena::alloc(Node::Truncate128(x.into_edge()));
+        let truncated_edge = Atom::Node(truncated_id);
+
+        let mut allocator = VarAllocator::new();
+        let _ = allocator.input("x");
+        allocator.assert_zero(truncated_edge);
+
+        let bundle = allocator.finish();
+        let mut emitter = GnarkAstEmitter::new();
+        bundle.emit(&mut emitter);
+
+        let code = emitter.finish();
+        assert!(code.contains("truncate128("), "expected truncate128 call: {code}");
+        assert!(code.contains("circuit.X"), "expected circuit.X reference: {code}");
+        assert!(code.contains("AssertIsEqual("));
+    }
+
+    #[test]
+    fn mul_two_pow_192_codegen() {
+        let _session = ArenaSession::new();
+        use crate::arena::{self, Atom, Node};
+
+        let x = SymbolicField::variable(0, "x");
+        let scaled_id = arena::alloc(Node::MulTwoPow192(x.into_edge()));
+        let scaled_edge = Atom::Node(scaled_id);
+
+        let mut allocator = VarAllocator::new();
+        let _ = allocator.input("x");
+        allocator.assert_zero(scaled_edge);
+
+        let bundle = allocator.finish();
+        let mut emitter = GnarkAstEmitter::new();
+        bundle.emit(&mut emitter);
+
+        let code = emitter.finish();
+        assert!(code.contains("mulTwoPow192("), "expected mulTwoPow192 call: {code}");
+        assert!(code.contains("circuit.X"), "expected circuit.X reference: {code}");
+        assert!(code.contains("AssertIsEqual("));
+    }
+
+    #[test]
+    fn special_ops_compose_with_arithmetic() {
+        let _session = ArenaSession::new();
+        use crate::arena::{self, Atom, Node};
+
+        // byte_reverse(x) * truncate128(y) + mul_two_pow_192(x)
+        let x = SymbolicField::variable(0, "x");
+        let y = SymbolicField::variable(1, "y");
+
+        let rev_id = arena::alloc(Node::ByteReverse(x.into_edge()));
+        let trunc_id = arena::alloc(Node::Truncate128(y.into_edge()));
+        let scaled_id = arena::alloc(Node::MulTwoPow192(x.into_edge()));
+
+        let rev = SymbolicField::from_edge(Atom::Node(rev_id));
+        let trunc = SymbolicField::from_edge(Atom::Node(trunc_id));
+        let scaled = SymbolicField::from_edge(Atom::Node(scaled_id));
+
+        let result = rev * trunc + scaled;
+
+        let mut allocator = VarAllocator::new();
+        let _ = allocator.input("x");
+        let _ = allocator.input("y");
+        allocator.assert_zero(result.into_edge());
+
+        let bundle = allocator.finish();
+        let mut emitter = GnarkAstEmitter::new();
+        bundle.emit(&mut emitter);
+
+        let code = emitter.finish();
+        assert!(code.contains("byteReverse("));
+        assert!(code.contains("truncate128("));
+        assert!(code.contains("mulTwoPow192("));
+        assert!(code.contains("api.Mul("));
+        assert!(code.contains("api.Add("));
+    }
 }

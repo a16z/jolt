@@ -51,22 +51,28 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
     type Proof = MockProof<F>;
     type ProverSetup = ();
     type VerifierSetup = ();
+    type Polynomial = Polynomial<F>;
+    type OpeningHint = ();
 
-    fn commit(evaluations: &[Self::Field], _setup: &Self::ProverSetup) -> Self::Output {
-        MockCommitment {
-            evaluations: evaluations.to_vec(),
-        }
+    fn commit(evaluations: &[Self::Field], _setup: &Self::ProverSetup) -> (Self::Output, ()) {
+        (
+            MockCommitment {
+                evaluations: evaluations.to_vec(),
+            },
+            (),
+        )
     }
 
     fn open(
-        evaluations: &[Self::Field],
+        poly: &Self::Polynomial,
         _point: &[Self::Field],
         _eval: Self::Field,
         _setup: &Self::ProverSetup,
+        _hint: Option<()>,
         _transcript: &mut impl Transcript,
     ) -> Self::Proof {
         MockProof {
-            evaluations: evaluations.to_vec(),
+            evaluations: poly.evaluations().to_vec(),
         }
     }
 
@@ -78,7 +84,6 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         _setup: &Self::VerifierSetup,
         _transcript: &mut impl Transcript,
     ) -> Result<(), OpeningsError> {
-        // Check binding: proof evaluations must match commitment
         if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::CommitmentMismatch {
                 expected: format!("len={}", commitment.evaluations.len()),
@@ -86,7 +91,6 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
             });
         }
 
-        // Check evaluation correctness
         let poly = Polynomial::new(proof.evaluations.clone());
         let actual_eval = poly.evaluate(point);
         if actual_eval != eval {
@@ -139,10 +143,10 @@ mod tests {
         let point: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
 
-        let commitment = MockPCS::commit(poly.evaluations(), &());
+        let (commitment, _hint) = MockPCS::commit(poly.evaluations(), &());
 
         let mut transcript_p = Blake2bTranscript::new(b"test");
-        let proof = MockPCS::open(poly.evaluations(), &point, eval, &(), &mut transcript_p);
+        let proof = MockPCS::open(&poly, &point, eval, &(), None, &mut transcript_p);
 
         let mut transcript_v = Blake2bTranscript::new(b"test");
         MockPCS::verify(&commitment, &point, eval, &proof, &(), &mut transcript_v)
@@ -157,10 +161,10 @@ mod tests {
         let eval = poly.evaluate(&point);
         let wrong_eval = eval + Fr::from_u64(1);
 
-        let commitment = MockPCS::commit(poly.evaluations(), &());
+        let (commitment, _) = MockPCS::commit(poly.evaluations(), &());
 
         let mut transcript_p = Blake2bTranscript::new(b"test");
-        let proof = MockPCS::open(poly.evaluations(), &point, eval, &(), &mut transcript_p);
+        let proof = MockPCS::open(&poly, &point, eval, &(), None, &mut transcript_p);
 
         let mut transcript_v = Blake2bTranscript::new(b"test");
         let result = MockPCS::verify(
@@ -181,11 +185,11 @@ mod tests {
         let poly2 = Polynomial::<Fr>::random(3, &mut rng);
         let point: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
 
-        let wrong_commitment = MockPCS::commit(poly2.evaluations(), &());
+        let (wrong_commitment, _) = MockPCS::commit(poly2.evaluations(), &());
         let eval = poly1.evaluate(&point);
 
         let mut transcript_p = Blake2bTranscript::new(b"test");
-        let proof = MockPCS::open(poly1.evaluations(), &point, eval, &(), &mut transcript_p);
+        let proof = MockPCS::open(&poly1, &point, eval, &(), None, &mut transcript_p);
 
         let mut transcript_v = Blake2bTranscript::new(b"test");
         let result = MockPCS::verify(
@@ -205,8 +209,8 @@ mod tests {
         let poly_a = Polynomial::<Fr>::random(3, &mut rng);
         let poly_b = Polynomial::<Fr>::random(3, &mut rng);
 
-        let ca = MockPCS::commit(poly_a.evaluations(), &());
-        let cb = MockPCS::commit(poly_b.evaluations(), &());
+        let (ca, _) = MockPCS::commit(poly_a.evaluations(), &());
+        let (cb, _) = MockPCS::commit(poly_b.evaluations(), &());
 
         let sum_evals: Vec<Fr> = poly_a
             .evaluations()
@@ -214,7 +218,7 @@ mod tests {
             .zip(poly_b.evaluations().iter())
             .map(|(a, b)| *a + *b)
             .collect();
-        let c_sum_direct = MockPCS::commit(&sum_evals, &());
+        let (c_sum_direct, _) = MockPCS::commit(&sum_evals, &());
         let c_sum_combined = MockPCS::combine(&[ca, cb], &[Fr::from_u64(1), Fr::from_u64(1)]);
 
         assert_eq!(c_sum_direct, c_sum_combined);
@@ -236,7 +240,7 @@ mod tests {
                 eval,
             });
 
-            let commitment = MockPCS::commit(poly.evaluations(), &());
+            let (commitment, _) = MockPCS::commit(poly.evaluations(), &());
             let v_eval = verifier_evals.map_or(eval, |overrides| overrides[i]);
             verifier_claims.push(VerifierClaim {
                 commitment,
@@ -255,13 +259,8 @@ mod tests {
         let proofs: Vec<_> = reduced_prover
             .iter()
             .map(|claim| {
-                MockPCS::open(
-                    &claim.evaluations,
-                    &claim.point,
-                    claim.eval,
-                    &(),
-                    &mut transcript_p,
-                )
+                let poly: Polynomial<Fr> = claim.evaluations.clone().into();
+                MockPCS::open(&poly, &claim.point, claim.eval, &(), None, &mut transcript_p)
             })
             .collect();
 

@@ -64,3 +64,30 @@ pub trait JoltCommitment: Clone + Send + Sync + 'static {
         blinding: &F,
     ) -> bool;
 }
+
+/// Additive homomorphism on commitment values over a scalar field `F`.
+///
+/// Captures the ability to linearly combine two commitments without
+/// knowing the committed values:
+/// ```text
+/// linear_combine(c1, c2, s) = c1 ⊕ s ⊗ c2
+/// ```
+///
+/// Required by Nova folding for instance-level commitment operations.
+/// Not all commitment schemes have this property (e.g., hash-based schemes
+/// do not). Pedersen and lattice-based schemes do.
+///
+/// Blanket-implemented for [`JoltGroup`](crate::JoltGroup) over any field
+/// (via `scalar_mul` + addition). Non-group commitment types (e.g., lattice
+/// vectors) can implement this trait directly for their native scalar field.
+pub trait HomomorphicCommitment<F: Field>: Clone {
+    /// Computes `c1 + scalar * c2`.
+    fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self;
+}
+
+impl<G: crate::JoltGroup, F: Field> HomomorphicCommitment<F> for G {
+    #[inline]
+    fn linear_combine(c1: &G, c2: &G, scalar: &F) -> G {
+        *c1 + c2.scalar_mul(scalar)
+    }
+}

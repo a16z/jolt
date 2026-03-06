@@ -49,6 +49,12 @@ pub trait Field:
     + for<'de> Deserialize<'de>
     + MaybeAllocative
 {
+    /// Accumulator for deferred-reduction fused multiply-add.
+    ///
+    /// For BN254 Fr, this is a wide 9-limb integer that defers Montgomery
+    /// reduction. For other fields, use [`NaiveAccumulator`](crate::NaiveAccumulator).
+    type Accumulator: crate::FieldAccumulator<Field = Self>;
+
     /// Byte length of a canonical (compressed) serialized element.
     const NUM_BYTES: usize;
 

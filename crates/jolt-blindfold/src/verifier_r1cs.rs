@@ -456,7 +456,7 @@ mod tests {
     fn integration_with_real_sumcheck() {
         use jolt_poly::{Polynomial, UnivariatePoly};
         use jolt_sumcheck::{
-            ClearRoundHandler, RoundHandler, SumcheckClaim, SumcheckCompute, SumcheckProver,
+            ClearRoundHandler, RoundHandler, SumcheckClaim, SumcheckWitness, SumcheckProver,
         };
         use jolt_transcript::{Blake2bTranscript, Transcript};
 
@@ -468,7 +468,7 @@ mod tests {
             b: Polynomial<Fr>,
         }
 
-        impl SumcheckCompute<Fr> for IpWitness {
+        impl SumcheckWitness<Fr> for IpWitness {
             fn round_polynomial(&self) -> UnivariatePoly<Fr> {
                 let half = self.a.evaluations().len() / 2;
                 let a = self.a.evaluations();

@@ -153,6 +153,10 @@ impl<const N: usize> Limbs<N> {
     }
 
     /// Truncated fused multiply-add: `self += a * b`, keeping `N` limbs.
+    ///
+    /// WARNING: The carry at the spill position is NOT fully propagated.
+    /// Use [`fmadd`] if many products will be accumulated and intermediate
+    /// limbs may overflow.
     #[inline]
     pub fn fmadd_trunc<const A: usize, const B: usize>(&mut self, a: &Limbs<A>, b: &Limbs<B>) {
         let i_limit = if A < N { A } else { N };
@@ -170,6 +174,35 @@ impl<const N: usize> Limbs<N> {
             if spill < N {
                 let (new_val, _) = self.0[spill].overflowing_add(carry);
                 self.0[spill] = new_val;
+            }
+        }
+    }
+
+    /// Fused multiply-add: `self += a * b`, keeping `N` limbs, with full carry propagation.
+    ///
+    /// Unlike [`fmadd_trunc`](Self::fmadd_trunc), the carry from each row's
+    /// spill position is propagated through all remaining higher limbs.
+    /// This is required when accumulating many products to avoid silent overflow.
+    #[inline]
+    pub fn fmadd<const A: usize, const B: usize>(&mut self, a: &Limbs<A>, b: &Limbs<B>) {
+        let i_limit = if A < N { A } else { N };
+        for i in 0..i_limit {
+            let mut carry = 0u64;
+            let j_limit = if B < (N - i) { B } else { N - i };
+            for j in 0..j_limit {
+                let idx = i + j;
+                let prod =
+                    (a.0[i] as u128) * (b.0[j] as u128) + (self.0[idx] as u128) + (carry as u128);
+                self.0[idx] = prod as u64;
+                carry = (prod >> 64) as u64;
+            }
+            // Propagate carry through remaining limbs
+            let mut k = i + j_limit;
+            while carry != 0 && k < N {
+                let sum = (self.0[k] as u128) + (carry as u128);
+                self.0[k] = sum as u64;
+                carry = (sum >> 64) as u64;
+                k += 1;
             }
         }
     }
@@ -411,6 +444,44 @@ mod tests {
         let mut acc = Limbs::<2>([10, 0]);
         acc.fmadd_trunc::<1, 1>(&a, &b);
         assert_eq!(acc.0[0], 22); // 10 + 3*4
+    }
+
+    #[test]
+    fn fmadd_basic() {
+        let a = Limbs::<1>([3u64]);
+        let b = Limbs::<1>([4u64]);
+        let mut acc = Limbs::<2>([10, 0]);
+        acc.fmadd::<1, 1>(&a, &b);
+        assert_eq!(acc.0[0], 22); // 10 + 3*4
+    }
+
+    #[test]
+    fn fmadd_carry_propagation() {
+        // Accumulate many large products into a wide accumulator.
+        // Use fmadd (full carry) vs add_with_carry reference to verify correctness.
+        let a = Limbs::<2>([u64::MAX, u64::MAX >> 1]);
+        let b = Limbs::<2>([u64::MAX, u64::MAX >> 1]);
+
+        // Compute a single product via mul_trunc as reference
+        let single_product: Limbs<5> = a.mul_trunc::<2, 5>(&b);
+
+        let mut acc = Limbs::<5>::zero();
+        let count = 10_000u64;
+        for _ in 0..count {
+            acc.fmadd::<2, 2>(&a, &b);
+        }
+
+        // Build expected: single_product * count via repeated addition
+        let mut expected = Limbs::<5>::zero();
+        // Multiply single_product by count using schoolbook with u64 scalar
+        let mut carry = 0u128;
+        for i in 0..5 {
+            let prod = (single_product.0[i] as u128) * (count as u128) + carry;
+            expected.0[i] = prod as u64;
+            carry = prod >> 64;
+        }
+
+        assert_eq!(acc, expected, "fmadd should match reference after {count} products");
     }
 
     #[test]

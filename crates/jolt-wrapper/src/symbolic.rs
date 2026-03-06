@@ -63,6 +63,11 @@ impl SymbolicField {
         }
     }
 
+    /// Creates a symbolic field element from an edge (constant or node reference).
+    pub fn from_edge(edge: Edge) -> Self {
+        Self { edge }
+    }
+
     /// Returns the underlying edge.
     pub fn into_edge(self) -> Edge {
         self.edge

@@ -20,14 +20,23 @@ fn round_trip<T: Transcript>(num_vars: usize, seed: u64, label: &'static [u8]) {
         .map(|_| <Fr as Field>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let commitment = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
+    // With hint
     let mut pt = T::new(label);
-    let proof = DoryScheme::open(poly.evaluations(), &point, eval, &prover_setup, &mut pt);
+    let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
 
     let mut vt = T::new(label);
     DoryScheme::verify(&commitment, &point, eval, &proof, &verifier_setup, &mut vt)
-        .expect("round-trip verification must succeed");
+        .expect("round-trip verification (with hint) must succeed");
+
+    // Without hint
+    let mut pt2 = T::new(label);
+    let proof2 = DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut pt2);
+
+    let mut vt2 = T::new(label);
+    DoryScheme::verify(&commitment, &point, eval, &proof2, &verifier_setup, &mut vt2)
+        .expect("round-trip verification (without hint) must succeed");
 }
 
 #[test]
@@ -54,7 +63,7 @@ fn streaming_equals_direct_various_sizes() {
         let prover_setup = DoryScheme::setup_prover(num_vars);
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
 
-        let direct = DoryScheme::commit(poly.evaluations(), &prover_setup);
+        let (direct, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut partial = DoryScheme::begin(&prover_setup);
         for row in poly.evaluations().chunks(num_cols) {
@@ -81,10 +90,10 @@ fn wrong_eval_rejected() {
         .map(|_| <Fr as Field>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let commitment = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
     let mut pt = Blake2bTranscript::new(b"wrong-eval");
-    let proof = DoryScheme::open(poly.evaluations(), &point, eval, &prover_setup, &mut pt);
+    let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
 
     let tampered_eval = eval + Fr::from_u64(1);
     let mut vt = Blake2bTranscript::new(b"wrong-eval");
@@ -111,10 +120,10 @@ fn wrong_point_rejected() {
         .map(|_| <Fr as Field>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let commitment = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
     let mut pt = Blake2bTranscript::new(b"wrong-point");
-    let proof = DoryScheme::open(poly.evaluations(), &point, eval, &prover_setup, &mut pt);
+    let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
 
     let mut tampered_point = point.clone();
     tampered_point[0] += Fr::from_u64(1);
@@ -140,8 +149,8 @@ fn combine_linear_combination() {
     let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
     let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
 
-    let commit_a = DoryScheme::commit(poly_a.evaluations(), &prover_setup);
-    let commit_b = DoryScheme::commit(poly_b.evaluations(), &prover_setup);
+    let (commit_a, _) = DoryScheme::commit(poly_a.evaluations(), &prover_setup);
+    let (commit_b, _) = DoryScheme::commit(poly_b.evaluations(), &prover_setup);
 
     let c1 = <Fr as Field>::random(&mut rng);
     let c2 = <Fr as Field>::random(&mut rng);
@@ -154,7 +163,7 @@ fn combine_linear_combination() {
         .zip(poly_b.evaluations().iter())
         .map(|(a, b)| c1 * *a + c2 * *b)
         .collect();
-    let commit_weighted = DoryScheme::commit(&weighted_evals, &prover_setup);
+    let (commit_weighted, _) = DoryScheme::commit(&weighted_evals, &prover_setup);
 
     assert_eq!(
         combined, commit_weighted,
@@ -170,8 +179,8 @@ fn deterministic_commitment() {
     let mut rng = ChaCha20Rng::seed_from_u64(700);
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
 
-    let c1 = DoryScheme::commit(poly.evaluations(), &prover_setup);
-    let c2 = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (c1, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (c2, _) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
     assert_eq!(c1, c2, "same poly + setup must yield identical commitment");
 }
@@ -189,14 +198,14 @@ fn wrong_commitment_rejected() {
         .map(|_| <Fr as Field>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let commitment = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
     let mut pt = Blake2bTranscript::new(b"wrong-commit");
-    let proof = DoryScheme::open(poly.evaluations(), &point, eval, &prover_setup, &mut pt);
+    let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
 
     // Commit to a different polynomial
     let wrong_poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let wrong_commitment = DoryScheme::commit(wrong_poly.evaluations(), &prover_setup);
+    let (wrong_commitment, _) = DoryScheme::commit(wrong_poly.evaluations(), &prover_setup);
     assert_ne!(commitment, wrong_commitment);
 
     let mut vt = Blake2bTranscript::new(b"wrong-commit");
@@ -223,10 +232,10 @@ fn wrong_transcript_domain_rejected() {
         .map(|_| <Fr as Field>::random(&mut rng))
         .collect();
     let eval = poly.evaluate(&point);
-    let commitment = DoryScheme::commit(poly.evaluations(), &prover_setup);
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
     let mut pt = Blake2bTranscript::new(b"correct-domain");
-    let proof = DoryScheme::open(poly.evaluations(), &point, eval, &prover_setup, &mut pt);
+    let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
 
     let mut vt = Blake2bTranscript::new(b"wrong-domain");
     let result = DoryScheme::verify(
