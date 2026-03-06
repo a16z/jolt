@@ -1303,7 +1303,7 @@ impl<
         let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
 
-        let mut booleanity = BooleanitySumcheckProver::initialize(
+        let (mut booleanity, shared_ra_indices) = BooleanitySumcheckProver::initialize(
             booleanity_params,
             &self.trace,
             &self.preprocessing.shared.bytecode,
@@ -1317,7 +1317,7 @@ impl<
             &self.one_hot_params,
         );
         let mut lookups_ra_virtual =
-            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
+            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &shared_ra_indices);
         let mut inc_reduction =
             IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
 

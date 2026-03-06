@@ -16,6 +16,7 @@ use crate::{
             VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
+        shared_ra_polys::RaIndices,
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
@@ -31,15 +32,12 @@ use crate::{
     transcripts::Transcript,
     zkvm::{
         config::OneHotParams,
-        instruction::LookupQuery,
         instruction_lookups::LOG_K,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
 use allocative::Allocative;
-use common::constants::XLEN;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 #[derive(Allocative, Clone)]
 pub struct InstructionRaSumcheckParams<F: JoltField> {
@@ -191,37 +189,27 @@ pub struct InstructionRaSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> InstructionRaSumcheckProver<F> {
+    /// Initialize from shared RA indices (avoids re-reading the trace).
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::initialize")]
-    pub fn initialize(params: InstructionRaSumcheckParams<F>, trace: &[Cycle]) -> Self {
-        // Compute r_address_chunks with proper padding
+    pub fn initialize(
+        params: InstructionRaSumcheckParams<F>,
+        shared_indices: &Arc<Vec<RaIndices>>,
+    ) -> Self {
         let r_address_chunks = params
             .one_hot_params
             .compute_r_address_chunks::<F>(&params.r_address.r);
 
-        let H_indices: Vec<Vec<Option<u8>>> = (0..params.one_hot_params.instruction_d)
-            .map(|i| {
-                trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                        Some(params.one_hot_params.lookup_index_chunk(lookup_index, i))
-                    })
-                    .collect()
-            })
-            .collect();
-
         let n_committed_per_virtual = params.n_committed_per_virtual;
         let gamma_powers = &params.gamma_powers;
 
-        let ra_i_polys = H_indices
+        let ra_i_polys = (0..params.one_hot_params.instruction_d)
             .into_par_iter()
-            .enumerate()
-            .map(|(i, lookup_indices)| {
-                // Pre-scale the first committed polynomial in each virtual batch by γ^batch.
-                //
-                // This pushes the γ weight *inside* the product term so we can form
-                // (Σ γ^i · ∏ ra_{i,*}) before multiplying by split-eq's inner weights e_in,
-                // allowing a single split-eq fold for the whole sumcheck message.
+            .map(|i| {
+                let lookup_indices: Vec<Option<u8>> = shared_indices
+                    .par_iter()
+                    .map(|ra| Some(ra.instruction[i]))
+                    .collect();
+
                 let scaling_factor = if i % n_committed_per_virtual == 0 {
                     let batch = i / n_committed_per_virtual;
                     let gamma = gamma_powers[batch];
@@ -256,9 +244,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let eq_poly = &self.eq_poly;
 
-        // Compute q(X) = Σ_i ∏_j ra_{i,j}(X,·) on the U_D grid using a *single*
-        // split-eq fold. The per-batch γ^i weights have already been absorbed by
-        // pre-scaling the first polynomial in each batch (see `initialize`).
         let evals = match self.params.n_committed_per_virtual {
             4 => compute_mles_product_sum_evals_sum_of_products_d4(
                 &self.ra_i_polys,
@@ -296,15 +281,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
     ) {
         let r_cycle = self.params.normalize_opening_point(sumcheck_challenges);
 
-        // Compute r_address_chunks with proper padding
         let r_address_chunks = self
             .params
             .one_hot_params
             .compute_r_address_chunks::<F>(&self.params.r_address.r);
 
         for (i, r_address) in r_address_chunks.into_iter().enumerate() {
-            // Undo the per-batch γ scaling applied in `initialize` before caching openings,
-            // so the claimed openings match the *actual* committed polynomials.
             let mut claim = self.ra_i_polys[i].final_sumcheck_claim();
             if i % self.params.n_committed_per_virtual == 0 {
                 let batch = i / self.params.n_committed_per_virtual;

@@ -27,6 +27,8 @@ use allocative::Allocative;
 use ark_std::Zero;
 use fixedbitset::FixedBitSet;
 
+use std::sync::Arc;
+
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
@@ -232,9 +234,8 @@ pub fn compute_all_G_and_ra_indices<F: JoltField>(
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
-) -> (Vec<Vec<F>>, Vec<RaIndices>) {
+) -> (Vec<Vec<F>>, Arc<Vec<RaIndices>>) {
     let T = trace.len();
-    // Pre-allocate ra_indices
     let mut ra_indices: Vec<RaIndices> = unsafe_allocate_zero_vec(T);
 
     let G = compute_all_G_impl::<F>(
@@ -246,7 +247,7 @@ pub fn compute_all_G_and_ra_indices<F: JoltField>(
         Some(&mut ra_indices),
     );
 
-    (G, ra_indices)
+    (G, Arc::new(ra_indices))
 }
 
 /// Core implementation for computing G evaluations.
@@ -475,7 +476,7 @@ pub struct SharedRaRound1<F: JoltField> {
     /// constant (e.g. a batching coefficient).
     tables: Vec<Vec<F>>,
     /// RA indices for all cycles (non-transposed)
-    indices: Vec<RaIndices>,
+    indices: Arc<Vec<RaIndices>>,
     /// Number of polynomials
     num_polys: usize,
     /// OneHotParams for index extraction
@@ -491,7 +492,7 @@ pub struct SharedRaRound2<F: JoltField> {
     /// Per-polynomial tables for the 1-branch: tables_1[poly_idx][k]
     tables_1: Vec<Vec<F>>,
     /// RA indices for all cycles
-    indices: Vec<RaIndices>,
+    indices: Arc<Vec<RaIndices>>,
     num_polys: usize,
     #[allocative(skip)]
     one_hot_params: OneHotParams,
@@ -505,7 +506,7 @@ pub struct SharedRaRound3<F: JoltField> {
     tables_01: Vec<Vec<F>>,
     tables_10: Vec<Vec<F>>,
     tables_11: Vec<Vec<F>>,
-    indices: Vec<RaIndices>,
+    indices: Arc<Vec<RaIndices>>,
     num_polys: usize,
     #[allocative(skip)]
     one_hot_params: OneHotParams,
@@ -518,7 +519,7 @@ pub struct SharedRaRound3<F: JoltField> {
 pub struct SharedRaRound4<F: JoltField> {
     /// tables[group][poly_idx][k] — 8 groups of per-poly eq tables
     tables: [Vec<Vec<F>>; 8],
-    indices: Vec<RaIndices>,
+    indices: Arc<Vec<RaIndices>>,
     num_polys: usize,
     #[allocative(skip)]
     one_hot_params: OneHotParams,
@@ -527,7 +528,11 @@ pub struct SharedRaRound4<F: JoltField> {
 
 impl<F: JoltField> SharedRaPolynomials<F> {
     /// Create new SharedRaPolynomials from eq table and indices.
-    pub fn new(tables: Vec<Vec<F>>, indices: Vec<RaIndices>, one_hot_params: OneHotParams) -> Self {
+    pub fn new(
+        tables: Vec<Vec<F>>,
+        indices: Arc<Vec<RaIndices>>,
+        one_hot_params: OneHotParams,
+    ) -> Self {
         let num_polys =
             one_hot_params.instruction_d + one_hot_params.bytecode_d + one_hot_params.ram_d;
         debug_assert!(
@@ -536,6 +541,23 @@ impl<F: JoltField> SharedRaPolynomials<F> {
             tables.len(),
             num_polys
         );
+        Self::Round1(SharedRaRound1 {
+            tables,
+            indices,
+            num_polys,
+            one_hot_params,
+        })
+    }
+
+    /// Create SharedRaPolynomials that only uses instruction polys from the shared indices.
+    /// `tables` should have exactly `instruction_d` entries.
+    pub fn new_instruction_only(
+        tables: Vec<Vec<F>>,
+        indices: Arc<Vec<RaIndices>>,
+        one_hot_params: OneHotParams,
+    ) -> Self {
+        let num_polys = one_hot_params.instruction_d;
+        debug_assert_eq!(tables.len(), num_polys);
         Self::Round1(SharedRaRound1 {
             tables,
             indices,
