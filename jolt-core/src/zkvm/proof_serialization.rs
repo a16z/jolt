@@ -1,6 +1,5 @@
 #[cfg(not(feature = "zk"))]
 use std::collections::BTreeMap;
-use std::fs::File;
 use std::io::{Read, Write};
 
 use ark_serialize::{
@@ -34,8 +33,10 @@ use crate::{
 
 use crate::zkvm::transport;
 
-const PROOF_MAGIC: &[u8; 7] = b"JOLTPRF";
+const PROOF_MAGIC: &[u8; 4] = b"JOLT";
 const PROOF_VERSION: u8 = 1;
+const PROOF_FLAGS_RESERVED_MASK: u8 = 0xFE;
+const PROOF_FLAG_ZK: u8 = 0x01;
 
 const MAX_PARAMS_LEN: u64 = 1024;
 const MAX_SECTION_LEN: u64 = 128 * 1024;
@@ -72,6 +73,7 @@ fn io_err(e: std::io::Error) -> SerializationError {
 macro_rules! write_section {
     ($w:expr, $c:expr, $($item:expr),+ $(,)?) => {{
         let len: u64 = 0 $(+ $item.serialized_size($c) as u64)+;
+        debug_assert!(len <= MAX_SECTION_LEN, "section size {len} exceeds MAX_SECTION_LEN");
         transport::write_varint_u64($w, len).map_err(io_err)?;
         $($item.serialize_with_mode($w, $c)?;)+
     }};
@@ -84,7 +86,9 @@ macro_rules! section_size {
     }};
 }
 
-fn check_trailing_bytes(limited: &std::io::Take<&mut impl Read>) -> Result<(), SerializationError> {
+fn check_trailing_bytes<R: Read>(
+    limited: &std::io::Take<&mut R>,
+) -> Result<(), SerializationError> {
     if limited.limit() != 0 {
         return Err(io_err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -119,20 +123,6 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
             .unwrap_or(0);
         count_len + items_len + 1 + untrusted_len
     }
-
-    #[cfg(not(feature = "zk"))]
-    fn claims_payload_len(&self, compress: Compress) -> u64 {
-        let count_len = transport::varint_u64_len(self.opening_claims.0.len() as u64) as u64;
-        let items_len: u64 = self
-            .opening_claims
-            .0
-            .iter()
-            .map(|(k, (_p, claim))| {
-                (k.serialized_size(compress) + claim.serialized_size(compress)) as u64
-            })
-            .sum();
-        count_len + items_len
-    }
 }
 
 impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
@@ -144,6 +134,12 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
         compress: Compress,
     ) -> Result<(), SerializationError> {
         transport::write_magic_version(&mut writer, PROOF_MAGIC, PROOF_VERSION).map_err(io_err)?;
+        let flags: u8 = if cfg!(feature = "zk") {
+            PROOF_FLAG_ZK
+        } else {
+            0
+        };
+        writer.write_all(&[flags]).map_err(io_err)?;
 
         let params_len = self.params_payload_len(compress);
         transport::write_varint_u64(&mut writer, params_len).map_err(io_err)?;
@@ -170,16 +166,7 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
         }
 
         #[cfg(not(feature = "zk"))]
-        {
-            let claims_len = self.claims_payload_len(compress);
-            transport::write_varint_u64(&mut writer, claims_len).map_err(io_err)?;
-            transport::write_varint_u64(&mut writer, self.opening_claims.0.len() as u64)
-                .map_err(io_err)?;
-            for (k, (_p, claim)) in self.opening_claims.0.iter() {
-                k.serialize_with_mode(&mut writer, compress)?;
-                claim.serialize_with_mode(&mut writer, compress)?;
-            }
-        }
+        write_section!(&mut writer, compress, &self.opening_claims);
 
         write_section!(
             &mut writer,
@@ -207,7 +194,7 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        let mut size = PROOF_MAGIC.len() + 1; // magic + version byte
+        let mut size = PROOF_MAGIC.len() + 1 + 1; // magic + version + flags
 
         let params_len = self.params_payload_len(compress);
         size += transport::varint_u64_len(params_len) + params_len as usize;
@@ -217,8 +204,7 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
 
         #[cfg(not(feature = "zk"))]
         {
-            let claims_len = self.claims_payload_len(compress);
-            size += transport::varint_u64_len(claims_len) + claims_len as usize;
+            size += section_size!(compress, &self.opening_claims);
         }
 
         size += section_size!(
@@ -271,6 +257,26 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
             )));
         }
 
+        let mut flags_buf = [0u8; 1];
+        reader.read_exact(&mut flags_buf).map_err(io_err)?;
+        let flags = flags_buf[0];
+        if flags & PROOF_FLAGS_RESERVED_MASK != 0 {
+            return Err(io_err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown proof flags bits set: {flags:#04x}"),
+            )));
+        }
+        let proof_is_zk = flags & PROOF_FLAG_ZK != 0;
+        let compiled_for_zk = cfg!(feature = "zk");
+        if proof_is_zk != compiled_for_zk {
+            let mode = if proof_is_zk { "ZK" } else { "standard" };
+            let expected = if compiled_for_zk { "ZK" } else { "standard" };
+            return Err(io_err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("proof was serialized in {mode} mode but deserializer expects {expected}"),
+            )));
+        }
+
         // Params
         let mut limited = transport::read_section(&mut reader, MAX_PARAMS_LEN).map_err(io_err)?;
         let t = transport::read_varint_u64(&mut limited).map_err(io_err)?;
@@ -315,30 +321,19 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
         };
         check_trailing_bytes(&limited)?;
 
-        // Opening claims (non-ZK only)
+        macro_rules! read_single_section {
+            ($reader:expr) => {{
+                let mut limited =
+                    transport::read_section($reader, MAX_SECTION_LEN).map_err(io_err)?;
+                let val =
+                    CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
+                check_trailing_bytes(&limited)?;
+                val
+            }};
+        }
+
         #[cfg(not(feature = "zk"))]
-        let opening_claims = {
-            let mut limited =
-                transport::read_section(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
-            let n = transport::read_varint_u64(&mut limited).map_err(io_err)?;
-            let n_usize = usize::try_from(n).map_err(|_| SerializationError::InvalidData)?;
-            if n_usize > 10_000 {
-                return Err(SerializationError::InvalidData);
-            }
-            let mut claims = BTreeMap::new();
-            for _ in 0..n_usize {
-                let key = OpeningId::deserialize_with_mode(&mut limited, compress, validate)?;
-                let claim = F::deserialize_with_mode(&mut limited, compress, validate)?;
-                if claims
-                    .insert(key, (OpeningPoint::default(), claim))
-                    .is_some()
-                {
-                    return Err(SerializationError::InvalidData);
-                }
-            }
-            check_trailing_bytes(&limited)?;
-            Claims(claims)
-        };
+        let opening_claims: Claims<F> = read_single_section!(&mut reader);
 
         // Stage 1
         let mut limited = transport::read_section(&mut reader, MAX_SECTION_LEN).map_err(io_err)?;
@@ -356,18 +351,6 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
             CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
         check_trailing_bytes(&limited)?;
 
-        // Stages 3-7
-        macro_rules! read_single_section {
-            ($reader:expr) => {{
-                let mut limited =
-                    transport::read_section($reader, MAX_SECTION_LEN).map_err(io_err)?;
-                let val =
-                    CanonicalDeserialize::deserialize_with_mode(&mut limited, compress, validate)?;
-                check_trailing_bytes(&limited)?;
-                val
-            }};
-        }
-
         let stage3_sumcheck_proof = read_single_section!(&mut reader);
         let stage4_sumcheck_proof = read_single_section!(&mut reader);
         let stage5_sumcheck_proof = read_single_section!(&mut reader);
@@ -377,6 +360,18 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
 
         #[cfg(feature = "zk")]
         let blindfold_proof = read_single_section!(&mut reader);
+
+        let mut eof_check = [0u8; 1];
+        match reader.read(&mut eof_check) {
+            Ok(0) => {}
+            Ok(_) => {
+                return Err(io_err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "unexpected trailing bytes after proof",
+                )));
+            }
+            Err(e) => return Err(io_err(e)),
+        }
 
         Ok(Self {
             commitments,
@@ -408,13 +403,16 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
 pub struct Claims<F: JoltField>(pub Openings<F>);
 
 #[cfg(not(feature = "zk"))]
+const MAX_CLAIMS_COUNT: u64 = 10_000;
+
+#[cfg(not(feature = "zk"))]
 impl<F: JoltField> CanonicalSerialize for Claims<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.0.len().serialize_with_mode(&mut writer, compress)?;
+        transport::write_varint_u64(&mut writer, self.0.len() as u64).map_err(io_err)?;
         for (key, (_opening_point, claim)) in self.0.iter() {
             key.serialize_with_mode(&mut writer, compress)?;
             claim.serialize_with_mode(&mut writer, compress)?;
@@ -423,7 +421,7 @@ impl<F: JoltField> CanonicalSerialize for Claims<F> {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        let mut size = self.0.len().serialized_size(compress);
+        let mut size = transport::varint_u64_len(self.0.len() as u64);
         for (key, (_opening_point, claim)) in self.0.iter() {
             size += key.serialized_size(compress);
             size += claim.serialized_size(compress);
@@ -446,9 +444,13 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let size = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let n = transport::read_varint_u64(&mut reader).map_err(io_err)?;
+        let n_usize = usize::try_from(n).map_err(|_| SerializationError::InvalidData)?;
+        if n > MAX_CLAIMS_COUNT {
+            return Err(SerializationError::InvalidData);
+        }
         let mut claims = BTreeMap::new();
-        for _ in 0..size {
+        for _ in 0..n_usize {
             let key = OpeningId::deserialize_with_mode(&mut reader, compress, validate)?;
             let claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
             if claims
@@ -458,7 +460,6 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
                 return Err(SerializationError::InvalidData);
             }
         }
-
         Ok(Claims(claims))
     }
 }
@@ -879,6 +880,7 @@ pub fn serialize_and_print_size(
     file_name: &str,
     item: &impl CanonicalSerialize,
 ) -> Result<(), SerializationError> {
+    use std::fs::File;
     let mut file = File::create(file_name)?;
     item.serialize_compressed(&mut file)?;
     let file_size_bytes = file.metadata()?.len();
@@ -921,17 +923,75 @@ mod tests {
 
     #[test]
     fn opening_id_roundtrips() {
-        let cases = [
-            OpeningId::UntrustedAdvice(SumcheckId::SpartanOuter),
-            OpeningId::TrustedAdvice(SumcheckId::SpartanOuter),
-            OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter),
-            OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
+        use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
+
+        let sumcheck_ids = [
+            SumcheckId::SpartanOuter,
+            SumcheckId::RamReadWriteChecking,
+            SumcheckId::HammingWeightClaimReduction,
         ];
-        for id in cases {
+
+        let committed_polys = [
+            CommittedPolynomial::RdInc,
+            CommittedPolynomial::RamInc,
+            CommittedPolynomial::InstructionRa(0),
+            CommittedPolynomial::InstructionRa(7),
+            CommittedPolynomial::BytecodeRa(0),
+            CommittedPolynomial::RamRa(0),
+            CommittedPolynomial::TrustedAdvice,
+            CommittedPolynomial::UntrustedAdvice,
+        ];
+
+        let virtual_polys = [
+            VirtualPolynomial::PC,
+            VirtualPolynomial::NextPC,
+            VirtualPolynomial::UnivariateSkip,
+            VirtualPolynomial::InstructionRa(0),
+            VirtualPolynomial::InstructionRa(5),
+            VirtualPolynomial::OpFlags(CircuitFlags::AddOperands),
+            VirtualPolynomial::OpFlags(CircuitFlags::IsLastInSequence),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
+            VirtualPolynomial::LookupTableFlag(0),
+            VirtualPolynomial::LookupTableFlag(3),
+        ];
+
+        for &sc in &sumcheck_ids {
+            let id = OpeningId::UntrustedAdvice(sc);
             let mut bytes = Vec::new();
             id.serialize_compressed(&mut bytes).unwrap();
-            let decoded = OpeningId::deserialize_compressed(bytes.as_slice()).unwrap();
-            assert_eq!(decoded, id);
+            assert_eq!(
+                OpeningId::deserialize_compressed(bytes.as_slice()).unwrap(),
+                id
+            );
+
+            let id = OpeningId::TrustedAdvice(sc);
+            let mut bytes = Vec::new();
+            id.serialize_compressed(&mut bytes).unwrap();
+            assert_eq!(
+                OpeningId::deserialize_compressed(bytes.as_slice()).unwrap(),
+                id
+            );
+
+            for &cp in &committed_polys {
+                let id = OpeningId::committed(cp, sc);
+                let mut bytes = Vec::new();
+                id.serialize_compressed(&mut bytes).unwrap();
+                assert_eq!(
+                    OpeningId::deserialize_compressed(bytes.as_slice()).unwrap(),
+                    id
+                );
+            }
+
+            for &vp in &virtual_polys {
+                let id = OpeningId::virt(vp, sc);
+                let mut bytes = Vec::new();
+                id.serialize_compressed(&mut bytes).unwrap();
+                assert_eq!(
+                    OpeningId::deserialize_compressed(bytes.as_slice()).unwrap(),
+                    id
+                );
+            }
         }
     }
 
@@ -979,7 +1039,7 @@ mod tests {
     #[test]
     fn wrong_magic_rejected() {
         let mut buf = Vec::new();
-        transport::write_magic_version(&mut buf, b"BADMAGC", 1).unwrap();
+        transport::write_magic_version(&mut buf, b"BAAD", 1).unwrap();
         buf.extend_from_slice(&[0u8; 100]);
         let res = RV64IMACProof::deserialize_with_mode(
             std::io::Cursor::new(&buf),

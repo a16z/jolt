@@ -1,7 +1,9 @@
 //! Lightweight length-prefixed transport encoding helpers.
 //!
-//! Used in proof serialization for magic/version header and varint-prefixed sections
-//! with explicit caps (DoS resistance) and trailing-byte validation.
+//! Wire format: `[magic: 4B][version: 1B][flags: 1B][section₀][section₁]…`
+//! where each section is `[varint payload_len][payload bytes]`.
+//! Sections are sequential and untagged; the deserializer reads them in a
+//! fixed order defined by the proof schema.
 
 use std::io::{self, Read, Write};
 
@@ -55,7 +57,14 @@ pub fn read_varint_u64<R: Read>(r: &mut R) -> io::Result<u64> {
         let mut b = [0u8; 1];
         r.read_exact(&mut b)?;
         let byte = b[0];
-        x |= ((byte & 0x7F) as u64) << shift;
+        let payload = (byte & 0x7F) as u64;
+        if shift == 63 && payload > 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "varint overflow",
+            ));
+        }
+        x |= payload << shift;
         if (byte & 0x80) == 0 {
             return Ok(x);
         }
@@ -120,12 +129,21 @@ mod tests {
     }
 
     #[test]
+    fn varint_10th_byte_overflow_rejected() {
+        // 9 continuation bytes + a 10th byte with payload 2 (only 0 or 1 is valid at shift=63)
+        let mut bad = vec![0x80u8; 9];
+        bad.push(0x02);
+        let res = read_varint_u64(&mut bad.as_slice());
+        assert!(res.is_err());
+    }
+
+    #[test]
     fn magic_version_roundtrip() {
-        let magic = b"JOLTPRF";
+        let magic = b"JOLT";
         let version = 1u8;
         let mut buf = Vec::new();
         write_magic_version(&mut buf, magic, version).unwrap();
-        assert_eq!(buf.len(), 8);
+        assert_eq!(buf.len(), 5);
 
         let decoded_version = read_magic_version(&mut buf.as_slice(), magic).unwrap();
         assert_eq!(decoded_version, version);
@@ -134,8 +152,8 @@ mod tests {
     #[test]
     fn wrong_magic_rejected() {
         let mut buf = Vec::new();
-        write_magic_version(&mut buf, b"JOLTPRF", 1).unwrap();
-        let res = read_magic_version(&mut buf.as_slice(), b"BADMAGC");
+        write_magic_version(&mut buf, b"JOLT", 1).unwrap();
+        let res = read_magic_version(&mut buf.as_slice(), b"BAAD");
         assert!(res.is_err());
         let err = res.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -145,8 +163,8 @@ mod tests {
     #[test]
     fn wrong_version_readable() {
         let mut buf = Vec::new();
-        write_magic_version(&mut buf, b"JOLTPRF", 2).unwrap();
-        let version = read_magic_version(&mut buf.as_slice(), b"JOLTPRF").unwrap();
+        write_magic_version(&mut buf, b"JOLT", 2).unwrap();
+        let version = read_magic_version(&mut buf.as_slice(), b"JOLT").unwrap();
         assert_eq!(version, 2);
     }
 
