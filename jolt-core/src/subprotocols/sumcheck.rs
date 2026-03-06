@@ -330,8 +330,8 @@ impl BatchedSumcheck {
             .into_iter()
             .zip(output_claim_values)
             .collect();
-        let output_claims_commitments: Vec<_> = oc_committed.iter().map(|(c, _)| *c).collect();
-        let output_claims_blindings: Vec<_> = oc_committed.iter().map(|(_, b)| *b).collect();
+        let (output_claims_commitments, output_claims_blindings): (Vec<_>, Vec<_>) =
+            oc_committed.into_iter().unzip();
         transcript.append_commitments(b"output_claims_coms", &output_claims_commitments);
 
         let output_constraints: Vec<_> = sumcheck_instances
