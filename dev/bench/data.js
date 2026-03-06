@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772833922368,
+  "lastUpdate": 1772834201009,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -61978,6 +61978,234 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 826240,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3fe1ca4e8c1990bd3c8b8fc692f4dfca715d9f16",
+          "message": "fix: enforce output claim commitment integrity and reduce blindfold generator count (#1321)\n\n* feat: add Private<T> type alias for private inputs\n\nPrivate<T> is an alias for UntrustedAdvice<T> — marks guest function\nparameters as private (committed by prover, not revealed to verifier).\nReuses the existing untrusted advice pipeline with zero core changes.\n\ndocs: document Private<T> inputs and zk feature in guest guide\n\ndocs: clarify Private<T> vs UntrustedAdvice<T> privacy guarantees\n\nUntrustedAdvice does not guarantee privacy — inputs may be\nextractable from the proof without the zk feature. Private<T>\nsignals intent for cryptographic hiding via BlindFold when zk\nis enabled.\n\nfeat: gate Private<T> behind private-inputs feature\n\nAdd private-inputs feature to jolt-sdk (included by zk). Guest\ncrates enable private-inputs directly without pulling in jolt-core.\n\nfeat: gate Private<T> behind zk feature\n\nUse jolt-core?/zk so enabling zk on the guest doesn't pull in\njolt-core (optional dep). Private<T> requires zk feature on both\nguest and host. Remove private-inputs feature.\n\nfeat: add BlindfoldSetup<C> wrapper for serializable Pedersen generators\n\nrename: Private<T> → PrivateInput<T>\n\nfeat: gate BlindfoldSetup behind zk feature\n\nBlindfoldSetup and the blindfold_setup field on JoltVerifierPreprocessing\nare now #[cfg(feature = \"zk\")]-gated. JoltVerifierPreprocessing::new()\ntakes 2 args; with_blindfold_setup() builder method added for ZK mode.\n\nThe provable macro detects PrivateInput<T> in the function signature to\ngenerate either a 3-arg (with BlindfoldSetup) or 2-arg preprocess_verifier\nfunction — no cfg attributes needed in generated code.\n\nExtracts hardcoded 128 into common::constants::MAX_BLINDFOLD_GENERATORS\nand removes the count parameter from blindfold_setup(). Updates docs for\nPrivate<T> → PrivateInput<T> rename.\n\nfix: address PR review comments for BlindfoldSetup feature-gating\n\n- Move BlindfoldSetup to blindfold/mod.rs\n- Macro emits cfg-gated preprocess_verifier_* via module wrapper\n  with #[allow(unexpected_cfgs)] and super::* import for crate alias\n  compatibility (recursion-guest uses jolt_sdk as jolt)\n- 2-arg new() always available; new_zk() for ZK mode\n  (Option internally — required because workspace-wide clippy unifies\n  features across all examples)\n- fibonacci guest declares zk feature, host enables it\n- Remove zk feature from proc-macro crate (feature unification)\n- Remove has_private_inputs / is_private_input_type from macro\n- Extract verifier_setup into variables per review feedback\n\nrefactor: make JoltVerifierPreprocessing generic over C: JoltCurve\n\nMove zk_generators from CommitmentScheme to ZkEvalCommitment<C>,\nreturning Vec<C::G1> directly instead of Vec<Bn254G1>. This removes\nall C::G1: From<Bn254G1> bounds from generic code — Bn254Curve now\nonly appears at concrete instantiation points.\n\nrefactor: add C: JoltCurve to JoltProverPreprocessing, unify verifier constructor\n\n- JoltProverPreprocessing<F, C, PCS> carries C via PhantomData so From\n  impl can infer the curve type (no more turbofish)\n- Unified JoltVerifierPreprocessing::new() takes Option<BlindfoldSetup<C>>\n  instead of separate new/new_zk constructors\n- Moved BlindfoldSetup definition to verifier.rs (available without zk)\n- Simplified macro: single preprocess_verifier_* fn, no cfg-gated variants\n- Updated all examples to pass None for blindfold_setup\n\ndocs: update preprocess_verifier_* to unified 3-arg signature\n\nfix: enable zk on jolt dep directly instead of guest feature\n\nfix: revert fibonacci example to plain u32 (no zk)\n\nfeat: add --zk flag to jolt new command\n\ndocs: update SKILL.md and guests.md for zk feature requirements\n\n* fix: reduce BlindFold Pedersen generators from 128 to 32\n\nOutput claims can exceed 32 elements but only serve as Fiat-Shamir\ntranscript bindings, not BlindFold R1CS/Hyrax grid inputs. Chunk them\ninto groups of ≤32 via commit_chunked, producing one commitment per\nchunk. This lets MAX_BLINDFOLD_GENERATORS drop to 32 (matching Hyrax C).\n\nAlso removes dead fields from ZkStageData and UniSkipStageData that were\nset but never read by the BlindFold protocol.\n\n* fix: bind output claims to Hyrax grid for BlindFold soundness\n\nOutput claim commitments appended to the Fiat-Shamir transcript were\nnot verified against the BlindFold R1CS witness values. A malicious\nprover could commit arbitrary output claim values to influence\nchallenges without those values being bound to the actual witness.\n\nAdd a dedicated output claims (OC) region in the Hyrax grid between\ncoefficient rows and regular noncoeff rows. The R1CS builder\npre-allocates opening variables there, and the Hyrax opening proof\nverifies witness values match the OC row commitments included in the\nBlindFold proof.\n\n* fix: enforce OC row commitment integrity in BlindFold verifier\n\nVerifier now extracts output claims row commitments directly from\nstage proofs (ZkSumcheckProof/ZkUniSkipFirstRoundProof) instead of\ntrusting a copy in BlindFoldProof. Per-stage Pedersen commitments\nbound to the Fiat-Shamir transcript are used as-is for Hyrax OC rows\nvia per-block layout with row padding.\n\n* fix: address PR review comments\n\n- Unify output_claims + output_claim_ids into Vec<(OpeningId, F)>\n- Simplify doc comments (remove AI meta-commentary)\n- Gate test-only constructors with #[cfg(test)]\n- Clarify output_claims_commitments dual role in doc comments\n\n* fix: simplify output_claims_commitments doc comments\n\n* fix: use unzip instead of two separate map/collect calls",
+          "timestamp": "2026-03-06T16:00:53-05:00",
+          "tree_id": "ba30423aca01fc85164b2d6dc0939067710eff47",
+          "url": "https://github.com/a16z/jolt/commit/3fe1ca4e8c1990bd3c8b8fc692f4dfca715d9f16"
+        },
+        "date": 1772834200085,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9852,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 827316,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3812,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 449220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 444756,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 444968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7445,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 444836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6152,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 448796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.1294,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 445060,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.3822,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 825444,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5958,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 447320,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4837,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 449308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7736,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 447180,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.2632,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1013420,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.311,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 609124,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 83.0273,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2105180,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5132,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 447204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5457,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 444932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.4086,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 825416,
             "unit": "KB",
             "extra": ""
           }
