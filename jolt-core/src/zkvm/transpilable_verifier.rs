@@ -46,7 +46,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 #[cfg(not(feature = "zk"))]
 use crate::poly::opening_proof::BIG_ENDIAN;
-use crate::subprotocols::sumcheck::BatchedSumcheck;
+use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheckProof, SumcheckInstanceProof};
 use crate::zkvm::claim_reductions::{
     AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier, ReductionPhase,
     RegistersClaimReductionSumcheckVerifier,
@@ -222,6 +222,19 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
             SumcheckId::RamValCheck,
             r_cycle_prime.r,
         );
+    }
+}
+
+/// Extract the Clear (non-ZK) proof from a SumcheckInstanceProof enum.
+/// TranspilableVerifier only handles non-ZK proofs; ZK mode uses the main verifier.
+fn extract_clear_proof<F: JoltField, C: JoltCurve, T: Transcript>(
+    proof: &SumcheckInstanceProof<F, C, T>,
+) -> &ClearSumcheckProof<F, T> {
+    match proof {
+        SumcheckInstanceProof::Clear(p) => p,
+        SumcheckInstanceProof::Zk(_) => {
+            panic!("TranspilableVerifier only supports non-ZK (Clear) proofs")
+        }
     }
 }
 
@@ -467,13 +480,12 @@ impl<
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> =
             vec![&spartan_outer_remaining];
 
-        let (_batching_coefficients, _r_stage1) =
-            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-                &self.proof.stage1_sumcheck_proof,
-                instances,
-                &mut self.opening_accumulator,
-                &mut self.transcript,
-            )?;
+        let _r_stage1 = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
+            extract_clear_proof(&self.proof.stage1_sumcheck_proof),
+            instances,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )?;
 
         Ok(())
     }
@@ -530,13 +542,12 @@ impl<
             &ram_output_check,
         ];
 
-        let (_batching_coefficients, _r_stage2) =
-            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-                &self.proof.stage2_sumcheck_proof,
-                instances,
-                &mut self.opening_accumulator,
-                &mut self.transcript,
-            )?;
+        let _r_stage2 = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
+            extract_clear_proof(&self.proof.stage2_sumcheck_proof),
+            instances,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )?;
 
         Ok(())
     }
@@ -561,13 +572,12 @@ impl<
             &spartan_registers_claim_reduction,
         ];
 
-        let (_batching_coefficients, _r_stage3) =
-            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-                &self.proof.stage3_sumcheck_proof,
-                instances,
-                &mut self.opening_accumulator,
-                &mut self.transcript,
-            )?;
+        let _r_stage3 = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
+            extract_clear_proof(&self.proof.stage3_sumcheck_proof),
+            instances,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )?;
 
         Ok(())
     }
@@ -608,13 +618,12 @@ impl<
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> =
             vec![&registers_read_write_checking, &ram_val_check];
 
-        let (_batching_coefficients, _r_stage4) =
-            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-                &self.proof.stage4_sumcheck_proof,
-                instances,
-                &mut self.opening_accumulator,
-                &mut self.transcript,
-            )?;
+        let _r_stage4 = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
+            extract_clear_proof(&self.proof.stage4_sumcheck_proof),
+            instances,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )?;
 
         Ok(())
     }
@@ -643,13 +652,12 @@ impl<
             &registers_val_evaluation,
         ];
 
-        let (_batching_coefficients, _r_stage5) =
-            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-                &self.proof.stage5_sumcheck_proof,
-                instances,
-                &mut self.opening_accumulator,
-                &mut self.transcript,
-            )?;
+        let _r_stage5 = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
+            extract_clear_proof(&self.proof.stage5_sumcheck_proof),
+            instances,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )?;
 
         Ok(())
     }
@@ -724,13 +732,12 @@ impl<
             instances.push(advice);
         }
 
-        let (_batching_coefficients, _r_stage6) =
-            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-                &self.proof.stage6_sumcheck_proof,
-                instances,
-                &mut self.opening_accumulator,
-                &mut self.transcript,
-            )?;
+        let _r_stage6 = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
+            extract_clear_proof(&self.proof.stage6_sumcheck_proof),
+            instances,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )?;
 
         Ok(())
     }
@@ -770,13 +777,12 @@ impl<
             }
         }
 
-        let (_batching_coefficients, _r_stage7) =
-            BatchedSumcheck::verify::<F, C, ProofTranscript, A>(
-                &self.proof.stage7_sumcheck_proof,
-                instances,
-                &mut self.opening_accumulator,
-                &mut self.transcript,
-            )?;
+        let _r_stage7 = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
+            extract_clear_proof(&self.proof.stage7_sumcheck_proof),
+            instances,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )?;
 
         Ok(())
     }
