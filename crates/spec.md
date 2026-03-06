@@ -785,7 +785,46 @@ pub enum SumcheckError {
     #[error("degree bound exceeded: round poly degree {got}, max {max}")]
     DegreeBoundExceeded { got: usize, max: usize },
 }
+
+// ── Claim reduction via sumcheck ────────────────────────────
+
+/// A claim reduction that transforms opening claims via sumcheck.
+///
+/// Follows the same `claims → (fewer claims, proof)` pattern as
+/// `OpeningReduction` from `jolt-openings`, but the mechanism is a
+/// sumcheck and the proof artifact is a `SumcheckProof`.
+///
+/// Implementations provide protocol-specific witness construction.
+/// Output claims carry the partially-bound polynomial as their
+/// `evaluations` field, enabling composed reductions.
+pub trait SumcheckReduction<F: Field> {
+    fn build_witnesses(
+        &self,
+        claims: &[ProverClaim<F>],
+    ) -> (Vec<SumcheckClaim<F>>, Vec<Box<dyn SumcheckCompute<F>>>);
+
+    fn build_verifier_claims<C>(
+        &self,
+        claims: &[VerifierClaim<F, C>],
+    ) -> Vec<SumcheckClaim<F>>;
+
+    fn extract_prover_claims(
+        &self,
+        input_claims: &[ProverClaim<F>],
+        challenges: &[F],
+        final_eval: F,
+    ) -> Vec<ProverClaim<F>>;
+
+    fn extract_verifier_claims<C>(
+        &self,
+        input_claims: &[VerifierClaim<F, C>],
+        challenges: &[F],
+        final_eval: F,
+    ) -> Vec<VerifierClaim<F, C>>;
+}
 ```
+
+`SumcheckReduction` is the formal abstraction for multi-phase claim reductions (e.g., advice polynomial reduction). Each phase is a concrete `SumcheckReduction` impl; composed reductions pass intermediate `ProverClaim`s between phases. See [zkvm_spec.md](./zkvm_spec.md) §3.6 for the advice reduction design.
 
 #### Testing
 

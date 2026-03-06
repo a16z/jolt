@@ -1,0 +1,29 @@
+[package]
+name = "jolt-cpu-kernels"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "CPU kernel compiler: compiles jolt-ir descriptors into jolt-compute CpuKernels"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field", default-features = false }
+jolt-ir = { path = "../jolt-ir" }
+jolt-compute = { path = "../jolt-compute" }
+
+[dev-dependencies]
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-poly = { path = "../jolt-poly" }
+jolt-sumcheck = { path = "../jolt-sumcheck" }
+jolt-transcript = { path = "../jolt-transcript" }
+rand = { workspace = true }
+rand_core = { workspace = true }
+rand_chacha = { workspace = true }
+num-traits = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "compiled_kernels"
+harness = false

@@ -1,6 +1,6 @@
 //! CPU compute backend using Rayon for parallelism.
 
-use jolt_field::Field;
+use jolt_field::{Field, FieldAccumulator};
 
 use crate::traits::{ComputeBackend, Scalar};
 

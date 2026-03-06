@@ -21,7 +21,7 @@ mod pairing;
 pub use pairing::PairingGroup;
 
 mod commitment;
-pub use commitment::{Commitment, JoltCommitment};
+pub use commitment::{Commitment, HomomorphicCommitment, JoltCommitment};
 
 mod pedersen;
 pub use pedersen::{Pedersen, PedersenSetup};
