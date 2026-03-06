@@ -1,6 +1,9 @@
 use crate::{
     field::{BarrettReduce, FMAdd, JoltField},
-    poly::{ra_poly::RaPolynomial, split_eq_poly::GruenSplitEqPolynomial, unipoly::UniPoly},
+    poly::{
+        ra_poly::RaPolynomial, shared_ra_polys::SharedRaPolynomials,
+        split_eq_poly::GruenSplitEqPolynomial, unipoly::UniPoly,
+    },
     utils::accumulation::SmallAccumS,
 };
 use core::{mem::MaybeUninit, ptr};
@@ -223,6 +226,67 @@ impl_mles_sum_of_products_evals_d!(
 );
 impl_mles_sum_of_products_evals_d!(
     compute_mles_product_sum_evals_sum_of_products_d16,
+    16,
+    eval_prod_16_assign
+);
+
+/// Like `impl_mles_sum_of_products_evals_d` but reads from SharedRaPolynomials
+/// instead of &[RaPolynomial]. Eliminates the transposed per-poly index storage.
+macro_rules! impl_shared_ra_sum_of_products_evals_d {
+    ($fn_name:ident, $d:expr, $eval_prod:ident) => {
+        #[inline]
+        pub fn $fn_name<F: JoltField>(
+            shared_ra: &SharedRaPolynomials<F>,
+            n_products: usize,
+            eq_poly: &GruenSplitEqPolynomial<F>,
+        ) -> Vec<F> {
+            debug_assert!(n_products > 0);
+
+            let current_scalar = eq_poly.get_current_scalar();
+
+            let sum_evals_arr: [F; $d] = eq_poly.par_fold_out_in_unreduced::<$d>(&|g| {
+                let mut sums = [F::zero(); $d];
+
+                for t in 0..n_products {
+                    let base = t * $d;
+
+                    let pairs: [(F, F); $d] = core::array::from_fn(|i| {
+                        let p0 = shared_ra.get_bound_coeff(base + i, 2 * g);
+                        let p1 = shared_ra.get_bound_coeff(base + i, 2 * g + 1);
+                        (p0, p1)
+                    });
+
+                    let mut endpoints = [F::zero(); $d];
+                    $eval_prod::<F>(&pairs, &mut endpoints);
+
+                    for k in 0..$d {
+                        sums[k] += endpoints[k];
+                    }
+                }
+
+                sums
+            });
+
+            sum_evals_arr
+                .into_iter()
+                .map(|x| x * current_scalar)
+                .collect()
+        }
+    };
+}
+
+impl_shared_ra_sum_of_products_evals_d!(
+    compute_shared_ra_sum_of_products_evals_d4,
+    4,
+    eval_prod_4_assign
+);
+impl_shared_ra_sum_of_products_evals_d!(
+    compute_shared_ra_sum_of_products_evals_d8,
+    8,
+    eval_prod_8_assign
+);
+impl_shared_ra_sum_of_products_evals_d!(
+    compute_shared_ra_sum_of_products_evals_d16,
     16,
     eval_prod_16_assign
 );
