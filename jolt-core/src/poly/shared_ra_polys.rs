@@ -460,6 +460,8 @@ pub enum SharedRaPolynomials<F: JoltField> {
     Round2(SharedRaRound2<F>),
     /// Round 3: Split into F_00, F_01, F_10, F_11
     Round3(SharedRaRound3<F>),
+    /// Round 4: Split into 8 table groups (F_000 through F_111)
+    Round4(SharedRaRound4<F>),
     /// Round N: Fully materialized multilinear polynomials
     RoundN(Vec<MultilinearPolynomial<F>>),
 }
@@ -510,6 +512,19 @@ pub struct SharedRaRound3<F: JoltField> {
     binding_order: BindingOrder,
 }
 
+/// Round 4 state: 8 table groups per polynomial.
+/// Delays materialization one more round to reduce peak memory.
+#[derive(Allocative, Default)]
+pub struct SharedRaRound4<F: JoltField> {
+    /// tables[group][poly_idx][k] — 8 groups of per-poly eq tables
+    tables: [Vec<Vec<F>>; 8],
+    indices: Vec<RaIndices>,
+    num_polys: usize,
+    #[allocative(skip)]
+    one_hot_params: OneHotParams,
+    binding_order: BindingOrder,
+}
+
 impl<F: JoltField> SharedRaPolynomials<F> {
     /// Create new SharedRaPolynomials from eq table and indices.
     pub fn new(tables: Vec<Vec<F>>, indices: Vec<RaIndices>, one_hot_params: OneHotParams) -> Self {
@@ -535,6 +550,7 @@ impl<F: JoltField> SharedRaPolynomials<F> {
             Self::Round1(r) => r.num_polys,
             Self::Round2(r) => r.num_polys,
             Self::Round3(r) => r.num_polys,
+            Self::Round4(r) => r.num_polys,
             Self::RoundN(polys) => polys.len(),
         }
     }
@@ -545,6 +561,7 @@ impl<F: JoltField> SharedRaPolynomials<F> {
             Self::Round1(r) => r.indices.len(),
             Self::Round2(r) => r.indices.len() / 2,
             Self::Round3(r) => r.indices.len() / 4,
+            Self::Round4(r) => r.indices.len() / 8,
             Self::RoundN(polys) => polys[0].len(),
         }
     }
@@ -556,6 +573,7 @@ impl<F: JoltField> SharedRaPolynomials<F> {
             Self::Round1(r) => r.get_bound_coeff(poly_idx, j),
             Self::Round2(r) => r.get_bound_coeff(poly_idx, j),
             Self::Round3(r) => r.get_bound_coeff(poly_idx, j),
+            Self::Round4(r) => r.get_bound_coeff(poly_idx, j),
             Self::RoundN(polys) => polys[poly_idx].get_bound_coeff(j),
         }
     }
@@ -574,7 +592,8 @@ impl<F: JoltField> SharedRaPolynomials<F> {
         match self {
             Self::Round1(r1) => Self::Round2(r1.bind(r, order)),
             Self::Round2(r2) => Self::Round3(r2.bind(r, order)),
-            Self::Round3(r3) => Self::RoundN(r3.bind(r, order)),
+            Self::Round3(r3) => Self::Round4(r3.bind(r, order)),
+            Self::Round4(r4) => Self::RoundN(r4.bind(r, order)),
             Self::RoundN(mut polys) => {
                 polys.par_iter_mut().for_each(|p| p.bind_parallel(r, order));
                 Self::RoundN(polys)
@@ -584,11 +603,11 @@ impl<F: JoltField> SharedRaPolynomials<F> {
 
     /// Bind in place with a challenge, transitioning to next round state.
     pub fn bind_in_place(&mut self, r: F::Challenge, order: BindingOrder) {
-        // Use mem::take pattern (same as ra_poly.rs) for efficiency
         match self {
             Self::Round1(r1) => *self = Self::Round2(std::mem::take(r1).bind(r, order)),
             Self::Round2(r2) => *self = Self::Round3(std::mem::take(r2).bind(r, order)),
-            Self::Round3(r3) => *self = Self::RoundN(std::mem::take(r3).bind(r, order)),
+            Self::Round3(r3) => *self = Self::Round4(std::mem::take(r3).bind(r, order)),
+            Self::Round4(r4) => *self = Self::RoundN(std::mem::take(r4).bind(r, order)),
             Self::RoundN(polys) => {
                 polys.par_iter_mut().for_each(|p| p.bind_parallel(r, order));
             }
@@ -755,10 +774,9 @@ impl<F: JoltField> SharedRaRound3<F> {
     }
 
     #[tracing::instrument(skip_all, name = "SharedRaRound3::bind")]
-    fn bind(self, r2: F::Challenge, order: BindingOrder) -> Vec<MultilinearPolynomial<F>> {
+    fn bind(self, r2: F::Challenge, order: BindingOrder) -> SharedRaRound4<F> {
         assert_eq!(order, self.binding_order);
 
-        // Create 8 F tables: F_ABC where A=r0, B=r1, C=r2
         let eq_0_r2 = EqPolynomial::mle(&[F::zero()], &[r2]);
         let eq_1_r2 = EqPolynomial::mle(&[F::one()], &[r2]);
 
@@ -771,7 +789,6 @@ impl<F: JoltField> SharedRaRound3<F> {
         let mut tables_110 = self.tables_11.clone();
         let mut tables_111 = self.tables_11;
 
-        // Scale by eq(r2, bit)
         rayon::join(
             || {
                 [
@@ -803,56 +820,121 @@ impl<F: JoltField> SharedRaRound3<F> {
             },
         );
 
-        // Collect all 8 table groups for indexed access: group[offset][poly_idx][k]
-        let table_groups = [
-            &tables_000,
-            &tables_100,
-            &tables_010,
-            &tables_110,
-            &tables_001,
-            &tables_101,
-            &tables_011,
-            &tables_111,
+        SharedRaRound4 {
+            tables: [
+                tables_000, tables_100, tables_010, tables_110, tables_001, tables_101, tables_011,
+                tables_111,
+            ],
+            indices: self.indices,
+            num_polys: self.num_polys,
+            one_hot_params: self.one_hot_params,
+            binding_order: order,
+        }
+    }
+}
+
+impl<F: JoltField> SharedRaRound4<F> {
+    #[inline]
+    fn get_bound_coeff(&self, poly_idx: usize, j: usize) -> F {
+        match self.binding_order {
+            BindingOrder::LowToHigh => (0..8)
+                .map(|offset| {
+                    self.indices[8 * j + offset]
+                        .get_index(poly_idx, &self.one_hot_params)
+                        .map_or(F::zero(), |k| self.tables[offset][poly_idx][k as usize])
+                })
+                .sum(),
+            BindingOrder::HighToLow => {
+                let eighth = self.indices.len() / 8;
+                (0..8)
+                    .map(|seg| {
+                        self.indices[seg * eighth + j]
+                            .get_index(poly_idx, &self.one_hot_params)
+                            .map_or(F::zero(), |k| self.tables[seg][poly_idx][k as usize])
+                    })
+                    .sum()
+            }
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "SharedRaRound4::bind")]
+    fn bind(self, r3: F::Challenge, order: BindingOrder) -> Vec<MultilinearPolynomial<F>> {
+        assert_eq!(order, self.binding_order);
+
+        let eq_0_r3 = EqPolynomial::mle(&[F::zero()], &[r3]);
+        let eq_1_r3 = EqPolynomial::mle(&[F::one()], &[r3]);
+
+        // 16 groups: [0..8) for bit3=0 (scale eq_0_r3), [8..16) for bit3=1 (scale eq_1_r3)
+        let [t0, t1, t2, t3, t4, t5, t6, t7] = self.tables;
+        let mut tables: [Vec<Vec<F>>; 16] = [
+            t0.clone(),
+            t1.clone(),
+            t2.clone(),
+            t3.clone(),
+            t4.clone(),
+            t5.clone(),
+            t6.clone(),
+            t7.clone(),
+            t0,
+            t1,
+            t2,
+            t3,
+            t4,
+            t5,
+            t6,
+            t7,
         ];
 
-        // Materialize all polynomials in parallel
+        let (lo, hi) = tables.split_at_mut(8);
+        rayon::join(
+            || {
+                lo.par_iter_mut().for_each(|table| {
+                    table
+                        .par_iter_mut()
+                        .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_0_r3))
+                })
+            },
+            || {
+                hi.par_iter_mut().for_each(|table| {
+                    table
+                        .par_iter_mut()
+                        .for_each(|t| t.par_iter_mut().for_each(|f| *f *= eq_1_r3))
+                })
+            },
+        );
+
         let num_polys = self.num_polys;
         let indices = &self.indices;
         let one_hot_params = &self.one_hot_params;
-        let new_len = indices.len() / 8;
+        let new_len = indices.len() / 16;
 
         (0..num_polys)
             .into_par_iter()
             .map(|poly_idx| {
                 let coeffs: Vec<F> = match order {
-                    BindingOrder::LowToHigh => {
-                        (0..new_len)
-                            .into_par_iter()
-                            .map(|j| {
-                                // Sum over 8 consecutive indices, each using appropriate F table
-                                (0..8)
-                                    .map(|offset| {
-                                        indices[8 * j + offset]
-                                            .get_index(poly_idx, one_hot_params)
-                                            .map_or(F::zero(), |k| {
-                                                table_groups[offset][poly_idx][k as usize]
-                                            })
-                                    })
-                                    .sum()
-                            })
-                            .collect()
-                    }
+                    BindingOrder::LowToHigh => (0..new_len)
+                        .into_par_iter()
+                        .map(|j| {
+                            (0..16)
+                                .map(|offset| {
+                                    indices[16 * j + offset]
+                                        .get_index(poly_idx, one_hot_params)
+                                        .map_or(F::zero(), |k| tables[offset][poly_idx][k as usize])
+                                })
+                                .sum()
+                        })
+                        .collect(),
                     BindingOrder::HighToLow => {
-                        let eighth = indices.len() / 8;
+                        let sixteenth = indices.len() / 16;
                         (0..new_len)
                             .into_par_iter()
                             .map(|j| {
-                                (0..8)
+                                (0..16)
                                     .map(|seg| {
-                                        indices[seg * eighth + j]
+                                        indices[seg * sixteenth + j]
                                             .get_index(poly_idx, one_hot_params)
                                             .map_or(F::zero(), |k| {
-                                                table_groups[seg][poly_idx][k as usize]
+                                                tables[seg][poly_idx][k as usize]
                                             })
                                     })
                                     .sum()
