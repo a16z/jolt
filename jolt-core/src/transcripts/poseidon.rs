@@ -244,10 +244,6 @@ impl Transcript for PoseidonTranscript {
     }
 
     fn challenge_scalar<JF: JoltField>(&mut self) -> JF {
-        // Debug print enabled by `debug-expected-output` feature for comparing
-        // Rust verifier challenges against transpiled circuit implementations.
-        #[cfg(feature = "debug-expected-output")]
-        eprintln!(">>> challenge_scalar called <<<");
         self.challenge_scalar_128_bits()
     }
 
@@ -261,10 +257,6 @@ impl Transcript for PoseidonTranscript {
     }
 
     fn challenge_vector<JF: JoltField>(&mut self, len: usize) -> Vec<JF> {
-        // Debug print enabled by `debug-expected-output` feature for comparing
-        // Rust verifier challenges against transpiled circuit implementations.
-        #[cfg(feature = "debug-expected-output")]
-        eprintln!(">>> challenge_vector called with len={} <<<", len);
         (0..len)
             .map(|_i| self.challenge_scalar())
             .collect::<Vec<JF>>()
@@ -304,29 +296,6 @@ impl Transcript for PoseidonTranscript {
         q_powers
     }
 
-    fn debug_state(&self, label: &str) {
-        #[cfg(feature = "debug-expected-output")]
-        {
-            let state_f = Fr::from_le_bytes_mod_order(&self.state);
-            eprintln!("TRANSCRIPT DEBUG [{}]: n_rounds={}", label, self.n_rounds);
-            eprintln!("  state (LE): {:02x?}", &self.state);
-
-            // Compute what the next challenge would be (hash output)
-            let mut poseidon = Self::hasher();
-            let round_f = Fr::from(self.n_rounds as u64);
-            let zero = Fr::zero();
-            let hash_output = poseidon
-                .hash(&[state_f, round_f, zero])
-                .expect("Poseidon hash failed");
-            let mut hash_bytes = [0u8; 32];
-            hash_output
-                .serialize_uncompressed(&mut hash_bytes[..])
-                .unwrap();
-            eprintln!("  next_challenge (LE): {:02x?}", &hash_bytes);
-        }
-        #[cfg(not(feature = "debug-expected-output"))]
-        let _ = label;
-    }
 }
 
 #[cfg(test)]

@@ -721,30 +721,6 @@ impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVeri
             sumcheck_challenges.iter().rev().copied().collect();
         let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
 
-        // Debug output for concrete Fr types (not MleAst)
-        #[cfg(feature = "debug-expected-output")]
-        {
-            use ark_serialize::CanonicalSerialize;
-            fn to_decimal<T: CanonicalSerialize>(val: &T) -> String {
-                let mut bytes = Vec::new();
-                val.serialize_compressed(&mut bytes).unwrap();
-                num_bigint::BigUint::from_bytes_le(&bytes).to_string()
-            }
-            eprintln!("=== expected_output_claim DEBUG ===");
-            eprintln!("inner_sum_prod = {}", to_decimal(&inner_sum_prod));
-            eprintln!("tau_high_bound_r0 = {}", to_decimal(&tau_high_bound_r0));
-            eprintln!(
-                "tau_bound_r_tail_reversed = {}",
-                to_decimal(&tau_bound_r_tail_reversed)
-            );
-            let result = tau_high_bound_r0 * tau_bound_r_tail_reversed * inner_sum_prod;
-            eprintln!(
-                "expected_output_claim (unbatched) = {}",
-                to_decimal(&result)
-            );
-            eprintln!("=== END DEBUG ===");
-        }
-
         tau_high_bound_r0 * tau_bound_r_tail_reversed * inner_sum_prod
     }
 

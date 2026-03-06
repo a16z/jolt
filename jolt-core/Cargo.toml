@@ -50,7 +50,6 @@ challenge-254-bit = []
 transcript-poseidon = ["dep:light-poseidon", "challenge-254-bit"]
 transcript-keccak = []
 transcript-blake2b = []
-debug-expected-output = ["dep:num-bigint"]
 
 [dependencies]
 ark-bn254.workspace = true
@@ -74,7 +73,6 @@ serde = { workspace = true, default-features = false }
 sha3.workspace = true
 blake2.workspace = true
 light-poseidon = { version = "0.4.0", optional = true }
-num-bigint = { version = "0.4", optional = true }
 chrono.workspace = true
 strum.workspace = true
 strum_macros.workspace = true

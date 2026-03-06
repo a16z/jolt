@@ -269,9 +269,6 @@ impl Transcript for PoseidonAstTranscript {
         q_powers
     }
 
-    fn debug_state(&self, _label: &str) {
-        // No-op for symbolic execution - debugging output not needed
-    }
 }
 
 impl Default for PoseidonAstTranscript {
