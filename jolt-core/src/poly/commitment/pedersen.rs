@@ -45,6 +45,21 @@ impl<C: JoltCurve> PedersenGenerators<C> {
         msg_commitment + blinding_commitment
     }
 
+    pub fn commit_chunked<F: JoltField, R: CryptoRngCore>(
+        &self,
+        values: &[F],
+        rng: &mut R,
+    ) -> Vec<(C::G1, F)> {
+        values
+            .chunks(self.message_generators.len())
+            .map(|chunk| {
+                let blinding = F::random(rng);
+                let commitment = self.commit(chunk, &blinding);
+                (commitment, blinding)
+            })
+            .collect()
+    }
+
     pub fn verify<F: JoltField>(&self, commitment: &C::G1, coeffs: &[F], blinding: &F) -> bool {
         let expected = self.commit(coeffs, blinding);
         *commitment == expected

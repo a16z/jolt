@@ -6,7 +6,9 @@
 use std::collections::HashSet;
 
 use super::r1cs::VerifierR1CS;
-use super::{OutputClaimConstraint, StageConfig};
+use super::OutputClaimConstraint;
+#[cfg(test)]
+use super::StageConfig;
 use super::{SumOfProductsVisitor, ValueSource};
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
@@ -161,25 +163,29 @@ pub struct BlindFoldWitness<F> {
     pub stages: Vec<StageWitness<F>>,
     /// Extra constraints appended after all stages (e.g., PCS binding)
     pub extra_constraints: Vec<ExtraConstraintWitness<F>>,
+    /// Output claims values placed in the dedicated OC region (layout-traversal order).
+    /// Empty when output_claims_rows == 0 (non-ZK or tests without OC binding).
+    pub output_claims_values: Vec<F>,
 }
 
 impl<F: JoltField> BlindFoldWitness<F> {
-    /// Create a new BlindFold witness with a single initial claim (legacy API).
+    #[cfg(test)]
     pub fn new(initial_claim: F, stages: Vec<StageWitness<F>>) -> Self {
         Self {
             initial_claims: vec![initial_claim],
             stages,
             extra_constraints: Vec::new(),
+            output_claims_values: Vec::new(),
         }
     }
 
-    /// Create a new BlindFold witness with multiple initial claims.
-    /// Each initial claim corresponds to an independent chain in the R1CS.
+    #[cfg(test)]
     pub fn with_multiple_claims(initial_claims: Vec<F>, stages: Vec<StageWitness<F>>) -> Self {
         Self {
             initial_claims,
             stages,
             extra_constraints: Vec::new(),
+            output_claims_values: Vec::new(),
         }
     }
 
@@ -193,6 +199,22 @@ impl<F: JoltField> BlindFoldWitness<F> {
             initial_claims,
             stages,
             extra_constraints,
+            output_claims_values: Vec::new(),
+        }
+    }
+
+    /// Create a new BlindFold witness with extra constraints and output claims.
+    pub fn with_output_claims(
+        initial_claims: Vec<F>,
+        stages: Vec<StageWitness<F>>,
+        extra_constraints: Vec<ExtraConstraintWitness<F>>,
+        output_claims_values: Vec<F>,
+    ) -> Self {
+        Self {
+            initial_claims,
+            stages,
+            extra_constraints,
+            output_claims_values,
         }
     }
 
@@ -216,11 +238,23 @@ impl<F: JoltField> BlindFoldWitness<F> {
 
         let hyrax_C = r1cs.hyrax.C;
         let hyrax_R_coeff = r1cs.hyrax.R_coeff;
+        let output_claims_rows = r1cs.hyrax.output_claims_rows;
         let witness_start = 1;
-        let mut noncoeff_idx = witness_start + hyrax_R_coeff * hyrax_C;
+        // Regular noncoeff starts after coeff rows AND output claims rows
+        let mut noncoeff_idx = witness_start + (hyrax_R_coeff + output_claims_rows) * hyrax_C;
+
+        // Assign output claims values into the dedicated OC region
+        let oc_region_start = witness_start + hyrax_R_coeff * hyrax_C;
+        for (i, val) in self.output_claims_values.iter().enumerate() {
+            z[oc_region_start + i] = *val;
+        }
 
         let layout = compute_witness_layout(&r1cs.stage_configs, &r1cs.extra_constraints);
-        let mut assigned_openings: HashSet<OpeningId> = HashSet::new();
+
+        // Pre-mark openings that live in the OC region so ConstraintVars steps
+        // don't allocate duplicate noncoeff slots.
+        let mut assigned_openings: HashSet<OpeningId> =
+            r1cs.output_claims_opening_ids.iter().copied().collect();
 
         for step in &layout {
             match step {
@@ -368,12 +402,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         z
     }
 
-    /// Create witness from compressed polynomial coefficients extracted from proof
-    ///
-    /// The compressed polynomial format from `CompressedUniPoly` stores `[c0, c2, c3, ...]`
-    /// (excluding c1, the linear term). c1 can be derived from the sum check:
-    ///   claimed_sum = g(0) + g(1) = c0 + (c0 + c1 + c2 + c3) = 2*c0 + c1 + c2 + c3
-    ///   c1 = claimed_sum - 2*c0 - c2 - c3 - ...
+    #[cfg(test)]
     pub fn from_compressed_polys(
         initial_claim: F,
         stage_configs: &[StageConfig],

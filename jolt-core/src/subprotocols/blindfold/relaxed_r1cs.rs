@@ -34,7 +34,10 @@ pub struct RelaxedR1CSInstance<F: JoltField, C: JoltCurve> {
     pub u: F,
     /// Per-round commitments from ZK sumcheck (= coefficient row commitments)
     pub round_commitments: Vec<C::G1>,
-    /// Non-coefficient W row commitments
+    /// Output claims row commitments — externally verified against sumcheck proof commitments.
+    /// These rows sit between the coeff rows and the regular noncoeff rows in the Hyrax grid.
+    pub output_claims_row_commitments: Vec<C::G1>,
+    /// Non-coefficient W row commitments (excludes output claims rows)
     pub noncoeff_row_commitments: Vec<C::G1>,
     /// E row commitments
     pub e_row_commitments: Vec<C::G1>,
@@ -59,12 +62,13 @@ pub struct RelaxedR1CSWitness<F: JoltField> {
 }
 
 impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
-    /// Create a non-relaxed instance (u=1, E=0) from standard R1CS witness.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_non_relaxed(
         witness: &[F],
         num_constraints: usize,
         hyrax_C: usize,
         round_commitments: Vec<C::G1>,
+        output_claims_row_commitments: Vec<C::G1>,
         noncoeff_row_commitments: Vec<C::G1>,
         eval_commitments: Vec<C::G1>,
         w_row_blindings: Vec<F>,
@@ -74,6 +78,7 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
         let instance = Self {
             u: F::one(),
             round_commitments,
+            output_claims_row_commitments,
             noncoeff_row_commitments,
             e_row_commitments: vec![C::G1::zero(); R_E],
             eval_commitments,
@@ -97,6 +102,7 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
         r: F,
     ) -> Result<Self, BlindFoldVerifyError> {
         if self.round_commitments.len() != other.round_commitments.len()
+            || self.output_claims_row_commitments.len() != other.output_claims_row_commitments.len()
             || self.noncoeff_row_commitments.len() != other.noncoeff_row_commitments.len()
             || self.eval_commitments.len() != other.eval_commitments.len()
             || self.e_row_commitments.len() != other.e_row_commitments.len()
@@ -108,18 +114,27 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
         let r_squared = r * r;
         let u = self.u + r * other.u;
 
+        let fold_row = |c1: &C::G1, c2: &C::G1| *c1 + c2.scalar_mul(&r);
+
         let round_commitments: Vec<C::G1> = self
             .round_commitments
             .iter()
             .zip(&other.round_commitments)
-            .map(|(c1, c2)| *c1 + c2.scalar_mul(&r))
+            .map(|(c1, c2)| fold_row(c1, c2))
+            .collect();
+
+        let output_claims_row_commitments: Vec<C::G1> = self
+            .output_claims_row_commitments
+            .iter()
+            .zip(&other.output_claims_row_commitments)
+            .map(|(c1, c2)| fold_row(c1, c2))
             .collect();
 
         let noncoeff_row_commitments: Vec<C::G1> = self
             .noncoeff_row_commitments
             .iter()
             .zip(&other.noncoeff_row_commitments)
-            .map(|(c1, c2)| *c1 + c2.scalar_mul(&r))
+            .map(|(c1, c2)| fold_row(c1, c2))
             .collect();
 
         let e_row_commitments: Vec<C::G1> = self
@@ -134,41 +149,42 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
             .eval_commitments
             .iter()
             .zip(&other.eval_commitments)
-            .map(|(c1, c2)| *c1 + c2.scalar_mul(&r))
+            .map(|(c1, c2)| fold_row(c1, c2))
             .collect();
 
         Ok(Self {
             u,
             round_commitments,
+            output_claims_row_commitments,
             noncoeff_row_commitments,
             e_row_commitments,
             eval_commitments,
         })
     }
 
-    /// All W row commitments in order: coefficient rows (padded to R_coeff), then non-coeff rows,
-    /// then padding to R'.
+    /// All W row commitments in order:
+    ///   coeff rows (padded to R_coeff) |
+    ///   output claims rows |
+    ///   regular noncoeff rows |
+    ///   padding to R'
     pub fn all_w_row_commitments(
         &self,
         R_coeff: usize,
         R_prime: usize,
     ) -> Result<Vec<C::G1>, BlindFoldVerifyError> {
-        let expected_noncoeff = R_prime - R_coeff;
-        if self.round_commitments.len() > R_coeff
-            || self.noncoeff_row_commitments.len() > expected_noncoeff
-        {
+        let total_non_padding = R_coeff
+            + self.output_claims_row_commitments.len()
+            + self.noncoeff_row_commitments.len();
+        if self.round_commitments.len() > R_coeff || total_non_padding > R_prime {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
 
         let mut rows = Vec::with_capacity(R_prime);
         rows.extend_from_slice(&self.round_commitments);
-        for _ in self.round_commitments.len()..R_coeff {
-            rows.push(C::G1::zero());
-        }
+        rows.resize(R_coeff, C::G1::zero());
+        rows.extend_from_slice(&self.output_claims_row_commitments);
         rows.extend_from_slice(&self.noncoeff_row_commitments);
-        for _ in rows.len()..R_prime {
-            rows.push(C::G1::zero());
-        }
+        rows.resize(R_prime, C::G1::zero());
         Ok(rows)
     }
 }
@@ -319,6 +335,7 @@ mod tests {
             r1cs.num_constraints,
             hyrax_C,
             vec![round_commitment],
+            Vec::new(),
             noncoeff_row_commitments,
             Vec::new(),
             w_row_blindings,
@@ -447,6 +464,7 @@ mod tests {
         let inst1 = RelaxedR1CSInstance::<F, Bn254Curve> {
             u: u1,
             round_commitments: rc1.clone(),
+            output_claims_row_commitments: Vec::new(),
             noncoeff_row_commitments: nc1.clone(),
             e_row_commitments: e1.clone(),
             eval_commitments: Vec::new(),
@@ -455,6 +473,7 @@ mod tests {
         let inst2 = RelaxedR1CSInstance::<F, Bn254Curve> {
             u: u2,
             round_commitments: rc2.clone(),
+            output_claims_row_commitments: Vec::new(),
             noncoeff_row_commitments: nc2.clone(),
             e_row_commitments: e2.clone(),
             eval_commitments: Vec::new(),
