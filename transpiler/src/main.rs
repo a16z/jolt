@@ -207,7 +207,7 @@ fn main() {
     // assert_eq! calls as circuit constraints.
     enable_constraint_mode();
 
-    // Execute verification stages 1-6. This performs symbolic execution:
+    // Execute verification stages 1-7. This performs symbolic execution:
     // - All field arithmetic (add, mul, sub, inv) builds up the AST
     // - Poseidon hashes for Fiat-Shamir challenges are computed symbolically
     // - Equality assertions are recorded as constraints
