@@ -27,13 +27,16 @@ thiserror = { workspace = true }
 [dev-dependencies]
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+rand_core = { workspace = true }
 criterion = { workspace = true }
 num-traits = { workspace = true }
 jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
+jolt-crypto = { path = "../jolt-crypto" }
+jolt-hyperkzg = { path = "../jolt-hyperkzg" }
 
 [[bench]]
 name = "spartan"
 harness = false
 
 [package.metadata.cargo-machete]
-ignored = ["rand", "rand_chacha"]
+ignored = ["rand", "rand_chacha", "jolt-crypto", "jolt-hyperkzg"]

@@ -1,43 +1,60 @@
 //! RV64I/M arithmetic instructions: ADD, SUB, LUI, AUIPC, and
 //! the M-extension multiply/divide family.
 
-use crate::macros::define_instruction;
 use crate::opcodes;
 
 define_instruction!(
     /// RV64I ADD: `rd = rs1 + rs2` (wrapping).
     Add, opcodes::ADD, "ADD",
-    |x, y| x.wrapping_add(y)
+    |x, y| x.wrapping_add(y),
+    circuit: [AddOperands, WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
+    table: RangeCheck,
 );
 
 define_instruction!(
     /// RV64I ADDI: `rd = rs1 + imm` (wrapping). Immediate already decoded.
     Addi, opcodes::ADDI, "ADDI",
-    |x, y| x.wrapping_add(y)
+    |x, y| x.wrapping_add(y),
+    circuit: [AddOperands, WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
+    table: RangeCheck,
 );
 
 define_instruction!(
     /// RV64I SUB: `rd = rs1 - rs2` (wrapping).
     Sub, opcodes::SUB, "SUB",
-    |x, y| x.wrapping_sub(y)
+    |x, y| x.wrapping_sub(y),
+    circuit: [SubtractOperands, WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
+    table: RangeCheck,
 );
 
 define_instruction!(
     /// RV64I LUI: load upper immediate. Result is the immediate value itself.
     Lui, opcodes::LUI, "LUI",
-    |x, _y| x
+    |x, _y| x,
+    circuit: [AddOperands, WriteLookupOutputToRD],
+    instruction: [RightOperandIsImm],
+    table: RangeCheck,
 );
 
 define_instruction!(
     /// RV64I AUIPC: add upper immediate to PC. `rd = PC + imm`.
     Auipc, opcodes::AUIPC, "AUIPC",
-    |x, y| x.wrapping_add(y)
+    |x, y| x.wrapping_add(y),
+    circuit: [AddOperands, WriteLookupOutputToRD],
+    instruction: [LeftOperandIsPC, RightOperandIsImm],
+    table: RangeCheck,
 );
 
 define_instruction!(
     /// RV64M MUL: signed multiply, lower 64 bits of the 128-bit product.
     Mul, opcodes::MUL, "MUL",
-    |x, y| x.wrapping_mul(y)
+    |x, y| x.wrapping_mul(y),
+    circuit: [MultiplyOperands, WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
+    table: RangeCheck,
 );
 
 /// RV64M MULH: signed×signed multiply, upper 64 bits.
@@ -61,8 +78,22 @@ impl crate::Instruction for MulH {
         (product >> 64) as u64
     }
     #[inline]
-    fn lookups(&self, _x: u64, _y: u64) -> Vec<crate::LookupQuery> {
-        Vec::new()
+    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
+        None
+    }
+}
+
+impl crate::Flags for MulH {
+    #[inline]
+    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
+        [false; crate::NUM_CIRCUIT_FLAGS]
+    }
+    #[inline]
+    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
+        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
+        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
+        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
+        flags
     }
 }
 
@@ -87,8 +118,22 @@ impl crate::Instruction for MulHSU {
         (product >> 64) as u64
     }
     #[inline]
-    fn lookups(&self, _x: u64, _y: u64) -> Vec<crate::LookupQuery> {
-        Vec::new()
+    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
+        None
+    }
+}
+
+impl crate::Flags for MulHSU {
+    #[inline]
+    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
+        [false; crate::NUM_CIRCUIT_FLAGS]
+    }
+    #[inline]
+    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
+        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
+        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
+        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
+        flags
     }
 }
 
@@ -113,8 +158,25 @@ impl crate::Instruction for MulHU {
         (product >> 64) as u64
     }
     #[inline]
-    fn lookups(&self, _x: u64, _y: u64) -> Vec<crate::LookupQuery> {
-        Vec::new()
+    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
+        Some(crate::LookupTableKind::UpperWord)
+    }
+}
+
+impl crate::Flags for MulHU {
+    #[inline]
+    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
+        let mut flags = [false; crate::NUM_CIRCUIT_FLAGS];
+        flags[crate::CircuitFlags::MultiplyOperands] = true;
+        flags[crate::CircuitFlags::WriteLookupOutputToRD] = true;
+        flags
+    }
+    #[inline]
+    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
+        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
+        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
+        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
+        flags
     }
 }
 
@@ -150,8 +212,22 @@ impl crate::Instruction for Div {
         }
     }
     #[inline]
-    fn lookups(&self, _x: u64, _y: u64) -> Vec<crate::LookupQuery> {
-        Vec::new()
+    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
+        None
+    }
+}
+
+impl crate::Flags for Div {
+    #[inline]
+    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
+        [false; crate::NUM_CIRCUIT_FLAGS]
+    }
+    #[inline]
+    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
+        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
+        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
+        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
+        flags
     }
 }
 
@@ -179,8 +255,22 @@ impl crate::Instruction for DivU {
         }
     }
     #[inline]
-    fn lookups(&self, _x: u64, _y: u64) -> Vec<crate::LookupQuery> {
-        Vec::new()
+    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
+        None
+    }
+}
+
+impl crate::Flags for DivU {
+    #[inline]
+    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
+        [false; crate::NUM_CIRCUIT_FLAGS]
+    }
+    #[inline]
+    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
+        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
+        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
+        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
+        flags
     }
 }
 
@@ -213,8 +303,22 @@ impl crate::Instruction for Rem {
         }
     }
     #[inline]
-    fn lookups(&self, _x: u64, _y: u64) -> Vec<crate::LookupQuery> {
-        Vec::new()
+    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
+        None
+    }
+}
+
+impl crate::Flags for Rem {
+    #[inline]
+    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
+        [false; crate::NUM_CIRCUIT_FLAGS]
+    }
+    #[inline]
+    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
+        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
+        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
+        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
+        flags
     }
 }
 
@@ -242,8 +346,22 @@ impl crate::Instruction for RemU {
         }
     }
     #[inline]
-    fn lookups(&self, _x: u64, _y: u64) -> Vec<crate::LookupQuery> {
-        Vec::new()
+    fn lookup_table(&self) -> Option<crate::LookupTableKind> {
+        None
+    }
+}
+
+impl crate::Flags for RemU {
+    #[inline]
+    fn circuit_flags(&self) -> [bool; crate::NUM_CIRCUIT_FLAGS] {
+        [false; crate::NUM_CIRCUIT_FLAGS]
+    }
+    #[inline]
+    fn instruction_flags(&self) -> [bool; crate::NUM_INSTRUCTION_FLAGS] {
+        let mut flags = [false; crate::NUM_INSTRUCTION_FLAGS];
+        flags[crate::InstructionFlags::LeftOperandIsRs1Value] = true;
+        flags[crate::InstructionFlags::RightOperandIsRs2Value] = true;
+        flags
     }
 }
 

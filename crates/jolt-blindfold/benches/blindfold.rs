@@ -23,10 +23,6 @@ use rand_core::SeedableRng;
 type TestVC = Pedersen<Bn254G1>;
 type MockPCS = MockCommitmentScheme<Fr>;
 
-// ---------------------------------------------------------------------------
-// Sumcheck witness + recording handler
-// ---------------------------------------------------------------------------
-
 struct IpWitness {
     a: Polynomial<Fr>,
     b: Polynomial<Fr>,
@@ -103,10 +99,6 @@ impl RoundHandler<Fr> for RecordingHandler {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn run_ip_stage(
     a_vals: Vec<Fr>,
     b_vals: Vec<Fr>,
@@ -174,10 +166,6 @@ fn pad_to(data: &[Fr], target_len: usize) -> Vec<Fr> {
     v[..copy_len].copy_from_slice(&data[..copy_len]);
     v
 }
-
-// ---------------------------------------------------------------------------
-// Benchmarks
-// ---------------------------------------------------------------------------
 
 fn bench_build_verifier_r1cs(c: &mut Criterion) {
     let mut group = c.benchmark_group("build_verifier_r1cs");

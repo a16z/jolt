@@ -3,28 +3,42 @@
 //!
 //! This crate provides:
 //!
-//! - The [`Instruction`] trait defining the interface for all RISC-V instructions.
-//! - The [`LookupTable`] trait for small-domain lookup tables used by the prover.
-//! - Concrete implementations of all RV64IMAC instructions with correct `execute` semantics.
-//! - Virtual instructions (`ASSERT_EQ`, `ASSERT_LTE`, `POW2`, `MOVSIGN`) used by the VM.
+//! - The [`Instruction`] trait: execution semantics, lookup table association, and flags.
+//! - The [`LookupTable`] trait: table materialization and MLE evaluation.
+//! - The [`Flags`] trait with [`CircuitFlags`] and [`InstructionFlags`] enums.
+//! - Concrete implementations of all RV64IMAC + virtual instructions.
 //! - The [`JoltInstructionSet`] registry for opcode-indexed dispatch.
+//! - Bit-interleaving utilities for two-operand lookup indices.
 //!
 //! # Architecture
 //!
-//! Each instruction is a zero-sized unit struct implementing [`Instruction`].
-//! The `execute` method provides ground-truth computation using native Rust
-//! wrapping arithmetic. The `lookups` method will decompose the computation
-//! into small lookup table queries when the prover pipeline is integrated.
+//! Each instruction is a zero-sized unit struct implementing [`Instruction`]
+//! (which requires [`Flags`]). The `execute` method provides ground-truth
+//! computation. The `lookup_table` method declares which [`LookupTableKind`]
+//! the instruction decomposes into for the proving system.
+//!
+//! Flags are split into *static* (determined by instruction type) and *dynamic*
+//! (determined per-cycle by the runtime). This crate provides static flags;
+//! dynamic flags (`VirtualInstruction`, `IsCompressed`, `IsRdNotZero`, etc.)
+//! are applied by `jolt-zkvm` based on trace context.
 
 #[macro_use]
 mod macros;
 
+pub mod flags;
 pub mod instruction_set;
+pub mod interleave;
 pub mod opcodes;
 pub mod rv;
 pub mod tables;
 pub mod traits;
 pub mod virtual_;
 
+pub use flags::{
+    CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker, NUM_CIRCUIT_FLAGS,
+    NUM_INSTRUCTION_FLAGS,
+};
 pub use instruction_set::JoltInstructionSet;
-pub use traits::{Instruction, LookupQuery, LookupTable, TableId};
+pub use interleave::{interleave_bits, uninterleave_bits};
+pub use tables::LookupTableKind;
+pub use traits::{Instruction, LookupTable};

@@ -22,21 +22,30 @@ impl JoltInstructionSet {
         use crate::rv::arithmetic_w::*;
         use crate::rv::branch::*;
         use crate::rv::compare::*;
+        use crate::rv::jump::*;
         use crate::rv::load::*;
         use crate::rv::logic::*;
         use crate::rv::shift::*;
         use crate::rv::shift_w::*;
         use crate::rv::store::*;
         use crate::rv::system::*;
+        use crate::virtual_::advice::*;
         use crate::virtual_::arithmetic::*;
         use crate::virtual_::assert::*;
         use crate::virtual_::bitwise::*;
+        use crate::virtual_::byte::*;
+        use crate::virtual_::division::*;
+        use crate::virtual_::extension::*;
+        use crate::virtual_::shift::*;
+        use crate::virtual_::xor_rotate::*;
 
         let all: Vec<Box<dyn Instruction>> = vec![
+            // RV64I arithmetic (0-3)
             Box::new(Add),
             Box::new(Sub),
             Box::new(Lui),
             Box::new(Auipc),
+            // RV64M multiply/divide (4-11)
             Box::new(Mul),
             Box::new(MulH),
             Box::new(MulHSU),
@@ -45,41 +54,49 @@ impl JoltInstructionSet {
             Box::new(DivU),
             Box::new(Rem),
             Box::new(RemU),
+            // RV64I arithmetic W-suffix (12-13)
             Box::new(AddW),
             Box::new(SubW),
+            // RV64M W-suffix (14-18)
             Box::new(MulW),
             Box::new(DivW),
             Box::new(DivUW),
             Box::new(RemW),
             Box::new(RemUW),
+            // RV64I logic (19-24)
             Box::new(And),
             Box::new(Or),
             Box::new(Xor),
             Box::new(AndI),
             Box::new(OrI),
             Box::new(XorI),
+            // RV64I shifts (25-30)
             Box::new(Sll),
             Box::new(Srl),
             Box::new(Sra),
             Box::new(SllI),
             Box::new(SrlI),
             Box::new(SraI),
+            // RV64I shifts W-suffix (31-36)
             Box::new(SllW),
             Box::new(SrlW),
             Box::new(SraW),
             Box::new(SllIW),
             Box::new(SrlIW),
             Box::new(SraIW),
+            // RV64I compare (37-40)
             Box::new(Slt),
             Box::new(SltU),
             Box::new(SltI),
             Box::new(SltIU),
+            // RV64I branch (41-46)
             Box::new(Beq),
             Box::new(Bne),
             Box::new(Blt),
             Box::new(Bge),
             Box::new(BltU),
             Box::new(BgeU),
+            // RV64I load (47-53)
             Box::new(Lb),
             Box::new(Lbu),
             Box::new(Lh),
@@ -87,23 +104,72 @@ impl JoltInstructionSet {
             Box::new(Lw),
             Box::new(Lwu),
             Box::new(Ld),
+            // RV64I store (54-57)
             Box::new(Sb),
             Box::new(Sh),
             Box::new(Sw),
             Box::new(Sd),
+            // RV64I system (58-61)
             Box::new(Ecall),
             Box::new(Ebreak),
             Box::new(Fence),
             Box::new(Noop),
+            // RV64I immediate aliases (62-63)
             Box::new(Addi),
             Box::new(AddiW),
+            // RV64I jump (64-65)
+            Box::new(Jal),
+            Box::new(Jalr),
+            // Zbb extension (66)
+            Box::new(Andn),
+            // Virtual arithmetic (67-74)
             Box::new(AssertEq),
             Box::new(AssertLte),
             Box::new(Pow2),
             Box::new(MovSign),
+            Box::new(Pow2I),
+            Box::new(Pow2W),
+            Box::new(Pow2IW),
+            Box::new(MulI),
+            // Virtual assert (75-79)
+            Box::new(AssertValidDiv0),
+            Box::new(AssertValidUnsignedRemainder),
+            Box::new(AssertMulUNoOverflow),
+            Box::new(AssertWordAlignment),
+            Box::new(AssertHalfwordAlignment),
+            // Virtual shift (80-87)
+            Box::new(VirtualSrl),
+            Box::new(VirtualSrli),
+            Box::new(VirtualSra),
+            Box::new(VirtualSrai),
+            Box::new(VirtualShiftRightBitmask),
+            Box::new(VirtualShiftRightBitmaski),
+            Box::new(VirtualRotri),
+            Box::new(VirtualRotriw),
+            // Virtual division (88-89)
+            Box::new(VirtualChangeDivisor),
+            Box::new(VirtualChangeDivisorW),
+            // Virtual extension (90-91)
+            Box::new(VirtualSignExtendWord),
+            Box::new(VirtualZeroExtendWord),
+            // Virtual XOR-rotate (92-99)
+            Box::new(VirtualXorRot32),
+            Box::new(VirtualXorRot24),
+            Box::new(VirtualXorRot16),
+            Box::new(VirtualXorRot63),
+            Box::new(VirtualXorRotW16),
+            Box::new(VirtualXorRotW12),
+            Box::new(VirtualXorRotW8),
+            Box::new(VirtualXorRotW7),
+            // Virtual byte (100)
+            Box::new(VirtualRev8W),
+            // Virtual advice/IO (101-104)
+            Box::new(VirtualAdvice),
+            Box::new(VirtualAdviceLen),
+            Box::new(VirtualAdviceLoad),
+            Box::new(VirtualHostIO),
         ];
 
-        // Sort by opcode and verify contiguous assignment
         debug_assert_eq!(all.len(), opcodes::COUNT as usize);
         let mut sorted: Vec<(u32, Box<dyn Instruction>)> =
             all.into_iter().map(|i| (i.opcode(), i)).collect();

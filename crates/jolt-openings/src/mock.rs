@@ -1,21 +1,21 @@
 //! Mock polynomial commitment scheme for testing.
 //!
-//! [`MockCommitmentScheme`] implements [`CommitmentScheme`] and
-//! [`AdditivelyHomomorphic`] with true additive homomorphism.
-//! It is intended solely for testing reduction and trait logic.
+//! [`MockCommitmentScheme`] implements [`CommitmentScheme`],
+//! [`AdditivelyHomomorphic`], and [`ZkOpeningScheme`] with true additive
+//! homomorphism. It is intended solely for testing reduction and trait logic.
 
 use std::marker::PhantomData;
 
 use jolt_crypto::Commitment;
 use jolt_field::Field;
 use jolt_poly::Polynomial;
-use jolt_transcript::Transcript;
+use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
 
 use jolt_crypto::HomomorphicCommitment;
 
 use crate::error::OpeningsError;
-use crate::traits::{AdditivelyHomomorphic, CommitmentScheme};
+use crate::traits::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 
 /// A trivial commitment scheme for testing infrastructure.
 ///
@@ -133,6 +133,73 @@ impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
         MockCommitment {
             evaluations: result,
         }
+    }
+}
+
+/// Mock eval commitment: wraps the cleartext evaluation for testing.
+///
+/// In a real ZK scheme this would be a hiding commitment (e.g., Pedersen).
+/// For testing, we just store the value directly.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct MockEvalCommitment<F: Field> {
+    /// The evaluation value (stored in the clear for testing).
+    pub eval: F,
+}
+
+impl<F: Field> AppendToTranscript for MockEvalCommitment<F> {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        self.eval.append_to_transcript(transcript);
+    }
+}
+
+impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
+    type EvalCommitment = MockEvalCommitment<F>;
+    type EvalBlinding = ();
+
+    fn open_zk(
+        poly: &Self::Polynomial,
+        _point: &[Self::Field],
+        eval: Self::Field,
+        _setup: &Self::ProverSetup,
+        _hint: Option<Self::OpeningHint>,
+        _transcript: &mut impl Transcript,
+    ) -> (Self::Proof, Self::EvalCommitment, Self::EvalBlinding) {
+        let proof = MockProof {
+            evaluations: poly.evaluations().to_vec(),
+        };
+        let eval_commitment = MockEvalCommitment { eval };
+        (proof, eval_commitment, ())
+    }
+
+    fn verify_zk(
+        commitment: &Self::Output,
+        point: &[Self::Field],
+        eval_commitment: &Self::EvalCommitment,
+        proof: &Self::Proof,
+        _setup: &Self::VerifierSetup,
+        _transcript: &mut impl Transcript,
+    ) -> Result<(), OpeningsError> {
+        if commitment.evaluations != proof.evaluations {
+            return Err(OpeningsError::CommitmentMismatch {
+                expected: format!("len={}", commitment.evaluations.len()),
+                actual: format!("len={}", proof.evaluations.len()),
+            });
+        }
+
+        let poly = Polynomial::new(proof.evaluations.clone());
+        let actual_eval = poly.evaluate(point);
+        if actual_eval != eval_commitment.eval {
+            return Err(OpeningsError::VerificationFailed);
+        }
+
+        Ok(())
+    }
+
+    fn extract_eval_commitment(proof: &Self::Proof) -> Option<Self::EvalCommitment> {
+        // Mock always returns Some — real schemes would check a flag or enum variant.
+        let _ = proof;
+        None
     }
 }
 
@@ -407,5 +474,60 @@ mod tests {
             challenge_fn,
         );
         assert_eq!(reduced.len(), 2, "two distinct points → two reduced claims");
+    }
+
+    #[test]
+    fn zk_open_verify_roundtrip() {
+        let mut rng = ChaCha20Rng::seed_from_u64(500);
+        let poly = Polynomial::<Fr>::random(4, &mut rng);
+        let point: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
+        let eval = poly.evaluate(&point);
+
+        let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
+
+        let mut transcript_p = Blake2bTranscript::new(b"zk-test");
+        let (proof, eval_com, _blinding) =
+            MockPCS::open_zk(&poly, &point, eval, &(), None, &mut transcript_p);
+
+        let mut transcript_v = Blake2bTranscript::new(b"zk-test");
+        MockPCS::verify_zk(&commitment, &point, &eval_com, &proof, &(), &mut transcript_v)
+            .expect("valid ZK proof should verify");
+    }
+
+    #[test]
+    fn zk_verify_rejects_wrong_eval_commitment() {
+        let mut rng = ChaCha20Rng::seed_from_u64(501);
+        let poly = Polynomial::<Fr>::random(3, &mut rng);
+        let point: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
+        let eval = poly.evaluate(&point);
+
+        let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
+
+        let mut transcript_p = Blake2bTranscript::new(b"zk-test");
+        let (proof, _eval_com, _blinding) =
+            MockPCS::open_zk(&poly, &point, eval, &(), None, &mut transcript_p);
+
+        let wrong_eval_com = MockEvalCommitment {
+            eval: eval + Fr::from_u64(1),
+        };
+
+        let mut transcript_v = Blake2bTranscript::new(b"zk-test");
+        let result = MockPCS::verify_zk(
+            &commitment,
+            &point,
+            &wrong_eval_com,
+            &proof,
+            &(),
+            &mut transcript_v,
+        );
+        assert!(result.is_err(), "wrong eval commitment should be rejected");
+    }
+
+    #[test]
+    fn extract_eval_commitment_returns_none_for_mock() {
+        let proof = MockProof::<Fr> {
+            evaluations: vec![Fr::from_u64(1)],
+        };
+        assert!(MockPCS::extract_eval_commitment(&proof).is_none());
     }
 }

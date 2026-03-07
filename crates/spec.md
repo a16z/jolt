@@ -2137,7 +2137,51 @@ Every crate implements three levels of testing:
 | `jolt-dory` | Basic commit/open | Full protocol flows, streaming commitment | Commitment verification |
 | `jolt-zkvm` | Subprotocol logic | Small program proving, claim reductions | Trace verification |
 
-### 5.3 Property-Based Testing
+### 5.3 Line Coverage Targets
+
+Measured via `cargo llvm-cov`. Baseline captured 2026-03-06 on `refactor/crates`.
+
+**Target: ≥85% per crate, ≥90% overall.**
+
+| Crate | Lines | Baseline | Target | Notes |
+|-------|------:|----------|--------|-------|
+| `jolt-cpu-kernels` | 612 | 99.8% | ≥95% | |
+| `jolt-blindfold` | 1,407 | 98.6% | ≥95% | |
+| `jolt-openings` | 505 | 97.6% | ≥95% | |
+| `jolt-sumcheck` | 286 | 96.9% | ≥95% | |
+| `jolt-ir` | 1,892 | 96.4% | ≥95% | |
+| `jolt-hyperkzg` | 538 | 96.1% | ≥95% | |
+| `jolt-compute` | 644 | 95.5% | ≥95% | |
+| `jolt-poly` | 1,793 | 92.9% | ≥90% | |
+| `jolt-spartan` | 1,678 | 91.2% | ≥90% | `prover.rs` 81%, `r1cs.rs` 72% |
+| `jolt-dory` | 486 | 89.7% | ≥90% | |
+| `jolt-transcript` | 96 | 83.3% | ≥85% | Small crate |
+| `jolt-field` | 2,451 | 69.6% | ≥85% | `signed/` 50-57%, `challenge/` 0-40%, `accumulator` 0% |
+| `jolt-crypto` | 1,136 | 65.2% | ≥85% | GLV 0-50%, GT 61%, G2 60% |
+| `jolt-instructions` | — | — | ≥85% | Excluded (llvm-cov compile error under instrumentation) |
+| **TOTAL** | **13,524** | **87.9%** | **≥90%** | |
+
+**Gaps to address (priority order):**
+
+1. `jolt-field/src/signed/signed_bigint_hi32.rs` — 50%: `S96`/`S224` arithmetic, `mul_magnitudes` specializations, ordering, serialization
+2. `jolt-field/src/signed/signed_bigint.rs` — 57%: `sub_trunc`, `sub_trunc_mixed`, `From<u128/i128>`, `Neg`, `mul_trunc` mixed widths
+3. `jolt-crypto/src/arkworks/bn254/glv/` — 0-50%: `decomp_4d`, `frobenius`, `glv_four`, `dory_g2`, `constants`
+4. `jolt-crypto/src/arkworks/bn254/gt.rs` — 61%: GT additive group laws, `Mul`/`MulAssign` aliases
+5. `jolt-field/src/accumulator.rs` — 0%: `NaiveAccumulator` fmadd/merge/reduce
+6. `jolt-field/src/challenge/mont_u254.rs` — 0%: `Mont254BitChallenge` construction, conversion, arithmetic
+7. `jolt-field/src/field.rs` — 44%: default method coverage (`mul_pow_2`, `from_bool`, etc.)
+
+**How to measure:**
+
+```bash
+# Per-crate (excludes jolt-instructions due to llvm-cov compile issues):
+cargo llvm-cov -p jolt-field -p jolt-transcript -p jolt-crypto -p jolt-poly \
+  -p jolt-openings -p jolt-dory -p jolt-hyperkzg -p jolt-sumcheck \
+  -p jolt-spartan -p jolt-ir -p jolt-compute -p jolt-cpu-kernels \
+  -p jolt-blindfold --summary-only
+```
+
+### 5.5 Property-Based Testing
 
 Use `proptest` for generating random inputs and checking invariants:
 
@@ -2149,7 +2193,7 @@ Use `proptest` for generating random inputs and checking invariants:
 | `jolt-spartan` | Satisfiable witness → valid proof, unsatisfiable → rejection |
 | `jolt-instructions` | `execute` matches wrapping native ops, lookup decomposition reconstructs correctly |
 
-### 5.4 Fuzzing
+### 5.6 Fuzzing
 
 Use `cargo-fuzz` with `libFuzzer` for security-critical code:
 
@@ -2160,7 +2204,7 @@ Use `cargo-fuzz` with `libFuzzer` for security-critical code:
 | `jolt-sumcheck` | Verifier with arbitrary round polynomials (soundness) |
 | `jolt-openings` | Verifier with arbitrary proofs |
 
-### 5.5 Cross-Crate Integration Tests
+### 5.7 Cross-Crate Integration Tests
 
 Cross-crate integration tests verify interactions between multiple crates:
 
@@ -2170,7 +2214,7 @@ Cross-crate integration tests verify interactions between multiple crates:
 
 These are separate from per-crate integration tests and focus on the boundaries between crates.
 
-### 5.6 End-to-End Test Infrastructure
+### 5.8 End-to-End Test Infrastructure
 
 Address RFC finding 11 — reduce e2e test boilerplate:
 

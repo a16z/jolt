@@ -39,6 +39,7 @@ members = [
   "crates/jolt-cpu-kernels",
   "crates/jolt-wrapper",
   "crates/jolt-blindfold",
+  "crates/jolt-verifier",
   "crates/jolt-zkvm",
   "jolt-core",
   "tracer",

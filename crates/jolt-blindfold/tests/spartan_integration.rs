@@ -32,10 +32,6 @@ use rand_core::SeedableRng;
 type TestVC = Pedersen<Bn254G1>;
 type MockPCS = MockCommitmentScheme<Fr>;
 
-// ---------------------------------------------------------------------------
-// Sumcheck witnesses
-// ---------------------------------------------------------------------------
-
 /// Degree-2 inner-product witness: g(x) = a(x) * b(x).
 struct IpWitness {
     a: Polynomial<Fr>,
@@ -111,10 +107,6 @@ impl SumcheckCompute<Fr> for CubicWitness {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Recording handler (captures challenges + round polys for accumulator)
-// ---------------------------------------------------------------------------
-
 struct RecordingHandler {
     inner: ClearRoundHandler<Fr>,
     challenges: Vec<Fr>,
@@ -157,10 +149,6 @@ impl RoundHandler<Fr> for RecordingHandler {
         (self.inner.finalize(), self.challenges, self.round_polys)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Runs a degree-2 sumcheck stage and returns (StageConfig, challenges, round_polys).
 fn run_ip_stage(
@@ -299,10 +287,6 @@ fn pad(data: &[Fr], target_len: usize) -> Vec<Fr> {
     v[..copy_len].copy_from_slice(&data[..copy_len]);
     v
 }
-
-// ===========================================================================
-// Tests
-// ===========================================================================
 
 #[test]
 fn higher_degree_stage() {

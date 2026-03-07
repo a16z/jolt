@@ -9,3 +9,8 @@ description = "zkVM prover and verifier orchestration for the Jolt proving syste
 workspace = true
 
 [dependencies]
+jolt-field = { path = "../jolt-field" }
+jolt-ir = { path = "../jolt-ir" }
+
+[dev-dependencies]
+num-traits = { workspace = true }

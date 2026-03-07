@@ -1,30 +1,41 @@
 //! RV64I comparison instructions that write 1 or 0 to the destination register.
 
-use crate::macros::define_instruction;
 use crate::opcodes;
 
 define_instruction!(
     /// RV64I SLT: set if less than (signed). `rd = (rs1 < rs2) ? 1 : 0`.
     Slt, opcodes::SLT, "SLT",
-    |x, y| u64::from((x as i64) < (y as i64))
+    |x, y| u64::from((x as i64) < (y as i64)),
+    circuit: [WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
+    table: SignedLessThan,
 );
 
 define_instruction!(
     /// RV64I SLTI: set if less than immediate (signed).
     SltI, opcodes::SLTI, "SLTI",
-    |x, y| u64::from((x as i64) < (y as i64))
+    |x, y| u64::from((x as i64) < (y as i64)),
+    circuit: [WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
+    table: SignedLessThan,
 );
 
 define_instruction!(
     /// RV64I SLTU: set if less than (unsigned). `rd = (rs1 < rs2) ? 1 : 0`.
     SltU, opcodes::SLTU, "SLTU",
-    |x, y| u64::from(x < y)
+    |x, y| u64::from(x < y),
+    circuit: [WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
+    table: UnsignedLessThan,
 );
 
 define_instruction!(
     /// RV64I SLTIU: set if less than immediate (unsigned).
     SltIU, opcodes::SLTIU, "SLTIU",
-    |x, y| u64::from(x < y)
+    |x, y| u64::from(x < y),
+    circuit: [WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
+    table: UnsignedLessThan,
 );
 
 #[cfg(test)]

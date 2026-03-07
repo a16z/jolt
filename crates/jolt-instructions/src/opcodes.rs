@@ -93,11 +93,66 @@ pub const NOOP: u32 = 61;
 pub const ADDI: u32 = 62;
 pub const ADDIW: u32 = 63;
 
-// Virtual instructions
-pub const ASSERT_EQ: u32 = 64;
-pub const ASSERT_LTE: u32 = 65;
-pub const POW2: u32 = 66;
-pub const MOVSIGN: u32 = 67;
+// RV64I jump
+pub const JAL: u32 = 64;
+pub const JALR: u32 = 65;
+
+// Zbb extension
+pub const ANDN: u32 = 66;
+
+// Virtual arithmetic
+pub const ASSERT_EQ: u32 = 67;
+pub const ASSERT_LTE: u32 = 68;
+pub const POW2: u32 = 69;
+pub const MOVSIGN: u32 = 70;
+pub const VIRTUAL_POW2I: u32 = 71;
+pub const VIRTUAL_POW2W: u32 = 72;
+pub const VIRTUAL_POW2IW: u32 = 73;
+pub const VIRTUAL_MULI: u32 = 74;
+
+// Virtual assert
+pub const VIRTUAL_ASSERT_VALID_DIV0: u32 = 75;
+pub const VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: u32 = 76;
+pub const VIRTUAL_ASSERT_MULU_NO_OVERFLOW: u32 = 77;
+pub const VIRTUAL_ASSERT_WORD_ALIGNMENT: u32 = 78;
+pub const VIRTUAL_ASSERT_HALFWORD_ALIGNMENT: u32 = 79;
+
+// Virtual shift
+pub const VIRTUAL_SRL: u32 = 80;
+pub const VIRTUAL_SRLI: u32 = 81;
+pub const VIRTUAL_SRA: u32 = 82;
+pub const VIRTUAL_SRAI: u32 = 83;
+pub const VIRTUAL_SHIFT_RIGHT_BITMASK: u32 = 84;
+pub const VIRTUAL_SHIFT_RIGHT_BITMASKI: u32 = 85;
+pub const VIRTUAL_ROTRI: u32 = 86;
+pub const VIRTUAL_ROTRIW: u32 = 87;
+
+// Virtual division
+pub const VIRTUAL_CHANGE_DIVISOR: u32 = 88;
+pub const VIRTUAL_CHANGE_DIVISOR_W: u32 = 89;
+
+// Virtual extension
+pub const VIRTUAL_SIGN_EXTEND_WORD: u32 = 90;
+pub const VIRTUAL_ZERO_EXTEND_WORD: u32 = 91;
+
+// Virtual XOR-rotate (SHA)
+pub const VIRTUAL_XORROT32: u32 = 92;
+pub const VIRTUAL_XORROT24: u32 = 93;
+pub const VIRTUAL_XORROT16: u32 = 94;
+pub const VIRTUAL_XORROT63: u32 = 95;
+pub const VIRTUAL_XORROTW16: u32 = 96;
+pub const VIRTUAL_XORROTW12: u32 = 97;
+pub const VIRTUAL_XORROTW8: u32 = 98;
+pub const VIRTUAL_XORROTW7: u32 = 99;
+
+// Virtual byte manipulation
+pub const VIRTUAL_REV8W: u32 = 100;
+
+// Virtual advice/IO
+pub const VIRTUAL_ADVICE: u32 = 101;
+pub const VIRTUAL_ADVICE_LEN: u32 = 102;
+pub const VIRTUAL_ADVICE_LOAD: u32 = 103;
+pub const VIRTUAL_HOST_IO: u32 = 104;
 
 /// Total number of opcodes in the instruction set.
-pub const COUNT: u32 = 68;
+pub const COUNT: u32 = 105;

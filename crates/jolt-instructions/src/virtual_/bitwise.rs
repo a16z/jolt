@@ -1,15 +1,14 @@
 //! Virtual bitwise instructions used internally by the Jolt VM.
 
-use crate::macros::define_instruction;
 use crate::opcodes;
 
 define_instruction!(
-    /// Virtual MOVSIGN: conditional move based on the sign bit of `x`.
-    ///
-    /// Returns `y` if `x` is negative (as signed i64), otherwise returns 0.
-    /// Used in the Jolt VM for sign-dependent conditional logic.
+    /// Virtual MOVSIGN: returns all-ones if `x` is negative (signed), otherwise zero.
     MovSign, opcodes::MOVSIGN, "MOVSIGN",
-    |x, y| if (x as i64) < 0 { y } else { 0 }
+    |x, _y| if (x as i64) < 0 { u64::MAX } else { 0 },
+    circuit: [WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
+    table: Movsign,
 );
 
 #[cfg(test)]
@@ -20,7 +19,7 @@ mod tests {
     #[test]
     fn movsign_negative() {
         let neg = (-1i64) as u64;
-        assert_eq!(MovSign.execute(neg, 42), 42);
+        assert_eq!(MovSign.execute(neg, 42), u64::MAX);
     }
 
     #[test]
@@ -36,6 +35,6 @@ mod tests {
     #[test]
     fn movsign_min() {
         let min = i64::MIN as u64;
-        assert_eq!(MovSign.execute(min, 99), 99);
+        assert_eq!(MovSign.execute(min, 99), u64::MAX);
     }
 }

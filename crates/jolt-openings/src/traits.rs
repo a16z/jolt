@@ -1,16 +1,22 @@
 //! Abstract commitment scheme trait hierarchy.
 //!
-//! Three tiers of polynomial commitment scheme (PCS) interfaces:
+//! Four tiers of polynomial commitment scheme (PCS) interfaces:
 //!
 //! 1. [`CommitmentScheme`] — base trait for commit, open, and verify.
 //!    Extends [`jolt_crypto::Commitment`] to inherit the `Output` associated type.
 //! 2. [`AdditivelyHomomorphic`] — commitments can be linearly combined.
 //! 3. [`StreamingCommitment`] — incremental/chunked commitment.
+//! 4. [`ZkOpeningScheme`] — zero-knowledge opening proofs with committed evaluations.
+//!
+//! Additionally, [`VcSetupExtractable`] bridges PCS and vector commitment setup
+//! when both share trust assumptions (e.g., same SRS).
 
-use jolt_crypto::Commitment;
+use std::fmt::Debug;
+
+use jolt_crypto::{Commitment, JoltCommitment};
 use jolt_field::Field;
 use jolt_poly::EvaluationSource;
-use jolt_transcript::Transcript;
+use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::OpeningsError;
@@ -179,4 +185,97 @@ pub trait StreamingCommitment: CommitmentScheme {
 
     /// Finalizes the streaming session, producing the full commitment.
     fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output;
+}
+
+/// Zero-knowledge polynomial commitment scheme.
+///
+/// Extends [`CommitmentScheme`] with the ability to produce opening proofs
+/// that hide the evaluation value. Instead of revealing the cleartext
+/// evaluation $v = f(r)$, the prover sends a hiding commitment to $v$
+/// (the [`EvalCommitment`](Self::EvalCommitment)) and proves that the
+/// committed polynomial evaluates to the committed value.
+///
+/// This trait makes no assumptions about the underlying algebraic structure.
+/// `EvalCommitment` could be a Pedersen commitment (group element), a
+/// lattice commitment, or a hash — the trait is fully generic.
+///
+/// PCS that do not support ZK simply do not implement this trait.
+pub trait ZkOpeningScheme: CommitmentScheme {
+    /// Hiding commitment to the evaluation value.
+    ///
+    /// For Dory: Pedersen commitment in G1.
+    /// For lattice-based PCS: a lattice commitment.
+    /// No group structure assumed.
+    type EvalCommitment: Clone
+        + Debug
+        + Eq
+        + Send
+        + Sync
+        + 'static
+        + Serialize
+        + DeserializeOwned
+        + AppendToTranscript;
+
+    /// Blinding factor for the eval commitment.
+    ///
+    /// Flows into the BlindFold witness so the prover can later open the
+    /// committed evaluation inside the verifier R1CS. Could be a field
+    /// element (Pedersen) or a vector (lattice).
+    type EvalBlinding: Clone + Send + Sync;
+
+    /// Produces a ZK opening proof that hides the evaluation value.
+    ///
+    /// Returns the proof, a hiding commitment to `eval`, and the blinding
+    /// factor used for that commitment. The verifier receives the proof and
+    /// `EvalCommitment` but never learns `eval` or the blinding factor.
+    fn open_zk(
+        poly: &Self::Polynomial,
+        point: &[Self::Field],
+        eval: Self::Field,
+        setup: &Self::ProverSetup,
+        hint: Option<Self::OpeningHint>,
+        transcript: &mut impl Transcript,
+    ) -> (Self::Proof, Self::EvalCommitment, Self::EvalBlinding);
+
+    /// Verifies a ZK opening proof against an eval commitment.
+    ///
+    /// Unlike [`CommitmentScheme::verify`], the verifier checks against
+    /// the `eval_commitment` rather than a cleartext evaluation value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OpeningsError::VerificationFailed`] if the proof is invalid.
+    fn verify_zk(
+        commitment: &Self::Output,
+        point: &[Self::Field],
+        eval_commitment: &Self::EvalCommitment,
+        proof: &Self::Proof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut impl Transcript,
+    ) -> Result<(), OpeningsError>;
+
+    /// Extracts the eval commitment from a proof, if present.
+    ///
+    /// Returns `Some` for ZK-mode proofs, `None` for transparent-mode proofs.
+    /// Enables runtime detection of ZK vs. transparent mode on the verifier side.
+    fn extract_eval_commitment(proof: &Self::Proof) -> Option<Self::EvalCommitment>;
+}
+
+/// Bridge between a PCS's setup and a vector commitment's setup.
+///
+/// When a PCS and a vector commitment scheme share trust assumptions
+/// (e.g., both derive from the same SRS), this trait extracts the VC setup
+/// from the PCS prover setup. The orchestrator (jolt-zkvm) calls this once
+/// at setup time to obtain the VC parameters for BlindFold's committed
+/// sumcheck rounds.
+///
+/// No group structure assumed — works for Pedersen (extract generators from
+/// SRS), lattice VC (extract lattice parameters), hash VC (extract hash
+/// parameters), or any other vector commitment scheme.
+pub trait VcSetupExtractable<VC: JoltCommitment>: CommitmentScheme {
+    /// Derives a vector commitment setup from the PCS prover setup.
+    ///
+    /// `capacity` is the maximum number of values the VC needs to commit
+    /// (e.g., max sumcheck polynomial degree + 1).
+    fn extract_vc_setup(setup: &Self::ProverSetup, capacity: usize) -> VC::Setup;
 }

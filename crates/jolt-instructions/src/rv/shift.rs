@@ -1,43 +1,54 @@
 //! RV64I shift instructions operating on full 64-bit values.
 //! Shift amount is masked to 6 bits (0..63) per the RISC-V spec.
 
-use crate::macros::define_instruction;
 use crate::opcodes;
 
 define_instruction!(
     /// RV64I SLL: shift left logical. Shift amount from lower 6 bits of `y`.
     Sll, opcodes::SLL, "SLL",
-    |x, y| x << (y & 63)
+    |x, y| x << (y & 63),
+    circuit: [WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
 );
 
 define_instruction!(
     /// RV64I SLLI: shift left logical by immediate. Immediate already masked.
     SllI, opcodes::SLLI, "SLLI",
-    |x, y| x << (y & 63)
+    |x, y| x << (y & 63),
+    circuit: [WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
 );
 
 define_instruction!(
     /// RV64I SRL: shift right logical. Shift amount from lower 6 bits of `y`.
     Srl, opcodes::SRL, "SRL",
-    |x, y| x >> (y & 63)
+    |x, y| x >> (y & 63),
+    circuit: [WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
 );
 
 define_instruction!(
     /// RV64I SRLI: shift right logical by immediate.
     SrlI, opcodes::SRLI, "SRLI",
-    |x, y| x >> (y & 63)
+    |x, y| x >> (y & 63),
+    circuit: [WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
 );
 
 define_instruction!(
     /// RV64I SRA: shift right arithmetic. Preserves sign bit.
     Sra, opcodes::SRA, "SRA",
-    |x, y| ((x as i64) >> (y & 63)) as u64
+    |x, y| ((x as i64) >> (y & 63)) as u64,
+    circuit: [WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value],
 );
 
 define_instruction!(
     /// RV64I SRAI: shift right arithmetic by immediate.
     SraI, opcodes::SRAI, "SRAI",
-    |x, y| ((x as i64) >> (y & 63)) as u64
+    |x, y| ((x as i64) >> (y & 63)) as u64,
+    circuit: [WriteLookupOutputToRD],
+    instruction: [LeftOperandIsRs1Value, RightOperandIsImm],
 );
 
 #[cfg(test)]

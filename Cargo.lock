@@ -3013,6 +3013,7 @@ dependencies = [
  "jolt-poly",
  "jolt-transcript",
  "num-traits",
+ "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
@@ -3128,6 +3129,7 @@ dependencies = [
  "criterion",
  "jolt-crypto",
  "jolt-field",
+ "jolt-hyperkzg",
  "jolt-poly",
  "jolt-transcript",
  "rand 0.8.5",
@@ -3192,7 +3194,9 @@ name = "jolt-spartan"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "jolt-crypto",
  "jolt-field",
+ "jolt-hyperkzg",
  "jolt-ir",
  "jolt-openings",
  "jolt-poly",
@@ -3201,6 +3205,7 @@ dependencies = [
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
  "thiserror 2.0.18",
@@ -3237,6 +3242,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-verifier"
+version = "0.1.0"
+dependencies = [
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-spartan",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-wrapper"
 version = "0.1.0"
 dependencies = [
@@ -3259,6 +3283,11 @@ dependencies = [
 [[package]]
 name = "jolt-zkvm"
 version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-ir",
+ "num-traits",
+]
 
 [[package]]
 name = "js-sys"

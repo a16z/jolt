@@ -23,6 +23,7 @@ rand_core = { workspace = true }
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 criterion = { workspace = true }
+rand = { workspace = true }
 rand_chacha = { workspace = true }
 
 [[bench]]
@@ -30,4 +31,4 @@ name = "hyperkzg"
 harness = false
 
 [package.metadata.cargo-machete]
-ignored = ["rand_core", "rand_chacha"]
+ignored = ["rand_core", "rand_chacha", "rand"]

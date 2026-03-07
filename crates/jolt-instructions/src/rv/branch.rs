@@ -3,43 +3,54 @@
 //! Each returns 1 if the branch condition is true, 0 otherwise.
 //! The actual PC update is handled by the VM, not the instruction itself.
 
-use crate::macros::define_instruction;
 use crate::opcodes;
 
 define_instruction!(
     /// RV64I BEQ: branch if equal. Returns 1 when `rs1 == rs2`.
     Beq, opcodes::BEQ, "BEQ",
-    |x, y| u64::from(x == y)
+    |x, y| u64::from(x == y),
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
+    table: Equal,
 );
 
 define_instruction!(
     /// RV64I BNE: branch if not equal. Returns 1 when `rs1 != rs2`.
     Bne, opcodes::BNE, "BNE",
-    |x, y| u64::from(x != y)
+    |x, y| u64::from(x != y),
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
+    table: NotEqual,
 );
 
 define_instruction!(
     /// RV64I BLT: branch if less than (signed).
     Blt, opcodes::BLT, "BLT",
-    |x, y| u64::from((x as i64) < (y as i64))
+    |x, y| u64::from((x as i64) < (y as i64)),
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
+    table: SignedLessThan,
 );
 
 define_instruction!(
     /// RV64I BGE: branch if greater than or equal (signed).
     Bge, opcodes::BGE, "BGE",
-    |x, y| u64::from((x as i64) >= (y as i64))
+    |x, y| u64::from((x as i64) >= (y as i64)),
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
+    table: SignedGreaterThanEqual,
 );
 
 define_instruction!(
     /// RV64I BLTU: branch if less than (unsigned).
     BltU, opcodes::BLTU, "BLTU",
-    |x, y| u64::from(x < y)
+    |x, y| u64::from(x < y),
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
+    table: UnsignedLessThan,
 );
 
 define_instruction!(
     /// RV64I BGEU: branch if greater than or equal (unsigned).
     BgeU, opcodes::BGEU, "BGEU",
-    |x, y| u64::from(x >= y)
+    |x, y| u64::from(x >= y),
+    instruction: [LeftOperandIsRs1Value, RightOperandIsRs2Value, Branch],
+    table: UnsignedGreaterThanEqual,
 );
 
 #[cfg(test)]

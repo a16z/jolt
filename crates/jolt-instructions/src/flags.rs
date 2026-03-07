@@ -108,8 +108,6 @@ impl InterleavedBitsMarker for [bool; NUM_CIRCUIT_FLAGS] {
     }
 }
 
-// --- Ergonomic indexing by enum variant ---
-
 impl Index<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
     type Output = bool;
     #[inline]
