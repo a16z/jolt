@@ -1,3 +1,10 @@
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[allow(non_upper_case_globals)]
+#[unsafe(export_name = "malloc_conf")]
+pub static malloc_conf: &[u8] = b"dirty_decay_ms:0,muzzy_decay_ms:0\0";
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[path = "../../benches/e2e_profiling.rs"]

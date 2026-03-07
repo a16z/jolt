@@ -23,6 +23,7 @@ use allocative::FlameGraphBuilder;
 use ark_std::Zero;
 use rayon::prelude::*;
 use std::iter::zip;
+use std::sync::Arc;
 
 use common::jolt_device::MemoryLayout;
 use tracer::instruction::Cycle;
@@ -284,8 +285,8 @@ pub struct BooleanitySumcheckProver<F: JoltField> {
     F: ExpandingTable<F>,
     /// eq(r_address, r_address) at end of phase 1
     eq_r_r: F,
-    /// RA indices (non-transposed, one per cycle)
-    ra_indices: Vec<RaIndices>,
+    /// RA indices (non-transposed, one per cycle), shared via Arc
+    ra_indices: Arc<Vec<RaIndices>>,
     pub params: BooleanitySumcheckParams<F>,
 }
 
@@ -296,14 +297,14 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
     /// - Compute G polynomials and RA indices in a single pass over the trace
     /// - Initialize split-eq polynomials for address (B) and cycle (D) variables
     /// - Initialize expanding table for phase 1
+    /// Returns (prover, shared_ra_indices) — the Arc can be passed to other provers.
     #[tracing::instrument(skip_all, name = "BooleanitySumcheckProver::initialize")]
     pub fn initialize(
         params: BooleanitySumcheckParams<F>,
         trace: &[Cycle],
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-    ) -> Self {
-        // Compute G and RA indices in a single pass over the trace
+    ) -> (Self, Arc<Vec<RaIndices>>) {
         let (G, ra_indices) = compute_all_G_and_ra_indices::<F>(
             trace,
             bytecode,
@@ -337,18 +338,22 @@ impl<F: JoltField> BooleanitySumcheckProver<F> {
             rho_i *= gamma_f;
         }
 
-        Self {
-            gamma_powers,
-            gamma_powers_inv,
-            B,
-            D,
-            G,
-            ra_indices,
-            H: None,
-            F: F_table,
-            eq_r_r: F::zero(),
-            params,
-        }
+        let shared = Arc::clone(&ra_indices);
+        (
+            Self {
+                gamma_powers,
+                gamma_powers_inv,
+                B,
+                D,
+                G,
+                ra_indices,
+                H: None,
+                F: F_table,
+                eq_r_r: F::zero(),
+                params,
+            },
+            shared,
+        )
     }
 
     fn compute_phase1_message(&self, round: usize, previous_claim: F) -> UniPoly<F> {
@@ -475,7 +480,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BooleanitySum
 
                 // Initialize SharedRaPolynomials with per-poly pre-scaled eq tables (by rho_i)
                 let F_table = std::mem::take(&mut self.F);
-                let ra_indices = std::mem::take(&mut self.ra_indices);
+                let ra_indices = std::mem::replace(&mut self.ra_indices, Arc::new(Vec::new()));
                 let base_eq = F_table.clone_values();
                 let num_polys = self.params.polynomial_types.len();
                 debug_assert!(
