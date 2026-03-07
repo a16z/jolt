@@ -791,8 +791,6 @@ fn eval_prod_8_assign<F: JoltField>(p: &[(F, F); 8], outputs: &mut [F]) {
 ///   correct alignment.
 /// - The sub-slices are non-overlapping.
 fn eval_prod_9_accumulate<F: JoltField>(p: &[(F, F); 9], outputs: &mut [F::UnreducedProductAccum]) {
-    // TODO: Implement more optimal way to do this.
-    // 5x4 split probably better than current 8x1 split.
     let p8 = p[0..8].try_into().unwrap();
     let [a1, a2, a3, a4, a5, a6, a7, a8, a_inf] = eval_linear_prod_8_internal(p8);
 
