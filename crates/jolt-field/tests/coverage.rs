@@ -1149,8 +1149,6 @@ fn signed_bigint_negate() {
     assert_eq!(n.magnitude_as_u64(), 10);
 }
 
-// ========== Fr From trait impls and ref-arithmetic ==========
-
 #[test]
 fn fr_from_bool() {
     let t: Fr = From::from(true);

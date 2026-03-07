@@ -11,15 +11,19 @@
 //! - [`CompressedPoly`]: Compressed univariate with the linear term omitted (for proof size)
 //! - [`IdentityPolynomial`]: Maps hypercube points to their integer index
 
+mod binding;
 mod compressed_univariate;
 mod cpu_polynomial;
 mod eq;
 mod identity;
 pub mod lagrange;
+pub mod math;
 mod multilinear;
 mod source;
+pub mod thread;
 mod univariate;
 
+pub use binding::BindingOrder;
 pub use compressed_univariate::CompressedPoly;
 pub use cpu_polynomial::Polynomial;
 pub use eq::EqPolynomial;

@@ -35,6 +35,7 @@ pub mod handler;
 pub mod proof;
 pub mod prover;
 pub mod reduction;
+pub mod split_eq;
 pub mod streaming;
 pub mod verifier;
 
@@ -45,6 +46,7 @@ pub use handler::{ClearRoundHandler, ClearRoundVerifier, RoundHandler, RoundVeri
 pub use proof::SumcheckProof;
 pub use prover::{SumcheckCompute, SumcheckProver};
 pub use reduction::{SumcheckReduction, SumcheckWitnessBatch};
+pub use split_eq::SplitEqEvaluator;
 pub use streaming::{
     HalfSplitSchedule, LinearOnlySchedule, LinearSumcheckStage, StreamingSchedule,
     StreamingSumcheck, StreamingSumcheckProver, StreamingSumcheckWindow,

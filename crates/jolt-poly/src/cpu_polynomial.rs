@@ -119,16 +119,35 @@ impl<F: Field> Polynomial<F> {
         }
     }
 
-    /// Fixes the first variable to `scalar` in place, halving the number of evaluations.
+    /// Fixes the first (MSB) variable to `scalar` in place, halving the evaluations.
     ///
     /// The evaluations table is laid out so that the first variable controls the
     /// upper/lower half split: indices `0..half` have $x_1 = 0$ and indices
     /// `half..2*half` have $x_1 = 1$. The result is:
     /// $$g(x_2, \ldots, x_n) = f(0, x_2, \ldots) + s \cdot (f(1, x_2, \ldots) - f(0, x_2, \ldots))$$
     ///
-    /// This is the hot inner loop of sumcheck — every allocation matters.
+    /// Equivalent to `bind_with_order(scalar, BindingOrder::HighToLow)`.
     #[inline]
     pub fn bind(&mut self, scalar: F) {
+        self.bind_high_to_low(scalar);
+    }
+
+    /// Binds with the specified variable ordering.
+    ///
+    /// - [`BindingOrder::HighToLow`]: binds the MSB (first variable, index `0`).
+    ///   Pairs `coefficients[i]` with `coefficients[i + half]`.
+    /// - [`BindingOrder::LowToHigh`]: binds the LSB (last variable, index `n-1`).
+    ///   Pairs `coefficients[2*i]` with `coefficients[2*i + 1]`.
+    #[inline]
+    pub fn bind_with_order(&mut self, scalar: F, order: crate::BindingOrder) {
+        match order {
+            crate::BindingOrder::HighToLow => self.bind_high_to_low(scalar),
+            crate::BindingOrder::LowToHigh => self.bind_low_to_high(scalar),
+        }
+    }
+
+    #[inline]
+    fn bind_high_to_low(&mut self, scalar: F) {
         let half = self.coefficients.len() / 2;
 
         #[cfg(feature = "parallel")]
@@ -159,6 +178,69 @@ impl<F: Field> Polynomial<F> {
 
         self.coefficients.truncate(half);
         self.num_vars -= 1;
+    }
+
+    #[inline]
+    fn bind_low_to_high(&mut self, scalar: F) {
+        let half = self.coefficients.len() / 2;
+
+        #[cfg(feature = "parallel")]
+        {
+            if half >= PAR_THRESHOLD {
+                use rayon::prelude::*;
+                // Parallel: write into a new buffer to avoid aliasing
+                let coeffs = &self.coefficients;
+                let new: Vec<F> = (0..half)
+                    .into_par_iter()
+                    .map(|i| {
+                        let lo = coeffs[2 * i];
+                        let hi = coeffs[2 * i + 1];
+                        lo + scalar * (hi - lo)
+                    })
+                    .collect();
+                self.coefficients = new;
+            } else {
+                for i in 0..half {
+                    let lo = self.coefficients[2 * i];
+                    let hi = self.coefficients[2 * i + 1];
+                    self.coefficients[i] = lo + scalar * (hi - lo);
+                }
+                self.coefficients.truncate(half);
+            }
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        {
+            for i in 0..half {
+                let lo = self.coefficients[2 * i];
+                let hi = self.coefficients[2 * i + 1];
+                self.coefficients[i] = lo + scalar * (hi - lo);
+            }
+            self.coefficients.truncate(half);
+        }
+
+        self.num_vars -= 1;
+    }
+
+    /// Returns the `(lo, hi)` pair for the given index and binding order.
+    ///
+    /// For sumcheck round polynomial evaluation at index `j`:
+    /// - `HighToLow`: `lo = coefficients[j]`, `hi = coefficients[j + half]`
+    /// - `LowToHigh`: `lo = coefficients[2*j]`, `hi = coefficients[2*j + 1]`
+    #[inline]
+    pub fn sumcheck_eval_pair(&self, index: usize, order: crate::BindingOrder) -> (F, F) {
+        match order {
+            crate::BindingOrder::HighToLow => {
+                let half = self.coefficients.len() / 2;
+                (self.coefficients[index], self.coefficients[index + half])
+            }
+            crate::BindingOrder::LowToHigh => {
+                (
+                    self.coefficients[2 * index],
+                    self.coefficients[2 * index + 1],
+                )
+            }
+        }
     }
 
     /// Evaluates the polynomial at `point` using the multilinear extension formula:

@@ -59,7 +59,7 @@ pub use suffixes::{SuffixEval, Suffixes};
 /// Identifies a lookup table type.
 ///
 /// Each variant corresponds to a concrete table with its own
-/// [`LookupTable`](crate::LookupTable) implementation. Instructions
+/// [`LookupTable`] implementation. Instructions
 /// declare which table they use via [`Instruction::lookup_table()`](crate::Instruction::lookup_table).
 ///
 /// The enum is `#[repr(u8)]` for compact serialization and efficient
@@ -67,14 +67,14 @@ pub use suffixes::{SuffixEval, Suffixes};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum LookupTableKind {
-    //Arithmetic
+    // Arithmetic
     /// Identity/range-check: extracts the lower XLEN bits.
     /// Used by ADD, SUB, MUL, ADDI, JAL, and other combined-operand instructions.
     RangeCheck,
     /// Range check with LSB alignment (clears bit 0). Used by JALR.
     RangeCheckAligned,
 
-    //Bitwise
+    // Bitwise
     /// Bitwise AND. Used by AND, ANDI.
     And,
     /// Bitwise AND-NOT (x & !y). Used by ANDN (Zbb extension).
@@ -84,7 +84,7 @@ pub enum LookupTableKind {
     /// Bitwise XOR. Used by XOR, XORI.
     Xor,
 
-    //Comparison
+    // Comparison
     /// Equality check: returns 1 if x == y. Used by BEQ.
     Equal,
     /// Not-equal: returns 1 if x != y. Used by BNE.
@@ -100,7 +100,7 @@ pub enum LookupTableKind {
     /// Unsigned less-than-or-equal.
     UnsignedLessThanEqual,
 
-    //Word extraction
+    // Word extraction
     /// Extract upper XLEN bits of a 2*XLEN-bit value. Used by MULHU.
     UpperWord,
     /// Extract lower half-word (XLEN/2 bits).
@@ -108,17 +108,17 @@ pub enum LookupTableKind {
     /// Sign-extend half-word to full word.
     SignExtendHalfWord,
 
-    //Sign/conditional
+    // Sign/conditional
     /// Sign-bit conditional: returns all-ones if MSB set, else zero. Used by MOVSIGN.
     Movsign,
 
-    //Power of 2
+    // Power of 2
     /// 2^(index mod XLEN). Used by POW2, POW2I.
     Pow2,
     /// 2^(index mod 32). Used by POW2W, POW2IW.
     Pow2W,
 
-    //Shift
+    // Shift
     /// Bitmask for right-shift: `((1 << (XLEN - shift)) - 1) << shift`.
     ShiftRightBitmask,
     /// Logical right shift (virtual decomposition). Used by SRL, SRLI.
@@ -130,7 +130,7 @@ pub enum LookupTableKind {
     /// Rotate right word (32-bit). Used by ROTRIW.
     VirtualROTRW,
 
-    //Division validation
+    // Division validation
     /// Division-by-zero validity check. Used by ASSERT_VALID_DIV0.
     ValidDiv0,
     /// Unsigned remainder validity (remainder < divisor or divisor == 0).
@@ -142,21 +142,21 @@ pub enum LookupTableKind {
     /// Divisor transform (32-bit). Used by CHANGE_DIVISOR_W.
     VirtualChangeDivisorW,
 
-    //Alignment
+    // Alignment
     /// Halfword alignment check (divisible by 2).
     HalfwordAlignment,
     /// Word alignment check (divisible by 4).
     WordAlignment,
 
-    //Multiply overflow
+    // Multiply overflow
     /// Unsigned multiply no-overflow check. Used by ASSERT_MULU_NO_OVERFLOW.
     MulUNoOverflow,
 
-    //Byte manipulation
+    // Byte manipulation
     /// Byte-reverse within word. Used by REV8W.
     VirtualRev8W,
 
-    //XOR-rotate (SHA)
+    // XOR-rotate (SHA)
     /// XOR then rotate right by 32 bits.
     VirtualXORROT32,
     /// XOR then rotate right by 24 bits.

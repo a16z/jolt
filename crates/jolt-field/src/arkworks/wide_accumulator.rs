@@ -22,6 +22,7 @@ use super::bn254_ops;
 /// Stores the running sum of Montgomery-form products as a 576-bit integer.
 /// Converting to a field element requires a single Montgomery reduction
 /// via [`reduce`](FieldAccumulator::reduce).
+#[derive(Clone, Copy)]
 pub struct WideAccumulator {
     /// 9 limbs = 2×4 (product width) + 1 (addition headroom).
     limbs: Limbs<9>,

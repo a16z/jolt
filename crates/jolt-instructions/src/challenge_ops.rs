@@ -12,7 +12,6 @@ use std::ops::{Add, Mul, Sub};
 
 /// A challenge value that can do arithmetic with field elements and other challenges.
 ///
-/// This is the jolt-instructions equivalent of jolt-core's `ChallengeFieldOps<F>`.
 /// The key property is that all arithmetic produces field elements `F`, even
 /// operations between two challenges (`C * C -> F`).
 pub trait ChallengeOps<F: Field>:
@@ -51,7 +50,6 @@ impl<F: Field, C> ChallengeOps<F> for C where
 
 /// A field element that accepts arithmetic with a challenge type `C`.
 ///
-/// This is the jolt-instructions equivalent of jolt-core's `FieldChallengeOps<C>`.
 /// Enables expressions like `F::from_u64(n) * challenge` where the field element
 /// is on the left-hand side.
 pub trait FieldOps<C>:

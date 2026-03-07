@@ -8,11 +8,15 @@ description = "Sumcheck protocol engine for the Jolt zkVM"
 [lints]
 workspace = true
 
+[features]
+parallel = ["dep:rayon", "jolt-poly/parallel"]
+
 [dependencies]
 jolt-field = { path = "../jolt-field" }
 jolt-openings = { path = "../jolt-openings" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-transcript = { path = "../jolt-transcript" }
+rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 thiserror = { workspace = true }

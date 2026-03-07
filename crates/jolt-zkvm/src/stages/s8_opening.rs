@@ -273,8 +273,6 @@ mod tests {
             .expect("mixed-group claims should verify");
     }
 
-    // --- Dory-backed tests ---
-
     mod dory {
         use super::*;
         use jolt_dory::DoryScheme;

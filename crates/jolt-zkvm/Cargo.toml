@@ -8,6 +8,9 @@ description = "zkVM prover and verifier orchestration for the Jolt proving syste
 [lints]
 workspace = true
 
+[features]
+parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-sumcheck/parallel"]
+
 [dependencies]
 jolt-field = { path = "../jolt-field" }
 jolt-ir = { path = "../jolt-ir" }
@@ -15,6 +18,9 @@ jolt-openings = { path = "../jolt-openings" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-transcript = { path = "../jolt-transcript" }
+rayon = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
 
 [dev-dependencies]
 jolt-crypto = { path = "../jolt-crypto" }

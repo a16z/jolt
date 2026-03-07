@@ -7,3 +7,5 @@
 pub mod eq_product;
 pub mod formula;
 pub mod hamming;
+pub mod mles_product_sum;
+pub mod ra_poly;

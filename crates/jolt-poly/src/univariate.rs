@@ -120,6 +120,11 @@ impl<F: Field> UnivariatePoly<F> {
         &self.coefficients
     }
 
+    /// Consumes the polynomial and returns the coefficient vector.
+    pub fn into_coefficients(self) -> Vec<F> {
+        self.coefficients
+    }
+
     /// Evaluates the $i$-th Lagrange basis polynomial at `point` over the domain
     /// $\{0, 1, \ldots, n-1\}$:
     /// $$L_i(x) = \prod_{\substack{j=0 \\ j \neq i}}^{n-1} \frac{x - j}{i - j}$$
@@ -182,6 +187,93 @@ impl<F: Field> UnivariatePoly<F> {
         let coeffs = [&self.coefficients[..1], &self.coefficients[2..]].concat();
         debug_assert_eq!(coeffs.len() + 1, self.coefficients.len());
         crate::CompressedPoly::new(coeffs)
+    }
+
+    /// Interpolates from evaluations at `0, 1, 2, ..., n-1` using Gaussian elimination
+    /// on the Vandermonde system. Equivalent to `interpolate_over_integers` but uses a
+    /// direct matrix solve instead of the Lagrange formula.
+    pub fn from_evals(evals: &[F]) -> Self {
+        Self {
+            coefficients: gaussian_elimination_vandermonde(evals),
+        }
+    }
+
+    /// Interpolates from evaluations at `[0, 2, 3, ..., n-1]` with the hint `p(0) + p(1)`.
+    ///
+    /// Recovers `p(1) = hint - p(0)` and then interpolates over the full set `{0, 1, ..., n-1}`.
+    pub fn from_evals_and_hint(hint: F, evals: &[F]) -> Self {
+        let mut full = evals.to_vec();
+        let eval_at_1 = hint - full[0];
+        full.insert(1, eval_at_1);
+        Self::from_evals(&full)
+    }
+
+    /// Interpolates from evaluations at `[0, 1, ..., degree-1, ∞]`.
+    ///
+    /// The last entry is interpreted as the evaluation at infinity, i.e., the leading
+    /// coefficient of the polynomial. Uses Gaussian elimination on the augmented
+    /// Vandermonde-plus-infinity system.
+    pub fn from_evals_toom(evals: &[F]) -> Self {
+        let n = evals.len();
+        let mut matrix: Vec<Vec<F>> = Vec::with_capacity(n);
+
+        // Rows for finite x values: x = 0, 1, ..., n-2
+        for (i, &eval) in evals[..n - 1].iter().enumerate() {
+            let mut row = Vec::with_capacity(n + 1);
+            let x = F::from_u64(i as u64);
+            let mut power = F::one();
+            for _ in 0..n {
+                row.push(power);
+                power *= x;
+            }
+            row.push(eval);
+            matrix.push(row);
+        }
+
+        // Row for x = ∞: only the leading coefficient survives
+        let mut row = vec![F::zero(); n];
+        row[n - 1] = F::one();
+        row.push(evals[n - 1]);
+        matrix.push(row);
+
+        Self {
+            coefficients: gaussian_elimination_augmented(&mut matrix),
+        }
+    }
+
+    /// Computes the cubic polynomial `s(X) = l(X) * q(X)`, where `l(X)` is linear
+    /// and `q(X)` is quadratic, given partial information and a hint.
+    ///
+    /// - `linear_coeffs = [l(0), l(∞)]` (constant and leading coefficient)
+    /// - `quadratic_coeff_0 = q(0)` (constant)
+    /// - `quadratic_coeff_2 = q(∞)` (quadratic coefficient, i.e., leading coeff)
+    /// - `hint = s(0) + s(1)`
+    ///
+    /// Used by the split-eq evaluator to construct round polynomials.
+    pub fn from_linear_times_quadratic_with_hint(
+        linear_coeffs: [F; 2],
+        quadratic_coeff_0: F,
+        quadratic_coeff_2: F,
+        hint: F,
+    ) -> Self {
+        let linear_eval_one = linear_coeffs[0] + linear_coeffs[1];
+        let cubic_coeff_0 = linear_coeffs[0] * quadratic_coeff_0;
+
+        // s(0) + s(1) = l(0)*q(0) + l(1)*q(1) = hint
+        // l(1) = l(0) + l(∞) = linear_eval_one
+        // q(1) = q(0) + q(1_coeff) + q(2_coeff)
+        // Solve for the linear coefficient of q:
+        let quadratic_coeff_1 =
+            (hint - cubic_coeff_0) / linear_eval_one - quadratic_coeff_0 - quadratic_coeff_2;
+
+        // s(X) = (a + bX)(c + dX + eX^2) = ac + (ad+bc)X + (ae+bd)X^2 + beX^3
+        let coefficients = vec![
+            cubic_coeff_0,
+            linear_coeffs[0] * quadratic_coeff_1 + linear_coeffs[1] * quadratic_coeff_0,
+            linear_coeffs[0] * quadratic_coeff_2 + linear_coeffs[1] * quadratic_coeff_1,
+            linear_coeffs[1] * quadratic_coeff_2,
+        ];
+        Self { coefficients }
     }
 
     /// Returns `true` if all coefficients are zero (or the vector is empty).
@@ -351,6 +443,67 @@ impl<F: Field> MulAssign<F> for UnivariatePoly<F> {
             *c *= rhs;
         }
     }
+}
+
+/// Gaussian elimination on a Vandermonde system for evaluations at `0, 1, ..., n-1`.
+fn gaussian_elimination_vandermonde<F: Field>(evals: &[F]) -> Vec<F> {
+    let n = evals.len();
+    let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64)).collect();
+
+    let mut matrix: Vec<Vec<F>> = Vec::with_capacity(n);
+    for i in 0..n {
+        let mut row = Vec::with_capacity(n + 1);
+        let x = xs[i];
+        let mut power = F::one();
+        for _ in 0..n {
+            row.push(power);
+            power *= x;
+        }
+        row.push(evals[i]);
+        matrix.push(row);
+    }
+
+    gaussian_elimination_augmented(&mut matrix)
+}
+
+/// Gaussian elimination on an augmented matrix `[A | b]` where `A` is `n × n`.
+///
+/// Returns the solution vector `x` such that `A x = b`.
+fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
+    let size = matrix.len();
+    debug_assert_eq!(size, matrix[0].len() - 1);
+
+    // Forward elimination (row echelon form)
+    for i in 0..size.saturating_sub(1) {
+        for j in i..size - 1 {
+            if matrix[i][i] != F::zero() {
+                let factor = matrix[j + 1][i] / matrix[i][i];
+                for k in i..=size {
+                    let tmp = matrix[i][k];
+                    matrix[j + 1][k] -= factor * tmp;
+                }
+            }
+        }
+    }
+
+    // Back substitution
+    for i in (1..size).rev() {
+        if matrix[i][i] != F::zero() {
+            for j in (1..=i).rev() {
+                let factor = matrix[j - 1][i] / matrix[i][i];
+                for k in (0..=size).rev() {
+                    let tmp = matrix[i][k];
+                    matrix[j - 1][k] -= factor * tmp;
+                }
+            }
+        }
+    }
+
+    let mut result = vec![F::zero(); size];
+    for i in 0..size {
+        result[i] = matrix[i][size] / matrix[i][i];
+    }
+    result
 }
 
 #[cfg(test)]
@@ -619,5 +772,105 @@ mod tests {
         let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
         assert!(q.is_zero());
         assert_eq!(r, dividend);
+    }
+
+    #[test]
+    fn from_evals_quadratic() {
+        // p(x) = 2x^2 + 3x + 1 → p(0)=1, p(1)=6, p(2)=15
+        let evals = vec![Fr::from_u64(1), Fr::from_u64(6), Fr::from_u64(15)];
+        let poly = UnivariatePoly::from_evals(&evals);
+        assert_eq!(poly.coefficients[0], Fr::from_u64(1));
+        assert_eq!(poly.coefficients[1], Fr::from_u64(3));
+        assert_eq!(poly.coefficients[2], Fr::from_u64(2));
+    }
+
+    #[test]
+    fn from_evals_cubic() {
+        // p(x) = x^3 + 2x^2 + 3x + 1
+        let evals = vec![
+            Fr::from_u64(1),
+            Fr::from_u64(7),
+            Fr::from_u64(23),
+            Fr::from_u64(55),
+        ];
+        let poly = UnivariatePoly::from_evals(&evals);
+        assert_eq!(poly.coefficients[0], Fr::from_u64(1));
+        assert_eq!(poly.coefficients[1], Fr::from_u64(3));
+        assert_eq!(poly.coefficients[2], Fr::from_u64(2));
+        assert_eq!(poly.coefficients[3], Fr::from_u64(1));
+    }
+
+    #[test]
+    fn from_evals_matches_interpolate_over_integers() {
+        let evals: Vec<Fr> = vec![
+            Fr::from_u64(7),
+            Fr::from_u64(3),
+            Fr::from_u64(11),
+            Fr::from_u64(2),
+        ];
+        let via_evals = UnivariatePoly::from_evals(&evals);
+        let via_lagrange = UnivariatePoly::interpolate_over_integers(&evals);
+
+        for i in 0..10u64 {
+            let x = Fr::from_u64(i);
+            assert_eq!(
+                via_evals.evaluate(x),
+                via_lagrange.evaluate(x),
+                "mismatch at x={i}"
+            );
+        }
+    }
+
+    #[test]
+    fn from_evals_and_hint() {
+        // p(x) = 2x^2 + 3x + 1 → p(0)=1, p(1)=6
+        // hint = p(0) + p(1) = 7
+        // Given evals at [0, 2] = [1, 15], recover p(1) = 7 - 1 = 6
+        let hint = Fr::from_u64(7);
+        let evals = vec![Fr::from_u64(1), Fr::from_u64(15)];
+        let poly = UnivariatePoly::from_evals_and_hint(hint, &evals);
+
+        assert_eq!(poly.evaluate(Fr::from_u64(0)), Fr::from_u64(1));
+        assert_eq!(poly.evaluate(Fr::from_u64(1)), Fr::from_u64(6));
+        assert_eq!(poly.evaluate(Fr::from_u64(2)), Fr::from_u64(15));
+    }
+
+    #[test]
+    fn from_evals_toom_cubic() {
+        // p(x) = 9x^3 + 3x^2 + x + 5
+        let gt_poly = UnivariatePoly::new(vec![
+            Fr::from_u64(5),
+            Fr::from_u64(1),
+            Fr::from_u64(3),
+            Fr::from_u64(9),
+        ]);
+        let degree = 3;
+        let mut toom_evals: Vec<Fr> = (0..degree)
+            .map(|x| gt_poly.evaluate(Fr::from_u64(x)))
+            .collect();
+        // eval at ∞ = leading coefficient
+        toom_evals.push(*gt_poly.coefficients().last().unwrap());
+
+        let poly = UnivariatePoly::from_evals_toom(&toom_evals);
+        assert_eq!(gt_poly, poly);
+    }
+
+    #[test]
+    fn from_linear_times_quadratic_with_hint() {
+        // s(x) = (x + 1) * (x^2 + 2x + 3) = x^3 + 3x^2 + 5x + 3
+        // hint = s(0) + s(1) = 3 + 12 = 15
+        let linear_coeffs = [Fr::from_u64(1), Fr::from_u64(1)];
+        let q0 = Fr::from_u64(3);
+        let q2 = Fr::from_u64(1);
+        let hint = Fr::from_u64(15);
+        let poly = UnivariatePoly::from_linear_times_quadratic_with_hint(linear_coeffs, q0, q2, hint);
+
+        let expected = UnivariatePoly::new(vec![
+            Fr::from_u64(3),
+            Fr::from_u64(5),
+            Fr::from_u64(3),
+            Fr::from_u64(1),
+        ]);
+        assert_eq!(poly, expected);
     }
 }

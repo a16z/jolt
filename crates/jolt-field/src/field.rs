@@ -178,6 +178,12 @@ pub(crate) trait ReductionOps: UnreducedOps {
 ///   reduction (default).
 /// - `Mont254BitChallenge` — full 254-bit field element, used when the wider
 ///   range is needed.
+///
+/// The `impl_field_ops_inline!` macro generates all 4 ownership variants
+/// (val-val, val-ref, ref-val, ref-ref) for the concrete implementations.
+/// Self-operations (`C op C → F`) and ref variants are available on the
+/// concrete types but not required by this trait — use function-level bounds
+/// where needed.
 pub trait Challenge<F: Field>:
     Copy
     + Send
@@ -195,7 +201,17 @@ pub trait Challenge<F: Field>:
 ///
 /// The associated type is selected at compile time via the
 /// `challenge-254-bit` feature flag.
-pub trait WithChallenge: Field {
+///
+/// Bounds on `Self` enable `F op C → F` expressions in generic code
+/// (e.g., `field_val * challenge` or `field_val - challenge`). These bounds
+/// are satisfiable because `WithChallenge` is only implemented for concrete
+/// field types (e.g., `Fr`) where the macro-generated operators exist.
+pub trait WithChallenge:
+    Field
+    + Add<<Self as WithChallenge>::Challenge, Output = Self>
+    + Sub<<Self as WithChallenge>::Challenge, Output = Self>
+    + Mul<<Self as WithChallenge>::Challenge, Output = Self>
+{
     type Challenge: Challenge<Self>;
 }
 

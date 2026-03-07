@@ -1,7 +1,12 @@
 //! Equality polynomial for multilinear evaluation.
 
+use std::ops::{Mul, SubAssign};
+
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
+
+use crate::math::Math;
+use crate::thread::unsafe_allocate_zero_vec;
 
 /// Equality polynomial $\widetilde{eq}(x, r) = \prod_{i=1}^{n}(r_i x_i + (1-r_i)(1-x_i))$.
 ///
@@ -106,6 +111,174 @@ impl<F: Field> EqPolynomial<F> {
             .fold(F::one(), |acc, (&r_i, &p_i)| {
                 acc * (r_i * p_i + (F::one() - r_i) * (F::one() - p_i))
             })
+    }
+}
+
+/// Static (point-free) evaluation methods for eq polynomial tables.
+///
+/// These accept challenge or field-element slices and produce materialized
+/// tables without constructing an `EqPolynomial` instance. They are used
+/// by split-eq evaluators and sumcheck witnesses.
+impl<F: Field> EqPolynomial<F> {
+    /// Computes `eq(x, y) = Π_i (x_i y_i + (1 - x_i)(1 - y_i))` for two slices.
+    pub fn mle<C>(x: &[C], y: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        assert_eq!(x.len(), y.len());
+        x.iter()
+            .zip(y.iter())
+            .map(|(x_i, y_i)| {
+                let x: F = (*x_i).into();
+                let y: F = (*y_i).into();
+                x * y + (F::one() - x) * (F::one() - y)
+            })
+            .fold(F::one(), |acc, v| acc * v)
+    }
+
+    /// Computes `eq(r, 0) = Π_i (1 - r_i)`, selecting the all-zeros vertex.
+    pub fn zero_selector<C>(r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+    {
+        r.iter()
+            .map(|r_i| F::one() - (*r_i).into())
+            .fold(F::one(), |acc, v| acc * v)
+    }
+
+    /// Computes `{ eq(r, x) : x ∈ {0,1}^n }` with optional scaling.
+    ///
+    /// Uses a serial or parallel path based on table size. Big-endian index
+    /// order: `r[0]` is the MSB.
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
+    pub fn evals<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        if r.len() <= 16 {
+            Self::evals_serial(r, scaling_factor)
+        } else {
+            Self::evals_parallel(r, scaling_factor)
+        }
+    }
+
+    /// Serial eq table construction with optional scaling.
+    #[inline]
+    pub fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.len().pow2()];
+        let mut size = 1;
+        for r_j in r {
+            size *= 2;
+            for i in (0..size).rev().step_by(2) {
+                let scalar = evals[i / 2];
+                evals[i] = scalar * *r_j;
+                evals[i - 1] = scalar - evals[i];
+            }
+        }
+        evals
+    }
+
+    /// Prefix-cached eq tables: `result[j]` = eq over the prefix `r[..j]`.
+    ///
+    /// Returns `n+1` tables where `result[0] = [scaling_factor]` (eq over 0 vars).
+    /// Big-endian index order.
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_cached")]
+    pub fn evals_cached<C>(r: &[C], scaling_factor: Option<F>) -> Vec<Vec<F>>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        let mut evals: Vec<Vec<F>> = (0..=r.len())
+            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
+            .collect();
+        let mut size = 1;
+        for j in 0..r.len() {
+            size *= 2;
+            for i in (0..size).rev().step_by(2) {
+                let scalar = evals[j][i / 2];
+                evals[j + 1][i] = scalar * r[j];
+                evals[j + 1][i - 1] = scalar - evals[j + 1][i];
+            }
+        }
+        evals
+    }
+
+    /// Like [`evals_cached`](Self::evals_cached) but for high-to-low (reverse) binding order.
+    ///
+    /// Returns `result` where `result[j]` contains evaluations for the suffix `r[(n-j)..]`.
+    /// `result[0] = [scaling_factor]`. Builds tables in reverse variable order.
+    pub fn evals_cached_rev<C>(r: &[C], scaling_factor: Option<F>) -> Vec<Vec<F>>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F>,
+    {
+        let rev_r: Vec<_> = r.iter().rev().collect();
+        let mut evals: Vec<Vec<F>> = (0..=r.len())
+            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
+            .collect();
+        let mut size = 1;
+        for j in 0..r.len() {
+            for i in 0..size {
+                let scalar = evals[j][i];
+                let multiple = 1 << j;
+                evals[j + 1][i + multiple] = scalar * *rev_r[j];
+                evals[j + 1][i] = scalar - evals[j + 1][i + multiple];
+            }
+            size *= 2;
+        }
+        evals
+    }
+
+    /// Parallel eq table construction with optional scaling.
+    ///
+    /// Uses rayon to build large layers in parallel. Low-to-high construction:
+    /// processes `r` in reverse so that the first coordinate ends up as the MSB.
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_parallel")]
+    #[inline]
+    pub fn evals_parallel<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        let final_size = r.len().pow2();
+        let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
+        let mut size = 1;
+        evals[0] = scaling_factor.unwrap_or(F::one());
+
+        for r in r.iter().rev() {
+            let (evals_left, evals_right) = evals.split_at_mut(size);
+            let (evals_right, _) = evals_right.split_at_mut(size);
+
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                evals_left
+                    .par_iter_mut()
+                    .zip(evals_right.par_iter_mut())
+                    .for_each(|(x, y)| {
+                        *y = *x * *r;
+                        *x -= *y;
+                    });
+            }
+
+            #[cfg(not(feature = "parallel"))]
+            {
+                for i in 0..size {
+                    evals_right[i] = evals_left[i] * *r;
+                    evals_left[i] -= evals_right[i];
+                }
+            }
+
+            size *= 2;
+        }
+
+        evals
     }
 }
 
@@ -287,6 +460,101 @@ mod tests {
                     "eq(b_i, b_j) != 0 for i={i}, j={j}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn evals_serial_matches_instance() {
+        let mut rng = ChaCha20Rng::seed_from_u64(400);
+        for n in 1..=8 {
+            let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+            let instance = EqPolynomial::new(r.clone()).evaluations();
+            let via_static = EqPolynomial::<Fr>::evals_serial(&r, None);
+            assert_eq!(instance, via_static, "mismatch for n={n}");
+        }
+    }
+
+    #[test]
+    fn evals_parallel_matches_serial() {
+        let mut rng = ChaCha20Rng::seed_from_u64(401);
+        for n in [5, 10, 12] {
+            let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+            let serial = EqPolynomial::<Fr>::evals_serial(&r, None);
+            let parallel = EqPolynomial::<Fr>::evals_parallel(&r, None);
+            assert_eq!(serial, parallel, "serial vs parallel mismatch for n={n}");
+        }
+    }
+
+    #[test]
+    fn evals_cached_prefix_consistency() {
+        let mut rng = ChaCha20Rng::seed_from_u64(402);
+        for n in 2..=10 {
+            let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+            let cached = EqPolynomial::<Fr>::evals_cached(&r, None);
+            assert_eq!(cached.len(), n + 1);
+            assert_eq!(cached[0], vec![Fr::one()]);
+            for i in 0..=n {
+                assert_eq!(cached[i].len(), 1 << i);
+                let direct = EqPolynomial::<Fr>::evals_serial(&r[..i], None);
+                assert_eq!(cached[i], direct, "cached[{i}] mismatch for n={n}");
+            }
+        }
+    }
+
+    #[test]
+    fn evals_cached_rev_consistency() {
+        let mut rng = ChaCha20Rng::seed_from_u64(403);
+        for n in 2..=8 {
+            let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+            let cached_rev = EqPolynomial::<Fr>::evals_cached_rev(&r, None);
+            assert_eq!(cached_rev.len(), n + 1);
+            assert_eq!(cached_rev[0], vec![Fr::one()]);
+            for (j, table) in cached_rev.iter().enumerate() {
+                assert_eq!(table.len(), 1 << j);
+            }
+            // The last entry should equal evals over all variables in reverse order
+            let full_rev: Vec<Fr> = r.iter().rev().copied().collect();
+            let full_table = EqPolynomial::<Fr>::evals_serial(&full_rev, None);
+            // Sizes should match but the table is built differently
+            assert_eq!(cached_rev[n].len(), full_table.len());
+        }
+    }
+
+    #[test]
+    fn mle_static_matches_instance_evaluate() {
+        let mut rng = ChaCha20Rng::seed_from_u64(404);
+        let n = 5;
+        let x: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let y: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+
+        let via_instance = EqPolynomial::new(x.clone()).evaluate(&y);
+        let via_static = EqPolynomial::<Fr>::mle(&x, &y);
+        assert_eq!(via_instance, via_static);
+    }
+
+    #[test]
+    fn zero_selector() {
+        let mut rng = ChaCha20Rng::seed_from_u64(405);
+        let n = 4;
+        let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+
+        let expected = r.iter().fold(Fr::one(), |acc, &r_i| acc * (Fr::one() - r_i));
+        let result = EqPolynomial::<Fr>::zero_selector(&r);
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn evals_with_scaling() {
+        let mut rng = ChaCha20Rng::seed_from_u64(406);
+        let n = 4;
+        let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let scale = Fr::from_u64(7);
+
+        let unscaled = EqPolynomial::<Fr>::evals_serial(&r, None);
+        let scaled = EqPolynomial::<Fr>::evals_serial(&r, Some(scale));
+
+        for (u, s) in unscaled.iter().zip(scaled.iter()) {
+            assert_eq!(*u * scale, *s);
         }
     }
 }

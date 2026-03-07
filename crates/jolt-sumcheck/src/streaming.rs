@@ -28,10 +28,6 @@ use jolt_poly::UnivariatePoly;
 
 use crate::SumcheckCompute;
 
-// ---------------------------------------------------------------------------
-// Schedule traits
-// ---------------------------------------------------------------------------
-
 /// Controls when the streaming sumcheck transitions from streaming to linear
 /// phase, and how rounds are partitioned into windows.
 ///
@@ -177,10 +173,6 @@ impl StreamingSchedule for LinearOnlySchedule {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Streaming/linear phase traits
-// ---------------------------------------------------------------------------
-
 /// Computation strategy for the streaming phase of the sumcheck.
 ///
 /// During streaming rounds, the prover computes round polynomials from
@@ -237,10 +229,6 @@ pub trait LinearSumcheckStage<F: Field>: Sized + Send + Sync {
     /// Incorporates the verifier's challenge for the current round.
     fn ingest_challenge(&mut self, shared: &mut Self::Shared, r: F, round: usize);
 }
-
-// ---------------------------------------------------------------------------
-// Streaming sumcheck engine
-// ---------------------------------------------------------------------------
 
 /// Two-phase streaming sumcheck prover.
 ///
@@ -387,10 +375,6 @@ where
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Also re-export the chunk-based streaming prover trait for backwards compat
-// ---------------------------------------------------------------------------
 
 /// A sumcheck prover that processes witness evaluations in streaming
 /// fashion, enabling proofs over polynomials that do not fit in memory.

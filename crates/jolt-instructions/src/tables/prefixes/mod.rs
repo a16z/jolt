@@ -182,7 +182,7 @@ pub enum Prefixes {
 }
 
 /// Total number of prefix variants.
-pub const NUM_PREFIXES: usize = 45;
+pub const NUM_PREFIXES: usize = 46;
 
 impl Prefixes {
     /// Evaluate the prefix MLE for this variant.

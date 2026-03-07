@@ -151,7 +151,7 @@ pub enum Suffixes {
 }
 
 /// Total number of suffix variants.
-pub const NUM_SUFFIXES: usize = 42;
+pub const NUM_SUFFIXES: usize = 43;
 
 impl Suffixes {
     /// Returns `true` if this suffix's output is guaranteed to be in {0, 1}.
