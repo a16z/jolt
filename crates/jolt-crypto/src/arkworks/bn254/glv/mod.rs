@@ -26,9 +26,8 @@ use super::{field_to_fr, Bn254G1, Bn254G2};
 #[inline]
 pub fn vector_add_scalar_mul_g1(v: &mut [Bn254G1], generators: &[Bn254G1], scalar: Fr) {
     // SAFETY: Bn254G1 is #[repr(transparent)] over G1Projective — identical layout.
-    let v_inner = unsafe {
-        std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<G1Projective>(), v.len())
-    };
+    let v_inner =
+        unsafe { std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<G1Projective>(), v.len()) };
     // SAFETY: same repr(transparent) guarantee.
     let gens_inner = unsafe {
         std::slice::from_raw_parts(generators.as_ptr().cast::<G1Projective>(), generators.len())
@@ -40,13 +39,11 @@ pub fn vector_add_scalar_mul_g1(v: &mut [Bn254G1], generators: &[Bn254G1], scala
 #[inline]
 pub fn vector_scalar_mul_add_gamma_g1(v: &mut [Bn254G1], scalar: Fr, gamma: &[Bn254G1]) {
     // SAFETY: Bn254G1 is #[repr(transparent)] over G1Projective — identical layout.
-    let v_inner = unsafe {
-        std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<G1Projective>(), v.len())
-    };
+    let v_inner =
+        unsafe { std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<G1Projective>(), v.len()) };
     // SAFETY: same repr(transparent) guarantee.
-    let gamma_inner = unsafe {
-        std::slice::from_raw_parts(gamma.as_ptr().cast::<G1Projective>(), gamma.len())
-    };
+    let gamma_inner =
+        unsafe { std::slice::from_raw_parts(gamma.as_ptr().cast::<G1Projective>(), gamma.len()) };
     dory_g1::vector_scalar_mul_add_gamma_g1_online(v_inner, field_to_fr(&scalar), gamma_inner);
 }
 
@@ -63,9 +60,8 @@ pub fn fixed_base_vector_msm_g1(base: &Bn254G1, scalars: &[Fr]) -> Vec<Bn254G1> 
 #[inline]
 pub fn vector_add_scalar_mul_g2(v: &mut [Bn254G2], generators: &[Bn254G2], scalar: Fr) {
     // SAFETY: Bn254G2 is #[repr(transparent)] over G2Projective — identical layout.
-    let v_inner = unsafe {
-        std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<G2Projective>(), v.len())
-    };
+    let v_inner =
+        unsafe { std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<G2Projective>(), v.len()) };
     // SAFETY: same repr(transparent) guarantee.
     let gens_inner = unsafe {
         std::slice::from_raw_parts(generators.as_ptr().cast::<G2Projective>(), generators.len())
@@ -77,13 +73,11 @@ pub fn vector_add_scalar_mul_g2(v: &mut [Bn254G2], generators: &[Bn254G2], scala
 #[inline]
 pub fn vector_scalar_mul_add_gamma_g2(v: &mut [Bn254G2], scalar: Fr, gamma: &[Bn254G2]) {
     // SAFETY: Bn254G2 is #[repr(transparent)] over G2Projective — identical layout.
-    let v_inner = unsafe {
-        std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<G2Projective>(), v.len())
-    };
+    let v_inner =
+        unsafe { std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<G2Projective>(), v.len()) };
     // SAFETY: same repr(transparent) guarantee.
-    let gamma_inner = unsafe {
-        std::slice::from_raw_parts(gamma.as_ptr().cast::<G2Projective>(), gamma.len())
-    };
+    let gamma_inner =
+        unsafe { std::slice::from_raw_parts(gamma.as_ptr().cast::<G2Projective>(), gamma.len()) };
     dory_g2::vector_scalar_mul_add_gamma_g2_online(v_inner, field_to_fr(&scalar), gamma_inner);
 }
 
@@ -91,9 +85,8 @@ pub fn vector_scalar_mul_add_gamma_g2(v: &mut [Bn254G2], scalar: Fr, gamma: &[Bn
 #[inline]
 pub fn glv_four_scalar_mul(scalar: Fr, points: &[Bn254G2]) -> Vec<Bn254G2> {
     // SAFETY: Bn254G2 is #[repr(transparent)] over G2Projective — identical layout.
-    let points_inner = unsafe {
-        std::slice::from_raw_parts(points.as_ptr().cast::<G2Projective>(), points.len())
-    };
+    let points_inner =
+        unsafe { std::slice::from_raw_parts(points.as_ptr().cast::<G2Projective>(), points.len()) };
     let results = glv_four::glv_four_scalar_mul_online(field_to_fr(&scalar), points_inner);
     results.into_iter().map(Bn254G2::from).collect()
 }

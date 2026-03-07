@@ -1,6 +1,6 @@
 # Task 09: Relaxed R1CS in jolt-spartan
 
-**Status:** Pending
+**Status:** DONE
 **Phase:** BlindFold Layer 0 (prerequisite)
 **Dependencies:** None (self-contained in jolt-spartan)
 **Blocks:** Task 11 (Nova folding), Task 12 (BlindFold protocol)

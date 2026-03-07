@@ -69,6 +69,39 @@ impl<F: Field> LinearCombination<F> {
         self.add_term(var, F::one())
     }
 
+    /// Merge terms sharing the same variable, removing any that become zero.
+    ///
+    /// After many `add`/`sub` operations, an LC can accumulate duplicate
+    /// entries for the same variable.  `compact` collapses them so
+    /// `evaluate` and `sparse_entries` stay O(unique-vars) instead of
+    /// O(total-ops).
+    pub fn compact(&mut self) {
+        if self.terms.len() <= 1 {
+            return;
+        }
+        // Sort by variable index so equal-var runs are adjacent.
+        self.terms.sort_unstable_by_key(|t| t.var.0);
+
+        let terms = &mut self.terms;
+        let mut write = 0;
+        for read in 1..terms.len() {
+            if terms[read].var == terms[write].var {
+                let read_coeff = terms[read].coeff;
+                terms[write].coeff += read_coeff;
+            } else {
+                if !terms[write].coeff.is_zero() {
+                    write += 1;
+                }
+                terms[write] = terms[read].clone();
+            }
+        }
+        // Keep last group if nonzero.
+        if !terms[write].coeff.is_zero() {
+            write += 1;
+        }
+        terms.truncate(write);
+    }
+
     /// Evaluate the linear combination against a witness vector.
     pub fn evaluate(&self, witness: &[F]) -> F {
         self.terms
@@ -380,6 +413,58 @@ mod tests {
         let expected = sop.evaluate(opening_values, challenge_values);
         let actual = witness[emission.output_var.index()];
         assert_eq!(actual, expected, "Output mismatch");
+    }
+
+    #[test]
+    fn lc_compact_merges_same_var() {
+        let mut lc: LinearCombination<Fr> = LinearCombination {
+            terms: vec![
+                LcTerm {
+                    var: R1csVar(1),
+                    coeff: Fr::from_u64(3),
+                },
+                LcTerm {
+                    var: R1csVar(2),
+                    coeff: Fr::from_u64(5),
+                },
+                LcTerm {
+                    var: R1csVar(1),
+                    coeff: Fr::from_u64(7),
+                },
+            ],
+        };
+        lc.compact();
+        assert_eq!(lc.terms.len(), 2);
+        assert_eq!(lc.terms[0].var, R1csVar(1));
+        assert_eq!(lc.terms[0].coeff, Fr::from_u64(10));
+        assert_eq!(lc.terms[1].var, R1csVar(2));
+        assert_eq!(lc.terms[1].coeff, Fr::from_u64(5));
+    }
+
+    #[test]
+    fn lc_compact_removes_zeros() {
+        let mut lc: LinearCombination<Fr> = LinearCombination {
+            terms: vec![
+                LcTerm {
+                    var: R1csVar(1),
+                    coeff: Fr::from_u64(5),
+                },
+                LcTerm {
+                    var: R1csVar(1),
+                    coeff: -Fr::from_u64(5),
+                },
+            ],
+        };
+        lc.compact();
+        assert!(lc.terms.is_empty());
+    }
+
+    #[test]
+    fn lc_compact_single_term_noop() {
+        let mut lc: LinearCombination<Fr> = LinearCombination::variable(R1csVar(3));
+        lc.compact();
+        assert_eq!(lc.terms.len(), 1);
+        assert_eq!(lc.terms[0].var, R1csVar(3));
     }
 
     #[test]

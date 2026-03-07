@@ -1,6 +1,6 @@
 # crates/tasks
 
-Task specifications for the `jolt-ir` crate (RFC finding 12, spec §4.10).
+Task specifications for the modular crate workspace.
 
 ## Task dependency graph
 
@@ -19,7 +19,15 @@ Task specifications for the `jolt-ir` crate (RFC finding 12, spec §4.10).
     │       │
     │       └──► 08-jolt-gnark-crate  ✅ DONE (GnarkEmitter + sanitize_go_name + 14 tests)
     │
-    └──► 06-integrate-downstream ← Wire into jolt-zkvm + jolt-spartan
+    └──► 06-integrate-downstream ← Wire into jolt-zkvm (jolt-spartan part done)
+
+09-blindfold-relaxed-spartan    ✅ DONE (RelaxedR1CS trait, prove_relaxed/verify_relaxed, 4 tests)
+    │
+    ├──► 10-blindfold-verifier-r1cs ✅ DONE (StageConfig, BakedPublicInputs, build/assign, 10 tests)
+    │
+    └──► 11-blindfold-nova-folding  ✅ DONE (fold_instances/witnesses, cross_term, sample_random, 14 tests)
+            │
+            └──► 12-blindfold-protocol  ✅ DONE (BlindFoldProver/Verifier, e2e + negative tests, 8 tests)
 ```
 
 ## Recommended execution order
@@ -31,7 +39,11 @@ Task specifications for the `jolt-ir` crate (RFC finding 12, spec §4.10).
 5. **Task 04** — Lean4 code generation backend ✅
 6. **Task 05** — Circuit transpilation backend (CircuitEmitter trait) ✅
 7. **Task 08** — `jolt-gnark` crate: gnark `CircuitEmitter` implementation (port from PR #1322) ✅
-8. **Task 06** — integrate into jolt-zkvm + jolt-spartan (migrate SumcheckInstanceParams)
+8. **Task 09** — relaxed R1CS in jolt-spartan ✅
+9. **Task 10** — verifier R1CS construction in jolt-blindfold ✅
+10. **Task 11** — Nova folding in jolt-blindfold ✅
+11. **Task 12** — BlindFold protocol orchestrator ✅
+12. **Task 06** — integrate IR into jolt-zkvm + jolt-spartan (spartan done, zkvm pending)
 
 ## Architecture decision: downstream dependency scope
 

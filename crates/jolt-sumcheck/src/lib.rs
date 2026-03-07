@@ -20,12 +20,13 @@
 //! |--------|---------|
 //! | [`claim`] | [`SumcheckClaim`] — the public statement |
 //! | [`proof`] | [`SumcheckProof`] — serializable proof |
-//! | [`prover`] | [`SumcheckProver`] engine + [`SumcheckWitness`] trait |
+//! | [`prover`] | [`SumcheckProver`] engine + [`SumcheckCompute`] trait |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
 //! | [`batched`] | Batched prover/verifier via random linear combination |
 //! | [`streaming`] | [`StreamingSumcheckProver`] trait for memory-constrained provers |
 //! | [`handler`] | [`RoundHandler`] / [`RoundVerifier`] — strategy traits for clear vs. committed mode |
 //! | [`error`] | [`SumcheckError`] variants |
+//! | [`reduction`] | [`SumcheckReduction`] — sumcheck-based claim reduction trait |
 
 pub mod batched;
 pub mod claim;
@@ -33,6 +34,7 @@ pub mod error;
 pub mod handler;
 pub mod proof;
 pub mod prover;
+pub mod reduction;
 pub mod streaming;
 pub mod verifier;
 
@@ -41,7 +43,8 @@ pub use claim::SumcheckClaim;
 pub use error::SumcheckError;
 pub use handler::{ClearRoundHandler, ClearRoundVerifier, RoundHandler, RoundVerifier};
 pub use proof::SumcheckProof;
-pub use prover::{SumcheckProver, SumcheckWitness};
+pub use prover::{SumcheckCompute, SumcheckProver};
+pub use reduction::{SumcheckReduction, SumcheckWitnessBatch};
 pub use streaming::StreamingSumcheckProver;
 pub use verifier::SumcheckVerifier;
 

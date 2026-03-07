@@ -11,13 +11,12 @@ workspace = true
 [dependencies]
 jolt-crypto = { path = "../jolt-crypto" }
 jolt-field = { path = "../jolt-field" }
-jolt-poly = { path = "../jolt-poly", optional = true }
+jolt-poly = { path = "../jolt-poly" }
 jolt-transcript = { path = "../jolt-transcript" }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-jolt-poly = { path = "../jolt-poly" }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }
@@ -31,4 +30,4 @@ harness = false
 ignored = ["rand"]
 
 [features]
-test-utils = ["jolt-poly"]
+test-utils = []

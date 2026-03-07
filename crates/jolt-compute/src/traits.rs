@@ -120,6 +120,23 @@ pub trait ComputeBackend: Send + Sync + 'static {
         degree: usize,
     ) -> Vec<F>;
 
+    /// Batched pairwise linear interpolation across multiple buffers.
+    ///
+    /// Equivalent to calling [`interpolate_pairs`](Self::interpolate_pairs) on
+    /// each buffer individually, but enables backends to parallelize across
+    /// all buffers in a single dispatch. This improves work-stealing
+    /// granularity when individual buffers are small (e.g., after several
+    /// sumcheck rounds).
+    fn interpolate_pairs_batch<F: Field>(
+        &self,
+        bufs: Vec<Self::Buffer<F>>,
+        scalar: F,
+    ) -> Vec<Self::Buffer<F>> {
+        bufs.into_iter()
+            .map(|buf| self.interpolate_pairs(buf, scalar))
+            .collect()
+    }
+
     /// Multiplicative product table over the Boolean hypercube.
     ///
     /// Computes $2^n$ evaluations where $n = \text{point.len()}$:

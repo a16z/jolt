@@ -106,8 +106,10 @@ impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
 
         for (point, group_claims) in groups {
             debug_assert!(
-                group_claims.iter().all(|c| c.evaluations.len().is_power_of_two()
-                    && c.evaluations.len() == 1 << c.point.len()),
+                group_claims
+                    .iter()
+                    .all(|c| c.evaluations.len().is_power_of_two()
+                        && c.evaluations.len() == 1 << c.point.len()),
                 "evaluation table size must equal 2^num_vars"
             );
 

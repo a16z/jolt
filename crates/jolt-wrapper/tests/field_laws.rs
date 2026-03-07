@@ -44,10 +44,7 @@ fn add_associativity() {
         let a = random_const(&mut rng);
         let b = random_const(&mut rng);
         let c = random_const(&mut rng);
-        assert_eq!(
-            ((a + b) + c).as_constant(),
-            (a + (b + c)).as_constant()
-        );
+        assert_eq!(((a + b) + c).as_constant(), (a + (b + c)).as_constant());
     }
 }
 
@@ -94,10 +91,7 @@ fn mul_associativity() {
         let a = random_const(&mut rng);
         let b = random_const(&mut rng);
         let c = random_const(&mut rng);
-        assert_eq!(
-            ((a * b) * c).as_constant(),
-            (a * (b * c)).as_constant()
-        );
+        assert_eq!(((a * b) * c).as_constant(), (a * (b * c)).as_constant());
     }
 }
 
@@ -235,7 +229,10 @@ fn from_i64_consistency() {
     for v in values {
         let pos = SymbolicField::from_i64(v);
         let neg = SymbolicField::from_i64(-v);
-        assert!((pos + neg).is_zero(), "from_i64({v}) + from_i64(-{v}) should be 0");
+        assert!(
+            (pos + neg).is_zero(),
+            "from_i64({v}) + from_i64(-{v}) should be 0"
+        );
     }
 }
 

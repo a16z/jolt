@@ -14,8 +14,8 @@
 //! AstBundle (constraints + inputs — backend-agnostic)
 //!      ↓ consumed by
 //! AstEmitter trait (pluggable codegen backend)
-//!      ├── gnark/ → GnarkAstEmitter → Go circuit code (Groth16)
-//!      └── future backends...
+//!      ├── gnark/    → GnarkAstEmitter    → Go circuit code (Groth16)
+//!      └── spartan/  → SpartanAstEmitter  → R1CS constraints (Spartan)
 //! ```
 //!
 //! # Usage
@@ -52,6 +52,7 @@ pub mod ast_emitter;
 pub mod bundle;
 pub mod gnark;
 pub mod scalar_ops;
+pub mod spartan;
 pub mod symbolic;
 pub mod transcript;
 pub mod tunneling;

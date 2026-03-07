@@ -3,7 +3,7 @@
 use jolt_field::{Field, Fr};
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::SumcheckClaim;
-use jolt_sumcheck::prover::{SumcheckProver, SumcheckWitness};
+use jolt_sumcheck::prover::{SumcheckCompute, SumcheckProver};
 use jolt_sumcheck::verifier::SumcheckVerifier;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use num_traits::Zero;
@@ -26,7 +26,7 @@ impl EqProductWitness {
     }
 }
 
-impl SumcheckWitness<Fr> for EqProductWitness {
+impl SumcheckCompute<Fr> for EqProductWitness {
     fn round_polynomial(&self) -> UnivariatePoly<Fr> {
         let half = self.poly.len() / 2;
         let mut evals = [Fr::zero(); 3];

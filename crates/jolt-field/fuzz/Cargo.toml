@@ -23,3 +23,13 @@ doc = false
 name = "field_arith"
 path = "fuzz_targets/field_arith.rs"
 doc = false
+
+[[bin]]
+name = "wide_accumulator_fmadd"
+path = "fuzz_targets/wide_accumulator_fmadd.rs"
+doc = false
+
+[[bin]]
+name = "wide_accumulator_merge"
+path = "fuzz_targets/wide_accumulator_merge.rs"
+doc = false

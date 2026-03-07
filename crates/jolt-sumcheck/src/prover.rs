@@ -11,9 +11,9 @@ use crate::proof::SumcheckProof;
 /// Trait that a concrete witness must implement to participate in the
 /// sumcheck protocol.
 ///
-/// The prover engine calls [`round_polynomial`](SumcheckWitness::round_polynomial)
+/// The prover engine calls [`round_polynomial`](SumcheckCompute::round_polynomial)
 /// to obtain the univariate restriction of the summed polynomial in the
-/// current round, then calls [`bind`](SumcheckWitness::bind) with the
+/// current round, then calls [`bind`](SumcheckCompute::bind) with the
 /// Fiat-Shamir challenge to fix that variable and advance to the next round.
 ///
 /// # Implementor contract
@@ -23,7 +23,7 @@ use crate::proof::SumcheckProof;
 ///   sum over the remaining Boolean hypercube.
 /// * `bind(r)` must fix the current leading variable to $r$ in place,
 ///   reducing `num_vars` by one.
-pub trait SumcheckWitness<F: Field>: Send + Sync {
+pub trait SumcheckCompute<F: Field>: Send + Sync {
     /// Computes the round polynomial $s_i(X)$ for the current round.
     ///
     /// The returned univariate polynomial satisfies
@@ -38,7 +38,7 @@ pub trait SumcheckWitness<F: Field>: Send + Sync {
 
 /// Stateless sumcheck prover engine.
 ///
-/// Orchestrates the interaction between a [`SumcheckWitness`] and a
+/// Orchestrates the interaction between a [`SumcheckCompute`] and a
 /// [`Transcript`], producing a proof artifact determined by the
 /// [`RoundHandler`] strategy.
 pub struct SumcheckProver;
@@ -58,7 +58,7 @@ impl SumcheckProver {
     /// 4. Binds the witness at $r_i$.
     pub fn prove_with_handler<F, T, H>(
         claim: &SumcheckClaim<F>,
-        witness: &mut impl SumcheckWitness<F>,
+        witness: &mut impl SumcheckCompute<F>,
         transcript: &mut T,
         challenge_fn: impl Fn(T::Challenge) -> F,
         mut handler: H,
@@ -85,7 +85,7 @@ impl SumcheckProver {
     /// directly to the transcript.
     pub fn prove<F, T>(
         claim: &SumcheckClaim<F>,
-        witness: &mut impl SumcheckWitness<F>,
+        witness: &mut impl SumcheckCompute<F>,
         transcript: &mut T,
         challenge_fn: impl Fn(T::Challenge) -> F,
     ) -> SumcheckProof<F>

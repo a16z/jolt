@@ -32,9 +32,8 @@ impl StreamingCommitment for crate::DoryScheme {
 
     fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output {
         // SAFETY: Bn254G1 is repr(transparent) over G1Projective, same as ArkG1.
-        let ark_row_commitments: Vec<dory::backends::arkworks::ArkG1> = unsafe {
-            std::mem::transmute(partial.row_commitments)
-        };
+        let ark_row_commitments: Vec<dory::backends::arkworks::ArkG1> =
+            unsafe { std::mem::transmute(partial.row_commitments) };
         let g2_bases = &setup.0.g2_vec[..ark_row_commitments.len()];
         let tier_2 =
             <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&ark_row_commitments, g2_bases);

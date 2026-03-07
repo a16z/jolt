@@ -2,6 +2,7 @@
 
 use jolt_field::{Field, FieldAccumulator};
 
+use crate::any_buffer::AnyBuffer;
 use crate::traits::{ComputeBackend, Scalar};
 
 /// Parallelism threshold: buffers smaller than this use sequential loops.
@@ -45,7 +46,7 @@ impl<F: Field> CpuKernel<F> {
     }
 
     #[inline]
-    fn evaluate(&self, lo: &[F], hi: &[F], degree: usize) -> Vec<F> {
+    pub fn evaluate(&self, lo: &[F], hi: &[F], degree: usize) -> Vec<F> {
         (self.eval_fn)(lo, hi, degree)
     }
 }
@@ -124,6 +125,38 @@ impl ComputeBackend for CpuBackend {
         result
     }
 
+    fn interpolate_pairs_batch<F: Field>(
+        &self,
+        bufs: Vec<Vec<F>>,
+        scalar: F,
+    ) -> Vec<Vec<F>> {
+        #[cfg(feature = "parallel")]
+        {
+            // Total pairs across all buffers
+            let total_pairs: usize = bufs.iter().map(|b| b.len() / 2).sum();
+            if total_pairs >= PAR_THRESHOLD {
+                use rayon::prelude::*;
+                return bufs
+                    .into_par_iter()
+                    .map(|buf| {
+                        let half = buf.len() / 2;
+                        (0..half)
+                            .map(|i| {
+                                let lo = buf[2 * i];
+                                let hi = buf[2 * i + 1];
+                                lo + scalar * (hi - lo)
+                            })
+                            .collect()
+                    })
+                    .collect();
+            }
+        }
+
+        bufs.into_iter()
+            .map(|buf| self.interpolate_pairs(buf, scalar))
+            .collect()
+    }
+
     fn pairwise_reduce<F: Field>(
         &self,
         inputs: &[&Vec<F>],
@@ -150,24 +183,21 @@ impl ComputeBackend for CpuBackend {
 
                 let accs = (0..half)
                     .into_par_iter()
-                    .fold(
-                        new_accs,
-                        |mut acc, i| {
-                            let mut lo = Vec::with_capacity(num_inputs);
-                            let mut hi = Vec::with_capacity(num_inputs);
-                            for &input in inputs {
-                                lo.push(input[2 * i]);
-                                hi.push(input[2 * i + 1]);
-                            }
+                    .fold(new_accs, |mut acc, i| {
+                        let mut lo = Vec::with_capacity(num_inputs);
+                        let mut hi = Vec::with_capacity(num_inputs);
+                        for &input in inputs {
+                            lo.push(input[2 * i]);
+                            hi.push(input[2 * i + 1]);
+                        }
 
-                            let evals = kernel.evaluate(&lo, &hi, degree);
-                            let w = weights[i];
-                            for (a, e) in acc.iter_mut().zip(evals.iter()) {
-                                a.fmadd(w, *e);
-                            }
-                            acc
-                        },
-                    )
+                        let evals = kernel.evaluate(&lo, &hi, degree);
+                        let w = weights[i];
+                        for (a, e) in acc.iter_mut().zip(evals.iter()) {
+                            a.fmadd(w, *e);
+                        }
+                        acc
+                    })
                     .reduce(new_accs, |mut a, b| {
                         for (ai, bi) in a.iter_mut().zip(b) {
                             ai.merge(bi);
@@ -236,6 +266,129 @@ impl ComputeBackend for CpuBackend {
         }
 
         table
+    }
+}
+
+impl CpuBackend {
+    /// Pairwise linear interpolation from a type-erased compact buffer.
+    ///
+    /// Like [`interpolate_pairs`](ComputeBackend::interpolate_pairs) but reads
+    /// from an [`AnyBuffer`], promoting compact scalars to `F` inline. The
+    /// output is always `Vec<F>` since the interpolation `lo + r*(hi - lo)`
+    /// produces a random field element regardless of the input scalar type.
+    ///
+    /// This is useful for the first sumcheck round where compact polynomials
+    /// have not yet been bound.
+    pub fn interpolate_mixed<F: Field>(
+        &self,
+        buf: &AnyBuffer<'_, F>,
+        scalar: F,
+    ) -> Vec<F> {
+        let half = buf.half_len();
+
+        #[cfg(feature = "parallel")]
+        {
+            if half >= PAR_THRESHOLD {
+                use rayon::prelude::*;
+                return (0..half)
+                    .into_par_iter()
+                    .map(|i| {
+                        let (lo, hi) = buf.pair(i);
+                        lo + scalar * (hi - lo)
+                    })
+                    .collect();
+            }
+        }
+
+        let mut result = Vec::with_capacity(half);
+        for i in 0..half {
+            let (lo, hi) = buf.pair(i);
+            result.push(lo + scalar * (hi - lo));
+        }
+        result
+    }
+
+    /// Composition-reduce over paired inputs from heterogeneous buffers.
+    ///
+    /// Like [`pairwise_reduce`](ComputeBackend::pairwise_reduce) but accepts
+    /// [`AnyBuffer`] inputs, allowing compact scalar types (`u8`, `i64`, etc.)
+    /// to be read directly without pre-promoting to field elements. This saves
+    /// memory bandwidth in the first sumcheck round where compact polynomials
+    /// have not yet been bound.
+    ///
+    /// Compact scalars are promoted to `F` inline during pair reads, avoiding
+    /// the allocation of a full `Vec<F>` buffer.
+    pub fn pairwise_reduce_mixed<F: Field>(
+        &self,
+        inputs: &[AnyBuffer<'_, F>],
+        weights: &[F],
+        kernel: &CpuKernel<F>,
+        degree: usize,
+    ) -> Vec<F> {
+        let num_outputs = degree + 1;
+        let half = inputs[0].half_len();
+        let num_inputs = inputs.len();
+
+        let new_accs = || -> Vec<F::Accumulator> {
+            (0..num_outputs)
+                .map(|_| F::Accumulator::default())
+                .collect()
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            if half >= PAR_THRESHOLD {
+                use rayon::prelude::*;
+
+                let accs = (0..half)
+                    .into_par_iter()
+                    .fold(new_accs, |mut acc, i| {
+                        let mut lo = Vec::with_capacity(num_inputs);
+                        let mut hi = Vec::with_capacity(num_inputs);
+                        for input in inputs {
+                            let (l, h) = input.pair(i);
+                            lo.push(l);
+                            hi.push(h);
+                        }
+
+                        let evals = kernel.evaluate(&lo, &hi, degree);
+                        let w = weights[i];
+                        for (a, e) in acc.iter_mut().zip(evals.iter()) {
+                            a.fmadd(w, *e);
+                        }
+                        acc
+                    })
+                    .reduce(new_accs, |mut a, b| {
+                        for (ai, bi) in a.iter_mut().zip(b) {
+                            ai.merge(bi);
+                        }
+                        a
+                    });
+
+                return accs.into_iter().map(FieldAccumulator::reduce).collect();
+            }
+        }
+
+        let mut accs = new_accs();
+        let mut lo = Vec::with_capacity(num_inputs);
+        let mut hi = Vec::with_capacity(num_inputs);
+
+        for (i, &w) in weights.iter().enumerate().take(half) {
+            lo.clear();
+            hi.clear();
+            for input in inputs {
+                let (l, h) = input.pair(i);
+                lo.push(l);
+                hi.push(h);
+            }
+
+            let evals = kernel.evaluate(&lo, &hi, degree);
+            for (a, e) in accs.iter_mut().zip(evals.iter()) {
+                a.fmadd(w, *e);
+            }
+        }
+
+        accs.into_iter().map(FieldAccumulator::reduce).collect()
     }
 }
 
@@ -537,5 +690,198 @@ mod tests {
             expected[1] += weights[i] * hi;
         }
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn pairwise_reduce_mixed_matches_promoted() {
+        let b = backend();
+        // Compact u8 input + field weight
+        let compact_data: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let weights: Vec<Fr> = vec![Fr::one(); 4];
+
+        let kernel = make_identity_kernel();
+
+        // Mixed: read directly from u8 slice
+        let mixed_result = b.pairwise_reduce_mixed(
+            &[AnyBuffer::from(compact_data.as_slice())],
+            &weights,
+            &kernel,
+            1,
+        );
+
+        // Promoted: convert to Fr first, then use standard pairwise_reduce
+        let promoted: Vec<Fr> = compact_data.iter().map(|&x| Fr::from_u8(x)).collect();
+        let standard_result = b.pairwise_reduce(&[&promoted], &weights, &kernel, 1);
+
+        assert_eq!(mixed_result, standard_result);
+    }
+
+    #[test]
+    fn pairwise_reduce_mixed_heterogeneous_inputs() {
+        let b = backend();
+        // Mix of u8 and Fr inputs
+        let u8_data: Vec<u8> = vec![10, 20, 30, 40];
+        let fr_data: Vec<Fr> = vec![100, 200, 300, 400]
+            .into_iter()
+            .map(Fr::from_u64)
+            .collect();
+        let weights = vec![Fr::one(); 2];
+
+        // Kernel sums across inputs: sum_k (lo[k] + t*(hi[k]-lo[k]))
+        let kernel = make_identity_kernel();
+
+        let mixed_result = b.pairwise_reduce_mixed(
+            &[
+                AnyBuffer::from(u8_data.as_slice()),
+                AnyBuffer::field(fr_data.as_slice()),
+            ],
+            &weights,
+            &kernel,
+            1,
+        );
+
+        // Pair 0: u8=(10,20), fr=(100,200) -> f(0)=10+100=110, f(1)=20+200=220
+        // Pair 1: u8=(30,40), fr=(300,400) -> f(0)=30+300=330, f(1)=40+400=440
+        // Sums: [110+330, 220+440] = [440, 660]
+        assert_eq!(mixed_result[0], Fr::from_u64(440));
+        assert_eq!(mixed_result[1], Fr::from_u64(660));
+    }
+
+    #[test]
+    fn pairwise_reduce_mixed_i64() {
+        let b = backend();
+        // Signed i64 input
+        let i64_data: Vec<i64> = vec![-1, 2, 3, -4];
+        let weights = vec![Fr::one(); 2];
+
+        let kernel = make_identity_kernel();
+
+        let mixed_result = b.pairwise_reduce_mixed(
+            &[AnyBuffer::from(i64_data.as_slice())],
+            &weights,
+            &kernel,
+            1,
+        );
+
+        // Promoted reference
+        let promoted: Vec<Fr> = i64_data.iter().map(|&x| Fr::from_i64(x)).collect();
+        let standard_result = b.pairwise_reduce(&[&promoted], &weights, &kernel, 1);
+
+        assert_eq!(mixed_result, standard_result);
+    }
+
+    #[test]
+    fn pairwise_reduce_mixed_large_parallel() {
+        let b = backend();
+        let mut rng = ChaCha20Rng::seed_from_u64(300);
+        // 4096 u8 elements -> 2048 pairs, above PAR_THRESHOLD
+        let n = 4096;
+        let compact: Vec<u8> = (0..n).map(|_| rand::Rng::gen(&mut rng)).collect();
+        let weights: Vec<Fr> = (0..n / 2).map(|_| Fr::random(&mut rng)).collect();
+
+        let kernel = make_identity_kernel();
+
+        let mixed_result = b.pairwise_reduce_mixed(
+            &[AnyBuffer::from(compact.as_slice())],
+            &weights,
+            &kernel,
+            1,
+        );
+
+        // Promoted reference
+        let promoted: Vec<Fr> = compact.iter().map(|&x| Fr::from_u8(x)).collect();
+        let standard_result = b.pairwise_reduce(&[&promoted], &weights, &kernel, 1);
+
+        assert_eq!(mixed_result, standard_result);
+    }
+
+    #[test]
+    fn interpolate_pairs_batch_matches_individual() {
+        let b = backend();
+        let mut rng = ChaCha20Rng::seed_from_u64(400);
+        let scalar = Fr::random(&mut rng);
+
+        let bufs: Vec<Vec<Fr>> = (0..5)
+            .map(|_| (0..64).map(|_| Fr::random(&mut rng)).collect())
+            .collect();
+
+        // Batched
+        let batch_result = b.interpolate_pairs_batch(bufs.clone(), scalar);
+
+        // Individual
+        let individual_results: Vec<Vec<Fr>> = bufs
+            .into_iter()
+            .map(|buf| b.interpolate_pairs(buf, scalar))
+            .collect();
+
+        assert_eq!(batch_result, individual_results);
+    }
+
+    #[test]
+    fn interpolate_pairs_batch_large_parallel() {
+        let b = backend();
+        let mut rng = ChaCha20Rng::seed_from_u64(401);
+        let scalar = Fr::random(&mut rng);
+
+        // 10 buffers of 512 elements each = 2560 total pairs, above PAR_THRESHOLD
+        let bufs: Vec<Vec<Fr>> = (0..10)
+            .map(|_| (0..512).map(|_| Fr::random(&mut rng)).collect())
+            .collect();
+
+        let batch_result = b.interpolate_pairs_batch(bufs.clone(), scalar);
+
+        let individual_results: Vec<Vec<Fr>> = bufs
+            .into_iter()
+            .map(|buf| b.interpolate_pairs(buf, scalar))
+            .collect();
+
+        assert_eq!(batch_result, individual_results);
+    }
+
+    #[test]
+    fn interpolate_mixed_matches_field() {
+        let b = backend();
+        let mut rng = ChaCha20Rng::seed_from_u64(500);
+        let scalar = Fr::random(&mut rng);
+
+        // u8 compact data
+        let compact: Vec<u8> = (0..64).map(|_| rand::Rng::gen(&mut rng)).collect();
+        let mixed_result = b.interpolate_mixed(&AnyBuffer::from(compact.as_slice()), scalar);
+
+        // Promoted reference
+        let promoted: Vec<Fr> = compact.iter().map(|&x| Fr::from_u8(x)).collect();
+        let field_result = b.interpolate_pairs(promoted, scalar);
+
+        assert_eq!(mixed_result, field_result);
+    }
+
+    #[test]
+    fn interpolate_mixed_i64() {
+        let b = backend();
+        let scalar = Fr::from_u64(7);
+
+        let data: Vec<i64> = vec![-10, 20, 30, -40];
+        let mixed_result = b.interpolate_mixed(&AnyBuffer::from(data.as_slice()), scalar);
+
+        // Manual: lo + scalar * (hi - lo)
+        let expected_0 = Fr::from_i64(-10) + scalar * (Fr::from_i64(20) - Fr::from_i64(-10));
+        let expected_1 = Fr::from_i64(30) + scalar * (Fr::from_i64(-40) - Fr::from_i64(30));
+        assert_eq!(mixed_result, vec![expected_0, expected_1]);
+    }
+
+    #[test]
+    fn interpolate_mixed_large_parallel() {
+        let b = backend();
+        let mut rng = ChaCha20Rng::seed_from_u64(501);
+        let scalar = Fr::random(&mut rng);
+
+        // 4096 u8 elements -> 2048 pairs, above PAR_THRESHOLD
+        let compact: Vec<u8> = (0..4096).map(|_| rand::Rng::gen(&mut rng)).collect();
+        let mixed_result = b.interpolate_mixed(&AnyBuffer::from(compact.as_slice()), scalar);
+
+        let promoted: Vec<Fr> = compact.iter().map(|&x| Fr::from_u8(x)).collect();
+        let field_result = b.interpolate_pairs(promoted, scalar);
+
+        assert_eq!(mixed_result, field_result);
     }
 }

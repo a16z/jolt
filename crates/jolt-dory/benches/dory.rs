@@ -64,16 +64,8 @@ fn bench_open(c: &mut Criterion) {
                         (poly, point, eval)
                     },
                     |(poly, point, eval)| {
-                        let mut transcript =
-                            jolt_transcript::Blake2bTranscript::new(b"bench-open");
-                        DoryScheme::open(
-                            &poly,
-                            &point,
-                            eval,
-                            &setup,
-                            None,
-                            &mut transcript,
-                        )
+                        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"bench-open");
+                        DoryScheme::open(&poly, &point, eval, &setup, None, &mut transcript)
                     },
                     criterion::BatchSize::SmallInput,
                 );
@@ -102,14 +94,8 @@ fn bench_verify(c: &mut Criterion) {
                         let (commitment, _) = DoryScheme::commit(poly.evaluations(), &setup);
                         let mut transcript =
                             jolt_transcript::Blake2bTranscript::new(b"bench-verify");
-                        let proof = DoryScheme::open(
-                            &poly,
-                            &point,
-                            eval,
-                            &setup,
-                            None,
-                            &mut transcript,
-                        );
+                        let proof =
+                            DoryScheme::open(&poly, &point, eval, &setup, None, &mut transcript);
                         (commitment, point, eval, proof)
                     },
                     |(commitment, point, eval, proof)| {
@@ -175,18 +161,14 @@ fn bench_combine(c: &mut Criterion) {
         let s_a = Fr::random(&mut rng);
         let s_b = Fr::random(&mut rng);
 
-        group.bench_with_input(
-            BenchmarkId::from_parameter(num_vars),
-            &num_vars,
-            |b, _| {
-                b.iter(|| {
-                    <DoryScheme as jolt_openings::AdditivelyHomomorphic>::combine(
-                        &[commit_a.clone(), commit_b.clone()],
-                        &[s_a, s_b],
-                    )
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(num_vars), &num_vars, |b, _| {
+            b.iter(|| {
+                <DoryScheme as jolt_openings::AdditivelyHomomorphic>::combine(
+                    &[commit_a.clone(), commit_b.clone()],
+                    &[s_a, s_b],
+                )
+            });
+        });
     }
     group.finish();
 }

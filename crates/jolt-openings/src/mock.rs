@@ -12,6 +12,8 @@ use jolt_poly::Polynomial;
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
+use jolt_crypto::HomomorphicCommitment;
+
 use crate::error::OpeningsError;
 use crate::traits::{AdditivelyHomomorphic, CommitmentScheme};
 
@@ -101,6 +103,21 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
     }
 }
 
+impl<F: Field> HomomorphicCommitment<F> for MockCommitment<F> {
+    fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
+        let len = c1.evaluations.len().max(c2.evaluations.len());
+        let mut result = vec![F::zero(); len];
+        for (i, r) in result.iter_mut().enumerate() {
+            let a = c1.evaluations.get(i).copied().unwrap_or_else(F::zero);
+            let b = c2.evaluations.get(i).copied().unwrap_or_else(F::zero);
+            *r = a + *scalar * b;
+        }
+        MockCommitment {
+            evaluations: result,
+        }
+    }
+}
+
 impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
@@ -143,7 +160,7 @@ mod tests {
         let point: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
 
-        let (commitment, _hint) = MockPCS::commit(poly.evaluations(), &());
+        let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
 
         let mut transcript_p = Blake2bTranscript::new(b"test");
         let proof = MockPCS::open(&poly, &point, eval, &(), None, &mut transcript_p);
@@ -161,7 +178,7 @@ mod tests {
         let eval = poly.evaluate(&point);
         let wrong_eval = eval + Fr::from_u64(1);
 
-        let (commitment, _) = MockPCS::commit(poly.evaluations(), &());
+        let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
 
         let mut transcript_p = Blake2bTranscript::new(b"test");
         let proof = MockPCS::open(&poly, &point, eval, &(), None, &mut transcript_p);
@@ -185,7 +202,7 @@ mod tests {
         let poly2 = Polynomial::<Fr>::random(3, &mut rng);
         let point: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
 
-        let (wrong_commitment, _) = MockPCS::commit(poly2.evaluations(), &());
+        let (wrong_commitment, ()) = MockPCS::commit(poly2.evaluations(), &());
         let eval = poly1.evaluate(&point);
 
         let mut transcript_p = Blake2bTranscript::new(b"test");
@@ -209,8 +226,8 @@ mod tests {
         let poly_a = Polynomial::<Fr>::random(3, &mut rng);
         let poly_b = Polynomial::<Fr>::random(3, &mut rng);
 
-        let (ca, _) = MockPCS::commit(poly_a.evaluations(), &());
-        let (cb, _) = MockPCS::commit(poly_b.evaluations(), &());
+        let (ca, ()) = MockPCS::commit(poly_a.evaluations(), &());
+        let (cb, ()) = MockPCS::commit(poly_b.evaluations(), &());
 
         let sum_evals: Vec<Fr> = poly_a
             .evaluations()
@@ -218,7 +235,7 @@ mod tests {
             .zip(poly_b.evaluations().iter())
             .map(|(a, b)| *a + *b)
             .collect();
-        let (c_sum_direct, _) = MockPCS::commit(&sum_evals, &());
+        let (c_sum_direct, ()) = MockPCS::commit(&sum_evals, &());
         let c_sum_combined = MockPCS::combine(&[ca, cb], &[Fr::from_u64(1), Fr::from_u64(1)]);
 
         assert_eq!(c_sum_direct, c_sum_combined);
@@ -240,7 +257,7 @@ mod tests {
                 eval,
             });
 
-            let (commitment, _) = MockPCS::commit(poly.evaluations(), &());
+            let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
             let v_eval = verifier_evals.map_or(eval, |overrides| overrides[i]);
             verifier_claims.push(VerifierClaim {
                 commitment,
@@ -260,7 +277,14 @@ mod tests {
             .iter()
             .map(|claim| {
                 let poly: Polynomial<Fr> = claim.evaluations.clone().into();
-                MockPCS::open(&poly, &claim.point, claim.eval, &(), None, &mut transcript_p)
+                MockPCS::open(
+                    &poly,
+                    &claim.point,
+                    claim.eval,
+                    &(),
+                    None,
+                    &mut transcript_p,
+                )
             })
             .collect();
 

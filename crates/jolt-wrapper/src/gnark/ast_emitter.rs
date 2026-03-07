@@ -286,8 +286,14 @@ mod tests {
         bundle.emit(&mut emitter);
 
         let code = emitter.finish();
-        assert!(code.contains("byteReverse("), "expected byteReverse call: {code}");
-        assert!(code.contains("circuit.X"), "expected circuit.X reference: {code}");
+        assert!(
+            code.contains("byteReverse("),
+            "expected byteReverse call: {code}"
+        );
+        assert!(
+            code.contains("circuit.X"),
+            "expected circuit.X reference: {code}"
+        );
         assert!(code.contains("AssertIsEqual("));
     }
 
@@ -309,8 +315,14 @@ mod tests {
         bundle.emit(&mut emitter);
 
         let code = emitter.finish();
-        assert!(code.contains("truncate128("), "expected truncate128 call: {code}");
-        assert!(code.contains("circuit.X"), "expected circuit.X reference: {code}");
+        assert!(
+            code.contains("truncate128("),
+            "expected truncate128 call: {code}"
+        );
+        assert!(
+            code.contains("circuit.X"),
+            "expected circuit.X reference: {code}"
+        );
         assert!(code.contains("AssertIsEqual("));
     }
 
@@ -332,8 +344,14 @@ mod tests {
         bundle.emit(&mut emitter);
 
         let code = emitter.finish();
-        assert!(code.contains("mulTwoPow192("), "expected mulTwoPow192 call: {code}");
-        assert!(code.contains("circuit.X"), "expected circuit.X reference: {code}");
+        assert!(
+            code.contains("mulTwoPow192("),
+            "expected mulTwoPow192 call: {code}"
+        );
+        assert!(
+            code.contains("circuit.X"),
+            "expected circuit.X reference: {code}"
+        );
         assert!(code.contains("AssertIsEqual("));
     }
 

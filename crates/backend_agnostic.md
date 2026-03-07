@@ -419,7 +419,7 @@ The protocol layer is entirely host-side:
 
 ```rust
 // These traits and types are UNCHANGED:
-pub trait SumcheckWitness<F: Field>: Send + Sync {
+pub trait SumcheckCompute<F: Field>: Send + Sync {
     fn round_polynomial(&self) -> UnivariatePoly<F>;
     fn bind(&mut self, challenge: F);
 }
@@ -428,22 +428,22 @@ pub struct SumcheckProver;   // host-only orchestration
 pub struct SumcheckVerifier;  // host-only verification
 ```
 
-`SumcheckWitness` returns `UnivariatePoly<F>` — a host-side value. The witness implementation internally uses whatever compute backend it holds. The sumcheck protocol layer never touches device memory.
+`SumcheckCompute` returns `UnivariatePoly<F>` — a host-side value. The witness implementation internally uses whatever compute backend it holds. The sumcheck protocol layer never touches device memory.
 
 ### `jolt-zkvm` — Wiring It Together
 
-Witness implementations are generic over `ComputeBackend`:
+Compute implementations are generic over `ComputeBackend`:
 
 ```rust
 use jolt_compute::{ComputeBackend, Scalar};
-use jolt_sumcheck::SumcheckWitness;
+use jolt_sumcheck::SumcheckCompute;
 
 /// Instruction RA virtual sumcheck witness.
 ///
 /// Generic over compute backend — same code drives CPU and GPU.
 /// After monomorphization with `CpuBackend`, compiles to identical
 /// code as today's hand-tuned implementation.
-pub struct RaVirtualWitness<F: Field, B: ComputeBackend> {
+pub struct RaVirtualCompute<F: Field, B: ComputeBackend> {
     backend: B,
     /// D polynomials per product group, stored as device buffers.
     /// Compact (`Buffer<u8>`) until first bind, then `Buffer<F>`.
@@ -455,7 +455,7 @@ pub struct RaVirtualWitness<F: Field, B: ComputeBackend> {
     degree: usize,
 }
 
-impl<F: Field, B: ComputeBackend> SumcheckWitness<F> for RaVirtualWitness<F, B> {
+impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for RaVirtualCompute<F, B> {
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let refs: Vec<&B::Buffer<F>> = self.poly_buffers.iter().collect();
         let coeffs = self.backend.pairwise_reduce(
@@ -504,7 +504,7 @@ where
     let eq_buffer = backend.product_table(&initial_point);
 
     // Construct witnesses (hold device buffers + compiled kernels)
-    let mut ra_witness = RaVirtualWitness::new(
+    let mut ra_witness = RaVirtualCompute::new(
         backend, ra_buffers, eq_buffer, ra_kernel, D,
     );
 

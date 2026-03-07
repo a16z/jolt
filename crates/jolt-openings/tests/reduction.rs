@@ -10,9 +10,7 @@
 
 use jolt_field::{Field, Fr};
 use jolt_openings::mock::MockCommitmentScheme;
-use jolt_openings::{
-    CommitmentScheme, OpeningReduction, ProverClaim, RlcReduction, VerifierClaim,
-};
+use jolt_openings::{CommitmentScheme, OpeningReduction, ProverClaim, RlcReduction, VerifierClaim};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -42,7 +40,7 @@ fn reduce_open_verify<T: Transcript<Challenge = u128>>(
             point: point.clone(),
             eval,
         });
-        let (commitment, _) = MockPCS::commit(poly.evaluations(), &());
+        let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
         verifier_claims.push(VerifierClaim {
             commitment,
             point: point.clone(),
@@ -111,7 +109,9 @@ fn multiple_claims_shared_point() {
     let nv = 3;
     let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
 
-    let polys: Vec<_> = (0..5).map(|_| Polynomial::<Fr>::random(nv, &mut rng)).collect();
+    let polys: Vec<_> = (0..5)
+        .map(|_| Polynomial::<Fr>::random(nv, &mut rng))
+        .collect();
     let points: Vec<_> = (0..5).map(|_| point.clone()).collect();
 
     reduce_open_verify::<Blake2bTranscript>(&polys, &points, b"shared-point");
@@ -122,7 +122,9 @@ fn multiple_claims_distinct_points() {
     let mut rng = ChaCha20Rng::seed_from_u64(3000);
     let nv = 3;
 
-    let polys: Vec<_> = (0..4).map(|_| Polynomial::<Fr>::random(nv, &mut rng)).collect();
+    let polys: Vec<_> = (0..4)
+        .map(|_| Polynomial::<Fr>::random(nv, &mut rng))
+        .collect();
     let points: Vec<Vec<Fr>> = (0..4)
         .map(|_| (0..nv).map(|_| Fr::random(&mut rng)).collect())
         .collect();
@@ -138,7 +140,9 @@ fn mixed_shared_and_distinct_points() {
     let shared_point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
     let other_point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
 
-    let polys: Vec<_> = (0..6).map(|_| Polynomial::<Fr>::random(nv, &mut rng)).collect();
+    let polys: Vec<_> = (0..6)
+        .map(|_| Polynomial::<Fr>::random(nv, &mut rng))
+        .collect();
     let points = vec![
         shared_point.clone(),
         shared_point.clone(),
@@ -198,8 +202,8 @@ fn tampered_eval_detected() {
     ];
 
     // Verifier has tampered eval for poly_b
-    let (com_a, _) = MockPCS::commit(poly_a.evaluations(), &());
-    let (com_b, _) = MockPCS::commit(poly_b.evaluations(), &());
+    let (com_a, ()) = MockPCS::commit(poly_a.evaluations(), &());
+    let (com_b, ()) = MockPCS::commit(poly_b.evaluations(), &());
     let verifier_claims = vec![
         VerifierClaim {
             commitment: com_a,
@@ -254,7 +258,10 @@ fn tampered_eval_detected() {
             any_failed = true;
         }
     }
-    assert!(any_failed, "tampered evaluation must cause verification failure");
+    assert!(
+        any_failed,
+        "tampered evaluation must cause verification failure"
+    );
 }
 
 /// Property-based: for any random polynomial count and dimensions,
@@ -280,10 +287,6 @@ fn property_random_claims_always_verify() {
             .map(|i| points[i % num_points].clone())
             .collect();
 
-        reduce_open_verify::<Blake2bTranscript>(
-            &polys,
-            &claim_points,
-            b"property",
-        );
+        reduce_open_verify::<Blake2bTranscript>(&polys, &claim_points, b"property");
     }
 }

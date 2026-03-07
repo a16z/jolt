@@ -201,8 +201,10 @@ impl SumcheckCompute<Fr> for ComputeWitness {
 
     fn bind(&mut self, challenge: Fr) {
         let backend = CpuBackend;
-        self.f_buf = backend.interpolate_pairs::<Fr, Fr>(std::mem::take(&mut self.f_buf), challenge);
-        self.g_buf = backend.interpolate_pairs::<Fr, Fr>(std::mem::take(&mut self.g_buf), challenge);
+        self.f_buf =
+            backend.interpolate_pairs::<Fr, Fr>(std::mem::take(&mut self.f_buf), challenge);
+        self.g_buf =
+            backend.interpolate_pairs::<Fr, Fr>(std::mem::take(&mut self.g_buf), challenge);
         self.eq_buf =
             backend.interpolate_pairs::<Fr, Fr>(std::mem::take(&mut self.eq_buf), challenge);
 
@@ -256,12 +258,8 @@ fn compute_witness_matches_reference() {
     let ref_proof = SumcheckProver::prove(&ref_claim, &mut ref_w, &mut ref_pt, challenge_to_field);
 
     let mut ref_vt = Blake2bTranscript::new(b"ref");
-    let ref_result = SumcheckVerifier::verify(
-        &ref_claim,
-        &ref_proof,
-        &mut ref_vt,
-        challenge_to_field,
-    );
+    let ref_result =
+        SumcheckVerifier::verify(&ref_claim, &ref_proof, &mut ref_vt, challenge_to_field);
     assert!(ref_result.is_ok(), "reference sumcheck should verify");
 
     let compute_claim = SumcheckClaim {
@@ -271,8 +269,12 @@ fn compute_witness_matches_reference() {
     };
     let mut compute_w = ComputeWitness::new(&f, &g, &tau);
     let mut compute_pt = Blake2bTranscript::new(b"compute");
-    let compute_proof =
-        SumcheckProver::prove(&compute_claim, &mut compute_w, &mut compute_pt, challenge_to_field);
+    let compute_proof = SumcheckProver::prove(
+        &compute_claim,
+        &mut compute_w,
+        &mut compute_pt,
+        challenge_to_field,
+    );
 
     let mut compute_vt = Blake2bTranscript::new(b"compute");
     let compute_result = SumcheckVerifier::verify(

@@ -15,7 +15,7 @@ use crate::claim::SumcheckClaim;
 use crate::error::SumcheckError;
 use crate::handler::{ClearRoundHandler, ClearRoundVerifier, RoundHandler, RoundVerifier};
 use crate::proof::SumcheckProof;
-use crate::prover::SumcheckWitness;
+use crate::prover::SumcheckCompute;
 
 /// Batched sumcheck prover that combines $m$ independent claims.
 ///
@@ -41,7 +41,7 @@ impl BatchedSumcheckProver {
     /// different lengths.
     pub fn prove_with_handler<F, T, H>(
         claims: &[SumcheckClaim<F>],
-        witnesses: &mut [Box<dyn SumcheckWitness<F>>],
+        witnesses: &mut [Box<dyn SumcheckCompute<F>>],
         transcript: &mut T,
         challenge_fn: impl Fn(T::Challenge) -> F,
         mut handler: H,
@@ -136,7 +136,7 @@ impl BatchedSumcheckProver {
     /// different lengths.
     pub fn prove<F, T>(
         claims: &[SumcheckClaim<F>],
-        witnesses: &mut [Box<dyn SumcheckWitness<F>>],
+        witnesses: &mut [Box<dyn SumcheckCompute<F>>],
         transcript: &mut T,
         challenge_fn: impl Fn(T::Challenge) -> F,
     ) -> SumcheckProof<F>

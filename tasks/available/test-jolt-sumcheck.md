@@ -114,7 +114,7 @@ The `jolt-sumcheck` crate already has **23 test functions** (21 unit + 2 integra
 - Fuzz target (`fuzz_verifier_soundness`)
 - Hardcoded concrete test vectors (regression)
 
-**Note:** The code samples above reference `SumcheckInstanceProver` — the actual trait is `SumcheckWitness`. `SumcheckClaim` fields and `SumcheckProver::prove` signature may also differ. Update samples if using this task as a reference.
+**Note:** The code samples above reference `SumcheckInstanceProver` — the actual trait is `SumcheckCompute`. `SumcheckClaim` fields and `SumcheckProver::prove` signature may also differ. Update samples if using this task as a reference.
 
 **Acceptance:**
 

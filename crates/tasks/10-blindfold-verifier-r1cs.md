@@ -1,6 +1,6 @@
 # Task 10: Verifier R1CS Construction
 
-**Status:** Pending
+**Status:** DONE
 **Phase:** BlindFold Layer 2
 **Dependencies:** jolt-ir (R1CS backend), jolt-spartan (R1CS trait)
 **Blocks:** Task 12 (BlindFold protocol)

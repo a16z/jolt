@@ -15,14 +15,14 @@ use jolt_openings::CommitmentScheme;
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::proof::SumcheckProof;
 use jolt_sumcheck::{
-    ClearRoundHandler, RoundHandler, SumcheckClaim, SumcheckProver, SumcheckWitness,
+    ClearRoundHandler, RoundHandler, SumcheckClaim, SumcheckCompute, SumcheckProver,
 };
 use jolt_transcript::Transcript;
 use num_traits::Zero;
 
 use crate::error::SpartanError;
 use crate::key::SpartanKey;
-use crate::proof::SpartanProof;
+use crate::proof::{RelaxedSpartanProof, SpartanProof};
 use crate::r1cs::R1CS;
 use crate::uni_skip::FirstRoundStrategy;
 
@@ -90,7 +90,7 @@ impl SpartanProver {
         let tau_1 = tau.first().copied();
 
         let eq_poly = Polynomial::new(EqPolynomial::new(tau).evaluations());
-        let mut outer_witness = OuterSumcheckWitness {
+        let mut outer_witness = OuterSumcheckCompute {
             eq: eq_poly,
             az: az_poly,
             bz: bz_poly,
@@ -158,7 +158,7 @@ impl SpartanProver {
         // The inner sumcheck consumes its witness copy via bind(). We evaluate
         // the original witness polynomial at r_y afterwards for the opening proof,
         // avoiding a full clone during witness construction.
-        let mut inner_witness = InnerSumcheckWitness::new(combined_row, &witness_poly);
+        let mut inner_witness = InnerSumcheckCompute::new(combined_row, &witness_poly);
 
         let inner_handler = TrackingHandler::new(num_witness_vars);
         let (inner_sumcheck_proof, r_y) = SumcheckProver::prove_with_handler(
@@ -173,14 +173,8 @@ impl SpartanProver {
         let witness_eval = witness_poly.evaluate(&r_y);
 
         let pcs_poly: PCS::Polynomial = witness_poly.evaluations().to_vec().into();
-        let witness_opening_proof = PCS::open(
-            &pcs_poly,
-            &r_y,
-            witness_eval,
-            pcs_setup,
-            None,
-            transcript,
-        );
+        let witness_opening_proof =
+            PCS::open(&pcs_poly, &r_y, witness_eval, pcs_setup, None, transcript);
 
         Ok(SpartanProof {
             witness_commitment,
@@ -191,6 +185,151 @@ impl SpartanProver {
             inner_sumcheck_proof,
             witness_eval,
             witness_opening_proof,
+        })
+    }
+
+    /// Generates a relaxed Spartan proof that `witness` and `error` satisfy
+    /// $Az \circ Bz = u \cdot Cz + E$.
+    ///
+    /// Used by BlindFold after Nova folding. Witness and error commitments
+    /// are passed in rather than computed here, since the caller (BlindFold)
+    /// manages commitment operations.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_relaxed<PCS, T>(
+        r1cs: &impl R1CS<PCS::Field>,
+        key: &SpartanKey<PCS::Field>,
+        u: PCS::Field,
+        witness: &[PCS::Field],
+        error: &[PCS::Field],
+        w_commitment: &PCS::Output,
+        e_commitment: &PCS::Output,
+        pcs_setup: &PCS::ProverSetup,
+        transcript: &mut T,
+    ) -> Result<RelaxedSpartanProof<PCS::Field, PCS>, SpartanError>
+    where
+        PCS: CommitmentScheme,
+        T: Transcript<Challenge = u128>,
+    {
+        let (az, bz, cz) = r1cs.multiply_witness(witness);
+
+        for i in 0..az.len() {
+            if az[i] * bz[i] != u * cz[i] + error[i] {
+                return Err(SpartanError::RelaxedConstraintViolation(i));
+            }
+        }
+
+        let witness_poly = pad_to_power_of_two(witness, key.num_variables_padded);
+        let az_poly = pad_to_power_of_two(&az, key.num_constraints_padded);
+        let bz_poly = pad_to_power_of_two(&bz, key.num_constraints_padded);
+        let cz_poly = pad_to_power_of_two(&cz, key.num_constraints_padded);
+        let error_poly = pad_to_power_of_two(error, key.num_constraints_padded);
+
+        // Absorb commitments into transcript
+        transcript.append_bytes(format!("{w_commitment:?}").as_bytes());
+        transcript.append_bytes(format!("{e_commitment:?}").as_bytes());
+
+        // Sample tau for the eq polynomial
+        let num_sc_vars = key.num_sumcheck_vars();
+        let tau: Vec<PCS::Field> = (0..num_sc_vars)
+            .map(|_| PCS::Field::from_u128(transcript.challenge()))
+            .collect();
+
+        let eq_poly = Polynomial::new(EqPolynomial::new(tau).evaluations());
+        let mut outer_witness = RelaxedOuterSumcheckCompute {
+            eq: eq_poly,
+            az: az_poly,
+            bz: bz_poly,
+            cz: cz_poly,
+            e: error_poly,
+            u,
+        };
+
+        let outer_claim = SumcheckClaim {
+            num_vars: num_sc_vars,
+            degree: 3,
+            claimed_sum: PCS::Field::zero(),
+        };
+
+        let handler = TrackingHandler::new(num_sc_vars);
+        let (outer_sumcheck_proof, r_x) = SumcheckProver::prove_with_handler(
+            &outer_claim,
+            &mut outer_witness,
+            transcript,
+            |c: u128| PCS::Field::from_u128(c),
+            handler,
+        );
+
+        let az_eval = outer_witness.az.evaluations()[0];
+        let bz_eval = outer_witness.bz.evaluations()[0];
+        let cz_eval = outer_witness.cz.evaluations()[0];
+        let e_eval = outer_witness.e.evaluations()[0];
+
+        transcript.append(&az_eval);
+        transcript.append(&bz_eval);
+        transcript.append(&cz_eval);
+        transcript.append(&e_eval);
+
+        let rho_a = PCS::Field::from_u128(transcript.challenge());
+        let rho_b = PCS::Field::from_u128(transcript.challenge());
+        let rho_c = PCS::Field::from_u128(transcript.challenge());
+
+        let combined_row = combined_partial_evaluate(
+            key.a_mle(),
+            key.b_mle(),
+            key.c_mle(),
+            &r_x,
+            rho_a,
+            rho_b,
+            rho_c,
+        );
+
+        let num_witness_vars = key.num_witness_vars();
+        let inner_claim = SumcheckClaim {
+            num_vars: num_witness_vars,
+            degree: 2,
+            claimed_sum: rho_a * az_eval + rho_b * bz_eval + rho_c * cz_eval,
+        };
+
+        let mut inner_witness = InnerSumcheckCompute::new(combined_row, &witness_poly);
+
+        let inner_handler = TrackingHandler::new(num_witness_vars);
+        let (inner_sumcheck_proof, r_y) = SumcheckProver::prove_with_handler(
+            &inner_claim,
+            &mut inner_witness,
+            transcript,
+            |c: u128| PCS::Field::from_u128(c),
+            inner_handler,
+        );
+
+        let witness_eval = witness_poly.evaluate(&r_y);
+
+        let pcs_witness: PCS::Polynomial = witness_poly.evaluations().to_vec().into();
+        let witness_opening_proof = PCS::open(
+            &pcs_witness,
+            &r_y,
+            witness_eval,
+            pcs_setup,
+            None,
+            transcript,
+        );
+
+        // Open error polynomial at r_x
+        let error_eval_at_rx = outer_witness.e.evaluations()[0];
+        debug_assert_eq!(error_eval_at_rx, e_eval);
+        let error_poly_full = pad_to_power_of_two(error, key.num_constraints_padded);
+        let pcs_error: PCS::Polynomial = error_poly_full.evaluations().to_vec().into();
+        let error_opening_proof = PCS::open(&pcs_error, &r_x, e_eval, pcs_setup, None, transcript);
+
+        Ok(RelaxedSpartanProof {
+            outer_sumcheck_proof,
+            az_eval,
+            bz_eval,
+            cz_eval,
+            e_eval,
+            inner_sumcheck_proof,
+            witness_eval,
+            witness_opening_proof,
+            error_opening_proof,
         })
     }
 }
@@ -314,7 +453,7 @@ impl<F: Field> RoundHandler<F> for TrackingHandler<F> {
 /// instead of four evaluations. Remaining rounds use standard enumeration.
 fn prove_outer_uniskip<F: Field>(
     claim: &SumcheckClaim<F>,
-    witness: &mut OuterSumcheckWitness<F>,
+    witness: &mut OuterSumcheckCompute<F>,
     transcript: &mut impl Transcript<Challenge = u128>,
     tau_1: F,
 ) -> (SumcheckProof<F>, Vec<F>) {
@@ -337,7 +476,7 @@ fn prove_outer_uniskip<F: Field>(
 
     // Remaining rounds: standard
     for _round in 1..claim.num_vars {
-        let round_poly = <OuterSumcheckWitness<F> as SumcheckWitness<F>>::round_polynomial(witness);
+        let round_poly = <OuterSumcheckCompute<F> as SumcheckCompute<F>>::round_polynomial(witness);
         handler.absorb_round_poly(&round_poly, transcript);
         let challenge = F::from_u128(transcript.challenge());
         handler.on_challenge(challenge);
@@ -413,14 +552,14 @@ fn inner_round_sequential<F: Field>(half: usize, row_evals: &[F], w_evals: &[F])
 /// The round polynomial is computed by evaluating $g$ at $X \in \{0, 1, 2, 3\}$
 /// (summing over the remaining Boolean hypercube) and interpolating the
 /// resulting degree-3 univariate.
-struct OuterSumcheckWitness<F: Field> {
+struct OuterSumcheckCompute<F: Field> {
     eq: Polynomial<F>,
     az: Polynomial<F>,
     bz: Polynomial<F>,
     cz: Polynomial<F>,
 }
 
-impl<F: Field> SumcheckWitness<F> for OuterSumcheckWitness<F> {
+impl<F: Field> SumcheckCompute<F> for OuterSumcheckCompute<F> {
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let half = self.eq.evaluations().len() / 2;
 
@@ -506,12 +645,12 @@ impl<F: Field> SumcheckWitness<F> for OuterSumcheckWitness<F> {
 ///
 /// The round polynomial is degree 2 (product of two multilinear polynomials),
 /// evaluated at $Y \in \{0, 1, 2\}$ and interpolated.
-struct InnerSumcheckWitness<F: Field> {
+struct InnerSumcheckCompute<F: Field> {
     combined_row: Polynomial<F>,
     witness: Polynomial<F>,
 }
 
-impl<F: Field> InnerSumcheckWitness<F> {
+impl<F: Field> InnerSumcheckCompute<F> {
     /// Creates a new inner sumcheck witness by cloning the witness polynomial.
     ///
     /// The clone is necessary because `bind()` mutates in place. The caller
@@ -524,7 +663,7 @@ impl<F: Field> InnerSumcheckWitness<F> {
     }
 }
 
-impl<F: Field> SumcheckWitness<F> for InnerSumcheckWitness<F> {
+impl<F: Field> SumcheckCompute<F> for InnerSumcheckCompute<F> {
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let half = self.combined_row.evaluations().len() / 2;
 
@@ -583,5 +722,148 @@ impl<F: Field> SumcheckWitness<F> for InnerSumcheckWitness<F> {
     fn bind(&mut self, challenge: F) {
         self.combined_row.bind(challenge);
         self.witness.bind(challenge);
+    }
+}
+
+/// Witness for the relaxed outer Spartan sumcheck.
+///
+/// $$g(x) = \widetilde{eq}(x, \tau) \cdot (\widetilde{Az}(x) \cdot \widetilde{Bz}(x) - u \cdot \widetilde{Cz}(x) - \widetilde{E}(x))$$
+///
+/// Degree is still 3 (Az·Bz dominates). The additional `-u·Cz - E` terms are
+/// degree 1 each (linear in the sumcheck variable), so the maximum degree is
+/// unchanged from the standard case.
+struct RelaxedOuterSumcheckCompute<F: Field> {
+    eq: Polynomial<F>,
+    az: Polynomial<F>,
+    bz: Polynomial<F>,
+    cz: Polynomial<F>,
+    e: Polynomial<F>,
+    u: F,
+}
+
+/// Sequential evaluation of the relaxed outer round polynomial.
+fn relaxed_outer_round_sequential<F: Field>(
+    half: usize,
+    eq_evals: &[F],
+    az_evals: &[F],
+    bz_evals: &[F],
+    cz_evals: &[F],
+    e_evals: &[F],
+    u: F,
+) -> [F; 4] {
+    let mut evals = [F::zero(); 4];
+    for i in 0..half {
+        let eq_lo = eq_evals[i];
+        let eq_hi = eq_evals[i + half];
+        let az_lo = az_evals[i];
+        let az_hi = az_evals[i + half];
+        let bz_lo = bz_evals[i];
+        let bz_hi = bz_evals[i + half];
+        let cz_lo = cz_evals[i];
+        let cz_hi = cz_evals[i + half];
+        let e_lo = e_evals[i];
+        let e_hi = e_evals[i + half];
+
+        let eq_delta = eq_hi - eq_lo;
+        let az_delta = az_hi - az_lo;
+        let bz_delta = bz_hi - bz_lo;
+        let cz_delta = cz_hi - cz_lo;
+        let e_delta = e_hi - e_lo;
+
+        for (t, eval) in evals.iter_mut().enumerate() {
+            let x = F::from_u64(t as u64);
+            let eq_val = eq_lo + x * eq_delta;
+            let az_val = az_lo + x * az_delta;
+            let bz_val = bz_lo + x * bz_delta;
+            let cz_val = cz_lo + x * cz_delta;
+            let e_val = e_lo + x * e_delta;
+            *eval += eq_val * (az_val * bz_val - u * cz_val - e_val);
+        }
+    }
+    evals
+}
+
+impl<F: Field> SumcheckCompute<F> for RelaxedOuterSumcheckCompute<F> {
+    fn round_polynomial(&self) -> UnivariatePoly<F> {
+        let half = self.eq.evaluations().len() / 2;
+
+        let eq_evals = self.eq.evaluations();
+        let az_evals = self.az.evaluations();
+        let bz_evals = self.bz.evaluations();
+        let cz_evals = self.cz.evaluations();
+        let e_evals = self.e.evaluations();
+        let u = self.u;
+
+        let evals_at_points;
+
+        #[cfg(feature = "parallel")]
+        {
+            if half >= PAR_THRESHOLD {
+                use rayon::prelude::*;
+                evals_at_points = (0..half)
+                    .into_par_iter()
+                    .fold(
+                        || [F::zero(); 4],
+                        |mut local, i| {
+                            let eq_lo = eq_evals[i];
+                            let eq_hi = eq_evals[i + half];
+                            let az_lo = az_evals[i];
+                            let az_hi = az_evals[i + half];
+                            let bz_lo = bz_evals[i];
+                            let bz_hi = bz_evals[i + half];
+                            let cz_lo = cz_evals[i];
+                            let cz_hi = cz_evals[i + half];
+                            let e_lo = e_evals[i];
+                            let e_hi = e_evals[i + half];
+
+                            let eq_delta = eq_hi - eq_lo;
+                            let az_delta = az_hi - az_lo;
+                            let bz_delta = bz_hi - bz_lo;
+                            let cz_delta = cz_hi - cz_lo;
+                            let e_delta = e_hi - e_lo;
+
+                            for (t, eval) in local.iter_mut().enumerate() {
+                                let x = F::from_u64(t as u64);
+                                let eq_val = eq_lo + x * eq_delta;
+                                let az_val = az_lo + x * az_delta;
+                                let bz_val = bz_lo + x * bz_delta;
+                                let cz_val = cz_lo + x * cz_delta;
+                                let e_val = e_lo + x * e_delta;
+                                *eval += eq_val * (az_val * bz_val - u * cz_val - e_val);
+                            }
+                            local
+                        },
+                    )
+                    .reduce(
+                        || [F::zero(); 4],
+                        |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]],
+                    );
+            } else {
+                evals_at_points = relaxed_outer_round_sequential(
+                    half, eq_evals, az_evals, bz_evals, cz_evals, e_evals, u,
+                );
+            }
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        {
+            evals_at_points = relaxed_outer_round_sequential(
+                half, eq_evals, az_evals, bz_evals, cz_evals, e_evals, u,
+            );
+        }
+
+        let points: Vec<(F, F)> = (0..4)
+            .map(|t| (F::from_u64(t as u64), evals_at_points[t]))
+            .collect();
+
+        UnivariatePoly::interpolate(&points)
+    }
+
+    fn bind(&mut self, challenge: F) {
+        self.eq.bind(challenge);
+        self.az.bind(challenge);
+        self.bz.bind(challenge);
+        self.cz.bind(challenge);
+        self.e.bind(challenge);
     }
 }

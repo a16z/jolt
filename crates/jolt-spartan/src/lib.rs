@@ -41,7 +41,7 @@ pub mod verifier;
 pub use error::SpartanError;
 pub use ir_r1cs::build_witness;
 pub use key::SpartanKey;
-pub use proof::SpartanProof;
+pub use proof::{RelaxedSpartanProof, SpartanProof};
 pub use prover::SpartanProver;
 pub use r1cs::{SimpleR1CS, R1CS};
 pub use uni_skip::FirstRoundStrategy;
@@ -626,6 +626,184 @@ mod tests {
                 matches!(result, Err(SpartanError::ConstraintViolation(_))),
                 "tampered witness should be rejected"
             );
+        }
+    }
+
+    mod relaxed_tests {
+        use super::*;
+        use jolt_openings::CommitmentScheme;
+        use num_traits::{One, Zero};
+
+        /// Pads a slice to the next power-of-two length with zeros.
+        fn pad(data: &[Fr], padded_len: usize) -> Vec<Fr> {
+            let mut v = vec![Fr::zero(); padded_len];
+            v[..data.len()].copy_from_slice(data);
+            v
+        }
+
+        /// u=1, E=0 — equivalent to standard R1CS. prove_relaxed should succeed
+        /// and verify_relaxed should accept.
+        #[test]
+        fn prove_relaxed_standard_instance() {
+            let r1cs = x_squared_circuit();
+            let key = SpartanKey::from_r1cs(&r1cs);
+            let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
+            let u = Fr::one();
+            let error = vec![Fr::zero()];
+
+            // Commitments must be over padded data to match proving internals
+            let w_padded = pad(&witness, key.num_variables_padded);
+            let e_padded = pad(&error, key.num_constraints_padded);
+            let (w_commitment, ()) = MockPCS::commit(&w_padded, &());
+            let (e_commitment, ()) = MockPCS::commit(&e_padded, &());
+
+            let mut transcript = Blake2bTranscript::new(b"relaxed-standard");
+            let proof = SpartanProver::prove_relaxed::<MockPCS, _>(
+                &r1cs,
+                &key,
+                u,
+                &witness,
+                &error,
+                &w_commitment,
+                &e_commitment,
+                &(),
+                &mut transcript,
+            )
+            .expect("proving should succeed");
+
+            let mut vt = Blake2bTranscript::new(b"relaxed-standard");
+            SpartanVerifier::verify_relaxed::<MockPCS, _>(
+                &key,
+                u,
+                &w_commitment,
+                &e_commitment,
+                &proof,
+                &(),
+                &mut vt,
+            )
+            .expect("verification should succeed");
+        }
+
+        /// prove_relaxed on a manually constructed relaxed instance (non-trivial u and E).
+        #[test]
+        fn prove_relaxed_manual_instance() {
+            let r1cs = x_squared_circuit();
+            let key = SpartanKey::from_r1cs(&r1cs);
+
+            // z = [1, x, y], constraint: x*x = y
+            // Pick u=2, witness=[1, 3, 9], so Az*Bz=3*3=9, u*Cz=2*9=18
+            // E = Az*Bz - u*Cz = 9 - 18 = -9
+            let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
+            let u = Fr::from_u64(2);
+            let error = vec![Fr::from_u64(9) - Fr::from_u64(18)]; // -9
+
+            let w_padded = pad(&witness, key.num_variables_padded);
+            let e_padded = pad(&error, key.num_constraints_padded);
+            let (w_commitment, ()) = MockPCS::commit(&w_padded, &());
+            let (e_commitment, ()) = MockPCS::commit(&e_padded, &());
+
+            let mut transcript = Blake2bTranscript::new(b"relaxed-manual");
+            let proof = SpartanProver::prove_relaxed::<MockPCS, _>(
+                &r1cs,
+                &key,
+                u,
+                &witness,
+                &error,
+                &w_commitment,
+                &e_commitment,
+                &(),
+                &mut transcript,
+            )
+            .expect("proving should succeed");
+
+            let mut vt = Blake2bTranscript::new(b"relaxed-manual");
+            SpartanVerifier::verify_relaxed::<MockPCS, _>(
+                &key,
+                u,
+                &w_commitment,
+                &e_commitment,
+                &proof,
+                &(),
+                &mut vt,
+            )
+            .expect("verification should succeed");
+        }
+
+        /// Tampered error vector should be rejected by the prover.
+        #[test]
+        fn relaxed_reject_bad_error() {
+            let r1cs = x_squared_circuit();
+            let key = SpartanKey::from_r1cs(&r1cs);
+            let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
+            let u = Fr::one();
+            let error = vec![Fr::from_u64(1)]; // Wrong: should be 0
+
+            let w_padded = pad(&witness, key.num_variables_padded);
+            let e_padded = pad(&error, key.num_constraints_padded);
+            let (w_commitment, ()) = MockPCS::commit(&w_padded, &());
+            let (e_commitment, ()) = MockPCS::commit(&e_padded, &());
+
+            let mut transcript = Blake2bTranscript::new(b"relaxed-bad-error");
+            let result = SpartanProver::prove_relaxed::<MockPCS, _>(
+                &r1cs,
+                &key,
+                u,
+                &witness,
+                &error,
+                &w_commitment,
+                &e_commitment,
+                &(),
+                &mut transcript,
+            );
+
+            assert!(
+                matches!(result, Err(SpartanError::RelaxedConstraintViolation(0))),
+                "tampered error should cause constraint violation at index 0"
+            );
+        }
+
+        /// Tampered e_eval in proof should be rejected by verifier.
+        #[test]
+        fn relaxed_tampered_e_eval_rejected() {
+            let r1cs = x_squared_circuit();
+            let key = SpartanKey::from_r1cs(&r1cs);
+            let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
+            let u = Fr::one();
+            let error = vec![Fr::zero()];
+
+            let w_padded = pad(&witness, key.num_variables_padded);
+            let e_padded = pad(&error, key.num_constraints_padded);
+            let (w_commitment, ()) = MockPCS::commit(&w_padded, &());
+            let (e_commitment, ()) = MockPCS::commit(&e_padded, &());
+
+            let mut transcript = Blake2bTranscript::new(b"relaxed-tampered-e");
+            let mut proof = SpartanProver::prove_relaxed::<MockPCS, _>(
+                &r1cs,
+                &key,
+                u,
+                &witness,
+                &error,
+                &w_commitment,
+                &e_commitment,
+                &(),
+                &mut transcript,
+            )
+            .expect("proving should succeed");
+
+            // Tamper e_eval
+            proof.e_eval += Fr::from_u64(1);
+
+            let mut vt = Blake2bTranscript::new(b"relaxed-tampered-e");
+            let result = SpartanVerifier::verify_relaxed::<MockPCS, _>(
+                &key,
+                u,
+                &w_commitment,
+                &e_commitment,
+                &proof,
+                &(),
+                &mut vt,
+            );
+            assert!(result.is_err(), "tampered e_eval should be rejected");
         }
     }
 }

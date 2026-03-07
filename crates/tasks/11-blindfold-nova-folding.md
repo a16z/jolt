@@ -1,6 +1,6 @@
 # Task 11: Nova Folding
 
-**Status:** Pending
+**Status:** DONE
 **Phase:** BlindFold Layer 3
 **Dependencies:** Task 09 (relaxed R1CS in jolt-spartan), Task 10 (verifier R1CS)
 **Blocks:** Task 12 (BlindFold protocol)

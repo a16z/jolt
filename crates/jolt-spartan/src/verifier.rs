@@ -17,7 +17,7 @@ use num_traits::Zero;
 
 use crate::error::SpartanError;
 use crate::key::SpartanKey;
-use crate::proof::SpartanProof;
+use crate::proof::{RelaxedSpartanProof, SpartanProof};
 
 /// Stateless Spartan verifier.
 ///
@@ -123,6 +123,111 @@ impl SpartanVerifier {
             &r_y,
             proof.witness_eval,
             &proof.witness_opening_proof,
+            verifier_setup,
+            transcript,
+        )?;
+
+        Ok(())
+    }
+
+    /// Verifies a relaxed Spartan proof for $Az \circ Bz = u \cdot Cz + E$.
+    ///
+    /// The verifier receives the relaxed scalar $u$, witness/error commitments,
+    /// and the proof. The outer sumcheck check becomes:
+    /// $$\widetilde{eq}(r_x, \tau) \cdot (\widetilde{Az}(r_x) \cdot \widetilde{Bz}(r_x) - u \cdot \widetilde{Cz}(r_x) - \widetilde{E}(r_x)) = v$$
+    pub fn verify_relaxed<PCS, T>(
+        key: &SpartanKey<PCS::Field>,
+        u: PCS::Field,
+        w_commitment: &PCS::Output,
+        e_commitment: &PCS::Output,
+        proof: &RelaxedSpartanProof<PCS::Field, PCS>,
+        verifier_setup: &PCS::VerifierSetup,
+        transcript: &mut T,
+    ) -> Result<(), SpartanError>
+    where
+        PCS: CommitmentScheme,
+        T: Transcript<Challenge = u128>,
+    {
+        // Absorb commitments (must match prover's transcript)
+        transcript.append_bytes(format!("{w_commitment:?}").as_bytes());
+        transcript.append_bytes(format!("{e_commitment:?}").as_bytes());
+
+        // Sample tau
+        let num_sc_vars = key.num_sumcheck_vars();
+        let tau: Vec<PCS::Field> = (0..num_sc_vars)
+            .map(|_| PCS::Field::from_u128(transcript.challenge()))
+            .collect();
+
+        // Verify outer sumcheck
+        let outer_claim = SumcheckClaim {
+            num_vars: num_sc_vars,
+            degree: 3,
+            claimed_sum: PCS::Field::zero(),
+        };
+
+        let (outer_final_eval, r_x) = SumcheckVerifier::verify(
+            &outer_claim,
+            &proof.outer_sumcheck_proof,
+            transcript,
+            |c: u128| PCS::Field::from_u128(c),
+        )?;
+
+        // Check: eq(r_x, tau) * (Az(r_x)*Bz(r_x) - u*Cz(r_x) - E(r_x)) == outer_final_eval
+        let eq_eval = EqPolynomial::new(tau).evaluate(&r_x);
+        let expected = eq_eval * (proof.az_eval * proof.bz_eval - u * proof.cz_eval - proof.e_eval);
+        if expected != outer_final_eval {
+            return Err(SpartanError::OuterEvaluationMismatch);
+        }
+
+        // Absorb evaluation claims
+        transcript.append(&proof.az_eval);
+        transcript.append(&proof.bz_eval);
+        transcript.append(&proof.cz_eval);
+        transcript.append(&proof.e_eval);
+
+        let rho_a = PCS::Field::from_u128(transcript.challenge());
+        let rho_b = PCS::Field::from_u128(transcript.challenge());
+        let rho_c = PCS::Field::from_u128(transcript.challenge());
+
+        // Verify inner sumcheck
+        let num_witness_vars = key.num_witness_vars();
+        let inner_claim = SumcheckClaim {
+            num_vars: num_witness_vars,
+            degree: 2,
+            claimed_sum: rho_a * proof.az_eval + rho_b * proof.bz_eval + rho_c * proof.cz_eval,
+        };
+
+        let (inner_final_eval, r_y) = SumcheckVerifier::verify(
+            &inner_claim,
+            &proof.inner_sumcheck_proof,
+            transcript,
+            |c: u128| PCS::Field::from_u128(c),
+        )?;
+
+        // Check inner sumcheck final evaluation
+        let (a_eval, b_eval, c_eval) = key.evaluate_matrix_mles(&r_x, &r_y);
+        let combined_matrix_eval = rho_a * a_eval + rho_b * b_eval + rho_c * c_eval;
+
+        if combined_matrix_eval * proof.witness_eval != inner_final_eval {
+            return Err(SpartanError::InnerEvaluationMismatch);
+        }
+
+        // Verify witness opening at r_y
+        PCS::verify(
+            w_commitment,
+            &r_y,
+            proof.witness_eval,
+            &proof.witness_opening_proof,
+            verifier_setup,
+            transcript,
+        )?;
+
+        // Verify error opening at r_x
+        PCS::verify(
+            e_commitment,
+            &r_x,
+            proof.e_eval,
+            &proof.error_opening_proof,
             verifier_setup,
             transcript,
         )?;

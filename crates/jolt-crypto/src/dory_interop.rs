@@ -303,10 +303,7 @@ impl arithmetic::DoryRoutines<Bn254G2> for OptimizedG2Routines {
         scalars
             .iter()
             .map(|s| {
-                crate::arkworks::bn254::glv::glv_four_scalar_mul(
-                    *s,
-                    std::slice::from_ref(base),
-                )[0]
+                crate::arkworks::bn254::glv::glv_four_scalar_mul(*s, std::slice::from_ref(base))[0]
             })
             .collect()
     }

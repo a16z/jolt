@@ -1,6 +1,6 @@
 #![allow(unused_results)]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_cpu_kernels::compile;
 use jolt_field::{Field, Fr};
 use jolt_ir::{KernelDescriptor, KernelShape};
@@ -31,6 +31,9 @@ fn bench_product_sum_kernels(c: &mut Criterion) {
                 tensor_split: None,
             };
             let kernel = compile::<Fr>(&desc);
+
+            // Throughput = total input field elements processed per eval
+            group.throughput(Throughput::Elements(total_inputs as u64));
 
             group.bench_with_input(
                 BenchmarkId::new(format!("D={d}/P={num_products}"), "specialized"),
@@ -66,6 +69,7 @@ fn bench_custom_kernel(c: &mut Criterion) {
     let kernel = compile::<Fr>(&desc);
     let (lo, hi) = random_vecs(1, 999);
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("booleanity", |bench| {
         bench.iter(|| {
             black_box(kernel.evaluate(&lo, &hi, 2));
@@ -89,6 +93,7 @@ fn bench_custom_kernel(c: &mut Criterion) {
     let kernel = compile::<Fr>(&desc);
     let (lo, hi) = random_vecs(4, 1000);
 
+    group.throughput(Throughput::Elements(4));
     group.bench_function("product_4_via_custom", |bench| {
         bench.iter(|| {
             black_box(kernel.evaluate(&lo, &hi, 4));

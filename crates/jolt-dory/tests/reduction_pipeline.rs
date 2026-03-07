@@ -41,7 +41,6 @@ fn group_by_point<T>(items: Vec<(Vec<Fr>, T)>) -> Vec<(Vec<Fr>, Vec<T>)> {
 }
 
 type DoryHintType = <DoryScheme as CommitmentScheme>::OpeningHint;
-type DoryCommitmentType = <DoryScheme as CommitmentScheme>::Output;
 type DoryProofType = <DoryScheme as CommitmentScheme>::Proof;
 type DoryProverSetupType = <DoryScheme as CommitmentScheme>::ProverSetup;
 type DoryVerifierSetupType = <DoryScheme as CommitmentScheme>::VerifierSetup;
@@ -113,7 +112,7 @@ fn pipeline_round_trip<T: Transcript<Challenge = u128>>(
     // Open each reduced claim
     let proofs: Vec<DoryProofType> = reduced_p
         .iter()
-        .zip(combined_hints.into_iter())
+        .zip(combined_hints)
         .map(|(claim, hint)| {
             let poly: Polynomial<Fr> = claim.evaluations.clone().into();
             DoryScheme::open(
@@ -437,7 +436,14 @@ fn transcript_mismatch_causes_failure() {
     let proof = {
         let claim = &reduced_p[0];
         let p: Polynomial<Fr> = claim.evaluations.clone().into();
-        DoryScheme::open(&p, &claim.point, claim.eval, &prover_setup, Some(hint), &mut tp)
+        DoryScheme::open(
+            &p,
+            &claim.point,
+            claim.eval,
+            &prover_setup,
+            Some(hint),
+            &mut tp,
+        )
     };
 
     // Verifier uses label "bbb" — Fiat-Shamir mismatch
@@ -741,7 +747,9 @@ fn property_random_claims_always_verify() {
                 b"property",
             )
             .unwrap_or_else(|e| {
-                panic!("seed={seed} num_vars={num_vars} num_polys={num_polys} hints={use_hints}: {e}")
+                panic!(
+                    "seed={seed} num_vars={num_vars} num_polys={num_polys} hints={use_hints}: {e}"
+                )
             });
         }
     }

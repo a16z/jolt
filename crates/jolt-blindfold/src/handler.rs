@@ -177,7 +177,7 @@ mod tests {
     use jolt_crypto::arkworks::bn254::Bn254G1;
     use jolt_crypto::{JoltGroup, Pedersen, PedersenSetup};
     use jolt_field::{Field, Fr};
-    use jolt_sumcheck::{SumcheckClaim, SumcheckProver, SumcheckWitness};
+    use jolt_sumcheck::{SumcheckClaim, SumcheckCompute, SumcheckProver};
     use jolt_transcript::Blake2bTranscript;
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
@@ -187,7 +187,7 @@ mod tests {
         evals: Vec<Fr>,
     }
 
-    impl SumcheckWitness<Fr> for TestWitness {
+    impl SumcheckCompute<Fr> for TestWitness {
         fn round_polynomial(&self) -> UnivariatePoly<Fr> {
             let n = self.evals.len();
             let half = n / 2;

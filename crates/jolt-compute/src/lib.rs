@@ -12,8 +12,10 @@
 //! GPU backends (Metal, CUDA, WebGPU) live in separate crates and implement
 //! the same trait with device memory buffers and compiled shader kernels.
 
+mod any_buffer;
 mod cpu;
 mod traits;
 
+pub use any_buffer::AnyBuffer;
 pub use cpu::{CpuBackend, CpuKernel};
 pub use traits::{ComputeBackend, Scalar};

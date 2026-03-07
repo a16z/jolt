@@ -36,6 +36,34 @@ jolt-field ─► jolt-compute
 
 Used by `jolt-sumcheck` and `jolt-zkvm`.
 
+## Benchmarks
+
+BN254 Fr on Apple Silicon (M-series). Run with `cargo bench -p jolt-compute`.
+
+### `interpolate_pairs` — pairwise linear interpolation
+
+| Size | Fr→Fr | u8→Fr | `Polynomial::bind` (ref) |
+|------|-------|-------|--------------------------|
+| 2^16 | 99 Melem/s | 172 Melem/s | 117 Melem/s |
+| 2^18 | 94 Melem/s | 175 Melem/s | 94 Melem/s |
+| 2^20 | 94 Melem/s | 138 Melem/s | 92 Melem/s |
+
+### `pairwise_reduce` — weighted kernel evaluation over pairs
+
+| D (inputs) | 2^16 pairs | 2^18 pairs | 2^20 pairs |
+|------------|------------|------------|------------|
+| 4 | 9.6 Mpair/s | 8.7 Mpair/s | 8.5 Mpair/s |
+| 8 | 4.9 Mpair/s | 4.2 Mpair/s | 4.2 Mpair/s |
+| 16 | 2.5 Mpair/s | 2.1 Mpair/s | 2.1 Mpair/s |
+
+### `product_table` — eq-polynomial evaluation table
+
+| Variables | `product_table` | `EqPolynomial` (ref) |
+|-----------|-----------------|----------------------|
+| 16 (64K) | 65 Melem/s | 71 Melem/s |
+| 20 (1M) | 136 Melem/s | 91 Melem/s |
+| 24 (16M) | 140 Melem/s | 170 Melem/s |
+
 ## Feature Flags
 
 | Flag | Default | Description |

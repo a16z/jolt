@@ -218,14 +218,8 @@ mod tests {
         let eval = poly.evaluate(&point);
 
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
-        let proof = crate::DoryScheme::open(
-            &poly,
-            &point,
-            eval,
-            &prover_setup,
-            None,
-            &mut transcript,
-        );
+        let proof =
+            crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript);
 
         let serialized = serde_json::to_vec(&proof).expect("serialize proof");
         let deserialized: DoryProof =

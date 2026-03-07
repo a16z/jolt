@@ -5,7 +5,7 @@ use jolt_field::{Field, Fr};
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::batched::BatchedSumcheckProver;
 use jolt_sumcheck::claim::SumcheckClaim;
-use jolt_sumcheck::prover::{SumcheckProver, SumcheckWitness};
+use jolt_sumcheck::prover::{SumcheckCompute, SumcheckProver};
 use jolt_sumcheck::verifier::SumcheckVerifier;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use num_traits::Zero;
@@ -28,7 +28,7 @@ impl EqProductWitness {
     }
 }
 
-impl SumcheckWitness<Fr> for EqProductWitness {
+impl SumcheckCompute<Fr> for EqProductWitness {
     fn round_polynomial(&self) -> UnivariatePoly<Fr> {
         let half = self.poly.len() / 2;
         let mut evals = [Fr::zero(); 3];
@@ -148,7 +148,7 @@ struct PlainSumWitness {
     poly: Polynomial<Fr>,
 }
 
-impl SumcheckWitness<Fr> for PlainSumWitness {
+impl SumcheckCompute<Fr> for PlainSumWitness {
     fn round_polynomial(&self) -> UnivariatePoly<Fr> {
         let half = self.poly.len() / 2;
         let mut sum_lo = Fr::zero();
@@ -190,9 +190,9 @@ fn bench_batched_prove(c: &mut Criterion) {
     let _ = c.bench_function("BatchedSumcheck::prove/8×14vars", |bench| {
         bench.iter_batched(
             || {
-                let witnesses: Vec<Box<dyn SumcheckWitness<Fr>>> = polys
+                let witnesses: Vec<Box<dyn SumcheckCompute<Fr>>> = polys
                     .iter()
-                    .map(|p| -> Box<dyn SumcheckWitness<Fr>> {
+                    .map(|p| -> Box<dyn SumcheckCompute<Fr>> {
                         Box::new(PlainSumWitness { poly: p.clone() })
                     })
                     .collect();

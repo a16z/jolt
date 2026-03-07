@@ -70,8 +70,10 @@ pub fn build_verifier_r1cs<F: Field>(
     );
 
     let num_constraints = 2 * total_rounds;
-    let num_variables: usize =
-        1 + stages.iter().map(|s| s.num_rounds * (s.degree + 2)).sum::<usize>();
+    let num_variables: usize = 1 + stages
+        .iter()
+        .map(|s| s.num_rounds * (s.degree + 2))
+        .sum::<usize>();
 
     let mut a_entries = Vec::new();
     let mut b_entries = Vec::new();
@@ -131,7 +133,13 @@ pub fn build_verifier_r1cs<F: Field>(
         }
     }
 
-    SimpleR1CS::new(num_constraints, num_variables, a_entries, b_entries, c_entries)
+    SimpleR1CS::new(
+        num_constraints,
+        num_variables,
+        a_entries,
+        b_entries,
+        c_entries,
+    )
 }
 
 /// Assigns witness values from round polynomial coefficients.
@@ -158,8 +166,10 @@ pub fn assign_witness<F: Field>(
 ) -> Vec<F> {
     assert_eq!(stages.len(), stage_coefficients.len());
 
-    let num_variables: usize =
-        1 + stages.iter().map(|s| s.num_rounds * (s.degree + 2)).sum::<usize>();
+    let num_variables: usize = 1 + stages
+        .iter()
+        .map(|s| s.num_rounds * (s.degree + 2))
+        .sum::<usize>();
 
     let mut witness = vec![F::zero(); num_variables];
     witness[0] = F::one();
@@ -335,11 +345,7 @@ mod tests {
             vec![Fr::from_u64(3), Fr::from_u64(4)],
             vec![Fr::from_u64(4), Fr::from_u64(3)],
         ];
-        let stage1_coeffs = vec![vec![
-            Fr::from_u64(10),
-            Fr::from_u64(20),
-            Fr::from_u64(10),
-        ]];
+        let stage1_coeffs = vec![vec![Fr::from_u64(10), Fr::from_u64(20), Fr::from_u64(10)]];
         let witness = assign_witness(&stages, &baked, &[stage0_coeffs, stage1_coeffs]);
         check_satisfaction(&r1cs, &witness);
     }
@@ -444,9 +450,7 @@ mod tests {
     #[test]
     fn empty_stages() {
         let stages: Vec<StageConfig<Fr>> = vec![];
-        let baked = BakedPublicInputs {
-            challenges: vec![],
-        };
+        let baked = BakedPublicInputs { challenges: vec![] };
         let r1cs = build_verifier_r1cs(&stages, &baked);
         assert_eq!(r1cs.num_constraints(), 0);
         assert_eq!(r1cs.num_variables(), 1);
@@ -456,7 +460,7 @@ mod tests {
     fn integration_with_real_sumcheck() {
         use jolt_poly::{Polynomial, UnivariatePoly};
         use jolt_sumcheck::{
-            ClearRoundHandler, RoundHandler, SumcheckClaim, SumcheckWitness, SumcheckProver,
+            ClearRoundHandler, RoundHandler, SumcheckClaim, SumcheckCompute, SumcheckProver,
         };
         use jolt_transcript::{Blake2bTranscript, Transcript};
 
@@ -468,7 +472,7 @@ mod tests {
             b: Polynomial<Fr>,
         }
 
-        impl SumcheckWitness<Fr> for IpWitness {
+        impl SumcheckCompute<Fr> for IpWitness {
             fn round_polynomial(&self) -> UnivariatePoly<Fr> {
                 let half = self.a.evaluations().len() / 2;
                 let a = self.a.evaluations();
@@ -488,9 +492,8 @@ mod tests {
                         *eval += a_val * b_val;
                     }
                 }
-                let points: Vec<(Fr, Fr)> = (0..3)
-                    .map(|t| (Fr::from_u64(t as u64), evals[t]))
-                    .collect();
+                let points: Vec<(Fr, Fr)> =
+                    (0..3).map(|t| (Fr::from_u64(t as u64), evals[t])).collect();
                 UnivariatePoly::interpolate(&points)
             }
 
@@ -518,7 +521,11 @@ mod tests {
         }
 
         impl RoundHandler<Fr> for RecordingHandler {
-            type Proof = (jolt_sumcheck::proof::SumcheckProof<Fr>, Vec<Fr>, Vec<Vec<Fr>>);
+            type Proof = (
+                jolt_sumcheck::proof::SumcheckProof<Fr>,
+                Vec<Fr>,
+                Vec<Vec<Fr>>,
+            );
 
             fn absorb_round_poly(
                 &mut self,
@@ -533,7 +540,13 @@ mod tests {
                 self.challenges.push(challenge);
             }
 
-            fn finalize(self) -> (jolt_sumcheck::proof::SumcheckProof<Fr>, Vec<Fr>, Vec<Vec<Fr>>) {
+            fn finalize(
+                self,
+            ) -> (
+                jolt_sumcheck::proof::SumcheckProof<Fr>,
+                Vec<Fr>,
+                Vec<Vec<Fr>>,
+            ) {
                 (self.inner.finalize(), self.challenges, self.round_polys)
             }
         }

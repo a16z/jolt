@@ -32,4 +32,10 @@ pub enum SpartanError {
     /// derived from the combined matrix MLE and witness polynomial evaluations.
     #[error("inner evaluation mismatch: combined_matrix_eval * witness_eval != inner_final_eval")]
     InnerEvaluationMismatch,
+
+    /// The witness does not satisfy the relaxed R1CS equation.
+    ///
+    /// The constraint at the given index has $Az_i \cdot Bz_i \neq u \cdot Cz_i + E_i$.
+    #[error("relaxed R1CS constraint violation at index {0}: Az∘Bz ≠ u·Cz + E")]
+    RelaxedConstraintViolation(usize),
 }

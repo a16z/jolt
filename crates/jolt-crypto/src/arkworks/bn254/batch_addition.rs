@@ -213,8 +213,9 @@ mod tests {
         let base_size = 1000;
         let num_batches = 10;
 
-        let projectiles: Vec<ark_bn254::G1Projective> =
-            (0..base_size).map(|_| ark_bn254::G1Projective::rand(&mut rng)).collect();
+        let projectiles: Vec<ark_bn254::G1Projective> = (0..base_size)
+            .map(|_| ark_bn254::G1Projective::rand(&mut rng))
+            .collect();
         let jolt_bases: Vec<Bn254G1> = projectiles.into_iter().map(Bn254G1::from).collect();
 
         let indices_sets: Vec<Vec<usize>> = (0..num_batches)

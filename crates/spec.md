@@ -674,7 +674,7 @@ jolt-openings/
 **Dependencies:** `jolt-field`, `jolt-poly`, `jolt-transcript`
 
 **Deviations from spec:**
-- `SumcheckInstanceProver` / `SumcheckInstanceVerifier` traits replaced by simpler `SumcheckWitness` trait (witness provides `round_polynomial` + `bind`)
+- `SumcheckInstanceProver` / `SumcheckInstanceVerifier` traits replaced by simpler `SumcheckCompute` trait (witness provides `round_polynomial` + `bind`)
 - `BatchedSumcheckProof` not a separate type — batched prover returns `SumcheckProof<F>` (same structure)
 - Prover/verifier accept a `challenge_fn` closure for Fiat-Shamir flexibility instead of `&mut impl Transcript` directly
 - `WrongNumberOfRounds` error variant added (not in original spec)
@@ -1315,7 +1315,7 @@ Each backend compiles `KernelDescriptor` into its `CompiledKernel` type at setup
 
 #### Integration with jolt-zkvm
 
-`jolt-zkvm` witness implementations are generic over `B: ComputeBackend`. The `SumcheckWitness` trait (in jolt-sumcheck) is unchanged — it returns `UnivariatePoly<F>` to the host. The compute backend is invisible to the protocol layer.
+`jolt-zkvm` witness implementations are generic over `B: ComputeBackend`. The `SumcheckCompute` trait (in jolt-sumcheck) is unchanged — it returns `UnivariatePoly<F>` to the host. The compute backend is invisible to the protocol layer.
 
 #### File Structure
 
@@ -1954,7 +1954,7 @@ pub enum TableRole {
 }
 ```
 
-A CPU executor interprets the kernel in a map-reduce loop. A GPU executor compiles it into a Metal/CUDA kernel. Hand-tuned kernels (for the ~30% of sumchecks with non-standard patterns like `SharedRaPolynomials` or multi-phase binding) implement `SumcheckWitness` directly, bypassing the kernel IR.
+A CPU executor interprets the kernel in a map-reduce loop. A GPU executor compiles it into a Metal/CUDA kernel. Hand-tuned kernels (for the ~30% of sumchecks with non-standard patterns like `SharedRaPolynomials` or multi-phase binding) implement `SumcheckCompute` directly, bypassing the kernel IR.
 
 The kernel IR is now a concrete part of the design. `KernelDescriptor` and `KernelShape` (with `ProductSum` and `Custom` variants) define the fused map-reduce computation for GPU and CPU backend compilation. `TensorSplit` captures the split-eq $\sqrt{N}$ decomposition for thread hierarchy mapping. See [backend_agnostic.md](./backend_agnostic.md) for the full compute backend design that consumes these types.
 

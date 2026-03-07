@@ -1,7 +1,9 @@
-//! Proof and prover-side data types for committed sumcheck.
+//! Proof and prover-side data types for committed sumcheck and BlindFold.
 
 use jolt_crypto::JoltCommitment;
 use jolt_field::Field;
+use jolt_openings::CommitmentScheme;
+use jolt_spartan::RelaxedSpartanProof;
 use serde::{Deserialize, Serialize};
 
 /// Public proof for a committed sumcheck stage.
@@ -33,6 +35,37 @@ pub struct CommittedRoundData<F: Field, VC: JoltCommitment> {
     pub poly_degrees: Vec<usize>,
     /// Fiat-Shamir challenges derived at each round.
     pub challenges: Vec<F>,
+}
+
+/// Full BlindFold proof tying committed sumcheck stages to a relaxed Spartan proof.
+///
+/// After all sumcheck stages run with committed rounds, the prover:
+/// 1. Builds a verifier R1CS encoding the deferred sumcheck checks.
+/// 2. Assigns the witness from accumulated round data.
+/// 3. Nova-folds the real instance with a random satisfying instance.
+/// 4. Produces a relaxed Spartan proof over the folded instance.
+///
+/// `PCS` is the polynomial commitment scheme used for the Spartan witness/error
+/// openings. The committed sumcheck proofs (with `VC::Commitment`) are sent
+/// separately and are not included here.
+#[derive(Serialize, Deserialize)]
+#[serde(bound = "")]
+#[allow(clippy::type_complexity)]
+pub struct BlindFoldProof<F: Field, PCS: CommitmentScheme> {
+    /// Commitment to the real R1CS witness.
+    pub real_w_commitment: PCS::Output,
+    /// Commitment to the real error vector (all zeros for a satisfying instance).
+    pub real_e_commitment: PCS::Output,
+    /// Relaxation scalar of the random masking instance.
+    pub random_u: F,
+    /// Commitment to the random instance's witness.
+    pub random_w_commitment: PCS::Output,
+    /// Commitment to the random instance's error vector.
+    pub random_e_commitment: PCS::Output,
+    /// Commitment to the cross-term vector from Nova folding.
+    pub cross_term_commitment: PCS::Output,
+    /// Relaxed Spartan proof over the folded instance.
+    pub spartan_proof: RelaxedSpartanProof<F, PCS>,
 }
 
 /// Combined output from [`CommittedRoundHandler::finalize`](super::CommittedRoundHandler).

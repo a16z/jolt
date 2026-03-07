@@ -1,6 +1,6 @@
 # Task 06: integrate-jolt-ir-downstream
 
-**Status:** Not started
+**Status:** Partially done (jolt-spartan IR integration complete; jolt-zkvm pending)
 **Phase:** 4a (during jolt-zkvm implementation)
 **Dependencies:** Tasks 01–05 (core IR + all backends)
 **Blocks:** Completion of the refactoring

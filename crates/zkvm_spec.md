@@ -95,9 +95,9 @@ pub struct StageBatch<F: Field> {
 
 ```rust
 pub fn prove<F, PCS, T, B>(
+    witness_store: &WitnessStore<F>,
     stages: &mut [Box<dyn ProverStage<F, B>>],
     transcript: &mut T,
-    handler: impl RoundHandler<F>,
 ) -> (Vec<SumcheckProof<F>>, Vec<ProverClaim<F>>)
 where
     F: Field,
@@ -111,12 +111,18 @@ where
     for stage in stages.iter_mut() {
         let batch = stage.build(&all_opening_claims, transcript);
 
+        // Each stage creates a fresh handler — no Clone required.
+        // In ZK mode, this would be CommittedRoundHandler::new(setup, rng).
+        let handler = ClearRoundHandler::with_capacity(
+            batch.claims.iter().map(|c| c.num_vars).max().unwrap_or(0),
+        );
+
         let proof = BatchedSumcheckProver::prove_with_handler(
             &batch.claims,
             &mut batch.witnesses,
             transcript,
             challenge_fn,
-            handler.clone(),
+            handler,
         );
 
         let challenges = extract_challenges_from_proof(&proof);
@@ -151,6 +157,83 @@ No accumulator struct — claims are plain data flowing through function paramet
 ### 3.4 Verifier Pipeline
 
 Mirror image: each stage provides a `VerifierStage` that verifies the sumcheck proof and produces `Vec<VerifierClaim<F, PCS::Output>>`. Stage 8 reduces via `RlcReduction::reduce_verifier` and calls `PCS::verify`.
+
+### 3.4a Witness Ownership and the WitnessStore
+
+In jolt-core, all witness polynomials live in the scope of one giant prover method. In jolt-zkvm, the stage loop requires explicit lifetime management.
+
+**`WitnessStore`** is a jolt-zkvm type that owns the evaluation tables produced during witness generation. Stages borrow from it:
+
+```rust
+/// Owns all committed polynomial evaluation tables for the duration of proving.
+///
+/// Created during witness generation, holds data until stage 8 consumes it
+/// for opening proofs. Stages borrow slices via `get()`.
+pub struct WitnessStore<F: Field> {
+    /// Keyed by polynomial tag (e.g., "rd_inc", "ram_ra", "bytecode_ra").
+    tables: HashMap<PolynomialTag, Vec<F>>,
+}
+
+impl<F: Field> WitnessStore<F> {
+    /// Returns the evaluation table for a polynomial, or panics if not found.
+    pub fn get(&self, tag: PolynomialTag) -> &[F] {
+        &self.tables[&tag]
+    }
+
+    /// Consumes a table, moving it into a `ProverClaim`. Used by `extract_claims()`.
+    pub fn take(&mut self, tag: PolynomialTag) -> Vec<F> {
+        self.tables.remove(&tag).expect("polynomial not found")
+    }
+}
+```
+
+**Lifecycle:**
+
+1. **Witness generation** produces `WitnessStore<F>` + streaming commitment outputs.
+2. **Stages 1–7** borrow from `WitnessStore` via `&self.store.get(tag)`. The `SumcheckCompute` working copies are created from these borrows (copied to `B::Buffer<F>` if GPU).
+3. **`extract_claims()`** calls `store.take(tag)` to move evaluation tables into `ProverClaim.evaluations`. After all stages complete, the store is empty.
+4. **Stage 8** consumes `ProverClaim.evaluations` for `RlcReduction` + `PCS::open`.
+
+This avoids both the jolt-core problem (implicit lifetime in one giant scope) and unnecessary cloning (tables are moved, not copied, into claims).
+
+### 3.4b Commitment Orchestration
+
+The `JoltProver` in jolt-zkvm orchestrates both commitment and proving:
+
+```rust
+impl<PCS, B> JoltProver<PCS, B>
+where
+    PCS: CommitmentScheme + StreamingCommitment,
+    B: ComputeBackend,
+{
+    pub fn prove(trace: ExecutionTrace, pcs_setup: &PCS::ProverSetup, ...) -> JoltProof<PCS> {
+        // Phase 1: Witness generation → WitnessStore + commitments
+        let (witness_store, commitments) = generate_and_commit::<PCS>(trace, pcs_setup);
+
+        // Phase 2: Build stages (borrow from witness_store)
+        let mut stages = build_stages(&witness_store, &self.backend);
+
+        // Phase 3: Run stage loop (stages borrow, then take from witness_store)
+        let (proofs, claims) = prove_stages(&mut stages, &mut transcript);
+
+        // Phase 4: Opening reduction + PCS open
+        let opening_proofs = open_claims::<PCS>(claims, pcs_setup, &mut transcript);
+
+        JoltProof { commitments, proofs, opening_proofs }
+    }
+}
+```
+
+Commitment happens before the stage loop. The PCS sees evaluation tables once during `StreamingCommitment::feed()`, then the tables live in `WitnessStore` until consumed by opening proofs. The stage pipeline never touches commitment — it only produces `ProverClaim`s with evaluation tables that the opening phase consumes.
+
+### 3.4c StageConfig Synchronization for BlindFold
+
+In ZK mode, the BlindFold verifier R1CS requires `StageConfig { num_rounds, degree, claimed_sum }` per stage. Both prover and verifier must construct identical configs:
+
+- **`num_rounds`** and **`degree`** are derived from `SumcheckClaim`s, which both sides produce from the same `ClaimDefinition`s and transcript state.
+- **`claimed_sum`** for batched sumcheck is the α-weighted combination of individual claims: $\sum_j \alpha^j \cdot 2^{N-n_j} \cdot C_j$. Both sides derive α from the transcript and compute the same combined sum.
+
+The verifier reconstructs `StageConfig`s during its stage loop (same claims → same configs). These feed into `BakedPublicInputs { challenges }` which is constructed from the transcript challenges absorbed during verification. The `build_verifier_r1cs()` call is deterministic given these inputs.
 
 ### 3.5 IR-Driven Claim Definitions
 
@@ -272,10 +355,10 @@ The normalized opening point (cycle-major vs. address-major ordering for Dory) i
 
 ### 4.1 Where ComputeBackend is Used
 
-The `ComputeBackend` trait enters jolt-zkvm through `SumcheckCompute` implementations. Each witness struct holds a `&B` reference and stores polynomial data in `B::Buffer<T>`:
+The `ComputeBackend` trait enters jolt-zkvm through `SumcheckCompute` implementations. Each compute struct holds a `&B` reference and stores polynomial data in `B::Buffer<T>`:
 
 ```rust
-struct RamRwWitness<'a, F: Field, B: ComputeBackend> {
+struct RamRwCompute<'a, F: Field, B: ComputeBackend> {
     backend: &'a B,
     eq_evals: B::Buffer<F>,
     ra_poly: B::Buffer<F>,
@@ -284,7 +367,7 @@ struct RamRwWitness<'a, F: Field, B: ComputeBackend> {
     kernel: B::CompiledKernel<F>,
 }
 
-impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for RamRwWitness<'_, F, B> {
+impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for RamRwCompute<'_, F, B> {
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let coeffs = self.backend.pairwise_reduce(
             &[&self.eq_evals, &self.ra_poly, &self.val_poly],
@@ -415,7 +498,7 @@ fn ram_rw_witness_round_poly_correct() {
     let ra = Polynomial::<Fr>::random(num_vars, &mut rng);
     let val = Polynomial::<Fr>::random(num_vars, &mut rng);
 
-    let mut witness = RamRwWitness::new(&backend, &eq, &ra, &val);
+    let mut witness = RamRwCompute::new(&backend, &eq, &ra, &val);
     let round_poly = witness.round_polynomial();
 
     // Brute-force: sum over all assignments to vars 1..n
@@ -659,18 +742,198 @@ Note: No `Transcript` type parameter on `JoltProver`/`JoltVerifier` — transcri
 
 ## 9. BlindFold Integration (ZK Feature)
 
-When `#[cfg(feature = "zk")]`:
+The stage pipeline supports zero-knowledge via compile-time feature gating (`#[cfg(feature = "zk")]`). The same `ProverStage` trait, same `SumcheckCompute` trait, and same stage ordering are used — the only change is which `RoundHandler` is injected and what happens after stage 7.
 
-1. `RoundHandler` switches from `ClearRoundHandler` to a committed handler from `jolt-blindfold` that Pedersen-commits round polynomials
-2. After stages 1–7, `BlindFoldProver` builds verifier R1CS from the same `ClaimDefinition`s via `emit_r1cs()`
-3. Nova folding + relaxed Spartan (from `jolt-spartan::prove_relaxed`) proves R1CS satisfaction
-4. Proof includes `BlindFoldProof` instead of cleartext opening claims
+### 9.1 What Changes in ZK Mode
 
-The IR-driven approach means BlindFold R1CS constraints are **automatically derived** from claim definitions — no hand-synchronization.
+| Aspect | Standard | ZK |
+|--------|----------|----|
+| `RoundHandler` | `ClearRoundHandler` — appends polynomial coefficients to transcript | `CommittedRoundHandler<VC>` — Pedersen-commits coefficients, appends commitment |
+| `RoundVerifier` | `ClearRoundVerifier` — checks `s(0)+s(1) == running_sum` | `CommittedRoundVerifier<VC>` — absorbs commitment, defers checks to BlindFold |
+| Stage 8 output | `Vec<OpeningProof>` (cleartext evaluations) | `BlindFoldProof` (no cleartext evaluations leaked) |
+| Proof type | `JoltProof { opening_claims, opening_proofs }` | `JoltProof { blindfold_proof }` |
+| `ClaimDefinition` usage | `.evaluate()` for `input_claim()` | `.expr.to_sum_of_products().emit_r1cs()` for verifier R1CS |
+
+### 9.2 ZK Prover Pipeline
+
+```rust
+pub fn prove_zk<F, PCS, VC, T, B>(
+    stages: &mut [Box<dyn ProverStage<F, B>>],
+    pedersen_setup: &VC::Setup,
+    pcs_setup: &PCS::ProverSetup,
+    transcript: &mut T,
+    rng: &mut impl CryptoRngCore,
+) -> JoltProof<F, PCS>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Output: HomomorphicCommitment<F>,
+    VC: JoltCommitment,
+    T: Transcript<Challenge = u128>,
+    B: ComputeBackend,
+{
+    let mut all_opening_claims: Vec<ProverClaim<F>> = Vec::new();
+    let mut accumulator = BlindFoldAccumulator::<F, VC>::new();
+    let mut stage_configs = Vec::new();
+
+    // ── Stages 1–7: identical loop, different handler ──
+    for stage in stages.iter_mut() {
+        let batch = stage.build(&all_opening_claims, transcript);
+
+        // ZK: committed handler instead of cleartext
+        let handler = CommittedRoundHandler::<F, VC, _>::new(pedersen_setup, rng);
+        let output: CommittedSumcheckOutput<F, VC> =
+            BatchedSumcheckProver::prove_with_handler(
+                &batch.claims, &mut batch.witnesses,
+                transcript, challenge_fn, handler,
+            );
+
+        // Accumulate round data for BlindFold
+        accumulator.push(output.round_data);
+
+        // Record stage config (rounds, degree, claimed_sum) for verifier R1CS
+        stage_configs.push(StageConfig {
+            num_rounds: batch.claims.iter().map(|c| c.num_vars).max().unwrap(),
+            degree: batch.claims.iter().map(|c| c.degree).max().unwrap(),
+            claimed_sum: /* combined claim */,
+        });
+
+        let challenges = extract_challenges_from_output(&output);
+        let new_claims = stage.extract_claims(&challenges);
+        all_opening_claims.extend(new_claims);
+    }
+
+    // ── Stage 8: BlindFold instead of cleartext openings ──
+    let blindfold_proof = BlindFoldProver::prove::<VC, PCS, T>(
+        accumulator,
+        &stage_configs,
+        pcs_setup,
+        transcript,
+        rng,
+    ).expect("BlindFold proving must succeed for satisfying witness");
+
+    JoltProof { blindfold_proof }
+}
+```
+
+### 9.3 ZK Verifier Pipeline
+
+```rust
+pub fn verify_zk<F, PCS, VC, T>(
+    proof: &JoltProof<F, PCS>,
+    stages: &[Box<dyn VerifierStage<F, PCS>>],
+    pcs_verifier_setup: &PCS::VerifierSetup,
+    transcript: &mut T,
+) -> Result<(), VerificationError>
+where
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Output: HomomorphicCommitment<F>,
+    VC: JoltCommitment,
+    T: Transcript<Challenge = u128>,
+{
+    let mut stage_configs = Vec::new();
+    let mut all_challenges = Vec::new();
+
+    // ── Stages 1–7: absorb commitments, derive challenges ──
+    let verifier = CommittedRoundVerifier::<VC>::new();
+    for (stage, committed_proof) in stages.iter().zip(&proof.committed_proofs) {
+        let claims = stage.build_claims(/* ... */);
+
+        // Absorb commitments into transcript (defers checks to BlindFold)
+        let (_, challenges) = BatchedSumcheckVerifier::verify_with_handler(
+            &claims, &committed_proof.round_commitments,
+            transcript, challenge_fn, &verifier,
+        )?;
+
+        all_challenges.extend_from_slice(&challenges);
+        stage_configs.push(/* same StageConfig as prover */);
+    }
+
+    // ── Stage 8: verify BlindFold proof ──
+    let baked = BakedPublicInputs { challenges: all_challenges };
+    BlindFoldVerifier::verify::<PCS, T>(
+        &proof.blindfold_proof,
+        &stage_configs,
+        &baked,
+        pcs_verifier_setup,
+        transcript,
+    )?;
+
+    Ok(())
+}
+```
+
+### 9.4 Why the Stage Pipeline Makes ZK Easy
+
+1. **Handler injection:** The `RoundHandler` trait is already a parameter of `BatchedSumcheckProver::prove_with_handler`. The stage loop body is identical — only the handler construction changes. No `#[cfg]` scattered through stage logic.
+
+2. **IR-driven R1CS:** Each stage exposes `claim_definitions()` → `Vec<ClaimDefinition>`. BlindFold calls `claim_def.expr.to_sum_of_products().emit_r1cs()` to build the verifier R1CS automatically. Adding or modifying a claim formula in jolt-ir automatically updates the BlindFold constraints — no hand-synchronization.
+
+3. **Accumulator is append-only:** `BlindFoldAccumulator::push(round_data)` collects committed round data. Each stage pushes one entry. The accumulator doesn't interact with stage logic — it's a simple collector.
+
+4. **Same `ProverStage` trait:** Stages don't know whether they're in ZK mode. They produce `SumcheckCompute` witnesses and claims. The handler decides what to do with the round polynomials.
+
+5. **Stage 8 bifurcation is clean:** Standard mode → `RlcReduction` + `PCS::open`. ZK mode → `BlindFoldProver::prove`. Both consume the same `Vec<ProverClaim<F>>` and produce a proof. This is the only `#[cfg(feature = "zk")]` branch in the orchestrator.
+
+### 9.5 Existing Crate Support
+
+All required pieces are implemented:
+
+| Component | Crate | Status |
+|-----------|-------|--------|
+| `CommittedRoundHandler` / `CommittedRoundVerifier` | jolt-blindfold | Done |
+| `BlindFoldAccumulator` | jolt-blindfold | Done |
+| `build_verifier_r1cs` / `assign_witness` | jolt-blindfold | Done |
+| Nova folding (`fold_witnesses`, `compute_cross_term`, `sample_random_witness`) | jolt-blindfold | Done |
+| `BlindFoldProver` / `BlindFoldVerifier` | jolt-blindfold | Done |
+| `BlindFoldProof` | jolt-blindfold | Done |
+| `SpartanProver::prove_relaxed` / `SpartanVerifier::verify_relaxed` | jolt-spartan | Done |
+| `RelaxedSpartanProof` | jolt-spartan | Done |
+| `HomomorphicCommitment` trait | jolt-crypto | Done |
+| `ClaimDefinition::expr.to_sum_of_products().emit_r1cs()` | jolt-ir | Done |
+| `RoundHandler` / `RoundVerifier` strategy traits | jolt-sumcheck | Done |
+
+### 9.6 What's NOT in the Crates Yet
+
+The orchestration glue in jolt-zkvm itself — the `prove_zk` / `verify_zk` functions above. All sub-crate APIs are ready; wiring them together is part of the jolt-zkvm implementation task.
 
 ---
 
-## 10. Open Questions
+## 10. Implementation Order for jolt-zkvm
+
+### 10.1 Phase 1: ClaimDefinition Migration (first task)
+
+Port the ~20 sumcheck claim formulas from jolt-core into `jolt-ir::ClaimDefinition`s. This is the foundation — every other piece (stages, BlindFold R1CS, Lean proofs, testing) depends on claim definitions existing.
+
+Source locations in jolt-core:
+- `zkvm/ram/read_write_checking.rs` — RAM read-write, val evaluation, val final
+- `zkvm/registers/` — register read-write, val evaluation
+- `zkvm/instruction_lookups/ra_virtual.rs` — instruction RA
+- `zkvm/bytecode/` — bytecode read-RAF
+- `zkvm/claim_reductions/` — advice, Hamming, increment, instruction lookups, register, RAM RA
+
+Each claim gets:
+1. An `Expr` in jolt-ir capturing the formula symbolically
+2. A test that `claim_def.evaluate()` matches hand-computed values
+3. A test that `claim_def.expr.to_sum_of_products().emit_r1cs()` is satisfiable with correct witness
+
+### 10.2 Phase 2: WitnessStore + First Concrete Stage
+
+Define `WitnessStore<F>` (see §3.4a) and implement one `ProverStage` end-to-end — likely the simplest (Hamming booleanity or a plain-sum reduction). This validates the trait signatures, witness borrowing, and claim flow before committing to all 7 stages.
+
+### 10.3 Phase 3: Remaining Stages
+
+Implement the remaining `ProverStage`s, including the advice `SumcheckReduction` two-phase reduction (stages 6–7). Each stage gets Level 2 and Level 3 tests (see §6).
+
+### 10.4 Phase 4: Orchestrator + E2E
+
+Wire `JoltProver` / `JoltVerifier` with the stage loop, opening reduction, and (optionally) BlindFold ZK mode. Run muldiv e2e test as the final validation.
+
+---
+
+## 11. Open Questions
+
+All previously open questions have been resolved. Documented here for reference.
 
 ### Resolved
 

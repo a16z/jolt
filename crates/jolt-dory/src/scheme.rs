@@ -13,6 +13,7 @@ use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment};
 use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
+use jolt_poly::EvaluationSource;
 use jolt_transcript::Transcript;
 
 use crate::params::DoryParams;
@@ -112,7 +113,7 @@ impl CommitmentScheme for DoryScheme {
         transcript: &mut impl Transcript,
     ) -> Self::Proof {
         let num_vars = point.len();
-        let wrapped = DoryPolyAdapter::from_evals(poly.evaluations(), num_vars);
+        let adapter = DorySourceAdapter::new(poly);
         let sigma = num_vars.div_ceil(2);
         let nu = num_vars - sigma;
 
@@ -132,7 +133,7 @@ impl CommitmentScheme for DoryScheme {
 
         let (proof, _blind) =
             dory::prove::<InnerFr, InnerBN254, G1Routines, G2Routines, _, _, Transparent>(
-                &wrapped,
+                &adapter,
                 &ark_point,
                 row_commitments,
                 <InnerFr as DoryField>::zero(),
@@ -198,10 +199,7 @@ impl AdditivelyHomomorphic for DoryScheme {
         DoryCommitment(gt)
     }
 
-    fn combine_hints(
-        hints: Vec<Self::OpeningHint>,
-        scalars: &[Self::Field],
-    ) -> Self::OpeningHint {
+    fn combine_hints(hints: Vec<Self::OpeningHint>, scalars: &[Self::Field]) -> Self::OpeningHint {
         assert_eq!(hints.len(), scalars.len());
         if hints.is_empty() {
             return DoryHint::default();
@@ -210,15 +208,9 @@ impl AdditivelyHomomorphic for DoryScheme {
         let num_rows = hints[0].0.len();
         let mut combined = vec![Bn254G1::default(); num_rows];
 
-        for (hint, scalar) in hints.iter().zip(scalars.iter()) {
-            let ark_s = jolt_fr_to_ark(scalar);
+        for (hint, &scalar) in hints.iter().zip(scalars.iter()) {
             for (dst, src) in combined.iter_mut().zip(hint.0.iter()) {
-                // SAFETY: Bn254G1 and ArkG1 are both repr(transparent) over G1Projective.
-                let ark_g1: dory::backends::arkworks::ArkG1 =
-                    unsafe { std::mem::transmute(*src) };
-                let scaled = G1Routines::scalar_mul(&ark_g1, &ark_s);
-                let scaled_bn: Bn254G1 = unsafe { std::mem::transmute(scaled) };
-                *dst += scaled_bn;
+                *dst += scalar * src;
             }
         }
 
@@ -243,30 +235,31 @@ fn commit_rows_msm(
         .collect()
 }
 
-struct DoryPolyAdapter {
-    evals: Vec<Fr>,
-    num_vars: usize,
+/// Bridges any [`EvaluationSource<Fr>`] to dory-pcs's polynomial traits.
+///
+/// Replaces the old `DoryPolyAdapter` which cloned evaluations eagerly.
+/// `DorySourceAdapter` borrows the source and delegates `evaluate`,
+/// `commit`, and `vector_matrix_product` through [`EvaluationSource`]
+/// methods — enabling streaming opening proofs where the full evaluation
+/// table never needs to be materialized.
+struct DorySourceAdapter<'a, S: EvaluationSource<Fr>> {
+    source: &'a S,
 }
 
-impl DoryPolyAdapter {
-    fn from_evals(evaluations: &[Fr], num_vars: usize) -> Self {
-        Self {
-            evals: evaluations.to_vec(),
-            num_vars,
-        }
+impl<'a, S: EvaluationSource<Fr>> DorySourceAdapter<'a, S> {
+    fn new(source: &'a S) -> Self {
+        Self { source }
     }
 }
 
-impl DoryPolynomial<InnerFr> for DoryPolyAdapter {
+impl<S: EvaluationSource<Fr>> DoryPolynomial<InnerFr> for DorySourceAdapter<'_, S> {
     fn num_vars(&self) -> usize {
-        self.num_vars
+        self.source.num_vars()
     }
 
     fn evaluate(&self, point: &[InnerFr]) -> InnerFr {
         let native_point: Vec<Fr> = point.iter().map(ark_to_jolt_fr).collect();
-        let dense = jolt_poly::Polynomial::new(self.evals.clone());
-        let result = dense.evaluate(&native_point);
-        jolt_fr_to_ark(&result)
+        jolt_fr_to_ark(&self.source.evaluate(&native_point))
     }
 
     fn commit<E, Mo, M1>(
@@ -281,16 +274,11 @@ impl DoryPolynomial<InnerFr> for DoryPolyAdapter {
         M1: DoryRoutines<E::G1>,
         E::G1: DoryGroup<Scalar = InnerFr>,
     {
-        let num_cols = 1usize << sigma;
-
-        let row_commitments: Vec<E::G1> = self
-            .evals
-            .chunks(num_cols)
-            .map(|row| {
-                let scalars: Vec<InnerFr> = row.iter().map(jolt_fr_to_ark).collect();
-                M1::msm(&setup.g1_vec[..scalars.len()], &scalars)
-            })
-            .collect();
+        let mut row_commitments: Vec<E::G1> = Vec::new();
+        self.source.for_each_row(sigma, &mut |_idx, row| {
+            let scalars: Vec<InnerFr> = row.iter().map(jolt_fr_to_ark).collect();
+            row_commitments.push(M1::msm(&setup.g1_vec[..scalars.len()], &scalars));
+        });
 
         let g2_bases = &setup.g2_vec[..row_commitments.len()];
         let tier_2 = E::multi_pair_g2_setup(&row_commitments, g2_bases);
@@ -299,24 +287,10 @@ impl DoryPolynomial<InnerFr> for DoryPolyAdapter {
     }
 }
 
-impl MultilinearLagrange<InnerFr> for DoryPolyAdapter {
-    fn vector_matrix_product(&self, left_vec: &[InnerFr], nu: usize, sigma: usize) -> Vec<InnerFr> {
-        let num_cols = 1usize << sigma;
-        let num_rows = 1usize << nu;
-        let left_native: Vec<Fr> = left_vec.iter().map(ark_to_jolt_fr).collect();
-
-        let mut result = vec![Fr::zero(); num_cols];
-        for (col_idx, dest) in result.iter_mut().enumerate() {
-            let mut sum = Fr::zero();
-            for (left_val, row_idx) in left_native.iter().zip(0..num_rows) {
-                let coeff_idx = row_idx * num_cols + col_idx;
-                if coeff_idx < self.evals.len() {
-                    sum += self.evals[coeff_idx] * *left_val;
-                }
-            }
-            *dest = sum;
-        }
-
+impl<S: EvaluationSource<Fr>> MultilinearLagrange<InnerFr> for DorySourceAdapter<'_, S> {
+    fn vector_matrix_product(&self, left_vec: &[InnerFr], _nu: usize, sigma: usize) -> Vec<InnerFr> {
+        let native_left: Vec<Fr> = left_vec.iter().map(ark_to_jolt_fr).collect();
+        let result = self.source.fold_rows(&native_left, sigma);
         result.iter().map(jolt_fr_to_ark).collect()
     }
 }

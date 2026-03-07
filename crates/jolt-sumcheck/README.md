@@ -20,7 +20,7 @@ This crate implements the sumcheck interactive proof protocol for multilinear po
 
 ### Prover
 
-- **`SumcheckWitness<F>`** — Trait for witness polynomials. Implementors provide `round_polynomial` (the univariate restriction for the current round) and `bind` (fix a variable to the verifier's challenge).
+- **`SumcheckCompute<F>`** — Trait for witness polynomials. Implementors provide `round_polynomial` (the univariate restriction for the current round) and `bind` (fix a variable to the verifier's challenge).
 - **`SumcheckProver`** — Drives the prover side: iterates rounds, queries the witness, and produces a `SumcheckProof`.
 - **`BatchedSumcheckProver`** — Batches multiple sumcheck instances via random linear combination.
 - **`StreamingSumcheckProver`** — Memory-efficient streaming variant for large witnesses.
@@ -29,6 +29,11 @@ This crate implements the sumcheck interactive proof protocol for multilinear po
 
 - **`SumcheckVerifier`** — Verifies a `SumcheckProof` against a claim. Returns the final evaluation and the vector of challenges on success.
 - **`BatchedSumcheckVerifier`** — Verifies a batched sumcheck proof.
+
+### Reduction
+
+- **`SumcheckReduction<F>`** — Trait for sumcheck-based claim reductions. Transforms `ProverClaim`s into sumcheck instances, then extracts reduced claims from the resulting challenges. The sumcheck analogue of `OpeningReduction` in jolt-openings.
+- **`SumcheckWitnessBatch<F>`** — Type alias for `(Vec<SumcheckClaim<F>>, Vec<Box<dyn SumcheckCompute<F>>>)`.
 
 ### Round Handlers
 
@@ -43,9 +48,10 @@ This crate implements the sumcheck interactive proof protocol for multilinear po
 ## Dependency Position
 
 ```
-jolt-field ─┐
-jolt-poly  ─┼─► jolt-sumcheck ─► jolt-blindfold, jolt-spartan, jolt-zkvm
-jolt-transcript ─┘
+jolt-field ─────┐
+jolt-poly  ─────┼─► jolt-sumcheck ─► jolt-blindfold, jolt-spartan, jolt-zkvm
+jolt-transcript ┘
+jolt-openings ──┘    (for ProverClaim/VerifierClaim used by SumcheckReduction)
 ```
 
 ## Feature Flags

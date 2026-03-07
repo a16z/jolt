@@ -757,7 +757,7 @@ The following crates already have Criterion benchmarks in place:
 - Benchmark runner script (`scripts/run-benchmarks.sh`)
 - Performance tracking tooling
 
-**Note:** The code samples in sections 1–3 above are illustrative but do not match the actual API signatures. The real benchmarks use `Polynomial<T>` (not `DensePolynomial`/`CompactPolynomial` as separate types), and `SumcheckWitness` (not `SumcheckInstanceProver`). Update samples if using this task as a reference.
+**Note:** The code samples in sections 1–3 above are illustrative but do not match the actual API signatures. The real benchmarks use `Polynomial<T>` (not `DensePolynomial`/`CompactPolynomial` as separate types), and `SumcheckCompute` (not `SumcheckInstanceProver`). Update samples if using this task as a reference.
 
 ### Acceptance Criteria
 

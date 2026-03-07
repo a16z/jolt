@@ -6,6 +6,7 @@
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
+use serde::{Deserialize, Serialize};
 
 /// A Spartan proof for an R1CS instance.
 ///
@@ -19,6 +20,9 @@ use jolt_sumcheck::SumcheckProof;
 /// 4. An inner sumcheck proof verifying the evaluation claims against the matrix MLEs:
 ///    $\sum_y M(r_x, y) \cdot \tilde{z}(y) = \rho_A \cdot \widetilde{Az}(r_x) + \rho_B \cdot \widetilde{Bz}(r_x) + \rho_C \cdot \widetilde{Cz}(r_x)$.
 /// 5. An opening proof for the witness polynomial at the inner challenge point $r_y$.
+#[derive(Serialize, Deserialize)]
+#[serde(bound = "")]
+#[allow(clippy::type_complexity)]
 pub struct SpartanProof<F: Field, PCS: CommitmentScheme> {
     /// Commitment to the multilinear extension of the witness vector.
     pub witness_commitment: PCS::Output,
@@ -37,4 +41,27 @@ pub struct SpartanProof<F: Field, PCS: CommitmentScheme> {
     pub witness_eval: F,
     /// Opening proof for the witness polynomial at the inner challenge point $r_y$.
     pub witness_opening_proof: PCS::Proof,
+}
+
+/// A Spartan proof for a **relaxed** R1CS instance: $Az \circ Bz = u \cdot Cz + E$.
+///
+/// Used by the BlindFold protocol after Nova folding. The relaxed equation
+/// introduces a scalar $u$ and error vector $E$. The outer sumcheck becomes:
+/// $$\sum_x \widetilde{eq}(x,\tau) \cdot (\widetilde{Az}(x) \cdot \widetilde{Bz}(x) - u \cdot \widetilde{Cz}(x) - \widetilde{E}(x)) = 0$$
+///
+/// Commitments to the witness and error polynomials are **not** included in the
+/// proof — they are passed as separate parameters by the caller (BlindFold).
+#[derive(Serialize, Deserialize)]
+#[serde(bound = "")]
+#[allow(clippy::type_complexity)]
+pub struct RelaxedSpartanProof<F: Field, PCS: CommitmentScheme> {
+    pub outer_sumcheck_proof: SumcheckProof<F>,
+    pub az_eval: F,
+    pub bz_eval: F,
+    pub cz_eval: F,
+    pub e_eval: F,
+    pub inner_sumcheck_proof: SumcheckProof<F>,
+    pub witness_eval: F,
+    pub witness_opening_proof: PCS::Proof,
+    pub error_opening_proof: PCS::Proof,
 }

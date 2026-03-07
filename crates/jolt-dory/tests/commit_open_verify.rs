@@ -35,8 +35,15 @@ fn round_trip<T: Transcript>(num_vars: usize, seed: u64, label: &'static [u8]) {
     let proof2 = DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut pt2);
 
     let mut vt2 = T::new(label);
-    DoryScheme::verify(&commitment, &point, eval, &proof2, &verifier_setup, &mut vt2)
-        .expect("round-trip verification (without hint) must succeed");
+    DoryScheme::verify(
+        &commitment,
+        &point,
+        eval,
+        &proof2,
+        &verifier_setup,
+        &mut vt2,
+    )
+    .expect("round-trip verification (without hint) must succeed");
 }
 
 #[test]
@@ -238,14 +245,7 @@ fn wrong_transcript_domain_rejected() {
     let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt);
 
     let mut vt = Blake2bTranscript::new(b"wrong-domain");
-    let result = DoryScheme::verify(
-        &commitment,
-        &point,
-        eval,
-        &proof,
-        &verifier_setup,
-        &mut vt,
-    );
+    let result = DoryScheme::verify(&commitment, &point, eval, &proof, &verifier_setup, &mut vt);
     assert!(result.is_err(), "wrong transcript domain must be rejected");
 }
 

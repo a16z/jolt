@@ -17,6 +17,7 @@ mod eq;
 mod identity;
 pub mod lagrange;
 mod multilinear;
+mod source;
 mod univariate;
 
 pub use compressed_univariate::CompressedPoly;
@@ -24,4 +25,5 @@ pub use cpu_polynomial::Polynomial;
 pub use eq::EqPolynomial;
 pub use identity::IdentityPolynomial;
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation};
+pub use source::{EvaluationSource, RlcSource};
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};

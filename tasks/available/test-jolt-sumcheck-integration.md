@@ -200,7 +200,7 @@ fn test_streaming_large_polynomial() {
 - Create `streaming.rs` with streaming variant tests
 - Add negative test cases (soundness) to integration tests
 
-**Note:** The code samples above reference `SumcheckInstanceProver` — the actual trait is `SumcheckWitness`. Update samples if using this task as a reference.
+**Note:** The code samples above reference `SumcheckInstanceProver` — the actual trait is `SumcheckCompute`. Update samples if using this task as a reference.
 
 ### Acceptance Criteria
 

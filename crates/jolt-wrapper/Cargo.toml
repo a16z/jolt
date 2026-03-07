@@ -22,6 +22,8 @@ rand_core = { workspace = true }
 jolt-ir = { path = "../jolt-ir" }
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 jolt-transcript = { path = "../jolt-transcript" }
+jolt-spartan = { path = "../jolt-spartan" }
+jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
 num-traits = { workspace = true }
 rand = { workspace = true }
 rand_core = { workspace = true }

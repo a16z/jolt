@@ -9,6 +9,7 @@
 
 use jolt_crypto::Commitment;
 use jolt_field::Field;
+use jolt_poly::EvaluationSource;
 use jolt_transcript::Transcript;
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -58,13 +59,19 @@ pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
 
     /// Polynomial representation accepted by [`open`](Self::open).
     ///
+    /// Must implement [`EvaluationSource`] to support streaming access
+    /// patterns during opening proofs (e.g., Dory's vector-matrix product
+    /// via [`fold_rows`](EvaluationSource::fold_rows), or row-wise iteration
+    /// via [`for_each_row`](EvaluationSource::for_each_row)).
+    ///
     /// Simple schemes use `jolt_poly::Polynomial<F>` (evaluation table with
-    /// bind/evaluate). Schemes with streaming optimizations (e.g., Dory's
-    /// vector-matrix product over lazily-generated rows) use richer types.
+    /// bind/evaluate). Schemes with streaming optimizations (e.g., Dory over
+    /// lazily-generated rows) use richer types like
+    /// [`RlcSource`](jolt_poly::RlcSource).
     ///
     /// `From<Vec<F>>` ensures materialized evaluation tables (produced by
     /// RLC reduction) can always be passed to `open`.
-    type Polynomial: Send + Sync + From<Vec<Self::Field>>;
+    type Polynomial: EvaluationSource<Self::Field> + From<Vec<Self::Field>>;
 
     /// Auxiliary data from the commit phase, reused during opening proofs.
     ///

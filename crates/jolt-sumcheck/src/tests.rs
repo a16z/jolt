@@ -10,7 +10,7 @@ use rand_core::SeedableRng;
 
 use crate::batched::{BatchedSumcheckProver, BatchedSumcheckVerifier};
 use crate::claim::SumcheckClaim;
-use crate::prover::{SumcheckProver, SumcheckWitness};
+use crate::prover::{SumcheckCompute, SumcheckProver};
 use crate::streaming::StreamingSumcheckProver;
 use crate::verifier::SumcheckVerifier;
 
@@ -35,7 +35,7 @@ impl EqProductWitness {
     }
 }
 
-impl SumcheckWitness<Fr> for EqProductWitness {
+impl SumcheckCompute<Fr> for EqProductWitness {
     fn round_polynomial(&self) -> UnivariatePoly<Fr> {
         let half = self.poly.len() / 2;
         // For the product f(x) * eq(x, tau), the round polynomial is degree 2.
@@ -89,7 +89,7 @@ struct PlainSumWitness {
     poly: Polynomial<Fr>,
 }
 
-impl SumcheckWitness<Fr> for PlainSumWitness {
+impl SumcheckCompute<Fr> for PlainSumWitness {
     fn round_polynomial(&self) -> UnivariatePoly<Fr> {
         let half = self.poly.len() / 2;
         let mut sum_lo = Fr::zero();
@@ -263,7 +263,7 @@ fn batched_prove_verify() {
         },
     ];
 
-    let mut witnesses: Vec<Box<dyn SumcheckWitness<Fr>>> = vec![
+    let mut witnesses: Vec<Box<dyn SumcheckCompute<Fr>>> = vec![
         Box::new(PlainSumWitness {
             poly: poly_a.clone(),
         }),
@@ -376,7 +376,7 @@ fn batched_single_claim_matches_unbatched() {
         claimed_sum,
     }];
 
-    let mut witnesses: Vec<Box<dyn SumcheckWitness<Fr>>> =
+    let mut witnesses: Vec<Box<dyn SumcheckCompute<Fr>>> =
         vec![Box::new(PlainSumWitness { poly: poly.clone() })];
 
     let mut pt = Blake2bTranscript::new(b"batched_single");
@@ -415,9 +415,9 @@ fn batched_three_claims() {
         })
         .collect();
 
-    let mut witnesses: Vec<Box<dyn SumcheckWitness<Fr>>> = polys
+    let mut witnesses: Vec<Box<dyn SumcheckCompute<Fr>>> = polys
         .iter()
-        .map(|p| -> Box<dyn SumcheckWitness<Fr>> { Box::new(PlainSumWitness { poly: p.clone() }) })
+        .map(|p| -> Box<dyn SumcheckCompute<Fr>> { Box::new(PlainSumWitness { poly: p.clone() }) })
         .collect();
 
     let mut pt = Blake2bTranscript::new(b"batched_three");
@@ -456,7 +456,7 @@ fn batched_wrong_claim_fails() {
         },
     ];
 
-    let mut witnesses: Vec<Box<dyn SumcheckWitness<Fr>>> = vec![
+    let mut witnesses: Vec<Box<dyn SumcheckCompute<Fr>>> = vec![
         Box::new(PlainSumWitness {
             poly: poly_a.clone(),
         }),
@@ -518,7 +518,7 @@ impl TripleProductWitness {
     }
 }
 
-impl SumcheckWitness<Fr> for TripleProductWitness {
+impl SumcheckCompute<Fr> for TripleProductWitness {
     fn round_polynomial(&self) -> UnivariatePoly<Fr> {
         let half = self.f.len() / 2;
         let mut evals = [Fr::zero(); 4];
@@ -837,7 +837,7 @@ fn batched_different_num_vars() {
         },
     ];
 
-    let mut witnesses: Vec<Box<dyn SumcheckWitness<Fr>>> = vec![
+    let mut witnesses: Vec<Box<dyn SumcheckCompute<Fr>>> = vec![
         Box::new(PlainSumWitness {
             poly: poly_a.clone(),
         }),
@@ -888,7 +888,7 @@ fn batched_mixed_degree_and_num_vars() {
         },
     ];
 
-    let mut witnesses: Vec<Box<dyn SumcheckWitness<Fr>>> = vec![
+    let mut witnesses: Vec<Box<dyn SumcheckCompute<Fr>>> = vec![
         Box::new(EqProductWitness::new(poly_a.clone(), &tau_a)),
         Box::new(PlainSumWitness {
             poly: poly_b.clone(),
@@ -934,7 +934,7 @@ fn batched_challenge_slicing() {
         },
     ];
 
-    let mut witnesses: Vec<Box<dyn SumcheckWitness<Fr>>> = vec![
+    let mut witnesses: Vec<Box<dyn SumcheckCompute<Fr>>> = vec![
         Box::new(PlainSumWitness {
             poly: poly_a.clone(),
         }),

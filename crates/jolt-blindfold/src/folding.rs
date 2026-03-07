@@ -124,8 +124,7 @@ pub fn fold_instances<F: Field, C: HomomorphicCommitment<F>>(
     challenge: F,
 ) -> RelaxedInstance<F, C> {
     let u = fold_scalar(inst1.u, inst2.u, challenge);
-    let w_commitment =
-        C::linear_combine(&inst1.w_commitment, &inst2.w_commitment, &challenge);
+    let w_commitment = C::linear_combine(&inst1.w_commitment, &inst2.w_commitment, &challenge);
 
     // E' = E1 + r*T + r²*E2
     let r2 = challenge * challenge;
@@ -227,18 +226,9 @@ mod tests {
         SimpleR1CS::new(
             2,
             3,
-            vec![
-                (0, 1, Fr::from_u64(1)),
-                (1, 2, Fr::from_u64(1)),
-            ],
-            vec![
-                (0, 1, Fr::from_u64(1)),
-                (1, 0, Fr::from_u64(1)),
-            ],
-            vec![
-                (0, 2, Fr::from_u64(1)),
-                (1, 2, Fr::from_u64(1)),
-            ],
+            vec![(0, 1, Fr::from_u64(1)), (1, 2, Fr::from_u64(1))],
+            vec![(0, 1, Fr::from_u64(1)), (1, 0, Fr::from_u64(1))],
+            vec![(0, 2, Fr::from_u64(1)), (1, 2, Fr::from_u64(1))],
         )
     }
 
@@ -276,9 +266,9 @@ mod tests {
 
         let folded = fold_witnesses(&w1, &w2, &t, r);
 
-        assert_eq!(folded.w[0], Fr::from_u64(3));   // 1 + 2*1
-        assert_eq!(folded.w[1], Fr::from_u64(13));  // 3 + 2*5
-        assert_eq!(folded.w[2], Fr::from_u64(59));  // 9 + 2*25
+        assert_eq!(folded.w[0], Fr::from_u64(3)); // 1 + 2*1
+        assert_eq!(folded.w[1], Fr::from_u64(13)); // 3 + 2*5
+        assert_eq!(folded.w[2], Fr::from_u64(59)); // 9 + 2*25
 
         // e' = 0 + 2*11 + 4*7 = 50
         assert_eq!(folded.e[0], Fr::from_u64(50));
@@ -298,11 +288,17 @@ mod tests {
 
         let z1 = vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
         let u1 = Fr::one();
-        let w1 = RelaxedWitness { w: z1.clone(), e: vec![Fr::zero()] };
+        let w1 = RelaxedWitness {
+            w: z1.clone(),
+            e: vec![Fr::zero()],
+        };
 
         let z2 = vec![Fr::from_u64(1), Fr::from_u64(5), Fr::from_u64(25)];
         let u2 = Fr::one();
-        let w2 = RelaxedWitness { w: z2.clone(), e: vec![Fr::zero()] };
+        let w2 = RelaxedWitness {
+            w: z2.clone(),
+            e: vec![Fr::zero()],
+        };
 
         let t = compute_cross_term(&r1cs, &z1, u1, &z2, u2);
         let r = Fr::from_u64(7);
@@ -318,11 +314,17 @@ mod tests {
 
         let z1 = vec![Fr::from_u64(1), Fr::from_u64(4), Fr::from_u64(16)];
         let u1 = Fr::one();
-        let w1 = RelaxedWitness { w: z1.clone(), e: vec![Fr::zero(); 2] };
+        let w1 = RelaxedWitness {
+            w: z1.clone(),
+            e: vec![Fr::zero(); 2],
+        };
 
         let z2 = vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(4)];
         let u2 = Fr::one();
-        let w2 = RelaxedWitness { w: z2.clone(), e: vec![Fr::zero(); 2] };
+        let w2 = RelaxedWitness {
+            w: z2.clone(),
+            e: vec![Fr::zero(); 2],
+        };
 
         let t = compute_cross_term(&r1cs, &z1, u1, &z2, u2);
         assert_eq!(t.len(), 2);
@@ -357,11 +359,17 @@ mod tests {
 
         let z1 = vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
         let u1 = Fr::one();
-        let w1 = RelaxedWitness { w: z1.clone(), e: vec![Fr::zero()] };
+        let w1 = RelaxedWitness {
+            w: z1.clone(),
+            e: vec![Fr::zero()],
+        };
 
         let z2 = vec![Fr::from_u64(1), Fr::from_u64(5), Fr::from_u64(25)];
         let u2 = Fr::one();
-        let w2 = RelaxedWitness { w: z2.clone(), e: vec![Fr::zero()] };
+        let w2 = RelaxedWitness {
+            w: z2.clone(),
+            e: vec![Fr::zero()],
+        };
 
         let t = compute_cross_term(&r1cs, &z1, u1, &z2, u2);
         let r = Fr::zero();
@@ -400,13 +408,19 @@ mod tests {
 
         let folded = fold_instances(&inst1, &inst2, &t_com, r);
 
-        assert_eq!(folded.u, Fr::from_u64(4));  // 1 + 3*1
+        assert_eq!(folded.u, Fr::from_u64(4)); // 1 + 3*1
 
         // w' = (10+90, 20+120) = (100, 140)
-        assert_eq!(folded.w_commitment, MockCom(Fr::from_u64(100), Fr::from_u64(140)));
+        assert_eq!(
+            folded.w_commitment,
+            MockCom(Fr::from_u64(100), Fr::from_u64(140))
+        );
 
         // e' = (0,0) + 3*(100,200) + 9*(5,6) = (345, 654)
-        assert_eq!(folded.e_commitment, MockCom(Fr::from_u64(345), Fr::from_u64(654)));
+        assert_eq!(
+            folded.e_commitment,
+            MockCom(Fr::from_u64(345), Fr::from_u64(654))
+        );
     }
 
     #[test]
@@ -416,11 +430,13 @@ mod tests {
 
         let z_real = vec![Fr::from_u64(1), Fr::from_u64(7), Fr::from_u64(49)];
         let u_real = Fr::one();
-        let w_real = RelaxedWitness { w: z_real.clone(), e: vec![Fr::zero()] };
+        let w_real = RelaxedWitness {
+            w: z_real.clone(),
+            e: vec![Fr::zero()],
+        };
 
         let (u_rand, w_rand) = sample_random_witness(&r1cs, &mut rng);
-        check_relaxed_satisfaction(&r1cs, u_rand, &w_rand)
-            .expect("random instance must satisfy");
+        check_relaxed_satisfaction(&r1cs, u_rand, &w_rand).expect("random instance must satisfy");
 
         let t = compute_cross_term(&r1cs, &z_real, u_real, &w_rand.w, u_rand);
         let r = Fr::from_u64(42);
@@ -433,7 +449,9 @@ mod tests {
 
     #[test]
     fn end_to_end_with_verifier_r1cs() {
-        use crate::verifier_r1cs::{assign_witness, build_verifier_r1cs, BakedPublicInputs, StageConfig};
+        use crate::verifier_r1cs::{
+            assign_witness, build_verifier_r1cs, BakedPublicInputs, StageConfig,
+        };
 
         // Build a verifier R1CS from a single degree-2 sumcheck stage with 3 rounds
         let claimed_sum = Fr::from_u64(44);
@@ -444,7 +462,9 @@ mod tests {
         }];
 
         let challenges = vec![Fr::from_u64(11), Fr::from_u64(22), Fr::from_u64(33)];
-        let baked = BakedPublicInputs { challenges: challenges.clone() };
+        let baked = BakedPublicInputs {
+            challenges: challenges.clone(),
+        };
 
         let r1cs = build_verifier_r1cs(&stages, &baked);
 
@@ -489,8 +509,7 @@ mod tests {
         let u_real = Fr::one();
 
         let (u_rand, w_rand) = sample_random_witness(&r1cs, &mut rng);
-        check_relaxed_satisfaction(&r1cs, u_rand, &w_rand)
-            .expect("random instance must satisfy");
+        check_relaxed_satisfaction(&r1cs, u_rand, &w_rand).expect("random instance must satisfy");
 
         let t = compute_cross_term(&r1cs, &z, u_real, &w_rand.w, u_rand);
         let r = Fr::from_u64(17);

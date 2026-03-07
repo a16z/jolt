@@ -258,10 +258,7 @@ fn bytes_roundtrip_matches_fr() {
         // Fr.to_bytes() == scalar_ops::to_bytes_le(limbs)
         let fr_bytes = fr.to_bytes();
         let limbs_bytes = scalar_ops::to_bytes_le(limbs);
-        assert_eq!(
-            fr_bytes, limbs_bytes,
-            "to_bytes mismatch for {limbs:?}"
-        );
+        assert_eq!(fr_bytes, limbs_bytes, "to_bytes mismatch for {limbs:?}");
 
         // Roundtrip: from_bytes(to_bytes(x)) == x
         let fr_restored = Fr::from_bytes(&fr_bytes);

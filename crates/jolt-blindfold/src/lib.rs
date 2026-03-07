@@ -27,16 +27,22 @@
 //! | [`folding`] | Nova folding — commitment-agnostic relaxed R1CS folding |
 
 pub mod accumulator;
+pub mod error;
 pub mod folding;
 pub mod handler;
 pub mod proof;
+pub mod protocol;
 pub mod verifier_r1cs;
 
 pub use accumulator::BlindFoldAccumulator;
+pub use error::BlindFoldError;
 pub use folding::{
     check_relaxed_satisfaction, compute_cross_term, fold_instances, fold_scalar, fold_witnesses,
     sample_random_witness, RelaxedInstance, RelaxedWitness,
 };
 pub use handler::{CommittedRoundHandler, CommittedRoundVerifier};
-pub use proof::{CommittedRoundData, CommittedSumcheckOutput, CommittedSumcheckProof};
+pub use proof::{
+    BlindFoldProof, CommittedRoundData, CommittedSumcheckOutput, CommittedSumcheckProof,
+};
+pub use protocol::{BlindFoldProver, BlindFoldVerifier};
 pub use verifier_r1cs::{BakedPublicInputs, StageConfig};

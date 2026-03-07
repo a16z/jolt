@@ -2845,6 +2845,7 @@ version = "0.1.0"
 dependencies = [
  "jolt-crypto",
  "jolt-field",
+ "jolt-openings",
  "jolt-poly",
  "jolt-spartan",
  "jolt-sumcheck",
@@ -2853,6 +2854,8 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2921,6 +2924,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-cpu-kernels"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "jolt-compute",
+ "jolt-field",
+ "jolt-ir",
+ "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+]
+
+[[package]]
 name = "jolt-crypto"
 version = "0.1.0"
 dependencies = [
@@ -2979,6 +2999,24 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde",
+]
+
+[[package]]
+name = "jolt-hyperkzg"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "num-traits",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3173,6 +3211,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "jolt-field",
+ "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
  "num-traits",
@@ -3202,6 +3241,8 @@ version = "0.1.0"
 dependencies = [
  "jolt-field",
  "jolt-ir",
+ "jolt-openings",
+ "jolt-spartan",
  "jolt-transcript",
  "num-bigint",
  "num-traits",

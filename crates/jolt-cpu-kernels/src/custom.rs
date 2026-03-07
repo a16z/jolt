@@ -360,9 +360,6 @@ mod tests {
 
         let lo = vec![Fr::from_u64(4)];
         let hi = vec![Fr::from_u64(6)];
-        assert_eq!(
-            k1.evaluate(&lo, &hi, 2),
-            k2.evaluate(&lo, &hi, 2),
-        );
+        assert_eq!(k1.evaluate(&lo, &hi, 2), k2.evaluate(&lo, &hi, 2),);
     }
 }

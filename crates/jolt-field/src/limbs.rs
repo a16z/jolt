@@ -481,7 +481,10 @@ mod tests {
             carry = prod >> 64;
         }
 
-        assert_eq!(acc, expected, "fmadd should match reference after {count} products");
+        assert_eq!(
+            acc, expected,
+            "fmadd should match reference after {count} products"
+        );
     }
 
     #[test]

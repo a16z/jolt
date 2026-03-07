@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
+jolt-openings = { path = "../jolt-openings" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-transcript = { path = "../jolt-transcript" }
 serde = { workspace = true, features = ["derive"] }

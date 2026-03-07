@@ -3,7 +3,7 @@
 use jolt_field::Field;
 use jolt_wrapper::arena::{self, ArenaSession, Node};
 use jolt_wrapper::bundle::{AstBundle, VarAllocator};
-use jolt_wrapper::gnark::{generate_go_file, GoFileConfig, GnarkAstEmitter, MemoizedCodeGen};
+use jolt_wrapper::gnark::{generate_go_file, GnarkAstEmitter, GoFileConfig, MemoizedCodeGen};
 use jolt_wrapper::symbolic::SymbolicField;
 use jolt_wrapper::transcript::PoseidonSymbolicTranscript;
 use num_traits::{One, Zero};
@@ -139,7 +139,10 @@ fn transcript_symbolic_append_and_challenge() {
 
     // The challenge should be tunneled — next from_u128 picks it up
     let gamma = SymbolicField::from_u128(0);
-    assert!(!gamma.is_constant(), "challenge should be symbolic, not constant");
+    assert!(
+        !gamma.is_constant(),
+        "challenge should be symbolic, not constant"
+    );
 
     // Use the challenge in a constraint
     let constraint = gamma * x;
@@ -173,7 +176,10 @@ fn transcript_multiple_rounds() {
 
     assert!(!gamma1.is_constant());
     assert!(!gamma2.is_constant());
-    assert_ne!(gamma1, gamma2, "different challenges should be different nodes");
+    assert_ne!(
+        gamma1, gamma2,
+        "different challenges should be different nodes"
+    );
 }
 
 #[test]
