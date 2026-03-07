@@ -1,15 +1,11 @@
-#[cfg(feature = "std")]
 use std::collections::HashMap;
-#[cfg(feature = "std")]
 use syn::{punctuated::Punctuated, token::Comma, Expr, ExprLit, Lit, Meta, MetaNameValue};
 
-#[cfg(feature = "std")]
 use crate::constants::{
     DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRACE_LENGTH,
     DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
 };
 
-#[cfg(feature = "std")]
 pub struct Attributes {
     pub wasm: bool,
     pub nightly: bool,
@@ -26,7 +22,6 @@ pub struct Attributes {
     pub backtrace: Option<String>,
 }
 
-#[cfg(feature = "std")]
 pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
     let mut attributes = HashMap::<_, u64>::new();
     let mut wasm = false;
