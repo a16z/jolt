@@ -54,7 +54,10 @@ mod tests {
 
     #[test]
     fn change_divisor_overflow() {
-        assert_eq!(VirtualChangeDivisor.execute(i64::MIN as u64, (-1i64) as u64), 1);
+        assert_eq!(
+            VirtualChangeDivisor.execute(i64::MIN as u64, (-1i64) as u64),
+            1
+        );
     }
 
     #[test]
@@ -64,6 +67,9 @@ mod tests {
 
     #[test]
     fn change_divisor_w_overflow() {
-        assert_eq!(VirtualChangeDivisorW.execute(i32::MIN as u64, (-1i32) as u64), 1);
+        assert_eq!(
+            VirtualChangeDivisorW.execute(i32::MIN as u64, (-1i32) as u64),
+            1
+        );
     }
 }

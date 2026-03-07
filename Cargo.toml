@@ -235,6 +235,7 @@ dory = { package = "dory-pcs", version = "0.3.0", features = [
   "backends",
   "cache",
   "disk-persistence",
+  "zk",
 ] }
 
 # Core Utilities

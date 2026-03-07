@@ -6,15 +6,12 @@
 
 use jolt_field::{Field, Fr};
 use jolt_poly::{
-    CompressedPoly, EqPolynomial, EvaluationSource, IdentityPolynomial, MultilinearEvaluation,
-    Polynomial, RlcSource, UnivariatePoly,
+    EqPolynomial, EvaluationSource, IdentityPolynomial, Polynomial, RlcSource, UnivariatePoly,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-// ---------------------------------------------------------------------------
 // Polynomial ↔ EqPolynomial: the fundamental MLE identity
-// ---------------------------------------------------------------------------
 
 /// ⟨f, eq(·, r)⟩ = f̃(r) for any multilinear f and point r.
 #[test]
@@ -38,9 +35,7 @@ fn inner_product_with_eq_is_evaluation() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Sequential binding converges to evaluate
-// ---------------------------------------------------------------------------
 
 /// Binding all variables one-by-one yields the same result as evaluate.
 #[test]
@@ -61,9 +56,7 @@ fn sequential_bind_equals_evaluate() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Compact polynomial promotion
-// ---------------------------------------------------------------------------
 
 /// Polynomial<u8>::bind_to_field agrees with Polynomial<Fr> built from the same data.
 #[test]
@@ -87,9 +80,7 @@ fn compact_u8_bind_matches_field_bind() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // UnivariatePoly interpolation
-// ---------------------------------------------------------------------------
 
 /// Lagrange interpolation recovers the original polynomial at domain points.
 #[test]
@@ -125,9 +116,7 @@ fn univariate_interpolation_over_integers() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // CompressedPoly round-trip
-// ---------------------------------------------------------------------------
 
 /// compress → decompress preserves the polynomial.
 #[test]
@@ -135,7 +124,7 @@ fn compressed_round_trip() {
     let mut rng = ChaCha20Rng::seed_from_u64(5000);
     let coeffs: Vec<Fr> = (0..5).map(|_| Fr::random(&mut rng)).collect();
     let original = UnivariatePoly::new(coeffs);
-    let hint = original.evaluate(Fr::zero()) + original.evaluate(Fr::one());
+    let hint = original.evaluate(Fr::from_u64(0)) + original.evaluate(Fr::from_u64(1));
 
     let compressed = original.compress();
     let recovered = compressed.decompress(hint);
@@ -157,22 +146,20 @@ fn compressed_evaluate_with_hint() {
     let mut rng = ChaCha20Rng::seed_from_u64(5001);
     let coeffs: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
     let poly = UnivariatePoly::new(coeffs);
-    let hint = poly.evaluate(Fr::zero()) + poly.evaluate(Fr::one());
+    let hint = poly.evaluate(Fr::from_u64(0)) + poly.evaluate(Fr::from_u64(1));
     let compressed = poly.compress();
 
     for i in 0..8 {
         let x = Fr::from_u64(i);
         assert_eq!(
             poly.evaluate(x),
-            compressed.evaluate_with_hint(x, hint),
+            compressed.evaluate_with_hint(hint, x),
             "evaluate_with_hint mismatch at x={i}"
         );
     }
 }
 
-// ---------------------------------------------------------------------------
 // IdentityPolynomial
-// ---------------------------------------------------------------------------
 
 /// IdentityPolynomial maps Boolean hypercube points to their integer index.
 #[test]
@@ -184,9 +171,9 @@ fn identity_polynomial_boolean_indexing() {
         let bits: Vec<Fr> = (0..nv)
             .map(|j| {
                 if (idx >> (nv - 1 - j)) & 1 == 1 {
-                    Fr::one()
+                    Fr::from_u64(1)
                 } else {
-                    Fr::zero()
+                    Fr::from_u64(0)
                 }
             })
             .collect();
@@ -219,9 +206,7 @@ fn identity_polynomial_random_point() {
     assert_eq!(eval, expected);
 }
 
-// ---------------------------------------------------------------------------
 // RlcSource: lazy random linear combination
-// ---------------------------------------------------------------------------
 
 /// RlcSource evaluation matches materializing and linearly combining.
 #[test]
@@ -250,9 +235,7 @@ fn rlc_source_matches_materialized_combination() {
     assert_eq!(actual, expected);
 }
 
-// ---------------------------------------------------------------------------
 // Polynomial arithmetic
-// ---------------------------------------------------------------------------
 
 /// Addition is commutative: a + b == b + a.
 #[test]
@@ -284,9 +267,7 @@ fn scalar_mul_distributes_over_addition() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Serialization
-// ---------------------------------------------------------------------------
 
 /// bincode round-trip preserves a Polynomial<Fr>.
 #[test]

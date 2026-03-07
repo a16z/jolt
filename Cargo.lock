@@ -3286,7 +3286,13 @@ version = "0.1.0"
 dependencies = [
  "jolt-field",
  "jolt-ir",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
  "num-traits",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
 ]
 
 [[package]]

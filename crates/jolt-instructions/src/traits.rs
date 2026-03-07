@@ -10,6 +10,7 @@
 use jolt_field::Field;
 use std::fmt::Debug;
 
+use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::flags::Flags;
 use crate::tables::LookupTableKind;
 
@@ -53,6 +54,11 @@ pub trait Instruction: Flags + Send + Sync + 'static {
 ///
 /// The `XLEN` const generic determines the word size. Challenge point `r` passed
 /// to [`evaluate_mle`](LookupTable::evaluate_mle) has length `2 * XLEN`.
+///
+/// The `evaluate_mle` method is generic over a challenge type `C` to support
+/// smaller-than-field-element challenge values (e.g., 128-bit challenges with
+/// a 254-bit field), which is a critical performance optimization for the
+/// sumcheck prover.
 pub trait LookupTable<const XLEN: usize>: Clone + Debug + Send + Sync {
     /// Compute the raw table value at the given interleaved index.
     ///
@@ -65,9 +71,12 @@ pub trait LookupTable<const XLEN: usize>: Clone + Debug + Send + Sync {
     /// `r` has length `2 * XLEN`. For interleaved-operand tables, even indices
     /// correspond to the first operand and odd indices to the second.
     ///
-    /// This is the critical method for the sumcheck verifier: it checks that
-    /// the prover's claimed table evaluation matches the table's MLE.
-    fn evaluate_mle<F: Field>(&self, r: &[F]) -> F;
+    /// `C` is the challenge type (may be smaller than `F` for performance).
+    /// When `C = F`, this degenerates to standard field evaluation.
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeOps<F>,
+        F: Field + FieldOps<C>;
 
     /// Materialize the entire table as a dense vector (test-only, XLEN=8).
     #[cfg(test)]

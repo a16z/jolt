@@ -5,9 +5,9 @@
 
 use std::marker::PhantomData;
 
-use jolt_crypto::{Commitment, JoltGroup, PairingGroup};
+use jolt_crypto::{Commitment, JoltGroup, PairingGroup, Pedersen, PedersenSetup};
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
+use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, VcSetupExtractable};
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
@@ -282,6 +282,35 @@ where
     }
 }
 
+impl<P: PairingGroup> VcSetupExtractable<Pedersen<P::G1>> for HyperKZGScheme<P>
+where
+    P::ScalarField: AppendToTranscript,
+    P::G1: AppendToTranscript,
+{
+    fn extract_vc_setup(
+        setup: &Self::ProverSetup,
+        capacity: usize,
+    ) -> PedersenSetup<P::G1> {
+        // Use the first `capacity` SRS G1 powers as Pedersen message generators.
+        // Under the discrete-log assumption, powers [g, β·g, β²·g, ...] are
+        // computationally independent and suitable as Pedersen generators.
+        //
+        // The blinding generator is the next power g^(β^capacity), which is
+        // independent from the message generators.
+        assert!(
+            setup.g1_powers.len() > capacity,
+            "SRS has {} G1 powers, need at least {} (capacity + 1 for blinding)",
+            setup.g1_powers.len(),
+            capacity + 1,
+        );
+
+        let message_generators = setup.g1_powers[..capacity].to_vec();
+        let blinding_generator = setup.g1_powers[capacity];
+
+        PedersenSetup::new(message_generators, blinding_generator)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,6 +527,38 @@ mod tests {
             )
             .expect("random instance should verify");
         }
+    }
+
+    #[test]
+    fn extract_vc_setup_produces_valid_pedersen() {
+        use jolt_crypto::JoltCommitment;
+
+        let n = 1 << 4;
+        let (pk, _vk) = test_setup(n);
+
+        let capacity = 5;
+        let vc_setup =
+            <TestScheme as VcSetupExtractable<Pedersen<jolt_crypto::Bn254G1>>>::extract_vc_setup(
+                &pk, capacity,
+            );
+
+        assert_eq!(
+            <Pedersen<jolt_crypto::Bn254G1> as JoltCommitment>::capacity(&vc_setup),
+            capacity,
+        );
+
+        // Commit and verify a small vector.
+        let values = vec![Fr::one(), Fr::from_u64(2), Fr::from_u64(3)];
+        let blinding = Fr::from_u64(42);
+        let commitment = <Pedersen<jolt_crypto::Bn254G1> as JoltCommitment>::commit(
+            &vc_setup, &values, &blinding,
+        );
+        assert!(<Pedersen<jolt_crypto::Bn254G1> as JoltCommitment>::verify(
+            &vc_setup,
+            &commitment,
+            &values,
+            &blinding,
+        ));
     }
 
     #[test]

@@ -11,6 +11,12 @@ workspace = true
 [dependencies]
 jolt-field = { path = "../jolt-field" }
 jolt-ir = { path = "../jolt-ir" }
+jolt-openings = { path = "../jolt-openings" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-sumcheck = { path = "../jolt-sumcheck" }
+jolt-transcript = { path = "../jolt-transcript" }
 
 [dev-dependencies]
 num-traits = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }

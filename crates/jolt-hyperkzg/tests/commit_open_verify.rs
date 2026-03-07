@@ -28,7 +28,7 @@ fn commit_open_verify(
     label: &'static [u8],
 ) {
     let eval = poly.evaluate(point);
-    let (commitment, _) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), pk);
+    let (commitment, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), pk);
 
     let mut t_p = Blake2bTranscript::new(label);
     let proof =
@@ -39,9 +39,7 @@ fn commit_open_verify(
         .expect("verification should succeed");
 }
 
-// ---------------------------------------------------------------------------
 // Basic roundtrip for various polynomial sizes
-// ---------------------------------------------------------------------------
 
 #[test]
 fn roundtrip_num_vars_1_to_8() {
@@ -54,9 +52,7 @@ fn roundtrip_num_vars_1_to_8() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Edge cases
-// ---------------------------------------------------------------------------
 
 /// All-zero polynomial commits to identity point and still verifies.
 #[test]
@@ -90,9 +86,7 @@ fn constant_polynomial() {
     commit_open_verify(&poly, &point, &pk, &vk, b"kzg-constant");
 }
 
-// ---------------------------------------------------------------------------
 // Wrong evaluation rejection
-// ---------------------------------------------------------------------------
 
 #[test]
 fn wrong_eval_rejected() {
@@ -103,8 +97,8 @@ fn wrong_eval_rejected() {
     let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
 
     let correct_eval = poly.evaluate(&point);
-    let wrong_eval = correct_eval + Fr::one();
-    let (commitment, _) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk);
+    let wrong_eval = correct_eval + Fr::from_u64(1);
+    let (commitment, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk);
 
     // Prover opens with correct eval
     let mut t_p = Blake2bTranscript::new(b"kzg-wrong");
@@ -118,9 +112,7 @@ fn wrong_eval_rejected() {
     assert!(result.is_err(), "wrong evaluation must be rejected");
 }
 
-// ---------------------------------------------------------------------------
 // Homomorphic properties
-// ---------------------------------------------------------------------------
 
 /// combine([C_a, C_b], [1, 1]) == commit(a + b).
 #[test]
@@ -131,11 +123,11 @@ fn homomorphic_sum() {
     let a = Polynomial::<Fr>::random(nv, &mut rng);
     let b = Polynomial::<Fr>::random(nv, &mut rng);
 
-    let (com_a, _) = <KzgPCS as CommitmentScheme>::commit(a.evaluations(), &pk);
-    let (com_b, _) = <KzgPCS as CommitmentScheme>::commit(b.evaluations(), &pk);
+    let (com_a, ()) = <KzgPCS as CommitmentScheme>::commit(a.evaluations(), &pk);
+    let (com_b, ()) = <KzgPCS as CommitmentScheme>::commit(b.evaluations(), &pk);
     let combined_com = <KzgPCS as AdditivelyHomomorphic>::combine(
         &[com_a, com_b],
-        &[Fr::one(), Fr::one()],
+        &[Fr::from_u64(1), Fr::from_u64(1)],
     );
 
     let sum_poly = a + b;
@@ -161,8 +153,8 @@ fn homomorphic_weighted_combination() {
     let s_a = Fr::random(&mut rng);
     let s_b = Fr::random(&mut rng);
 
-    let (com_a, _) = <KzgPCS as CommitmentScheme>::commit(a.evaluations(), &pk);
-    let (com_b, _) = <KzgPCS as CommitmentScheme>::commit(b.evaluations(), &pk);
+    let (com_a, ()) = <KzgPCS as CommitmentScheme>::commit(a.evaluations(), &pk);
+    let (com_b, ()) = <KzgPCS as CommitmentScheme>::commit(b.evaluations(), &pk);
     let combined_com = <KzgPCS as AdditivelyHomomorphic>::combine(
         &[com_a, com_b],
         &[s_a, s_b],
@@ -182,9 +174,7 @@ fn homomorphic_weighted_combination() {
         .expect("weighted combination must verify");
 }
 
-// ---------------------------------------------------------------------------
 // Deterministic setup
-// ---------------------------------------------------------------------------
 
 #[test]
 fn deterministic_setup_from_secret() {
@@ -194,13 +184,13 @@ fn deterministic_setup_from_secret() {
 
     let pk1 = KzgPCS::setup_from_secret(beta, 16, g1, g2);
     let pk2 = KzgPCS::setup_from_secret(beta, 16, g1, g2);
-    let vk1 = KzgPCS::verifier_setup(&pk1);
+    let _vk1 = KzgPCS::verifier_setup(&pk1);
     let vk2 = KzgPCS::verifier_setup(&pk2);
 
     // Same setup yields same commitments
     let poly = Polynomial::new(vec![Fr::from_u64(1), Fr::from_u64(2)]);
-    let (com1, _) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk1);
-    let (com2, _) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk2);
+    let (com1, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk1);
+    let (com2, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk2);
     assert_eq!(com1, com2, "deterministic setups must produce same commitments");
 
     // Verify with either setup
@@ -213,9 +203,7 @@ fn deterministic_setup_from_secret() {
         .expect("cross-setup verification must work");
 }
 
-// ---------------------------------------------------------------------------
 // Property test: random polynomials always verify
-// ---------------------------------------------------------------------------
 
 #[test]
 fn property_random_polynomials_always_verify() {

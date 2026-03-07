@@ -12,9 +12,7 @@ use jolt_field::signed::*;
 use jolt_field::{Field, FieldAccumulator, Fr, Limbs, NaiveAccumulator, OptimizedMul};
 use num_traits::{One, Zero};
 
-// =========================================================================
 // 1. NaiveAccumulator
-// =========================================================================
 
 #[test]
 fn naive_accumulator_fmadd() {
@@ -49,9 +47,7 @@ fn naive_accumulator_reduce_empty() {
     assert!(acc.reduce().is_zero());
 }
 
-// =========================================================================
 // 2. WideAccumulator
-// =========================================================================
 
 #[test]
 fn wide_accumulator_fmadd() {
@@ -104,9 +100,7 @@ fn wide_accumulator_many_fmadds() {
     assert_eq!(acc.reduce(), expected);
 }
 
-// =========================================================================
 // 3. Mont254BitChallenge (unconditional tests)
-// =========================================================================
 
 #[test]
 fn mont254_construction_from_u128() {
@@ -273,9 +267,7 @@ fn mont254_optimized_mul() {
     assert_eq!(c.mul_01_optimized(f), Into::<Fr>::into(c) * f);
 }
 
-// =========================================================================
 // 4. MontU128Challenge Display/Debug
-// =========================================================================
 
 #[test]
 fn mont_u128_display() {
@@ -334,9 +326,7 @@ fn mont_u128_ref_arithmetic_variants() {
     let _: Fr = f * &a;
 }
 
-// =========================================================================
 // 5. OptimizedMul<Fr, Fr> blanket impl
-// =========================================================================
 
 #[test]
 fn optimized_mul_blanket_impl() {
@@ -374,10 +364,8 @@ fn optimized_mul_blanket_impl() {
     assert_eq!(a.mul_01_optimized(b), a * b);
 }
 
-// =========================================================================
 // 6. Field default methods (from_u8, from_u16, from_u32, from_bool, mul_*)
 //    Already covered in field_operations.rs, but adding edge cases
-// =========================================================================
 
 #[test]
 fn field_from_bool_edge() {
@@ -407,10 +395,7 @@ fn field_mul_pow_2_boundary() {
     // pow=0 -> f * 1 = f
     assert_eq!(<Fr as Field>::mul_pow_2(&f, 0), f);
     // pow=1 -> f * 2
-    assert_eq!(
-        <Fr as Field>::mul_pow_2(&f, 1),
-        <Fr as Field>::from_u64(2)
-    );
+    assert_eq!(<Fr as Field>::mul_pow_2(&f, 1), <Fr as Field>::from_u64(2));
     // pow=64 -> goes through while loop at least once
     let result = <Fr as Field>::mul_pow_2(&f, 64);
     let mut expected = f;
@@ -427,9 +412,7 @@ fn field_mul_pow_2_overflow() {
     let _ = <Fr as Field>::mul_pow_2(&f, 256);
 }
 
-// =========================================================================
 // 7. SignedBigInt — uncovered paths
-// =========================================================================
 
 #[test]
 fn signed_bigint_neg() {
@@ -582,9 +565,7 @@ fn signed_bigint_ordering_negative_magnitudes() {
     assert!(c > d);
 }
 
-// =========================================================================
 // 8. SignedBigIntHi32 — uncovered paths
-// =========================================================================
 
 #[test]
 fn s96_arithmetic() {
@@ -863,9 +844,7 @@ fn s160_from_s128() {
     assert_eq!(wide.magnitude_lo()[0], 999);
 }
 
-// =========================================================================
 // 9. Macro-generated operator variants (signed/mod.rs)
-// =========================================================================
 
 #[test]
 #[allow(clippy::op_ref)]
@@ -948,9 +927,7 @@ fn signed_bigint_hi32_operator_variants() {
     assert_eq!(d.magnitude_lo()[0], 30);
 }
 
-// =========================================================================
 // 10. SignedBigIntHi32 mul_magnitudes specializations
-// =========================================================================
 
 #[test]
 fn s96_mul_magnitudes_n1() {
@@ -1023,9 +1000,7 @@ fn s160_mul_mixed_signs() {
     assert_eq!(prod2.magnitude_lo()[0], 9);
 }
 
-// =========================================================================
 // 11. S160 from conversions (i64, u64, S64, S128) — ensure full coverage
-// =========================================================================
 
 #[test]
 fn s160_from_i64() {
@@ -1051,9 +1026,7 @@ fn s160_from_s64() {
     assert_eq!(v.magnitude_lo()[0], 99);
 }
 
-// =========================================================================
 // 12. SignedBigInt add/sub with opposite signs exercising all branches
-// =========================================================================
 
 #[test]
 fn signed_bigint_add_opposite_signs_self_smaller() {
@@ -1084,9 +1057,7 @@ fn signed_bigint_sub_same_sign_smaller_magnitude() {
     assert_eq!(c.magnitude_as_u64(), 7);
 }
 
-// =========================================================================
 // 13. SignedBigInt add_trunc_mixed — more branch coverage
-// =========================================================================
 
 #[test]
 fn signed_bigint_add_trunc_mixed_opposite_signs_self_smaller() {
@@ -1104,9 +1075,7 @@ fn signed_bigint_add_trunc_mixed_opposite_signs_self_larger() {
     assert_eq!(c.to_i128(), Some(97));
 }
 
-// =========================================================================
 // 14. SignedBigIntHi32 add with carry into hi32
-// =========================================================================
 
 #[test]
 fn s96_add_with_carry_into_hi32() {
@@ -1135,9 +1104,7 @@ fn signed_bigint_hi32_default() {
     assert!(d.is_positive());
 }
 
-// =========================================================================
 // 15. SignedBigInt zero_extend_from to wider
-// =========================================================================
 
 #[test]
 fn signed_bigint_zero_extend_s64_to_s256() {
@@ -1150,9 +1117,7 @@ fn signed_bigint_zero_extend_s64_to_s256() {
     assert_eq!(wide.magnitude.0[3], 0);
 }
 
-// =========================================================================
 // 16. SignedBigInt default, accessors
-// =========================================================================
 
 #[test]
 fn signed_bigint_default_is_zero() {
@@ -1182,4 +1147,171 @@ fn signed_bigint_negate() {
     let n = s.negate();
     assert!(!n.is_positive);
     assert_eq!(n.magnitude_as_u64(), 10);
+}
+
+// ========== Fr From trait impls and ref-arithmetic ==========
+
+#[test]
+fn fr_from_bool() {
+    let t: Fr = From::from(true);
+    let f: Fr = From::from(false);
+    assert_eq!(t, Fr::one());
+    assert_eq!(f, Fr::zero());
+}
+
+#[test]
+fn fr_from_small_types() {
+    // Exercise the From<T> for Fr trait impls in bn254.rs
+    let from_u8: Fr = <Fr as From<u8>>::from(42);
+    assert_eq!(from_u8, Fr::from_u64(42));
+
+    let from_u16: Fr = <Fr as From<u16>>::from(1000);
+    assert_eq!(from_u16, Fr::from_u64(1000));
+
+    let from_u32: Fr = <Fr as From<u32>>::from(100_000);
+    assert_eq!(from_u32, Fr::from_u64(100_000));
+
+    let from_u64: Fr = <Fr as From<u64>>::from(123_456_789);
+    assert_eq!(from_u64, Fr::from_u64(123_456_789));
+
+    let from_i64: Fr = <Fr as From<i64>>::from(-42);
+    assert_eq!(from_i64, Fr::from_i64(-42));
+
+    let from_u128: Fr = <Fr as From<u128>>::from(999_999_999_999);
+    assert_eq!(from_u128, Fr::from_u128(999_999_999_999));
+
+    let from_i128: Fr = <Fr as From<i128>>::from(-999);
+    assert_eq!(from_i128, Fr::from_i128(-999));
+
+    let from_bool: Fr = <Fr as From<bool>>::from(true);
+    assert_eq!(from_bool, Fr::one());
+    let from_bool_f: Fr = <Fr as From<bool>>::from(false);
+    assert_eq!(from_bool_f, Fr::zero());
+}
+
+#[test]
+#[allow(clippy::op_ref)]
+fn fr_ref_arithmetic() {
+    let a = Fr::from_u64(7);
+    let b = Fr::from_u64(11);
+
+    // val op &ref
+    let sum_vr = a + &b;
+    assert_eq!(sum_vr, Fr::from_u64(18));
+    let diff_vr = a - &b;
+    assert_eq!(diff_vr, Fr::from_i64(-4));
+    let prod_vr = a * &b;
+    assert_eq!(prod_vr, Fr::from_u64(77));
+    let div_vr = a / &b;
+    assert_eq!(div_vr * b, a);
+
+    // &ref op val
+    let sum_rv = &a + b;
+    assert_eq!(sum_rv, Fr::from_u64(18));
+    let diff_rv = &a - b;
+    assert_eq!(diff_rv, Fr::from_i64(-4));
+    let prod_rv = &a * b;
+    assert_eq!(prod_rv, Fr::from_u64(77));
+    let div_rv = &a / b;
+    assert_eq!(div_rv * b, a);
+
+    // &ref op &ref
+    let sum_rr = &a + &b;
+    assert_eq!(sum_rr, Fr::from_u64(18));
+    let diff_rr = &a - &b;
+    assert_eq!(diff_rr, Fr::from_i64(-4));
+    let prod_rr = &a * &b;
+    assert_eq!(prod_rr, Fr::from_u64(77));
+    let div_rr = &a / &b;
+    assert_eq!(div_rr * b, a);
+}
+
+#[test]
+fn fr_neg() {
+    let a = Fr::from_u64(42);
+    let neg_a = -a;
+    assert_eq!(a + neg_a, Fr::zero());
+
+    let neg_zero = -Fr::zero();
+    assert_eq!(neg_zero, Fr::zero());
+}
+
+#[test]
+fn fr_inner_roundtrip() {
+    // Test Fr(ark_bn254::Fr) -> ark_bn254::Fr conversion (inner type)
+    let a = Fr::from_u64(12345);
+    let bytes = a.to_bytes();
+    let b = Fr::from_bytes(&bytes);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn fr_mul_assign_sub_assign() {
+    let mut a = Fr::from_u64(10);
+    a -= Fr::from_u64(3);
+    assert_eq!(a, Fr::from_u64(7));
+
+    a *= Fr::from_u64(6);
+    assert_eq!(a, Fr::from_u64(42));
+
+    a += Fr::from_u64(8);
+    assert_eq!(a, Fr::from_u64(50));
+}
+
+#[test]
+fn fr_sum_and_product_iterators() {
+    let vals: Vec<Fr> = (1..=5).map(Fr::from_u64).collect();
+    let sum: Fr = vals.iter().copied().sum();
+    assert_eq!(sum, Fr::from_u64(15));
+
+    let sum_ref: Fr = vals.iter().sum();
+    assert_eq!(sum_ref, Fr::from_u64(15));
+
+    let prod: Fr = vals.iter().copied().product();
+    assert_eq!(prod, Fr::from_u64(120));
+
+    let prod_ref: Fr = vals.iter().product();
+    assert_eq!(prod_ref, Fr::from_u64(120));
+}
+
+#[test]
+fn wide_accumulator_reduce_matches_field() {
+    use jolt_field::WideAccumulator;
+    let mut rng = test_rng();
+
+    let mut acc = WideAccumulator::default();
+    let mut expected = Fr::zero();
+
+    for _ in 0..200 {
+        let a = Fr::random(&mut rng);
+        let b = Fr::random(&mut rng);
+        acc.fmadd(a, b);
+        expected += a * b;
+    }
+    assert_eq!(acc.reduce(), expected);
+}
+
+#[test]
+fn wide_accumulator_merge_reduce() {
+    use jolt_field::WideAccumulator;
+    let mut rng = test_rng();
+
+    let mut acc1 = WideAccumulator::default();
+    let mut acc2 = WideAccumulator::default();
+    let mut expected = Fr::zero();
+
+    for _ in 0..100 {
+        let a = Fr::random(&mut rng);
+        let b = Fr::random(&mut rng);
+        acc1.fmadd(a, b);
+        expected += a * b;
+    }
+    for _ in 0..100 {
+        let a = Fr::random(&mut rng);
+        let b = Fr::random(&mut rng);
+        acc2.fmadd(a, b);
+        expected += a * b;
+    }
+    acc1.merge(acc2);
+    assert_eq!(acc1.reduce(), expected);
 }

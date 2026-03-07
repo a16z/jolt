@@ -8,6 +8,7 @@
 //! - The [`Flags`] trait with [`CircuitFlags`] and [`InstructionFlags`] enums.
 //! - Concrete implementations of all RV64IMAC + virtual instructions.
 //! - The [`JoltInstructionSet`] registry for opcode-indexed dispatch.
+//! - Prefix/suffix sparse-dense decomposition for sub-linear MLE evaluation.
 //! - Bit-interleaving utilities for two-operand lookup indices.
 //!
 //! # Architecture
@@ -25,20 +26,24 @@
 #[macro_use]
 mod macros;
 
+pub mod challenge_ops;
 pub mod flags;
 pub mod instruction_set;
 pub mod interleave;
+pub mod lookup_bits;
 pub mod opcodes;
 pub mod rv;
 pub mod tables;
 pub mod traits;
 pub mod virtual_;
 
+pub use challenge_ops::{ChallengeOps, FieldOps};
 pub use flags::{
     CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker, NUM_CIRCUIT_FLAGS,
     NUM_INSTRUCTION_FLAGS,
 };
 pub use instruction_set::JoltInstructionSet;
 pub use interleave::{interleave_bits, uninterleave_bits};
+pub use lookup_bits::LookupBits;
 pub use tables::LookupTableKind;
 pub use traits::{Instruction, LookupTable};

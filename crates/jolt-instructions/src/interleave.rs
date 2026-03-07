@@ -99,10 +99,7 @@ mod tests {
         for &val in vals {
             let (x, y) = uninterleave_bits(val);
             let reinterleaved = interleave_bits(x, y);
-            assert_eq!(
-                reinterleaved, val,
-                "roundtrip failed for {val:#x}"
-            );
+            assert_eq!(reinterleaved, val, "roundtrip failed for {val:#x}");
         }
     }
 

@@ -49,9 +49,7 @@ fn prove_and_verify(
         .expect("verification should succeed");
 }
 
-// ---------------------------------------------------------------------------
 // Basic circuits
-// ---------------------------------------------------------------------------
 
 /// x * x = y with HyperKZG.
 #[test]
@@ -80,7 +78,7 @@ fn reject_bad_witness() {
         vec![(0, 2, Fr::from_u64(1))],
     );
     let key = SpartanKey::from_r1cs(&r1cs);
-    let (pk, _) = make_setup(key.num_variables_padded);
+    let (pk, _vk) = make_setup(key.num_variables_padded);
 
     let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(10)]; // 3*3 != 10
     let mut t = Blake2bTranscript::new(b"kzg-bad");
@@ -141,9 +139,7 @@ fn chain_multiplication() {
     prove_and_verify(&r1cs, &key, &witness, &pk, &vk, b"kzg-chain");
 }
 
-// ---------------------------------------------------------------------------
 // Univariate skip strategy
-// ---------------------------------------------------------------------------
 
 /// Both strategies produce verifiable proofs.
 #[test]
@@ -183,9 +179,7 @@ fn uniskip_matches_standard() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Relaxed Spartan with HyperKZG
-// ---------------------------------------------------------------------------
 
 /// Relaxed Spartan with u=1, E=0 (standard instance presented as relaxed).
 #[test]
@@ -205,10 +199,10 @@ fn relaxed_standard_instance() {
 
     // x=3: [1, 3, 9, 27]
     let witness = [one, Fr::from_u64(3), Fr::from_u64(9), Fr::from_u64(27)];
-    let error = vec![Fr::zero(); key.num_constraints_padded];
+    let error = vec![Fr::from_u64(0); key.num_constraints_padded];
 
-    let (w_com, _) = <KzgPCS as CommitmentScheme>::commit(&witness, &pk);
-    let (e_com, _) = <KzgPCS as CommitmentScheme>::commit(&error, &pk);
+    let (w_com, ()) = <KzgPCS as CommitmentScheme>::commit(&witness, &pk);
+    let (e_com, ()) = <KzgPCS as CommitmentScheme>::commit(&error, &pk);
 
     let mut t_p = Blake2bTranscript::new(b"kzg-relaxed");
     let proof = SpartanProver::prove_relaxed::<KzgPCS, _>(
@@ -221,9 +215,7 @@ fn relaxed_standard_instance() {
         .expect("relaxed verification should succeed");
 }
 
-// ---------------------------------------------------------------------------
 // Randomized property test
-// ---------------------------------------------------------------------------
 
 /// Random circuits with varying sizes always verify.
 #[test]
@@ -249,7 +241,7 @@ fn randomized_circuits() {
         let (pk, vk) = make_setup(key.num_variables_padded);
 
         // Build valid witness: z[0]=1, z[1]=x (random), z[i+2]=x*z[i+1]
-        let mut witness = vec![Fr::zero(); num_variables];
+        let mut witness = vec![Fr::from_u64(0); num_variables];
         witness[0] = one;
         witness[1] = Fr::random(&mut rng);
         for i in 0..num_constraints {

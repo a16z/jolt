@@ -27,7 +27,10 @@ mod tests {
 
     #[test]
     fn sign_extend_negative() {
-        assert_eq!(VirtualSignExtendWord.execute(0x8000_0000, 0), 0xFFFF_FFFF_8000_0000);
+        assert_eq!(
+            VirtualSignExtendWord.execute(0x8000_0000, 0),
+            0xFFFF_FFFF_8000_0000
+        );
     }
 
     #[test]
@@ -37,6 +40,9 @@ mod tests {
 
     #[test]
     fn zero_extend() {
-        assert_eq!(VirtualZeroExtendWord.execute(0xFFFF_FFFF_8000_0000, 0), 0x8000_0000);
+        assert_eq!(
+            VirtualZeroExtendWord.execute(0xFFFF_FFFF_8000_0000, 0),
+            0x8000_0000
+        );
     }
 }

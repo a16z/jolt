@@ -5,8 +5,43 @@
 //! provide [`materialize_entry`](crate::LookupTable::materialize_entry) for
 //! preprocessing and [`evaluate_mle`](crate::LookupTable::evaluate_mle) for
 //! the sumcheck verifier.
+//!
+//! The prefix/suffix sparse-dense decomposition enables sub-linear MLE
+//! evaluation during the sumcheck prover's inner loop.
 
+use jolt_field::Field;
 use serde::{Deserialize, Serialize};
+
+pub mod and;
+pub mod andn;
+pub mod equal;
+pub mod halfword_alignment;
+pub mod lower_half_word;
+pub mod movsign;
+pub mod mulu_no_overflow;
+pub mod not_equal;
+pub mod or;
+pub mod pow2;
+pub mod pow2_w;
+pub mod prefixes;
+pub mod range_check;
+pub mod range_check_aligned;
+pub mod shift_right_bitmask;
+pub mod sign_extend_half_word;
+pub mod suffixes;
+pub mod upper_word;
+pub mod valid_div0;
+pub mod valid_signed_remainder;
+pub mod valid_unsigned_remainder;
+pub mod virtual_change_divisor_w;
+pub mod virtual_rev8w;
+pub mod virtual_xor_rot;
+pub mod virtual_xor_rotw;
+pub mod word_alignment;
+pub mod xor;
+
+pub use prefixes::{PrefixEval, Prefixes};
+pub use suffixes::{SuffixEval, Suffixes};
 
 /// Identifies a lookup table type.
 ///
@@ -136,4 +171,21 @@ impl LookupTableKind {
     pub fn index(self) -> usize {
         self as usize
     }
+}
+
+/// Prefix/suffix decomposition for sub-linear MLE evaluation.
+///
+/// Each lookup table decomposes its MLE as:
+/// ```text
+/// table_mle(r) = Σ_i prefix_i(r_high) · suffix_i(r_low)
+/// ```
+///
+/// where the sum is over a small number of prefix-suffix pairs.
+/// This enables the sumcheck prover to avoid materializing the entire table.
+pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable<XLEN> + Default {
+    /// The suffix types used in this table's decomposition.
+    fn suffixes(&self) -> Vec<Suffixes>;
+
+    /// Recombine evaluated prefix and suffix values into the table's MLE evaluation.
+    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
 }

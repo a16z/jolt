@@ -144,12 +144,18 @@ mod tests {
 
     #[test]
     fn circuit_flags_count_matches_enum() {
-        assert_eq!(CircuitFlags::IsLastInSequence as usize + 1, NUM_CIRCUIT_FLAGS);
+        assert_eq!(
+            CircuitFlags::IsLastInSequence as usize + 1,
+            NUM_CIRCUIT_FLAGS
+        );
     }
 
     #[test]
     fn instruction_flags_count_matches_enum() {
-        assert_eq!(InstructionFlags::IsRdNotZero as usize + 1, NUM_INSTRUCTION_FLAGS);
+        assert_eq!(
+            InstructionFlags::IsRdNotZero as usize + 1,
+            NUM_INSTRUCTION_FLAGS
+        );
     }
 
     #[test]

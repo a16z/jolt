@@ -78,4 +78,3 @@ macro_rules! define_instruction {
     (@table $table:ident) => { Some($crate::LookupTableKind::$table) };
     (@table) => { None };
 }
-

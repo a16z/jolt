@@ -11,9 +11,7 @@ use jolt_field::{Field, Fr};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-// ---------------------------------------------------------------------------
 // G2: Debug, From conversions, ref-based ops, commutativity, MSM edge cases
-// ---------------------------------------------------------------------------
 
 #[test]
 fn g2_debug_format_contains_type_name() {
@@ -111,9 +109,7 @@ fn g2_scalar_mul_distributive() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // GT: Debug, Mul/MulAssign, SubAssign, ref-based ops, MSM edge cases
-// ---------------------------------------------------------------------------
 
 fn gt_element() -> Bn254GT {
     Bn254::pairing(&Bn254::g1_generator(), &Bn254::g2_generator())
@@ -236,11 +232,9 @@ fn gt_mul_matches_add() {
     assert_eq!(a * b, a + b);
 }
 
-// ---------------------------------------------------------------------------
 // GLV wrapper functions: vector_add_scalar_mul_g1, vector_add_scalar_mul_g2,
 // vector_scalar_mul_add_gamma_g1, vector_scalar_mul_add_gamma_g2,
 // glv_four_scalar_mul, fixed_base_vector_msm_g1
-// ---------------------------------------------------------------------------
 
 #[test]
 fn glv_vector_add_scalar_mul_g1_matches_naive() {
@@ -402,9 +396,7 @@ fn glv_fixed_base_vector_msm_g1_single() {
     assert_eq!(results[0], base.scalar_mul(&scalar));
 }
 
-// ---------------------------------------------------------------------------
 // GLV with random scalars (exercises more decomposition paths)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn glv_vector_add_scalar_mul_g2_random_scalar() {
@@ -450,9 +442,7 @@ fn glv_vector_scalar_mul_add_gamma_g2_random_scalar() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // HomomorphicCommitment blanket impl
-// ---------------------------------------------------------------------------
 
 #[test]
 fn homomorphic_commitment_g1_linear_combine() {
@@ -490,9 +480,7 @@ fn homomorphic_commitment_gt_linear_combine() {
     assert_eq!(result, expected);
 }
 
-// ---------------------------------------------------------------------------
 // GLV with large random scalars (fully exercises decomposition bit-scanning)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn glv_four_scalar_mul_large_random_scalars() {
@@ -525,9 +513,7 @@ fn glv_fixed_base_vector_msm_g1_large_random_scalars() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // G2 scalar mul edge cases for GLV 4D coverage via JoltGroup::scalar_mul
-// ---------------------------------------------------------------------------
 
 #[test]
 fn g2_scalar_mul_large_random() {
@@ -556,9 +542,7 @@ fn g2_scalar_mul_consistency_with_repeated_add() {
     assert_eq!(via_scalar_mul, via_add);
 }
 
-// ---------------------------------------------------------------------------
 // GT scalar mul edge cases
-// ---------------------------------------------------------------------------
 
 #[test]
 fn gt_scalar_mul_consistency_with_repeated_add() {

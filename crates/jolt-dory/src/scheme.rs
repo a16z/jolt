@@ -1,8 +1,8 @@
 //! Dory polynomial commitment scheme implementing the `jolt-openings` traits.
 //!
-//! [`DoryScheme`] wraps the `dory-pcs` crate behind the [`CommitmentScheme`] and
-//! [`AdditivelyHomomorphic`] trait interfaces, using instance-local
-//! [`DoryParams`] instead of global state.
+//! [`DoryScheme`] wraps the `dory-pcs` crate behind the [`CommitmentScheme`],
+//! [`AdditivelyHomomorphic`], and [`ZkOpeningScheme`] trait interfaces, using
+//! instance-local [`DoryParams`] instead of global state.
 
 use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
 use dory::mode::Transparent;
@@ -10,9 +10,11 @@ use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
-use jolt_crypto::{Bn254G1, Bn254GT, Commitment};
+use jolt_crypto::{Bn254G1, Bn254GT, Commitment, Pedersen, PedersenSetup};
 use jolt_field::Fr;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
+use jolt_openings::{
+    AdditivelyHomomorphic, CommitmentScheme, OpeningsError, VcSetupExtractable, ZkOpeningScheme,
+};
 use jolt_poly::EvaluationSource;
 use jolt_transcript::Transcript;
 
@@ -218,6 +220,120 @@ impl AdditivelyHomomorphic for DoryScheme {
     }
 }
 
+impl ZkOpeningScheme for DoryScheme {
+    type EvalCommitment = Bn254G1;
+    type EvalBlinding = Fr;
+
+    fn open_zk(
+        poly: &Self::Polynomial,
+        point: &[Fr],
+        _eval: Fr,
+        setup: &Self::ProverSetup,
+        hint: Option<Self::OpeningHint>,
+        transcript: &mut impl Transcript,
+    ) -> (Self::Proof, Self::EvalCommitment, Self::EvalBlinding) {
+        let num_vars = point.len();
+        let adapter = DorySourceAdapter::new(poly);
+        let sigma = num_vars.div_ceil(2);
+        let nu = num_vars - sigma;
+
+        let row_commitments = match hint {
+            Some(h) => {
+                // SAFETY: Bn254G1 is repr(transparent) over G1Projective, same as ArkG1.
+                h.0.into_iter()
+                    .map(|g1| unsafe { std::mem::transmute(g1) })
+                    .collect()
+            }
+            None => commit_rows_msm(poly.evaluations(), sigma, &setup.0),
+        };
+
+        let ark_point: Vec<InnerFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
+
+        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
+
+        let (proof, y_blinding) =
+            dory::prove::<InnerFr, InnerBN254, G1Routines, G2Routines, _, _, dory::mode::ZK>(
+                &adapter,
+                &ark_point,
+                row_commitments,
+                <InnerFr as DoryField>::zero(),
+                nu,
+                sigma,
+                &setup.0,
+                &mut dory_transcript,
+            )
+            .expect("Dory ZK proof generation should not fail");
+
+        // Extract y_com from the proof. In ZK mode, dory::prove always sets y_com.
+        let ark_y_com = proof
+            .y_com
+            .expect("ZK mode proof must contain y_com");
+
+        // SAFETY: ArkG1 is repr(transparent) over G1Projective, same as Bn254G1.
+        let y_com: Bn254G1 = unsafe { std::mem::transmute(ark_y_com) };
+        let blinding = ark_to_jolt_fr(
+            &y_blinding.expect("ZK mode prove must return y_blinding"),
+        );
+
+        (DoryProof(proof), y_com, blinding)
+    }
+
+    fn verify_zk(
+        commitment: &Self::Output,
+        point: &[Fr],
+        _eval_commitment: &Self::EvalCommitment,
+        proof: &Self::Proof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut impl Transcript,
+    ) -> Result<(), OpeningsError> {
+        let ark_point: Vec<InnerFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
+
+        // In ZK mode, dory::verify ignores the evaluation parameter and uses
+        // the proof's y_com/e2 instead. We pass zero as a placeholder.
+        let dummy_eval = <InnerFr as DoryField>::zero();
+
+        // SAFETY: Bn254GT is repr(transparent) over Fq12, same as ArkGT.
+        let ark_commitment: InnerGT = unsafe { std::mem::transmute(commitment.0) };
+
+        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
+
+        dory::verify::<InnerFr, InnerBN254, G1Routines, G2Routines, _>(
+            ark_commitment,
+            dummy_eval,
+            &ark_point,
+            &proof.0,
+            setup.0.clone().into_inner(),
+            &mut dory_transcript,
+        )
+        .map_err(|_| OpeningsError::VerificationFailed)
+    }
+
+    fn extract_eval_commitment(proof: &Self::Proof) -> Option<Self::EvalCommitment> {
+        proof.0.y_com.map(|ark_g1| {
+            // SAFETY: ArkG1 is repr(transparent) over G1Projective, same as Bn254G1.
+            unsafe { std::mem::transmute(ark_g1) }
+        })
+    }
+}
+
+impl VcSetupExtractable<Pedersen<Bn254G1>> for DoryScheme {
+    fn extract_vc_setup(setup: &Self::ProverSetup, capacity: usize) -> PedersenSetup<Bn254G1> {
+        let len = capacity.min(setup.0.g1_vec.len());
+        let message_generators: Vec<Bn254G1> = setup.0.g1_vec[..len]
+            .iter()
+            .map(|ark_g1| {
+                // SAFETY: ArkG1 is repr(transparent) over G1Projective, same as Bn254G1.
+                unsafe { std::mem::transmute_copy(ark_g1) }
+            })
+            .collect();
+
+        // SAFETY: ArkG1 is repr(transparent) over G1Projective, same as Bn254G1.
+        let blinding_generator: Bn254G1 = unsafe { std::mem::transmute_copy(&setup.0.h1) };
+
+        PedersenSetup::new(message_generators, blinding_generator)
+    }
+}
+
 fn commit_rows_msm(
     evals: &[Fr],
     sigma: usize,
@@ -298,6 +414,7 @@ impl<S: EvaluationSource<Fr>> MultilinearLagrange<InnerFr> for DorySourceAdapter
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_crypto::JoltCommitment;
     use jolt_field::Field;
     use jolt_poly::Polynomial;
     use rand_chacha::ChaCha20Rng;
@@ -374,6 +491,99 @@ mod tests {
         assert_eq!(
             commit_sum_direct, combined,
             "combine([1,1]) must match commitment to sum"
+        );
+    }
+
+    #[test]
+    fn zk_open_verify_round_trip() {
+        let num_vars = 4;
+        let mut rng = ChaCha20Rng::seed_from_u64(600);
+
+        let prover_setup = DoryScheme::setup_prover(num_vars);
+        let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
+
+        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let point: Vec<Fr> = (0..num_vars)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
+        let eval = poly.evaluate(&point);
+
+        let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
+
+        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
+        let (proof, eval_com, _blinding) =
+            DoryScheme::open_zk(&poly, &point, eval, &prover_setup, Some(hint), &mut prove_transcript);
+
+        // Eval commitment should be extractable from the proof.
+        let extracted = DoryScheme::extract_eval_commitment(&proof);
+        assert_eq!(extracted, Some(eval_com));
+
+        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
+        let result = DoryScheme::verify_zk(
+            &commitment,
+            &point,
+            &eval_com,
+            &proof,
+            &verifier_setup,
+            &mut verify_transcript,
+        );
+        assert!(result.is_ok(), "ZK verification failed: {result:?}");
+    }
+
+    #[test]
+    fn extract_eval_commitment_none_for_transparent_proof() {
+        let num_vars = 2;
+        let mut rng = ChaCha20Rng::seed_from_u64(601);
+
+        let prover_setup = DoryScheme::setup_prover(num_vars);
+        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+        let point: Vec<Fr> = (0..num_vars)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
+        let eval = poly.evaluate(&point);
+
+        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"transparent");
+        let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript);
+
+        assert!(
+            DoryScheme::extract_eval_commitment(&proof).is_none(),
+            "transparent-mode proof should not have y_com"
+        );
+    }
+
+    #[test]
+    fn extract_vc_setup_produces_valid_pedersen_setup() {
+        let num_vars = 6;
+        let prover_setup = DoryScheme::setup_prover(num_vars);
+
+        let capacity = 5;
+        let vc_setup =
+            <DoryScheme as VcSetupExtractable<Pedersen<Bn254G1>>>::extract_vc_setup(
+                &prover_setup,
+                capacity,
+            );
+
+        assert_eq!(
+            <Pedersen<Bn254G1> as JoltCommitment>::capacity(&vc_setup),
+            capacity,
+        );
+
+        // Commit and verify a small vector.
+        let values = vec![
+            <Fr as Field>::from_u64(1),
+            <Fr as Field>::from_u64(2),
+            <Fr as Field>::from_u64(3),
+        ];
+        let blinding = <Fr as Field>::from_u64(42);
+        let commitment =
+            <Pedersen<Bn254G1> as JoltCommitment>::commit(&vc_setup, &values, &blinding);
+        assert!(
+            <Pedersen<Bn254G1> as JoltCommitment>::verify(
+                &vc_setup,
+                &commitment,
+                &values,
+                &blinding,
+            ),
         );
     }
 }
