@@ -48,7 +48,7 @@ pub struct CommittedRoundData<F: Field, VC: JoltCommitment> {
 /// `PCS` is the polynomial commitment scheme used for the Spartan witness/error
 /// openings. The committed sumcheck proofs (with `VC::Commitment`) are sent
 /// separately and are not included here.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
 #[allow(clippy::type_complexity)]
 pub struct BlindFoldProof<F: Field, PCS: CommitmentScheme> {

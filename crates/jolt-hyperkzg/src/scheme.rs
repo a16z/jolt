@@ -161,7 +161,7 @@ where
         let r_challenge = transcript.challenge();
         let r = challenge_to_field::<P::ScalarField, T>(r_challenge);
 
-        if r.is_zero() || commitment.point.is_identity() {
+        if r.is_zero() {
             return Err(HyperKZGError::VerificationFailed);
         }
 

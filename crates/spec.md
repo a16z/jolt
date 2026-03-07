@@ -144,7 +144,8 @@ jolt-openings  │    │
 | `jolt-wrapper` | Verifier wrapping: symbolic execution, AST capture, pluggable codegen | Yes | ~1200 (done) |
 | `jolt-instructions` | RISC-V instruction set + lookup tables | No | ~3000 (done) |
 | `jolt-dory` | Dory commitment scheme impl | No | ~5000 (done) |
-| `jolt-zkvm` | zkVM prover/verifier orchestration | No | ~10000 (in progress) |
+| `jolt-verifier` | Lightweight proof verification (no prover deps) | Yes | ~1500 (planned) |
+| `jolt-zkvm` | zkVM prover orchestration (depends on jolt-verifier) | No | ~10000 (in progress) |
 | `jolt-metal` | Metal GPU compute backend | No | TBD (future) |
 | `jolt-cuda` | CUDA GPU compute backend | No | TBD (future) |
 | `jolt-webgpu` | WebGPU compute backend | No | TBD (future) |
@@ -172,8 +173,12 @@ Already completed. Defines `Field`, `UnreducedOps`, `ReductionOps`, `Challenge`,
 **Dependency position:**
 
 ```
-jolt-field ← jolt-crypto ← jolt-openings, jolt-dory, jolt-blindfold, jolt-zkvm
+jolt-field ← jolt-crypto ← jolt-openings, jolt-dory, jolt-blindfold
              jolt-transcript ↗
+                              ┌─ jolt-verifier (proof types, verifier, error)
+protocol crates ──────────────┤
+                              └─ jolt-zkvm (prover, depends on jolt-verifier)
+                                  + jolt-compute, jolt-cpu-kernels, jolt-ir
 ```
 
 **Design decisions:**
@@ -1335,32 +1340,33 @@ jolt-compute/
 
 ---
 
-### 4.10 `jolt-zkvm` — zkVM Prover/Verifier
+### 4.10a `jolt-verifier` — Lightweight Proof Verification
 
-**Purpose:** The top-level zkVM that orchestrates all sub-crates into a complete proving system. This is Jolt-specific and replaces the old `jolt-core`. It is the last crate to be built.
+**Purpose:** A standalone crate for verifying Jolt proofs with minimal dependencies. External consumers (bridges, on-chain verifiers, SDKs) import only `jolt-verifier` — no prover code, no rayon, no compute backend, no kernel infrastructure. This is the public verification API.
 
-**Dependencies:** All other `jolt-*` crates
+**Dependencies:** `jolt-field`, `jolt-transcript`, `jolt-crypto`, `jolt-poly`, `jolt-openings`, `jolt-sumcheck`, `jolt-spartan`, `jolt-dory`
+
+All dependencies are pulled **without** the `parallel` feature — no rayon in the verifier dependency tree.
+
+**Dependency position:**
+
+```
+                              ┌─ jolt-verifier ─► External consumers
+jolt-field ─┐                 │   (proof types, verifier, error types)
+jolt-crypto ├─► protocol ─────┤
+jolt-poly   │   crates        │
+jolt-openings┘                └─ jolt-zkvm ─► Prover consumers
+                                  (depends on jolt-verifier + heavy deps)
+```
 
 #### Public API
 
 ```rust
-// ── Core prover/verifier ────────────────────────────────────
-
-pub struct JoltProver<PCS: CommitmentScheme, B: ComputeBackend> { /* ... */ }
-
-impl<PCS: HomomorphicCommitmentScheme, B: ComputeBackend> JoltProver<PCS, B> {
-    pub fn new(config: ProverConfig, pcs_setup: PCS::ProverSetup, backend: B) -> Self;
-
-    pub fn prove<T: Transcript>(
-        &self,
-        trace: ExecutionTrace,
-        transcript: &mut T,
-    ) -> Result<JoltProof<PCS>, JoltError>;
+pub struct JoltVerifier<PCS: CommitmentScheme> {
+    pcs_setup: PCS::VerifierSetup,
 }
 
-pub struct JoltVerifier<PCS: CommitmentScheme> { /* ... */ }
-
-impl<PCS: HomomorphicCommitmentScheme> JoltVerifier<PCS> {
+impl<PCS: CommitmentScheme> JoltVerifier<PCS> {
     pub fn new(pcs_setup: PCS::VerifierSetup) -> Self;
 
     pub fn verify<T: Transcript>(
@@ -1370,19 +1376,30 @@ impl<PCS: HomomorphicCommitmentScheme> JoltVerifier<PCS> {
     ) -> Result<(), JoltError>;
 }
 
-// ── Configuration ───────────────────────────────────────────
-
-pub struct ProverConfig {
-    pub memory_layout: MemoryLayout,
-    pub first_round_strategy: FirstRoundStrategy,
-    // ... other config
+/// Complete Jolt proof — serializable, sent from prover to verifier.
+pub struct JoltProof<PCS: CommitmentScheme> {
+    pub commitments: Vec<PCS::Output>,
+    pub stage_proofs: [SumcheckProof<PCS::Field>; 7],
+    pub opening_proofs: Vec<PCS::Proof>,
+    pub config: ProverConfig,
+    pub trace_length: usize,
+    pub ram_k: usize,
 }
 
-// ── Proof type ──────────────────────────────────────────────
+/// Verification key — derived from PCS setup, shared between prover and verifier.
+pub struct JoltVerifyingKey<PCS: CommitmentScheme> {
+    pub pcs_setup: PCS::VerifierSetup,
+    pub preprocessing: JoltVerifierPreprocessing,
+}
 
-pub struct JoltProof<PCS: CommitmentScheme> { /* ... */ }
+/// Public inputs to a Jolt proof.
+pub struct JoltPublicInput {
+    pub program_io: Vec<u8>,
+    pub memory_layout: MemoryLayout,
+}
 
-// ── Error ───────────────────────────────────────────────────
+/// Concrete type alias for the standard Dory-backed verifier.
+pub type RV64IMACVerifier = JoltVerifier<DoryScheme>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum JoltError {
@@ -1397,6 +1414,82 @@ pub enum JoltError {
     #[error("memory error: {0}")]
     Memory(String),
 }
+```
+
+#### What Lives Here vs. jolt-zkvm
+
+| Type | Crate | Reason |
+|------|-------|--------|
+| `JoltProof`, `JoltVerifyingKey`, `JoltPublicInput` | jolt-verifier | Shared between prover and verifier — defined once |
+| `JoltVerifier`, `VerifierStage` | jolt-verifier | Verification-only logic |
+| `JoltError` | jolt-verifier | Error variants needed by both sides |
+| `ProverConfig` | jolt-verifier | Embedded in proof — verifier needs it for reconstruction |
+| `JoltProver`, `ProverStage`, `WitnessStore` | jolt-zkvm | Prover-only; depends on compute backend |
+
+#### Feature Flags
+
+| Feature | Purpose |
+|---------|---------|
+| `zk` | Enables `BlindFoldVerifier` from `jolt-blindfold` |
+
+Without `zk`, jolt-verifier has **no dependency on jolt-blindfold**.
+
+#### File Structure
+
+```
+jolt-verifier/
+├── Cargo.toml
+├── README.md
+├── src/
+│   ├── lib.rs              # Re-exports: JoltVerifier, JoltProof, JoltError
+│   ├── verifier.rs         # JoltVerifier<PCS> — stage loop + opening verification
+│   ├── proof.rs            # JoltProof<PCS>, serialization
+│   ├── key.rs              # JoltVerifyingKey, JoltPublicInput
+│   ├── error.rs            # JoltError
+│   ├── config.rs           # ProverConfig (deserialized from proof)
+│   └── stages/             # VerifierStage implementations
+│       ├── mod.rs
+│       ├── s1_spartan_outer.rs
+│       ├── s2_memory_checking.rs
+│       ├── s3_register_reduction.rs
+│       ├── s4_value_checking.rs
+│       ├── s5_raf_reduction.rs
+│       ├── s6_booleanity.rs
+│       └── s7_hamming_weight.rs
+├── tests/
+│   ├── proof_deserialization.rs
+│   └── verification.rs
+└── benches/
+    └── verify.rs
+```
+
+---
+
+### 4.10b `jolt-zkvm` — zkVM Prover
+
+**Purpose:** The top-level prover that orchestrates all sub-crates into a complete proving system. Depends on `jolt-verifier` for shared types (`JoltProof`, `JoltError`) and re-exports them. This is the last crate to be built.
+
+**Dependencies:** `jolt-verifier` (re-exports proof types) + `jolt-compute`, `jolt-cpu-kernels`, `jolt-ir`, `jolt-blindfold` (ZK feature)
+
+#### Public API
+
+```rust
+pub struct JoltProver<PCS: CommitmentScheme, B: ComputeBackend> { /* ... */ }
+
+impl<PCS: HomomorphicCommitmentScheme, B: ComputeBackend> JoltProver<PCS, B> {
+    pub fn new(config: ProverConfig, pcs_setup: PCS::ProverSetup, backend: B) -> Self;
+
+    pub fn prove<T: Transcript>(
+        &self,
+        trace: ExecutionTrace,
+        transcript: &mut T,
+    ) -> Result<JoltProof<PCS>, JoltError>;
+}
+
+// Re-export from jolt-verifier
+pub use jolt_verifier::{JoltVerifier, JoltProof, JoltVerifyingKey, JoltPublicInput, JoltError};
+
+pub type RV64IMACProver = JoltProver<DoryScheme, CpuBackend>;
 ```
 
 #### Constraint Definitions

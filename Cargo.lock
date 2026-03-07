@@ -2843,6 +2843,7 @@ dependencies = [
 name = "jolt-blindfold"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
@@ -3239,7 +3240,9 @@ dependencies = [
 name = "jolt-wrapper"
 version = "0.1.0"
 dependencies = [
+ "jolt-crypto",
  "jolt-field",
+ "jolt-hyperkzg",
  "jolt-ir",
  "jolt-openings",
  "jolt-spartan",

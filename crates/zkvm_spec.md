@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-`jolt-zkvm` is the final crate in the modular Jolt workspace. It orchestrates all sub-crates into a complete RISC-V (RV64IMAC) proving system. This document specifies how jolt-zkvm composes the existing abstractions, what new abstractions it introduces, how testing works at every level, and how the compute backend integrates.
+`jolt-zkvm` and `jolt-verifier` are the final crates in the modular Jolt workspace. `jolt-verifier` owns the proof types, verifier logic, and error types — external consumers import only this crate to verify Jolt proofs with minimal dependencies (no rayon, no compute backend). `jolt-zkvm` depends on `jolt-verifier` and adds the prover, compute backend integration, and kernel infrastructure. This document specifies how both crates compose the existing abstractions, what new abstractions they introduce, how testing works at every level, and how the compute backend integrates.
 
 ### Design Principles
 
@@ -22,22 +22,39 @@
 
 ## 2. Dependency Inventory
 
-jolt-zkvm consumes every crate in the workspace. Here is exactly what it uses from each:
+The proving system is split into two top-level crates: `jolt-verifier` (lightweight, verification-only) and `jolt-zkvm` (full prover, depends on jolt-verifier).
+
+### jolt-verifier Dependencies
+
+| Crate | What jolt-verifier uses |
+|-------|------------------------|
+| **jolt-field** | `Field`, `Fr`, challenge types |
+| **jolt-transcript** | `Transcript`, `Blake2bTranscript` |
+| **jolt-crypto** | `PairingGroup` (for Dory verify pairing check) |
+| **jolt-poly** | `UnivariatePoly` (sumcheck round polynomials) |
+| **jolt-openings** | `CommitmentScheme::verify`, `VerifierClaim`, `RlcReduction::reduce_verifier` |
+| **jolt-dory** | `DoryScheme::verify` |
+| **jolt-sumcheck** | `SumcheckVerifier`, `BatchedSumcheckVerifier`, `SumcheckClaim`, `SumcheckProof`, `ClearRoundVerifier` |
+| **jolt-spartan** | `SpartanVerifier`, `SpartanKey` |
+| **jolt-blindfold** | `BlindFoldVerifier` (ZK feature gate only) |
+
+All protocol crate dependencies are pulled **without** the `parallel` feature — no rayon in the verifier.
+
+### jolt-zkvm Additional Dependencies
+
+jolt-zkvm depends on `jolt-verifier` (re-exports `JoltProof`, `JoltVerifier`, `JoltError`) plus:
 
 | Crate | What jolt-zkvm uses |
 |-------|-------------------|
-| **jolt-field** | `Field`, `Fr`, challenge types |
-| **jolt-transcript** | `Transcript`, `Blake2bTranscript` |
-| **jolt-crypto** | `JoltGroup`, `PairingGroup` (for BlindFold), `Pedersen` (ZK mode) |
-| **jolt-poly** | `Polynomial<T>`, `EqPolynomial`, `UnivariatePoly` |
-| **jolt-openings** | `CommitmentScheme`, `AdditivelyHomomorphic`, `StreamingCommitment`, `ProverClaim`, `VerifierClaim`, `RlcReduction` |
-| **jolt-dory** | `DoryScheme` (concrete PCS instantiation) |
-| **jolt-sumcheck** | `SumcheckClaim`, `SumcheckCompute`, `BatchedSumcheckProver/Verifier`, `RoundHandler/Verifier`, `SumcheckProof` |
-| **jolt-spartan** | `SpartanProver/Verifier`, `SpartanKey`, `R1CS`, `SimpleR1CS`, `FirstRoundStrategy` |
+| **jolt-verifier** | `JoltProof`, `JoltVerifier`, `JoltVerifyingKey`, `JoltError`, `VerifierStage` |
+| **jolt-openings** | `ProverClaim`, `StreamingCommitment`, `AdditivelyHomomorphic`, `RlcReduction::reduce_prover` |
+| **jolt-sumcheck** | `SumcheckCompute`, `BatchedSumcheckProver`, `RoundHandler`, `SumcheckReduction` |
+| **jolt-spartan** | `SpartanProver` |
 | **jolt-ir** | `ExprBuilder`, `ClaimDefinition`, `SumOfProducts`, `R1csEmission`, `KernelDescriptor` |
 | **jolt-compute** | `ComputeBackend`, `CpuBackend` |
+| **jolt-cpu-kernels** | `CpuKernelCompiler` |
 | **jolt-instructions** | `Instruction`, `LookupTable`, `JoltInstructionSet` |
-| **jolt-blindfold** | `BlindFoldProver/Verifier` (ZK feature gate) |
+| **jolt-blindfold** | `BlindFoldProver` (ZK feature gate) |
 
 ### Confirmed: No Gaps
 
@@ -50,6 +67,7 @@ jolt-zkvm consumes every crate in the workspace. Here is exactly what it uses fr
 | Compute backend | `jolt-compute::ComputeBackend` used in `SumcheckCompute` implementations for `round_polynomial()` and `bind()` |
 | Multi-phase reductions | `SumcheckReduction` trait in `jolt-sumcheck` — sumcheck-based claim reduction with protocol-specific witness construction. Advice two-phase reduction modeled as two composed reductions with intermediate claims flowing via `ProverClaim`. |
 | Spartan outer sumcheck | Stage 1 implements `ProverStage` normally. Internally wraps the lazy `UniformSpartanKey` fused bilinear evaluator as a `SumcheckCompute` impl. Specialized evaluation hidden behind the trait. |
+| Lightweight verifier | `jolt-verifier` crate owns proof types + verification logic. No rayon, no compute backend, no kernel infrastructure. External consumers import only this crate. `jolt-zkvm` depends on `jolt-verifier` and re-exports its types. |
 
 ---
 
@@ -154,9 +172,9 @@ for claim in &reduced_claims {
 
 No accumulator struct — claims are plain data flowing through function parameters.
 
-### 3.4 Verifier Pipeline
+### 3.4 Verifier Pipeline (jolt-verifier)
 
-Mirror image: each stage provides a `VerifierStage` that verifies the sumcheck proof and produces `Vec<VerifierClaim<F, PCS::Output>>`. Stage 8 reduces via `RlcReduction::reduce_verifier` and calls `PCS::verify`.
+Mirror image: each stage provides a `VerifierStage` (defined in `jolt-verifier`) that verifies the sumcheck proof and produces `Vec<VerifierClaim<F, PCS::Output>>`. Stage 8 reduces via `RlcReduction::reduce_verifier` and calls `PCS::verify`. The entire verification pipeline lives in `jolt-verifier` — it has no dependency on jolt-zkvm, jolt-compute, or jolt-ir.
 
 ### 3.4a Witness Ownership and the WitnessStore
 
@@ -620,19 +638,50 @@ benches/
 
 ## 7. Module Structure
 
+### 7.1 jolt-verifier
+
+```
+jolt-verifier/
+├── Cargo.toml
+├── README.md
+├── src/
+│   ├── lib.rs                    # Re-exports: JoltVerifier, JoltProof, JoltError
+│   ├── verifier.rs               # JoltVerifier<PCS> — verifier stage pipeline
+│   ├── proof.rs                  # JoltProof<PCS>, serialization
+│   ├── key.rs                    # JoltVerifyingKey, JoltPublicInput
+│   ├── config.rs                 # ProverConfig (deserialized from proof)
+│   ├── error.rs                  # JoltError
+│   ├── pipeline.rs               # verify_stages() — generic verifier loop
+│   ├── stage.rs                  # VerifierStage trait
+│   │
+│   └── stages/                   # VerifierStage implementations
+│       ├── mod.rs
+│       ├── s1_spartan_outer.rs
+│       ├── s2_memory_checking.rs
+│       ├── s3_register_reduction.rs
+│       ├── s4_value_checking.rs
+│       ├── s5_raf_reduction.rs
+│       ├── s6_booleanity.rs
+│       └── s7_hamming_weight.rs
+│
+├── tests/
+│   ├── proof_deserialization.rs  # Proof round-trip serialization
+│   └── verification.rs          # Verify known-good proofs
+└── benches/
+    └── verify.rs
+```
+
+### 7.2 jolt-zkvm
+
 ```
 jolt-zkvm/
 ├── Cargo.toml
 ├── README.md
 ├── src/
-│   ├── lib.rs                    # Re-exports: JoltProver, JoltVerifier, JoltProof
+│   ├── lib.rs                    # Re-exports: JoltProver + jolt_verifier::*
 │   ├── prover.rs                 # JoltProver<PCS, B> — generic pipeline driver
-│   ├── verifier.rs               # JoltVerifier<PCS> — mirror of prover
-│   ├── proof.rs                  # JoltProof<PCS> serialization
-│   ├── config.rs                 # ProverConfig, OneHotConfig, ReadWriteConfig
-│   ├── error.rs                  # JoltError
-│   ├── pipeline.rs               # Generic prove_stages() / verify_stages()
-│   ├── stage.rs                  # ProverStage / VerifierStage traits
+│   ├── pipeline.rs               # prove_stages() — generic prover loop
+│   ├── stage.rs                  # ProverStage trait
 │   ├── witness.rs                # CommittedPolynomial enum, witness generation
 │   │
 │   ├── claims/                   # IR-based claim definitions (single source of truth)
@@ -644,7 +693,7 @@ jolt-zkvm/
 │   │   ├── spartan.rs            # Outer, product, shift, instruction input claims
 │   │   └── reductions.rs         # Inc, hamming weight, advice claim reductions
 │   │
-│   ├── stages/                   # Each stage as a self-contained module
+│   ├── stages/                   # ProverStage implementations
 │   │   ├── mod.rs
 │   │   ├── s1_spartan_outer.rs
 │   │   ├── s2_memory_checking.rs
@@ -676,7 +725,7 @@ jolt-zkvm/
 │   │   ├── mod.rs
 │   │   └── preprocessing.rs
 │   │
-│   └── preprocessing.rs          # JoltProverPreprocessing, JoltVerifierPreprocessing
+│   └── preprocessing.rs          # JoltProverPreprocessing
 │
 ├── tests/
 │   ├── ir_claims.rs              # Level 1: all ClaimDefinition IR round-trips
@@ -697,24 +746,18 @@ jolt-zkvm/
 
 ### Key: `claims/` vs `witnesses/` vs `stages/`
 
-- **`claims/`** — Pure IR expressions. No runtime state. Define the mathematics.
-- **`witnesses/`** — `SumcheckCompute` implementations. Hold polynomial data. Do the heavy computation. Generic over `B: ComputeBackend`.
-- **`stages/`** — Orchestration. Construct claims + witnesses, call `BatchedSumcheckProver`, extract opening claims. Implement `ProverStage`.
+- **`claims/`** — Pure IR expressions. No runtime state. Define the mathematics. Lives in jolt-zkvm (prover constructs claims; verifier reconstructs them from proof data).
+- **`witnesses/`** — `SumcheckCompute` implementations. Hold polynomial data. Do the heavy computation. Generic over `B: ComputeBackend`. Prover-only (jolt-zkvm).
+- **`stages/`** — Orchestration. Both crates have `stages/` directories. jolt-zkvm's stages implement `ProverStage` (construct claims + witnesses, call `BatchedSumcheckProver`). jolt-verifier's stages implement `VerifierStage` (verify sumcheck proofs, extract `VerifierClaim`s).
 
 ---
 
 ## 8. Type Parameters
 
+### jolt-verifier types (shared)
+
 ```rust
-pub struct JoltProver<PCS, B>
-where
-    PCS: AdditivelyHomomorphic,
-    B: ComputeBackend,
-{
-    config: ProverConfig,
-    pcs_setup: PCS::ProverSetup,
-    backend: B,
-}
+// Defined in jolt-verifier — shared by both prover and verifier consumers.
 
 pub struct JoltVerifier<PCS: CommitmentScheme> {
     pcs_setup: PCS::VerifierSetup,
@@ -731,12 +774,46 @@ pub struct JoltProof<PCS: CommitmentScheme> {
     // pub blindfold_proof: BlindFoldProof,
 }
 
-// Concrete type aliases
-pub type RV64IMACProver = JoltProver<DoryScheme, CpuBackend>;
+pub struct JoltVerifyingKey<PCS: CommitmentScheme> {
+    pub pcs_setup: PCS::VerifierSetup,
+    pub preprocessing: JoltVerifierPreprocessing,
+}
+
 pub type RV64IMACVerifier = JoltVerifier<DoryScheme>;
 ```
 
-Note: No `Transcript` type parameter on `JoltProver`/`JoltVerifier` — transcript is passed to `prove()`/`verify()` as `&mut impl Transcript`, keeping the structs simple.
+### jolt-zkvm types (prover-only)
+
+```rust
+// Defined in jolt-zkvm — prover consumers only.
+
+pub struct JoltProver<PCS, B>
+where
+    PCS: AdditivelyHomomorphic,
+    B: ComputeBackend,
+{
+    config: ProverConfig,
+    pcs_setup: PCS::ProverSetup,
+    backend: B,
+}
+
+// Re-export everything from jolt-verifier
+pub use jolt_verifier::{JoltVerifier, JoltProof, JoltVerifyingKey, JoltError};
+
+pub type RV64IMACProver = JoltProver<DoryScheme, CpuBackend>;
+```
+
+No `Transcript` type parameter on `JoltProver`/`JoltVerifier` — transcript is passed to `prove()`/`verify()` as `&mut impl Transcript`, keeping the structs simple.
+
+### Consumer usage
+
+```rust
+// Verifier-only consumer (minimal deps, no rayon):
+use jolt_verifier::{JoltVerifier, JoltProof, RV64IMACVerifier};
+
+// Full prover consumer:
+use jolt_zkvm::{JoltProver, JoltProof, JoltVerifier, RV64IMACProver};
+```
 
 ---
 
@@ -899,7 +976,7 @@ The orchestration glue in jolt-zkvm itself — the `prove_zk` / `verify_zk` func
 
 ---
 
-## 10. Implementation Order for jolt-zkvm
+## 10. Implementation Order
 
 ### 10.1 Phase 1: ClaimDefinition Migration (first task)
 
@@ -917,17 +994,27 @@ Each claim gets:
 2. A test that `claim_def.evaluate()` matches hand-computed values
 3. A test that `claim_def.expr.to_sum_of_products().emit_r1cs()` is satisfiable with correct witness
 
-### 10.2 Phase 2: WitnessStore + First Concrete Stage
+### 10.2 Phase 2: jolt-verifier — Proof Types + Verifier Skeleton
 
-Define `WitnessStore<F>` (see §3.4a) and implement one `ProverStage` end-to-end — likely the simplest (Hamming booleanity or a plain-sum reduction). This validates the trait signatures, witness borrowing, and claim flow before committing to all 7 stages.
+Create `jolt-verifier` with:
+- `JoltProof<PCS>`, `JoltVerifyingKey<PCS>`, `JoltPublicInput`, `JoltError`
+- `VerifierStage` trait
+- `JoltVerifier<PCS>` with the stage-loop skeleton (calls `VerifierStage::verify()` per stage, then `RlcReduction::reduce_verifier` + `PCS::verify`)
+- Proof serialization round-trip tests
 
-### 10.3 Phase 3: Remaining Stages
+This must come before jolt-zkvm because the prover produces `JoltProof` which is defined here. jolt-zkvm depends on jolt-verifier.
 
-Implement the remaining `ProverStage`s, including the advice `SumcheckReduction` two-phase reduction (stages 6–7). Each stage gets Level 2 and Level 3 tests (see §6).
+### 10.3 Phase 3: WitnessStore + First Concrete Stage (jolt-zkvm)
 
-### 10.4 Phase 4: Orchestrator + E2E
+Define `WitnessStore<F>` (see §3.4a) and implement one `ProverStage` end-to-end — likely the simplest (Hamming booleanity or a plain-sum reduction). Implement the corresponding `VerifierStage` in jolt-verifier. This validates the trait signatures, witness borrowing, and claim flow before committing to all 7 stages.
 
-Wire `JoltProver` / `JoltVerifier` with the stage loop, opening reduction, and (optionally) BlindFold ZK mode. Run muldiv e2e test as the final validation.
+### 10.4 Phase 4: Remaining Stages
+
+Implement the remaining `ProverStage`s (jolt-zkvm) and `VerifierStage`s (jolt-verifier), including the advice `SumcheckReduction` two-phase reduction (stages 6–7). Each stage gets Level 2 and Level 3 tests (see §6).
+
+### 10.5 Phase 5: Orchestrator + E2E
+
+Wire `JoltProver` (jolt-zkvm) with the stage loop, opening reduction, and (optionally) BlindFold ZK mode. Wire `JoltVerifier` (jolt-verifier) with the verification loop. Run muldiv e2e test as the final validation.
 
 ---
 

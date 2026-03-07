@@ -3,6 +3,7 @@
 
 use jolt_field::{Field, Fr};
 use jolt_openings::mock::MockCommitmentScheme;
+use jolt_openings::CommitmentScheme;
 use jolt_spartan::{
     FirstRoundStrategy, SimpleR1CS, SpartanError, SpartanKey, SpartanProver, SpartanVerifier,
 };
@@ -356,4 +357,340 @@ fn spartan_e2e_computed_assert_equal() {
     ]);
     assert!(circuit.is_satisfied(&witness));
     prove_and_verify(&circuit, &witness, b"wrapper-computed-eq");
+}
+
+/// HyperKZG-backed Spartan integration tests.
+///
+/// These exercise the same symbolic → Spartan pipeline but with real
+/// pairing-based polynomial commitments (BN254 HyperKZG) instead of MockPCS.
+mod hyperkzg {
+    use super::*;
+    use jolt_crypto::Bn254;
+    use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    type KzgPCS = HyperKZGScheme<Bn254>;
+
+    fn make_setup(
+        max_degree: usize,
+    ) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifierSetup<Bn254>) {
+        let mut rng = ChaCha20Rng::seed_from_u64(0xdead_cafe);
+        let g1 = Bn254::g1_generator();
+        let g2 = Bn254::g2_generator();
+        let pk = KzgPCS::setup(&mut rng, max_degree, g1, g2);
+        let vk = KzgPCS::verifier_setup(&pk);
+        (pk, vk)
+    }
+
+    fn prove_and_verify_kzg(
+        circuit: &jolt_wrapper::spartan::SpartanCircuit<Fr>,
+        witness: &[Fr],
+        label: &'static [u8],
+    ) {
+        let (a, b, c) = circuit.sparse_entries();
+        let r1cs = SimpleR1CS::new(
+            circuit.num_constraints(),
+            circuit.num_variables as usize,
+            a,
+            b,
+            c,
+        );
+        let key = SpartanKey::from_r1cs(&r1cs);
+
+        // SRS must cover the padded witness length
+        let (pk, vk) = make_setup(key.num_variables_padded);
+
+        let mut prover_transcript = Blake2bTranscript::new(label);
+        let proof = SpartanProver::prove::<KzgPCS, _>(
+            &r1cs,
+            &key,
+            witness,
+            &pk,
+            &mut prover_transcript,
+            FirstRoundStrategy::Standard,
+        )
+        .expect("proving should succeed");
+
+        let mut verifier_transcript = Blake2bTranscript::new(label);
+        SpartanVerifier::verify::<KzgPCS, _>(&key, &proof, &vk, &mut verifier_transcript)
+            .expect("verification should succeed");
+    }
+
+    fn prove_should_fail_kzg(
+        circuit: &jolt_wrapper::spartan::SpartanCircuit<Fr>,
+        witness: &[Fr],
+        label: &'static [u8],
+    ) {
+        let (a, b, c) = circuit.sparse_entries();
+        let r1cs = SimpleR1CS::new(
+            circuit.num_constraints(),
+            circuit.num_variables as usize,
+            a,
+            b,
+            c,
+        );
+        let key = SpartanKey::from_r1cs(&r1cs);
+        let (pk, _vk) = make_setup(key.num_variables_padded);
+
+        let mut transcript = Blake2bTranscript::new(label);
+        let result = SpartanProver::prove::<KzgPCS, _>(
+            &r1cs,
+            &key,
+            witness,
+            &pk,
+            &mut transcript,
+            FirstRoundStrategy::Standard,
+        );
+        assert!(
+            matches!(result, Err(SpartanError::ConstraintViolation(_))),
+            "expected constraint violation, got Ok or different error"
+        );
+    }
+
+    #[test]
+    fn hyperkzg_spartan_simple_mul() {
+        let _session = ArenaSession::new();
+
+        let x = SymbolicField::variable(0, "x");
+        let y = SymbolicField::variable(1, "y");
+
+        let mut alloc = VarAllocator::new();
+        let _ = alloc.input("x");
+        let _ = alloc.input("y");
+        alloc.assert_zero((x * y).into_edge());
+        let bundle = alloc.finish();
+
+        let mut emitter = SpartanAstEmitter::<Fr>::new();
+        bundle.emit(&mut emitter);
+        let circuit = emitter.finish();
+
+        let witness = circuit.build_witness(&[(0, Fr::from_u64(0)), (1, Fr::from_u64(42))]);
+        assert!(circuit.is_satisfied(&witness));
+        prove_and_verify_kzg(&circuit, &witness, b"kzg-simple-mul");
+    }
+
+    #[test]
+    fn hyperkzg_spartan_simple_mul_unsatisfied() {
+        let _session = ArenaSession::new();
+
+        let x = SymbolicField::variable(0, "x");
+        let y = SymbolicField::variable(1, "y");
+
+        let mut alloc = VarAllocator::new();
+        let _ = alloc.input("x");
+        let _ = alloc.input("y");
+        alloc.assert_zero((x * y).into_edge());
+        let bundle = alloc.finish();
+
+        let mut emitter = SpartanAstEmitter::<Fr>::new();
+        bundle.emit(&mut emitter);
+        let circuit = emitter.finish();
+
+        let witness = circuit.build_witness(&[(0, Fr::from_u64(3)), (1, Fr::from_u64(7))]);
+        assert!(!circuit.is_satisfied(&witness));
+        prove_should_fail_kzg(&circuit, &witness, b"kzg-simple-mul-bad");
+    }
+
+    #[test]
+    fn hyperkzg_spartan_booleanity() {
+        let _session = ArenaSession::new();
+
+        let h = SymbolicField::variable(0, "H");
+        let gamma = SymbolicField::variable(1, "gamma");
+        let constraint = gamma * (h * h - h);
+
+        let mut alloc = VarAllocator::new();
+        let _ = alloc.input("H");
+        let _ = alloc.input("gamma");
+        alloc.assert_zero(constraint.into_edge());
+        let bundle = alloc.finish();
+
+        let mut emitter = SpartanAstEmitter::<Fr>::new();
+        bundle.emit(&mut emitter);
+        let circuit = emitter.finish();
+
+        let witness = circuit.build_witness(&[(0, Fr::from_u64(1)), (1, Fr::from_u64(99))]);
+        assert!(circuit.is_satisfied(&witness));
+        prove_and_verify_kzg(&circuit, &witness, b"kzg-bool");
+    }
+
+    #[test]
+    fn hyperkzg_spartan_chained_mul() {
+        let _session = ArenaSession::new();
+
+        let x = SymbolicField::variable(0, "x");
+        let y = SymbolicField::variable(1, "y");
+        let z = SymbolicField::variable(2, "z");
+        let expected = SymbolicField::variable(3, "expected");
+
+        let mut alloc = VarAllocator::new();
+        let _ = alloc.input("x");
+        let _ = alloc.input("y");
+        let _ = alloc.input("z");
+        let _ = alloc.input("expected");
+        alloc.assert_equal((x * y * z).into_edge(), expected.into_edge());
+        let bundle = alloc.finish();
+
+        let mut emitter = SpartanAstEmitter::<Fr>::new();
+        bundle.emit(&mut emitter);
+        let circuit = emitter.finish();
+
+        let witness = circuit.build_witness(&[
+            (0, Fr::from_u64(2)),
+            (1, Fr::from_u64(3)),
+            (2, Fr::from_u64(5)),
+            (3, Fr::from_u64(30)),
+        ]);
+        assert!(circuit.is_satisfied(&witness));
+        prove_and_verify_kzg(&circuit, &witness, b"kzg-chain-mul");
+    }
+
+    #[test]
+    fn hyperkzg_spartan_weighted_sum() {
+        let _session = ArenaSession::new();
+
+        let x = SymbolicField::variable(0, "x");
+        let y = SymbolicField::variable(1, "y");
+        let three = SymbolicField::from_u64(3);
+        let seven = SymbolicField::from_u64(7);
+        let forty_two = SymbolicField::from_u64(42);
+        let constraint = three * x + seven * y - forty_two;
+
+        let mut alloc = VarAllocator::new();
+        let _ = alloc.input("x");
+        let _ = alloc.input("y");
+        alloc.assert_zero(constraint.into_edge());
+        let bundle = alloc.finish();
+
+        let mut emitter = SpartanAstEmitter::<Fr>::new();
+        bundle.emit(&mut emitter);
+        let circuit = emitter.finish();
+
+        let witness = circuit.build_witness(&[(0, Fr::from_u64(7)), (1, Fr::from_u64(3))]);
+        assert!(circuit.is_satisfied(&witness));
+        prove_and_verify_kzg(&circuit, &witness, b"kzg-weighted-sum");
+    }
+
+    #[test]
+    fn hyperkzg_spartan_randomized() {
+        let mut rng = ChaCha20Rng::seed_from_u64(0xbeef_face);
+
+        for _ in 0..5 {
+            let _session = ArenaSession::new();
+
+            let a_val = Fr::random(&mut rng);
+            let b_val = Fr::random(&mut rng);
+            let c_val = a_val * b_val;
+
+            let a = SymbolicField::variable(0, "a");
+            let b = SymbolicField::variable(1, "b");
+            let c = SymbolicField::variable(2, "c");
+
+            let mut alloc = VarAllocator::new();
+            let _ = alloc.input("a");
+            let _ = alloc.input("b");
+            let _ = alloc.input("c");
+            alloc.assert_zero((a * b - c).into_edge());
+            let bundle = alloc.finish();
+
+            let mut emitter = SpartanAstEmitter::<Fr>::new();
+            bundle.emit(&mut emitter);
+            let circuit = emitter.finish();
+
+            let witness = circuit.build_witness(&[(0, a_val), (1, b_val), (2, c_val)]);
+            assert!(circuit.is_satisfied(&witness));
+            prove_and_verify_kzg(&circuit, &witness, b"kzg-rand");
+        }
+    }
+
+    /// Relaxed Spartan with HyperKZG — u=1, E=0 (equivalent to standard R1CS).
+    ///
+    /// Uses a multi-constraint circuit (chained multiply) so that both the
+    /// witness and error polynomials have ell >= 1, which HyperKZG requires.
+    #[test]
+    fn hyperkzg_spartan_relaxed() {
+        use num_traits::Zero;
+
+        let _session = ArenaSession::new();
+
+        // x * y * z = expected → at least 2 multiplication constraints
+        let x = SymbolicField::variable(0, "x");
+        let y = SymbolicField::variable(1, "y");
+        let z = SymbolicField::variable(2, "z");
+        let expected = SymbolicField::variable(3, "expected");
+
+        let mut alloc = VarAllocator::new();
+        let _ = alloc.input("x");
+        let _ = alloc.input("y");
+        let _ = alloc.input("z");
+        let _ = alloc.input("expected");
+        alloc.assert_equal((x * y * z).into_edge(), expected.into_edge());
+        let bundle = alloc.finish();
+
+        let mut emitter = SpartanAstEmitter::<Fr>::new();
+        bundle.emit(&mut emitter);
+        let circuit = emitter.finish();
+
+        let (a, b, c) = circuit.sparse_entries();
+        let r1cs = SimpleR1CS::new(
+            circuit.num_constraints(),
+            circuit.num_variables as usize,
+            a,
+            b,
+            c,
+        );
+        let key = SpartanKey::from_r1cs(&r1cs);
+
+        // SRS must cover both witness and error polynomials
+        let max_degree = key.num_variables_padded.max(key.num_constraints_padded);
+        let (pk, vk) = make_setup(max_degree);
+
+        // 2 * 3 * 5 = 30
+        let witness = circuit.build_witness(&[
+            (0, Fr::from_u64(2)),
+            (1, Fr::from_u64(3)),
+            (2, Fr::from_u64(5)),
+            (3, Fr::from_u64(30)),
+        ]);
+        let u = Fr::from_u64(1);
+        let error = vec![Fr::zero(); circuit.num_constraints()];
+
+        fn pad(data: &[Fr], padded_len: usize) -> Vec<Fr> {
+            let mut v = vec![Fr::zero(); padded_len];
+            v[..data.len()].copy_from_slice(data);
+            v
+        }
+
+        let w_padded = pad(&witness, key.num_variables_padded);
+        let e_padded = pad(&error, key.num_constraints_padded);
+        let (w_commitment, ()) = KzgPCS::commit(&w_padded, &pk);
+        let (e_commitment, ()) = KzgPCS::commit(&e_padded, &pk);
+
+        let mut prover_transcript = Blake2bTranscript::new(b"kzg-relaxed");
+        let proof = SpartanProver::prove_relaxed::<KzgPCS, _>(
+            &r1cs,
+            &key,
+            u,
+            &witness,
+            &error,
+            &w_commitment,
+            &e_commitment,
+            &pk,
+            &mut prover_transcript,
+        )
+        .expect("proving should succeed");
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"kzg-relaxed");
+        SpartanVerifier::verify_relaxed::<KzgPCS, _>(
+            &key,
+            u,
+            &w_commitment,
+            &e_commitment,
+            &proof,
+            &vk,
+            &mut verifier_transcript,
+        )
+        .expect("verification should succeed");
+    }
 }
