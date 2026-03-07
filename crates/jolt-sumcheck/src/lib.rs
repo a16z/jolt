@@ -45,7 +45,10 @@ pub use handler::{ClearRoundHandler, ClearRoundVerifier, RoundHandler, RoundVeri
 pub use proof::SumcheckProof;
 pub use prover::{SumcheckCompute, SumcheckProver};
 pub use reduction::{SumcheckReduction, SumcheckWitnessBatch};
-pub use streaming::StreamingSumcheckProver;
+pub use streaming::{
+    HalfSplitSchedule, LinearOnlySchedule, LinearSumcheckStage, StreamingSchedule,
+    StreamingSumcheck, StreamingSumcheckProver, StreamingSumcheckWindow,
+};
 pub use verifier::SumcheckVerifier;
 
 #[cfg(test)]

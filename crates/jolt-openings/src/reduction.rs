@@ -92,6 +92,7 @@ pub struct RlcReduction;
 impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
     type ReductionProof = ();
 
+    #[tracing::instrument(skip_all, name = "RlcReduction::reduce_prover")]
     fn reduce_prover<T: Transcript>(
         claims: Vec<ProverClaim<PCS::Field>>,
         transcript: &mut T,
@@ -134,6 +135,8 @@ impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
         (reduced, ())
     }
 
+    #[allow(clippy::type_complexity)]
+    #[tracing::instrument(skip_all, name = "RlcReduction::reduce_verifier")]
     fn reduce_verifier<T: Transcript>(
         claims: Vec<VerifierClaim<PCS::Field, PCS::Output>>,
         _proof: &(),

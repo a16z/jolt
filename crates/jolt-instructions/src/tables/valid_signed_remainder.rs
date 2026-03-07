@@ -84,10 +84,8 @@ impl<const XLEN: usize> LookupTable<XLEN> for ValidSignedRemainderTable<XLEN> {
                 negative_divisor_greater_than_remainder +=
                     negative_divisor_equals_remainder * x_i * (F::one() - y_i);
             }
-            positive_remainder_equals_divisor *=
-                x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
-            negative_divisor_equals_remainder *=
-                x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+            positive_remainder_equals_divisor *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+            negative_divisor_equals_remainder *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
             remainder_is_zero *= F::one() - x_i;
             divisor_is_zero *= F::one() - y_i;
         }

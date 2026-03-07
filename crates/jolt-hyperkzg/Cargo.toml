@@ -15,6 +15,7 @@ jolt-poly = { path = "../jolt-poly" }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-openings = { path = "../jolt-openings" }
 serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
 num-traits = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }

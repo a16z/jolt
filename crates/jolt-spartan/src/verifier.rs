@@ -43,6 +43,7 @@ impl SpartanVerifier {
     /// # Errors
     ///
     /// Returns [`SpartanError`] if any verification step fails.
+    #[tracing::instrument(skip_all, name = "SpartanVerifier::verify")]
     pub fn verify<PCS, T>(
         key: &SpartanKey<PCS::Field>,
         proof: &SpartanProof<PCS::Field, PCS>,
@@ -135,6 +136,7 @@ impl SpartanVerifier {
     /// The verifier receives the relaxed scalar $u$, witness/error commitments,
     /// and the proof. The outer sumcheck check becomes:
     /// $$\widetilde{eq}(r_x, \tau) \cdot (\widetilde{Az}(r_x) \cdot \widetilde{Bz}(r_x) - u \cdot \widetilde{Cz}(r_x) - \widetilde{E}(r_x)) = v$$
+    #[tracing::instrument(skip_all, name = "SpartanVerifier::verify_relaxed")]
     pub fn verify_relaxed<PCS, T>(
         key: &SpartanKey<PCS::Field>,
         u: PCS::Field,

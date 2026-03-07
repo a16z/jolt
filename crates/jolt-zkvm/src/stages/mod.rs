@@ -4,4 +4,10 @@
 //! proving pipeline, constructing claims and witnesses for the
 //! batched sumcheck prover.
 
+pub mod s3_claim_reductions;
+pub mod s4_ram_rw;
+pub mod s4_rw_checking;
+pub mod s5_ram_checking;
 pub mod s6_booleanity;
+pub mod s7_hamming_reduction;
+pub mod s8_opening;

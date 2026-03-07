@@ -228,7 +228,6 @@ use jolt_sumcheck::prover::SumcheckCompute;
 mod tests {
     use super::*;
     use jolt_field::{Field, Fr};
-    use jolt_poly::EqPolynomial;
     use jolt_sumcheck::{BatchedSumcheckProver, BatchedSumcheckVerifier};
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use rand_chacha::ChaCha20Rng;

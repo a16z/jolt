@@ -6,8 +6,8 @@
 //! Proves: $\sum_{x \in \{0,1\}^n} \widetilde{eq}(r, x) \cdot
 //!   \sum_i c_i \cdot p_i(x) = v$
 //!
-//! where $c_i = \text{eq\_eval}_i \cdot \gamma^i$ and $p_i$ are the
-//! Hamming weight polynomials for each chunk type.
+//! where $c_i$ are pre-computed scalar coefficients combining eq
+//! evaluations and γ-powers.
 
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
@@ -26,32 +26,40 @@ use crate::witnesses::eq_product::EqProductCompute;
 /// and reduces them to a single opening point. The sumcheck formula is
 /// `eq · (Σ c_i · poly_i)`, which is degree 2.
 ///
-/// The γ-weighted coefficients c_i combine the eq evaluation at the prior
-/// sumcheck challenge point with γ-powers from the batching challenge.
+/// Coefficients are provided at construction time (derived externally from
+/// γ-powers and eq evaluations at the prior sumcheck challenge point).
 pub struct HammingReductionStage<F: Field> {
     /// Evaluation tables for each Hamming weight polynomial type.
     poly_tables: Option<Vec<Vec<F>>>,
-    /// Eq evaluation point (from the prior sumcheck challenge vector).
-    eq_point: Vec<F>,
-    /// Pre-computed coefficients combining eq_eval and γ-powers.
-    /// Populated during `build()`.
+    /// Pre-computed scalar coefficients for the linear combination.
     coefficients: Vec<F>,
+    /// Eq evaluation point.
+    eq_point: Vec<F>,
     num_vars: usize,
 }
 
 impl<F: Field> HammingReductionStage<F> {
     /// Creates a new stage from Hamming weight polynomial tables.
     ///
-    /// `poly_tables[i]` contains the evaluation table for the i-th
-    /// Hamming weight polynomial type. `eq_point` is the challenge
-    /// vector from the prior sumcheck.
+    /// `coefficients[i]` is the scalar weight for `poly_tables[i]`,
+    /// typically `eq_eval · γ^i`.
     ///
     /// # Panics
     ///
-    /// Panics if any table has length != 2^eq_point.len().
-    pub fn new(poly_tables: Vec<Vec<F>>, eq_point: Vec<F>) -> Self {
+    /// Panics if `poly_tables` and `coefficients` differ in length,
+    /// or if any table has length != 2^eq_point.len().
+    pub fn new(
+        poly_tables: Vec<Vec<F>>,
+        coefficients: Vec<F>,
+        eq_point: Vec<F>,
+    ) -> Self {
         let num_vars = eq_point.len();
         let expected = 1usize << num_vars;
+        assert_eq!(
+            poly_tables.len(),
+            coefficients.len(),
+            "poly_tables and coefficients length mismatch"
+        );
         for (i, table) in poly_tables.iter().enumerate() {
             assert_eq!(
                 table.len(),
@@ -62,8 +70,8 @@ impl<F: Field> HammingReductionStage<F> {
         }
         Self {
             poly_tables: Some(poly_tables),
+            coefficients,
             eq_point,
-            coefficients: Vec::new(),
             num_vars,
         }
     }
@@ -72,34 +80,14 @@ impl<F: Field> HammingReductionStage<F> {
 impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
     fn build(
         &mut self,
-        prior_claims: &[ProverClaim<F>],
-        transcript: &mut T,
+        _prior_claims: &[ProverClaim<F>],
+        _transcript: &mut T,
     ) -> StageBatch<F> {
         let poly_tables = self
             .poly_tables
             .as_ref()
             .expect("build() called after extract_claims()");
-        let n_polys = poly_tables.len();
         let n = 1usize << self.num_vars;
-
-        // Derive γ from transcript
-        let gamma: F = transcript.challenge().into();
-
-        // Compute coefficients: c_i = eq_eval_i · γ^i
-        // where eq_eval_i comes from the prior claim's eval at the
-        // reduction point. For standalone use, if no prior claims,
-        // coefficients are just γ-powers.
-        let mut gamma_power = F::one();
-        self.coefficients = Vec::with_capacity(n_polys);
-        for i in 0..n_polys {
-            let eq_weight = if i < prior_claims.len() {
-                prior_claims[i].eval
-            } else {
-                F::one()
-            };
-            self.coefficients.push(eq_weight * gamma_power);
-            gamma_power *= gamma;
-        }
 
         // Pre-compute g(x) = Σ c_i · p_i(x)
         let mut g_table = vec![F::zero(); n];
@@ -112,7 +100,6 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
 
         let eq_table = EqPolynomial::new(self.eq_point.clone()).evaluations();
 
-        // Claimed sum = Σ_x eq(r, x) · g(x)
         let claimed_sum: F = eq_table
             .iter()
             .zip(g_table.iter())
@@ -172,6 +159,7 @@ mod tests {
     use jolt_field::{Field, Fr};
     use jolt_sumcheck::{BatchedSumcheckProver, BatchedSumcheckVerifier};
     use jolt_transcript::{Blake2bTranscript, Transcript};
+    use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -181,12 +169,14 @@ mod tests {
         let n = 1usize << num_vars;
         let mut rng = ChaCha20Rng::seed_from_u64(42);
         let eq_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+        let gamma = Fr::random(&mut rng);
 
         let polys: Vec<Vec<Fr>> = (0..3)
             .map(|_| (0..n).map(|_| Fr::random(&mut rng)).collect())
             .collect();
 
-        let mut stage = HammingReductionStage::new(polys, eq_point);
+        let coefficients = vec![Fr::one(), gamma, gamma * gamma];
+        let mut stage = HammingReductionStage::new(polys, coefficients, eq_point);
         let mut transcript = Blake2bTranscript::new(b"test_s7");
         let batch = stage.build(&[], &mut transcript);
 
@@ -201,13 +191,15 @@ mod tests {
         let n = 1usize << num_vars;
         let mut rng = ChaCha20Rng::seed_from_u64(123);
         let eq_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+        let gamma = Fr::random(&mut rng);
 
         let polys: Vec<Vec<Fr>> = (0..3)
             .map(|_| (0..n).map(|_| Fr::random(&mut rng)).collect())
             .collect();
 
+        let coefficients = vec![Fr::one(), gamma, gamma * gamma];
         let mut stage: HammingReductionStage<Fr> =
-            HammingReductionStage::new(polys, eq_point);
+            HammingReductionStage::new(polys, coefficients, eq_point);
 
         let mut prover_transcript = Blake2bTranscript::new(b"s7_roundtrip");
         let mut batch = stage.build(&[], &mut prover_transcript);
@@ -222,9 +214,6 @@ mod tests {
         );
 
         let mut verifier_transcript = Blake2bTranscript::new(b"s7_roundtrip");
-        // Derive the same γ challenge the prover consumed
-        let _gamma: Fr = verifier_transcript.challenge().into();
-
         let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
             &[claim],
             &proof,
@@ -241,7 +230,6 @@ mod tests {
             );
         assert_eq!(prover_claims.len(), 3);
 
-        // Each claim's eval matches polynomial evaluation at challenge point
         for pc in &prover_claims {
             let poly = Polynomial::new(pc.evaluations.clone());
             assert_eq!(poly.evaluate(&challenges), pc.eval);
@@ -251,25 +239,24 @@ mod tests {
 
     #[test]
     fn extract_claims_consumes_tables() {
-        let num_vars = 2;
         let polys = vec![vec![Fr::from_u64(1); 4], vec![Fr::from_u64(2); 4]];
+        let coefficients = vec![Fr::from_u64(1), Fr::from_u64(2)];
         let eq_point = vec![Fr::from_u64(3), Fr::from_u64(5)];
 
-        let mut stage = HammingReductionStage::new(polys, eq_point);
+        let mut stage = HammingReductionStage::new(polys, coefficients, eq_point);
         let mut t = Blake2bTranscript::new(b"test");
         let _ = stage.build(&[], &mut t);
 
         let challenges = vec![Fr::from_u64(7), Fr::from_u64(11)];
-        let claims = <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
+        let _claims = <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
             &mut stage,
             &challenges,
             Fr::zero(),
         );
-        assert_eq!(claims.len(), 2);
+        assert_eq!(_claims.len(), 2);
 
-        // Second call should panic
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
+            let _ = <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
                 &mut stage,
                 &challenges,
                 Fr::zero(),
@@ -285,8 +272,9 @@ mod tests {
             vec![Fr::from_u64(2); 8],
             vec![Fr::from_u64(3); 8],
         ];
+        let coefficients = vec![Fr::from_u64(1); 3];
         let eq_point: Vec<Fr> = (0..3).map(|i| Fr::from_u64(i + 1)).collect();
-        let stage = HammingReductionStage::new(polys, eq_point);
+        let stage = HammingReductionStage::new(polys, coefficients, eq_point);
 
         let defs = <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(&stage);
         assert_eq!(defs.len(), 1);

@@ -50,6 +50,7 @@ impl SpartanProver {
     /// 5. Absorb $\widetilde{Az}(r_x), \widetilde{Bz}(r_x), \widetilde{Cz}(r_x)$ and sample $\rho_A, \rho_B, \rho_C$.
     /// 6. Run inner sumcheck on $\sum_y M(r_x, y) \cdot \tilde{z}(y)$.
     /// 7. Produce an opening proof for the witness polynomial at $r_y$.
+    #[tracing::instrument(skip_all, name = "SpartanProver::prove")]
     pub fn prove<PCS, T>(
         r1cs: &impl R1CS<PCS::Field>,
         key: &SpartanKey<PCS::Field>,
@@ -195,6 +196,7 @@ impl SpartanProver {
     /// are passed in rather than computed here, since the caller (BlindFold)
     /// manages commitment operations.
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, name = "SpartanProver::prove_relaxed")]
     pub fn prove_relaxed<PCS, T>(
         r1cs: &impl R1CS<PCS::Field>,
         key: &SpartanKey<PCS::Field>,

@@ -147,6 +147,13 @@ Additionally, `jolt-ir` replaces the compile-time `LC` / `lc!` / `r1cs_eq_condit
 
 See [backend_agnostic.md](./backend_agnostic.md) for the full design and spec §4.9 for the crate specification.
 
+#### (14) Profiling infrastructure locked inside jolt-core — **ADDRESSED**
+
+- jolt-core's `bin/jolt_core.rs` and `utils/profiling.rs` contained the tracing subscriber setup (Perfetto/Chrome output), memory monitoring (`MetricsMonitor`), CPU profiling (`pprof`), and heap analysis (`allocative`). None of this was accessible to the modular crates.
+- `jolt-profiling` extracts all profiling infrastructure into a standalone crate: `setup_tracing()` configures `tracing-chrome` + `tracing-subscriber` layers, optional `MetricsMonitor` (feature `monitor`), `PprofGuard` (feature `pprof`), and allocative flamegraphs (feature `allocative`).
+- All library crates depend on `tracing` (workspace, `default-features = false, features = ["attributes"]`) and annotate higher-level protocol functions with `#[tracing::instrument(skip_all)]`. Zero runtime cost when no subscriber is registered.
+- Binary crates (e.g., `jolt-core` CLI, benchmarks) depend on `jolt-profiling` to set up subscribers. Library crates never configure subscribers — they only emit spans.
+
 ---
 
 ## Plan to address
@@ -167,6 +174,7 @@ Extract into new crates under `crates/`. While doing so address each observation
 | `jolt-ir` | **Done** | `Expr`, `ExprBuilder`, `ClaimDefinition`, `ExprVisitor`, `CircuitEmitter`, normalization passes, evaluate/R1CS/Lean4/circuit backends | `jolt-field` |
 | `jolt-wrapper` | **Done** | Verifier wrapping: `SymbolicField`, `AstBundle`, `AstEmitter`, `GnarkAstEmitter` — symbolic execution + pluggable codegen (gnark/Groth16, future backends). Subsumes former `jolt-gnark`. | `jolt-field`, `jolt-ir` |
 | `jolt-zkvm` | **In progress** | zkvm sumchecks (ram, registers, bytecode, claim reductions), prover/verifier | `jolt-sumcheck`, `jolt-openings`, `jolt-spartan`, `jolt-instructions`, `jolt-ir`, `jolt-compute` |
+| `jolt-profiling` | **Done** | `setup_tracing`, `TracingFormat`, `MetricsMonitor`, `PprofGuard`, memory utilities — tracing subscriber setup + Perfetto output + optional monitoring | — (external only: `tracing`, `tracing-chrome`, `tracing-subscriber`) |
 | `jolt-compute` | **Done** | `ComputeBackend`, `Scalar`, `CpuBackend` — backend-agnostic buffer management and parallel primitives | `jolt-field` |
 | `jolt-cpu-kernels` | **Done** | Compiles `KernelDescriptor` → `CpuKernel<F>`. Specialized D=4,8,16 + generic + Custom Expr stack-machine | `jolt-compute`, `jolt-ir`, `jolt-field` |
 | `jolt-metal` | **Future** | Metal GPU compute backend (`ComputeBackend` impl) | `jolt-compute`, `jolt-field` |

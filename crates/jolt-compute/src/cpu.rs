@@ -157,6 +157,7 @@ impl ComputeBackend for CpuBackend {
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "CpuBackend::pairwise_reduce")]
     fn pairwise_reduce<F: Field>(
         &self,
         inputs: &[&Vec<F>],
@@ -231,6 +232,7 @@ impl ComputeBackend for CpuBackend {
         accs.into_iter().map(FieldAccumulator::reduce).collect()
     }
 
+    #[tracing::instrument(skip_all, name = "CpuBackend::product_table")]
     fn product_table<F: Field>(&self, point: &[F]) -> Vec<F> {
         let n = point.len();
         let size = 1usize << n;

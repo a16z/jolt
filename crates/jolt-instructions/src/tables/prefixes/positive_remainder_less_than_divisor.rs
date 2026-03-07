@@ -24,24 +24,22 @@ impl<F: Field> SparseDensePrefix<F> for PositiveRemainderLessThanDivisorPrefix {
             let (remainder, divisor) = b.uninterleave();
             if u64::from(remainder) >= u64::from(divisor) {
                 return F::zero();
-            } else {
-                // `c` is the sign "bit" of the remainder.
-                // This prefix handles the case where both remainder and divisor
-                // are positive, i.e. their sign bits are zero.
-                return (F::one() - F::from_u32(c)) * (F::one() - divisor_sign);
             }
+            // `c` is the sign "bit" of the remainder.
+            // This prefix handles the case where both remainder and divisor
+            // are positive, i.e. their sign bits are zero.
+            return (F::one() - F::from_u32(c)) * (F::one() - divisor_sign);
         }
         if j == 1 {
             let (remainder, divisor) = b.uninterleave();
             if u64::from(remainder) >= u64::from(divisor) {
                 return F::zero();
-            } else {
-                // `r_x` is the sign "bit" of the remainder.
-                // `c` is the sign "bit" of the divisor.
-                // This prefix handles the case where both remainder and divisor
-                // are positive, i.e. their sign bits are zero.
-                return (F::one() - r_x.unwrap()) * (F::one() - F::from_u32(c));
             }
+            // `r_x` is the sign "bit" of the remainder.
+            // `c` is the sign "bit" of the divisor.
+            // This prefix handles the case where both remainder and divisor
+            // are positive, i.e. their sign bits are zero.
+            return (F::one() - r_x.unwrap()) * (F::one() - F::from_u32(c));
         }
 
         let mut lt = checkpoints[Prefixes::PositiveRemainderLessThanDivisor].unwrap();

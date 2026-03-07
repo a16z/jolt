@@ -39,6 +39,7 @@ impl BatchedSumcheckProver {
     ///
     /// Panics if `claims` is empty or if `claims` and `witnesses` have
     /// different lengths.
+    #[tracing::instrument(skip_all, name = "BatchedSumcheckProver::prove")]
     pub fn prove_with_handler<F, T, H>(
         claims: &[SumcheckClaim<F>],
         witnesses: &mut [Box<dyn SumcheckCompute<F>>],
@@ -172,6 +173,7 @@ impl BatchedSumcheckVerifier {
     /// # Errors
     ///
     /// Returns [`SumcheckError`] if verification fails.
+    #[tracing::instrument(skip_all, name = "BatchedSumcheckVerifier::verify")]
     pub fn verify_with_handler<F, T, V>(
         claims: &[SumcheckClaim<F>],
         round_proofs: &[V::RoundProof],

@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 jolt-field = { path = "../jolt-field" }
 serde = { workspace = true, features = ["derive", "alloc"] }
+tracing.workspace = true
 rayon = { workspace = true, optional = true }
 rand_core = { workspace = true }
 num-traits = { workspace = true }

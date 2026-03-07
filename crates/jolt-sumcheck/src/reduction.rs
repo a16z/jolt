@@ -71,10 +71,7 @@ pub trait SumcheckReduction<F: Field> {
     ///
     /// The `SumcheckClaim` vector and witness vector must have the same length
     /// and correspond element-wise.
-    fn build_witnesses(
-        &self,
-        claims: &[ProverClaim<F>],
-    ) -> SumcheckWitnessBatch<F>;
+    fn build_witnesses(&self, claims: &[ProverClaim<F>]) -> SumcheckWitnessBatch<F>;
 
     /// Constructs sumcheck claims from verifier-side input claims.
     ///

@@ -38,6 +38,7 @@ impl<F: Field> EqPolynomial<F> {
     /// $r_i$ doubles the table by producing entries $e \cdot (1 - r_i)$ and $e \cdot r_i$.
     ///
     /// Time: $O(2^n)$. Space: $O(2^n)$.
+    #[tracing::instrument(skip_all, name = "EqPolynomial::evaluations")]
     pub fn evaluations(&self) -> Vec<F> {
         let n = self.point.len();
         let size = 1usize << n;

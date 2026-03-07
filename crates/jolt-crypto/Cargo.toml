@@ -17,6 +17,7 @@ dory-pcs = ["dep:dory", "bn254", "jolt-field/dory-pcs"]
 [dependencies]
 jolt-field = { path = "../jolt-field" }
 jolt-transcript = { path = "../jolt-transcript" }
+tracing.workspace = true
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
 dory = { workspace = true, optional = true }

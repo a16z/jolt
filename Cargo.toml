@@ -38,6 +38,7 @@ members = [
   "crates/jolt-compute",
   "crates/jolt-cpu-kernels",
   "crates/jolt-wrapper",
+  "crates/jolt-profiling",
   "crates/jolt-blindfold",
   "crates/jolt-verifier",
   "crates/jolt-zkvm",
@@ -287,7 +288,7 @@ mimalloc = "0.1"
 rayon = { version = "^1.8.0" }
 
 # Tracing and Profiling
-tracing = { version = "0.1.37", default-features = false }
+tracing = { version = "0.1.37", default-features = false, features = ["attributes"] }
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 inferno = { version = "0.12.3" }

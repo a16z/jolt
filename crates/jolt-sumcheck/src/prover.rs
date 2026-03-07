@@ -56,6 +56,7 @@ impl SumcheckProver {
     /// 2. Delegates to `handler.absorb_round_poly()` for transcript binding.
     /// 3. Squeezes a challenge $r_i$ from the transcript.
     /// 4. Binds the witness at $r_i$.
+    #[tracing::instrument(skip_all, name = "SumcheckProver::prove")]
     pub fn prove_with_handler<F, T, H>(
         claim: &SumcheckClaim<F>,
         witness: &mut impl SumcheckCompute<F>,

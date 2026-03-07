@@ -58,4 +58,12 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualRev8WTable<XL
         let [one, rev8w] = suffixes.try_into().unwrap();
         prefixes[Prefixes::Rev8W] * one + rev8w
     }
+
+    // Rev8WPrefix returns zero when suffix >= 64 bits, and Rev8WSuffix only
+    // handles the lower 32 bits. The decomposition is therefore only valid for
+    // lookup indices whose value fits in 32 bits (upper word = 0).
+    #[cfg(test)]
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
+        rand::RngCore::next_u32(rng) as u128
+    }
 }

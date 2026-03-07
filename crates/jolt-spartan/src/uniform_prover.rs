@@ -1,0 +1,427 @@
+//! Prover for uniform (repeated-constraint) Spartan.
+//!
+//! Provides two proving modes:
+//!
+//! 1. **Dense mode** — materializes `Az`, `Bz`, `Cz` fully and runs the
+//!    standard outer/inner sumcheck. Suitable for testing and small circuits.
+//!
+//! 2. **Streaming mode** — uses the [`StreamingSumcheck`] engine with
+//!    pluggable [`StreamingSumcheckWindow`] and [`LinearSumcheckStage`]
+//!    implementations. The concrete implementations are provided by
+//!    jolt-zkvm for the RISC-V circuit.
+//!
+//! Both modes produce the same [`UniformSpartanProof`] structure.
+
+use jolt_field::Field;
+use jolt_openings::CommitmentScheme;
+use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
+use jolt_sumcheck::proof::SumcheckProof;
+use jolt_sumcheck::{
+    ClearRoundHandler, RoundHandler, SumcheckClaim, SumcheckCompute, SumcheckProver,
+};
+use jolt_transcript::Transcript;
+use num_traits::Zero;
+
+use crate::error::SpartanError;
+use crate::uniform_key::UniformSpartanKey;
+
+/// Proof structure for uniform Spartan.
+///
+/// Same logical content as the standard [`SpartanProof`](crate::proof::SpartanProof)
+/// but produced by the uniform prover.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(bound = "")]
+#[allow(clippy::type_complexity)]
+pub struct UniformSpartanProof<F: Field, PCS: CommitmentScheme> {
+    pub witness_commitment: PCS::Output,
+    pub outer_sumcheck_proof: SumcheckProof<F>,
+    pub az_eval: F,
+    pub bz_eval: F,
+    pub cz_eval: F,
+    pub inner_sumcheck_proof: SumcheckProof<F>,
+    pub witness_eval: F,
+    pub witness_opening_proof: PCS::Proof,
+}
+
+/// Stateless uniform Spartan prover.
+pub struct UniformSpartanProver;
+
+impl UniformSpartanProver {
+    /// Dense-mode proving: materializes full Az, Bz, Cz polynomials.
+    ///
+    /// This is the simple approach suitable for testing. It constructs the
+    /// full witness polynomial over all cycles, computes Az/Bz/Cz via the
+    /// uniform key's sparse matrices, and runs standard sumcheck.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` — Uniform Spartan key with sparse constraint matrices.
+    /// * `cycle_witnesses` — Per-cycle witness vectors, each of length
+    ///   `key.num_vars`. `cycle_witnesses[c][v]` is the value of variable `v`
+    ///   in cycle `c`.
+    /// * `pcs_setup` — Polynomial commitment setup.
+    /// * `transcript` — Fiat-Shamir transcript.
+    #[tracing::instrument(skip_all, name = "UniformSpartanProver::prove_dense")]
+    pub fn prove_dense<PCS, T>(
+        key: &UniformSpartanKey<PCS::Field>,
+        cycle_witnesses: &[Vec<PCS::Field>],
+        pcs_setup: &PCS::ProverSetup,
+        transcript: &mut T,
+    ) -> Result<UniformSpartanProof<PCS::Field, PCS>, SpartanError>
+    where
+        PCS: CommitmentScheme,
+        T: Transcript<Challenge = u128>,
+    {
+        assert_eq!(cycle_witnesses.len(), key.num_cycles);
+
+        let total_rows = key.total_rows();
+        let total_cols = key.total_cols();
+        let total_rows_padded = total_rows.next_power_of_two();
+        let total_cols_padded = total_cols.next_power_of_two();
+
+        // Build the flat witness z: interleave cycle witnesses with padding
+        let mut witness_flat = vec![PCS::Field::zero(); total_cols_padded];
+        for (c, cycle_w) in cycle_witnesses.iter().enumerate() {
+            assert!(cycle_w.len() >= key.num_vars);
+            let base = c * key.num_vars_padded;
+            for (v, &val) in cycle_w.iter().enumerate().take(key.num_vars) {
+                witness_flat[base + v] = val;
+            }
+        }
+
+        // Compute Az, Bz, Cz
+        let mut az = vec![PCS::Field::zero(); total_rows_padded];
+        let mut bz = vec![PCS::Field::zero(); total_rows_padded];
+        let mut cz = vec![PCS::Field::zero(); total_rows_padded];
+
+        for (c, cycle_w) in cycle_witnesses.iter().enumerate() {
+            for (k, (a_row, (b_row, c_row))) in key
+                .a_sparse
+                .iter()
+                .zip(key.b_sparse.iter().zip(key.c_sparse.iter()))
+                .enumerate()
+            {
+                let row = c * key.num_constraints_padded + k;
+
+                let mut a_val = PCS::Field::zero();
+                for &(j, coeff) in a_row {
+                    a_val += coeff * cycle_w[j];
+                }
+
+                let mut b_val = PCS::Field::zero();
+                for &(j, coeff) in b_row {
+                    b_val += coeff * cycle_w[j];
+                }
+
+                let mut c_val = PCS::Field::zero();
+                for &(j, coeff) in c_row {
+                    c_val += coeff * cycle_w[j];
+                }
+
+                az[row] = a_val;
+                bz[row] = b_val;
+                cz[row] = c_val;
+            }
+        }
+
+        // Check constraint satisfaction
+        for i in 0..total_rows {
+            if az[i] * bz[i] != cz[i] {
+                return Err(SpartanError::ConstraintViolation(i));
+            }
+        }
+
+        // Build witness polynomial and commit
+        let witness_poly = Polynomial::new(witness_flat.clone());
+        let (witness_commitment, _hint) = PCS::commit(witness_poly.evaluations(), pcs_setup);
+
+        transcript.append_bytes(format!("{witness_commitment:?}").as_bytes());
+
+        // Sample tau
+        let num_row_vars = log2_padded(total_rows_padded);
+        let tau: Vec<PCS::Field> = (0..num_row_vars)
+            .map(|_| PCS::Field::from_u128(transcript.challenge()))
+            .collect();
+
+        let eq_poly = Polynomial::new(EqPolynomial::new(tau).evaluations());
+        let az_poly = Polynomial::new(az);
+        let bz_poly = Polynomial::new(bz);
+        let cz_poly = Polynomial::new(cz);
+
+        let mut outer_witness = UniformOuterSumcheckCompute {
+            eq: eq_poly,
+            az: az_poly,
+            bz: bz_poly,
+            cz: cz_poly,
+        };
+
+        let outer_claim = SumcheckClaim {
+            num_vars: num_row_vars,
+            degree: 3,
+            claimed_sum: PCS::Field::zero(),
+        };
+
+        let handler = TrackingHandler::new(num_row_vars);
+        let (outer_sumcheck_proof, r_x) = SumcheckProver::prove_with_handler(
+            &outer_claim,
+            &mut outer_witness,
+            transcript,
+            |c: u128| PCS::Field::from_u128(c),
+            handler,
+        );
+
+        let az_eval = outer_witness.az.evaluations()[0];
+        let bz_eval = outer_witness.bz.evaluations()[0];
+        let cz_eval = outer_witness.cz.evaluations()[0];
+
+        transcript.append(&az_eval);
+        transcript.append(&bz_eval);
+        transcript.append(&cz_eval);
+
+        let rho_a = PCS::Field::from_u128(transcript.challenge());
+        let rho_b = PCS::Field::from_u128(transcript.challenge());
+        let rho_c = PCS::Field::from_u128(transcript.challenge());
+
+        // Build combined row polynomial for inner sumcheck
+        let num_col_vars = log2_padded(total_cols_padded);
+        let combined_row =
+            combined_partial_evaluate_uniform(key, &r_x, rho_a, rho_b, rho_c, total_cols_padded);
+
+        let inner_claim = SumcheckClaim {
+            num_vars: num_col_vars,
+            degree: 2,
+            claimed_sum: rho_a * az_eval + rho_b * bz_eval + rho_c * cz_eval,
+        };
+
+        let mut inner_witness = InnerSumcheckCompute {
+            combined_row,
+            witness: witness_poly.clone(),
+        };
+
+        let inner_handler = TrackingHandler::new(num_col_vars);
+        let (inner_sumcheck_proof, r_y) = SumcheckProver::prove_with_handler(
+            &inner_claim,
+            &mut inner_witness,
+            transcript,
+            |c: u128| PCS::Field::from_u128(c),
+            inner_handler,
+        );
+
+        let witness_eval = witness_poly.evaluate(&r_y);
+
+        let pcs_poly: PCS::Polynomial = witness_poly.evaluations().to_vec().into();
+        let witness_opening_proof =
+            PCS::open(&pcs_poly, &r_y, witness_eval, pcs_setup, None, transcript);
+
+        Ok(UniformSpartanProof {
+            witness_commitment,
+            outer_sumcheck_proof,
+            az_eval,
+            bz_eval,
+            cz_eval,
+            inner_sumcheck_proof,
+            witness_eval,
+            witness_opening_proof,
+        })
+    }
+}
+
+/// Computes the combined row polynomial `M(r_x, ·)` for the inner sumcheck
+/// using the uniform key's sparse structure.
+///
+/// $$M(r_x, y) = \rho_A \cdot A(r_x, y) + \rho_B \cdot B(r_x, y) + \rho_C \cdot C(r_x, y)$$
+///
+/// For a uniform R1CS, `r_x = (r_cycle, r_constraint)` and the matrix factors
+/// as `M(r_x, y) = eq(r_cycle, y_cycle) · M_local(r_constraint, y_var)`.
+///
+/// We materialize this as a dense polynomial over all `total_cols_padded`
+/// column indices.
+fn combined_partial_evaluate_uniform<F: Field>(
+    key: &UniformSpartanKey<F>,
+    r_x: &[F],
+    rho_a: F,
+    rho_b: F,
+    rho_c: F,
+    total_cols_padded: usize,
+) -> Polynomial<F> {
+    let cycle_vars = key.num_cycle_vars();
+    let (r_x_cycle, r_x_constraint) = r_x.split_at(cycle_vars);
+
+    // Compute eq evaluations for constraint and cycle dimensions
+    let eq_constraint = EqPolynomial::new(r_x_constraint.to_vec()).evaluations();
+    let eq_cycle = EqPolynomial::new(r_x_cycle.to_vec()).evaluations();
+
+    // Build the combined local row: M_local(r_constraint, v) for each variable v
+    let mut local_row = vec![F::zero(); key.num_vars_padded];
+    for (k, (a_row, (b_row, c_row))) in key
+        .a_sparse
+        .iter()
+        .zip(key.b_sparse.iter().zip(key.c_sparse.iter()))
+        .enumerate()
+    {
+        let w = eq_constraint[k];
+        if w.is_zero() {
+            continue;
+        }
+
+        for &(j, coeff) in a_row {
+            local_row[j] += w * rho_a * coeff;
+        }
+        for &(j, coeff) in b_row {
+            local_row[j] += w * rho_b * coeff;
+        }
+        for &(j, coeff) in c_row {
+            local_row[j] += w * rho_c * coeff;
+        }
+    }
+
+    // Expand to full column space: M(r_x, y) = eq(r_cycle, y_cycle) * local_row[y_var]
+    let mut combined = vec![F::zero(); total_cols_padded];
+    for (c, &eq_c) in eq_cycle.iter().enumerate() {
+        if eq_c.is_zero() {
+            continue;
+        }
+        let base = c * key.num_vars_padded;
+        for (v, &local_val) in local_row.iter().enumerate() {
+            if !local_val.is_zero() {
+                combined[base + v] = eq_c * local_val;
+            }
+        }
+    }
+
+    Polynomial::new(combined)
+}
+
+/// Outer sumcheck witness for uniform Spartan (dense mode).
+struct UniformOuterSumcheckCompute<F: Field> {
+    eq: Polynomial<F>,
+    az: Polynomial<F>,
+    bz: Polynomial<F>,
+    cz: Polynomial<F>,
+}
+
+impl<F: Field> SumcheckCompute<F> for UniformOuterSumcheckCompute<F> {
+    fn round_polynomial(&self) -> UnivariatePoly<F> {
+        let half = self.eq.evaluations().len() / 2;
+        let eq_evals = self.eq.evaluations();
+        let az_evals = self.az.evaluations();
+        let bz_evals = self.bz.evaluations();
+        let cz_evals = self.cz.evaluations();
+
+        let mut evals_at_points = [F::zero(); 4];
+        for i in 0..half {
+            let eq_lo = eq_evals[i];
+            let eq_hi = eq_evals[i + half];
+            let az_lo = az_evals[i];
+            let az_hi = az_evals[i + half];
+            let bz_lo = bz_evals[i];
+            let bz_hi = bz_evals[i + half];
+            let cz_lo = cz_evals[i];
+            let cz_hi = cz_evals[i + half];
+
+            let eq_delta = eq_hi - eq_lo;
+            let az_delta = az_hi - az_lo;
+            let bz_delta = bz_hi - bz_lo;
+            let cz_delta = cz_hi - cz_lo;
+
+            for (t, eval) in evals_at_points.iter_mut().enumerate() {
+                let x = F::from_u64(t as u64);
+                let eq_val = eq_lo + x * eq_delta;
+                let az_val = az_lo + x * az_delta;
+                let bz_val = bz_lo + x * bz_delta;
+                let cz_val = cz_lo + x * cz_delta;
+                *eval += eq_val * (az_val * bz_val - cz_val);
+            }
+        }
+
+        let points: Vec<(F, F)> = (0..4)
+            .map(|t| (F::from_u64(t as u64), evals_at_points[t]))
+            .collect();
+        UnivariatePoly::interpolate(&points)
+    }
+
+    fn bind(&mut self, challenge: F) {
+        self.eq.bind(challenge);
+        self.az.bind(challenge);
+        self.bz.bind(challenge);
+        self.cz.bind(challenge);
+    }
+}
+
+/// Inner sumcheck witness for uniform Spartan.
+struct InnerSumcheckCompute<F: Field> {
+    combined_row: Polynomial<F>,
+    witness: Polynomial<F>,
+}
+
+impl<F: Field> SumcheckCompute<F> for InnerSumcheckCompute<F> {
+    fn round_polynomial(&self) -> UnivariatePoly<F> {
+        let half = self.combined_row.evaluations().len() / 2;
+        let row_evals = self.combined_row.evaluations();
+        let w_evals = self.witness.evaluations();
+
+        let mut evals_at_points = [F::zero(); 3];
+        for i in 0..half {
+            let row_lo = row_evals[i];
+            let row_hi = row_evals[i + half];
+            let w_lo = w_evals[i];
+            let w_hi = w_evals[i + half];
+
+            let row_delta = row_hi - row_lo;
+            let w_delta = w_hi - w_lo;
+
+            for (t, eval) in evals_at_points.iter_mut().enumerate() {
+                let x = F::from_u64(t as u64);
+                let row_val = row_lo + x * row_delta;
+                let w_val = w_lo + x * w_delta;
+                *eval += row_val * w_val;
+            }
+        }
+
+        let points: Vec<(F, F)> = (0..3)
+            .map(|t| (F::from_u64(t as u64), evals_at_points[t]))
+            .collect();
+        UnivariatePoly::interpolate(&points)
+    }
+
+    fn bind(&mut self, challenge: F) {
+        self.combined_row.bind(challenge);
+        self.witness.bind(challenge);
+    }
+}
+
+/// Round handler that records challenges alongside the proof.
+struct TrackingHandler<F: Field> {
+    inner: ClearRoundHandler<F>,
+    challenges: Vec<F>,
+}
+
+impl<F: Field> TrackingHandler<F> {
+    fn new(capacity: usize) -> Self {
+        Self {
+            inner: ClearRoundHandler::with_capacity(capacity),
+            challenges: Vec::with_capacity(capacity),
+        }
+    }
+}
+
+impl<F: Field> RoundHandler<F> for TrackingHandler<F> {
+    type Proof = (SumcheckProof<F>, Vec<F>);
+
+    fn absorb_round_poly(&mut self, poly: &UnivariatePoly<F>, transcript: &mut impl Transcript) {
+        self.inner.absorb_round_poly(poly, transcript);
+    }
+
+    fn on_challenge(&mut self, challenge: F) {
+        self.challenges.push(challenge);
+    }
+
+    fn finalize(self) -> (SumcheckProof<F>, Vec<F>) {
+        (self.inner.finalize(), self.challenges)
+    }
+}
+
+#[inline]
+fn log2_padded(n: usize) -> usize {
+    n.trailing_zeros() as usize
+}

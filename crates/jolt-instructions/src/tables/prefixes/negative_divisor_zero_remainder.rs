@@ -24,24 +24,22 @@ impl<F: Field> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
             let (remainder, _) = b.uninterleave();
             if u64::from(remainder) != 0 {
                 return F::zero();
-            } else {
-                // `c` is the sign "bit" of the remainder.
-                // This prefix handles the case where the remainder is zero
-                // and the divisor is negative.
-                return (F::one() - F::from_u32(c)) * divisor_sign;
             }
+            // `c` is the sign "bit" of the remainder.
+            // This prefix handles the case where the remainder is zero
+            // and the divisor is negative.
+            return (F::one() - F::from_u32(c)) * divisor_sign;
         }
         if j == 1 {
             let (remainder, _) = b.uninterleave();
             if u64::from(remainder) != 0 {
                 return F::zero();
-            } else {
-                // `r_x` is the sign "bit" of the remainder.
-                // `c` is the sign "bit" of the divisor.
-                // This prefix handles the case where the remainder is zero
-                // and the divisor is negative.
-                return (F::one() - r_x.unwrap()) * F::from_u32(c);
             }
+            // `r_x` is the sign "bit" of the remainder.
+            // `c` is the sign "bit" of the divisor.
+            // This prefix handles the case where the remainder is zero
+            // and the divisor is negative.
+            return (F::one() - r_x.unwrap()) * F::from_u32(c);
         }
 
         let negative_divisor_zero_remainder =

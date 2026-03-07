@@ -43,7 +43,7 @@ impl<const XLEN: usize, F: Field> SparseDensePrefix<F> for ChangeDivisorPrefix<X
             }
         } else {
             let (x, y) = b.uninterleave();
-            if b.len() > 0 && u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1 {
+            if !b.is_empty() && u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1 {
                 return F::zero();
             }
             result *= F::one() - F::from_u64(c as u64);

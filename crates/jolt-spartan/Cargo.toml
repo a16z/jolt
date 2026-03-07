@@ -22,6 +22,7 @@ jolt-openings = { path = "../jolt-openings" }
 num-traits = { workspace = true }
 rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
 thiserror = { workspace = true }
 
 [dev-dependencies]

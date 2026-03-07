@@ -17,6 +17,9 @@ jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-transcript = { path = "../jolt-transcript" }
 
 [dev-dependencies]
+jolt-crypto = { path = "../jolt-crypto" }
+jolt-dory = { path = "../jolt-dory" }
+jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
 num-traits = { workspace = true }
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }

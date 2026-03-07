@@ -125,6 +125,8 @@ jolt-openings  │    │
         ├──► jolt-metal    (jolt-compute, jolt-ir, jolt-field) [future]
         ├──► jolt-cuda     (jolt-compute, jolt-ir, jolt-field) [future]
         └──► jolt-webgpu   (jolt-compute, jolt-ir, jolt-field) [future]
+
+   jolt-profiling           (no internal deps — tracing, tracing-chrome, tracing-subscriber)
 ```
 
 ### 3.2 Crate Summary
@@ -144,6 +146,7 @@ jolt-openings  │    │
 | `jolt-wrapper` | Verifier wrapping: symbolic execution, AST capture, pluggable codegen | Yes | ~1200 (done) |
 | `jolt-instructions` | RISC-V instruction set + lookup tables | No | ~3000 (done) |
 | `jolt-dory` | Dory commitment scheme impl | No | ~5000 (done) |
+| `jolt-profiling` | Tracing subscriber setup, Perfetto output, memory/CPU monitoring | Yes | ~300 (done) |
 | `jolt-verifier` | Lightweight proof verification (no prover deps) | Yes | ~1500 (planned) |
 | `jolt-zkvm` | zkVM prover orchestration (depends on jolt-verifier) | No | ~10000 (in progress) |
 | `jolt-metal` | Metal GPU compute backend | No | TBD (future) |
@@ -2101,6 +2104,70 @@ jolt-ir/
 
 ---
 
+### 4.11 `jolt-profiling` — Tracing and Profiling Infrastructure — **DONE**
+
+**Purpose:** Centralized tracing subscriber setup and profiling utilities, extracted from `jolt-core`. Enables all modular crates to emit structured spans via `tracing`, with subscriber configuration (Perfetto/Chrome trace output, console fmt layer) and optional monitoring (CPU/memory sampling, pprof flamegraphs, allocative heap analysis) managed in a single crate.
+
+**Dependencies:** None from the Jolt workspace. External: `tracing`, `tracing-chrome`, `tracing-subscriber`, `memory-stats`. Feature-gated: `sysinfo` (monitor), `pprof` (CPU profiling), `allocative` (heap flamegraphs).
+
+**Design:**
+
+The crate follows a two-layer architecture:
+
+1. **Span instrumentation** — Each library crate (`jolt-sumcheck`, `jolt-spartan`, `jolt-dory`, `jolt-openings`, `jolt-compute`, `jolt-poly`, `jolt-hyperkzg`) depends on `tracing` (workspace, `default-features = false, features = ["attributes"]`) and annotates higher-level functions with `#[tracing::instrument(skip_all, name = "...")]`. When no subscriber is registered, span macros compile to essentially nothing — zero runtime cost.
+
+2. **Subscriber setup** — `jolt-profiling` provides `setup_tracing(formats, trace_name)` which configures `tracing-chrome` for Perfetto JSON output and/or `tracing-subscriber::fmt` for console output. The caller (binary crate) holds returned guards; dropping them flushes traces.
+
+Feature-gated utilities:
+- `monitor`: `MetricsMonitor` — background thread sampling CPU%, memory, cores, threads via `sysinfo`. Emits tracing counter events for Perfetto visualization.
+- `pprof`: `PprofGuard` + `pprof_scope!` macro — CPU profiling via `pprof-rs`, outputs SVG flamegraphs.
+- `allocative`: `print_data_structure_heap_usage` + `write_flamegraph_svg` — heap analysis via the `allocative` crate.
+
+**Instrumentation policy:**
+- Instrument higher-level protocol functions (prove, verify, commit, open, reduce) — NOT inner-loop operations (MSM, polynomial bind, field arithmetic).
+- Use `skip_all` to avoid serializing large arguments into span metadata.
+- Use explicit `name = "Type::method"` for clarity in traces.
+
+**Public API:**
+
+```rust
+pub enum TracingFormat { Default, Chrome }
+
+pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> Vec<Box<dyn Any>>;
+
+// memory.rs
+pub fn start_memory_tracing_span(name: &str) -> (u64, Instant);
+pub fn end_memory_tracing_span(name: &str, start_bytes: u64, start_time: Instant);
+
+// monitor.rs (feature = "monitor")
+pub struct MetricsMonitor { ... }
+impl MetricsMonitor { pub fn start(interval_secs: u64) -> Self; }
+
+// pprof_guard.rs (feature = "pprof")
+pub struct PprofGuard { ... }
+pub macro pprof_scope!($name:expr) { ... }
+
+// flamegraph.rs (feature = "allocative")
+pub fn print_data_structure_heap_usage<T: Allocative>(name: &str, data: &T);
+pub fn write_flamegraph_svg<T: Allocative>(name: &str, data: &T);
+```
+
+**File layout:**
+
+```
+crates/jolt-profiling/
+├── Cargo.toml
+└── src/
+    ├── lib.rs           # Feature-gated re-exports
+    ├── setup.rs         # setup_tracing(), TracingFormat
+    ├── memory.rs        # Memory tracing utilities
+    ├── monitor.rs       # MetricsMonitor (feature = "monitor")
+    ├── pprof_guard.rs   # PprofGuard + pprof_scope! (feature = "pprof")
+    └── flamegraph.rs    # Allocative heap analysis (feature = "allocative")
+```
+
+---
+
 ## 5. Testing Strategy
 
 ### 5.1 Three-Tier Per-Crate Testing
@@ -2400,6 +2467,7 @@ crates/
 ├── jolt-dory/
 ├── jolt-kzg/           # (future)
 ├── jolt-hyperkzg/      # (future)
+├── jolt-profiling/     # tracing subscriber + profiling infra
 └── jolt-zkvm/          # replaces jolt-core
 tracer/                 # unchanged
 common/                 # unchanged (minor mods allowed)

@@ -160,7 +160,12 @@ fn uniskip_matches_standard() {
     {
         let mut t_p = Blake2bTranscript::new(b"kzg-std");
         let proof = SpartanProver::prove::<KzgPCS, _>(
-            &r1cs, &key, &witness, &pk, &mut t_p, FirstRoundStrategy::Standard,
+            &r1cs,
+            &key,
+            &witness,
+            &pk,
+            &mut t_p,
+            FirstRoundStrategy::Standard,
         )
         .unwrap();
         let mut t_v = Blake2bTranscript::new(b"kzg-std");
@@ -171,7 +176,12 @@ fn uniskip_matches_standard() {
     {
         let mut t_p = Blake2bTranscript::new(b"kzg-uni");
         let proof = SpartanProver::prove::<KzgPCS, _>(
-            &r1cs, &key, &witness, &pk, &mut t_p, FirstRoundStrategy::UnivariateSkip,
+            &r1cs,
+            &key,
+            &witness,
+            &pk,
+            &mut t_p,
+            FirstRoundStrategy::UnivariateSkip,
         )
         .unwrap();
         let mut t_v = Blake2bTranscript::new(b"kzg-uni");
@@ -236,7 +246,13 @@ fn randomized_circuits() {
             c_entries.push((i, i + 2, one)); // C picks z[i+2]
         }
 
-        let r1cs = SimpleR1CS::new(num_constraints, num_variables, a_entries, b_entries, c_entries);
+        let r1cs = SimpleR1CS::new(
+            num_constraints,
+            num_variables,
+            a_entries,
+            b_entries,
+            c_entries,
+        );
         let key = SpartanKey::from_r1cs(&r1cs);
         let (pk, vk) = make_setup(key.num_variables_padded);
 

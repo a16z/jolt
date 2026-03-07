@@ -85,6 +85,7 @@ impl CommitmentScheme for DoryScheme {
     type Polynomial = jolt_poly::Polynomial<Fr>;
     type OpeningHint = DoryHint;
 
+    #[tracing::instrument(skip_all, name = "DoryScheme::commit")]
     fn commit(evaluations: &[Fr], setup: &Self::ProverSetup) -> (Self::Output, Self::OpeningHint) {
         let num_vars = evaluations.len().trailing_zeros() as usize;
         let sigma = num_vars.div_ceil(2);
@@ -106,6 +107,7 @@ impl CommitmentScheme for DoryScheme {
         (DoryCommitment(gt), DoryHint(hint_rows))
     }
 
+    #[tracing::instrument(skip_all, name = "DoryScheme::open")]
     fn open(
         poly: &Self::Polynomial,
         point: &[Fr],
@@ -149,6 +151,7 @@ impl CommitmentScheme for DoryScheme {
         DoryProof(proof)
     }
 
+    #[tracing::instrument(skip_all, name = "DoryScheme::verify")]
     fn verify(
         commitment: &Self::Output,
         point: &[Fr],
@@ -224,6 +227,7 @@ impl ZkOpeningScheme for DoryScheme {
     type EvalCommitment = Bn254G1;
     type EvalBlinding = Fr;
 
+    #[tracing::instrument(skip_all, name = "DoryScheme::open_zk")]
     fn open_zk(
         poly: &Self::Polynomial,
         point: &[Fr],
@@ -278,6 +282,7 @@ impl ZkOpeningScheme for DoryScheme {
         (DoryProof(proof), y_com, blinding)
     }
 
+    #[tracing::instrument(skip_all, name = "DoryScheme::verify_zk")]
     fn verify_zk(
         commitment: &Self::Output,
         point: &[Fr],

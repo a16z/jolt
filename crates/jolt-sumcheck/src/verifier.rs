@@ -30,6 +30,7 @@ impl SumcheckVerifier {
     ///
     /// Returns [`SumcheckError`] if the handler's consistency checks fail
     /// or the proof has the wrong number of rounds.
+    #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify")]
     pub fn verify_with_handler<F, T, V>(
         claim: &SumcheckClaim<F>,
         round_proofs: &[V::RoundProof],

@@ -7,9 +7,7 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum SignExtensionRightOperandPrefix<const XLEN: usize> {}
 
-impl<const XLEN: usize, F: Field> SparseDensePrefix<F>
-    for SignExtensionRightOperandPrefix<XLEN>
-{
+impl<const XLEN: usize, F: Field> SparseDensePrefix<F> for SignExtensionRightOperandPrefix<XLEN> {
     fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
         _r_x: Option<C>,

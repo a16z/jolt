@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 jolt-field = { path = "../jolt-field", default-features = false }
+tracing.workspace = true
 rayon = { workspace = true, optional = true }
 
 [dev-dependencies]

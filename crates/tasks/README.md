@@ -21,6 +21,12 @@ Task specifications for the modular crate workspace.
     │
     └──► 06-integrate-downstream ← Wire into jolt-zkvm (jolt-spartan part done)
 
+13-extract-split-eq-and-ra-poly   ← Extract GruenSplitEqPolynomial, RaPolynomial, mles_product_sum to jolt-poly
+    │
+    └──► 14-jolt-spartan-uniform  ← Uniform Spartan variant + streaming sumcheck for Jolt zkVM
+             │
+             └──► S1/S2 stages in jolt-zkvm (unblocked)
+
 09-blindfold-relaxed-spartan    ✅ DONE (RelaxedR1CS trait, prove_relaxed/verify_relaxed, 4 tests)
     │
     ├──► 10-blindfold-verifier-r1cs ✅ DONE (StageConfig, BakedPublicInputs, build/assign, 10 tests)
@@ -44,6 +50,8 @@ Task specifications for the modular crate workspace.
 10. **Task 11** — Nova folding in jolt-blindfold ✅
 11. **Task 12** — BlindFold protocol orchestrator ✅
 12. **Task 06** — integrate IR into jolt-zkvm + jolt-spartan (spartan done, zkvm pending)
+13. **Task 13** — extract GruenSplitEqPolynomial, RaPolynomial, mles_product_sum to jolt-poly
+14. **Task 14** — uniform Spartan variant + streaming sumcheck in jolt-spartan (depends on 13)
 
 ## Architecture decision: downstream dependency scope
 

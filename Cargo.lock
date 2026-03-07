@@ -2871,6 +2871,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
+ "tracing",
 ]
 
 [[package]]
@@ -2963,6 +2964,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -2982,6 +2984,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -3019,6 +3022,7 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -3108,6 +3112,7 @@ name = "jolt-instructions"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "rand 0.8.5",
  "serde",
 ]
 
@@ -3137,6 +3142,7 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -3161,6 +3167,22 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-profiling"
+version = "0.1.0"
+dependencies = [
+ "allocative",
+ "inferno 0.12.4",
+ "memory-stats",
+ "pprof",
+ "prost 0.14.3",
+ "sysinfo 0.37.2",
+ "tracing",
+ "tracing-chrome",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3209,6 +3231,7 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -3226,6 +3249,7 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -3284,6 +3308,8 @@ dependencies = [
 name = "jolt-zkvm"
 version = "0.1.0"
 dependencies = [
+ "jolt-crypto",
+ "jolt-dory",
  "jolt-field",
  "jolt-ir",
  "jolt-openings",

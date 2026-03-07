@@ -42,6 +42,7 @@ impl<F: Field> SpartanKey<F> {
     /// Uses the R1CS sparse entry API to construct dense MLE tables in a
     /// single pass over each matrix's nonzero entries, avoiding the $O(n)$
     /// basis-vector probing of the default implementation.
+    #[tracing::instrument(skip_all, name = "SpartanKey::from_r1cs")]
     pub fn from_r1cs(r1cs: &impl R1CS<F>) -> Self {
         let m = r1cs.num_constraints();
         let n = r1cs.num_variables();

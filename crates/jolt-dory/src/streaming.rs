@@ -21,6 +21,7 @@ impl StreamingCommitment for crate::DoryScheme {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "DoryScheme::stream_feed")]
     fn feed(partial: &mut Self::PartialCommitment, chunk: &[Fr], setup: &Self::ProverSetup) {
         let g1_bases = &setup.0.g1_vec[..chunk.len()];
         let scalars: Vec<InnerFr> = chunk.iter().map(jolt_fr_to_ark).collect();
@@ -30,6 +31,7 @@ impl StreamingCommitment for crate::DoryScheme {
         partial.row_commitments.push(jolt_commitment);
     }
 
+    #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish")]
     fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output {
         // SAFETY: Bn254G1 is repr(transparent) over G1Projective, same as ArkG1.
         let ark_row_commitments: Vec<dory::backends::arkworks::ArkG1> =

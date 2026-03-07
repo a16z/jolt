@@ -106,6 +106,7 @@ where
     }
 
     /// Full HyperKZG opening proof.
+    #[tracing::instrument(skip_all, name = "HyperKZG::open")]
     pub fn open<T: Transcript>(
         setup: &HyperKZGProverSetup<P>,
         evals: &[P::ScalarField],
@@ -142,6 +143,7 @@ where
     }
 
     /// HyperKZG verification.
+    #[tracing::instrument(skip_all, name = "HyperKZG::verify")]
     pub fn verify<T: Transcript>(
         vk: &HyperKZGVerifierSetup<P>,
         commitment: &HyperKZGCommitment<P>,

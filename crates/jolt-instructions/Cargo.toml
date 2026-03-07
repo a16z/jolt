@@ -11,3 +11,6 @@ workspace = true
 [dependencies]
 jolt-field = { path = "../jolt-field" }
 serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+rand = { workspace = true }

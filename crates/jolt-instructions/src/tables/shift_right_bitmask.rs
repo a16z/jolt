@@ -27,7 +27,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for ShiftRightBitmaskTable<XLEN> {
         let r = &r[r.len() - log_w..];
 
         let mut dp = vec![F::zero(); 1 << log_w];
-        for s in 0..XLEN {
+        for (s, dp_s) in dp.iter_mut().enumerate().take(XLEN) {
             let bitmask = ((1u128 << (XLEN - s)) - 1) << s;
             let mut eq_val = F::one();
             for i in 0..log_w {
@@ -38,7 +38,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for ShiftRightBitmaskTable<XLEN> {
                     r[log_w - i - 1].into()
                 };
             }
-            dp[s] = F::from_u128(bitmask) * eq_val;
+            *dp_s = F::from_u128(bitmask) * eq_val;
         }
         dp.into_iter().sum()
     }
