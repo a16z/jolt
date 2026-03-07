@@ -5,15 +5,17 @@ edition = "2021"
 
 [features]
 default = ["std"]
+allocative = ["dep:allocative"]
 std = [
-    "dep:allocative",
-    "ark-serialize/std",
+    "allocative",
+    "dep:ark-serialize",
+    "ark-serialize?/std",
     "serde/std",
     "syn/full",
 ]
 
 [dependencies]
 allocative = { workspace = true, optional = true }
-ark-serialize = { workspace = true, default-features = false }
+ark-serialize = { workspace = true, default-features = false, optional = true }
 serde = { workspace = true, default-features = false, features = ["alloc"] }
 syn = { workspace = true, optional = true }
