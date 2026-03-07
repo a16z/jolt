@@ -9,6 +9,7 @@ use crate::constants::{
     DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
 };
 
+#[cfg(feature = "std")]
 pub struct Attributes {
     pub wasm: bool,
     pub nightly: bool,
