@@ -43,7 +43,6 @@ use std::iter::zip;
 
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 #[cfg(not(feature = "zk"))]
 use crate::poly::opening_proof::BIG_ENDIAN;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheckProof, SumcheckInstanceProof};
@@ -88,7 +87,7 @@ use crate::zkvm::{
 use crate::{
     field::JoltField,
     poly::opening_proof::{
-        OpeningAccumulator, OpeningPoint, SumcheckId, VerifierOpeningAccumulator,
+        OpeningAccumulator, OpeningId, OpeningPoint, SumcheckId, VerifierOpeningAccumulator,
     },
     pprof_scope,
     subprotocols::{
@@ -110,6 +109,20 @@ struct GenericRamValCheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> GenericRamValCheckVerifier<F> {
+    /// Construct the RAM value-check verifier with advice-aware `init_eval`.
+    ///
+    /// Unlike the upstream `RamValCheckSumcheckVerifier::new` (which takes
+    /// `&VerifierOpeningAccumulator<F>`), this constructor uses the generic
+    /// `OpeningAccumulator` trait so it works with both the real accumulator
+    /// and the symbolic `AstOpeningAccumulator`.
+    ///
+    /// `init_eval` is computed as:
+    ///   `eval_initial_ram_mle(public) + Σ(selector_i * advice_eval_i)`
+    ///
+    /// For programs without advice (e.g., fibonacci), the advice sum is empty
+    /// and `init_eval` equals the public-only evaluation. For programs with
+    /// advice (e.g., merkle-tree), the selectors pick out the advice address
+    /// regions and the evaluations come from committed advice polynomials.
     #[allow(clippy::too_many_arguments)]
     fn new(
         initial_ram_state: &[u64],
@@ -127,18 +140,14 @@ impl<F: JoltField> GenericRamValCheckVerifier<F> {
         );
         let (r_address, r_cycle) = r.split_at(ram_K.log_2());
 
-        let val_init: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let init_eval = val_init.evaluate(&r_address.r);
-
-        #[cfg(feature = "zk")]
+        // Compute the public portion of init_eval (bytecode + inputs only).
         let init_eval_public = crate::zkvm::ram::eval_initial_ram_mle::<F>(
             ram_preprocessing,
             program_io,
             &r_address.r,
         );
 
-        #[cfg(feature = "zk")]
+        // Get advice contributions: Vec<(-selector, OpeningId)>
         let advice_contributions = crate::zkvm::ram::compute_advice_init_contributions(
             opening_accumulator,
             &program_io.memory_layout,
@@ -147,8 +156,26 @@ impl<F: JoltField> GenericRamValCheckVerifier<F> {
             SumcheckId::RamValCheck,
         );
 
-        #[cfg(not(feature = "zk"))]
-        let _ = (ram_preprocessing, program_io, _rw_config);
+        // Reconstruct full init_eval = public_eval + Σ(selector_i * advice_eval_i)
+        // advice_contributions stores (-selector, OpeningId), so:
+        // init_eval = public_eval - Σ(neg_selector * advice_eval)
+        let mut init_eval = init_eval_public;
+        for (neg_selector, opening_id) in &advice_contributions {
+            let advice_eval = match opening_id {
+                OpeningId::UntrustedAdvice(sid) => opening_accumulator
+                    .get_advice_opening(AdviceKind::Untrusted, *sid)
+                    .map(|(_, eval)| eval)
+                    .unwrap_or(F::zero()),
+                OpeningId::TrustedAdvice(sid) => opening_accumulator
+                    .get_advice_opening(AdviceKind::Trusted, *sid)
+                    .map(|(_, eval)| eval)
+                    .unwrap_or(F::zero()),
+                _ => F::zero(),
+            };
+            init_eval -= *neg_selector * advice_eval;
+        }
+
+        let _ = (initial_ram_state, _rw_config);
 
         let params = RamValCheckSumcheckParams {
             T: trace_len,

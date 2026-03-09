@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use common::jolt_device::JoltDevice;
-use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
+use jolt_core::poly::commitment::dory::{ArkGT, DoryCommitmentScheme};
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::transpilable_verifier::TranspilableVerifier;
 use jolt_core::zkvm::verifier::JoltVerifierPreprocessing;
@@ -50,6 +50,7 @@ use zklean_extractor::mle_ast::{
     enable_constraint_mode, take_constraints as take_assertions, AstBundle, MleAst, TargetField,
     WitnessType,
 };
+use zklean_extractor::AstCommitment;
 
 // Output file names (bundle is target-agnostic)
 const BUNDLE_FILENAME: &str = "stages_bundle.json";
@@ -87,6 +88,10 @@ struct Args {
     /// Transpilation target language/framework
     #[arg(long, short = 't', default_value = "gnark", value_enum)]
     target: TranspilationTarget,
+
+    /// Path to trusted advice commitment file (optional, for programs using TrustedAdvice)
+    #[arg(long)]
+    trusted_advice: Option<PathBuf>,
 
     /// Output directory (defaults to target-specific directory, e.g., "go" for gnark)
     #[arg(long, short = 'o')]
@@ -167,9 +172,29 @@ fn main() {
     // - accumulator: AstOpeningAccumulator to collect polynomial opening claims
     // - var_alloc: Tracks variable IDs and names for witness generation
     println!("\n=== Symbolizing Proof ===");
-    let (symbolic_proof, accumulator, var_alloc) =
+    let (symbolic_proof, accumulator, mut var_alloc) =
         symbolize_proof::<SelectedAstTranscript>(&real_proof);
     println!("  Total symbolic variables: {}", var_alloc.next_idx());
+
+    // Load and symbolize trusted advice commitment (if provided).
+    // The commitment is serialized separately from the proof because it's pre-committed
+    // by the host before proving (not included in JoltProof).
+    // The commitment file contains Option<ArkGT> (the return type of commit_trusted_advice_*).
+    let symbolic_trusted_advice = if let Some(ref path) = args.trusted_advice {
+        println!("\nLoading trusted advice commitment from: {:?}", path);
+        let advice_bytes = std::fs::read(path)
+            .unwrap_or_else(|e| panic!("Failed to read trusted advice file {:?}: {}", path, e));
+        let real_commitment: Option<ArkGT> =
+            CanonicalDeserialize::deserialize_compressed(&advice_bytes[..])
+                .expect("Failed to deserialize trusted advice commitment");
+        let real_commitment =
+            real_commitment.expect("Trusted advice file contains None (no commitment)");
+        let chunks = var_alloc.alloc_commitment(&real_commitment, "trusted_advice_commitment");
+        println!("  Symbolized as {} chunks", chunks.len());
+        Some(AstCommitment::new(chunks))
+    } else {
+        None
+    };
 
     // Create transcript for Fiat-Shamir challenges.
     // IMPORTANT: The proof must have been generated with the same transcript feature,
@@ -194,7 +219,7 @@ fn main() {
         &symbolic_preprocessing,
         symbolic_proof,
         io_device,
-        None, // trusted_advice_commitment (fibonacci doesn't use advice)
+        symbolic_trusted_advice,
         transcript,
         accumulator,
     );

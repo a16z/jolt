@@ -249,14 +249,6 @@ fn commitment_to_field_chunks<T: CanonicalSerialize>(commitment: &T) -> Vec<ark_
 /// - `AstOpeningAccumulator`: Accumulator pre-populated with symbolic opening claims
 /// - `VarAllocator`: Tracks all allocated variables and their descriptions
 ///
-/// # Variable Naming Convention
-///
-/// Variables are named by their semantic role:
-/// - `commitment_N_M`: Chunk M of commitment N
-/// - `stageX_sumcheck_rY_Z`: Stage X, round Y, coefficient Z
-/// - `stageX_uni_skip_coeff_Y`: Univariate skip polynomial coefficient
-/// - `claim_KEY`: Opening claim for polynomial KEY
-///
 /// # Type Parameter
 ///
 /// `OutputTranscript` specifies the transcript type for the symbolic proof.

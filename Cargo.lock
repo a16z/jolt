@@ -913,7 +913,7 @@ dependencies = [
  "bitflags 2.11.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -2857,6 +2857,7 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
+ "light-poseidon",
  "memory-stats",
  "num",
  "num-derive",
@@ -3105,6 +3106,18 @@ checksum = "3d0b95e02c851351f877147b7deea7b1afb1df71b63aa5f8270716e0c5720616"
 dependencies = [
  "bitflags 2.11.0",
  "libc",
+]
+
+[[package]]
+name = "light-poseidon"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47a1ccadd0bb5a32c196da536fd72c59183de24a055f6bf0513bf845fefab862"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "num-bigint",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -4048,7 +4061,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.12.1",
  "log",
  "multimap",
@@ -5886,6 +5899,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "transpiler"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "clap",
+ "common",
+ "jolt-core",
+ "light-poseidon",
+ "num-bigint",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "zklean-extractor",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6913,9 +6946,12 @@ dependencies = [
  "clap",
  "common",
  "jolt-core",
+ "num-bigint",
  "proptest",
  "rand_core 0.6.4",
  "regex",
+ "serde",
+ "serde_json",
  "strum 0.27.2",
  "tracer",
 ]
