@@ -4,7 +4,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use jolt_crypto::Bn254;
 use jolt_field::{Field, Fr};
-use jolt_hyperkzg::{HyperKZGScheme, HyperKZGProverSetup, HyperKZGVerifierSetup};
+use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_poly::Polynomial;
 use jolt_transcript::Transcript;
@@ -64,10 +64,14 @@ fn bench_open(c: &mut Criterion) {
                         (poly, point, eval)
                     },
                     |(poly, point, eval)| {
-                        let mut transcript =
-                            jolt_transcript::Blake2bTranscript::new(b"bench-open");
+                        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"bench-open");
                         <TestScheme as CommitmentScheme>::open(
-                            &poly, &point, eval, &pk, None, &mut transcript,
+                            &poly,
+                            &point,
+                            eval,
+                            &pk,
+                            None,
+                            &mut transcript,
                         )
                     },
                     criterion::BatchSize::SmallInput,
@@ -155,18 +159,14 @@ fn bench_setup(c: &mut Criterion) {
     let mut group = c.benchmark_group("hyperkzg_setup");
     for num_vars in [8, 10, 12] {
         let n = 1 << num_vars;
-        group.bench_with_input(
-            BenchmarkId::from_parameter(num_vars),
-            &num_vars,
-            |b, _| {
-                b.iter(|| {
-                    let mut rng = ChaCha20Rng::seed_from_u64(0xbe0c);
-                    let g1 = Bn254::g1_generator();
-                    let g2 = Bn254::g2_generator();
-                    TestScheme::setup(&mut rng, n, g1, g2)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(num_vars), &num_vars, |b, _| {
+            b.iter(|| {
+                let mut rng = ChaCha20Rng::seed_from_u64(0xbe0c);
+                let g1 = Bn254::g1_generator();
+                let g2 = Bn254::g2_generator();
+                TestScheme::setup(&mut rng, n, g1, g2)
+            });
+        });
     }
     group.finish();
 }

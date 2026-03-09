@@ -490,8 +490,15 @@ mod tests {
             MockPCS::open_zk(&poly, &point, eval, &(), None, &mut transcript_p);
 
         let mut transcript_v = Blake2bTranscript::new(b"zk-test");
-        MockPCS::verify_zk(&commitment, &point, &eval_com, &proof, &(), &mut transcript_v)
-            .expect("valid ZK proof should verify");
+        MockPCS::verify_zk(
+            &commitment,
+            &point,
+            &eval_com,
+            &proof,
+            &(),
+            &mut transcript_v,
+        )
+        .expect("valid ZK proof should verify");
     }
 
     #[test]

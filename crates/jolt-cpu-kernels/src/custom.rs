@@ -87,12 +87,10 @@ fn compile_node<F: Field>(
 
 /// Build a `CpuKernel<F>` from a compiled op sequence.
 fn kernel_from_ops<F: Field>(ops: Vec<CompiledOp<F>>) -> CpuKernel<F> {
-    CpuKernel::new(move |lo: &[F], hi: &[F], degree: usize| {
-        let num_outputs = degree + 1;
-        let mut evals = Vec::with_capacity(num_outputs);
+    CpuKernel::new(move |lo: &[F], hi: &[F], out: &mut [F]| {
         let mut stack: Vec<F> = Vec::with_capacity(ops.len());
 
-        for t in 0..num_outputs {
+        for (t, slot) in out.iter_mut().enumerate() {
             let t_f = F::from_u64(t as u64);
             stack.clear();
 
@@ -131,10 +129,8 @@ fn kernel_from_ops<F: Field>(ops: Vec<CompiledOp<F>>) -> CpuKernel<F> {
                 1,
                 "expression should leave exactly one value on stack"
             );
-            evals.push(stack[0]);
+            *slot = stack[0];
         }
-
-        evals
     })
 }
 
@@ -164,6 +160,13 @@ mod tests {
     use super::*;
     use jolt_field::Fr;
     use jolt_ir::ExprBuilder;
+    use num_traits::Zero;
+
+    fn eval_kernel(kernel: &CpuKernel<Fr>, lo: &[Fr], hi: &[Fr], n: usize) -> Vec<Fr> {
+        let mut out = vec![Fr::zero(); n];
+        kernel.evaluate(lo, hi, &mut out);
+        out
+    }
 
     #[test]
     fn constant_expr() {
@@ -175,8 +178,7 @@ mod tests {
         assert_eq!(ops.len(), 1);
 
         let kernel: CpuKernel<Fr> = compile_with_challenges(&expr, 0, 1, &[]);
-        let result = kernel.evaluate(&[], &[], 2);
-        assert_eq!(result, vec![Fr::from_u64(42); 3]);
+        assert_eq!(eval_kernel(&kernel, &[], &[], 3), vec![Fr::from_u64(42); 3]);
     }
 
     #[test]
@@ -186,9 +188,7 @@ mod tests {
         let expr = b.build(a);
 
         let kernel: CpuKernel<Fr> = compile_with_challenges(&expr, 1, 1, &[]);
-        let lo = vec![Fr::from_u64(3)];
-        let hi = vec![Fr::from_u64(7)];
-        let result = kernel.evaluate(&lo, &hi, 1);
+        let result = eval_kernel(&kernel, &[Fr::from_u64(3)], &[Fr::from_u64(7)], 2);
 
         assert_eq!(result[0], Fr::from_u64(3)); // t=0
         assert_eq!(result[1], Fr::from_u64(7)); // t=1
@@ -204,9 +204,8 @@ mod tests {
         let kernel: CpuKernel<Fr> = compile_with_challenges(&expr, 2, 1, &[]);
         let lo = vec![Fr::from_u64(3), Fr::from_u64(10)];
         let hi = vec![Fr::from_u64(7), Fr::from_u64(20)];
-        let result = kernel.evaluate(&lo, &hi, 1);
+        let result = eval_kernel(&kernel, &lo, &hi, 2);
 
-        // t=0: 3+10=13, t=1: 7+20=27
         assert_eq!(result[0], Fr::from_u64(13));
         assert_eq!(result[1], Fr::from_u64(27));
     }
@@ -218,10 +217,7 @@ mod tests {
         let expr = b.build(-a);
 
         let kernel: CpuKernel<Fr> = compile_with_challenges(&expr, 1, 1, &[]);
-        let lo = vec![Fr::from_u64(5)];
-        let hi = vec![Fr::from_u64(5)];
-        let result = kernel.evaluate(&lo, &hi, 0);
-
+        let result = eval_kernel(&kernel, &[Fr::from_u64(5)], &[Fr::from_u64(5)], 1);
         assert_eq!(result[0], -Fr::from_u64(5));
     }
 
@@ -235,9 +231,8 @@ mod tests {
         let kernel: CpuKernel<Fr> = compile_with_challenges(&expr, 2, 1, &[]);
         let lo = vec![Fr::from_u64(10), Fr::from_u64(3)];
         let hi = vec![Fr::from_u64(20), Fr::from_u64(7)];
-        let result = kernel.evaluate(&lo, &hi, 1);
+        let result = eval_kernel(&kernel, &lo, &hi, 2);
 
-        // t=0: 10-3=7, t=1: 20-7=13
         assert_eq!(result[0], Fr::from_u64(7));
         assert_eq!(result[1], Fr::from_u64(13));
     }
@@ -254,40 +249,29 @@ mod tests {
         let kernel: CpuKernel<Fr> = compile_with_challenges(&expr, 2, 2, &[]);
         let lo = vec![Fr::from_u64(2), Fr::from_u64(5)];
         let hi = vec![Fr::from_u64(4), Fr::from_u64(9)];
-        let result = kernel.evaluate(&lo, &hi, 2);
+        let result = eval_kernel(&kernel, &lo, &hi, 3);
 
-        // t=0: (2+1)*(5-2) = 3*3 = 9
         assert_eq!(result[0], Fr::from_u64(9));
-        // t=1: (4+1)*(9-4) = 5*5 = 25
         assert_eq!(result[1], Fr::from_u64(25));
-        // t=2: a=2+2*(4-2)=6, bv=5+2*(9-5)=13 -> (6+1)*(13-6) = 7*7 = 49
         assert_eq!(result[2], Fr::from_u64(49));
     }
 
     #[test]
     fn challenge_binding_single() {
-        // expr = c0 * o0  (gamma * opening)
         let b = ExprBuilder::new();
         let a = b.opening(0);
         let gamma = b.challenge(0);
         let expr = b.build(gamma * a);
 
-        let gamma_val = Fr::from_u64(7);
-        let kernel = compile_with_challenges::<Fr>(&expr, 1, 1, &[gamma_val]);
+        let kernel = compile_with_challenges::<Fr>(&expr, 1, 1, &[Fr::from_u64(7)]);
+        let result = eval_kernel(&kernel, &[Fr::from_u64(5)], &[Fr::from_u64(10)], 2);
 
-        let lo = vec![Fr::from_u64(5)];
-        let hi = vec![Fr::from_u64(10)];
-        let result = kernel.evaluate(&lo, &hi, 1);
-
-        // t=0: 7*5 = 35
         assert_eq!(result[0], Fr::from_u64(35));
-        // t=1: 7*10 = 70
         assert_eq!(result[1], Fr::from_u64(70));
     }
 
     #[test]
     fn challenge_binding_multiple() {
-        // expr = c0 * o0 + c1 * o1
         let b = ExprBuilder::new();
         let a = b.opening(0);
         let bv = b.opening(1);
@@ -297,40 +281,30 @@ mod tests {
 
         let challenges = vec![Fr::from_u64(3), Fr::from_u64(5)];
         let kernel = compile_with_challenges::<Fr>(&expr, 2, 1, &challenges);
-
         let lo = vec![Fr::from_u64(10), Fr::from_u64(20)];
         let hi = vec![Fr::from_u64(10), Fr::from_u64(20)];
-        let result = kernel.evaluate(&lo, &hi, 1);
+        let result = eval_kernel(&kernel, &lo, &hi, 2);
 
-        // Both t=0 and t=1: 3*10 + 5*20 = 30 + 100 = 130
         assert_eq!(result[0], Fr::from_u64(130));
         assert_eq!(result[1], Fr::from_u64(130));
     }
 
     #[test]
     fn challenge_binding_booleanity_weighted() {
-        // Weighted booleanity: c0 * (o0^2 - o0)
         let b = ExprBuilder::new();
         let h = b.opening(0);
         let gamma = b.challenge(0);
         let expr = b.build(gamma * (h * h - h));
 
-        let gamma_val = Fr::from_u64(11);
-        let kernel = compile_with_challenges::<Fr>(&expr, 1, 2, &[gamma_val]);
+        let kernel = compile_with_challenges::<Fr>(&expr, 1, 2, &[Fr::from_u64(11)]);
+        let result = eval_kernel(&kernel, &[Fr::from_u64(3)], &[Fr::from_u64(7)], 3);
 
-        let lo = vec![Fr::from_u64(3)];
-        let hi = vec![Fr::from_u64(7)];
-        let result = kernel.evaluate(&lo, &hi, 2);
-
-        // t=0: 11 * (9 - 3) = 66
         assert_eq!(result[0], Fr::from_u64(66));
-        // t=1: 11 * (49 - 7) = 462
         assert_eq!(result[1], Fr::from_u64(462));
     }
 
     #[test]
     fn missing_challenge_defaults_to_zero() {
-        // expr = c0 * o0 + c1 * o1, but only supply c0
         let b = ExprBuilder::new();
         let a = b.opening(0);
         let bv = b.opening(1);
@@ -338,14 +312,11 @@ mod tests {
         let c1 = b.challenge(1);
         let expr = b.build(c0 * a + c1 * bv);
 
-        // Only bind c0; c1 defaults to zero
         let kernel = compile_with_challenges::<Fr>(&expr, 2, 1, &[Fr::from_u64(3)]);
-
         let lo = vec![Fr::from_u64(10), Fr::from_u64(20)];
         let hi = vec![Fr::from_u64(10), Fr::from_u64(20)];
-        let result = kernel.evaluate(&lo, &hi, 1);
+        let result = eval_kernel(&kernel, &lo, &hi, 2);
 
-        // 3*10 + 0*20 = 30
         assert_eq!(result[0], Fr::from_u64(30));
     }
 
@@ -360,6 +331,6 @@ mod tests {
 
         let lo = vec![Fr::from_u64(4)];
         let hi = vec![Fr::from_u64(6)];
-        assert_eq!(k1.evaluate(&lo, &hi, 2), k2.evaluate(&lo, &hi, 2),);
+        assert_eq!(eval_kernel(&k1, &lo, &hi, 3), eval_kernel(&k2, &lo, &hi, 3));
     }
 }

@@ -127,13 +127,7 @@ impl<F: Field> ClaimReductionStage<F> {
     /// Creates a single-instance increment claim reduction stage.
     ///
     /// Convenience constructor for `c0·ram_inc + c1·rd_inc`.
-    pub fn increment(
-        ram_inc: Vec<F>,
-        rd_inc: Vec<F>,
-        eq_point: Vec<F>,
-        c0: F,
-        c1: F,
-    ) -> Self {
+    pub fn increment(ram_inc: Vec<F>, rd_inc: Vec<F>, eq_point: Vec<F>, c0: F, c1: F) -> Self {
         Self::new(
             vec![(vec![ram_inc, rd_inc], vec![c0, c1])],
             eq_point,
@@ -143,11 +137,7 @@ impl<F: Field> ClaimReductionStage<F> {
 }
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
-    fn build(
-        &mut self,
-        _prior_claims: &[ProverClaim<F>],
-        _transcript: &mut T,
-    ) -> StageBatch<F> {
+    fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let instances = self
             .instances
             .as_ref()
@@ -156,11 +146,9 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
         let eq_table = EqPolynomial::new(self.eq_point.clone()).evaluations();
 
         let mut claims = Vec::with_capacity(instances.len());
-        let mut witnesses: Vec<Box<dyn SumcheckCompute<F>>> =
-            Vec::with_capacity(instances.len());
+        let mut witnesses: Vec<Box<dyn SumcheckCompute<F>>> = Vec::with_capacity(instances.len());
 
         for inst in instances {
-            // Pre-compute g(x) = Σ c_i · p_i(x)
             let mut g_table = vec![F::zero(); n];
             for (i, table) in inst.poly_tables.iter().enumerate() {
                 let c = inst.coefficients[i];
@@ -191,11 +179,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
         StageBatch { claims, witnesses }
     }
 
-    fn extract_claims(
-        &mut self,
-        challenges: &[F],
-        _final_eval: F,
-    ) -> Vec<ProverClaim<F>> {
+    fn extract_claims(&mut self, challenges: &[F], _final_eval: F) -> Vec<ProverClaim<F>> {
         let instances = self
             .instances
             .take()
@@ -349,10 +333,7 @@ mod tests {
         let c2 = Fr::random(&mut rng);
 
         let mut stage: ClaimReductionStage<Fr> = ClaimReductionStage::new(
-            vec![
-                (vec![p0, p1], vec![c0, c1]),
-                (vec![p2], vec![c2]),
-            ],
+            vec![(vec![p0, p1], vec![c0, c1]), (vec![p2], vec![c2])],
             eq_point,
             vec![
                 reductions::increment_claim_reduction as fn() -> ClaimDefinition,

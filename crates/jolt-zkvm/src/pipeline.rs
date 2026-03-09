@@ -1,7 +1,7 @@
 //! Prover pipeline: stage loop and sumcheck orchestration.
 //!
 //! [`prove_stages`] drives the proving pipeline over a sequence of
-//! [`ProverStage`](crate::stage::ProverStage) implementations.
+//! [`ProverStage`] implementations.
 
 use jolt_field::Field;
 use jolt_openings::ProverClaim;
@@ -71,12 +71,7 @@ where
     for stage in stages.iter_mut() {
         let mut batch = stage.build(&all_opening_claims, transcript);
 
-        let max_rounds = batch
-            .claims
-            .iter()
-            .map(|c| c.num_vars)
-            .max()
-            .unwrap_or(0);
+        let max_rounds = batch.claims.iter().map(|c| c.num_vars).max().unwrap_or(0);
 
         let handler = CaptureHandler::new(max_rounds);
 
@@ -88,8 +83,6 @@ where
             handler,
         );
 
-        // The final evaluation is the last round polynomial evaluated at
-        // the last challenge.
         let final_eval = if let (Some(last_poly), Some(&last_challenge)) =
             (proof.round_polynomials.last(), challenges.last())
         {

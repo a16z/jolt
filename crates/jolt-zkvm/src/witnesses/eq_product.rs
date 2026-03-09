@@ -125,7 +125,11 @@ mod tests {
         let eq_table = EqPolynomial::new(r).evaluations();
         let g_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let claimed_sum: Fr = eq_table.iter().zip(g_table.iter()).map(|(&e, &g)| e * g).sum();
+        let claimed_sum: Fr = eq_table
+            .iter()
+            .zip(g_table.iter())
+            .map(|(&e, &g)| e * g)
+            .sum();
 
         let claim = SumcheckClaim {
             num_vars,

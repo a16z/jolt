@@ -110,8 +110,10 @@ impl<F: Field> SumcheckCompute<F> for HammingBooleanityCompute<F> {
         let half = self.current_size() / 2;
 
         for j in 0..half {
-            self.h_table[j] = self.h_table[2 * j] + challenge * (self.h_table[2 * j + 1] - self.h_table[2 * j]);
-            self.eq_table[j] = self.eq_table[2 * j] + challenge * (self.eq_table[2 * j + 1] - self.eq_table[2 * j]);
+            self.h_table[j] =
+                self.h_table[2 * j] + challenge * (self.h_table[2 * j + 1] - self.h_table[2 * j]);
+            self.eq_table[j] = self.eq_table[2 * j]
+                + challenge * (self.eq_table[2 * j + 1] - self.eq_table[2 * j]);
         }
 
         self.h_table.truncate(half);
@@ -164,13 +166,13 @@ mod tests {
         let eq_table = EqPolynomial::new(r).evaluations();
 
         // h = [0, 2, 1, 0] — h(01) = 2, not boolean
-        let h_table: Vec<Fr> = vec![0, 2, 1, 0]
-            .into_iter()
-            .map(Fr::from_u64)
-            .collect();
+        let h_table: Vec<Fr> = vec![0, 2, 1, 0].into_iter().map(Fr::from_u64).collect();
 
         let sum = brute_force_booleanity_sum(&h_table, &eq_table);
-        assert!(!sum.is_zero(), "non-boolean polynomial should have nonzero sum");
+        assert!(
+            !sum.is_zero(),
+            "non-boolean polynomial should have nonzero sum"
+        );
     }
 
     #[test]
@@ -219,9 +221,7 @@ mod tests {
         let eq_table = EqPolynomial::new(r).evaluations();
 
         // All-boolean h
-        let h_table: Vec<Fr> = (0..(1 << num_vars))
-            .map(|i| Fr::from_u64(i % 2))
-            .collect();
+        let h_table: Vec<Fr> = (0..(1 << num_vars)).map(|i| Fr::from_u64(i % 2)).collect();
 
         let claimed_sum = brute_force_booleanity_sum(&h_table, &eq_table);
 
@@ -231,11 +231,7 @@ mod tests {
             claimed_sum,
         };
 
-        let mut witness = HammingBooleanityCompute::new(
-            h_table,
-            eq_table,
-            num_vars,
-        );
+        let mut witness = HammingBooleanityCompute::new(h_table, eq_table, num_vars);
 
         let mut prover_transcript = Blake2bTranscript::new(b"test_hamming_booleanity");
         let proof = SumcheckProver::prove(
@@ -267,9 +263,7 @@ mod tests {
         let eq_table = EqPolynomial::new(r).evaluations();
 
         // Random h — not necessarily boolean, so claimed_sum != 0
-        let h_table: Vec<Fr> = (0..(1 << num_vars))
-            .map(|_| Fr::random(&mut rng))
-            .collect();
+        let h_table: Vec<Fr> = (0..(1 << num_vars)).map(|_| Fr::random(&mut rng)).collect();
 
         let claimed_sum = brute_force_booleanity_sum(&h_table, &eq_table);
 
@@ -279,11 +273,7 @@ mod tests {
             claimed_sum,
         };
 
-        let mut witness = HammingBooleanityCompute::new(
-            h_table,
-            eq_table,
-            num_vars,
-        );
+        let mut witness = HammingBooleanityCompute::new(h_table, eq_table, num_vars);
 
         let mut prover_transcript = Blake2bTranscript::new(b"test_random");
         let proof = SumcheckProver::prove(

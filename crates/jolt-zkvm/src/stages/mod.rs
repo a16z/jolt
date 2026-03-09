@@ -4,6 +4,8 @@
 //! proving pipeline, constructing claims and witnesses for the
 //! batched sumcheck prover.
 
+pub mod s1_spartan;
+pub mod s2_ra_virtual;
 pub mod s3_claim_reductions;
 pub mod s4_ram_rw;
 pub mod s4_rw_checking;

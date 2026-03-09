@@ -5,8 +5,8 @@
 //! 1. **Dense mode** — materializes `Az`, `Bz`, `Cz` fully and runs the
 //!    standard outer/inner sumcheck. Suitable for testing and small circuits.
 //!
-//! 2. **Streaming mode** — uses the [`StreamingSumcheck`] engine with
-//!    pluggable [`StreamingSumcheckWindow`] and [`LinearSumcheckStage`]
+//! 2. **Streaming mode** — uses the `StreamingSumcheck` engine with
+//!    pluggable `StreamingSumcheckWindow` and `LinearSumcheckStage`
 //!    implementations. The concrete implementations are provided by
 //!    jolt-zkvm for the RISC-V circuit.
 //!
@@ -182,7 +182,6 @@ impl UniformSpartanProver {
         let rho_b = PCS::Field::from_u128(transcript.challenge());
         let rho_c = PCS::Field::from_u128(transcript.challenge());
 
-        // Build combined row polynomial for inner sumcheck
         let num_col_vars = log2_padded(total_cols_padded);
         let combined_row =
             combined_partial_evaluate_uniform(key, &r_x, rho_a, rho_b, rho_c, total_cols_padded);
@@ -247,7 +246,6 @@ fn combined_partial_evaluate_uniform<F: Field>(
     let cycle_vars = key.num_cycle_vars();
     let (r_x_cycle, r_x_constraint) = r_x.split_at(cycle_vars);
 
-    // Compute eq evaluations for constraint and cycle dimensions
     let eq_constraint = EqPolynomial::new(r_x_constraint.to_vec()).evaluations();
     let eq_cycle = EqPolynomial::new(r_x_cycle.to_vec()).evaluations();
 

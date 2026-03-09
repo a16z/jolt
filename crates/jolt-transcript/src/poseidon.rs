@@ -155,9 +155,6 @@ impl Transcript for PoseidonTranscript {
     }
 
     fn append_bytes(&mut self, bytes: &[u8]) {
-        // Fixed-arity Poseidon: chunk input into 32-byte field elements.
-        // First chunk: hash(state, n_rounds, chunk) — domain separation.
-        // Remaining: hash(prev, 0, chunk) — chained.
         let mut poseidon = Self::hasher();
         let state_f = Fr::from_le_bytes_mod_order(&self.state);
         let round_f = Fr::from(u64::from(self.n_rounds));
@@ -165,7 +162,6 @@ impl Transcript for PoseidonTranscript {
 
         let mut chunks = bytes.chunks(BYTES_PER_CHUNK);
 
-        // First hash includes n_rounds for domain separation
         let first_f = chunks
             .next()
             .map_or(zero, Fr::from_le_bytes_mod_order);
@@ -174,7 +170,6 @@ impl Transcript for PoseidonTranscript {
             .hash(&[state_f, round_f, first_f])
             .expect("Poseidon hash failed");
 
-        // Remaining chunks chain without n_rounds
         for chunk in chunks {
             let chunk_f = Fr::from_le_bytes_mod_order(chunk);
             current = poseidon

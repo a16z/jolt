@@ -12,33 +12,26 @@ This crate defines the instruction abstraction layer for the Jolt lookup argumen
 
 ### Core Traits
 
-- **`Instruction`** — A RISC-V instruction that can be executed and decomposed into lookup queries. Methods: `opcode`, `name`, `execute(x, y) -> u64`, `lookups(x, y) -> Vec<LookupQuery>`.
-
-- **`LookupTable<F>`** — A small evaluation table used by the Twist/Shout lookup argument. Methods: `id`, `name`, `size`, `evaluate(input) -> F`, `materialize() -> Vec<F>`.
+- **`Instruction: Flags`** -- A RISC-V instruction. Methods: `opcode()`, `name()`, `execute(x, y) -> u64`, `lookup_table() -> Option<LookupTableKind>`.
+- **`LookupTable<XLEN>`** -- A small evaluation table. Methods: `materialize_entry(index) -> u64`, `evaluate_mle(r) -> F`.
+- **`Flags`** -- Static flag configuration. Methods: `circuit_flags() -> [bool; NUM_CIRCUIT_FLAGS]`, `instruction_flags() -> [bool; NUM_INSTRUCTION_FLAGS]`.
+- **`ChallengeOps<F>`** -- Arithmetic bounds for challenge-field operations in prefix/suffix evaluation.
+- **`FieldOps<C>`** -- Field-side bounds for challenge arithmetic.
 
 ### Types
 
-- **`TableId(u16)`** — Unique identifier for a lookup table.
-- **`LookupQuery`** — A query pairing a `TableId` with a `u64` input.
-- **`JoltInstructionSet`** — Registry of all RV64IMAC instructions with opcode-indexed dispatch.
+- **`LookupTableKind`** -- `#[repr(u8)]` enum identifying one of 40 distinct lookup table types.
+- **`LookupTables<XLEN>`** -- Runtime dispatch enum over all concrete table implementations. Constructed from `LookupTableKind` via `From`.
+- **`LookupBits`** -- Compact 17-byte bitvector for lookup index substrings (prefix/suffix decomposition).
+- **`CircuitFlags`** -- R1CS-relevant boolean flags (14 variants: `AddOperands`, `Load`, `Store`, `Jump`, etc.).
+- **`InstructionFlags`** -- Non-R1CS flags for witness generation (7 variants: `LeftOperandIsPC`, `RightOperandIsImm`, `Branch`, etc.).
+- **`JoltInstructionSet`** -- Registry of all RV64IMAC instructions with opcode-indexed dispatch.
 
-### Instruction Modules
+### Modules
 
-- **`rv`** — Concrete RISC-V instruction implementations:
-  - `arithmetic` / `arithmetic_w` — ADD, SUB, MUL, DIV, REM (64-bit and 32-bit word variants)
-  - `branch` — BEQ, BNE, BLT, BGE, BLTU, BGEU
-  - `compare` — SLT, SLTU
-  - `load` / `store` — LB, LH, LW, LD, SB, SH, SW, SD (with sign extension)
-  - `logic` — AND, OR, XOR
-  - `shift` / `shift_w` — SLL, SRL, SRA (64-bit and 32-bit word variants)
-  - `system` — ECALL, EBREAK
-
-- **`virtual_`** — Virtual instructions that combine multiple lookups:
-  - `assert` — Assertion instructions
-  - `arithmetic` — Virtual arithmetic operations
-  - `bitwise` — Virtual bitwise operations
-
-- **`tables`** — Lookup table implementations backing the instructions
+- **`rv`** -- Concrete RISC-V instruction implementations (arithmetic, branch, compare, load/store, logic, shift, system).
+- **`virtual_`** -- Virtual instructions (assert, arithmetic, bitwise).
+- **`tables`** -- Lookup table implementations with prefix/suffix sparse-dense decomposition.
 
 ## Dependency Position
 

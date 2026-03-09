@@ -134,7 +134,6 @@ impl<F: Field> SpartanCircuit<F> {
         (extract(|c| &c.a), extract(|c| &c.b), extract(|c| &c.c))
     }
 
-    /// Number of R1CS constraints.
     pub fn num_constraints(&self) -> usize {
         self.constraints.len()
     }

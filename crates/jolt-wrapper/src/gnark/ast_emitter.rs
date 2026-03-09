@@ -37,24 +37,20 @@ impl GnarkAstEmitter {
         }
     }
 
-    /// Set a custom CSE prefix.
     pub fn with_cse_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.cse_prefix = prefix.into();
         self
     }
 
-    /// Map a variable index to a custom Go field name.
     pub fn with_var_name(mut self, index: u32, name: impl Into<String>) -> Self {
         let _ = self.var_names.insert(index, name.into());
         self
     }
 
-    /// Return the accumulated Go assignment lines.
     pub fn lines(&self) -> &[String] {
         &self.lines
     }
 
-    /// Return the accumulated assertion lines.
     pub fn assertion_lines(&self) -> &[String] {
         &self.assertions
     }

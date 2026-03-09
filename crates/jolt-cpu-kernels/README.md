@@ -47,6 +47,35 @@ BN254 Fr on Apple Silicon (M-series). Run with `cargo bench -p jolt-cpu-kernels`
 | `x² - x` (booleanity, 1 input) | 3.5 Melem/s | 286 ns |
 | `x₀·x₁·x₂·x₃` (product, 4 inputs) | 5.5 Melem/s | 730 ns |
 
+### Direct Rayon vs ComputeBackend — abstraction overhead
+
+Compares the direct Rayon `par_iter().fold().reduce()` pattern (as used in the
+witness hot path) against `CpuBackend::pairwise_reduce` with a compiled kernel.
+Both use `FieldAccumulator` delayed reduction and the same Toom-Cook kernels.
+
+| D | Size | Direct Rayon | Backend | Overhead |
+|---|------|--------------|---------|----------|
+| 4 | 2^16 | 14.3 Mpair/s | 13.1 Mpair/s | ~8% |
+| 4 | 2^18 | 16.7 Mpair/s | 15.0 Mpair/s | ~10% |
+| 4 | 2^20 | 20.3 Mpair/s | 19.1 Mpair/s | ~6% |
+| 8 | 2^16 | 5.0 Mpair/s | 4.9 Mpair/s | ~2% |
+| 8 | 2^18 | 5.8 Mpair/s | 5.5 Mpair/s | ~5% |
+| 8 | 2^20 | 6.4 Mpair/s | 5.7 Mpair/s | ~11% |
+| 16 | 2^16 | 1.5 Mpair/s | 1.5 Mpair/s | ~2% |
+| 16 | 2^18 | 1.6 Mpair/s | 1.5 Mpair/s | ~2% |
+| 16 | 2^20 | 1.6 Mpair/s | 1.5 Mpair/s | ~2% |
+
+**Conclusion:** The backend abstraction adds 2–11% overhead on CPU. The
+`CpuKernel::evaluate` signature uses `&mut [F]` output slices (no per-pair
+heap allocation), and `lo`/`hi` scratch buffers are hoisted into the fold
+initializer. The remaining gap at small D is from `Vec`-based scratch buffers
+vs stack-allocated arrays in the direct path. At D≥16 the kernel computation
+dominates and overhead is within noise (~2%).
+
+**Remaining path to zero overhead:** A const-generic
+`pairwise_reduce<const D: usize>` variant could use fixed-size `[F; D]` scratch
+arrays for `lo`/`hi`, eliminating the last heap allocation in the hot loop.
+
 ## Feature Flags
 
 This crate has no feature flags.

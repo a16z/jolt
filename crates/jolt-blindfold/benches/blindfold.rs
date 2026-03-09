@@ -241,8 +241,7 @@ fn bench_nova_folding(c: &mut Criterion) {
             .map(|s| s.round_data.poly_coeffs)
             .collect();
 
-        let r1cs =
-            jolt_blindfold::verifier_r1cs::build_verifier_r1cs(&configs, &baked);
+        let r1cs = jolt_blindfold::verifier_r1cs::build_verifier_r1cs(&configs, &baked);
         let z_real =
             jolt_blindfold::verifier_r1cs::assign_witness(&configs, &baked, &stage_coefficients);
         let u_real = Fr::one();
@@ -254,10 +253,8 @@ fn bench_nova_folding(c: &mut Criterion) {
                 bench.iter_batched(
                     || ChaCha20Rng::seed_from_u64(42),
                     |mut rng| {
-                        let (u_rand, w_rand) =
-                            sample_random_witness(black_box(&r1cs), &mut rng);
-                        let cross =
-                            compute_cross_term(&r1cs, &z_real, u_real, &w_rand.w, u_rand);
+                        let (u_rand, w_rand) = sample_random_witness(black_box(&r1cs), &mut rng);
+                        let cross = compute_cross_term(&r1cs, &z_real, u_real, &w_rand.w, u_rand);
                         let w_real = RelaxedWitness {
                             w: z_real.clone(),
                             e: vec![Fr::zero(); r1cs.num_constraints()],
@@ -291,8 +288,7 @@ fn bench_prove_relaxed(c: &mut Criterion) {
             .map(|s| s.round_data.poly_coeffs)
             .collect();
 
-        let r1cs =
-            jolt_blindfold::verifier_r1cs::build_verifier_r1cs(&configs, &baked);
+        let r1cs = jolt_blindfold::verifier_r1cs::build_verifier_r1cs(&configs, &baked);
         let z_real =
             jolt_blindfold::verifier_r1cs::assign_witness(&configs, &baked, &stage_coefficients);
         let key = SpartanKey::from_r1cs(&r1cs);
@@ -358,8 +354,7 @@ fn bench_verify_relaxed(c: &mut Criterion) {
             .map(|s| s.round_data.poly_coeffs)
             .collect();
 
-        let r1cs =
-            jolt_blindfold::verifier_r1cs::build_verifier_r1cs(&configs, &baked);
+        let r1cs = jolt_blindfold::verifier_r1cs::build_verifier_r1cs(&configs, &baked);
         let z_real =
             jolt_blindfold::verifier_r1cs::assign_witness(&configs, &baked, &stage_coefficients);
         let key = SpartanKey::from_r1cs(&r1cs);
@@ -382,7 +377,15 @@ fn bench_verify_relaxed(c: &mut Criterion) {
 
         let mut pt = Blake2bTranscript::new(b"bench");
         let proof = SpartanProver::prove_relaxed::<MockPCS, _>(
-            &r1cs, &key, u_folded, &folded.w, &folded.e, &w_com, &e_com, &(), &mut pt,
+            &r1cs,
+            &key,
+            u_folded,
+            &folded.w,
+            &folded.e,
+            &w_com,
+            &e_com,
+            &(),
+            &mut pt,
         )
         .expect("prove_relaxed must succeed");
 

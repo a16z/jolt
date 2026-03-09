@@ -279,47 +279,170 @@ pub enum LookupTables<const XLEN: usize> {
 macro_rules! dispatch_table {
     ($self:expr, |$t:ident| $body:expr) => {
         match $self {
-            Self::RangeCheck => { let $t = range_check::RangeCheckTable::<XLEN>; $body }
-            Self::RangeCheckAligned => { let $t = range_check_aligned::RangeCheckAlignedTable::<XLEN>; $body }
-            Self::And => { let $t = and::AndTable::<XLEN>; $body }
-            Self::Andn => { let $t = andn::AndnTable::<XLEN>; $body }
-            Self::Or => { let $t = or::OrTable::<XLEN>; $body }
-            Self::Xor => { let $t = xor::XorTable::<XLEN>; $body }
-            Self::Equal => { let $t = equal::EqualTable::<XLEN>; $body }
-            Self::NotEqual => { let $t = not_equal::NotEqualTable::<XLEN>; $body }
-            Self::SignedLessThan => { let $t = signed_less_than::SignedLessThanTable::<XLEN>; $body }
-            Self::UnsignedLessThan => { let $t = unsigned_less_than::UnsignedLessThanTable::<XLEN>; $body }
-            Self::SignedGreaterThanEqual => { let $t = signed_greater_than_equal::SignedGreaterThanEqualTable::<XLEN>; $body }
-            Self::UnsignedGreaterThanEqual => { let $t = unsigned_greater_than_equal::UnsignedGreaterThanEqualTable::<XLEN>; $body }
-            Self::UnsignedLessThanEqual => { let $t = unsigned_less_than_equal::UnsignedLessThanEqualTable::<XLEN>; $body }
-            Self::UpperWord => { let $t = upper_word::UpperWordTable::<XLEN>; $body }
-            Self::LowerHalfWord => { let $t = lower_half_word::LowerHalfWordTable::<XLEN>; $body }
-            Self::SignExtendHalfWord => { let $t = sign_extend_half_word::SignExtendHalfWordTable::<XLEN>; $body }
-            Self::Movsign => { let $t = movsign::MovsignTable::<XLEN>; $body }
-            Self::Pow2 => { let $t = pow2::Pow2Table::<XLEN>; $body }
-            Self::Pow2W => { let $t = pow2_w::Pow2WTable::<XLEN>; $body }
-            Self::ShiftRightBitmask => { let $t = shift_right_bitmask::ShiftRightBitmaskTable::<XLEN>; $body }
-            Self::VirtualSRL => { let $t = virtual_srl::VirtualSRLTable::<XLEN>; $body }
-            Self::VirtualSRA => { let $t = virtual_sra::VirtualSRATable::<XLEN>; $body }
-            Self::VirtualROTR => { let $t = virtual_rotr::VirtualRotrTable::<XLEN>; $body }
-            Self::VirtualROTRW => { let $t = virtual_rotrw::VirtualRotrWTable::<XLEN>; $body }
-            Self::ValidDiv0 => { let $t = valid_div0::ValidDiv0Table::<XLEN>; $body }
-            Self::ValidUnsignedRemainder => { let $t = valid_unsigned_remainder::ValidUnsignedRemainderTable::<XLEN>; $body }
-            Self::ValidSignedRemainder => { let $t = valid_signed_remainder::ValidSignedRemainderTable::<XLEN>; $body }
-            Self::VirtualChangeDivisor => { let $t = virtual_change_divisor::VirtualChangeDivisorTable::<XLEN>; $body }
-            Self::VirtualChangeDivisorW => { let $t = virtual_change_divisor_w::VirtualChangeDivisorWTable::<XLEN>; $body }
-            Self::HalfwordAlignment => { let $t = halfword_alignment::HalfwordAlignmentTable::<XLEN>; $body }
-            Self::WordAlignment => { let $t = word_alignment::WordAlignmentTable::<XLEN>; $body }
-            Self::MulUNoOverflow => { let $t = mulu_no_overflow::MulUNoOverflowTable::<XLEN>; $body }
-            Self::VirtualRev8W => { let $t = virtual_rev8w::VirtualRev8WTable::<XLEN>; $body }
-            Self::VirtualXORROT32 => { let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 32>; $body }
-            Self::VirtualXORROT24 => { let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 24>; $body }
-            Self::VirtualXORROT16 => { let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 16>; $body }
-            Self::VirtualXORROT63 => { let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 63>; $body }
-            Self::VirtualXORROTW16 => { let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 16>; $body }
-            Self::VirtualXORROTW12 => { let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 12>; $body }
-            Self::VirtualXORROTW8 => { let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 8>; $body }
-            Self::VirtualXORROTW7 => { let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 7>; $body }
+            Self::RangeCheck => {
+                let $t = range_check::RangeCheckTable::<XLEN>;
+                $body
+            }
+            Self::RangeCheckAligned => {
+                let $t = range_check_aligned::RangeCheckAlignedTable::<XLEN>;
+                $body
+            }
+            Self::And => {
+                let $t = and::AndTable::<XLEN>;
+                $body
+            }
+            Self::Andn => {
+                let $t = andn::AndnTable::<XLEN>;
+                $body
+            }
+            Self::Or => {
+                let $t = or::OrTable::<XLEN>;
+                $body
+            }
+            Self::Xor => {
+                let $t = xor::XorTable::<XLEN>;
+                $body
+            }
+            Self::Equal => {
+                let $t = equal::EqualTable::<XLEN>;
+                $body
+            }
+            Self::NotEqual => {
+                let $t = not_equal::NotEqualTable::<XLEN>;
+                $body
+            }
+            Self::SignedLessThan => {
+                let $t = signed_less_than::SignedLessThanTable::<XLEN>;
+                $body
+            }
+            Self::UnsignedLessThan => {
+                let $t = unsigned_less_than::UnsignedLessThanTable::<XLEN>;
+                $body
+            }
+            Self::SignedGreaterThanEqual => {
+                let $t = signed_greater_than_equal::SignedGreaterThanEqualTable::<XLEN>;
+                $body
+            }
+            Self::UnsignedGreaterThanEqual => {
+                let $t = unsigned_greater_than_equal::UnsignedGreaterThanEqualTable::<XLEN>;
+                $body
+            }
+            Self::UnsignedLessThanEqual => {
+                let $t = unsigned_less_than_equal::UnsignedLessThanEqualTable::<XLEN>;
+                $body
+            }
+            Self::UpperWord => {
+                let $t = upper_word::UpperWordTable::<XLEN>;
+                $body
+            }
+            Self::LowerHalfWord => {
+                let $t = lower_half_word::LowerHalfWordTable::<XLEN>;
+                $body
+            }
+            Self::SignExtendHalfWord => {
+                let $t = sign_extend_half_word::SignExtendHalfWordTable::<XLEN>;
+                $body
+            }
+            Self::Movsign => {
+                let $t = movsign::MovsignTable::<XLEN>;
+                $body
+            }
+            Self::Pow2 => {
+                let $t = pow2::Pow2Table::<XLEN>;
+                $body
+            }
+            Self::Pow2W => {
+                let $t = pow2_w::Pow2WTable::<XLEN>;
+                $body
+            }
+            Self::ShiftRightBitmask => {
+                let $t = shift_right_bitmask::ShiftRightBitmaskTable::<XLEN>;
+                $body
+            }
+            Self::VirtualSRL => {
+                let $t = virtual_srl::VirtualSRLTable::<XLEN>;
+                $body
+            }
+            Self::VirtualSRA => {
+                let $t = virtual_sra::VirtualSRATable::<XLEN>;
+                $body
+            }
+            Self::VirtualROTR => {
+                let $t = virtual_rotr::VirtualRotrTable::<XLEN>;
+                $body
+            }
+            Self::VirtualROTRW => {
+                let $t = virtual_rotrw::VirtualRotrWTable::<XLEN>;
+                $body
+            }
+            Self::ValidDiv0 => {
+                let $t = valid_div0::ValidDiv0Table::<XLEN>;
+                $body
+            }
+            Self::ValidUnsignedRemainder => {
+                let $t = valid_unsigned_remainder::ValidUnsignedRemainderTable::<XLEN>;
+                $body
+            }
+            Self::ValidSignedRemainder => {
+                let $t = valid_signed_remainder::ValidSignedRemainderTable::<XLEN>;
+                $body
+            }
+            Self::VirtualChangeDivisor => {
+                let $t = virtual_change_divisor::VirtualChangeDivisorTable::<XLEN>;
+                $body
+            }
+            Self::VirtualChangeDivisorW => {
+                let $t = virtual_change_divisor_w::VirtualChangeDivisorWTable::<XLEN>;
+                $body
+            }
+            Self::HalfwordAlignment => {
+                let $t = halfword_alignment::HalfwordAlignmentTable::<XLEN>;
+                $body
+            }
+            Self::WordAlignment => {
+                let $t = word_alignment::WordAlignmentTable::<XLEN>;
+                $body
+            }
+            Self::MulUNoOverflow => {
+                let $t = mulu_no_overflow::MulUNoOverflowTable::<XLEN>;
+                $body
+            }
+            Self::VirtualRev8W => {
+                let $t = virtual_rev8w::VirtualRev8WTable::<XLEN>;
+                $body
+            }
+            Self::VirtualXORROT32 => {
+                let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 32>;
+                $body
+            }
+            Self::VirtualXORROT24 => {
+                let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 24>;
+                $body
+            }
+            Self::VirtualXORROT16 => {
+                let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 16>;
+                $body
+            }
+            Self::VirtualXORROT63 => {
+                let $t = virtual_xor_rot::VirtualXORROTTable::<XLEN, 63>;
+                $body
+            }
+            Self::VirtualXORROTW16 => {
+                let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 16>;
+                $body
+            }
+            Self::VirtualXORROTW12 => {
+                let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 12>;
+                $body
+            }
+            Self::VirtualXORROTW8 => {
+                let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 8>;
+                $body
+            }
+            Self::VirtualXORROTW7 => {
+                let $t = virtual_xor_rotw::VirtualXORROTWTable::<XLEN, 7>;
+                $body
+            }
         }
     };
 }
@@ -380,7 +503,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
 
     /// Recombine evaluated prefix and suffix values into the table's MLE evaluation.
     pub fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        dispatch_table!(self, |t| PrefixSuffixDecomposition::<XLEN>::combine(&t, prefixes, suffixes))
+        dispatch_table!(self, |t| PrefixSuffixDecomposition::<XLEN>::combine(
+            &t, prefixes, suffixes
+        ))
     }
 }
 

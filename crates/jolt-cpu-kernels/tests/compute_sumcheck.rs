@@ -169,34 +169,29 @@ impl SumcheckCompute<Fr> for ComputeWitness {
     fn round_polynomial(&self) -> UnivariatePoly<Fr> {
         let backend = CpuBackend;
 
-        // Compute eq-weighted reduction across all pairs
-        // The kernel expects 3 input buffers (one per factor in the product),
-        // but pairwise_reduce reads pairs from each buffer.
-        // For ProductSum D=3 P=1: at each pair position i, reads:
-        //   lo = [eq_buf[2i], f_buf[2i], g_buf[2i]]
-        //   hi = [eq_buf[2i+1], f_buf[2i+1], g_buf[2i+1]]
-        // and computes product(lo[j] + t*(hi[j]-lo[j])) for t=0..3
-        //
-        // But we want eq*f*g with eq as weight, not as a third factor.
-        // Actually, ProductSum D=3 gives us exactly eq(t)*f(t)*g(t) at
-        // each grid point — we just need uniform weights (all 1s).
+        // ProductSum D=3 P=1: at each pair position, evaluates the product
+        // of 3 linear interpolants (eq, f, g) on the Toom-Cook grid {1, 2, ∞},
+        // producing 3 values. We use uniform weights (all 1s).
         let half = self.f_buf.len() / 2;
         let ones = vec![Fr::from_u64(1); half];
 
-        let evals = backend.pairwise_reduce(
+        // Toom-Cook evaluations: [P(1), P(2), P(∞)]
+        let toom_evals = backend.pairwise_reduce(
             &[&self.eq_buf, &self.f_buf, &self.g_buf],
             &ones,
             &self.kernel,
             3,
         );
 
-        // 4 evaluations of the degree-3 round polynomial at t=0,1,2,3.
-        let points: Vec<(Fr, Fr)> = evals
-            .iter()
-            .enumerate()
-            .map(|(t, &y)| (Fr::from_u64(t as u64), y))
-            .collect();
-        UnivariatePoly::interpolate(&points)
+        // Compute P(0) = Σ_i eq_lo[i] * f_lo[i] * g_lo[i]
+        let mut p0 = Fr::zero();
+        for i in 0..half {
+            p0 += self.eq_buf[2 * i] * self.f_buf[2 * i] * self.g_buf[2 * i];
+        }
+
+        // Recover degree-3 polynomial from [P(0), P(1), P(2), P(∞)]
+        let full_evals = vec![p0, toom_evals[0], toom_evals[1], toom_evals[2]];
+        UnivariatePoly::from_evals_toom(&full_evals)
     }
 
     fn bind(&mut self, challenge: Fr) {

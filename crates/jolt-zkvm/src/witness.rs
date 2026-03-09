@@ -36,19 +36,16 @@ pub struct WitnessStore<F: Field> {
 }
 
 impl<F: Field> WitnessStore<F> {
-    /// Creates an empty store.
     pub fn new() -> Self {
         Self {
             tables: HashMap::new(),
         }
     }
 
-    /// Creates a store pre-populated with the given tables.
     pub fn from_tables(tables: HashMap<PolynomialTag, Vec<F>>) -> Self {
         Self { tables }
     }
 
-    /// Inserts an evaluation table, returning the previous value if any.
     pub fn insert(&mut self, tag: PolynomialTag, evaluations: Vec<F>) -> Option<Vec<F>> {
         self.tables.insert(tag, evaluations)
     }
@@ -64,7 +61,6 @@ impl<F: Field> WitnessStore<F> {
             .unwrap_or_else(|| panic!("polynomial tag {tag} not found in witness store"))
     }
 
-    /// Returns the evaluation table for `tag` if it exists.
     pub fn try_get(&self, tag: PolynomialTag) -> Option<&[F]> {
         self.tables.get(&tag).map(Vec::as_slice)
     }
@@ -83,17 +79,14 @@ impl<F: Field> WitnessStore<F> {
             .unwrap_or_else(|| panic!("polynomial tag {tag} not found in witness store"))
     }
 
-    /// Returns `true` if the store contains a table for `tag`.
     pub fn contains(&self, tag: PolynomialTag) -> bool {
         self.tables.contains_key(&tag)
     }
 
-    /// Number of tables currently in the store.
     pub fn len(&self) -> usize {
         self.tables.len()
     }
 
-    /// Returns `true` if the store contains no tables.
     pub fn is_empty(&self) -> bool {
         self.tables.is_empty()
     }

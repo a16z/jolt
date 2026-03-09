@@ -160,7 +160,11 @@ where
     let d_0 = challenge_to_field::<P::ScalarField, T>(d_challenge);
     let d_1 = d_0 * d_0;
 
-    assert_eq!(wit.len(), 3, "HyperKZG requires exactly 3 evaluation points");
+    assert_eq!(
+        wit.len(),
+        3,
+        "HyperKZG requires exactly 3 evaluation points"
+    );
 
     // q_power_multiplier = 1 + d_0 + d_1
     let q_power_multiplier = P::ScalarField::one() + d_0 + d_1;
@@ -205,7 +209,10 @@ where
 }
 
 /// Computes `[1, c, c^2, ..., c^{n-1}]` from a transcript challenge.
-pub(crate) fn challenge_powers<F: Field, T: Transcript>(challenge: T::Challenge, n: usize) -> Vec<F> {
+pub(crate) fn challenge_powers<F: Field, T: Transcript>(
+    challenge: T::Challenge,
+    n: usize,
+) -> Vec<F> {
     let c = challenge_to_field::<F, T>(challenge);
     let mut powers = Vec::with_capacity(n);
     let mut cur = F::one();
@@ -216,10 +223,8 @@ pub(crate) fn challenge_powers<F: Field, T: Transcript>(challenge: T::Challenge,
     powers
 }
 
-/// Converts a transcript challenge to a field element.
-///
-/// The transcript challenge is a `u128` (for `Blake2bTranscript`).
-/// We interpret it as a field element via `from_bytes`.
+/// Converts a transcript challenge to a field element by interpreting
+/// the challenge bytes.
 pub(crate) fn challenge_to_field<F: Field, T: Transcript>(challenge: T::Challenge) -> F {
     // SAFETY: Challenge is Copy + Default, typically u128. Reading as bytes is safe
     // because we only read `size_of::<Challenge>()` bytes from a valid reference.

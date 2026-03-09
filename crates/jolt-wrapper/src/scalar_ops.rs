@@ -50,12 +50,10 @@ pub const ZERO: [u64; 4] = [0, 0, 0, 0];
 /// One element.
 pub const ONE: [u64; 4] = [1, 0, 0, 0];
 
-/// Returns `true` if `val` is zero.
 pub fn is_zero(val: [u64; 4]) -> bool {
     val == ZERO
 }
 
-/// Returns `true` if `val` is one.
 pub fn is_one(val: [u64; 4]) -> bool {
     val == ONE
 }
@@ -114,7 +112,6 @@ pub fn div(a: [u64; 4], b: [u64; 4]) -> Option<[u64; 4]> {
     inv(b).map(|b_inv| mul(a, b_inv))
 }
 
-/// Converts a `u64` to limbs.
 pub fn from_u64(n: u64) -> [u64; 4] {
     [n, 0, 0, 0]
 }
@@ -145,17 +142,14 @@ pub fn from_i128(n: i128) -> [u64; 4] {
     }
 }
 
-/// Squaring: `a * a mod p`.
 pub fn square(a: [u64; 4]) -> [u64; 4] {
     mul(a, a)
 }
 
-/// Converts limbs to a big-endian decimal string.
 pub fn to_decimal_string(val: [u64; 4]) -> String {
     to_biguint(val).to_string()
 }
 
-/// Converts limbs to little-endian bytes (32 bytes).
 pub fn to_bytes_le(val: [u64; 4]) -> Vec<u8> {
     let mut bytes = vec![0u8; 32];
     for (i, limb) in val.iter().enumerate() {
@@ -171,7 +165,6 @@ pub fn from_bytes_le(bytes: &[u8]) -> [u64; 4] {
     from_biguint(&big)
 }
 
-/// Returns the number of significant bits.
 pub fn num_bits(val: [u64; 4]) -> u32 {
     to_biguint(val).bits() as u32
 }

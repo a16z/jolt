@@ -15,9 +15,7 @@ use rayon::prelude::*;
 
 use crate::error::HyperKZGError;
 use crate::kzg::{self, challenge_to_field, kzg_open_batch, kzg_verify_batch};
-use crate::types::{
-    HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup,
-};
+use crate::types::{HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup};
 
 /// HyperKZG multilinear polynomial commitment scheme.
 ///
@@ -270,10 +268,7 @@ where
     P::ScalarField: AppendToTranscript,
     P::G1: AppendToTranscript,
 {
-    fn combine(
-        commitments: &[Self::Output],
-        scalars: &[Self::Field],
-    ) -> Self::Output {
+    fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
         let combined = commitments
             .iter()
@@ -289,10 +284,7 @@ where
     P::ScalarField: AppendToTranscript,
     P::G1: AppendToTranscript,
 {
-    fn extract_vc_setup(
-        setup: &Self::ProverSetup,
-        capacity: usize,
-    ) -> PedersenSetup<P::G1> {
+    fn extract_vc_setup(setup: &Self::ProverSetup, capacity: usize) -> PedersenSetup<P::G1> {
         // Use the first `capacity` SRS G1 powers as Pedersen message generators.
         // Under the discrete-log assumption, powers [g, β·g, β²·g, ...] are
         // computationally independent and suitable as Pedersen generators.
@@ -466,8 +458,7 @@ mod tests {
             .collect();
         let (c_sum_direct, ()) = TestScheme::commit(&sum_evals, &pk);
 
-        let c_sum_combined =
-            TestScheme::combine(&[ca, cb], &[Fr::from_u64(1), Fr::from_u64(1)]);
+        let c_sum_combined = TestScheme::combine(&[ca, cb], &[Fr::from_u64(1), Fr::from_u64(1)]);
 
         assert_eq!(
             c_sum_direct, c_sum_combined,
@@ -519,13 +510,17 @@ mod tests {
             let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
 
             let mut pt = Blake2bTranscript::new(b"rand-test");
-            let proof = <TestScheme as CommitmentScheme>::open(
-                &poly, &point, eval, &pk, None, &mut pt,
-            );
+            let proof =
+                <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt);
 
             let mut vt = Blake2bTranscript::new(b"rand-test");
             <TestScheme as CommitmentScheme>::verify(
-                &commitment, &point, eval, &proof, &vk, &mut vt,
+                &commitment,
+                &point,
+                eval,
+                &proof,
+                &vk,
+                &mut vt,
             )
             .expect("random instance should verify");
         }
@@ -578,14 +573,10 @@ mod tests {
         let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
 
         let mut pt = Blake2bTranscript::new(b"trivial");
-        let proof = <TestScheme as CommitmentScheme>::open(
-            &poly, &point, eval, &pk, None, &mut pt,
-        );
+        let proof = <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"trivial");
-        <TestScheme as CommitmentScheme>::verify(
-            &commitment, &point, eval, &proof, &vk, &mut vt,
-        )
-        .expect("trivial polynomial should verify");
+        <TestScheme as CommitmentScheme>::verify(&commitment, &point, eval, &proof, &vk, &mut vt)
+            .expect("trivial polynomial should verify");
     }
 }

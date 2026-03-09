@@ -36,11 +36,7 @@ pub trait ProverStage<F: Field, T: Transcript> {
     ///
     /// `prior_claims` contains opening claims from all previous stages,
     /// used to derive input claims for this stage's sumcheck instances.
-    fn build(
-        &mut self,
-        prior_claims: &[ProverClaim<F>],
-        transcript: &mut T,
-    ) -> StageBatch<F>;
+    fn build(&mut self, prior_claims: &[ProverClaim<F>], transcript: &mut T) -> StageBatch<F>;
 
     /// Extracts opening claims after sumcheck completes.
     ///
@@ -52,11 +48,7 @@ pub trait ProverStage<F: Field, T: Transcript> {
     /// Implementations typically evaluate the original polynomials at the
     /// challenge point and pair evaluations with the evaluation tables
     /// (moved from the [`WitnessStore`](crate::witness::WitnessStore)).
-    fn extract_claims(
-        &mut self,
-        challenges: &[F],
-        final_eval: F,
-    ) -> Vec<ProverClaim<F>>;
+    fn extract_claims(&mut self, challenges: &[F], final_eval: F) -> Vec<ProverClaim<F>>;
 
     /// IR-based claim definitions for this stage's sumcheck instances.
     ///

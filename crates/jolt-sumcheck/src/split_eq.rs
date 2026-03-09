@@ -7,9 +7,7 @@
 use rayon::prelude::*;
 
 use jolt_field::{FieldAccumulator, WithChallenge};
-use jolt_poly::{
-    math::Math, BindingOrder, EqPolynomial, Polynomial, UnivariatePoly,
-};
+use jolt_poly::{math::Math, BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 
 /// Split equality polynomial evaluator for efficient sumcheck.
 ///
@@ -259,6 +257,37 @@ impl<F: WithChallenge> SplitEqEvaluator<F> {
                 let r_f: F = r.into();
                 let prod = w_i * r_f;
                 self.current_scalar *= F::one() - w_i - r_f + prod + prod;
+                self.current_index += 1;
+                if self.current_index <= self.w.len() / 2 && self.E_in_vec.len() > 1 {
+                    let _ = self.E_in_vec.pop();
+                } else if self.current_index <= self.w.len() && self.E_out_vec.len() > 1 {
+                    let _ = self.E_out_vec.pop();
+                }
+            }
+        }
+    }
+
+    /// Like [`bind`](Self::bind), but accepts a field element directly.
+    ///
+    /// Useful when the challenge has already been converted from `F::Challenge`
+    /// to `F` (e.g. inside a `SumcheckCompute::bind(F)` wrapper).
+    pub fn bind_f(&mut self, r: F) {
+        match self.binding_order {
+            BindingOrder::LowToHigh => {
+                let w_i: F = self.w[self.current_index - 1].into();
+                let prod = w_i * r;
+                self.current_scalar *= F::one() - w_i - r + prod + prod;
+                self.current_index -= 1;
+                if self.w.len() / 2 < self.current_index && self.E_in_vec.len() > 1 {
+                    let _ = self.E_in_vec.pop();
+                } else if 0 < self.current_index && self.E_out_vec.len() > 1 {
+                    let _ = self.E_out_vec.pop();
+                }
+            }
+            BindingOrder::HighToLow => {
+                let w_i: F = self.w[self.current_index].into();
+                let prod = w_i * r;
+                self.current_scalar *= F::one() - w_i - r + prod + prod;
                 self.current_index += 1;
                 if self.current_index <= self.w.len() / 2 && self.E_in_vec.len() > 1 {
                     let _ = self.E_in_vec.pop();
@@ -524,11 +553,7 @@ mod tests {
         let mut split_eq = SplitEqEvaluator::new(&w, BindingOrder::LowToHigh);
 
         let merged = split_eq.merge();
-        assert_eq!(
-            &regular_evals,
-            merged.evaluations(),
-            "initial mismatch"
-        );
+        assert_eq!(&regular_evals, merged.evaluations(), "initial mismatch");
 
         for _ in 0..NUM_VARS {
             let r = <Fr as WithChallenge>::Challenge::random(&mut rng);
@@ -537,10 +562,7 @@ mod tests {
             split_eq.bind(r);
 
             let merged = split_eq.merge();
-            assert_eq!(
-                &regular_evals,
-                merged.evaluations(),
-            );
+            assert_eq!(&regular_evals, merged.evaluations(),);
         }
     }
 

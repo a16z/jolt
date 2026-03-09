@@ -4,6 +4,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use jolt_cpu_kernels::compile;
 use jolt_field::{Field, Fr};
 use jolt_ir::{KernelDescriptor, KernelShape};
+use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -35,12 +36,15 @@ fn bench_product_sum_kernels(c: &mut Criterion) {
             // Throughput = total input field elements processed per eval
             group.throughput(Throughput::Elements(total_inputs as u64));
 
+            let num_evals = desc.num_evals();
             group.bench_with_input(
                 BenchmarkId::new(format!("D={d}/P={num_products}"), "specialized"),
                 &d,
                 |b, _| {
                     b.iter(|| {
-                        black_box(kernel.evaluate(&lo, &hi, d));
+                        let mut out = vec![Fr::zero(); num_evals];
+                        kernel.evaluate(&lo, &hi, &mut out);
+                        black_box(&out);
                     });
                 },
             );
@@ -69,10 +73,13 @@ fn bench_custom_kernel(c: &mut Criterion) {
     let kernel = compile::<Fr>(&desc);
     let (lo, hi) = random_vecs(1, 999);
 
+    let num_evals = desc.num_evals();
     group.throughput(Throughput::Elements(1));
     group.bench_function("booleanity", |bench| {
         bench.iter(|| {
-            black_box(kernel.evaluate(&lo, &hi, 2));
+            let mut out = vec![Fr::zero(); num_evals];
+            kernel.evaluate(&lo, &hi, &mut out);
+            black_box(&out);
         });
     });
 
@@ -93,10 +100,13 @@ fn bench_custom_kernel(c: &mut Criterion) {
     let kernel = compile::<Fr>(&desc);
     let (lo, hi) = random_vecs(4, 1000);
 
+    let num_evals = desc.num_evals();
     group.throughput(Throughput::Elements(4));
     group.bench_function("product_4_via_custom", |bench| {
         bench.iter(|| {
-            black_box(kernel.evaluate(&lo, &hi, 4));
+            let mut out = vec![Fr::zero(); num_evals];
+            kernel.evaluate(&lo, &hi, &mut out);
+            black_box(&out);
         });
     });
 

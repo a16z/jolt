@@ -269,15 +269,11 @@ impl ZkOpeningScheme for DoryScheme {
             .expect("Dory ZK proof generation should not fail");
 
         // Extract y_com from the proof. In ZK mode, dory::prove always sets y_com.
-        let ark_y_com = proof
-            .y_com
-            .expect("ZK mode proof must contain y_com");
+        let ark_y_com = proof.y_com.expect("ZK mode proof must contain y_com");
 
         // SAFETY: ArkG1 is repr(transparent) over G1Projective, same as Bn254G1.
         let y_com: Bn254G1 = unsafe { std::mem::transmute(ark_y_com) };
-        let blinding = ark_to_jolt_fr(
-            &y_blinding.expect("ZK mode prove must return y_blinding"),
-        );
+        let blinding = ark_to_jolt_fr(&y_blinding.expect("ZK mode prove must return y_blinding"));
 
         (DoryProof(proof), y_com, blinding)
     }
@@ -358,11 +354,10 @@ fn commit_rows_msm(
 
 /// Bridges any [`EvaluationSource<Fr>`] to dory-pcs's polynomial traits.
 ///
-/// Replaces the old `DoryPolyAdapter` which cloned evaluations eagerly.
-/// `DorySourceAdapter` borrows the source and delegates `evaluate`,
-/// `commit`, and `vector_matrix_product` through [`EvaluationSource`]
-/// methods — enabling streaming opening proofs where the full evaluation
-/// table never needs to be materialized.
+/// Borrows the source and delegates `evaluate`, `commit`, and
+/// `vector_matrix_product` through [`EvaluationSource`] methods —
+/// enabling streaming opening proofs where the full evaluation table
+/// never needs to be materialized.
 struct DorySourceAdapter<'a, S: EvaluationSource<Fr>> {
     source: &'a S,
 }
@@ -409,7 +404,12 @@ impl<S: EvaluationSource<Fr>> DoryPolynomial<InnerFr> for DorySourceAdapter<'_, 
 }
 
 impl<S: EvaluationSource<Fr>> MultilinearLagrange<InnerFr> for DorySourceAdapter<'_, S> {
-    fn vector_matrix_product(&self, left_vec: &[InnerFr], _nu: usize, sigma: usize) -> Vec<InnerFr> {
+    fn vector_matrix_product(
+        &self,
+        left_vec: &[InnerFr],
+        _nu: usize,
+        sigma: usize,
+    ) -> Vec<InnerFr> {
         let native_left: Vec<Fr> = left_vec.iter().map(ark_to_jolt_fr).collect();
         let result = self.source.fold_rows(&native_left, sigma);
         result.iter().map(jolt_fr_to_ark).collect()
@@ -516,8 +516,14 @@ mod tests {
         let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
-        let (proof, eval_com, _blinding) =
-            DoryScheme::open_zk(&poly, &point, eval, &prover_setup, Some(hint), &mut prove_transcript);
+        let (proof, eval_com, _blinding) = DoryScheme::open_zk(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint),
+            &mut prove_transcript,
+        );
 
         // Eval commitment should be extractable from the proof.
         let extracted = DoryScheme::extract_eval_commitment(&proof);
@@ -562,11 +568,10 @@ mod tests {
         let prover_setup = DoryScheme::setup_prover(num_vars);
 
         let capacity = 5;
-        let vc_setup =
-            <DoryScheme as VcSetupExtractable<Pedersen<Bn254G1>>>::extract_vc_setup(
-                &prover_setup,
-                capacity,
-            );
+        let vc_setup = <DoryScheme as VcSetupExtractable<Pedersen<Bn254G1>>>::extract_vc_setup(
+            &prover_setup,
+            capacity,
+        );
 
         assert_eq!(
             <Pedersen<Bn254G1> as JoltCommitment>::capacity(&vc_setup),
@@ -582,13 +587,11 @@ mod tests {
         let blinding = <Fr as Field>::from_u64(42);
         let commitment =
             <Pedersen<Bn254G1> as JoltCommitment>::commit(&vc_setup, &values, &blinding);
-        assert!(
-            <Pedersen<Bn254G1> as JoltCommitment>::verify(
-                &vc_setup,
-                &commitment,
-                &values,
-                &blinding,
-            ),
-        );
+        assert!(<Pedersen<Bn254G1> as JoltCommitment>::verify(
+            &vc_setup,
+            &commitment,
+            &values,
+            &blinding,
+        ),);
     }
 }

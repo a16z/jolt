@@ -5,11 +5,9 @@
 //! structures. The outer sumcheck uses univariate skip; the remaining
 //! sumchecks are standard.
 
-use jolt_ir::{
-    ChallengeBinding, ChallengeSource, ClaimDefinition, ExprBuilder, OpeningBinding,
-};
-
-use crate::tags::{poly, sumcheck};
+use crate::builder::ExprBuilder;
+use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
+use crate::zkvm::tags::{poly, sumcheck};
 
 /// Shift sumcheck output claim.
 ///
@@ -32,12 +30,12 @@ pub fn shift() -> ClaimDefinition {
     let is_first_in_seq = b.opening(3);
     let noop_shifted = b.opening(4);
 
-    let c0 = b.challenge(0); // eq_plus_one * γ^0
-    let c1 = b.challenge(1); // eq_plus_one * γ^1
-    let c2 = b.challenge(2); // eq_plus_one * γ^2
-    let c3 = b.challenge(3); // eq_plus_one * γ^3
-    let c4 = b.challenge(4); // eq_plus_one * (-γ^4)  (from 1 - noop)
-    let c5 = b.challenge(5); // eq_plus_one * γ^4      (constant term)
+    let c0 = b.challenge(0);
+    let c1 = b.challenge(1);
+    let c2 = b.challenge(2);
+    let c3 = b.challenge(3);
+    let c4 = b.challenge(4);
+    let c5 = b.challenge(5);
 
     let expr = b.build(
         c0 * unexpanded_pc

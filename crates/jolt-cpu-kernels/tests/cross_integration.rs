@@ -3,15 +3,75 @@
 //! Compiles kernel descriptors from IR, then executes them through the
 //! CpuBackend pairwise_reduce pipeline and verifies correctness.
 
-use jolt_compute::{ComputeBackend, CpuBackend};
+use jolt_compute::{ComputeBackend, CpuBackend, CpuKernel};
 use jolt_cpu_kernels::{compile, compile_with_challenges};
 use jolt_field::{Field, Fr};
 use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
+use num_traits::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 fn backend() -> CpuBackend {
     CpuBackend
+}
+
+fn eval_kernel(kernel: &CpuKernel<Fr>, lo: &[Fr], hi: &[Fr], n: usize) -> Vec<Fr> {
+    let mut out = vec![Fr::zero(); n];
+    kernel.evaluate(lo, hi, &mut out);
+    out
+}
+
+/// Reference: compute Toom-Cook evaluations for a sum-of-products composition
+/// by evaluating directly at each grid point {1, 2, ..., D-1, ∞}.
+fn reference_toom_cook_reduce(
+    inputs: &[&Vec<Fr>],
+    weights: &[Fr],
+    d: usize,
+    num_products: usize,
+) -> Vec<Fr> {
+    let n = inputs[0].len();
+    let half = n / 2;
+    let total_inputs = d * num_products;
+    debug_assert_eq!(inputs.len(), total_inputs);
+
+    let mut result = vec![Fr::from_u64(0); d];
+
+    for (pair_idx, &w) in weights.iter().enumerate().take(half) {
+        // Finite grid points 1, 2, ..., D-1
+        for (t_idx, res) in result[..(d - 1)].iter_mut().enumerate() {
+            let t_f = Fr::from_u64((t_idx + 1) as u64);
+
+            let mut sum = Fr::from_u64(0);
+            for g in 0..num_products {
+                let mut prod = Fr::one();
+                for j in 0..d {
+                    let k = g * d + j;
+                    let lo = inputs[k][2 * pair_idx];
+                    let hi = inputs[k][2 * pair_idx + 1];
+                    let delta = hi - lo;
+                    prod *= lo + t_f * delta;
+                }
+                sum += prod;
+            }
+            *res += w * sum;
+        }
+
+        // t = ∞: product of slopes
+        let mut sum_inf = Fr::from_u64(0);
+        for g in 0..num_products {
+            let mut prod = Fr::one();
+            for j in 0..d {
+                let k = g * d + j;
+                let lo = inputs[k][2 * pair_idx];
+                let hi = inputs[k][2 * pair_idx + 1];
+                prod *= hi - lo;
+            }
+            sum_inf += prod;
+        }
+        result[d - 1] += w * sum_inf;
+    }
+
+    result
 }
 
 // ProductSum through pairwise_reduce
@@ -42,33 +102,12 @@ fn product_sum_d4_via_pairwise_reduce() {
 
     let weights = b.upload(&vec![Fr::from_u64(1); num_pairs]);
     let buf_refs: Vec<&Vec<Fr>> = bufs.iter().collect();
-    let result = b.pairwise_reduce(&buf_refs, &weights, &kernel, 4);
+    let result = b.pairwise_reduce(&buf_refs, &weights, &kernel, desc.num_evals());
 
-    assert_eq!(result.len(), 5); // degree + 1
+    assert_eq!(result.len(), 4); // D outputs (Toom-Cook)
 
-    // Verify t=0: sum over pairs of product of lo values
-    let mut t0 = Fr::from_u64(0);
-    for pair_idx in 0..num_pairs {
-        let mut prod = Fr::from_u64(1);
-        for k in 0..4 {
-            let lo = Fr::from_u64((k * 100 + pair_idx * 2 + 1) as u64);
-            prod *= lo;
-        }
-        t0 += prod;
-    }
-    assert_eq!(result[0], t0, "t=0 mismatch");
-
-    // Verify t=1: sum over pairs of product of hi values
-    let mut t1 = Fr::from_u64(0);
-    for pair_idx in 0..num_pairs {
-        let mut prod = Fr::from_u64(1);
-        for k in 0..4 {
-            let hi = Fr::from_u64((k * 100 + pair_idx * 2 + 2) as u64);
-            prod *= hi;
-        }
-        t1 += prod;
-    }
-    assert_eq!(result[1], t1, "t=1 mismatch");
+    let expected = reference_toom_cook_reduce(&buf_refs, &vec![Fr::from_u64(1); num_pairs], 4, 1);
+    assert_eq!(result, expected);
 }
 
 /// D=8 ProductSum with multiple product groups.
@@ -98,24 +137,14 @@ fn product_sum_d8_multiple_groups() {
         .map(|data| b.upload(&data))
         .collect();
 
-    let weights = b.upload(&vec![Fr::from_u64(1); num_pairs]);
+    let weights_data = vec![Fr::from_u64(1); num_pairs];
+    let weights = b.upload(&weights_data);
     let buf_refs: Vec<&Vec<Fr>> = bufs.iter().collect();
-    let result = b.pairwise_reduce(&buf_refs, &weights, &kernel, d);
-    assert_eq!(result.len(), d + 1);
+    let result = b.pairwise_reduce(&buf_refs, &weights, &kernel, desc.num_evals());
+    assert_eq!(result.len(), d);
 
-    let mut t0 = Fr::from_u64(0);
-    for pair_idx in 0..num_pairs {
-        for group in 0..num_products {
-            let mut prod = Fr::from_u64(1);
-            for j in 0..d {
-                let k = group * d + j;
-                let lo = Fr::from_u64((k * 10 + pair_idx * 2 + 1) as u64);
-                prod *= lo;
-            }
-            t0 += prod;
-        }
-    }
-    assert_eq!(result[0], t0, "t=0 mismatch for D=8 P=2");
+    let expected = reference_toom_cook_reduce(&buf_refs, &weights_data, d, num_products);
+    assert_eq!(result, expected, "D=8 P=2 Toom-Cook mismatch");
 }
 
 // Custom kernel through pairwise_reduce
@@ -152,9 +181,11 @@ fn custom_product_via_pairwise_reduce() {
     );
     let weights = b.upload(&vec![Fr::from_u64(1); num_pairs]);
 
-    let result = b.pairwise_reduce(&[&buf_a, &buf_b], &weights, &kernel, 2);
+    // Custom degree-2: num_evals = degree + 1 = 3
+    let result = b.pairwise_reduce(&[&buf_a, &buf_b], &weights, &kernel, desc.num_evals());
     assert_eq!(result.len(), 3);
 
+    // t=0: sum over pairs of (lo_a * lo_b)
     let mut t0 = Fr::from_u64(0);
     for i in 0..num_pairs {
         let lo_a = Fr::from_u64((i * 2 + 1) as u64);
@@ -199,21 +230,30 @@ fn custom_with_challenge_via_pairwise_reduce() {
     let buf = b.upload(&data);
     let weights = b.upload(&[Fr::from_u64(1); 3]);
 
-    let result = b.pairwise_reduce(&[&buf], &weights, &kernel, 2);
+    // Custom degree-2: num_evals = degree + 1 = 3
+    let result = b.pairwise_reduce(&[&buf], &weights, &kernel, desc.num_evals());
     assert_eq!(result.len(), 3);
 
     // t=0: gamma * (lo^2 - lo) for each pair, with lo in {0, 1, 0}
-    assert_eq!(result[0], Fr::from_u64(0), "boolean inputs should give 0 at t=0");
+    assert_eq!(
+        result[0],
+        Fr::from_u64(0),
+        "boolean inputs should give 0 at t=0"
+    );
     // t=1: gamma * (hi^2 - hi) for each pair, with hi in {1, 0, 0}
-    assert_eq!(result[1], Fr::from_u64(0), "boolean inputs should give 0 at t=1");
+    assert_eq!(
+        result[1],
+        Fr::from_u64(0),
+        "boolean inputs should give 0 at t=1"
+    );
 }
 
 // Kernel evaluation matches manual polynomial evaluation
 
-/// For a degree-D ProductSum kernel, evaluating the round polynomial at a
-/// random point should match summing the product over interpolated values.
+/// For a ProductSum kernel, verify the Toom-Cook evaluations match the
+/// reference computation at each grid point.
 #[test]
-fn kernel_interpolation_consistency() {
+fn kernel_toom_cook_consistency() {
     let mut rng = ChaCha20Rng::seed_from_u64(9000);
     let d = 4;
     let num_products = 2;
@@ -232,14 +272,16 @@ fn kernel_interpolation_consistency() {
     let lo: Vec<Fr> = (0..total_inputs).map(|_| Fr::random(&mut rng)).collect();
     let hi: Vec<Fr> = (0..total_inputs).map(|_| Fr::random(&mut rng)).collect();
 
-    let evals = kernel.evaluate(&lo, &hi, d);
-    assert_eq!(evals.len(), d + 1);
+    let evals = eval_kernel(&kernel, &lo, &hi, desc.num_evals());
+    assert_eq!(evals.len(), d);
 
-    for (t, eval) in evals.iter().enumerate() {
+    // Verify against Toom-Cook grid: {1, 2, ..., D-1, ∞}
+    for (t_idx, eval) in evals[..(d - 1)].iter().enumerate() {
+        let t = t_idx + 1;
         let t_f = Fr::from_u64(t as u64);
         let mut expected = Fr::from_u64(0);
         for g in 0..num_products {
-            let mut prod = Fr::from_u64(1);
+            let mut prod = Fr::one();
             for j in 0..d {
                 let k = g * d + j;
                 let val = lo[k] + t_f * (hi[k] - lo[k]);
@@ -249,4 +291,16 @@ fn kernel_interpolation_consistency() {
         }
         assert_eq!(*eval, expected, "grid point t={t} mismatch");
     }
+
+    // Verify P(∞): product of slopes
+    let mut expected_inf = Fr::from_u64(0);
+    for g in 0..num_products {
+        let mut prod = Fr::one();
+        for j in 0..d {
+            let k = g * d + j;
+            prod *= hi[k] - lo[k];
+        }
+        expected_inf += prod;
+    }
+    assert_eq!(evals[d - 1], expected_inf, "P(∞) mismatch");
 }

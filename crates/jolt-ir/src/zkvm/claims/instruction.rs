@@ -3,11 +3,9 @@
 //! Instruction lookups use RA (read-address) decomposition where a virtual
 //! RA polynomial is decomposed into a product of committed RA chunks.
 
-use jolt_ir::{
-    ChallengeBinding, ChallengeSource, ClaimDefinition, ExprBuilder, OpeningBinding,
-};
-
-use crate::tags::{poly, sumcheck};
+use crate::builder::ExprBuilder;
+use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
+use crate::zkvm::tags::{poly, sumcheck};
 
 /// Instruction RA virtual sumcheck output claim.
 ///
@@ -20,14 +18,10 @@ use crate::tags::{poly, sumcheck};
 ///
 /// `n_virtual` is the number of virtual RA polynomials and `n_committed_per_virtual`
 /// is the number of committed chunks per virtual polynomial.
-pub fn instruction_ra_virtual(
-    n_virtual: usize,
-    n_committed_per_virtual: usize,
-) -> ClaimDefinition {
+pub fn instruction_ra_virtual(n_virtual: usize, n_committed_per_virtual: usize) -> ClaimDefinition {
     let b = ExprBuilder::new();
     let m = n_committed_per_virtual;
 
-    // Build: Σ_i challenge[i] * Π_{j=0}^{m-1} opening[i*m + j]
     let mut terms = b.zero();
     for i in 0..n_virtual {
         let c_i = b.challenge(i as u32);

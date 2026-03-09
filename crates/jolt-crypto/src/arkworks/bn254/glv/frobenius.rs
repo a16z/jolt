@@ -12,7 +12,6 @@ pub fn frobenius_psi_power_projective(p: &G2Projective, k: usize) -> G2Projectiv
     let mut res = *p;
     let coeffs = get_frobenius_coefficients();
 
-    // Odd power: apply conjugation in Fq2
     if (k & 1) == 1 {
         let _ = res.x.conjugate_in_place();
         let _ = res.y.conjugate_in_place();

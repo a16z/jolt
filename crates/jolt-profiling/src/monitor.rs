@@ -45,11 +45,9 @@ impl MetricsMonitor {
                 while !stop_flag_clone.load(Ordering::Relaxed) {
                     system.refresh_all();
 
-                    let memory_gb =
-                        memory_stats().unwrap().physical_mem as f64 / 1_073_741_824.0;
+                    let memory_gb = memory_stats().unwrap().physical_mem as f64 / 1_073_741_824.0;
                     let cpu_percent = system.global_cpu_usage();
-                    let cores_active_avg =
-                        cpu_percent / 100.0 * (system.cpus().len() as f32);
+                    let cores_active_avg = cpu_percent / 100.0 * (system.cpus().len() as f32);
                     let active_cores = system
                         .cpus()
                         .iter()

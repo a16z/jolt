@@ -459,8 +459,7 @@ fn proof_serialization_roundtrip() {
     let claimed_sum = Fr::from_u64(70);
 
     let mut sc_transcript = Blake2bTranscript::new(b"integ-serde");
-    let (config, challenges, round_polys) =
-        run_ip_stage(a, b, claimed_sum, &mut sc_transcript);
+    let (config, challenges, round_polys) = run_ip_stage(a, b, claimed_sum, &mut sc_transcript);
 
     let acc = build_single_accumulator(&challenges, &round_polys, 2);
     let proof = prove_and_verify(acc, &[config.clone()], &challenges, 42)
@@ -503,8 +502,7 @@ fn tampered_witness_commitment_rejected() {
     let claimed_sum = Fr::from_u64(70);
 
     let mut sc_transcript = Blake2bTranscript::new(b"integ-tamper-wcom");
-    let (config, challenges, round_polys) =
-        run_ip_stage(a, b, claimed_sum, &mut sc_transcript);
+    let (config, challenges, round_polys) = run_ip_stage(a, b, claimed_sum, &mut sc_transcript);
 
     let acc = build_single_accumulator(&challenges, &round_polys, 2);
 
@@ -556,8 +554,7 @@ fn tampered_error_commitment_rejected() {
     let claimed_sum = Fr::from_u64(70);
 
     let mut sc_transcript = Blake2bTranscript::new(b"integ-tamper-ecom");
-    let (config, challenges, round_polys) =
-        run_ip_stage(a, b, claimed_sum, &mut sc_transcript);
+    let (config, challenges, round_polys) = run_ip_stage(a, b, claimed_sum, &mut sc_transcript);
 
     let acc = build_single_accumulator(&challenges, &round_polys, 2);
 
@@ -609,8 +606,7 @@ fn wrong_baked_challenges_rejected() {
     let claimed_sum = Fr::from_u64(70);
 
     let mut sc_transcript = Blake2bTranscript::new(b"integ-wrong-baked");
-    let (config, challenges, round_polys) =
-        run_ip_stage(a, b, claimed_sum, &mut sc_transcript);
+    let (config, challenges, round_polys) = run_ip_stage(a, b, claimed_sum, &mut sc_transcript);
 
     let acc = build_single_accumulator(&challenges, &round_polys, 2);
 
@@ -665,12 +661,8 @@ fn deterministic_across_rng_seeds() {
 
     for seed in [0u64, 1, 42, 999, u64::MAX] {
         let mut sc_transcript = Blake2bTranscript::new(b"integ-rng");
-        let (config, challenges, round_polys) = run_ip_stage(
-            a.clone(),
-            b.clone(),
-            claimed_sum,
-            &mut sc_transcript,
-        );
+        let (config, challenges, round_polys) =
+            run_ip_stage(a.clone(), b.clone(), claimed_sum, &mut sc_transcript);
         let acc = build_single_accumulator(&challenges, &round_polys, 2);
         assert_prove_and_verify(
             acc,
@@ -684,8 +676,8 @@ fn deterministic_across_rng_seeds() {
 
 #[test]
 fn relaxed_spartan_various_r1cs_shapes() {
-    use jolt_blindfold::{check_relaxed_satisfaction, sample_random_witness};
     use jolt_blindfold::folding::{compute_cross_term, fold_scalar, fold_witnesses};
+    use jolt_blindfold::{check_relaxed_satisfaction, sample_random_witness};
 
     // Shape 1: x * x = y (1 constraint, 3 variables)
     let r1cs_1 = SimpleR1CS::new(
@@ -837,5 +829,11 @@ fn mixed_degree_multi_stage() {
     let mut all_challenges = ch0;
     all_challenges.extend_from_slice(&ch1);
 
-    assert_prove_and_verify(acc, &stage_configs, &all_challenges, 88, "mixed-degree pipeline");
+    assert_prove_and_verify(
+        acc,
+        &stage_configs,
+        &all_challenges,
+        88,
+        "mixed-degree pipeline",
+    );
 }

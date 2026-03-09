@@ -26,13 +26,11 @@ impl MemoizedCodeGen {
         }
     }
 
-    /// Set CSE variable prefix for namespacing within a constraint.
     pub fn with_cse_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.cse_prefix = prefix.into();
         self
     }
 
-    /// Returns the reference counts collected by `count_refs`.
     pub fn ref_counts(&self) -> &HashMap<u32, usize> {
         &self.ref_counts
     }

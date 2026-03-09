@@ -13,6 +13,7 @@ jolt-field = { path = "../jolt-field", default-features = false }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
+num-traits = { workspace = true }
 rand = { workspace = true }
 rand_core = { workspace = true }
 rand_chacha = { workspace = true }

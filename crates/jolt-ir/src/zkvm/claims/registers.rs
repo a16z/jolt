@@ -3,11 +3,9 @@
 //! Registers use a similar read-write checking pattern to RAM, but with
 //! three register files (rd, rs1, rs2) batched via γ-powers.
 
-use jolt_ir::{
-    ChallengeBinding, ChallengeSource, ClaimDefinition, ExprBuilder, OpeningBinding,
-};
-
-use crate::tags::{poly, sumcheck};
+use crate::builder::ExprBuilder;
+use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
+use crate::zkvm::tags::{poly, sumcheck};
 
 /// Register read-write checking output claim.
 ///
@@ -32,7 +30,9 @@ pub fn registers_read_write_checking() -> ClaimDefinition {
     let gamma_sq = b.challenge(2);
 
     let expr = b.build(
-        eq * rd_wa * inc + eq * rd_wa * val + eq * gamma * rs1_ra * val
+        eq * rd_wa * inc
+            + eq * rd_wa * val
+            + eq * gamma * rs1_ra * val
             + eq * gamma_sq * rs2_ra * val,
     );
 
@@ -120,7 +120,6 @@ pub fn registers_val_evaluation() -> ClaimDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[allow(unused_imports)]
     use jolt_field::{Field, Fr};
 
     #[test]
@@ -135,8 +134,9 @@ mod tests {
         let gamma = Fr::from_u64(13);
         let gamma_sq = gamma * gamma;
 
-        // eq*rd_wa*inc + eq*rd_wa*val + eq*γ*rs1_ra*val + eq*γ²*rs2_ra*val
-        let expected = eq * rd_wa * inc + eq * rd_wa * val + eq * gamma * rs1_ra * val
+        let expected = eq * rd_wa * inc
+            + eq * rd_wa * val
+            + eq * gamma * rs1_ra * val
             + eq * gamma_sq * rs2_ra * val;
 
         let result =

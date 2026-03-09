@@ -1,56 +1,59 @@
-//! Jolt proof and verification key types.
+//! Jolt proof and associated types.
 //!
-//! [`JoltProof`] is the complete proof object sent from prover to verifier.
-//! [`JoltVerifyingKey`] contains PCS setup + preprocessing data needed
-//! for verification.
+//! [`JoltProof`] is the complete proof artifact sent from prover to verifier.
+//! It carries the Spartan R1CS proof, per-stage sumcheck proofs with claimed
+//! polynomial evaluations, and batch PCS opening proofs.
 
+use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
+use jolt_spartan::SpartanProof;
 use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
 
-use crate::config::ProverConfig;
-
-/// Number of sumcheck stages in the Jolt proving pipeline.
-pub const NUM_SUMCHECK_STAGES: usize = 7;
-
-/// Complete Jolt proof — sent from prover to verifier.
+/// Per-stage sumcheck proof with claimed polynomial evaluations.
 ///
-/// Generic over the polynomial commitment scheme. The proof contains:
-/// - Commitments to all committed polynomials
-/// - One sumcheck proof per stage (7 stages)
-/// - Opening proofs for all reduced claims
-/// - Configuration used during proving
+/// After the batched sumcheck completes for one stage, the prover reveals the
+/// individual polynomial evaluations at the sumcheck challenge point. The
+/// verifier checks that these evaluations are consistent with the sumcheck
+/// final evaluation (via the stage's claim formula) and records them as
+/// opening claims for the batch opening phase.
 #[derive(Clone, Serialize, Deserialize)]
-pub struct JoltProof<PCS: CommitmentScheme> {
-    /// Commitments to all committed polynomials (Inc, RA, etc.).
+#[serde(bound = "")]
+pub struct SumcheckStageProof<F: Field> {
+    /// Batched sumcheck proof for this stage.
+    pub sumcheck_proof: SumcheckProof<F>,
+    /// Claimed evaluations of the stage's polynomials at the sumcheck
+    /// challenge point. Ordering is stage-defined and must be consistent
+    /// between prover and verifier.
+    pub evaluations: Vec<F>,
+}
+
+/// Batch PCS opening proofs.
+///
+/// After all sumcheck stages complete, the prover RLC-reduces opening claims
+/// by evaluation point and produces one PCS opening proof per distinct
+/// reduced claim.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct BatchOpeningProofs<PCS: CommitmentScheme> {
+    pub proofs: Vec<PCS::Proof>,
+}
+
+/// Complete Jolt proof for one program execution.
+///
+/// Produced by stages S1 (Spartan) through S8 (batch openings). The verifier
+/// replays the Fiat-Shamir transcript and checks each component in sequence.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct JoltProof<F: Field, PCS: CommitmentScheme<Field = F>> {
+    /// Spartan R1CS proof (outer + inner sumcheck + witness opening).
+    pub spartan_proof: SpartanProof<F, PCS>,
+    /// Per-stage sumcheck proofs (S2–S7) with claimed evaluations.
+    pub stage_proofs: Vec<SumcheckStageProof<F>>,
+    /// Batch PCS opening proofs from the opening reduction phase.
+    pub opening_proofs: BatchOpeningProofs<PCS>,
+    /// Commitments to all committed polynomials.
     pub commitments: Vec<PCS::Output>,
-    /// One sumcheck proof per stage.
-    pub stage_proofs: Vec<SumcheckProof<PCS::Field>>,
-    /// Opening proofs for reduced polynomial claims.
-    pub opening_proofs: Vec<PCS::Proof>,
-    /// Prover configuration (memory layout, chunk sizes).
-    pub config: ProverConfig,
     /// Number of execution cycles in the trace.
     pub trace_length: usize,
-}
-
-/// Verification key for a Jolt proof.
-///
-/// Contains everything the verifier needs besides the proof itself.
-/// Typically generated once during preprocessing and reused across
-/// multiple proof verifications.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct JoltVerifyingKey<PCS: CommitmentScheme> {
-    /// PCS verifier setup (SRS or structured reference string).
-    pub pcs_setup: PCS::VerifierSetup,
-}
-
-/// Public inputs to a Jolt proof.
-///
-/// The verifier uses these to check that the proof corresponds to the
-/// claimed program execution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JoltPublicInput {
-    /// Program I/O bytes (stdin/stdout).
-    pub program_io: Vec<u8>,
 }

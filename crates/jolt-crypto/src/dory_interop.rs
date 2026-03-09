@@ -16,8 +16,6 @@ use jolt_field::Fr;
 use crate::arkworks::bn254::{Bn254, Bn254G1, Bn254G2, Bn254GT};
 use crate::{JoltGroup, PairingGroup};
 
-// Serialization bridge helpers
-
 #[inline(always)]
 fn to_ark_compress(c: Compress) -> ark_serialize::Compress {
     match c {
@@ -46,8 +44,6 @@ fn ark_err_to_dory(e: ark_serialize::SerializationError) -> SerializationError {
         }
     }
 }
-
-// Macro for serialization trait impls (G1, G2, GT all follow the same pattern)
 
 macro_rules! impl_dory_serialization {
     ($ty:ty, $inner:ty) => {
@@ -94,8 +90,6 @@ macro_rules! impl_dory_serialization {
 impl_dory_serialization!(Bn254G1, ark_bn254::G1Projective);
 impl_dory_serialization!(Bn254G2, ark_bn254::G2Projective);
 impl_dory_serialization!(Bn254GT, ark_bn254::Fq12);
-
-// Fr * Group operator impls (required by dory::Group::Scalar bound)
 
 impl std::ops::Mul<Bn254G1> for Fr {
     type Output = Bn254G1;
@@ -144,8 +138,6 @@ impl<'a> std::ops::Mul<&'a Bn254GT> for Fr {
         rhs.scalar_mul(&self)
     }
 }
-
-// dory::Group impls
 
 impl arithmetic::Group for Bn254G1 {
     type Scalar = Fr;
@@ -238,8 +230,6 @@ impl arithmetic::Group for Bn254GT {
     }
 }
 
-// dory::PairingCurve
-
 impl arithmetic::PairingCurve for Bn254 {
     type G1 = Bn254G1;
     type G2 = Bn254G2;
@@ -265,8 +255,6 @@ impl arithmetic::PairingCurve for Bn254 {
         <Bn254 as PairingGroup>::multi_pairing(ps, qs)
     }
 }
-
-// DoryRoutines
 
 /// GLV-optimized MSM and vector operations for G1 elements.
 pub struct OptimizedG1Routines;

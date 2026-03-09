@@ -268,17 +268,14 @@ where
         }
     }
 
-    /// Returns a reference to the shared state.
     pub fn shared(&self) -> &Shared {
         &self.shared
     }
 
-    /// Returns a mutable reference to the shared state.
     pub fn shared_mut(&mut self) -> &mut Shared {
         &mut self.shared
     }
 
-    /// Returns the schedule.
     pub fn schedule(&self) -> &S {
         &self.schedule
     }
@@ -301,7 +298,6 @@ where
     }
 
     fn bind(&mut self, challenge: F) {
-        // Binding is handled internally via ingest_challenge
         if let Some(streaming) = &mut self.streaming {
             streaming.ingest_challenge(&mut self.shared, challenge, 0);
         } else if let Some(linear) = &mut self.linear {
@@ -326,14 +322,12 @@ where
 
         match round.cmp(&switch_over) {
             Ordering::Less => {
-                // STREAMING MODE
                 if self.schedule.is_window_start(round) {
                     self.streaming =
                         Some(Streaming::initialize(&mut self.shared, num_unbound_vars));
                 }
             }
             Ordering::Equal => {
-                // SWITCHING TO LINEAR MODE
                 assert!(
                     self.schedule.is_window_start(round),
                     "switch-over is not a window start"
@@ -345,7 +339,6 @@ where
                 ));
             }
             Ordering::Greater => {
-                // LINEAR MODE
                 if self.schedule.is_window_start(round) {
                     self.linear
                         .as_mut()

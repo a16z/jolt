@@ -46,15 +46,12 @@ impl UniformSpartanVerifier {
         let num_row_vars = total_rows_padded.trailing_zeros() as usize;
         let num_col_vars = total_cols_padded.trailing_zeros() as usize;
 
-        // Absorb commitment
         transcript.append_bytes(format!("{:?}", proof.witness_commitment).as_bytes());
 
-        // Sample tau
         let tau: Vec<PCS::Field> = (0..num_row_vars)
             .map(|_| PCS::Field::from_u128(transcript.challenge()))
             .collect();
 
-        // Verify outer sumcheck
         let outer_claim = SumcheckClaim {
             num_vars: num_row_vars,
             degree: 3,
@@ -68,14 +65,12 @@ impl UniformSpartanVerifier {
             |c: u128| PCS::Field::from_u128(c),
         )?;
 
-        // Check outer evaluation
         let eq_eval = EqPolynomial::new(tau).evaluate(&r_x);
         let expected = eq_eval * (proof.az_eval * proof.bz_eval - proof.cz_eval);
         if expected != outer_final_eval {
             return Err(SpartanError::OuterEvaluationMismatch);
         }
 
-        // Absorb evaluation claims
         transcript.append(&proof.az_eval);
         transcript.append(&proof.bz_eval);
         transcript.append(&proof.cz_eval);
@@ -84,7 +79,6 @@ impl UniformSpartanVerifier {
         let rho_b = PCS::Field::from_u128(transcript.challenge());
         let rho_c = PCS::Field::from_u128(transcript.challenge());
 
-        // Verify inner sumcheck
         let inner_claim = SumcheckClaim {
             num_vars: num_col_vars,
             degree: 2,
@@ -98,7 +92,6 @@ impl UniformSpartanVerifier {
             |c: u128| PCS::Field::from_u128(c),
         )?;
 
-        // Evaluate matrix MLEs using the sparse key
         let (a_eval, b_eval, c_eval) = key.evaluate_matrix_mles(&r_x, &r_y);
         let combined_matrix_eval = rho_a * a_eval + rho_b * b_eval + rho_c * c_eval;
 
@@ -106,7 +99,6 @@ impl UniformSpartanVerifier {
             return Err(SpartanError::InnerEvaluationMismatch);
         }
 
-        // Verify witness opening proof
         PCS::verify(
             &proof.witness_commitment,
             &r_y,

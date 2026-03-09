@@ -6,7 +6,7 @@ Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 ## Overview
 
-This crate defines the `ComputeBackend` trait — a protocol-agnostic interface over typed buffer management and parallel primitives (pairwise interpolation, composition-reduce, product tables). All methods are named for what they compute, not what protocol uses them.
+This crate defines the `ComputeBackend` trait — a protocol-agnostic interface over typed buffer management and parallel primitives (pairwise interpolation, composition-reduce, product tables).
 
 The `CpuBackend` implementation uses `Vec<T>` buffers with Rayon parallelism. After monomorphization every trait method compiles to a direct function call — identical codegen to hand-written Rayon code.
 
@@ -22,8 +22,6 @@ GPU backends (Metal, CUDA, WebGPU) live in separate crates and implement the sam
   - `Buffer<T: Scalar>` — typed device buffer handle
   - `CompiledKernel` — opaque compiled kernel for `pairwise_reduce`
   - Methods: `upload`, `download`, `alloc`, `len`, `is_empty`, `interpolate_pairs`, `interpolate_pairs_batch`, `pairwise_reduce`, `product_table`
-
-- **`AnyBuffer`** — Type-erased buffer view for heterogeneous polynomial inputs. Provides field-element pair access without virtual dispatch.
 
 ### Backends
 
@@ -58,14 +56,6 @@ BN254 Fr on Apple Silicon (M-series). Run with `cargo bench -p jolt-compute`.
 | 32 × 2^16 | 138 Melem/s |
 | 128 × 2^14 | 137 Melem/s |
 
-### `interpolate_mixed` — pairwise interpolation from `AnyBuffer`
-
-| Size | u8→Fr | Fr→Fr |
-|------|-------|-------|
-| 2^16 | 83 Melem/s | 71 Melem/s |
-| 2^18 | 96 Melem/s | 115 Melem/s |
-| 2^20 | 120 Melem/s | 106 Melem/s |
-
 ### `pairwise_reduce` — weighted kernel evaluation over pairs
 
 | D (inputs) | 2^16 pairs | 2^18 pairs | 2^20 pairs |
@@ -73,14 +63,6 @@ BN254 Fr on Apple Silicon (M-series). Run with `cargo bench -p jolt-compute`.
 | 4 | 9.6 Mpair/s | 8.7 Mpair/s | 8.5 Mpair/s |
 | 8 | 4.9 Mpair/s | 4.2 Mpair/s | 4.2 Mpair/s |
 | 16 | 2.5 Mpair/s | 2.1 Mpair/s | 2.1 Mpair/s |
-
-### `pairwise_reduce_mixed` — composition-reduce from `AnyBuffer` inputs (D=4)
-
-| Size | mixed (2×u8 + 2×Fr) | promoted (all Fr) |
-|------|----------------------|-------------------|
-| 2^16 | 2.1 Mpair/s | 3.7 Mpair/s |
-| 2^18 | 5.9 Mpair/s | 5.5 Mpair/s |
-| 2^20 | 6.0 Mpair/s | 6.1 Mpair/s |
 
 ### `product_table` — eq-polynomial evaluation table
 

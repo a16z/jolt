@@ -12,25 +12,24 @@ This crate provides multilinear and univariate polynomial representations used t
 
 ### Core Traits
 
-- **`MultilinearEvaluation<F>`** — Point evaluation interface for multilinear polynomials. Provides `num_vars()`, `len()`, and `evaluate(point)` without coupling to data layout. Implemented by `Polynomial<F>`, `EqPolynomial<F>`, and `IdentityPolynomial`.
-
-- **`MultilinearBinding<F>`** — In-place variable binding for sumcheck. Provides `bind(scalar)` which fixes the first variable, halving the evaluation table. Implemented by `Polynomial<F>`.
-
-- **`UnivariatePolynomial<F>`** — Shared interface for univariate polynomial types (`UnivariatePoly`, `CompressedPoly`). Provides `degree()`. Evaluation and coefficient access are inherent methods because the compressed form requires an external hint.
+- **`MultilinearEvaluation<F>`** -- Point evaluation interface for multilinear polynomials. Methods: `num_vars()`, `len()`, `evaluate(point)`.
+- **`MultilinearBinding<F>`** -- In-place variable binding for sumcheck. Method: `bind(scalar)`.
+- **`UnivariatePolynomial<F>`** -- Shared interface for univariate types. Method: `degree()`.
 
 ### Polynomial Types
 
-- **`Polynomial<F: Field>`** — Full evaluation table stored as `Vec<F>`. Supports in-place variable binding (`bind`), evaluation, random generation, arithmetic operators, and serde. This is the workhorse type for sumcheck.
+- **`Polynomial<F: Field>`** -- Full evaluation table stored as `Vec<F>`. Supports in-place variable binding, evaluation, arithmetic operators.
+- **`Polynomial<T>` (compact mode)** -- When `T` is a small primitive (`bool`, `u8`, etc.), stores evaluations natively and promotes to field on demand. Up to 32x memory reduction.
+- **`UnivariatePoly<F>`** -- Coefficient-form univariate polynomial with Lagrange interpolation and compression.
+- **`CompressedPoly<F>`** -- Compressed univariate with linear term omitted (saves one field element per sumcheck round).
+- **`EqPolynomial<F>`** -- Equality polynomial `eq(x, r)`. Materializes all `2^n` evaluations via bottom-up doubling.
+- **`IdentityPolynomial`** -- Maps hypercube points to their integer index.
 
-- **`Polynomial<T>` (compact mode)** — When `T` is a small primitive (`bool`, `u8`, `u16`, `u32`, `u64`, `i64`, `i128`, `u128`), stores evaluations in their native representation and promotes to field elements on demand via `bind_to_field`. Reduces memory by up to 32x compared to `Polynomial<F>`.
+### Binding and Evaluation
 
-- **`UnivariatePoly<F>`** — Coefficient-form univariate polynomial. Supports evaluation, Lagrange interpolation, degree queries, and compression via `compress()`. Used for sumcheck round polynomials. Implements `UnivariatePolynomial`.
-
-- **`CompressedPoly<F>`** — Compressed univariate polynomial with the linear term omitted. Stores `[c0, c2, c3, ...]` to save one field element per sumcheck round in proof serialization. Supports `evaluate_with_hint(hint, point)` and `decompress(hint)` to recover the full polynomial. Implements `UnivariatePolynomial`.
-
-- **`EqPolynomial<F>`** — The equality polynomial `eq(x, r) = prod_i (r_i * x_i + (1 - r_i)(1 - x_i))`. Materializes all `2^n` evaluations via a bottom-up doubling construction. Fundamental to sumcheck evaluation.
-
-- **`IdentityPolynomial`** — Evaluates to the integer index on the Boolean hypercube: `I(b) = sum_i b_i * 2^(n-1-i)`. Used for indexed lookups.
+- **`BindingOrder`** -- Controls the order in which variables are bound during sumcheck (MSB-first vs LSB-first).
+- **`EvaluationSource`** -- Abstraction over polynomial evaluation data sources.
+- **`RlcSource`** -- Source for random linear combination evaluation.
 
 ## Feature Flags
 

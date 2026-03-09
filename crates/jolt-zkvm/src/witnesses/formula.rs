@@ -106,7 +106,6 @@ impl<F: Field> SumcheckCompute<F> for FormulaCompute<F> {
 
         let mut evals = vec![F::zero(); num_points];
 
-        // Pre-allocate space for per-point polynomial interpolations
         let mut poly_at_t = vec![F::zero(); num_polys];
 
         for j in 0..half {
@@ -145,8 +144,8 @@ impl<F: Field> SumcheckCompute<F> for FormulaCompute<F> {
         let half = self.current_size() / 2;
 
         for j in 0..half {
-            self.eq_table[j] =
-                self.eq_table[2 * j] + challenge * (self.eq_table[2 * j + 1] - self.eq_table[2 * j]);
+            self.eq_table[j] = self.eq_table[2 * j]
+                + challenge * (self.eq_table[2 * j + 1] - self.eq_table[2 * j]);
         }
         self.eq_table.truncate(half);
 
@@ -173,11 +172,7 @@ mod tests {
     use rand_core::SeedableRng;
 
     /// Brute-force evaluation of eq · Σ_term coeff · Π factors.
-    fn brute_force<F: Field>(
-        eq: &[F],
-        polys: &[Vec<F>],
-        terms: &[Term<F>],
-    ) -> F {
+    fn brute_force<F: Field>(eq: &[F], polys: &[Vec<F>], terms: &[Term<F>]) -> F {
         let n = eq.len();
         (0..n)
             .map(|x| {

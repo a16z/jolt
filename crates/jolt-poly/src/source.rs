@@ -55,7 +55,7 @@ pub trait EvaluationSource<F: Field>: Send + Sync {
     /// Computes:
     /// $$\text{result}\[c\] = \sum_{r=0}^{2^\nu - 1} \text{left}\[r\] \cdot M\[r\]\[c\]$$
     ///
-    /// where $M[r][c] = f(\text{bits}(r \cdot 2^\sigma + c))$ and
+    /// where $M\[r\]\[c\] = f(\text{bits}(r \cdot 2^\sigma + c))$ and
     /// $\nu = n - \sigma$.
     ///
     /// The default implementation iterates rows via [`for_each_row`](Self::for_each_row).
@@ -130,7 +130,7 @@ impl<F: Field> EvaluationSource<F> for Polynomial<F> {
 /// This is the streaming counterpart of
 /// [`rlc_combine`](https://docs.rs/jolt-openings/*/jolt_openings/fn.rlc_combine.html):
 /// where `rlc_combine` materializes the combined evaluation table,
-/// `RlcSource` defers computation until [`fold_rows`] or [`evaluate`] is called.
+/// `RlcSource` defers computation until `fold_rows` or `evaluate` is called.
 pub struct RlcSource<F: Field, S: EvaluationSource<F>> {
     sources: Vec<S>,
     scalars: Vec<F>,

@@ -4,11 +4,9 @@
 //! into fewer claims via eq-weighted sumchecks. Most follow a common
 //! pattern: γ-weighted sum of openings at the output point.
 
-use jolt_ir::{
-    ChallengeBinding, ChallengeSource, ClaimDefinition, ExprBuilder, OpeningBinding,
-};
-
-use crate::tags::{poly, sumcheck};
+use crate::builder::ExprBuilder;
+use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
+use crate::zkvm::tags::{poly, sumcheck};
 
 /// Registers claim reduction output claim.
 ///
@@ -87,9 +85,8 @@ pub fn instruction_lookups_claim_reduction() -> ClaimDefinition {
     let c3 = b.challenge(3);
     let c4 = b.challenge(4);
 
-    let expr = b.build(
-        c0 * lookup_out + c1 * left_op + c2 * right_op + c3 * left_input + c4 * right_input,
-    );
+    let expr = b
+        .build(c0 * lookup_out + c1 * left_op + c2 * right_op + c3 * left_input + c4 * right_input);
 
     ClaimDefinition {
         expr,
@@ -140,7 +137,7 @@ pub fn instruction_lookups_claim_reduction() -> ClaimDefinition {
 pub fn ram_ra_claim_reduction() -> ClaimDefinition {
     let b = ExprBuilder::new();
     let ra = b.opening(0);
-    let c0 = b.challenge(0); // combined eq weight
+    let c0 = b.challenge(0);
 
     let expr = b.build(c0 * ra);
 
@@ -225,7 +222,7 @@ pub fn hamming_weight_claim_reduction(n_poly_types: usize) -> ClaimDefinition {
     let opening_bindings = (0..n_poly_types)
         .map(|i| OpeningBinding {
             var_id: i as u32,
-            polynomial_tag: 0, // Resolved at runtime per polynomial type
+            polynomial_tag: 0,
             sumcheck_tag: sumcheck::HAMMING_WEIGHT_CLAIM_REDUCTION,
         })
         .collect();
@@ -257,7 +254,7 @@ pub fn hamming_weight_claim_reduction(n_poly_types: usize) -> ClaimDefinition {
 pub fn advice_claim_reduction_address() -> ClaimDefinition {
     let b = ExprBuilder::new();
     let advice = b.opening(0);
-    let c0 = b.challenge(0); // eq_combined * scale
+    let c0 = b.challenge(0);
 
     let expr = b.build(c0 * advice);
 
@@ -265,7 +262,7 @@ pub fn advice_claim_reduction_address() -> ClaimDefinition {
         expr,
         opening_bindings: vec![OpeningBinding {
             var_id: 0,
-            polynomial_tag: 0, // Resolved at runtime (trusted or untrusted advice)
+            polynomial_tag: 0,
             sumcheck_tag: sumcheck::ADVICE_CLAIM_REDUCTION,
         }],
         challenge_bindings: vec![ChallengeBinding {

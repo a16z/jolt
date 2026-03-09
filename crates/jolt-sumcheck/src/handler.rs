@@ -52,7 +52,6 @@ pub struct ClearRoundHandler<F: Field> {
 }
 
 impl<F: Field> ClearRoundHandler<F> {
-    /// Creates a new handler that will collect round polynomials.
     pub fn new() -> Self {
         Self {
             round_polynomials: Vec::new(),

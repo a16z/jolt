@@ -218,7 +218,14 @@ fn tampered_eval_detected() {
         .iter()
         .map(|c| {
             let poly: Polynomial<Fr> = c.evaluations.clone().into();
-            <KzgPCS as CommitmentScheme>::open(&poly, &c.point, c.eval, &pk, None, &mut transcript_p)
+            <KzgPCS as CommitmentScheme>::open(
+                &poly,
+                &c.point,
+                c.eval,
+                &pk,
+                None,
+                &mut transcript_p,
+            )
         })
         .collect();
 

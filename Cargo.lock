@@ -2940,6 +2940,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "rayon",
 ]
 
 [[package]]
@@ -3122,6 +3123,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "jolt-field",
+ "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
@@ -3273,16 +3275,31 @@ dependencies = [
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
+ "jolt-ir",
  "jolt-openings",
  "jolt-poly",
  "jolt-spartan",
  "jolt-sumcheck",
  "jolt-transcript",
+ "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-witness"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-ir",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "tracing",
 ]
 
 [[package]]
@@ -3309,12 +3326,15 @@ dependencies = [
 name = "jolt-zkvm"
 version = "0.1.0"
 dependencies = [
+ "jolt-compute",
+ "jolt-cpu-kernels",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
  "jolt-ir",
  "jolt-openings",
  "jolt-poly",
+ "jolt-spartan",
  "jolt-sumcheck",
  "jolt-transcript",
  "num-traits",

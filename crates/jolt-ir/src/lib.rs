@@ -28,6 +28,8 @@ mod kernel;
 mod normalize;
 mod visitor;
 
+pub mod zkvm;
+
 pub use builder::{ExprBuilder, ExprHandle};
 pub use claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
 pub use expr::{Expr, ExprArena, ExprId, ExprNode, Var};

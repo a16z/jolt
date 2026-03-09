@@ -48,11 +48,7 @@ impl<F: Field> HammingReductionStage<F> {
     ///
     /// Panics if `poly_tables` and `coefficients` differ in length,
     /// or if any table has length != 2^eq_point.len().
-    pub fn new(
-        poly_tables: Vec<Vec<F>>,
-        coefficients: Vec<F>,
-        eq_point: Vec<F>,
-    ) -> Self {
+    pub fn new(poly_tables: Vec<Vec<F>>, coefficients: Vec<F>, eq_point: Vec<F>) -> Self {
         let num_vars = eq_point.len();
         let expected = 1usize << num_vars;
         assert_eq!(
@@ -78,18 +74,13 @@ impl<F: Field> HammingReductionStage<F> {
 }
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
-    fn build(
-        &mut self,
-        _prior_claims: &[ProverClaim<F>],
-        _transcript: &mut T,
-    ) -> StageBatch<F> {
+    fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let poly_tables = self
             .poly_tables
             .as_ref()
             .expect("build() called after extract_claims()");
         let n = 1usize << self.num_vars;
 
-        // Pre-compute g(x) = Σ c_i · p_i(x)
         let mut g_table = vec![F::zero(); n];
         for (i, table) in poly_tables.iter().enumerate() {
             let c = self.coefficients[i];
@@ -120,11 +111,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
         }
     }
 
-    fn extract_claims(
-        &mut self,
-        challenges: &[F],
-        _final_eval: F,
-    ) -> Vec<ProverClaim<F>> {
+    fn extract_claims(&mut self, challenges: &[F], _final_eval: F) -> Vec<ProverClaim<F>> {
         let poly_tables = self
             .poly_tables
             .take()
@@ -145,10 +132,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
     }
 
     fn claim_definitions(&self) -> Vec<ClaimDefinition> {
-        let n_polys = self
-            .poly_tables
-            .as_ref()
-            .map_or(0, |t| t.len());
+        let n_polys = self.poly_tables.as_ref().map_or(0, |t| t.len());
         vec![reductions::hamming_weight_claim_reduction(n_polys)]
     }
 }
@@ -248,19 +232,21 @@ mod tests {
         let _ = stage.build(&[], &mut t);
 
         let challenges = vec![Fr::from_u64(7), Fr::from_u64(11)];
-        let _claims = <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-            &mut stage,
-            &challenges,
-            Fr::zero(),
-        );
-        assert_eq!(_claims.len(), 2);
-
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
+        let _claims =
+            <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
                 &mut stage,
                 &challenges,
                 Fr::zero(),
             );
+        assert_eq!(_claims.len(), 2);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ =
+                <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
+                    &mut stage,
+                    &challenges,
+                    Fr::zero(),
+                );
         }));
         assert!(result.is_err());
     }
@@ -276,7 +262,10 @@ mod tests {
         let eq_point: Vec<Fr> = (0..3).map(|i| Fr::from_u64(i + 1)).collect();
         let stage = HammingReductionStage::new(polys, coefficients, eq_point);
 
-        let defs = <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(&stage);
+        let defs =
+            <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(
+                &stage,
+            );
         assert_eq!(defs.len(), 1);
     }
 }

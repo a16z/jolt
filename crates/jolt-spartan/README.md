@@ -8,57 +8,64 @@ Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 This crate implements the [Spartan](https://eprint.iacr.org/2019/550) SNARK for R1CS constraint systems. Given an R1CS instance `Az * Bz = Cz`, the prover produces a succinct proof via a sumcheck reduction over the multilinear extensions of the constraint matrices, then opens the witness polynomial at the resulting evaluation point using a polynomial commitment scheme.
 
-The implementation is generic over the commitment scheme and transcript, allowing it to be composed with different PCS backends (Dory, HyperKZG, etc.).
+The implementation is generic over the commitment scheme and transcript.
 
 ## Public API
 
 ### R1CS Interface
 
-- **`R1CS<F>`** — Trait for R1CS constraint systems. Methods: `num_constraints`, `num_variables`, `multiply_witness` (matrix-vector product).
-- **`SimpleR1CS<F>`** — Sparse triple-based R1CS representation. Useful for testing and small circuits.
+- **`R1CS<F>`** -- Trait for R1CS constraint systems. Methods: `num_constraints`, `num_variables`, `multiply_witness`.
+- **`SimpleR1CS<F>`** -- Sparse triple-based R1CS representation.
 
-### Key
+### Keys
 
-- **`SpartanKey<F>`** — Precomputed key containing multilinear extensions of the A, B, C matrices. Built from an `R1CS` instance via `from_r1cs`. Provides `num_sumcheck_vars` and `num_witness_vars` for protocol dimensioning.
+- **`SpartanKey<F>`** -- Precomputed key with multilinear extensions of A, B, C matrices.
+- **`UniformSpartanKey<F>`** -- Key for uniform (repeated per-cycle) R1CS structure. Avoids materializing the full matrix.
 
 ### Prover & Verifier
 
-- **`SpartanProver`** — Produces a `SpartanProof` from an R1CS witness, key, and PCS setup.
-- **`SpartanVerifier`** — Verifies a `SpartanProof` against a key and transcript.
+- **`SpartanProver`** -- Produces a `SpartanProof` from an R1CS witness and key.
+- **`SpartanVerifier`** -- Verifies a `SpartanProof`.
+- **`UniformSpartanProver`** -- Prover for uniform R1CS (per-cycle witnesses).
+- **`UniformSpartanVerifier`** -- Verifier for uniform Spartan proofs.
 
-### Proof
+### Proofs
 
-- **`SpartanProof<F, PCS>`** — Contains the witness commitment, sumcheck proof, matrix evaluations (`az_eval`, `bz_eval`, `cz_eval`), witness evaluation, and opening proof.
+- **`SpartanProof<F, PCS>`** -- Standard Spartan proof (witness commitment, sumcheck proof, matrix evaluations, opening proof).
+- **`UniformSpartanProof<F, PCS>`** -- Proof for uniform R1CS.
+- **`RelaxedSpartanProof<F, PCS>`** -- Proof for relaxed R1CS (used by Nova folding).
 
 ### jolt-ir Bridge
 
-- **`ir_r1cs`** — Implements `R1CS` for `jolt_ir::R1csEmission`, so expressions built with `ExprBuilder` can be proved directly via Spartan.
-- **`build_witness`** — Assembles a witness vector from an `R1csEmission` and concrete opening values.
+- **`ir_r1cs`** -- Implements `R1CS` for `jolt_ir::R1csEmission`.
+- **`build_witness`** -- Assembles a witness vector from an `R1csEmission` and concrete opening values.
 
 ### Univariate Skip
 
-- **`FirstRoundStrategy`** — Optimization for the first sumcheck round using univariate polynomial evaluation instead of the standard multilinear approach.
+- **`FirstRoundStrategy`** -- Optimization for the first sumcheck round using univariate polynomial evaluation.
 
 ### Errors
 
-- **`SpartanError`** — Error type with variants: `ConstraintViolation`, `Sumcheck`, `Opening`, `EvaluationMismatch`.
+- **`SpartanError`** -- Variants: `ConstraintViolation`, `Sumcheck`, `Opening`, `EvaluationMismatch`, `InnerEvaluationMismatch`, `RelaxedConstraintViolation`.
+
+## Feature Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `parallel` | **Yes** | Enable rayon parallelism |
 
 ## Dependency Position
 
 ```
 jolt-field ─┐
 jolt-poly  ─┤
-jolt-transcript ─┼─► jolt-spartan
+jolt-transcript ─┼─> jolt-spartan
 jolt-sumcheck ─┤
 jolt-openings ─┤
 jolt-ir ───────┘
 ```
 
-Used by `jolt-zkvm`.
-
-## Feature Flags
-
-This crate has no feature flags.
+Used by `jolt-blindfold` and `jolt-zkvm`.
 
 ## License
 

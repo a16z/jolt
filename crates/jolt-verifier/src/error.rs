@@ -1,9 +1,10 @@
 //! Error types for Jolt proof verification.
 
+use jolt_openings::OpeningsError;
 use jolt_spartan::SpartanError;
 use jolt_sumcheck::SumcheckError;
 
-/// Errors that can occur during Jolt proof verification or proving.
+/// Errors that can occur during Jolt proof verification.
 #[derive(Debug, thiserror::Error)]
 pub enum JoltError {
     #[error("spartan error: {0}")]
@@ -13,14 +14,14 @@ pub enum JoltError {
     Sumcheck(#[from] SumcheckError),
 
     #[error("opening verification failed: {0}")]
-    Opening(String),
+    Opening(#[from] OpeningsError),
 
     #[error("stage {stage} verification failed: {reason}")]
     StageVerification { stage: usize, reason: String },
 
-    #[error("proof deserialization failed: {0}")]
-    Deserialization(String),
-
     #[error("invalid proof structure: {0}")]
     InvalidProof(String),
+
+    #[error("evaluation check failed at stage {stage}: {reason}")]
+    EvaluationMismatch { stage: usize, reason: String },
 }

@@ -87,8 +87,7 @@ where
     let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..300 {
-        let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> =
-            vec![None.into(); NUM_PREFIXES];
+        let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); NUM_PREFIXES];
         let lookup_index = T::random_lookup_index(&mut rng);
         let mut j = 0;
         let mut r: Vec<F> = vec![];
@@ -101,9 +100,7 @@ where
             let suffix_evals: Vec<_> = T::default()
                 .suffixes()
                 .iter()
-                .map(|suffix| {
-                    SuffixEval::from(F::from_u64(suffix.suffix_mle::<XLEN>(suffix_bits)))
-                })
+                .map(|suffix| SuffixEval::from(F::from_u64(suffix.suffix_mle::<XLEN>(suffix_bits))))
                 .collect();
 
             for _ in 0..ROUNDS_PER_PHASE {
@@ -131,13 +128,7 @@ where
                     .map(|i| {
                         // SAFETY: repr(u8) enum with NUM_PREFIXES contiguous variants
                         let prefix: Prefixes = unsafe { std::mem::transmute(i as u8) };
-                        prefix.prefix_mle::<XLEN, F, F>(
-                            &prefix_checkpoints,
-                            r_x,
-                            c,
-                            prefix_bits,
-                            j,
-                        )
+                        prefix.prefix_mle::<XLEN, F, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
                     })
                     .collect();
 

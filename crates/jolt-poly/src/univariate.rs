@@ -43,7 +43,6 @@ impl<F: Field> UnivariatePoly<F> {
         Self { coefficients }
     }
 
-    /// The zero polynomial.
     pub fn zero() -> Self {
         Self {
             coefficients: Vec::new(),
@@ -863,7 +862,8 @@ mod tests {
         let q0 = Fr::from_u64(3);
         let q2 = Fr::from_u64(1);
         let hint = Fr::from_u64(15);
-        let poly = UnivariatePoly::from_linear_times_quadratic_with_hint(linear_coeffs, q0, q2, hint);
+        let poly =
+            UnivariatePoly::from_linear_times_quadratic_with_hint(linear_coeffs, q0, q2, hint);
 
         let expected = UnivariatePoly::new(vec![
             Fr::from_u64(3),

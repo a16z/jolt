@@ -109,7 +109,6 @@ fn write_arena() -> RwLockWriteGuard<'static, Arena> {
     get_arena().write().expect("arena write lock poisoned")
 }
 
-/// Allocates a new node in the arena and returns its `NodeId`.
 pub fn alloc(node: Node) -> NodeId {
     let mut arena = write_arena();
     let id = NodeId(arena.nodes.len() as u32);
@@ -117,8 +116,6 @@ pub fn alloc(node: Node) -> NodeId {
     id
 }
 
-/// Reads a node from the arena by `NodeId`.
-///
 /// # Panics
 ///
 /// Panics if the `NodeId` is out of bounds.
@@ -127,13 +124,11 @@ pub fn get_node(id: NodeId) -> Node {
     arena.nodes[id.0 as usize].clone()
 }
 
-/// Returns the current number of nodes in the arena.
 pub fn node_count() -> usize {
     let arena = read_arena();
     arena.nodes.len()
 }
 
-/// Returns all nodes as a snapshot.
 pub fn snapshot() -> Vec<Node> {
     let arena = read_arena();
     arena.nodes.clone()
@@ -193,12 +188,10 @@ impl ArenaSession {
         Self { _private: () }
     }
 
-    /// Returns the number of nodes allocated so far.
     pub fn node_count(&self) -> usize {
         node_count()
     }
 
-    /// Takes a snapshot of all arena nodes.
     pub fn snapshot(&self) -> Vec<Node> {
         snapshot()
     }
@@ -220,17 +213,14 @@ impl Drop for ArenaSession {
     }
 }
 
-/// Helper: wrap a scalar `[u64; 4]` as an `Edge`.
 pub fn scalar_edge(val: [u64; 4]) -> Edge {
     Atom::Scalar(val)
 }
 
-/// Helper: wrap a `NodeId` as an `Edge`.
 pub fn node_edge(id: NodeId) -> Edge {
     Atom::Node(id)
 }
 
-/// Perform add with constant folding.
 pub fn add_edges(lhs: Edge, rhs: Edge) -> Edge {
     // Identity: x + 0 = x
     if let Atom::Scalar(s) = rhs {
@@ -246,7 +236,6 @@ pub fn add_edges(lhs: Edge, rhs: Edge) -> Edge {
     try_fold_binary(lhs, rhs, scalar_ops::add, Node::Add)
 }
 
-/// Perform sub with constant folding.
 pub fn sub_edges(lhs: Edge, rhs: Edge) -> Edge {
     // Identity: x - 0 = x
     if let Atom::Scalar(s) = rhs {
@@ -257,7 +246,6 @@ pub fn sub_edges(lhs: Edge, rhs: Edge) -> Edge {
     try_fold_binary(lhs, rhs, scalar_ops::sub, Node::Sub)
 }
 
-/// Perform mul with constant folding.
 pub fn mul_edges(lhs: Edge, rhs: Edge) -> Edge {
     // x * 0 = 0
     if let Atom::Scalar(s) = lhs {
@@ -284,7 +272,6 @@ pub fn mul_edges(lhs: Edge, rhs: Edge) -> Edge {
     try_fold_binary(lhs, rhs, scalar_ops::mul, Node::Mul)
 }
 
-/// Perform div with constant folding.
 pub fn div_edges(lhs: Edge, rhs: Edge) -> Edge {
     if let (Atom::Scalar(a), Atom::Scalar(b)) = (lhs, rhs) {
         if let Some(result) = scalar_ops::div(a, b) {
@@ -294,12 +281,10 @@ pub fn div_edges(lhs: Edge, rhs: Edge) -> Edge {
     Atom::Node(alloc(Node::Div(lhs, rhs)))
 }
 
-/// Perform neg with constant folding.
 pub fn neg_edge(inner: Edge) -> Edge {
     try_fold_unary(inner, scalar_ops::neg, Node::Neg)
 }
 
-/// Perform inv with constant folding.
 pub fn inv_edge(inner: Edge) -> Edge {
     match inner {
         Atom::Scalar(a) => {

@@ -44,9 +44,7 @@ pub enum RaPolynomial<I: Into<usize> + Copy + Default + Send + Sync + 'static, F
 }
 
 #[allow(non_snake_case)]
-impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
-    RaPolynomial<I, F>
-{
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge> RaPolynomial<I, F> {
     pub fn new(lookup_indices: Arc<Vec<Option<I>>>, eq_evals: Vec<F>) -> Self {
         Self::Round1(RaPolynomialRound1 {
             F: eq_evals,
@@ -89,14 +87,21 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
 
     /// Bind the next variable, advancing the state machine.
     pub fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
+        self.bind_f(r.into(), order);
+    }
+
+    /// Like [`bind`](Self::bind), but accepts a field element directly.
+    ///
+    /// Useful inside [`SumcheckCompute::bind(F)`](jolt_sumcheck::SumcheckCompute::bind)
+    /// wrappers where the challenge has already been converted to `F`.
+    pub fn bind_f(&mut self, r: F, order: BindingOrder) {
         match self {
-            Self::None => panic!("RaPolynomial::bind called on None"),
+            Self::None => panic!("RaPolynomial::bind_f called on None"),
             Self::Round1(mle) => *self = Self::Round2(mem::take(mle).bind_round(r, order)),
             Self::Round2(mle) => *self = Self::Round3(mem::take(mle).bind_round(r, order)),
             Self::Round3(mle) => *self = Self::RoundN(mem::take(mle).bind_round(r, order)),
             Self::RoundN(poly) => {
-                let r_f: F = r.into();
-                poly.bind_with_order(r_f, order);
+                poly.bind_with_order(r, order);
             }
         }
     }
@@ -152,15 +157,9 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
     }
 
     #[tracing::instrument(skip_all, name = "RaPolynomialRound1::bind")]
-    fn bind_round(
-        self,
-        r0: F::Challenge,
-        binding_order: BindingOrder,
-    ) -> RaPolynomialRound2<I, F> {
-        // eq(0, r0) = 1 - r0,  eq(1, r0) = r0
-        let r0_f: F = r0.into();
-        let eq_0_r0 = eq_single_bit(F::zero(), r0_f);
-        let eq_1_r0 = eq_single_bit(F::one(), r0_f);
+    fn bind_round(self, r0: F, binding_order: BindingOrder) -> RaPolynomialRound2<I, F> {
+        let eq_0_r0 = eq_single_bit(F::zero(), r0);
+        let eq_1_r0 = eq_single_bit(F::one(), r0);
         let F_0 = self.F.iter().map(|v| eq_0_r0 * *v).collect();
         let F_1 = self.F.iter().map(|v| eq_1_r0 * *v).collect();
         drop_in_background_thread(self.F);
@@ -216,15 +215,10 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
     }
 
     #[tracing::instrument(skip_all, name = "RaPolynomialRound2::bind")]
-    fn bind_round(
-        self,
-        r1: F::Challenge,
-        binding_order: BindingOrder,
-    ) -> RaPolynomialRound3<I, F> {
+    fn bind_round(self, r1: F, binding_order: BindingOrder) -> RaPolynomialRound3<I, F> {
         assert_eq!(binding_order, self.binding_order);
-        let r1_f: F = r1.into();
-        let eq_0_r1 = eq_single_bit(F::zero(), r1_f);
-        let eq_1_r1 = eq_single_bit(F::one(), r1_f);
+        let eq_0_r1 = eq_single_bit(F::zero(), r1);
+        let eq_1_r1 = eq_single_bit(F::one(), r1);
 
         let mut F_00: Vec<F> = self.F_0.clone();
         let mut F_01: Vec<F> = self.F_0;
@@ -241,10 +235,18 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
 
         #[cfg(not(feature = "parallel"))]
         {
-            for f in &mut F_00 { *f *= eq_0_r1; }
-            for f in &mut F_01 { *f *= eq_1_r1; }
-            for f in &mut F_10 { *f *= eq_0_r1; }
-            for f in &mut F_11 { *f *= eq_1_r1; }
+            for f in &mut F_00 {
+                *f *= eq_0_r1;
+            }
+            for f in &mut F_01 {
+                *f *= eq_1_r1;
+            }
+            for f in &mut F_10 {
+                *f *= eq_0_r1;
+            }
+            for f in &mut F_11 {
+                *f *= eq_1_r1;
+            }
         }
 
         RaPolynomialRound3 {
@@ -268,8 +270,7 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
             }
             BindingOrder::LowToHigh => {
                 let h0 = self.lookup_indices[2 * j].map_or(F::zero(), |i| self.F_0[i.into()]);
-                let h1 =
-                    self.lookup_indices[2 * j + 1].map_or(F::zero(), |i| self.F_1[i.into()]);
+                let h1 = self.lookup_indices[2 * j + 1].map_or(F::zero(), |i| self.F_1[i.into()]);
                 h0 + h1
             }
         }
@@ -312,10 +313,9 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
     }
 
     #[tracing::instrument(skip_all, name = "RaPolynomialRound3::bind")]
-    fn bind_round(self, r2: F::Challenge, _binding_order: BindingOrder) -> Polynomial<F> {
-        let r2_f: F = r2.into();
-        let eq_0_r2 = eq_single_bit(F::zero(), r2_f);
-        let eq_1_r2 = eq_single_bit(F::one(), r2_f);
+    fn bind_round(self, r2: F, _binding_order: BindingOrder) -> Polynomial<F> {
+        let eq_0_r2 = eq_single_bit(F::zero(), r2);
+        let eq_1_r2 = eq_single_bit(F::one(), r2);
 
         let mut f000: Vec<F> = self.F_00.clone();
         let mut f001: Vec<F> = self.F_00;
@@ -340,14 +340,30 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
 
         #[cfg(not(feature = "parallel"))]
         {
-            for f in &mut f000 { *f *= eq_0_r2; }
-            for f in &mut f010 { *f *= eq_0_r2; }
-            for f in &mut f100 { *f *= eq_0_r2; }
-            for f in &mut f110 { *f *= eq_0_r2; }
-            for f in &mut f001 { *f *= eq_1_r2; }
-            for f in &mut f011 { *f *= eq_1_r2; }
-            for f in &mut f101 { *f *= eq_1_r2; }
-            for f in &mut f111 { *f *= eq_1_r2; }
+            for f in &mut f000 {
+                *f *= eq_0_r2;
+            }
+            for f in &mut f010 {
+                *f *= eq_0_r2;
+            }
+            for f in &mut f100 {
+                *f *= eq_0_r2;
+            }
+            for f in &mut f110 {
+                *f *= eq_0_r2;
+            }
+            for f in &mut f001 {
+                *f *= eq_1_r2;
+            }
+            for f in &mut f011 {
+                *f *= eq_1_r2;
+            }
+            for f in &mut f101 {
+                *f *= eq_1_r2;
+            }
+            for f in &mut f111 {
+                *f *= eq_1_r2;
+            }
         }
 
         let lookup_indices = &self.lookup_indices;
@@ -419,21 +435,15 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
                 let n = self.lookup_indices.len() / 4;
                 let h00 = self.lookup_indices[j].map_or(F::zero(), |i| self.F_00[i.into()]);
                 let h01 = self.lookup_indices[j + n].map_or(F::zero(), |i| self.F_01[i.into()]);
-                let h10 =
-                    self.lookup_indices[j + n * 2].map_or(F::zero(), |i| self.F_10[i.into()]);
-                let h11 =
-                    self.lookup_indices[j + n * 3].map_or(F::zero(), |i| self.F_11[i.into()]);
+                let h10 = self.lookup_indices[j + n * 2].map_or(F::zero(), |i| self.F_10[i.into()]);
+                let h11 = self.lookup_indices[j + n * 3].map_or(F::zero(), |i| self.F_11[i.into()]);
                 h00 + h10 + h01 + h11
             }
             BindingOrder::LowToHigh => {
-                let h00 =
-                    self.lookup_indices[4 * j].map_or(F::zero(), |i| self.F_00[i.into()]);
-                let h10 =
-                    self.lookup_indices[4 * j + 1].map_or(F::zero(), |i| self.F_10[i.into()]);
-                let h01 =
-                    self.lookup_indices[4 * j + 2].map_or(F::zero(), |i| self.F_01[i.into()]);
-                let h11 =
-                    self.lookup_indices[4 * j + 3].map_or(F::zero(), |i| self.F_11[i.into()]);
+                let h00 = self.lookup_indices[4 * j].map_or(F::zero(), |i| self.F_00[i.into()]);
+                let h10 = self.lookup_indices[4 * j + 1].map_or(F::zero(), |i| self.F_10[i.into()]);
+                let h01 = self.lookup_indices[4 * j + 2].map_or(F::zero(), |i| self.F_01[i.into()]);
+                let h11 = self.lookup_indices[4 * j + 3].map_or(F::zero(), |i| self.F_11[i.into()]);
                 h00 + h10 + h01 + h11
             }
         }

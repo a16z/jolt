@@ -1,15 +1,13 @@
 //! RAM subsystem claim definitions.
 //!
 //! These encode the output claim formulas for the five RAM-related sumcheck
-//! instances. Each function returns a [`ClaimDefinition`] whose expression
-//! captures the exact polynomial identity, and whose bindings map symbolic
-//! variables to concrete Jolt polynomials and sumcheck stages.
+//! instances. Each function returns a [`ClaimDefinition`](crate::ClaimDefinition)
+//! whose expression captures the exact polynomial identity, and whose bindings
+//! map symbolic variables to concrete Jolt polynomials and sumcheck stages.
 
-use jolt_ir::{
-    ChallengeBinding, ChallengeSource, ClaimDefinition, ExprBuilder, OpeningBinding,
-};
-
-use crate::tags::{poly, sumcheck};
+use crate::builder::ExprBuilder;
+use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
+use crate::zkvm::tags::{poly, sumcheck};
 
 /// Hamming booleanity: `H² − H`, scaled by eq evaluation challenges.
 ///
@@ -61,8 +59,8 @@ pub fn ram_read_write_checking() -> ClaimDefinition {
     let ra = b.opening(0);
     let val = b.opening(1);
     let inc = b.opening(2);
-    let c0 = b.challenge(0); // eq*(1+γ)
-    let c1 = b.challenge(1); // eq*γ
+    let c0 = b.challenge(0);
+    let c1 = b.challenge(1);
 
     let expr = b.build(c0 * ra * val + c1 * ra * inc);
 
@@ -109,8 +107,8 @@ pub fn ram_read_write_checking() -> ClaimDefinition {
 pub fn ram_output_check() -> ClaimDefinition {
     let b = ExprBuilder::new();
     let val_final = b.opening(0);
-    let c0 = b.challenge(0); // eq*io_mask
-    let c1 = b.challenge(1); // -eq*io_mask*val_io (constant term)
+    let c0 = b.challenge(0);
+    let c1 = b.challenge(1);
 
     let expr = b.build(c0 * val_final + c1);
 
@@ -146,7 +144,7 @@ pub fn ram_val_check() -> ClaimDefinition {
     let b = ExprBuilder::new();
     let inc = b.opening(0);
     let wa = b.opening(1);
-    let c0 = b.challenge(0); // LT + γ
+    let c0 = b.challenge(0);
 
     let expr = b.build(c0 * inc * wa);
 
@@ -186,7 +184,7 @@ pub fn ram_val_check_input(n_advice: usize) -> ClaimDefinition {
     let val_rw = b.opening(0);
     let val_final = b.opening(1);
     let gamma = b.challenge(0);
-    let neg_init = b.challenge(1); // -(1+γ)*init_eval_public
+    let neg_init = b.challenge(1);
 
     let mut result = val_rw + gamma * val_final + neg_init;
 
@@ -225,7 +223,7 @@ pub fn ram_val_check_input(n_advice: usize) -> ClaimDefinition {
     for i in 0..n_advice {
         opening_bindings.push(OpeningBinding {
             var_id: 2 + i as u32,
-            polynomial_tag: 0, // Advice polynomial tag resolved at runtime
+            polynomial_tag: 0,
             sumcheck_tag: sumcheck::RAM_VAL_CHECK,
         });
         challenge_bindings.push(ChallengeBinding {
@@ -251,9 +249,9 @@ pub fn ram_val_check_input(n_advice: usize) -> ClaimDefinition {
 pub fn ram_raf_evaluation() -> ClaimDefinition {
     let b = ExprBuilder::new();
     let ra = b.opening(0);
-    let unmap = b.challenge(0);
+    let c0 = b.challenge(0);
 
-    let expr = b.build(unmap * ra);
+    let expr = b.build(c0 * ra);
 
     ClaimDefinition {
         expr,

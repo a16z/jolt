@@ -7,5 +7,7 @@
 pub mod eq_product;
 pub mod formula;
 pub mod hamming;
+pub mod kernel_witness;
 pub mod mles_product_sum;
 pub mod ra_poly;
+pub mod ra_virtual;

@@ -69,7 +69,8 @@ fn compact_u8_bind_matches_field_bind() {
     let compact = Polynomial::new(data.clone());
     let promoted = compact.bind_to_field::<Fr>(scalar);
 
-    let field_poly: Polynomial<Fr> = Polynomial::new(data.iter().map(|&x| Fr::from_u64(x as u64)).collect());
+    let field_poly: Polynomial<Fr> =
+        Polynomial::new(data.iter().map(|&x| Fr::from_u64(x as u64)).collect());
     let mut expected = field_poly;
     expected.bind(scalar);
 
@@ -178,11 +179,7 @@ fn identity_polynomial_boolean_indexing() {
             })
             .collect();
         let eval = id.evaluate::<Fr>(&bits);
-        assert_eq!(
-            eval,
-            Fr::from_u64(idx as u64),
-            "identity at index {idx}"
-        );
+        assert_eq!(eval, Fr::from_u64(idx as u64), "identity at index {idx}");
     }
 }
 
@@ -261,10 +258,7 @@ fn scalar_mul_distributes_over_addition() {
 
     let sum_then_scale = (a.clone() + b.clone()) * s;
     let scale_then_sum = a * s + b * s;
-    assert_eq!(
-        sum_then_scale.evaluations(),
-        scale_then_sum.evaluations()
-    );
+    assert_eq!(sum_then_scale.evaluations(), scale_then_sum.evaluations());
 }
 
 // Serialization

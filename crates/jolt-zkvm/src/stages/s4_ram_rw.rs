@@ -31,13 +31,7 @@ pub struct RamRwCheckingStage<F: Field> {
 }
 
 impl<F: Field> RamRwCheckingStage<F> {
-    pub fn new(
-        ra: Vec<F>,
-        val: Vec<F>,
-        inc: Vec<F>,
-        eq_point: Vec<F>,
-        challenges: [F; 2],
-    ) -> Self {
+    pub fn new(ra: Vec<F>, val: Vec<F>, inc: Vec<F>, eq_point: Vec<F>, challenges: [F; 2]) -> Self {
         let num_vars = eq_point.len();
         let expected = 1usize << num_vars;
         assert_eq!(ra.len(), expected);
@@ -55,11 +49,7 @@ impl<F: Field> RamRwCheckingStage<F> {
 }
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
-    fn build(
-        &mut self,
-        _prior_claims: &[ProverClaim<F>],
-        _transcript: &mut T,
-    ) -> StageBatch<F> {
+    fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let ra = self.ra.as_ref().unwrap();
         let val = self.val.as_ref().unwrap();
         let inc = self.inc.as_ref().unwrap();
@@ -67,10 +57,8 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
 
         let [c0, c1] = self.challenges;
 
-        // poly_tables: [ra(0), val(1), inc(2)]
         let poly_tables = vec![ra.clone(), val.clone(), inc.clone()];
 
-        // c0·ra·val + c1·ra·inc
         let terms = vec![
             Term {
                 coeff: c0,
@@ -85,7 +73,11 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
         let eq_table = EqPolynomial::new(self.eq_point.clone()).evaluations();
 
         let claimed_sum: F = (0..n)
-            .map(|x| eq_table[x] * (c0 * poly_tables[0][x] * poly_tables[1][x] + c1 * poly_tables[0][x] * poly_tables[2][x]))
+            .map(|x| {
+                eq_table[x]
+                    * (c0 * poly_tables[0][x] * poly_tables[1][x]
+                        + c1 * poly_tables[0][x] * poly_tables[2][x])
+            })
             .sum();
 
         let degree = 3;
@@ -101,11 +93,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
         }
     }
 
-    fn extract_claims(
-        &mut self,
-        challenges: &[F],
-        _final_eval: F,
-    ) -> Vec<ProverClaim<F>> {
+    fn extract_claims(&mut self, challenges: &[F], _final_eval: F) -> Vec<ProverClaim<F>> {
         let tables = vec![
             self.ra.take().unwrap(),
             self.val.take().unwrap(),

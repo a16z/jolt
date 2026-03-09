@@ -89,7 +89,6 @@ impl GnarkEmitter {
         out
     }
 
-    /// Return the accumulated Go assignment lines.
     pub fn lines(&self) -> &[String] {
         &self.lines
     }
@@ -176,8 +175,7 @@ impl CircuitEmitter for GnarkEmitter {
 /// Convert a Rust identifier to a valid Go exported name.
 ///
 /// Non-alphanumeric characters become `_`, and each underscore-delimited
-/// segment is PascalCased. This matches the convention in PR #1322's
-/// `gnark_codegen.rs`.
+/// segment is PascalCased.
 ///
 /// # Examples
 ///

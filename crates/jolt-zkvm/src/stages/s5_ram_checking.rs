@@ -79,16 +79,11 @@ impl<F: Field> RamCheckingStage<F> {
 }
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
-    fn build(
-        &mut self,
-        _prior_claims: &[ProverClaim<F>],
-        _transcript: &mut T,
-    ) -> StageBatch<F> {
+    fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let val_final = self.val_final.as_ref().unwrap();
         let ram_ra = self.ram_ra.as_ref().unwrap();
         let n = 1usize << self.num_vars;
 
-        // Output check: g(x) = c0·val_final(x) + c1
         let [c0, c1] = self.output_challenges;
         let mut output_g = vec![F::zero(); n];
         for (j, g) in output_g.iter_mut().enumerate() {
@@ -101,17 +96,12 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
             .map(|(&e, &g)| e * g)
             .sum();
 
-        // RAF evaluation: g(x) = raf_c0·ra(x)
         let mut raf_g = vec![F::zero(); n];
         for (j, g) in raf_g.iter_mut().enumerate() {
             *g = self.raf_c0 * ram_ra[j];
         }
         let raf_eq = EqPolynomial::new(self.raf_eq_point.clone()).evaluations();
-        let raf_sum: F = raf_eq
-            .iter()
-            .zip(raf_g.iter())
-            .map(|(&e, &g)| e * g)
-            .sum();
+        let raf_sum: F = raf_eq.iter().zip(raf_g.iter()).map(|(&e, &g)| e * g).sum();
 
         StageBatch {
             claims: vec![
@@ -133,11 +123,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
         }
     }
 
-    fn extract_claims(
-        &mut self,
-        challenges: &[F],
-        _final_eval: F,
-    ) -> Vec<ProverClaim<F>> {
+    fn extract_claims(&mut self, challenges: &[F], _final_eval: F) -> Vec<ProverClaim<F>> {
         let val_final = self.val_final.take().unwrap();
         let ram_ra = self.ram_ra.take().unwrap();
 
@@ -184,9 +170,8 @@ mod tests {
         let c1 = Fr::random(&mut rng);
         let raf_c0 = Fr::random(&mut rng);
 
-        let mut stage = RamCheckingStage::new(
-            val_final, output_eq, [c0, c1], ram_ra, raf_eq, raf_c0,
-        );
+        let mut stage =
+            RamCheckingStage::new(val_final, output_eq, [c0, c1], ram_ra, raf_eq, raf_c0);
 
         let mut t = Blake2bTranscript::new(b"test_s5");
         let batch = stage.build(&[], &mut t);
@@ -211,9 +196,8 @@ mod tests {
         let c1 = Fr::random(&mut rng);
         let raf_c0 = Fr::random(&mut rng);
 
-        let mut stage: RamCheckingStage<Fr> = RamCheckingStage::new(
-            val_final, output_eq, [c0, c1], ram_ra, raf_eq, raf_c0,
-        );
+        let mut stage: RamCheckingStage<Fr> =
+            RamCheckingStage::new(val_final, output_eq, [c0, c1], ram_ra, raf_eq, raf_c0);
 
         let mut pt = Blake2bTranscript::new(b"s5_roundtrip");
         let mut batch = stage.build(&[], &mut pt);

@@ -41,6 +41,7 @@ members = [
   "crates/jolt-profiling",
   "crates/jolt-blindfold",
   "crates/jolt-verifier",
+  "crates/jolt-witness",
   "crates/jolt-zkvm",
   "jolt-core",
   "tracer",

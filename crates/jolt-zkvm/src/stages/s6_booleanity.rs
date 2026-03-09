@@ -55,11 +55,7 @@ impl<F: Field> HammingBooleanityStage<F> {
 }
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for HammingBooleanityStage<F> {
-    fn build(
-        &mut self,
-        _prior_claims: &[ProverClaim<F>],
-        _transcript: &mut T,
-    ) -> StageBatch<F> {
+    fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let h_evals = self
             .h_evals
             .as_ref()
@@ -73,11 +69,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingBooleanityStage<F> {
             claimed_sum: F::zero(),
         };
 
-        let witness = HammingBooleanityCompute::new(
-            h_evals.clone(),
-            eq_table,
-            self.num_vars,
-        );
+        let witness = HammingBooleanityCompute::new(h_evals.clone(), eq_table, self.num_vars);
 
         StageBatch {
             claims: vec![claim],
@@ -85,17 +77,9 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingBooleanityStage<F> {
         }
     }
 
-    fn extract_claims(
-        &mut self,
-        challenges: &[F],
-        _final_eval: F,
-    ) -> Vec<ProverClaim<F>> {
-        let h_evals = self
-            .h_evals
-            .take()
-            .expect("extract_claims() called twice");
+    fn extract_claims(&mut self, challenges: &[F], _final_eval: F) -> Vec<ProverClaim<F>> {
+        let h_evals = self.h_evals.take().expect("extract_claims() called twice");
 
-        // Evaluate h at the sumcheck challenge point
         let poly = Polynomial::new(h_evals.clone());
         let eval = poly.evaluate(challenges);
 
@@ -128,9 +112,7 @@ mod tests {
         let eq_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
 
         // Boolean h
-        let h_evals: Vec<Fr> = (0..(1 << num_vars))
-            .map(|i| Fr::from_u64(i % 2))
-            .collect();
+        let h_evals: Vec<Fr> = (0..(1 << num_vars)).map(|i| Fr::from_u64(i % 2)).collect();
 
         let mut stage = HammingBooleanityStage::new(h_evals, eq_point);
 
@@ -150,9 +132,7 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(777);
         let eq_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
 
-        let h_evals: Vec<Fr> = (0..(1 << num_vars))
-            .map(|i| Fr::from_u64(i % 2))
-            .collect();
+        let h_evals: Vec<Fr> = (0..(1 << num_vars)).map(|i| Fr::from_u64(i % 2)).collect();
 
         let mut stage: HammingBooleanityStage<Fr> = HammingBooleanityStage::new(h_evals, eq_point);
 

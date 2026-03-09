@@ -13,6 +13,7 @@ use jolt_openings::{
     RlcReduction, VerifierClaim,
 };
 use jolt_transcript::Transcript;
+use serde::{Deserialize, Serialize};
 
 /// Batch opening stage, generic over an additively homomorphic PCS.
 ///
@@ -27,6 +28,8 @@ pub struct OpeningStage<PCS: AdditivelyHomomorphic> {
 /// Prover-side opening proof bundle.
 ///
 /// One proof per distinct evaluation point group after RLC reduction.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct OpeningProofs<PCS: CommitmentScheme> {
     pub proofs: Vec<PCS::Proof>,
 }
@@ -124,8 +127,7 @@ mod tests {
         num_vars: usize,
         point: &[Fr],
         setup: &PCS::ProverSetup,
-    ) -> (Vec<ProverClaim<Fr>>, Vec<VerifierClaim<Fr, PCS::Output>>)
-    {
+    ) -> (Vec<ProverClaim<Fr>>, Vec<VerifierClaim<Fr, PCS::Output>>) {
         let mut prover_claims = Vec::with_capacity(num_polys);
         let mut verifier_claims = Vec::with_capacity(num_polys);
 
@@ -194,10 +196,8 @@ mod tests {
         let point_a: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let point_b: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
 
-        let (mut pc_a, mut vc_a) =
-            random_claims::<MockPCS>(&mut rng, 3, num_vars, &point_a, &());
-        let (pc_b, vc_b) =
-            random_claims::<MockPCS>(&mut rng, 2, num_vars, &point_b, &());
+        let (mut pc_a, mut vc_a) = random_claims::<MockPCS>(&mut rng, 3, num_vars, &point_a, &());
+        let (pc_b, vc_b) = random_claims::<MockPCS>(&mut rng, 2, num_vars, &point_b, &());
 
         pc_a.extend(pc_b);
         vc_a.extend(vc_b);
@@ -252,12 +252,9 @@ mod tests {
         let point_b: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let point_c: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
 
-        let (mut pc, mut vc) =
-            random_claims::<MockPCS>(&mut rng, 4, num_vars, &point_a, &());
-        let (pc_b, vc_b) =
-            random_claims::<MockPCS>(&mut rng, 2, num_vars, &point_b, &());
-        let (pc_c, vc_c) =
-            random_claims::<MockPCS>(&mut rng, 1, num_vars, &point_c, &());
+        let (mut pc, mut vc) = random_claims::<MockPCS>(&mut rng, 4, num_vars, &point_a, &());
+        let (pc_b, vc_b) = random_claims::<MockPCS>(&mut rng, 2, num_vars, &point_b, &());
+        let (pc_c, vc_c) = random_claims::<MockPCS>(&mut rng, 1, num_vars, &point_c, &());
 
         pc.extend(pc_b);
         pc.extend(pc_c);
@@ -266,7 +263,11 @@ mod tests {
 
         let mut pt = Blake2bTranscript::new(b"s8_mixed");
         let proofs = OpeningStage::<MockPCS>::prove(pc, &(), &mut pt, challenge_fn);
-        assert_eq!(proofs.proofs.len(), 3, "three distinct points → three proofs");
+        assert_eq!(
+            proofs.proofs.len(),
+            3,
+            "three distinct points → three proofs"
+        );
 
         let mut vt = Blake2bTranscript::new(b"s8_mixed");
         OpeningStage::<MockPCS>::verify(vc, &proofs, &(), &mut vt, challenge_fn)
@@ -362,14 +363,8 @@ mod tests {
             assert_eq!(proofs.proofs.len(), 2, "two distinct points → two proofs");
 
             let mut vt = Blake2bTranscript::new(b"s8_dory_distinct");
-            OpeningStage::<DoryScheme>::verify(
-                vc,
-                &proofs,
-                &verifier_setup,
-                &mut vt,
-                challenge_fn,
-            )
-            .expect("Dory distinct-point claims should verify");
+            OpeningStage::<DoryScheme>::verify(vc, &proofs, &verifier_setup, &mut vt, challenge_fn)
+                .expect("Dory distinct-point claims should verify");
         }
 
         #[test]

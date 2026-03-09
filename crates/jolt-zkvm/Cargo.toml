@@ -9,13 +9,16 @@ description = "zkVM prover and verifier orchestration for the Jolt proving syste
 workspace = true
 
 [features]
-parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-sumcheck/parallel"]
+parallel = ["dep:rayon", "jolt-compute/parallel", "jolt-poly/parallel", "jolt-sumcheck/parallel"]
 
 [dependencies]
+jolt-compute = { path = "../jolt-compute" }
+jolt-cpu-kernels = { path = "../jolt-cpu-kernels" }
 jolt-field = { path = "../jolt-field" }
 jolt-ir = { path = "../jolt-ir" }
 jolt-openings = { path = "../jolt-openings" }
 jolt-poly = { path = "../jolt-poly" }
+jolt-spartan = { path = "../jolt-spartan" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-transcript = { path = "../jolt-transcript" }
 rayon = { workspace = true, optional = true }

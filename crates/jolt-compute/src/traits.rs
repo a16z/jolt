@@ -13,6 +13,24 @@ use jolt_field::Field;
 pub trait Scalar: Copy + Send + Sync + 'static {}
 impl<T: Copy + Send + Sync + 'static> Scalar for T {}
 
+/// Variable binding order for polynomial interpolation.
+///
+/// Determines how pairs are formed from buffer elements:
+///
+/// - **LowToHigh**: Interleaved layout. Pairs `(buf[2i], buf[2i+1])`.
+///   Binds the least-significant variable first. Default for most sumcheck
+///   instances (instruction RA, claim reductions).
+///
+/// - **HighToLow**: Split-half layout. Pairs `(buf[i], buf[i + n/2])`.
+///   Binds the most-significant variable first. Used by Spartan outer
+///   sumcheck and RAM read-write checking.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum BindingOrder {
+    #[default]
+    LowToHigh,
+    HighToLow,
+}
+
 /// Abstraction over a compute device (CPU, Metal GPU, CUDA GPU, WebGPU).
 ///
 /// Provides typed buffer management and parallel primitives. All methods
@@ -74,14 +92,13 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// Active element count of a buffer.
     fn len<T: Scalar>(&self, buf: &Self::Buffer<T>) -> usize;
 
-    /// Returns `true` if the buffer has no elements.
     fn is_empty<T: Scalar>(&self, buf: &Self::Buffer<T>) -> bool {
         self.len::<T>(buf) == 0
     }
 
     /// Pairwise linear interpolation, halving the buffer.
     ///
-    /// For each `i` in $[0, n/2)$ where $n$ is the active buffer length:
+    /// For each `i` in `[0, n/2)` where `n` is the active buffer length:
     /// $$\text{out}[i] = \text{buf}[2i] + \text{scalar} \cdot (\text{buf}[2i+1] - \text{buf}[2i])$$
     ///
     /// When `T` is a compact type (e.g., `u8`), elements are promoted to `F`
@@ -97,18 +114,22 @@ pub trait ComputeBackend: Send + Sync + 'static {
 
     /// Composition-reduce over paired inputs from multiple buffers.
     ///
-    /// For each position $i$ in $[0, n/2)$ where $n$ is the active buffer
+    /// For each position `i` in `[0, n/2)` where `n` is the active buffer
     /// length:
     ///
     /// 1. Reads pairs $(\text{inputs}[k][2i],\; \text{inputs}[k][2i+1])$
-    ///    for all $k$ input buffers
+    ///    for all `k` input buffers
     /// 2. Executes the compiled kernel on those pairs, producing
-    ///    $\text{degree} + 1$ values
+    ///    `num_evals` values
     /// 3. Multiplies each value by $\text{weights}[i]$
-    /// 4. Accumulates into $\text{degree} + 1$ running sums
+    /// 4. Accumulates into `num_evals` running sums
     ///
-    /// Returns $\text{degree} + 1$ field elements after reducing across all
+    /// Returns `num_evals` field elements after reducing across all
     /// positions. This is the only device-to-host transfer per invocation.
+    ///
+    /// For Toom-Cook kernels (ProductSum), `num_evals = D` (evaluations on
+    /// the grid `{1, ..., D-1, ∞}`). For standard-grid kernels (Custom),
+    /// `num_evals = degree + 1` (evaluations on `{0, 1, ..., degree}`).
     ///
     /// Both the kernel evaluation and the reduction use delayed modular
     /// reduction internally.
@@ -117,7 +138,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
         inputs: &[&Self::Buffer<F>],
         weights: &Self::Buffer<F>,
         kernel: &Self::CompiledKernel<F>,
-        degree: usize,
+        num_evals: usize,
     ) -> Vec<F>;
 
     /// Batched pairwise linear interpolation across multiple buffers.
@@ -137,11 +158,119 @@ pub trait ComputeBackend: Send + Sync + 'static {
             .collect()
     }
 
+    /// In-place pairwise linear interpolation, halving the buffer.
+    ///
+    /// For [`LowToHigh`](BindingOrder::LowToHigh) order (interleaved pairs):
+    /// $$\text{buf}[i] \leftarrow \text{buf}[2i] + s \cdot (\text{buf}[2i+1] - \text{buf}[2i])$$
+    ///
+    /// For [`HighToLow`](BindingOrder::HighToLow) order (split-half pairs):
+    /// $$\text{buf}[i] \leftarrow \text{buf}[i] + s \cdot (\text{buf}[i + n/2] - \text{buf}[i])$$
+    ///
+    /// The buffer is truncated to half its original length. Only works for
+    /// field-to-field binding (no compact type promotion).
+    fn interpolate_pairs_inplace<F: Field>(
+        &self,
+        buf: &mut Self::Buffer<F>,
+        scalar: F,
+        order: BindingOrder,
+    );
+
+    /// In-place batched pairwise interpolation across multiple buffers.
+    ///
+    /// Equivalent to calling [`interpolate_pairs_inplace`](Self::interpolate_pairs_inplace)
+    /// on each buffer, but enables inter-buffer parallelism.
+    fn interpolate_pairs_batch_inplace<F: Field>(
+        &self,
+        bufs: &mut [Self::Buffer<F>],
+        scalar: F,
+        order: BindingOrder,
+    ) {
+        for buf in bufs.iter_mut() {
+            self.interpolate_pairs_inplace(buf, scalar, order);
+        }
+    }
+
+    /// Const-generic composition-reduce with stack-allocated scratch.
+    ///
+    /// Identical to [`pairwise_reduce`](Self::pairwise_reduce) but with
+    /// compile-time-known `D`, enabling stack-allocated accumulators and
+    /// evaluation scratch arrays. Returns `[F; D]` instead of `Vec<F>`.
+    ///
+    /// Specialized for D ∈ {4, 8, 16, 32} which cover ~80% of prover time.
+    fn pairwise_reduce_fixed<F: Field, const D: usize>(
+        &self,
+        inputs: &[&Self::Buffer<F>],
+        weights: &Self::Buffer<F>,
+        kernel: &Self::CompiledKernel<F>,
+    ) -> [F; D] {
+        let v = self.pairwise_reduce(inputs, weights, kernel, D);
+        core::array::from_fn(|i| v[i])
+    }
+
+    /// Split-eq tensor-product composition-reduce.
+    ///
+    /// Like [`pairwise_reduce`](Self::pairwise_reduce) but with factored
+    /// weights. Instead of a flat weight buffer, takes two tables whose
+    /// tensor product forms the weights:
+    ///
+    /// $$w(x_{\text{out}}, x_{\text{in}}) = \text{outer}[x_{\text{out}}] \cdot \text{inner}[x_{\text{in}}]$$
+    ///
+    /// Input buffers have `2 × |outer| × |inner|` elements. Position
+    /// $(x_{\text{out}}, x_{\text{in}})$ maps to pair index
+    /// $x_{\text{out}} \cdot |\text{inner}| + x_{\text{in}}$.
+    ///
+    /// On CPU the outer loop stays in L1 while the inner loop streams data.
+    /// On GPU the outer factor maps to thread groups, the inner to threads
+    /// with the inner weight table in shared memory.
+    fn tensor_pairwise_reduce<F: Field>(
+        &self,
+        inputs: &[&Self::Buffer<F>],
+        outer_weights: &Self::Buffer<F>,
+        inner_weights: &Self::Buffer<F>,
+        kernel: &Self::CompiledKernel<F>,
+        num_evals: usize,
+    ) -> Vec<F>;
+
+    /// Const-generic split-eq tensor-product composition-reduce.
+    ///
+    /// Combines the tensor-product weight factoring of
+    /// [`tensor_pairwise_reduce`](Self::tensor_pairwise_reduce) with the
+    /// stack-allocated scratch of [`pairwise_reduce_fixed`](Self::pairwise_reduce_fixed).
+    fn tensor_pairwise_reduce_fixed<F: Field, const D: usize>(
+        &self,
+        inputs: &[&Self::Buffer<F>],
+        outer_weights: &Self::Buffer<F>,
+        inner_weights: &Self::Buffer<F>,
+        kernel: &Self::CompiledKernel<F>,
+    ) -> [F; D] {
+        let v = self.tensor_pairwise_reduce(inputs, outer_weights, inner_weights, kernel, D);
+        core::array::from_fn(|i| v[i])
+    }
+
+    /// Evaluates multiple kernels over the same inputs and weights in a
+    /// single pass.
+    ///
+    /// Each `(kernel, num_evals)` pair shares the same input buffers and
+    /// weight buffer. The data is read once per position and each kernel is
+    /// evaluated, saving cache misses compared to calling
+    /// [`pairwise_reduce`](Self::pairwise_reduce) independently per kernel.
+    fn pairwise_reduce_multi<F: Field>(
+        &self,
+        inputs: &[&Self::Buffer<F>],
+        weights: &Self::Buffer<F>,
+        kernels: &[(&Self::CompiledKernel<F>, usize)],
+    ) -> Vec<Vec<F>> {
+        kernels
+            .iter()
+            .map(|(kernel, num_evals)| self.pairwise_reduce(inputs, weights, kernel, *num_evals))
+            .collect()
+    }
+
     /// Multiplicative product table over the Boolean hypercube.
     ///
     /// Computes $2^n$ evaluations where $n = \text{point.len()}$:
     /// $$\text{out}[x] = \prod_{i=0}^{n-1} \bigl(r_i \cdot x_i + (1 - r_i)(1 - x_i)\bigr)$$
-    /// for all $x \in \{0,1\}^n$, where $x_i$ is the $i$-th bit of $x$.
+    /// for all `x` in `{0,1}^n`, where `x_i` is the `i`-th bit of `x`.
     ///
     /// On GPU this is constructed on-device, avoiding a $2^n$ field-element
     /// transfer across the bus. On CPU this is equivalent to

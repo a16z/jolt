@@ -15,10 +15,6 @@ use std::io::{Read, Write};
 
 type InnerFr = ark_bn254::Fr;
 
-// Serialization bridge
-//
-// dory-pcs serialization enums mirror arkworks's, so we convert between them.
-
 #[inline(always)]
 fn to_ark_compress(c: Compress) -> ark_serialize::Compress {
     match c {
@@ -81,8 +77,6 @@ impl DoryDeserialize for Fr {
             .map_err(ark_err_to_dory)
     }
 }
-
-// dory::Field
 
 impl arithmetic::Field for Fr {
     #[inline(always)]

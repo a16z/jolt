@@ -3,7 +3,7 @@
 //! Verifies that CpuBackend primitives agree with the canonical implementations
 //! in jolt-poly (Polynomial::bind, EqPolynomial::evaluations).
 
-use jolt_compute::{AnyBuffer, ComputeBackend, CpuBackend, CpuKernel};
+use jolt_compute::{ComputeBackend, CpuBackend, CpuKernel};
 use jolt_field::{Field, Fr};
 use jolt_poly::{EqPolynomial, Polynomial};
 use rand_chacha::ChaCha20Rng;
@@ -106,48 +106,6 @@ fn product_table_matches_eq_polynomial() {
     }
 }
 
-// AnyBuffer mixed interpolation
-
-/// interpolate_mixed with u8 data matches field interpolation of promoted data.
-#[test]
-fn mixed_u8_interpolation_matches_promoted() {
-    let mut rng = ChaCha20Rng::seed_from_u64(3000);
-    let b = backend();
-    let n = 16; // 8 pairs
-    let data: Vec<u8> = (0..n).map(|i| (i * 17 + 5) as u8).collect();
-    let scalar = Fr::random(&mut rng);
-
-    // Via mixed path
-    let any = AnyBuffer::from(data.as_slice());
-    let mixed_result: Vec<Fr> = b.interpolate_mixed(&any, scalar);
-
-    // Via promoted field path
-    let promoted: Vec<Fr> = data.iter().map(|&x| Fr::from_u64(x as u64)).collect();
-    let buf = b.upload(&promoted);
-    let field_result: Vec<Fr> = b.interpolate_pairs(buf, scalar);
-    let field_result = b.download(&field_result);
-
-    assert_eq!(mixed_result, field_result);
-}
-
-/// interpolate_mixed with i64 data.
-#[test]
-fn mixed_i64_interpolation_matches_promoted() {
-    let b = backend();
-    let data: Vec<i64> = vec![-100, 200, -300, 400, 0, -1, i64::MAX, i64::MIN];
-    let scalar = Fr::from_u64(7);
-
-    let any = AnyBuffer::from(data.as_slice());
-    let mixed_result: Vec<Fr> = b.interpolate_mixed(&any, scalar);
-
-    let promoted: Vec<Fr> = data.iter().map(|&x| Fr::from_i64(x)).collect();
-    let buf = b.upload(&promoted);
-    let field_result: Vec<Fr> = b.interpolate_pairs(buf, scalar);
-    let field_result = b.download(&field_result);
-
-    assert_eq!(mixed_result, field_result);
-}
-
 // pairwise_reduce with kernel
 
 /// Identity kernel: f(t) = sum_k (lo[k] + t*(hi[k] - lo[k])) * weight[k].
@@ -155,17 +113,13 @@ fn mixed_i64_interpolation_matches_promoted() {
 #[test]
 fn pairwise_reduce_identity_kernel() {
     let b = backend();
-    let degree = 1;
+    let num_evals = 2; // degree-1 polynomial: evals at t=0, t=1
 
-    let kernel = CpuKernel::new(move |lo: &[Fr], hi: &[Fr], d: usize| {
-        (0..=d)
-            .map(|t| {
-                let t_f = Fr::from_u64(t as u64);
-                (0..lo.len())
-                    .map(|k| lo[k] + t_f * (hi[k] - lo[k]))
-                    .sum()
-            })
-            .collect()
+    let kernel = CpuKernel::new(move |lo: &[Fr], hi: &[Fr], out: &mut [Fr]| {
+        for (t, slot) in out.iter_mut().enumerate() {
+            let t_f = Fr::from_u64(t as u64);
+            *slot = (0..lo.len()).map(|k| lo[k] + t_f * (hi[k] - lo[k])).sum();
+        }
     });
 
     // Two buffers with 4 pairs each
@@ -189,9 +143,14 @@ fn pairwise_reduce_identity_kernel() {
         Fr::from_u64(70),
         Fr::from_u64(80),
     ]);
-    let weights = b.upload(&[Fr::from_u64(1), Fr::from_u64(1), Fr::from_u64(1), Fr::from_u64(1)]);
+    let weights = b.upload(&[
+        Fr::from_u64(1),
+        Fr::from_u64(1),
+        Fr::from_u64(1),
+        Fr::from_u64(1),
+    ]);
 
-    let result = b.pairwise_reduce(&[&buf_a, &buf_b], &weights, &kernel, degree);
+    let result = b.pairwise_reduce(&[&buf_a, &buf_b], &weights, &kernel, num_evals);
 
     // t=0: sum over pairs of (lo_a + lo_b) * 1
     // pair 0: lo_a=1, lo_b=10 → 11; pair 1: lo_a=3, lo_b=30 → 33; ...
@@ -236,15 +195,9 @@ fn batch_interpolate_matches_individual() {
         .collect();
 
     // Batch
-    let bufs: Vec<Vec<Fr>> = polys
-        .iter()
-        .map(|p| b.upload(p.evaluations()))
-        .collect();
+    let bufs: Vec<Vec<Fr>> = polys.iter().map(|p| b.upload(p.evaluations())).collect();
     let batch_results = b.interpolate_pairs_batch(bufs, scalar);
-    let batch: Vec<Vec<Fr>> = batch_results
-        .iter()
-        .map(|buf| b.download(buf))
-        .collect();
+    let batch: Vec<Vec<Fr>> = batch_results.iter().map(|buf| b.download(buf)).collect();
 
     assert_eq!(individual, batch);
 }
@@ -270,7 +223,11 @@ fn sumcheck_round_invariant() {
         .sum();
 
     // Verify via direct evaluation
-    assert_eq!(running_sum, poly.evaluate(&tau), "initial sum must equal f(tau)");
+    assert_eq!(
+        running_sum,
+        poly.evaluate(&tau),
+        "initial sum must equal f(tau)"
+    );
 
     let mut eq_poly = Polynomial::new(eq_evals);
     let mut f_poly = poly;
@@ -288,7 +245,8 @@ fn sumcheck_round_invariant() {
         }
 
         assert_eq!(
-            s0 + s1, running_sum,
+            s0 + s1,
+            running_sum,
             "round {round}: s(0) + s(1) must equal running sum"
         );
 

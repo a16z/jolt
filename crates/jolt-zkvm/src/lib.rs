@@ -18,6 +18,8 @@
 
 pub mod claims;
 pub mod pipeline;
+pub mod proof;
+pub mod prover;
 pub mod stage;
 pub mod stages;
 pub mod tags;

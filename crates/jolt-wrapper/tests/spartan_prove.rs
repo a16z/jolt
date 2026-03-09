@@ -80,7 +80,6 @@ fn prove_should_fail(
     );
 }
 
-
 #[test]
 fn spartan_e2e_simple_mul() {
     let _session = ArenaSession::new();
@@ -372,9 +371,7 @@ mod hyperkzg {
 
     type KzgPCS = HyperKZGScheme<Bn254>;
 
-    fn make_setup(
-        max_degree: usize,
-    ) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifierSetup<Bn254>) {
+    fn make_setup(max_degree: usize) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifierSetup<Bn254>) {
         let mut rng = ChaCha20Rng::seed_from_u64(0xdead_cafe);
         let g1 = Bn254::g1_generator();
         let g2 = Bn254::g2_generator();

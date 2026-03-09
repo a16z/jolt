@@ -155,7 +155,7 @@ impl<const N: usize> Limbs<N> {
     /// Truncated fused multiply-add: `self += a * b`, keeping `N` limbs.
     ///
     /// WARNING: The carry at the spill position is NOT fully propagated.
-    /// Use [`fmadd`] if many products will be accumulated and intermediate
+    /// Use [`fmadd`](Self::fmadd) if many products will be accumulated and intermediate
     /// limbs may overflow.
     #[inline]
     pub fn fmadd_trunc<const A: usize, const B: usize>(&mut self, a: &Limbs<A>, b: &Limbs<B>) {
@@ -196,7 +196,6 @@ impl<const N: usize> Limbs<N> {
                 self.0[idx] = prod as u64;
                 carry = (prod >> 64) as u64;
             }
-            // Propagate carry through remaining limbs
             let mut k = i + j_limit;
             while carry != 0 && k < N {
                 let sum = (self.0[k] as u128) + (carry as u128);

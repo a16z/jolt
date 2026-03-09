@@ -14,20 +14,13 @@ Two hash backends are provided. Both produce 128-bit challenges (drawn from `u12
 
 ### Core Traits
 
-- **`Transcript`** — The main transcript trait. Methods:
-  - `new(label)` — Initialize with a domain-separation label (< 33 bytes)
-  - `append_bytes(bytes)` — Absorb raw bytes into the transcript state
-  - `append(value)` — Absorb any `AppendToTranscript` value (field elements, commitments, etc.)
-  - `challenge()` — Squeeze a 128-bit challenge
-  - `challenge_vector(len)` — Squeeze multiple challenges
-  - `state()` — Current 256-bit state (for transcript comparison in tests)
-
-- **`AppendToTranscript`** — Trait for types that can be absorbed into a transcript. Implemented for field elements and commitment types.
+- **`Transcript`** -- The main transcript trait. Methods: `new(label)`, `append_bytes(bytes)`, `append(value)`, `challenge()`, `challenge_vector(len)`, `state()`.
+- **`AppendToTranscript`** -- Trait for types that can be absorbed into a transcript.
 
 ### Implementations
 
-- **`Blake2bTranscript`** — Uses Blake2b-256. Default choice for Jolt proofs.
-- **`KeccakTranscript`** — Uses Keccak-256. EVM-compatible for on-chain verification.
+- **`Blake2bTranscript`** -- Uses Blake2b-256. Default choice for Jolt proofs.
+- **`KeccakTranscript`** -- Uses Keccak-256. EVM-compatible for on-chain verification.
 
 ## Dependency Position
 
@@ -35,7 +28,7 @@ Two hash backends are provided. Both produce 128-bit challenges (drawn from `u12
 
 ## Feature Flags
 
-This crate has no feature flags. Test-only functionality (`compare_to`) is gated behind `#[cfg(test)]`.
+This crate has no feature flags.
 
 ## License
 

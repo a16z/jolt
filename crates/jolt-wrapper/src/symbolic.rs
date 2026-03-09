@@ -38,21 +38,18 @@ pub struct SymbolicField {
 }
 
 impl SymbolicField {
-    /// Creates a symbolic field element from a constant value.
     pub fn constant(val: [u64; 4]) -> Self {
         Self {
             edge: Atom::Scalar(val),
         }
     }
 
-    /// Creates a symbolic field element from an arena node.
     pub fn from_node(id: NodeId) -> Self {
         Self {
             edge: Atom::Node(id),
         }
     }
 
-    /// Creates a named input variable.
     pub fn variable(index: u32, name: impl Into<String>) -> Self {
         let id = arena::alloc(Node::Var {
             index,
@@ -63,22 +60,18 @@ impl SymbolicField {
         }
     }
 
-    /// Creates a symbolic field element from an edge (constant or node reference).
     pub fn from_edge(edge: Edge) -> Self {
         Self { edge }
     }
 
-    /// Returns the underlying edge.
     pub fn into_edge(self) -> Edge {
         self.edge
     }
 
-    /// Returns `true` if this is an inline constant.
     pub fn is_constant(&self) -> bool {
         matches!(self.edge, Atom::Scalar(_))
     }
 
-    /// Returns the constant value if this is a constant.
     pub fn as_constant(&self) -> Option<[u64; 4]> {
         match self.edge {
             Atom::Scalar(val) => Some(val),

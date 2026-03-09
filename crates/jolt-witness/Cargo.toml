@@ -1,0 +1,23 @@
+[package]
+name = "jolt-witness"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Witness generation for the Jolt zkVM: trace → multilinear evaluation tables"
+
+[lints]
+workspace = true
+
+[features]
+test-utils = []
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+jolt-ir = { path = "../jolt-ir" }
+tracing.workspace = true
+
+[dev-dependencies]
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }

@@ -4,8 +4,8 @@
 //! the Gemini transformation (section 2.4.2 of <https://eprint.iacr.org/2022/420.pdf>),
 //! operating directly on evaluation-form polynomials (no FFT/interpolation).
 //!
-//! This crate is generic over [`PairingGroup`] from `jolt-crypto` and implements
-//! the [`CommitmentScheme`] and [`AdditivelyHomomorphic`] traits from `jolt-openings`.
+//! This crate is generic over `PairingGroup` from `jolt-crypto` and implements
+//! the `CommitmentScheme` and `AdditivelyHomomorphic` traits from `jolt-openings`.
 //!
 //! # Protocol overview
 //!
@@ -25,6 +25,4 @@ pub mod scheme;
 pub mod types;
 
 pub use scheme::HyperKZGScheme;
-pub use types::{
-    HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup,
-};
+pub use types::{HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup};

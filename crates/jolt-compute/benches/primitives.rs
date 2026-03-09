@@ -1,9 +1,8 @@
 #![allow(unused_results)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_compute::{AnyBuffer, ComputeBackend, CpuBackend, CpuKernel};
+use jolt_compute::{ComputeBackend, CpuBackend, CpuKernel};
 use jolt_field::{Field, Fr};
-use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -13,17 +12,15 @@ fn random_field_vec(n: usize, seed: u64) -> Vec<Fr> {
 }
 
 fn make_product_sum_kernel(d: usize) -> CpuKernel<Fr> {
-    CpuKernel::new(move |lo: &[Fr], hi: &[Fr], degree: usize| {
-        let mut evals = vec![Fr::zero(); degree + 1];
-        for (t, eval) in evals.iter_mut().enumerate() {
+    CpuKernel::new(move |lo: &[Fr], hi: &[Fr], out: &mut [Fr]| {
+        for (t, slot) in out.iter_mut().enumerate() {
             let t_f = Fr::from_u64(t as u64);
             let mut product = Fr::from_u64(1);
             for j in 0..d {
                 product *= lo[j] + t_f * (hi[j] - lo[j]);
             }
-            *eval += product;
+            *slot = product;
         }
-        evals
     })
 }
 
@@ -126,64 +123,6 @@ fn bench_pairwise_reduce(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_pairwise_reduce_mixed(c: &mut Criterion) {
-    let backend = CpuBackend;
-    let mut group = c.benchmark_group("pairwise_reduce_mixed");
-
-    // Compare: D=4 inputs where half are u8 (compact) vs all Fr (promoted)
-    let d = 4;
-    let kernel = make_product_sum_kernel(d);
-
-    for log_n in [16, 18, 20] {
-        let n = 1usize << log_n;
-        let half = n / 2;
-
-        let mut rng = ChaCha20Rng::seed_from_u64(42);
-        // 2 compact u8 inputs + 2 field inputs
-        let compact_a: Vec<u8> = (0..n).map(|_| rand::Rng::gen(&mut rng)).collect();
-        let compact_b: Vec<u8> = (0..n).map(|_| rand::Rng::gen(&mut rng)).collect();
-        let field_a = random_field_vec(n, 100);
-        let field_b = random_field_vec(n, 101);
-        let weights = random_field_vec(half, 200);
-
-        group.throughput(Throughput::Elements(half as u64));
-
-        // Mixed path: reads u8 directly
-        group.bench_with_input(
-            BenchmarkId::new("mixed", format!("2^{log_n}")),
-            &n,
-            |b, _| {
-                let inputs: Vec<AnyBuffer<'_, Fr>> = vec![
-                    AnyBuffer::from(compact_a.as_slice()),
-                    AnyBuffer::from(compact_b.as_slice()),
-                    AnyBuffer::field(field_a.as_slice()),
-                    AnyBuffer::field(field_b.as_slice()),
-                ];
-                b.iter(|| {
-                    black_box(backend.pairwise_reduce_mixed(&inputs, &weights, &kernel, d));
-                });
-            },
-        );
-
-        // Promoted path: pre-convert u8 to Fr, then use standard pairwise_reduce
-        let promoted_a: Vec<Fr> = compact_a.iter().map(|&x| Fr::from_u8(x)).collect();
-        let promoted_b: Vec<Fr> = compact_b.iter().map(|&x| Fr::from_u8(x)).collect();
-        group.bench_with_input(
-            BenchmarkId::new("promoted", format!("2^{log_n}")),
-            &n,
-            |b, _| {
-                let input_refs: Vec<&Vec<Fr>> =
-                    vec![&promoted_a, &promoted_b, &field_a, &field_b];
-                b.iter(|| {
-                    black_box(backend.pairwise_reduce(&input_refs, &weights, &kernel, d));
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
-
 fn bench_interpolate_pairs_batch(c: &mut Criterion) {
     let backend = CpuBackend;
     let mut group = c.benchmark_group("interpolate_pairs_batch");
@@ -214,39 +153,266 @@ fn bench_interpolate_pairs_batch(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_interpolate_mixed(c: &mut Criterion) {
+fn bench_interpolate_pairs_inplace(c: &mut Criterion) {
     let backend = CpuBackend;
-    let mut group = c.benchmark_group("interpolate_mixed");
+    let mut group = c.benchmark_group("interpolate_pairs_inplace");
 
     for log_n in [16, 18, 20] {
         let n = 1usize << log_n;
         let half = (n / 2) as u64;
+        let data = random_field_vec(n, 42);
         let scalar = Fr::from_u64(0x1234_5678);
-
-        let mut rng = ChaCha20Rng::seed_from_u64(42);
-        let data_u8: Vec<u8> = (0..n).map(|_| rand::Rng::gen(&mut rng)).collect();
-        let data_fr = random_field_vec(n, 100);
 
         group.throughput(Throughput::Elements(half));
 
         group.bench_with_input(
-            BenchmarkId::new("u8", format!("2^{log_n}")),
+            BenchmarkId::new("allocating", format!("2^{log_n}")),
             &n,
             |b, _| {
-                let buf = AnyBuffer::from(data_u8.as_slice());
                 b.iter(|| {
-                    black_box(backend.interpolate_mixed::<Fr>(&buf, scalar));
+                    let buf = data.clone();
+                    black_box(backend.interpolate_pairs::<Fr, Fr>(buf, scalar));
                 });
             },
         );
 
         group.bench_with_input(
-            BenchmarkId::new("field", format!("2^{log_n}")),
+            BenchmarkId::new("inplace_low_to_high", format!("2^{log_n}")),
             &n,
             |b, _| {
-                let buf = AnyBuffer::field(data_fr.as_slice());
                 b.iter(|| {
-                    black_box(backend.interpolate_mixed::<Fr>(&buf, scalar));
+                    let mut buf = data.clone();
+                    backend.interpolate_pairs_inplace(
+                        &mut buf,
+                        scalar,
+                        jolt_compute::BindingOrder::LowToHigh,
+                    );
+                    black_box(&buf);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("inplace_high_to_low", format!("2^{log_n}")),
+            &n,
+            |b, _| {
+                b.iter(|| {
+                    let mut buf = data.clone();
+                    backend.interpolate_pairs_inplace(
+                        &mut buf,
+                        scalar,
+                        jolt_compute::BindingOrder::HighToLow,
+                    );
+                    black_box(&buf);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn bench_pairwise_reduce_fixed(c: &mut Criterion) {
+    let backend = CpuBackend;
+    let mut group = c.benchmark_group("pairwise_reduce_fixed");
+
+    for d in [4, 8, 16] {
+        let kernel = make_product_sum_kernel(d);
+
+        for log_n in [16, 18, 20] {
+            let n = 1usize << log_n;
+            let half = n / 2;
+
+            let inputs: Vec<Vec<Fr>> = (0..d)
+                .map(|i| random_field_vec(n, 100 + i as u64))
+                .collect();
+            let input_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+            let weights = random_field_vec(half, 200);
+
+            group.throughput(Throughput::Elements(half as u64));
+
+            group.bench_with_input(
+                BenchmarkId::new(format!("dynamic/D={d}"), format!("2^{log_n}")),
+                &n,
+                |b, _| {
+                    b.iter(|| {
+                        black_box(backend.pairwise_reduce(&input_refs, &weights, &kernel, d));
+                    });
+                },
+            );
+
+            match d {
+                4 => {
+                    group.bench_with_input(
+                        BenchmarkId::new(format!("fixed/D={d}"), format!("2^{log_n}")),
+                        &n,
+                        |b, _| {
+                            b.iter(|| {
+                                black_box(
+                                    backend
+                                        .pairwise_reduce_fixed::<Fr, 4>(&input_refs, &weights, &kernel),
+                                );
+                            });
+                        },
+                    );
+                }
+                8 => {
+                    group.bench_with_input(
+                        BenchmarkId::new(format!("fixed/D={d}"), format!("2^{log_n}")),
+                        &n,
+                        |b, _| {
+                            b.iter(|| {
+                                black_box(
+                                    backend
+                                        .pairwise_reduce_fixed::<Fr, 8>(&input_refs, &weights, &kernel),
+                                );
+                            });
+                        },
+                    );
+                }
+                16 => {
+                    group.bench_with_input(
+                        BenchmarkId::new(format!("fixed/D={d}"), format!("2^{log_n}")),
+                        &n,
+                        |b, _| {
+                            b.iter(|| {
+                                black_box(
+                                    backend.pairwise_reduce_fixed::<Fr, 16>(
+                                        &input_refs,
+                                        &weights,
+                                        &kernel,
+                                    ),
+                                );
+                            });
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    group.finish();
+}
+
+fn bench_tensor_pairwise_reduce(c: &mut Criterion) {
+    let backend = CpuBackend;
+    let mut group = c.benchmark_group("tensor_pairwise_reduce");
+
+    let d = 4;
+    let kernel = make_product_sum_kernel(d);
+
+    // Test various outer×inner splits at total ~2^18 pairs
+    for (outer_log, inner_log) in [(5, 13), (9, 9), (13, 5)] {
+        let outer_len = 1usize << outer_log;
+        let inner_len = 1usize << inner_log;
+        let total_pairs = outer_len * inner_len;
+        let n = total_pairs * 2;
+
+        let inputs: Vec<Vec<Fr>> = (0..d)
+            .map(|i| random_field_vec(n, 100 + i as u64))
+            .collect();
+        let input_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+        let outer_w = random_field_vec(outer_len, 200);
+        let inner_w = random_field_vec(inner_len, 201);
+
+        // Flat weights for comparison
+        let mut flat_w = Vec::with_capacity(total_pairs);
+        for &o in &outer_w {
+            for &i in &inner_w {
+                flat_w.push(o * i);
+            }
+        }
+
+        group.throughput(Throughput::Elements(total_pairs as u64));
+
+        let label = format!("{outer_log}+{inner_log}");
+
+        group.bench_with_input(
+            BenchmarkId::new("flat", &label),
+            &total_pairs,
+            |b, _| {
+                b.iter(|| {
+                    black_box(backend.pairwise_reduce(&input_refs, &flat_w, &kernel, d));
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("tensor", &label),
+            &total_pairs,
+            |b, _| {
+                b.iter(|| {
+                    black_box(backend.tensor_pairwise_reduce(
+                        &input_refs,
+                        &outer_w,
+                        &inner_w,
+                        &kernel,
+                        d,
+                    ));
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("tensor_fixed", &label),
+            &total_pairs,
+            |b, _| {
+                b.iter(|| {
+                    black_box(backend.tensor_pairwise_reduce_fixed::<Fr, 4>(
+                        &input_refs,
+                        &outer_w,
+                        &inner_w,
+                        &kernel,
+                    ));
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn bench_pairwise_reduce_multi(c: &mut Criterion) {
+    let backend = CpuBackend;
+    let mut group = c.benchmark_group("pairwise_reduce_multi");
+
+    let k1 = make_product_sum_kernel(4);
+    let k2 = make_product_sum_kernel(4);
+
+    for log_n in [16, 18, 20] {
+        let n = 1usize << log_n;
+        let half = n / 2;
+
+        let inputs: Vec<Vec<Fr>> = (0..4)
+            .map(|i| random_field_vec(n, 100 + i as u64))
+            .collect();
+        let input_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+        let weights = random_field_vec(half, 200);
+
+        group.throughput(Throughput::Elements(half as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("individual_2x", format!("2^{log_n}")),
+            &n,
+            |b, _| {
+                b.iter(|| {
+                    black_box(backend.pairwise_reduce(&input_refs, &weights, &k1, 4));
+                    black_box(backend.pairwise_reduce(&input_refs, &weights, &k2, 4));
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("multi_2x", format!("2^{log_n}")),
+            &n,
+            |b, _| {
+                b.iter(|| {
+                    black_box(backend.pairwise_reduce_multi(
+                        &input_refs,
+                        &weights,
+                        &[(&k1, 4), (&k2, 4)],
+                    ));
                 });
             },
         );
@@ -295,9 +461,11 @@ criterion_group!(
     bench_interpolate_pairs,
     bench_interpolate_pairs_compact,
     bench_interpolate_pairs_batch,
-    bench_interpolate_mixed,
     bench_pairwise_reduce,
-    bench_pairwise_reduce_mixed,
     bench_product_table,
+    bench_interpolate_pairs_inplace,
+    bench_pairwise_reduce_fixed,
+    bench_tensor_pairwise_reduce,
+    bench_pairwise_reduce_multi,
 );
 criterion_main!(benches);

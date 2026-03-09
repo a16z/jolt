@@ -20,7 +20,6 @@ impl IdentityPolynomial {
         Self { num_vars }
     }
 
-    /// Number of variables `n`.
     pub fn num_vars(&self) -> usize {
         self.num_vars
     }

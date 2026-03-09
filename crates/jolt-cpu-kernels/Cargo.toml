@@ -23,7 +23,12 @@ rand_core = { workspace = true }
 rand_chacha = { workspace = true }
 num-traits = { workspace = true }
 criterion = { workspace = true }
+rayon = { workspace = true }
 
 [[bench]]
 name = "compiled_kernels"
+harness = false
+
+[[bench]]
+name = "rayon_vs_backend"
 harness = false

@@ -538,7 +538,9 @@ mod tests {
         let n = 4;
         let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let expected = r.iter().fold(Fr::one(), |acc, &r_i| acc * (Fr::one() - r_i));
+        let expected = r
+            .iter()
+            .fold(Fr::one(), |acc, &r_i| acc * (Fr::one() - r_i));
         let result = EqPolynomial::<Fr>::zero_selector(&r);
         assert_eq!(expected, result);
     }

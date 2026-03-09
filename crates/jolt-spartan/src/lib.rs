@@ -108,6 +108,33 @@ mod tests {
     }
 
     #[test]
+    fn verify_with_challenges_matches_prover() {
+        let r1cs = x_squared_circuit();
+        let key = SpartanKey::from_r1cs(&r1cs);
+        let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
+
+        let mut pt = Blake2bTranscript::new(b"spartan-challenges");
+        let (proof, prover_r_x, prover_r_y) =
+            SpartanProver::prove_with_challenges::<MockPCS, _>(
+                &r1cs,
+                &key,
+                &witness,
+                &(),
+                &mut pt,
+                FirstRoundStrategy::Standard,
+            )
+            .expect("proving should succeed");
+
+        let mut vt = Blake2bTranscript::new(b"spartan-challenges");
+        let (verifier_r_x, verifier_r_y) =
+            SpartanVerifier::verify_with_challenges::<MockPCS, _>(&key, &proof, &(), &mut vt)
+                .expect("verification should succeed");
+
+        assert_eq!(prover_r_x, verifier_r_x, "r_x must match");
+        assert_eq!(prover_r_y, verifier_r_y, "r_y must match");
+    }
+
+    #[test]
     fn reject_unsatisfied_witness() {
         let r1cs = x_squared_circuit();
         let key = SpartanKey::from_r1cs(&r1cs);

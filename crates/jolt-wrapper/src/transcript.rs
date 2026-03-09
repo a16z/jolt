@@ -147,7 +147,6 @@ impl Transcript for PoseidonSymbolicTranscript {
     fn state(&self) -> &[u8; 32] {
         // We can't return a meaningful state for symbolic transcripts.
         // This is used for debugging/testing; return a zero state.
-        // SAFETY: returning a static reference to a zero array is safe.
         static ZERO_STATE: [u8; 32] = [0u8; 32];
         &ZERO_STATE
     }

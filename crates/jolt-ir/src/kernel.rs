@@ -17,14 +17,17 @@ use crate::Expr;
 /// (dominant cost in Jolt), and an escape hatch for bespoke compositions.
 #[derive(Debug, Clone)]
 pub enum KernelShape {
-    /// Product of D linear interpolants evaluated at D+1 grid points,
-    /// summed across multiple product groups.
+    /// Product of D linear interpolants evaluated on the Toom-Cook grid
+    /// $\{1, 2, \ldots, D-1, \infty\}$, summed across multiple product groups.
     ///
-    /// At each pair position, for grid point $t \in \{0, 1, \ldots, D\}$:
-    /// $$\text{eval}[t] = \sum_{g=0}^{P-1} \prod_{j=0}^{D-1}
-    ///     \bigl(\text{lo}[g \cdot D + j] + t \cdot (\text{hi}[g \cdot D + j] - \text{lo}[g \cdot D + j])\bigr)$$
+    /// At each pair position, produces D evaluations:
+    /// $$\text{eval}\[k\] = \sum_{g=0}^{P-1} \prod_{j=0}^{D-1} p_{g,j}(t_k)$$
     ///
-    /// where $D$ = `num_inputs_per_product` and $P$ = `num_products`.
+    /// where $t_k \in \{1, 2, \ldots, D-1, \infty\}$, $D$ = `num_inputs_per_product`,
+    /// and $P$ = `num_products`.
+    ///
+    /// The Toom-Cook grid enables $O(D \log D)$ multiplications via balanced
+    /// binary splitting with extrapolation, vs $O(D^2)$ for the standard grid.
     ///
     /// This covers instruction RA sumchecks ($D \in \{4, 8, 16\}$) and most
     /// claim reductions. GPU backends generate D-specialized kernels with
@@ -32,8 +35,8 @@ pub enum KernelShape {
     ProductSum {
         /// Number of input buffers per product group ($D$).
         ///
-        /// Determines both the product degree and the number of grid points
-        /// ($D + 1$). Common values: 4, 8, 16.
+        /// Determines both the product degree and the number of Toom-Cook
+        /// evaluations ($D$). Common values: 4, 8, 16, 32.
         num_inputs_per_product: usize,
         /// Number of product groups summed together ($P$).
         num_products: usize,
@@ -141,18 +144,19 @@ impl TensorSplit {
 ///     tensor_split: Some(TensorSplit::balanced(20)),
 /// };
 /// assert_eq!(desc.shape.num_inputs(), 12);
-/// assert_eq!(desc.num_outputs(), 5);
+/// assert_eq!(desc.num_evals(), 4);
 /// ```
 #[derive(Debug, Clone)]
 pub struct KernelDescriptor {
     /// The computation performed at each pair position.
     pub shape: KernelShape,
 
-    /// Degree of the composition. Determines output size (`degree + 1`
-    /// field elements per position).
+    /// Degree of the composition polynomial.
     ///
-    /// For `ProductSum`, this should equal `num_inputs_per_product`.
-    /// For `Custom`, this is specified by the caller.
+    /// For `ProductSum`, this must equal `num_inputs_per_product` and the
+    /// kernel produces `degree` evaluations on the Toom-Cook grid.
+    /// For `Custom`, this is caller-specified and the kernel produces
+    /// `degree + 1` evaluations on the standard grid.
     pub degree: usize,
 
     /// Optional tensor-product decomposition of the weight buffer.
@@ -166,10 +170,19 @@ pub struct KernelDescriptor {
 }
 
 impl KernelDescriptor {
-    /// Number of output values per pair position ($\text{degree} + 1$).
+    /// Number of evaluation values produced per pair position.
+    ///
+    /// For `ProductSum`: $D$ (Toom-Cook grid `{1, ..., D-1, ∞}`).
+    /// For `Custom`: `degree + 1` (standard grid `{0, 1, ..., degree}`).
     #[inline]
-    pub fn num_outputs(&self) -> usize {
-        self.degree + 1
+    pub fn num_evals(&self) -> usize {
+        match &self.shape {
+            KernelShape::ProductSum {
+                num_inputs_per_product,
+                ..
+            } => *num_inputs_per_product,
+            KernelShape::Custom { .. } => self.degree + 1,
+        }
     }
 
     /// Total number of input buffers.
@@ -253,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_num_outputs() {
+    fn descriptor_num_evals() {
         let desc = KernelDescriptor {
             shape: KernelShape::ProductSum {
                 num_inputs_per_product: 4,
@@ -262,7 +275,8 @@ mod tests {
             degree: 4,
             tensor_split: None,
         };
-        assert_eq!(desc.num_outputs(), 5);
+        // ProductSum: num_evals = D (Toom-Cook grid)
+        assert_eq!(desc.num_evals(), 4);
         assert_eq!(desc.num_inputs(), 8);
     }
 
@@ -352,6 +366,7 @@ mod tests {
             }),
         };
         assert!(desc.is_valid());
-        assert_eq!(desc.num_outputs(), 3);
+        // Custom: num_evals = degree + 1 (standard grid)
+        assert_eq!(desc.num_evals(), 3);
     }
 }

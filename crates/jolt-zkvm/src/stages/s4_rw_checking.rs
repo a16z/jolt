@@ -103,7 +103,6 @@ impl<F: Field> RwCheckingStage<F> {
         let gamma = self.reg_challenges[1];
         let gamma_sq = self.reg_challenges[2];
 
-        // poly_tables: [val(0), rs1_ra(1), rs2_ra(2), rd_wa(3), inc(4)]
         let poly_tables = vec![
             val.clone(),
             rs1_ra.clone(),
@@ -112,13 +111,6 @@ impl<F: Field> RwCheckingStage<F> {
             inc.clone(),
         ];
 
-        // eq·rd_wa·inc + eq·rd_wa·val + eq·γ·rs1_ra·val + eq·γ²·rs2_ra·val
-        // The eq polynomial is handled separately by FormulaCompute.
-        // Terms (without eq factor, since FormulaCompute multiplies by eq):
-        //   rd_wa(3) · inc(4) with coeff 1
-        //   rd_wa(3) · val(0) with coeff 1
-        //   rs1_ra(1) · val(0) with coeff γ
-        //   rs2_ra(2) · val(0) with coeff γ²
         let terms = vec![
             Term {
                 coeff: eq_eval,
@@ -141,7 +133,6 @@ impl<F: Field> RwCheckingStage<F> {
         let eq_table = EqPolynomial::new(self.reg_eq_point.clone()).evaluations();
         let n = 1usize << self.num_vars;
 
-        // Compute claimed sum by brute force
         let claimed_sum: F = (0..n)
             .map(|x| {
                 let mut formula_val = F::zero();
@@ -156,7 +147,6 @@ impl<F: Field> RwCheckingStage<F> {
             })
             .sum();
 
-        // Degree = 1 (eq) + max product size = 1 + 2 = 3
         let degree = 3;
 
         let witness = FormulaCompute::new(poly_tables, eq_table, terms, degree, self.num_vars);
@@ -174,10 +164,8 @@ impl<F: Field> RwCheckingStage<F> {
         let inc = self.ram_inc.as_ref().unwrap();
         let wa = self.ram_wa.as_ref().unwrap();
 
-        // poly_tables: [inc(0), wa(1)]
         let poly_tables = vec![inc.clone(), wa.clone()];
 
-        // c0 · inc · wa (without eq factor)
         let terms = vec![Term {
             coeff: self.ram_c0,
             factors: vec![0, 1], // inc · wa
@@ -190,7 +178,6 @@ impl<F: Field> RwCheckingStage<F> {
             .map(|x| eq_table[x] * self.ram_c0 * poly_tables[0][x] * poly_tables[1][x])
             .sum();
 
-        // Degree = 1 (eq) + 2 (inc·wa) = 3
         let degree = 3;
 
         let witness = FormulaCompute::new(poly_tables, eq_table, terms, degree, self.num_vars);
@@ -208,11 +195,7 @@ impl<F: Field> RwCheckingStage<F> {
 use jolt_sumcheck::prover::SumcheckCompute;
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for RwCheckingStage<F> {
-    fn build(
-        &mut self,
-        _prior_claims: &[ProverClaim<F>],
-        _transcript: &mut T,
-    ) -> StageBatch<F> {
+    fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let (reg_claim, reg_witness) = self.build_register_rw();
         let (ram_claim, ram_witness) = self.build_ram_val_check();
 
@@ -222,11 +205,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RwCheckingStage<F> {
         }
     }
 
-    fn extract_claims(
-        &mut self,
-        challenges: &[F],
-        _final_eval: F,
-    ) -> Vec<ProverClaim<F>> {
+    fn extract_claims(&mut self, challenges: &[F], _final_eval: F) -> Vec<ProverClaim<F>> {
         let tables: Vec<Vec<F>> = vec![
             self.reg_val.take().unwrap(),
             self.rs1_ra.take().unwrap(),

@@ -77,7 +77,6 @@ pub fn generate_go_file(bundle: &AstBundle, config: &GoFileConfig) -> String {
     out
 }
 
-/// Builds a `GnarkAstEmitter` with variable name mappings from the bundle inputs.
 fn build_emitter(inputs: &[InputVar]) -> GnarkAstEmitter {
     let mut emitter = GnarkAstEmitter::new();
     for input in inputs {

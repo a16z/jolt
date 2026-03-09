@@ -59,13 +59,11 @@ impl<T> Polynomial<T> {
         self.num_vars
     }
 
-    /// Number of evaluations (`2^n`).
     #[inline]
     pub fn len(&self) -> usize {
         self.coefficients.len()
     }
 
-    /// Returns `true` if the polynomial has no evaluations.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.coefficients.is_empty()
@@ -134,9 +132,9 @@ impl<F: Field> Polynomial<F> {
 
     /// Binds with the specified variable ordering.
     ///
-    /// - [`BindingOrder::HighToLow`]: binds the MSB (first variable, index `0`).
+    /// - `BindingOrder::HighToLow`: binds the MSB (first variable, index `0`).
     ///   Pairs `coefficients[i]` with `coefficients[i + half]`.
-    /// - [`BindingOrder::LowToHigh`]: binds the LSB (last variable, index `n-1`).
+    /// - `BindingOrder::LowToHigh`: binds the LSB (last variable, index `n-1`).
     ///   Pairs `coefficients[2*i]` with `coefficients[2*i + 1]`.
     #[inline]
     pub fn bind_with_order(&mut self, scalar: F, order: crate::BindingOrder) {
@@ -234,12 +232,10 @@ impl<F: Field> Polynomial<F> {
                 let half = self.coefficients.len() / 2;
                 (self.coefficients[index], self.coefficients[index + half])
             }
-            crate::BindingOrder::LowToHigh => {
-                (
-                    self.coefficients[2 * index],
-                    self.coefficients[2 * index + 1],
-                )
-            }
+            crate::BindingOrder::LowToHigh => (
+                self.coefficients[2 * index],
+                self.coefficients[2 * index + 1],
+            ),
         }
     }
 
@@ -290,13 +286,11 @@ impl<F: Field> Polynomial<F> {
         self.coefficients[0]
     }
 
-    /// The evaluation table as a shared slice.
     #[inline]
     pub fn evaluations(&self) -> &[F] {
         &self.coefficients
     }
 
-    /// The evaluation table as a mutable slice.
     #[inline]
     pub fn evaluations_mut(&mut self) -> &mut [F] {
         &mut self.coefficients

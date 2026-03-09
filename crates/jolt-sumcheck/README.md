@@ -12,51 +12,61 @@ This crate implements the sumcheck interactive proof protocol for multilinear po
 
 ### Claims
 
-- **`SumcheckClaim<F>`** — A sumcheck claim specifying `num_vars`, `degree`, and `claimed_sum`.
+- **`SumcheckClaim<F>`** -- A sumcheck claim specifying `num_vars`, `degree`, and `claimed_sum`.
 
 ### Proofs
 
-- **`SumcheckProof<F>`** — A sequence of univariate round polynomials, one per variable. Also used as the proof type for the batched (RLC) variant.
+- **`SumcheckProof<F>`** -- A sequence of univariate round polynomials, one per variable.
 
 ### Prover
 
-- **`SumcheckCompute<F>`** — Trait for witness polynomials. Implementors provide `round_polynomial` (the univariate restriction for the current round) and `bind` (fix a variable to the verifier's challenge).
-- **`SumcheckProver`** — Drives the prover side: iterates rounds, queries the witness, and produces a `SumcheckProof`.
-- **`BatchedSumcheckProver`** — Batches multiple sumcheck instances via random linear combination.
-- **`StreamingSumcheckProver`** — Memory-efficient streaming variant for large witnesses.
+- **`SumcheckCompute<F>`** -- Trait for witness polynomials. Provides `round_polynomial` and `bind`.
+- **`SumcheckProver`** -- Drives the prover side: iterates rounds, queries the witness, produces a `SumcheckProof`.
+- **`BatchedSumcheckProver`** -- Batches multiple sumcheck instances via random linear combination.
+- **`StreamingSumcheckProver`** -- Memory-efficient streaming variant for large witnesses.
+- **`SplitEqEvaluator`** -- Split-eq optimization for sqrt-cost sumcheck evaluation.
+
+### Streaming Types
+
+- **`StreamingSumcheck`** -- Streaming sumcheck prover for memory-constrained settings.
+- **`StreamingSumcheckWindow`** -- Window-based streaming interface.
+- **`LinearSumcheckStage`** -- Linear-scan sumcheck stage.
+- **`StreamingSchedule`** / **`HalfSplitSchedule`** / **`LinearOnlySchedule`** -- Schedule strategies for streaming.
 
 ### Verifier
 
-- **`SumcheckVerifier`** — Verifies a `SumcheckProof` against a claim. Returns the final evaluation and the vector of challenges on success.
-- **`BatchedSumcheckVerifier`** — Verifies a batched sumcheck proof.
+- **`SumcheckVerifier`** -- Verifies a `SumcheckProof` against a claim.
+- **`BatchedSumcheckVerifier`** -- Verifies a batched sumcheck proof.
 
 ### Reduction
 
-- **`SumcheckReduction<F>`** — Trait for sumcheck-based claim reductions. Transforms `ProverClaim`s into sumcheck instances, then extracts reduced claims from the resulting challenges. The sumcheck analogue of `OpeningReduction` in jolt-openings.
-- **`SumcheckWitnessBatch<F>`** — Type alias for `(Vec<SumcheckClaim<F>>, Vec<Box<dyn SumcheckCompute<F>>>)`.
+- **`SumcheckReduction<F>`** -- Trait for sumcheck-based claim reductions.
+- **`SumcheckWitnessBatch<F>`** -- Type alias for `(Vec<SumcheckClaim<F>>, Vec<Box<dyn SumcheckCompute<F>>>)`.
 
 ### Round Handlers
 
-- **`RoundHandler<F>`** — Prover-side strategy for absorbing round polynomials into the transcript.
-- **`RoundVerifier<F>`** — Verifier-side strategy for checking round data.
-- **`ClearRoundHandler`** / **`ClearRoundVerifier`** — Cleartext implementations (coefficients appended directly). The committed-mode implementations live in `jolt-blindfold`.
+- **`RoundHandler<F>`** -- Prover-side strategy for absorbing round polynomials into the transcript.
+- **`RoundVerifier<F>`** -- Verifier-side strategy for checking round data.
+- **`ClearRoundHandler`** / **`ClearRoundVerifier`** -- Cleartext implementations. Committed-mode implementations live in `jolt-blindfold`.
 
 ### Errors
 
-- **`SumcheckError`** — Error type with variants: `RoundCheckFailed`, `FinalEvalMismatch`, `DegreeBoundExceeded`, `WrongNumberOfRounds`.
+- **`SumcheckError`** -- Variants: `RoundCheckFailed`, `FinalEvalMismatch`, `DegreeBoundExceeded`, `WrongNumberOfRounds`.
+
+## Feature Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `parallel` | No | Enable rayon parallelism (also enables `jolt-poly/parallel`) |
 
 ## Dependency Position
 
 ```
 jolt-field ─────┐
-jolt-poly  ─────┼─► jolt-sumcheck ─► jolt-blindfold, jolt-spartan, jolt-zkvm
+jolt-poly  ─────┼─> jolt-sumcheck -> jolt-blindfold, jolt-spartan, jolt-zkvm
 jolt-transcript ┘
 jolt-openings ──┘    (for ProverClaim/VerifierClaim used by SumcheckReduction)
 ```
-
-## Feature Flags
-
-This crate has no feature flags.
 
 ## License
 
