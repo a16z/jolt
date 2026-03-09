@@ -21,28 +21,26 @@ use crate::key::JoltVerifyingKey;
 use crate::proof::{BatchOpeningProofs, JoltProof, SumcheckStageProof};
 use crate::stage::VerifierStage;
 
-/// Verifies the uniform Spartan R1CS proof (stage 1) and returns the
-/// challenge vectors.
+/// Verifies the uniform Spartan R1CS proof (PIOP only — no PCS).
 ///
 /// The returned `(r_x, r_y)` are the outer and inner sumcheck challenge
 /// points, needed by downstream stages to construct eq-weighted sumcheck
 /// claims.
 ///
-/// The transcript is left in the same state as the prover's transcript
-/// after S1, so subsequent stages can sample consistent challenges.
+/// The caller must append the witness commitment to the transcript before
+/// calling this, and verify the witness opening proof afterward.
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "verify_spartan")]
-pub fn verify_spartan<PCS, T>(
-    key: &UniformSpartanKey<PCS::Field>,
-    proof: &UniformSpartanProof<PCS::Field, PCS>,
-    verifier_setup: &PCS::VerifierSetup,
+pub fn verify_spartan<F, T>(
+    key: &UniformSpartanKey<F>,
+    proof: &UniformSpartanProof<F>,
     transcript: &mut T,
-) -> Result<(Vec<PCS::Field>, Vec<PCS::Field>), SpartanError>
+) -> Result<(Vec<F>, Vec<F>), SpartanError>
 where
-    PCS: jolt_openings::CommitmentScheme,
+    F: Field,
     T: Transcript<Challenge = u128>,
 {
-    UniformSpartanVerifier::verify_with_challenges::<PCS, T>(key, proof, verifier_setup, transcript)
+    UniformSpartanVerifier::verify_with_challenges(key, proof, transcript)
 }
 
 /// Verifies one sumcheck stage (S2–S7).
@@ -164,13 +162,8 @@ where
         )));
     }
 
-    // S1: Uniform Spartan
-    let (r_x, r_y) = verify_spartan::<PCS, T>(
-        &vk.spartan_key,
-        &proof.spartan_proof,
-        &vk.pcs_setup,
-        transcript,
-    )?;
+    // S1: Uniform Spartan (PIOP only — witness commitment already in transcript)
+    let (r_x, r_y) = verify_spartan(&vk.spartan_key, &proof.spartan_proof, transcript)?;
 
     // S2–S7: Sumcheck stages
     let mut all_opening_claims: Vec<VerifierClaim<PCS::Field, PCS::Output>> = Vec::new();

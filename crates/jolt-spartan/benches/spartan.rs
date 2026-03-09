@@ -3,10 +3,19 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_field::{Field, Fr};
 use jolt_openings::mock::MockCommitmentScheme;
+use jolt_openings::CommitmentScheme;
 use jolt_spartan::{FirstRoundStrategy, SimpleR1CS, SpartanKey, SpartanProver, SpartanVerifier};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
 type MockPCS = MockCommitmentScheme<Fr>;
+
+fn commit_witness(witness: &[Fr], padded_len: usize, transcript: &mut Blake2bTranscript) {
+    let mut padded = vec![Fr::from_u64(0); padded_len];
+    let copy_len = witness.len().min(padded_len);
+    padded[..copy_len].copy_from_slice(&witness[..copy_len]);
+    let (commitment, ()) = MockPCS::commit(&padded, &());
+    transcript.append_bytes(format!("{commitment:?}").as_bytes());
+}
 
 /// Builds a chain-multiplication R1CS with `n_constraints` constraints.
 ///
@@ -46,13 +55,16 @@ fn bench_prove(c: &mut Criterion) {
             &n_constraints,
             |bench, _| {
                 bench.iter_batched(
-                    || Blake2bTranscript::new(b"bench"),
+                    || {
+                        let mut t = Blake2bTranscript::new(b"bench");
+                        commit_witness(&witness, key.num_variables_padded, &mut t);
+                        t
+                    },
                     |mut transcript| {
-                        SpartanProver::prove::<MockPCS, _>(
+                        SpartanProver::prove(
                             black_box(&r1cs),
                             black_box(&key),
                             black_box(&witness),
-                            &(),
                             &mut transcript,
                             FirstRoundStrategy::Standard,
                         )
@@ -72,29 +84,23 @@ fn bench_verify(c: &mut Criterion) {
         let key = SpartanKey::from_r1cs(&r1cs);
 
         let mut pt = Blake2bTranscript::new(b"bench");
-        let proof = SpartanProver::prove::<MockPCS, _>(
-            &r1cs,
-            &key,
-            &witness,
-            &(),
-            &mut pt,
-            FirstRoundStrategy::Standard,
-        )
-        .expect("proving should succeed");
+        commit_witness(&witness, key.num_variables_padded, &mut pt);
+        let proof =
+            SpartanProver::prove(&r1cs, &key, &witness, &mut pt, FirstRoundStrategy::Standard)
+                .expect("proving should succeed");
 
         group.bench_with_input(
             BenchmarkId::from_parameter(n_constraints),
             &n_constraints,
             |bench, _| {
                 bench.iter_batched(
-                    || Blake2bTranscript::new(b"bench"),
+                    || {
+                        let mut t = Blake2bTranscript::new(b"bench");
+                        commit_witness(&witness, key.num_variables_padded, &mut t);
+                        t
+                    },
                     |mut transcript| {
-                        SpartanVerifier::verify::<MockPCS, _>(
-                            black_box(&key),
-                            black_box(&proof),
-                            &(),
-                            &mut transcript,
-                        )
+                        SpartanVerifier::verify(black_box(&key), black_box(&proof), &mut transcript)
                     },
                     criterion::BatchSize::SmallInput,
                 );

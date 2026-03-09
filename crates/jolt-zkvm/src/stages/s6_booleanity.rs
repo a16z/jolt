@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::CpuBackend;
+use jolt_compute::{ComputeBackend, CpuBackend};
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -15,7 +15,8 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
 use crate::claims::ram;
-use crate::evaluators::hamming::HammingBooleanityEvaluator;
+use crate::evaluators::catalog;
+use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
 
 /// Hamming booleanity prover stage.
@@ -73,14 +74,10 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingBooleanityStage<F> {
         };
 
         let backend = Arc::new(CpuBackend);
-        let desc = HammingBooleanityEvaluator::<F, CpuBackend>::descriptor();
+        let desc = catalog::hamming_booleanity();
         let kernel = jolt_cpu_kernels::compile::<F>(&desc);
-        let witness = HammingBooleanityEvaluator::new(
-            backend.upload(&eq_table),
-            backend.upload(h_evals),
-            kernel,
-            backend,
-        );
+        let inputs = vec![backend.upload(&eq_table), backend.upload(h_evals)];
+        let witness = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         StageBatch {
             claims: vec![claim],

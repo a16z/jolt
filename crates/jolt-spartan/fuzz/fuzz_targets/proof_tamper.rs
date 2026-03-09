@@ -6,6 +6,7 @@
 
 use jolt_field::{Field, Fr};
 use jolt_openings::mock::MockCommitmentScheme;
+use jolt_openings::CommitmentScheme;
 use jolt_spartan::{
     FirstRoundStrategy, SimpleR1CS, SpartanKey, SpartanProof, SpartanProver, SpartanVerifier,
 };
@@ -13,6 +14,14 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 
 type MockPCS = MockCommitmentScheme<Fr>;
+
+fn commit_witness(witness: &[Fr], padded_len: usize, transcript: &mut Blake2bTranscript) {
+    let mut padded = vec![Fr::from_u64(0); padded_len];
+    let copy_len = witness.len().min(padded_len);
+    padded[..copy_len].copy_from_slice(&witness[..copy_len]);
+    let (commitment, _) = MockPCS::commit(&padded, &());
+    transcript.append_bytes(format!("{commitment:?}").as_bytes());
+}
 
 fn x_squared_circuit() -> (SimpleR1CS<Fr>, Vec<Fr>, SpartanKey<Fr>) {
     let one = Fr::from_u64(1);
@@ -37,13 +46,13 @@ fn valid_proof(
     r1cs: &SimpleR1CS<Fr>,
     key: &SpartanKey<Fr>,
     witness: &[Fr],
-) -> SpartanProof<Fr, MockPCS> {
+) -> SpartanProof<Fr> {
     let mut transcript = Blake2bTranscript::new(b"fuzz");
-    SpartanProver::prove::<MockPCS, _>(
+    commit_witness(witness, key.num_variables_padded, &mut transcript);
+    SpartanProver::prove(
         r1cs,
         key,
         witness,
-        &(),
         &mut transcript,
         FirstRoundStrategy::Standard,
     )
@@ -58,7 +67,6 @@ fuzz_target!(|data: &[u8]| {
     let (r1cs, witness, key) = x_squared_circuit();
     let mut proof = valid_proof(&r1cs, &key, &witness);
 
-    // Use first byte to select which field to tamper
     let tamper_target = data[0] % 4;
     let delta = Fr::from_bytes(&{
         let mut buf = [0u8; 32];
@@ -67,7 +75,6 @@ fuzz_target!(|data: &[u8]| {
         buf
     });
 
-    // Skip no-op tampering (delta = 0)
     if delta == Fr::from_u64(0) {
         return;
     }
@@ -81,7 +88,8 @@ fuzz_target!(|data: &[u8]| {
     }
 
     let mut vt = Blake2bTranscript::new(b"fuzz");
-    let result = SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt);
+    commit_witness(&witness, key.num_variables_padded, &mut vt);
+    let result = SpartanVerifier::verify(&key, &proof, &mut vt);
     assert!(
         result.is_err(),
         "tampered proof (target={tamper_target}) should be rejected"

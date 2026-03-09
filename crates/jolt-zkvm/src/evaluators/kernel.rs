@@ -6,9 +6,9 @@
 //! compiled from a [`KernelDescriptor`](jolt_ir::KernelDescriptor) at setup
 //! time.
 //!
-//! This replaces hand-written evaluators like [`EqProductEvaluator`](super::eq_product::EqProductEvaluator)
-//! and [`HammingBooleanityEvaluator`](super::hamming::HammingBooleanityEvaluator)
-//! with a single generic implementation that works on any backend (CPU, GPU).
+//! This is the universal `SumcheckCompute` implementation that works on any
+//! backend (CPU, GPU). Composition formulas come from [`catalog`](super::catalog)
+//! descriptors.
 //!
 //! # Data layout
 //!
@@ -185,8 +185,7 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evaluators::eq_product::EqProductEvaluator;
-    use crate::evaluators::hamming::HammingBooleanityEvaluator;
+    use crate::evaluators::catalog;
     use jolt_compute::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
@@ -199,124 +198,6 @@ mod tests {
 
     fn cpu() -> Arc<CpuBackend> {
         Arc::new(CpuBackend)
-    }
-
-    fn compile_eq_product_kernel() -> (
-        KernelDescriptor,
-        <CpuBackend as ComputeBackend>::CompiledKernel<Fr>,
-    ) {
-        // eq(x) * g(x), degree 2, 2 inputs
-        let b = ExprBuilder::new();
-        let eq_var = b.opening(0);
-        let g_var = b.opening(1);
-        let desc = KernelDescriptor {
-            shape: KernelShape::Custom {
-                expr: b.build(eq_var * g_var),
-                num_inputs: 2,
-            },
-            degree: 2,
-            tensor_split: None,
-        };
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
-        (desc, kernel)
-    }
-
-    fn compile_hamming_kernel() -> (
-        KernelDescriptor,
-        <CpuBackend as ComputeBackend>::CompiledKernel<Fr>,
-    ) {
-        // eq(x) * h(x) * (h(x) - 1), degree 3, 2 inputs
-        let b = ExprBuilder::new();
-        let eq_var = b.opening(0);
-        let h_var = b.opening(1);
-        let desc = KernelDescriptor {
-            shape: KernelShape::Custom {
-                expr: b.build(eq_var * (h_var * h_var - h_var)),
-                num_inputs: 2,
-            },
-            degree: 3,
-            tensor_split: None,
-        };
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
-        (desc, kernel)
-    }
-
-    /// Verifies that KernelEvaluator produces the same round polynomial as
-    /// EqProductEvaluator at each round, with the same bind behavior.
-    #[test]
-    fn kernel_witness_matches_eq_product_round_by_round() {
-        let backend = cpu();
-        let num_vars = 4;
-        let n = 1usize << num_vars;
-        let mut rng = ChaCha20Rng::seed_from_u64(42);
-
-        let r: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-        let eq_table = EqPolynomial::new(r).evaluations();
-        let g_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-
-        let mut hand = EqProductEvaluator::new(g_table.clone(), eq_table.clone(), num_vars);
-
-        let (desc, kernel) = compile_eq_product_kernel();
-        let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
-        let mut kw = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
-
-        for round in 0..num_vars {
-            let hand_poly = hand.round_polynomial();
-            let kw_poly = kw.round_polynomial();
-
-            // Compare evaluations at several points
-            for t in 0..=5 {
-                let t_f = Fr::from_u64(t);
-                assert_eq!(
-                    hand_poly.evaluate(t_f),
-                    kw_poly.evaluate(t_f),
-                    "mismatch at round {round}, t={t}"
-                );
-            }
-
-            let challenge = Fr::random(&mut rng);
-            hand.bind(challenge);
-            kw.bind(challenge);
-        }
-    }
-
-    /// Verifies that KernelEvaluator produces the same round polynomial as
-    /// HammingBooleanityEvaluator at each round.
-    #[test]
-    fn kernel_witness_matches_hamming_round_by_round() {
-        let backend = cpu();
-        let num_vars = 4;
-        let n = 1usize << num_vars;
-        let mut rng = ChaCha20Rng::seed_from_u64(77);
-
-        let r: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-        let eq_table = EqPolynomial::new(r).evaluations();
-        // Boolean-valued polynomial
-        let h_table: Vec<Fr> = (0..n).map(|i| Fr::from_u64(i as u64 % 2)).collect();
-
-        let mut hand = HammingBooleanityEvaluator::new(h_table.clone(), eq_table.clone(), num_vars);
-
-        let (desc, kernel) = compile_hamming_kernel();
-        let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
-        let mut kw = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
-
-        for round in 0..num_vars {
-            let hand_poly = hand.round_polynomial();
-            let kw_poly = kw.round_polynomial();
-
-            for t in 0..=6 {
-                let t_f = Fr::from_u64(t);
-                assert_eq!(
-                    hand_poly.evaluate(t_f),
-                    kw_poly.evaluate(t_f),
-                    "mismatch at round {round}, t={t}"
-                );
-            }
-
-            let challenge = Fr::random(&mut rng);
-            hand.bind(challenge);
-            kw.bind(challenge);
-        }
     }
 
     /// Full sumcheck prove/verify using KernelEvaluator for eq · g.
@@ -343,7 +224,8 @@ mod tests {
             claimed_sum,
         };
 
-        let (desc, kernel) = compile_eq_product_kernel();
+        let desc = catalog::eq_product();
+        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -391,7 +273,8 @@ mod tests {
             claimed_sum,
         };
 
-        let (desc, kernel) = compile_hamming_kernel();
+        let desc = catalog::hamming_booleanity();
+        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -439,7 +322,8 @@ mod tests {
             claimed_sum,
         };
 
-        let (desc, kernel) = compile_hamming_kernel();
+        let desc = catalog::hamming_booleanity();
+        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -550,7 +434,8 @@ mod tests {
         let eq_table = vec![Fr::one(); n];
         let g_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let (desc, kernel) = compile_eq_product_kernel();
+        let desc = catalog::eq_product();
+        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut kw = KernelEvaluator::with_unit_weights(
             inputs,
@@ -583,7 +468,8 @@ mod tests {
         let eq_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let g_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let (desc, kernel) = compile_eq_product_kernel();
+        let desc = catalog::eq_product();
+        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut kw = KernelEvaluator::with_unit_weights(
             inputs,

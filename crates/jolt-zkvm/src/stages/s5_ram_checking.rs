@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::CpuBackend;
+use jolt_compute::{ComputeBackend, CpuBackend};
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -24,13 +24,14 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
 use crate::claims::ram;
-use crate::evaluators::eq_product::EqProductEvaluator;
+use crate::evaluators::catalog;
+use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
 
 /// RAM output check + RAF evaluation prover stage.
 ///
-/// Both instances are degree 2 and use the pre-compute-g + EqProductEvaluator
-/// pattern.
+/// Both instances are degree 2 and use the pre-compute-g + `KernelEvaluator`
+/// pattern with the `eq_product` kernel.
 pub struct RamCheckingStage<F: Field> {
     /// RAM val_final polynomial evaluations.
     val_final: Option<Vec<F>>,
@@ -110,10 +111,11 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
         let raf_sum: F = raf_eq.iter().zip(raf_g.iter()).map(|(&e, &g)| e * g).sum();
 
         let backend = Arc::new(CpuBackend);
-        let desc = EqProductEvaluator::<F, CpuBackend>::descriptor();
+        let desc = catalog::eq_product();
 
         let kernel_output = jolt_cpu_kernels::compile::<F>(&desc);
         let kernel_raf = jolt_cpu_kernels::compile::<F>(&desc);
+        let num_evals = desc.num_evals();
 
         StageBatch {
             claims: vec![
@@ -129,16 +131,16 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
                 },
             ],
             witnesses: vec![
-                Box::new(EqProductEvaluator::new(
-                    backend.upload(&output_eq),
-                    backend.upload(&output_g),
+                Box::new(KernelEvaluator::with_unit_weights(
+                    vec![backend.upload(&output_eq), backend.upload(&output_g)],
                     kernel_output,
+                    num_evals,
                     Arc::clone(&backend),
                 )),
-                Box::new(EqProductEvaluator::new(
-                    backend.upload(&raf_eq),
-                    backend.upload(&raf_g),
+                Box::new(KernelEvaluator::with_unit_weights(
+                    vec![backend.upload(&raf_eq), backend.upload(&raf_g)],
                     kernel_raf,
+                    num_evals,
                     backend,
                 )),
             ],

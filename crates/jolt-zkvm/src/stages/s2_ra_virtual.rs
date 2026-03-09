@@ -23,9 +23,9 @@ use jolt_sumcheck::SplitEqEvaluator;
 use jolt_transcript::Transcript;
 
 use crate::claims::instruction;
-use crate::stage::{ProverStage, StageBatch};
 use crate::evaluators::ra_poly::RaPolynomial;
 use crate::evaluators::ra_virtual::RaVirtualCompute;
+use crate::stage::{ProverStage, StageBatch};
 
 /// RA virtual sumcheck prover stage.
 ///

@@ -1,33 +1,27 @@
-//! Stage 1: Spartan R1CS proof.
+//! Stage 1: Spartan R1CS proof (PIOP only — no PCS).
 //!
-//! Wraps [`SpartanProver::prove_with_challenges`] to produce a Spartan proof
-//! and extract the outer/inner sumcheck challenge vectors needed by downstream
-//! stages.
+//! Wraps the Spartan prover/verifier to produce a Spartan proof and extract
+//! the outer/inner sumcheck challenge vectors needed by downstream stages.
 //!
-//! This stage does **not** implement [`ProverStage`](crate::stage::ProverStage)
-//! because Spartan runs both outer and inner sumchecks internally, sharing
-//! Az/Bz/Cz intermediates. Splitting into build/extract would require
-//! decomposing the Spartan prover.
-
-use std::marker::PhantomData;
+//! The caller is responsible for committing the witness polynomial and
+//! appending the commitment to the Fiat-Shamir transcript **before** calling
+//! `prove`. The witness opening proof is handled by S8 (batch opening phase).
 
 use jolt_field::Field;
-use jolt_openings::{CommitmentScheme, ProverClaim};
+use jolt_openings::ProverClaim;
 use jolt_spartan::{
     FirstRoundStrategy, SpartanError, SpartanKey, SpartanProof, SpartanProver, SpartanVerifier,
     UniformSpartanKey, UniformSpartanProof, UniformSpartanProver, UniformSpartanVerifier, R1CS,
 };
 use jolt_transcript::Transcript;
 
-/// Thin wrapper around Spartan proving that surfaces challenge vectors.
-pub struct SpartanStage<PCS: CommitmentScheme> {
-    _marker: PhantomData<PCS>,
-}
+/// Thin wrapper around standard Spartan proving that surfaces challenge vectors.
+pub struct SpartanStage;
 
 /// Output of [`SpartanStage::prove`].
-pub struct SpartanResult<F: Field, PCS: CommitmentScheme> {
-    /// The Spartan proof (outer + inner sumcheck + opening).
-    pub proof: SpartanProof<F, PCS>,
+pub struct SpartanResult<F: Field> {
+    /// The Spartan proof (outer + inner sumcheck, PIOP only).
+    pub proof: SpartanProof<F>,
     /// Witness polynomial opening claim at the inner sumcheck challenge point.
     pub witness_opening_claim: ProverClaim<F>,
     /// Outer sumcheck challenge vector, needed by downstream claim reductions.
@@ -36,22 +30,27 @@ pub struct SpartanResult<F: Field, PCS: CommitmentScheme> {
     pub r_y: Vec<F>,
 }
 
-impl<PCS: CommitmentScheme> SpartanStage<PCS> {
-    /// Runs the full Spartan protocol and returns the proof alongside
+impl SpartanStage {
+    /// Runs the full Spartan PIOP and returns the proof alongside
     /// the challenge vectors and witness opening claim.
+    ///
+    /// The caller must commit the witness and append the commitment to the
+    /// transcript before calling this.
     #[tracing::instrument(skip_all, name = "SpartanStage::prove")]
-    pub fn prove<T: Transcript<Challenge = u128>>(
-        r1cs: &impl R1CS<PCS::Field>,
-        key: &SpartanKey<PCS::Field>,
-        witness: &[PCS::Field],
-        witness_evals: &[PCS::Field],
-        pcs_setup: &PCS::ProverSetup,
+    pub fn prove<F, T>(
+        r1cs: &impl R1CS<F>,
+        key: &SpartanKey<F>,
+        witness: &[F],
+        witness_evals: &[F],
         transcript: &mut T,
         strategy: FirstRoundStrategy,
-    ) -> Result<SpartanResult<PCS::Field, PCS>, SpartanError> {
-        let (proof, r_x, r_y) = SpartanProver::prove_with_challenges::<PCS, T>(
-            r1cs, key, witness, pcs_setup, transcript, strategy,
-        )?;
+    ) -> Result<SpartanResult<F>, SpartanError>
+    where
+        F: Field,
+        T: Transcript<Challenge = u128>,
+    {
+        let (proof, r_x, r_y) =
+            SpartanProver::prove_with_challenges(r1cs, key, witness, transcript, strategy)?;
 
         let witness_opening_claim = ProverClaim {
             evaluations: witness_evals.to_vec(),
@@ -67,24 +66,28 @@ impl<PCS: CommitmentScheme> SpartanStage<PCS> {
         })
     }
 
-    /// Verifies a Spartan proof.
+    /// Verifies a Spartan proof (PIOP only).
     ///
-    /// Delegates directly to [`SpartanVerifier::verify`].
+    /// The caller must append the witness commitment to the transcript before
+    /// calling this, and verify the witness opening proof afterward.
     #[tracing::instrument(skip_all, name = "SpartanStage::verify")]
-    pub fn verify<T: Transcript<Challenge = u128>>(
-        key: &SpartanKey<PCS::Field>,
-        proof: &SpartanProof<PCS::Field, PCS>,
-        verifier_setup: &PCS::VerifierSetup,
+    pub fn verify<F, T>(
+        key: &SpartanKey<F>,
+        proof: &SpartanProof<F>,
         transcript: &mut T,
-    ) -> Result<(), SpartanError> {
-        SpartanVerifier::verify::<PCS, T>(key, proof, verifier_setup, transcript)
+    ) -> Result<(Vec<F>, Vec<F>), SpartanError>
+    where
+        F: Field,
+        T: Transcript<Challenge = u128>,
+    {
+        SpartanVerifier::verify_with_challenges(key, proof, transcript)
     }
 }
 
 /// Output of [`UniformSpartanStage::prove`].
-pub struct UniformSpartanResult<F: Field, PCS: CommitmentScheme> {
-    /// The uniform Spartan proof.
-    pub proof: UniformSpartanProof<F, PCS>,
+pub struct UniformSpartanResult<F: Field> {
+    /// The uniform Spartan proof (PIOP only).
+    pub proof: UniformSpartanProof<F>,
     /// Witness polynomial opening claim at the inner sumcheck challenge point.
     pub witness_opening_claim: ProverClaim<F>,
     /// Outer sumcheck challenge vector (`log2(total_rows)` elements).
@@ -101,41 +104,40 @@ pub struct UniformSpartanResult<F: Field, PCS: CommitmentScheme> {
     pub r_y: Vec<F>,
 }
 
-/// Thin wrapper around the uniform Spartan prover.
+/// Thin wrapper around the uniform Spartan prover (PIOP only).
 ///
 /// Uses [`UniformSpartanKey`] (per-cycle sparse constraints) instead of the
 /// dense [`SpartanKey`], enabling O(K) key storage regardless of cycle count.
-pub struct UniformSpartanStage<PCS: CommitmentScheme> {
-    _marker: PhantomData<PCS>,
-}
+pub struct UniformSpartanStage;
 
-impl<PCS: CommitmentScheme> UniformSpartanStage<PCS> {
-    /// Runs the uniform Spartan protocol (dense mode) and returns the proof
+impl UniformSpartanStage {
+    /// Runs the uniform Spartan PIOP (dense mode) and returns the proof
     /// alongside challenge vectors and witness opening claim.
+    ///
+    /// The caller must commit the witness and append the commitment to the
+    /// transcript before calling this.
     ///
     /// # Arguments
     ///
     /// * `key` — Uniform Spartan key with per-cycle sparse constraints.
-    /// * `cycle_witnesses` — Per-cycle witness vectors. `cycle_witnesses[c][v]`
-    ///   is variable `v` in cycle `c`.
-    /// * `witness_evals` — Flat interleaved witness evaluations for the opening
-    ///   claim (length = `total_cols_padded`).
-    /// * `pcs_setup` — PCS prover setup.
-    /// * `transcript` — Fiat-Shamir transcript.
+    /// * `flat_witness` — Flat interleaved witness vector of length
+    ///   `total_cols_padded`. Layout: `flat_witness[c * num_vars_padded + v]`.
+    /// * `witness_evals` — Evaluations for the opening claim (same flat vector).
+    /// * `transcript` — Fiat-Shamir transcript (with witness commitment already
+    ///   appended).
     #[tracing::instrument(skip_all, name = "UniformSpartanStage::prove")]
-    pub fn prove<T: Transcript<Challenge = u128>>(
-        key: &UniformSpartanKey<PCS::Field>,
-        cycle_witnesses: &[Vec<PCS::Field>],
-        witness_evals: &[PCS::Field],
-        pcs_setup: &PCS::ProverSetup,
+    pub fn prove<F, T>(
+        key: &UniformSpartanKey<F>,
+        flat_witness: &[F],
+        witness_evals: &[F],
         transcript: &mut T,
-    ) -> Result<UniformSpartanResult<PCS::Field, PCS>, SpartanError> {
-        let (proof, r_x, r_y) = UniformSpartanProver::prove_dense_with_challenges::<PCS, T>(
-            key,
-            cycle_witnesses,
-            pcs_setup,
-            transcript,
-        )?;
+    ) -> Result<UniformSpartanResult<F>, SpartanError>
+    where
+        F: Field,
+        T: Transcript<Challenge = u128>,
+    {
+        let (proof, r_x, r_y) =
+            UniformSpartanProver::prove_dense_with_challenges(key, flat_witness, transcript)?;
 
         let witness_opening_claim = ProverClaim {
             evaluations: witness_evals.to_vec(),
@@ -151,15 +153,22 @@ impl<PCS: CommitmentScheme> UniformSpartanStage<PCS> {
         })
     }
 
-    /// Verifies a uniform Spartan proof.
+    /// Verifies a uniform Spartan proof (PIOP only).
+    ///
+    /// Returns `(r_x, r_y)` challenge vectors for downstream stages.
+    /// The caller must append the witness commitment to the transcript before
+    /// calling this, and verify the witness opening proof afterward.
     #[tracing::instrument(skip_all, name = "UniformSpartanStage::verify")]
-    pub fn verify<T: Transcript<Challenge = u128>>(
-        key: &UniformSpartanKey<PCS::Field>,
-        proof: &UniformSpartanProof<PCS::Field, PCS>,
-        verifier_setup: &PCS::VerifierSetup,
+    pub fn verify<F, T>(
+        key: &UniformSpartanKey<F>,
+        proof: &UniformSpartanProof<F>,
         transcript: &mut T,
-    ) -> Result<(), SpartanError> {
-        UniformSpartanVerifier::verify::<PCS, T>(key, proof, verifier_setup, transcript)
+    ) -> Result<(Vec<F>, Vec<F>), SpartanError>
+    where
+        F: Field,
+        T: Transcript<Challenge = u128>,
+    {
+        UniformSpartanVerifier::verify_with_challenges(key, proof, transcript)
     }
 }
 
@@ -168,10 +177,19 @@ mod tests {
     use super::*;
     use jolt_field::{Field, Fr};
     use jolt_openings::mock::MockCommitmentScheme;
+    use jolt_openings::CommitmentScheme;
     use jolt_spartan::SimpleR1CS;
     use jolt_transcript::{Blake2bTranscript, Transcript};
 
     type MockPCS = MockCommitmentScheme<Fr>;
+
+    fn commit_witness(witness: &[Fr], padded_len: usize, transcript: &mut Blake2bTranscript) {
+        let mut padded = vec![Fr::from_u64(0); padded_len];
+        let copy_len = witness.len().min(padded_len);
+        padded[..copy_len].copy_from_slice(&witness[..copy_len]);
+        let (commitment, ()) = MockPCS::commit(&padded, &());
+        transcript.append_bytes(format!("{commitment:?}").as_bytes());
+    }
 
     fn x_squared_circuit() -> SimpleR1CS<Fr> {
         SimpleR1CS::new(
@@ -190,19 +208,20 @@ mod tests {
         let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
 
         let mut pt = Blake2bTranscript::new(b"s1-test");
-        let result = SpartanStage::<MockPCS>::prove(
+        commit_witness(&witness, key.num_variables_padded, &mut pt);
+        let result = SpartanStage::prove(
             &r1cs,
             &key,
             &witness,
             &witness,
-            &(),
             &mut pt,
             FirstRoundStrategy::Standard,
         )
         .expect("proving should succeed");
 
         let mut vt = Blake2bTranscript::new(b"s1-test");
-        SpartanStage::<MockPCS>::verify(&key, &result.proof, &(), &mut vt)
+        commit_witness(&witness, key.num_variables_padded, &mut vt);
+        let _ = SpartanStage::verify(&key, &result.proof, &mut vt)
             .expect("verification should succeed");
     }
 
@@ -213,12 +232,12 @@ mod tests {
         let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
 
         let mut pt = Blake2bTranscript::new(b"s1-claim");
-        let result = SpartanStage::<MockPCS>::prove(
+        commit_witness(&witness, key.num_variables_padded, &mut pt);
+        let result = SpartanStage::prove(
             &r1cs,
             &key,
             &witness,
             &witness,
-            &(),
             &mut pt,
             FirstRoundStrategy::Standard,
         )
@@ -249,12 +268,12 @@ mod tests {
         ];
 
         let mut pt = Blake2bTranscript::new(b"s1-dims");
-        let result = SpartanStage::<MockPCS>::prove(
+        commit_witness(&witness, key.num_variables_padded, &mut pt);
+        let result = SpartanStage::prove(
             &r1cs,
             &key,
             &witness,
             &witness,
-            &(),
             &mut pt,
             FirstRoundStrategy::Standard,
         )
@@ -271,12 +290,12 @@ mod tests {
         let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(10)];
 
         let mut pt = Blake2bTranscript::new(b"s1-bad");
-        let result = SpartanStage::<MockPCS>::prove(
+        commit_witness(&witness, key.num_variables_padded, &mut pt);
+        let result = SpartanStage::prove(
             &r1cs,
             &key,
             &witness,
             &witness,
-            &(),
             &mut pt,
             FirstRoundStrategy::Standard,
         );
@@ -321,6 +340,11 @@ mod tests {
             flat
         }
 
+        fn uniform_commit(flat: &[Fr], transcript: &mut Blake2bTranscript) {
+            let (commitment, ()) = MockPCS::commit(flat, &());
+            transcript.append_bytes(format!("{commitment:?}").as_bytes());
+        }
+
         #[test]
         fn uniform_prove_and_verify_round_trip() {
             let key = test_key(4);
@@ -333,9 +357,9 @@ mod tests {
             let flat = make_flat_witness(&key, &witnesses);
 
             let mut pt = Blake2bTranscript::new(b"uniform-s1");
-            let result =
-                UniformSpartanStage::<MockPCS>::prove(&key, &witnesses, &flat, &(), &mut pt)
-                    .expect("proving should succeed");
+            uniform_commit(&flat, &mut pt);
+            let result = UniformSpartanStage::prove(&key, &flat, &flat, &mut pt)
+                .expect("proving should succeed");
 
             assert_eq!(result.r_x.len(), key.num_row_vars());
             assert_eq!(result.r_y.len(), key.num_col_vars());
@@ -343,7 +367,8 @@ mod tests {
             assert_eq!(result.witness_opening_claim.point, result.r_y);
 
             let mut vt = Blake2bTranscript::new(b"uniform-s1");
-            UniformSpartanStage::<MockPCS>::verify(&key, &result.proof, &(), &mut vt)
+            uniform_commit(&flat, &mut vt);
+            let _ = UniformSpartanStage::verify(&key, &result.proof, &mut vt)
                 .expect("verification should succeed");
         }
 
@@ -356,8 +381,8 @@ mod tests {
             let flat = make_flat_witness(&key, &witnesses);
 
             let mut pt = Blake2bTranscript::new(b"uniform-s1-bad");
-            let result =
-                UniformSpartanStage::<MockPCS>::prove(&key, &witnesses, &flat, &(), &mut pt);
+            uniform_commit(&flat, &mut pt);
+            let result = UniformSpartanStage::prove(&key, &flat, &flat, &mut pt);
             assert!(matches!(result, Err(SpartanError::ConstraintViolation(_))));
         }
     }
@@ -381,24 +406,24 @@ mod tests {
         ];
 
         let mut pt_std = Blake2bTranscript::new(b"s1-cmp");
-        let std_result = SpartanStage::<MockPCS>::prove(
+        commit_witness(&witness, key.num_variables_padded, &mut pt_std);
+        let std_result = SpartanStage::prove(
             &r1cs,
             &key,
             &witness,
             &witness,
-            &(),
             &mut pt_std,
             FirstRoundStrategy::Standard,
         )
         .expect("standard should succeed");
 
         let mut pt_uni = Blake2bTranscript::new(b"s1-cmp");
-        let uni_result = SpartanStage::<MockPCS>::prove(
+        commit_witness(&witness, key.num_variables_padded, &mut pt_uni);
+        let uni_result = SpartanStage::prove(
             &r1cs,
             &key,
             &witness,
             &witness,
-            &(),
             &mut pt_uni,
             FirstRoundStrategy::UnivariateSkip,
         )

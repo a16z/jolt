@@ -44,7 +44,7 @@ pub mod verifier;
 pub use error::SpartanError;
 pub use ir_r1cs::build_witness;
 pub use key::SpartanKey;
-pub use proof::{RelaxedSpartanProof, SpartanProof};
+pub use proof::SpartanProof;
 pub use prover::SpartanProver;
 pub use r1cs::{SimpleR1CS, R1CS};
 pub use uni_skip::FirstRoundStrategy;
@@ -53,12 +53,16 @@ pub use uniform_prover::{UniformSpartanProof, UniformSpartanProver};
 pub use uniform_verifier::UniformSpartanVerifier;
 pub use verifier::SpartanVerifier;
 
+// Re-export relaxed types (still PCS-aware, used by BlindFold)
+pub use proof::RelaxedSpartanProof;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use jolt_field::Field;
     use jolt_field::Fr;
     use jolt_openings::mock::MockCommitmentScheme;
+    use jolt_openings::CommitmentScheme;
     use jolt_transcript::{Blake2bTranscript, Transcript};
 
     type MockPCS = MockCommitmentScheme<Fr>;
@@ -75,22 +79,42 @@ mod tests {
         )
     }
 
+    /// Pads witness, commits via MockPCS, and appends commitment to transcript.
+    fn commit_witness(witness: &[Fr], padded_len: usize, transcript: &mut Blake2bTranscript) {
+        let mut padded = vec![Fr::from_u64(0); padded_len];
+        let copy_len = witness.len().min(padded_len);
+        padded[..copy_len].copy_from_slice(&witness[..copy_len]);
+        let (commitment, ()) = MockPCS::commit(&padded, &());
+        transcript.append_bytes(format!("{commitment:?}").as_bytes());
+    }
+
     fn prove_helper(
         r1cs: &SimpleR1CS<Fr>,
         key: &SpartanKey<Fr>,
         witness: &[Fr],
         label: &'static [u8],
-    ) -> Result<(SpartanProof<Fr, MockPCS>, Blake2bTranscript), SpartanError> {
+    ) -> Result<(SpartanProof<Fr>, Blake2bTranscript), SpartanError> {
         let mut transcript = Blake2bTranscript::new(label);
-        let proof = SpartanProver::prove::<MockPCS, _>(
+        commit_witness(witness, key.num_variables_padded, &mut transcript);
+        let proof = SpartanProver::prove(
             r1cs,
             key,
             witness,
-            &(),
             &mut transcript,
             FirstRoundStrategy::Standard,
         )?;
         Ok((proof, transcript))
+    }
+
+    fn verify_helper(
+        key: &SpartanKey<Fr>,
+        proof: &SpartanProof<Fr>,
+        witness: &[Fr],
+        label: &'static [u8],
+    ) -> Result<(), SpartanError> {
+        let mut vt = Blake2bTranscript::new(label);
+        commit_witness(witness, key.num_variables_padded, &mut vt);
+        SpartanVerifier::verify(key, proof, &mut vt)
     }
 
     #[test]
@@ -102,8 +126,7 @@ mod tests {
         let (proof, _) =
             prove_helper(&r1cs, &key, &witness, b"spartan-test").expect("proving should succeed");
 
-        let mut verifier_transcript = Blake2bTranscript::new(b"spartan-test");
-        SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut verifier_transcript)
+        verify_helper(&key, &proof, &witness, b"spartan-test")
             .expect("verification should succeed");
     }
 
@@ -114,19 +137,20 @@ mod tests {
         let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
 
         let mut pt = Blake2bTranscript::new(b"spartan-challenges");
-        let (proof, prover_r_x, prover_r_y) = SpartanProver::prove_with_challenges::<MockPCS, _>(
+        commit_witness(&witness, key.num_variables_padded, &mut pt);
+        let (proof, prover_r_x, prover_r_y) = SpartanProver::prove_with_challenges(
             &r1cs,
             &key,
             &witness,
-            &(),
             &mut pt,
             FirstRoundStrategy::Standard,
         )
         .expect("proving should succeed");
 
         let mut vt = Blake2bTranscript::new(b"spartan-challenges");
+        commit_witness(&witness, key.num_variables_padded, &mut vt);
         let (verifier_r_x, verifier_r_y) =
-            SpartanVerifier::verify_with_challenges::<MockPCS, _>(&key, &proof, &(), &mut vt)
+            SpartanVerifier::verify_with_challenges(&key, &proof, &mut vt)
                 .expect("verification should succeed");
 
         assert_eq!(prover_r_x, verifier_r_x, "r_x must match");
@@ -148,7 +172,6 @@ mod tests {
 
     #[test]
     fn prove_and_verify_multiple_constraints() {
-        // x * x = y, y * x = z
         let r1cs = SimpleR1CS::new(
             2,
             4,
@@ -167,18 +190,12 @@ mod tests {
         let (proof, _) =
             prove_helper(&r1cs, &key, &witness, b"spartan-multi").expect("proving should succeed");
 
-        let mut verifier_transcript = Blake2bTranscript::new(b"spartan-multi");
-        SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut verifier_transcript)
+        verify_helper(&key, &proof, &witness, b"spartan-multi")
             .expect("verification should succeed");
     }
 
     #[test]
     fn prove_and_verify_chain_multiplication() {
-        // x^2 = y, x^3 = z, x^4 = w, x^5 = v
-        // Constraint 0: A[0,1]*x * B[0,1]*x = C[0,2]*y
-        // Constraint 1: A[1,2]*y * B[1,1]*x = C[1,3]*z
-        // Constraint 2: A[2,3]*z * B[2,1]*x = C[2,4]*w
-        // Constraint 3: A[3,4]*w * B[3,1]*x = C[3,5]*v
         let one = Fr::from_u64(1);
         let r1cs = SimpleR1CS::new(
             4,
@@ -188,7 +205,6 @@ mod tests {
             vec![(0, 2, one), (1, 3, one), (2, 4, one), (3, 5, one)],
         );
         let key = SpartanKey::from_r1cs(&r1cs);
-        // x=3: 1, 3, 9, 27, 81, 243
         let witness = [
             Fr::from_u64(1),
             Fr::from_u64(3),
@@ -201,8 +217,7 @@ mod tests {
         let (proof, _) =
             prove_helper(&r1cs, &key, &witness, b"spartan-chain").expect("proving should succeed");
 
-        let mut vt = Blake2bTranscript::new(b"spartan-chain");
-        SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
+        verify_helper(&key, &proof, &witness, b"spartan-chain")
             .expect("verification should succeed");
     }
 
@@ -211,7 +226,6 @@ mod tests {
     fn witness_length_mismatch_panics() {
         let r1cs = x_squared_circuit();
         let key = SpartanKey::from_r1cs(&r1cs);
-        // Only 2 elements instead of 3
         let witness = [Fr::from_u64(1), Fr::from_u64(3)];
         let _ = prove_helper(&r1cs, &key, &witness, b"spartan-mismatch");
     }
@@ -227,8 +241,7 @@ mod tests {
 
         proof.az_eval += Fr::from_u64(1);
 
-        let mut vt = Blake2bTranscript::new(b"spartan-tamper");
-        let result = SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt);
+        let result = verify_helper(&key, &proof, &witness, b"spartan-tamper");
         assert!(result.is_err(), "tampered az_eval should be rejected");
     }
 
@@ -243,8 +256,7 @@ mod tests {
 
         proof.bz_eval += Fr::from_u64(1);
 
-        let mut vt = Blake2bTranscript::new(b"spartan-tamper");
-        let result = SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt);
+        let result = verify_helper(&key, &proof, &witness, b"spartan-tamper");
         assert!(result.is_err(), "tampered bz_eval should be rejected");
     }
 
@@ -259,8 +271,7 @@ mod tests {
 
         proof.cz_eval += Fr::from_u64(1);
 
-        let mut vt = Blake2bTranscript::new(b"spartan-tamper");
-        let result = SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt);
+        let result = verify_helper(&key, &proof, &witness, b"spartan-tamper");
         assert!(result.is_err(), "tampered cz_eval should be rejected");
     }
 
@@ -275,8 +286,7 @@ mod tests {
 
         proof.witness_eval += Fr::from_u64(1);
 
-        let mut vt = Blake2bTranscript::new(b"spartan-tamper");
-        let result = SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt);
+        let result = verify_helper(&key, &proof, &witness, b"spartan-tamper");
         assert!(
             matches!(result, Err(SpartanError::InnerEvaluationMismatch)),
             "tampered witness_eval should fail inner eval check, got: {result:?}"
@@ -285,7 +295,6 @@ mod tests {
 
     #[test]
     fn tampered_inner_sumcheck_rejected() {
-        // Use a larger circuit so the inner sumcheck has multiple rounds
         let one = Fr::from_u64(1);
         let r1cs = SimpleR1CS::new(
             4,
@@ -307,7 +316,6 @@ mod tests {
         let (mut proof, _) = prove_helper(&r1cs, &key, &witness, b"spartan-inner-tamper")
             .expect("proving should succeed");
 
-        // Replace the first inner sumcheck round polynomial with a shifted copy
         let orig = &proof.inner_sumcheck_proof.round_polynomials[0];
         let tampered_coeffs: Vec<Fr> = orig
             .coefficients()
@@ -318,8 +326,7 @@ mod tests {
         proof.inner_sumcheck_proof.round_polynomials[0] =
             jolt_poly::UnivariatePoly::new(tampered_coeffs);
 
-        let mut vt = Blake2bTranscript::new(b"spartan-inner-tamper");
-        let result = SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt);
+        let result = verify_helper(&key, &proof, &witness, b"spartan-inner-tamper");
         assert!(
             result.is_err(),
             "tampered inner sumcheck should be rejected"
@@ -328,7 +335,6 @@ mod tests {
 
     #[test]
     fn tampered_outer_sumcheck_rejected() {
-        // Need a multi-constraint circuit so the outer sumcheck has rounds
         let one = Fr::from_u64(1);
         let r1cs = SimpleR1CS::new(
             2,
@@ -348,7 +354,6 @@ mod tests {
         let (mut proof, _) = prove_helper(&r1cs, &key, &witness, b"spartan-outer-tamper")
             .expect("proving should succeed");
 
-        // Replace the first outer sumcheck round polynomial with a shifted copy
         let orig = &proof.outer_sumcheck_proof.round_polynomials[0];
         let tampered_coeffs: Vec<Fr> = orig
             .coefficients()
@@ -359,8 +364,7 @@ mod tests {
         proof.outer_sumcheck_proof.round_polynomials[0] =
             jolt_poly::UnivariatePoly::new(tampered_coeffs);
 
-        let mut vt = Blake2bTranscript::new(b"spartan-outer-tamper");
-        let result = SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt);
+        let result = verify_helper(&key, &proof, &witness, b"spartan-outer-tamper");
         assert!(
             result.is_err(),
             "tampered outer sumcheck should be rejected"
@@ -375,13 +379,13 @@ mod tests {
             key: &SpartanKey<Fr>,
             witness: &[Fr],
             label: &'static [u8],
-        ) -> Result<(SpartanProof<Fr, MockPCS>, Blake2bTranscript), SpartanError> {
+        ) -> Result<(SpartanProof<Fr>, Blake2bTranscript), SpartanError> {
             let mut transcript = Blake2bTranscript::new(label);
-            let proof = SpartanProver::prove::<MockPCS, _>(
+            commit_witness(witness, key.num_variables_padded, &mut transcript);
+            let proof = SpartanProver::prove(
                 r1cs,
                 key,
                 witness,
-                &(),
                 &mut transcript,
                 FirstRoundStrategy::UnivariateSkip,
             )?;
@@ -397,8 +401,7 @@ mod tests {
             let (proof, _) = prove_uniskip(&r1cs, &key, &witness, b"spartan-uniskip")
                 .expect("proving should succeed");
 
-            let mut vt = Blake2bTranscript::new(b"spartan-uniskip");
-            SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
+            verify_helper(&key, &proof, &witness, b"spartan-uniskip")
                 .expect("verification should succeed");
         }
 
@@ -423,8 +426,7 @@ mod tests {
             let (proof, _) = prove_uniskip(&r1cs, &key, &witness, b"spartan-uniskip-multi")
                 .expect("proving should succeed");
 
-            let mut vt = Blake2bTranscript::new(b"spartan-uniskip-multi");
-            SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
+            verify_helper(&key, &proof, &witness, b"spartan-uniskip-multi")
                 .expect("verification should succeed");
         }
 
@@ -451,8 +453,7 @@ mod tests {
             let (proof, _) = prove_uniskip(&r1cs, &key, &witness, b"spartan-uniskip-chain")
                 .expect("proving should succeed");
 
-            let mut vt = Blake2bTranscript::new(b"spartan-uniskip-chain");
-            SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
+            verify_helper(&key, &proof, &witness, b"spartan-uniskip-chain")
                 .expect("verification should succeed");
         }
 
@@ -479,14 +480,12 @@ mod tests {
             let (uniskip_proof, _) = prove_uniskip(&r1cs, &key, &witness, b"spartan-cmp")
                 .expect("uniskip proving should succeed");
 
-            // The first round polynomial should be identical
             assert_eq!(
                 standard_proof.outer_sumcheck_proof.round_polynomials[0].coefficients(),
                 uniskip_proof.outer_sumcheck_proof.round_polynomials[0].coefficients(),
                 "first round polynomial should match between Standard and UnivariateSkip"
             );
 
-            // Full proofs should be identical (same transcript → same challenges)
             assert_eq!(standard_proof.az_eval, uniskip_proof.az_eval);
             assert_eq!(standard_proof.bz_eval, uniskip_proof.bz_eval);
             assert_eq!(standard_proof.cz_eval, uniskip_proof.cz_eval);
@@ -498,8 +497,6 @@ mod tests {
         use super::*;
         use jolt_ir::{ExprBuilder, R1csVar};
 
-        /// Full pipeline: ExprBuilder → SoP → emit_r1cs → build_witness →
-        /// SpartanKey → prove → verify.
         fn ir_prove_verify(
             emission: &jolt_ir::R1csEmission<Fr>,
             witness: &[Fr],
@@ -508,19 +505,17 @@ mod tests {
             let key = SpartanKey::from_r1cs(emission);
 
             let mut prover_transcript = Blake2bTranscript::new(label);
-            let proof = SpartanProver::prove::<MockPCS, _>(
+            commit_witness(witness, key.num_variables_padded, &mut prover_transcript);
+            let proof = SpartanProver::prove(
                 emission,
                 &key,
                 witness,
-                &(),
                 &mut prover_transcript,
                 FirstRoundStrategy::Standard,
             )
             .expect("proving should succeed");
 
-            let mut verifier_transcript = Blake2bTranscript::new(label);
-            SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut verifier_transcript)
-                .expect("verification should succeed");
+            verify_helper(&key, &proof, witness, label).expect("verification should succeed");
         }
 
         #[test]
@@ -646,11 +641,11 @@ mod tests {
 
             let key = SpartanKey::from_r1cs(&emission);
             let mut transcript = Blake2bTranscript::new(b"ir-bad-witness");
-            let result = SpartanProver::prove::<MockPCS, _>(
+            commit_witness(&witness, key.num_variables_padded, &mut transcript);
+            let result = SpartanProver::prove(
                 &emission,
                 &key,
                 &witness,
-                &(),
                 &mut transcript,
                 FirstRoundStrategy::Standard,
             );
@@ -843,10 +838,6 @@ mod tests {
         use super::*;
         use num_traits::One;
 
-        type MockPCS = MockCommitmentScheme<Fr>;
-
-        /// Builds a 2-constraint uniform key: x*x = y, y*x = z.
-        /// Wire layout per cycle: [1, x, y, z] (4 vars).
         fn test_key(num_cycles: usize) -> UniformSpartanKey<Fr> {
             let one = Fr::from_u64(1);
             UniformSpartanKey::new(
@@ -868,22 +859,38 @@ mod tests {
             ]
         }
 
+        /// Flattens per-cycle witnesses into a single interleaved vector.
+        fn flatten_witnesses(key: &UniformSpartanKey<Fr>, cycle_witnesses: &[Vec<Fr>]) -> Vec<Fr> {
+            let total_cols_padded = key.total_cols().next_power_of_two();
+            let mut flat = vec![Fr::from_u64(0); total_cols_padded];
+            for (c, w) in cycle_witnesses.iter().enumerate() {
+                let base = c * key.num_vars_padded;
+                for (v, &val) in w.iter().enumerate().take(key.num_vars) {
+                    flat[base + v] = val;
+                }
+            }
+            flat
+        }
+
+        fn uniform_commit(flat: &[Fr], transcript: &mut Blake2bTranscript) {
+            let (commitment, ()) = MockPCS::commit(flat, &());
+            transcript.append_bytes(format!("{commitment:?}").as_bytes());
+        }
+
         #[test]
         fn uniform_prove_verify_single_cycle() {
             let key = test_key(1);
             let witnesses = vec![make_cycle_witness(3)];
+            let flat = flatten_witnesses(&key, &witnesses);
 
             let mut transcript = Blake2bTranscript::new(b"uniform-single");
-            let proof = UniformSpartanProver::prove_dense::<MockPCS, _>(
-                &key,
-                &witnesses,
-                &(),
-                &mut transcript,
-            )
-            .expect("proving should succeed");
+            uniform_commit(&flat, &mut transcript);
+            let proof = UniformSpartanProver::prove_dense(&key, &flat, &mut transcript)
+                .expect("proving should succeed");
 
             let mut vt = Blake2bTranscript::new(b"uniform-single");
-            UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
+            uniform_commit(&flat, &mut vt);
+            UniformSpartanVerifier::verify(&key, &proof, &mut vt)
                 .expect("verification should succeed");
         }
 
@@ -891,18 +898,16 @@ mod tests {
         fn uniform_prove_verify_two_cycles() {
             let key = test_key(2);
             let witnesses = vec![make_cycle_witness(3), make_cycle_witness(5)];
+            let flat = flatten_witnesses(&key, &witnesses);
 
             let mut transcript = Blake2bTranscript::new(b"uniform-two");
-            let proof = UniformSpartanProver::prove_dense::<MockPCS, _>(
-                &key,
-                &witnesses,
-                &(),
-                &mut transcript,
-            )
-            .expect("proving should succeed");
+            uniform_commit(&flat, &mut transcript);
+            let proof = UniformSpartanProver::prove_dense(&key, &flat, &mut transcript)
+                .expect("proving should succeed");
 
             let mut vt = Blake2bTranscript::new(b"uniform-two");
-            UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
+            uniform_commit(&flat, &mut vt);
+            UniformSpartanVerifier::verify(&key, &proof, &mut vt)
                 .expect("verification should succeed");
         }
 
@@ -915,18 +920,16 @@ mod tests {
                 make_cycle_witness(5),
                 make_cycle_witness(7),
             ];
+            let flat = flatten_witnesses(&key, &witnesses);
 
             let mut transcript = Blake2bTranscript::new(b"uniform-four");
-            let proof = UniformSpartanProver::prove_dense::<MockPCS, _>(
-                &key,
-                &witnesses,
-                &(),
-                &mut transcript,
-            )
-            .expect("proving should succeed");
+            uniform_commit(&flat, &mut transcript);
+            let proof = UniformSpartanProver::prove_dense(&key, &flat, &mut transcript)
+                .expect("proving should succeed");
 
             let mut vt = Blake2bTranscript::new(b"uniform-four");
-            UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
+            uniform_commit(&flat, &mut vt);
+            UniformSpartanVerifier::verify(&key, &proof, &mut vt)
                 .expect("verification should succeed");
         }
 
@@ -934,16 +937,12 @@ mod tests {
         fn uniform_reject_bad_witness() {
             let key = test_key(2);
             let mut witnesses = vec![make_cycle_witness(3), make_cycle_witness(5)];
-            // Corrupt y in cycle 1: should be 25 (5^2) but set to 26
-            witnesses[1][2] = Fr::from_u64(26);
+            witnesses[1][2] = Fr::from_u64(26); // y should be 25
+            let flat = flatten_witnesses(&key, &witnesses);
 
             let mut transcript = Blake2bTranscript::new(b"uniform-bad");
-            let result = UniformSpartanProver::prove_dense::<MockPCS, _>(
-                &key,
-                &witnesses,
-                &(),
-                &mut transcript,
-            );
+            uniform_commit(&flat, &mut transcript);
+            let result = UniformSpartanProver::prove_dense(&key, &flat, &mut transcript);
             assert!(
                 matches!(result, Err(SpartanError::ConstraintViolation(_))),
                 "corrupted witness should be rejected"
@@ -954,20 +953,18 @@ mod tests {
         fn uniform_tampered_az_eval_rejected() {
             let key = test_key(2);
             let witnesses = vec![make_cycle_witness(3), make_cycle_witness(7)];
+            let flat = flatten_witnesses(&key, &witnesses);
 
             let mut transcript = Blake2bTranscript::new(b"uniform-tamper");
-            let mut proof = UniformSpartanProver::prove_dense::<MockPCS, _>(
-                &key,
-                &witnesses,
-                &(),
-                &mut transcript,
-            )
-            .expect("proving should succeed");
+            uniform_commit(&flat, &mut transcript);
+            let mut proof = UniformSpartanProver::prove_dense(&key, &flat, &mut transcript)
+                .expect("proving should succeed");
 
             proof.az_eval += Fr::from_u64(1);
 
             let mut vt = Blake2bTranscript::new(b"uniform-tamper");
-            let result = UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt);
+            uniform_commit(&flat, &mut vt);
+            let result = UniformSpartanVerifier::verify(&key, &proof, &mut vt);
             assert!(result.is_err(), "tampered az_eval should be rejected");
         }
 
@@ -975,20 +972,18 @@ mod tests {
         fn uniform_tampered_witness_eval_rejected() {
             let key = test_key(2);
             let witnesses = vec![make_cycle_witness(3), make_cycle_witness(7)];
+            let flat = flatten_witnesses(&key, &witnesses);
 
             let mut transcript = Blake2bTranscript::new(b"uniform-tamper-w");
-            let mut proof = UniformSpartanProver::prove_dense::<MockPCS, _>(
-                &key,
-                &witnesses,
-                &(),
-                &mut transcript,
-            )
-            .expect("proving should succeed");
+            uniform_commit(&flat, &mut transcript);
+            let mut proof = UniformSpartanProver::prove_dense(&key, &flat, &mut transcript)
+                .expect("proving should succeed");
 
             proof.witness_eval += Fr::from_u64(1);
 
             let mut vt = Blake2bTranscript::new(b"uniform-tamper-w");
-            let result = UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt);
+            uniform_commit(&flat, &mut vt);
+            let result = UniformSpartanVerifier::verify(&key, &proof, &mut vt);
             assert!(
                 matches!(result, Err(SpartanError::InnerEvaluationMismatch)),
                 "tampered witness_eval should fail inner check, got: {result:?}"
@@ -997,8 +992,6 @@ mod tests {
 
         #[test]
         fn uniform_single_constraint_key() {
-            // Single constraint per cycle: x * x = y
-            // Wire layout: [1, x, y]
             let one = Fr::from_u64(1);
             let key = UniformSpartanKey::new(
                 2,
@@ -1013,18 +1006,16 @@ mod tests {
                 vec![Fr::one(), Fr::from_u64(4), Fr::from_u64(16)],
                 vec![Fr::one(), Fr::from_u64(6), Fr::from_u64(36)],
             ];
+            let flat = flatten_witnesses(&key, &witnesses);
 
             let mut transcript = Blake2bTranscript::new(b"uniform-single-constr");
-            let proof = UniformSpartanProver::prove_dense::<MockPCS, _>(
-                &key,
-                &witnesses,
-                &(),
-                &mut transcript,
-            )
-            .expect("proving should succeed");
+            uniform_commit(&flat, &mut transcript);
+            let proof = UniformSpartanProver::prove_dense(&key, &flat, &mut transcript)
+                .expect("proving should succeed");
 
             let mut vt = Blake2bTranscript::new(b"uniform-single-constr");
-            UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
+            uniform_commit(&flat, &mut vt);
+            UniformSpartanVerifier::verify(&key, &proof, &mut vt)
                 .expect("verification should succeed");
         }
 
@@ -1037,26 +1028,22 @@ mod tests {
                 make_cycle_witness(5),
                 make_cycle_witness(7),
             ];
+            let flat = flatten_witnesses(&key, &witnesses);
 
             let mut pt = Blake2bTranscript::new(b"uniform-challenges");
+            uniform_commit(&flat, &mut pt);
             let (proof, r_x, r_y) =
-                UniformSpartanProver::prove_dense_with_challenges::<MockPCS, _>(
-                    &key,
-                    &witnesses,
-                    &(),
-                    &mut pt,
-                )
-                .expect("proving should succeed");
+                UniformSpartanProver::prove_dense_with_challenges(&key, &flat, &mut pt)
+                    .expect("proving should succeed");
 
             assert_eq!(r_x.len(), key.num_row_vars());
             assert_eq!(r_y.len(), key.num_col_vars());
 
             let mut vt = Blake2bTranscript::new(b"uniform-challenges");
-            UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
+            uniform_commit(&flat, &mut vt);
+            UniformSpartanVerifier::verify(&key, &proof, &mut vt)
                 .expect("verification should succeed");
 
-            // Witness eval at r_y should match the proof
-            assert_eq!(proof.witness_eval, proof.witness_eval);
             assert!(!r_x.is_empty());
             assert!(!r_y.is_empty());
         }

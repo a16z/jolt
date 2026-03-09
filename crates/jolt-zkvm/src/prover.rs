@@ -68,7 +68,7 @@ impl std::error::Error for ProveError {
 /// * `challenge_fn` — converts transcript challenges to field elements
 #[tracing::instrument(skip_all, name = "prove")]
 pub fn prove<PCS, T>(
-    spartan_result: UniformSpartanResult<PCS::Field, PCS>,
+    spartan_result: UniformSpartanResult<PCS::Field>,
     stages: &mut [Box<dyn ProverStage<PCS::Field, T>>],
     key: &JoltProvingKey<PCS::Field, PCS>,
     commitments: Vec<PCS::Output>,
@@ -82,13 +82,15 @@ where
 {
     let (stage_proofs, mut opening_claims) = prove_stages(stages, transcript, challenge_fn);
 
+    // The Spartan witness opening claim goes through S8 like all other openings.
+    // Spartan is a pure PIOP — it does not handle PCS.
     opening_claims.push(spartan_result.witness_opening_claim);
 
     // S8: RLC reduction + PCS opening proofs
     let (reduced, ()) = <RlcReduction as OpeningReduction<PCS>>::reduce_prover(
         opening_claims,
         transcript,
-        &challenge_fn,
+        challenge_fn,
     );
 
     let proofs = reduced

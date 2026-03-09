@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::CpuBackend;
+use jolt_compute::{ComputeBackend, CpuBackend};
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -23,7 +23,8 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
 use crate::claims::reductions;
-use crate::evaluators::eq_product::EqProductEvaluator;
+use crate::evaluators::catalog;
+use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
 
 /// Hamming weight claim reduction prover stage.
@@ -110,14 +111,10 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
         };
 
         let backend = Arc::new(CpuBackend);
-        let desc = EqProductEvaluator::<F, CpuBackend>::descriptor();
+        let desc = catalog::eq_product();
         let kernel = jolt_cpu_kernels::compile::<F>(&desc);
-        let witness = EqProductEvaluator::new(
-            backend.upload(&eq_table),
-            backend.upload(&g_table),
-            kernel,
-            backend,
-        );
+        let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
+        let witness = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         StageBatch {
             claims: vec![claim],

@@ -13,34 +13,30 @@
 //! Both modes produce the same [`UniformSpartanProof`] structure.
 
 use jolt_field::Field;
-use jolt_openings::CommitmentScheme;
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::proof::SumcheckProof;
 use jolt_sumcheck::{
     ClearRoundHandler, RoundHandler, SumcheckClaim, SumcheckCompute, SumcheckProver,
 };
 use jolt_transcript::Transcript;
-use num_traits::Zero;
 
 use crate::error::SpartanError;
 use crate::uniform_key::UniformSpartanKey;
 
-/// Proof structure for uniform Spartan.
+/// Proof structure for uniform Spartan (pure PIOP).
 ///
-/// Same logical content as the standard [`SpartanProof`](crate::proof::SpartanProof)
-/// but produced by the uniform prover.
+/// Contains the two sumcheck proofs and evaluation claims. The witness
+/// commitment and opening proof are NOT included — the caller handles
+/// PCS operations externally.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(bound = "")]
-#[allow(clippy::type_complexity)]
-pub struct UniformSpartanProof<F: Field, PCS: CommitmentScheme> {
-    pub witness_commitment: PCS::Output,
+pub struct UniformSpartanProof<F: Field> {
     pub outer_sumcheck_proof: SumcheckProof<F>,
     pub az_eval: F,
     pub bz_eval: F,
     pub cz_eval: F,
     pub inner_sumcheck_proof: SumcheckProof<F>,
     pub witness_eval: F,
-    pub witness_opening_proof: PCS::Proof,
 }
 
 /// Stateless uniform Spartan prover.
@@ -49,31 +45,27 @@ pub struct UniformSpartanProver;
 impl UniformSpartanProver {
     /// Dense-mode proving: materializes full Az, Bz, Cz polynomials.
     ///
-    /// This is the simple approach suitable for testing. It constructs the
-    /// full witness polynomial over all cycles, computes Az/Bz/Cz via the
-    /// uniform key's sparse matrices, and runs standard sumcheck.
+    /// The caller must commit to the witness and append the commitment to the
+    /// transcript BEFORE calling this function. After this returns, the caller
+    /// opens the witness polynomial at `r_y` via PCS.
     ///
     /// # Arguments
     ///
     /// * `key` — Uniform Spartan key with sparse constraint matrices.
-    /// * `cycle_witnesses` — Per-cycle witness vectors, each of length
-    ///   `key.num_vars`. `cycle_witnesses[c][v]` is the value of variable `v`
-    ///   in cycle `c`.
-    /// * `pcs_setup` — Polynomial commitment setup.
-    /// * `transcript` — Fiat-Shamir transcript.
+    /// * `witness` — Flat interleaved witness vector of length `total_cols_padded`.
+    ///   Layout: `witness[c * num_vars_padded + v]` is variable `v` in cycle `c`.
+    /// * `transcript` — Fiat-Shamir transcript (with witness commitment already appended).
     #[tracing::instrument(skip_all, name = "UniformSpartanProver::prove_dense")]
-    pub fn prove_dense<PCS, T>(
-        key: &UniformSpartanKey<PCS::Field>,
-        cycle_witnesses: &[Vec<PCS::Field>],
-        pcs_setup: &PCS::ProverSetup,
+    pub fn prove_dense<F, T>(
+        key: &UniformSpartanKey<F>,
+        witness: &[F],
         transcript: &mut T,
-    ) -> Result<UniformSpartanProof<PCS::Field, PCS>, SpartanError>
+    ) -> Result<UniformSpartanProof<F>, SpartanError>
     where
-        PCS: CommitmentScheme,
+        F: Field,
         T: Transcript<Challenge = u128>,
     {
-        let (proof, _r_x, _r_y) =
-            Self::prove_dense_with_challenges::<PCS, T>(key, cycle_witnesses, pcs_setup, transcript)?;
+        let (proof, _r_x, _r_y) = Self::prove_dense_with_challenges(key, witness, transcript)?;
         Ok(proof)
     }
 
@@ -84,44 +76,33 @@ impl UniformSpartanProver {
     /// sumcheck claims and evaluate witness polynomials at the correct points.
     #[tracing::instrument(skip_all, name = "UniformSpartanProver::prove_dense_with_challenges")]
     #[allow(clippy::type_complexity)]
-    pub fn prove_dense_with_challenges<PCS, T>(
-        key: &UniformSpartanKey<PCS::Field>,
-        cycle_witnesses: &[Vec<PCS::Field>],
-        pcs_setup: &PCS::ProverSetup,
+    pub fn prove_dense_with_challenges<F, T>(
+        key: &UniformSpartanKey<F>,
+        witness: &[F],
         transcript: &mut T,
-    ) -> Result<
-        (
-            UniformSpartanProof<PCS::Field, PCS>,
-            Vec<PCS::Field>,
-            Vec<PCS::Field>,
-        ),
-        SpartanError,
-    >
+    ) -> Result<(UniformSpartanProof<F>, Vec<F>, Vec<F>), SpartanError>
     where
-        PCS: CommitmentScheme,
+        F: Field,
         T: Transcript<Challenge = u128>,
     {
-        assert_eq!(cycle_witnesses.len(), key.num_cycles);
-
         let total_rows = key.total_rows();
         let total_cols = key.total_cols();
         let total_rows_padded = total_rows.next_power_of_two();
         let total_cols_padded = total_cols.next_power_of_two();
 
-        let mut witness_flat = vec![PCS::Field::zero(); total_cols_padded];
-        for (c, cycle_w) in cycle_witnesses.iter().enumerate() {
-            assert!(cycle_w.len() >= key.num_vars);
-            let base = c * key.num_vars_padded;
-            for (v, &val) in cycle_w.iter().enumerate().take(key.num_vars) {
-                witness_flat[base + v] = val;
-            }
-        }
+        assert_eq!(
+            witness.len(),
+            total_cols_padded,
+            "witness length {} != total_cols_padded {total_cols_padded}",
+            witness.len(),
+        );
 
-        let mut az = vec![PCS::Field::zero(); total_rows_padded];
-        let mut bz = vec![PCS::Field::zero(); total_rows_padded];
-        let mut cz = vec![PCS::Field::zero(); total_rows_padded];
+        let mut az = vec![F::zero(); total_rows_padded];
+        let mut bz = vec![F::zero(); total_rows_padded];
+        let mut cz = vec![F::zero(); total_rows_padded];
 
-        for (c, cycle_w) in cycle_witnesses.iter().enumerate() {
+        for c in 0..key.num_cycles {
+            let cycle_base = c * key.num_vars_padded;
             for (k, (a_row, (b_row, c_row))) in key
                 .a_sparse
                 .iter()
@@ -130,19 +111,19 @@ impl UniformSpartanProver {
             {
                 let row = c * key.num_constraints_padded + k;
 
-                let mut a_val = PCS::Field::zero();
+                let mut a_val = F::zero();
                 for &(j, coeff) in a_row {
-                    a_val += coeff * cycle_w[j];
+                    a_val += coeff * witness[cycle_base + j];
                 }
 
-                let mut b_val = PCS::Field::zero();
+                let mut b_val = F::zero();
                 for &(j, coeff) in b_row {
-                    b_val += coeff * cycle_w[j];
+                    b_val += coeff * witness[cycle_base + j];
                 }
 
-                let mut c_val = PCS::Field::zero();
+                let mut c_val = F::zero();
                 for &(j, coeff) in c_row {
-                    c_val += coeff * cycle_w[j];
+                    c_val += coeff * witness[cycle_base + j];
                 }
 
                 az[row] = a_val;
@@ -157,14 +138,11 @@ impl UniformSpartanProver {
             }
         }
 
-        let witness_poly = Polynomial::new(witness_flat.clone());
-        let (witness_commitment, _hint) = PCS::commit(witness_poly.evaluations(), pcs_setup);
-
-        transcript.append_bytes(format!("{witness_commitment:?}").as_bytes());
+        let witness_poly = Polynomial::new(witness.to_vec());
 
         let num_row_vars = log2_padded(total_rows_padded);
-        let tau: Vec<PCS::Field> = (0..num_row_vars)
-            .map(|_| PCS::Field::from_u128(transcript.challenge()))
+        let tau: Vec<F> = (0..num_row_vars)
+            .map(|_| F::from_u128(transcript.challenge()))
             .collect();
 
         let eq_poly = Polynomial::new(EqPolynomial::new(tau).evaluations());
@@ -182,7 +160,7 @@ impl UniformSpartanProver {
         let outer_claim = SumcheckClaim {
             num_vars: num_row_vars,
             degree: 3,
-            claimed_sum: PCS::Field::zero(),
+            claimed_sum: F::zero(),
         };
 
         let handler = TrackingHandler::new(num_row_vars);
@@ -190,7 +168,7 @@ impl UniformSpartanProver {
             &outer_claim,
             &mut outer_witness,
             transcript,
-            |c: u128| PCS::Field::from_u128(c),
+            |c: u128| F::from_u128(c),
             handler,
         );
 
@@ -202,9 +180,9 @@ impl UniformSpartanProver {
         transcript.append(&bz_eval);
         transcript.append(&cz_eval);
 
-        let rho_a = PCS::Field::from_u128(transcript.challenge());
-        let rho_b = PCS::Field::from_u128(transcript.challenge());
-        let rho_c = PCS::Field::from_u128(transcript.challenge());
+        let rho_a = F::from_u128(transcript.challenge());
+        let rho_b = F::from_u128(transcript.challenge());
+        let rho_c = F::from_u128(transcript.challenge());
 
         let num_col_vars = log2_padded(total_cols_padded);
         let combined_row =
@@ -226,25 +204,19 @@ impl UniformSpartanProver {
             &inner_claim,
             &mut inner_witness,
             transcript,
-            |c: u128| PCS::Field::from_u128(c),
+            |c: u128| F::from_u128(c),
             inner_handler,
         );
 
         let witness_eval = witness_poly.evaluate(&r_y);
 
-        let pcs_poly: PCS::Polynomial = witness_poly.evaluations().to_vec().into();
-        let witness_opening_proof =
-            PCS::open(&pcs_poly, &r_y, witness_eval, pcs_setup, None, transcript);
-
         let proof = UniformSpartanProof {
-            witness_commitment,
             outer_sumcheck_proof,
             az_eval,
             bz_eval,
             cz_eval,
             inner_sumcheck_proof,
             witness_eval,
-            witness_opening_proof,
         };
 
         Ok((proof, r_x, r_y))

@@ -7,6 +7,7 @@
 
 use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend};
 use jolt_field::{Field, Fr};
+use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
 use jolt_metal::MetalBackend;
 use num_traits::Zero;
 use rand::rngs::StdRng;
@@ -406,10 +407,7 @@ fn interpolate_pairs_inplace_multi_round() {
 
         let expected = cpu.download(&cpu_buf);
         let got = metal.download(&mtl_buf);
-        assert_eq!(
-            expected, got,
-            "multi-round L2H mismatch at round {round}"
-        );
+        assert_eq!(expected, got, "multi-round L2H mismatch at round {round}");
     }
 
     assert_eq!(cpu.len(&cpu_buf), 1);
@@ -435,10 +433,7 @@ fn interpolate_pairs_inplace_multi_round_high_to_low() {
 
         let expected = cpu.download(&cpu_buf);
         let got = metal.download(&mtl_buf);
-        assert_eq!(
-            expected, got,
-            "multi-round H2L mismatch at round {round}"
-        );
+        assert_eq!(expected, got, "multi-round H2L mismatch at round {round}");
     }
 
     assert_eq!(cpu.len(&cpu_buf), 1);
@@ -457,7 +452,11 @@ fn product_table_parity() {
         let cpu_table = cpu.download(&cpu.product_table(&point));
         let mtl_table = metal.download(&metal.product_table(&point));
 
-        assert_eq!(cpu_table.len(), mtl_table.len(), "table size mismatch for {n_vars} vars");
+        assert_eq!(
+            cpu_table.len(),
+            mtl_table.len(),
+            "table size mismatch for {n_vars} vars"
+        );
         assert_eq!(
             cpu_table, mtl_table,
             "product_table mismatch for {n_vars} vars"
@@ -502,4 +501,448 @@ fn product_table_large() {
     let mtl_table = metal.download(&metal.product_table(&point));
 
     assert_eq!(cpu_table, mtl_table, "large product_table mismatch");
+}
+
+// ── Phase 4: Kernel Compilation + Pairwise Reduce ──────────────────────
+
+fn compile_kernels(
+    cpu: &CpuBackend,
+    metal: &MetalBackend,
+    desc: &KernelDescriptor,
+) -> (
+    <CpuBackend as ComputeBackend>::CompiledKernel<Fr>,
+    <MetalBackend as ComputeBackend>::CompiledKernel<Fr>,
+) {
+    let cpu_k = jolt_cpu_kernels::compile::<Fr>(desc);
+    let mtl_k = metal.compile_kernel::<Fr>(desc);
+    let _ = cpu;
+    (cpu_k, mtl_k)
+}
+
+fn compile_kernels_with_challenges(
+    cpu: &CpuBackend,
+    metal: &MetalBackend,
+    desc: &KernelDescriptor,
+    challenges: &[Fr],
+) -> (
+    <CpuBackend as ComputeBackend>::CompiledKernel<Fr>,
+    <MetalBackend as ComputeBackend>::CompiledKernel<Fr>,
+) {
+    let cpu_k = jolt_cpu_kernels::compile_with_challenges::<Fr>(desc, challenges);
+    let mtl_k = metal.compile_kernel_with_challenges::<Fr>(desc, challenges);
+    let _ = cpu;
+    (cpu_k, mtl_k)
+}
+
+/// ProductSum D=4, single group, LowToHigh.
+#[test]
+fn pairwise_reduce_product_sum_d4() {
+    let metal = MetalBackend::new();
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xD001);
+
+    let desc = KernelDescriptor {
+        shape: KernelShape::ProductSum {
+            num_inputs_per_product: 4,
+            num_products: 1,
+        },
+        degree: 4,
+        tensor_split: None,
+    };
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+
+    let n = 256;
+    let inputs: Vec<Vec<Fr>> = (0..4).map(|_| random_elements(&mut rng, n)).collect();
+    let weights = random_elements(&mut rng, n / 2);
+
+    let cpu_inputs: Vec<Vec<Fr>> = inputs.clone();
+    let cpu_refs: Vec<&Vec<Fr>> = cpu_inputs.iter().collect();
+    let cpu_w = cpu.upload(&weights);
+    let expected = cpu.pairwise_reduce(
+        &cpu_refs,
+        &cpu_w,
+        &cpu_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+    let mtl_w = metal.upload(&weights);
+    let got = metal.pairwise_reduce(
+        &mtl_refs,
+        &mtl_w,
+        &mtl_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    assert_eq!(expected.len(), got.len());
+    assert_eq!(expected, got, "pairwise_reduce D=4 mismatch");
+}
+
+/// ProductSum D=3, 2 groups.
+#[test]
+fn pairwise_reduce_product_sum_d3_p2() {
+    let metal = MetalBackend::new();
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xD002);
+
+    let desc = KernelDescriptor {
+        shape: KernelShape::ProductSum {
+            num_inputs_per_product: 3,
+            num_products: 2,
+        },
+        degree: 3,
+        tensor_split: None,
+    };
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+
+    let k = desc.num_inputs();
+    let n = 128;
+    let inputs: Vec<Vec<Fr>> = (0..k).map(|_| random_elements(&mut rng, n)).collect();
+    let weights = random_elements(&mut rng, n / 2);
+
+    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+    let cpu_w = cpu.upload(&weights);
+    let expected = cpu.pairwise_reduce(
+        &cpu_refs,
+        &cpu_w,
+        &cpu_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+    let mtl_w = metal.upload(&weights);
+    let got = metal.pairwise_reduce(
+        &mtl_refs,
+        &mtl_w,
+        &mtl_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    assert_eq!(expected, got, "pairwise_reduce D=3 P=2 mismatch");
+}
+
+/// ProductSum D=8, single group, large buffer to exercise multiple threadgroups.
+#[test]
+fn pairwise_reduce_product_sum_d8_large() {
+    let metal = MetalBackend::new();
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xD003);
+
+    let desc = KernelDescriptor {
+        shape: KernelShape::ProductSum {
+            num_inputs_per_product: 8,
+            num_products: 1,
+        },
+        degree: 8,
+        tensor_split: None,
+    };
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+
+    let n = 1 << 14;
+    let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
+    let weights = random_elements(&mut rng, n / 2);
+
+    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+    let cpu_w = cpu.upload(&weights);
+    let expected = cpu.pairwise_reduce(
+        &cpu_refs,
+        &cpu_w,
+        &cpu_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+    let mtl_w = metal.upload(&weights);
+    let got = metal.pairwise_reduce(
+        &mtl_refs,
+        &mtl_w,
+        &mtl_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    assert_eq!(expected, got, "pairwise_reduce D=8 large mismatch");
+}
+
+/// HighToLow binding order.
+#[test]
+fn pairwise_reduce_high_to_low() {
+    let metal = MetalBackend::new();
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xD004);
+
+    let desc = KernelDescriptor {
+        shape: KernelShape::ProductSum {
+            num_inputs_per_product: 4,
+            num_products: 1,
+        },
+        degree: 4,
+        tensor_split: None,
+    };
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+
+    let n = 512;
+    let inputs: Vec<Vec<Fr>> = (0..4).map(|_| random_elements(&mut rng, n)).collect();
+    let weights = random_elements(&mut rng, n / 2);
+
+    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+    let cpu_w = cpu.upload(&weights);
+    let expected = cpu.pairwise_reduce(
+        &cpu_refs,
+        &cpu_w,
+        &cpu_k,
+        desc.num_evals(),
+        BindingOrder::HighToLow,
+    );
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+    let mtl_w = metal.upload(&weights);
+    let got = metal.pairwise_reduce(
+        &mtl_refs,
+        &mtl_w,
+        &mtl_k,
+        desc.num_evals(),
+        BindingOrder::HighToLow,
+    );
+
+    assert_eq!(expected, got, "pairwise_reduce H2L mismatch");
+}
+
+/// Custom expression: booleanity h^2 - h.
+#[test]
+fn pairwise_reduce_custom_booleanity() {
+    let metal = MetalBackend::new();
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xD005);
+
+    let b = ExprBuilder::new();
+    let h = b.opening(0);
+    let desc = KernelDescriptor {
+        shape: KernelShape::Custom {
+            expr: b.build(h * h - h),
+            num_inputs: 1,
+        },
+        degree: 2,
+        tensor_split: None,
+    };
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+
+    let n = 512;
+    let inputs: Vec<Vec<Fr>> = vec![random_elements(&mut rng, n)];
+    let weights = random_elements(&mut rng, n / 2);
+
+    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+    let cpu_w = cpu.upload(&weights);
+    let expected = cpu.pairwise_reduce(
+        &cpu_refs,
+        &cpu_w,
+        &cpu_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+    let mtl_w = metal.upload(&weights);
+    let got = metal.pairwise_reduce(
+        &mtl_refs,
+        &mtl_w,
+        &mtl_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    assert_eq!(expected, got, "pairwise_reduce custom booleanity mismatch");
+}
+
+/// Custom expression with challenges: gamma * o0 * o1.
+#[test]
+fn pairwise_reduce_custom_with_challenges() {
+    let metal = MetalBackend::new();
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xD006);
+
+    let b = ExprBuilder::new();
+    let a = b.opening(0);
+    let bv = b.opening(1);
+    let gamma = b.challenge(0);
+    let desc = KernelDescriptor {
+        shape: KernelShape::Custom {
+            expr: b.build(gamma * a * bv),
+            num_inputs: 2,
+        },
+        degree: 3,
+        tensor_split: None,
+    };
+    let challenges = vec![Fr::random(&mut rng)];
+    let (cpu_k, mtl_k) = compile_kernels_with_challenges(&cpu, &metal, &desc, &challenges);
+
+    let n = 256;
+    let inputs: Vec<Vec<Fr>> = (0..2).map(|_| random_elements(&mut rng, n)).collect();
+    let weights = random_elements(&mut rng, n / 2);
+
+    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+    let cpu_w = cpu.upload(&weights);
+    let expected = cpu.pairwise_reduce(
+        &cpu_refs,
+        &cpu_w,
+        &cpu_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+    let mtl_w = metal.upload(&weights);
+    let got = metal.pairwise_reduce(
+        &mtl_refs,
+        &mtl_w,
+        &mtl_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    assert_eq!(
+        expected, got,
+        "pairwise_reduce custom with challenge mismatch"
+    );
+}
+
+/// Tensor pairwise reduce matches CPU.
+#[test]
+fn tensor_pairwise_reduce_product_sum() {
+    let metal = MetalBackend::new();
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xD007);
+
+    let desc = KernelDescriptor {
+        shape: KernelShape::ProductSum {
+            num_inputs_per_product: 4,
+            num_products: 1,
+        },
+        degree: 4,
+        tensor_split: None,
+    };
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+
+    // outer_len * inner_len pairs = n/2
+    let outer_len = 8;
+    let inner_len = 16;
+    let n = outer_len * inner_len * 2;
+    let inputs: Vec<Vec<Fr>> = (0..4).map(|_| random_elements(&mut rng, n)).collect();
+    let outer_w = random_elements(&mut rng, outer_len);
+    let inner_w = random_elements(&mut rng, inner_len);
+
+    let cpu_inputs: Vec<Vec<Fr>> = inputs.clone();
+    let cpu_refs: Vec<&Vec<Fr>> = cpu_inputs.iter().collect();
+    let cpu_outer = cpu.upload(&outer_w);
+    let cpu_inner = cpu.upload(&inner_w);
+    let expected =
+        cpu.tensor_pairwise_reduce(&cpu_refs, &cpu_outer, &cpu_inner, &cpu_k, desc.num_evals());
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+    let mtl_outer = metal.upload(&outer_w);
+    let mtl_inner = metal.upload(&inner_w);
+    let got =
+        metal.tensor_pairwise_reduce(&mtl_refs, &mtl_outer, &mtl_inner, &mtl_k, desc.num_evals());
+
+    assert_eq!(expected, got, "tensor_pairwise_reduce mismatch");
+}
+
+/// ProductSum D=2 (smallest nontrivial case).
+#[test]
+fn pairwise_reduce_product_sum_d2() {
+    let metal = MetalBackend::new();
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xD008);
+
+    let desc = KernelDescriptor {
+        shape: KernelShape::ProductSum {
+            num_inputs_per_product: 2,
+            num_products: 1,
+        },
+        degree: 2,
+        tensor_split: None,
+    };
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+
+    let n = 64;
+    let inputs: Vec<Vec<Fr>> = (0..2).map(|_| random_elements(&mut rng, n)).collect();
+    let weights = random_elements(&mut rng, n / 2);
+
+    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+    let cpu_w = cpu.upload(&weights);
+    let expected = cpu.pairwise_reduce(
+        &cpu_refs,
+        &cpu_w,
+        &cpu_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+    let mtl_w = metal.upload(&weights);
+    let got = metal.pairwise_reduce(
+        &mtl_refs,
+        &mtl_w,
+        &mtl_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    assert_eq!(expected, got, "pairwise_reduce D=2 mismatch");
+}
+
+/// Verify known values for ProductSum D=4 with simple inputs.
+#[test]
+fn pairwise_reduce_product_sum_known_values() {
+    let metal = MetalBackend::new();
+
+    let desc = KernelDescriptor {
+        shape: KernelShape::ProductSum {
+            num_inputs_per_product: 4,
+            num_products: 1,
+        },
+        degree: 4,
+        tensor_split: None,
+    };
+    let mtl_k = metal.compile_kernel::<Fr>(&desc);
+
+    // Single pair: lo = [1,2,3,4], hi = [5,6,7,8]
+    // Stored interleaved for LowToHigh: input_k = [lo[k], hi[k]]
+    let inputs: Vec<Vec<Fr>> = (0..4)
+        .map(|k| {
+            let lo = Fr::from_u64(k as u64 + 1);
+            let hi = Fr::from_u64(k as u64 + 5);
+            vec![lo, hi]
+        })
+        .collect();
+    let weights = vec![Fr::from_u64(1)];
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+    let mtl_w = metal.upload(&weights);
+    let got = metal.pairwise_reduce(
+        &mtl_refs,
+        &mtl_w,
+        &mtl_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    // Toom-Cook grid: P(1) = hi[0]*hi[1]*hi[2]*hi[3] = 5*6*7*8 = 1680
+    assert_eq!(got[0], Fr::from_u64(1680), "P(1) mismatch");
+    // P(∞) = diff[0]*diff[1]*diff[2]*diff[3] = 4*4*4*4 = 256
+    assert_eq!(got[3], Fr::from_u64(256), "P(∞) mismatch");
 }

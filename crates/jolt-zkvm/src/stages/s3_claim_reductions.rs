@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::CpuBackend;
+use jolt_compute::{ComputeBackend, CpuBackend};
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -20,7 +20,8 @@ use jolt_sumcheck::prover::SumcheckCompute;
 use jolt_transcript::Transcript;
 
 use crate::claims::reductions;
-use crate::evaluators::eq_product::EqProductEvaluator;
+use crate::evaluators::catalog;
+use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
 
 /// A single claim reduction instance within the stage.
@@ -149,7 +150,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
         let n = 1usize << self.num_vars;
         let eq_table = EqPolynomial::new(self.eq_point.clone()).evaluations();
         let backend = Arc::new(CpuBackend);
-        let desc = EqProductEvaluator::<F, CpuBackend>::descriptor();
+        let desc = catalog::eq_product();
 
         let mut claims = Vec::with_capacity(instances.len());
         let mut witnesses: Vec<Box<dyn SumcheckCompute<F>>> = Vec::with_capacity(instances.len());
@@ -176,10 +177,11 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
             });
 
             let kernel = jolt_cpu_kernels::compile::<F>(&desc);
-            witnesses.push(Box::new(EqProductEvaluator::new(
-                backend.upload(&eq_table),
-                backend.upload(&g_table),
+            let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
+            witnesses.push(Box::new(KernelEvaluator::with_unit_weights(
+                inputs,
                 kernel,
+                desc.num_evals(),
                 Arc::clone(&backend),
             )));
         }

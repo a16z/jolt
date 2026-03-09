@@ -97,7 +97,10 @@ mod tests {
         let config = JoltConfig { num_cycles: 4 };
         let key = preprocess::<Fr, MockPCS>(&config, |_vars| ((), ()));
 
-        assert_eq!(key.spartan_key.num_constraints, r1cs::NUM_CONSTRAINTS_PER_CYCLE);
+        assert_eq!(
+            key.spartan_key.num_constraints,
+            r1cs::NUM_CONSTRAINTS_PER_CYCLE
+        );
         assert_eq!(key.spartan_key.num_vars, r1cs::NUM_VARS_PER_CYCLE);
         assert_eq!(key.spartan_key.num_cycles, 4);
     }

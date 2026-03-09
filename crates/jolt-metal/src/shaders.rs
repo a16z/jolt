@@ -63,11 +63,7 @@ impl InterpolationKernels {
                 &library,
                 "fr_interpolate_inplace_high_kernel",
             ),
-            product_table_round: make_pipeline(
-                device,
-                &library,
-                "fr_product_table_round_kernel",
-            ),
+            product_table_round: make_pipeline(device, &library, "fr_product_table_round_kernel"),
         }
     }
 }

@@ -537,82 +537,98 @@ mod tests {
         assert_ne!(a19 * b19, c19);
     }
 
+    fn interleave(
+        key: &jolt_spartan::UniformSpartanKey<Fr>,
+        cycle_witnesses: &[Vec<Fr>],
+    ) -> Vec<Fr> {
+        let total_cols_padded = key.total_cols().next_power_of_two();
+        let mut flat = vec![Fr::from_u64(0); total_cols_padded];
+        for (c, w) in cycle_witnesses.iter().enumerate() {
+            let base = c * key.num_vars_padded;
+            for (v, &val) in w.iter().enumerate().take(key.num_vars) {
+                flat[base + v] = val;
+            }
+        }
+        flat
+    }
+
+    fn commit_and_append(flat: &[Fr], transcript: &mut jolt_transcript::Blake2bTranscript) {
+        use jolt_openings::mock::MockCommitmentScheme;
+        use jolt_openings::CommitmentScheme;
+        use jolt_transcript::Transcript;
+        type MockPCS = MockCommitmentScheme<Fr>;
+        let (commitment, ()) = MockPCS::commit(flat, &());
+        transcript.append_bytes(format!("{commitment:?}").as_bytes());
+    }
+
     #[test]
     fn prove_and_verify_nop_cycle() {
-        use jolt_openings::mock::MockCommitmentScheme;
         use jolt_spartan::{UniformSpartanProver, UniformSpartanVerifier};
         use jolt_transcript::{Blake2bTranscript, Transcript};
 
-        type MockPCS = MockCommitmentScheme<Fr>;
-
         let key = build_jolt_spartan_key::<Fr>(1);
-        let witnesses = vec![nop_witness()];
+        let flat = interleave(&key, &[nop_witness()]);
 
         let mut pt = Blake2bTranscript::new(b"jolt-r1cs-nop");
-        let proof = UniformSpartanProver::prove_dense::<MockPCS, _>(&key, &witnesses, &(), &mut pt)
+        commit_and_append(&flat, &mut pt);
+        let proof = UniformSpartanProver::prove_dense(&key, &flat, &mut pt)
             .expect("NOP cycle should prove");
 
         let mut vt = Blake2bTranscript::new(b"jolt-r1cs-nop");
-        UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
-            .expect("NOP cycle should verify");
+        commit_and_append(&flat, &mut vt);
+        UniformSpartanVerifier::verify(&key, &proof, &mut vt).expect("NOP cycle should verify");
     }
 
     #[test]
     fn prove_and_verify_load_cycle() {
-        use jolt_openings::mock::MockCommitmentScheme;
         use jolt_spartan::{UniformSpartanProver, UniformSpartanVerifier};
         use jolt_transcript::{Blake2bTranscript, Transcript};
 
-        type MockPCS = MockCommitmentScheme<Fr>;
-
         let key = build_jolt_spartan_key::<Fr>(1);
-        let witnesses = vec![load_witness()];
+        let flat = interleave(&key, &[load_witness()]);
 
         let mut pt = Blake2bTranscript::new(b"jolt-r1cs-load");
-        let proof = UniformSpartanProver::prove_dense::<MockPCS, _>(&key, &witnesses, &(), &mut pt)
+        commit_and_append(&flat, &mut pt);
+        let proof = UniformSpartanProver::prove_dense(&key, &flat, &mut pt)
             .expect("LOAD cycle should prove");
 
         let mut vt = Blake2bTranscript::new(b"jolt-r1cs-load");
-        UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
-            .expect("LOAD cycle should verify");
+        commit_and_append(&flat, &mut vt);
+        UniformSpartanVerifier::verify(&key, &proof, &mut vt).expect("LOAD cycle should verify");
     }
 
     #[test]
     fn prove_and_verify_mixed_cycles() {
-        use jolt_openings::mock::MockCommitmentScheme;
         use jolt_spartan::{UniformSpartanProver, UniformSpartanVerifier};
         use jolt_transcript::{Blake2bTranscript, Transcript};
 
-        type MockPCS = MockCommitmentScheme<Fr>;
-
         let key = build_jolt_spartan_key::<Fr>(4);
         let witnesses = vec![nop_witness(), load_witness(), add_witness(), nop_witness()];
+        let flat = interleave(&key, &witnesses);
 
         let mut pt = Blake2bTranscript::new(b"jolt-r1cs-mixed");
-        let proof = UniformSpartanProver::prove_dense::<MockPCS, _>(&key, &witnesses, &(), &mut pt)
+        commit_and_append(&flat, &mut pt);
+        let proof = UniformSpartanProver::prove_dense(&key, &flat, &mut pt)
             .expect("mixed cycles should prove");
 
         let mut vt = Blake2bTranscript::new(b"jolt-r1cs-mixed");
-        UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
-            .expect("mixed cycles should verify");
+        commit_and_append(&flat, &mut vt);
+        UniformSpartanVerifier::verify(&key, &proof, &mut vt).expect("mixed cycles should verify");
     }
 
     #[test]
     fn bad_witness_rejected_by_prover() {
-        use jolt_openings::mock::MockCommitmentScheme;
         use jolt_spartan::{SpartanError, UniformSpartanProver};
         use jolt_transcript::{Blake2bTranscript, Transcript};
-
-        type MockPCS = MockCommitmentScheme<Fr>;
 
         let key = build_jolt_spartan_key::<Fr>(1);
         let mut w = load_witness();
         w[V_RAM_ADDRESS] = f(999); // Violates constraint 0
-        let witnesses = vec![w];
+        let flat = interleave(&key, &[w]);
 
         let mut pt = Blake2bTranscript::new(b"jolt-r1cs-bad");
-        let result =
-            UniformSpartanProver::prove_dense::<MockPCS, _>(&key, &witnesses, &(), &mut pt);
+        commit_and_append(&flat, &mut pt);
+        let result = UniformSpartanProver::prove_dense(&key, &flat, &mut pt);
         assert!(matches!(result, Err(SpartanError::ConstraintViolation(_))));
     }
 }

@@ -1,14 +1,15 @@
-//! Spartan prover: produces a proof of R1CS satisfiability.
+//! Spartan prover: produces a proof of R1CS satisfiability (pure PIOP).
 //!
 //! The prover pipeline:
 //! 1. Compute $Az$, $Bz$, $Cz$ from the R1CS and witness.
 //! 2. Check constraint satisfaction: $Az \circ Bz = Cz$.
-//! 3. Commit to the witness polynomial.
-//! 4. Run the outer sumcheck proving
+//! 3. Run the outer sumcheck proving
 //!    $\sum_x \widetilde{eq}(x, \tau) \cdot (\widetilde{Az}(x) \cdot \widetilde{Bz}(x) - \widetilde{Cz}(x)) = 0$.
-//! 5. Run the inner sumcheck proving
+//! 4. Run the inner sumcheck proving
 //!    $\sum_y M(r_x, y) \cdot \tilde{z}(y) = \rho_A \cdot \widetilde{Az}(r_x) + \rho_B \cdot \widetilde{Bz}(r_x) + \rho_C \cdot \widetilde{Cz}(r_x)$.
-//! 6. Provide an opening proof for the witness polynomial at $r_y$.
+//!
+//! The caller commits to the witness before calling prove, and opens the
+//! witness polynomial at $r_y$ after prove returns.
 
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -40,27 +41,51 @@ pub struct SpartanProver;
 impl SpartanProver {
     /// Generates a Spartan proof that `witness` satisfies the R1CS encoded in `key`.
     ///
+    /// The caller must commit to the witness and append the commitment to
+    /// the transcript BEFORE calling this function. After this returns, the
+    /// caller opens the witness polynomial at `r_y` via PCS.
+    ///
     /// # Protocol
     ///
     /// 1. Compute $Az$, $Bz$, $Cz$ and verify $Az \circ Bz = Cz$.
-    /// 2. Commit to $\tilde{z}$ (the witness MLE).
-    /// 3. Sample $\tau \in \mathbb{F}^{\log m}$ via Fiat-Shamir.
-    /// 4. Run outer sumcheck on
+    /// 2. Sample $\tau \in \mathbb{F}^{\log m}$ via Fiat-Shamir.
+    /// 3. Run outer sumcheck on
     ///    $\sum_x \widetilde{eq}(x, \tau) \cdot (\widetilde{Az}(x) \cdot \widetilde{Bz}(x) - \widetilde{Cz}(x)) = 0$.
-    /// 5. Absorb $\widetilde{Az}(r_x), \widetilde{Bz}(r_x), \widetilde{Cz}(r_x)$ and sample $\rho_A, \rho_B, \rho_C$.
-    /// 6. Run inner sumcheck on $\sum_y M(r_x, y) \cdot \tilde{z}(y)$.
-    /// 7. Produce an opening proof for the witness polynomial at $r_y$.
+    /// 4. Absorb $\widetilde{Az}(r_x), \widetilde{Bz}(r_x), \widetilde{Cz}(r_x)$ and sample $\rho_A, \rho_B, \rho_C$.
+    /// 5. Run inner sumcheck on $\sum_y M(r_x, y) \cdot \tilde{z}(y)$.
     #[tracing::instrument(skip_all, name = "SpartanProver::prove")]
-    pub fn prove<PCS, T>(
-        r1cs: &impl R1CS<PCS::Field>,
-        key: &SpartanKey<PCS::Field>,
-        witness: &[PCS::Field],
-        pcs_setup: &PCS::ProverSetup,
+    pub fn prove<F, T>(
+        r1cs: &impl R1CS<F>,
+        key: &SpartanKey<F>,
+        witness: &[F],
         transcript: &mut T,
         strategy: FirstRoundStrategy,
-    ) -> Result<SpartanProof<PCS::Field, PCS>, SpartanError>
+    ) -> Result<SpartanProof<F>, SpartanError>
     where
-        PCS: CommitmentScheme,
+        F: Field,
+        T: Transcript<Challenge = u128>,
+    {
+        let (proof, _r_x, _r_y) =
+            Self::prove_with_challenges(r1cs, key, witness, transcript, strategy)?;
+        Ok(proof)
+    }
+
+    /// Like [`prove`](Self::prove), but additionally returns the outer and inner
+    /// sumcheck challenge vectors $(r_x, r_y)$.
+    ///
+    /// Downstream stages need $r_x$ for eq-weighted sumcheck instances, and
+    /// the caller needs $r_y$ to open the witness polynomial via PCS.
+    #[allow(clippy::type_complexity)]
+    #[tracing::instrument(skip_all, name = "SpartanProver::prove_with_challenges")]
+    pub fn prove_with_challenges<F, T>(
+        r1cs: &impl R1CS<F>,
+        key: &SpartanKey<F>,
+        witness: &[F],
+        transcript: &mut T,
+        strategy: FirstRoundStrategy,
+    ) -> Result<(SpartanProof<F>, Vec<F>, Vec<F>), SpartanError>
+    where
+        F: Field,
         T: Transcript<Challenge = u128>,
     {
         let (az, bz, cz) = r1cs.multiply_witness(witness);
@@ -76,13 +101,9 @@ impl SpartanProver {
         let bz_poly = pad_to_power_of_two(&bz, key.num_constraints_padded);
         let cz_poly = pad_to_power_of_two(&cz, key.num_constraints_padded);
 
-        let (witness_commitment, _hint) = PCS::commit(witness_poly.evaluations(), pcs_setup);
-
-        transcript.append_bytes(format!("{witness_commitment:?}").as_bytes());
-
         let num_sc_vars = key.num_sumcheck_vars();
-        let tau: Vec<PCS::Field> = (0..num_sc_vars)
-            .map(|_| PCS::Field::from_u128(transcript.challenge()))
+        let tau: Vec<F> = (0..num_sc_vars)
+            .map(|_| F::from_u128(transcript.challenge()))
             .collect();
 
         let tau_1 = tau.first().copied();
@@ -98,7 +119,7 @@ impl SpartanProver {
         let outer_claim = SumcheckClaim {
             num_vars: num_sc_vars,
             degree: 3,
-            claimed_sum: PCS::Field::zero(),
+            claimed_sum: F::zero(),
         };
 
         let (outer_sumcheck_proof, r_x) = match strategy {
@@ -111,7 +132,7 @@ impl SpartanProver {
                     &outer_claim,
                     &mut outer_witness,
                     transcript,
-                    |c: u128| PCS::Field::from_u128(c),
+                    |c: u128| F::from_u128(c),
                     handler,
                 )
             }
@@ -125,13 +146,12 @@ impl SpartanProver {
         transcript.append(&bz_eval);
         transcript.append(&cz_eval);
 
-        let rho_a = PCS::Field::from_u128(transcript.challenge());
-        let rho_b = PCS::Field::from_u128(transcript.challenge());
-        let rho_c = PCS::Field::from_u128(transcript.challenge());
+        let rho_a = F::from_u128(transcript.challenge());
+        let rho_b = F::from_u128(transcript.challenge());
+        let rho_c = F::from_u128(transcript.challenge());
 
         // Fuse partial-evaluation of all three matrix MLEs into a single combined
         // row: M(r_x, ·) = ρ_A·A(r_x,·) + ρ_B·B(r_x,·) + ρ_C·C(r_x,·).
-        // This avoids allocating three intermediate polynomials.
         let combined_row = combined_partial_evaluate(
             key.a_mle(),
             key.b_mle(),
@@ -159,163 +179,19 @@ impl SpartanProver {
             &inner_claim,
             &mut inner_witness,
             transcript,
-            |c: u128| PCS::Field::from_u128(c),
+            |c: u128| F::from_u128(c),
             inner_handler,
         );
 
         let witness_eval = witness_poly.evaluate(&r_y);
-
-        let pcs_poly: PCS::Polynomial = witness_poly.evaluations().to_vec().into();
-        let witness_opening_proof =
-            PCS::open(&pcs_poly, &r_y, witness_eval, pcs_setup, None, transcript);
-
-        Ok(SpartanProof {
-            witness_commitment,
-            outer_sumcheck_proof,
-            az_eval,
-            bz_eval,
-            cz_eval,
-            inner_sumcheck_proof,
-            witness_eval,
-            witness_opening_proof,
-        })
-    }
-
-    /// Like [`prove`](Self::prove), but additionally returns the outer and inner
-    /// sumcheck challenge vectors $(r_x, r_y)$.
-    ///
-    /// Downstream stages (e.g. claim reductions) need $r_x$ to construct
-    /// eq-weighted sumcheck instances.
-    #[allow(clippy::type_complexity)]
-    #[tracing::instrument(skip_all, name = "SpartanProver::prove_with_challenges")]
-    pub fn prove_with_challenges<PCS, T>(
-        r1cs: &impl R1CS<PCS::Field>,
-        key: &SpartanKey<PCS::Field>,
-        witness: &[PCS::Field],
-        pcs_setup: &PCS::ProverSetup,
-        transcript: &mut T,
-        strategy: FirstRoundStrategy,
-    ) -> Result<
-        (
-            SpartanProof<PCS::Field, PCS>,
-            Vec<PCS::Field>,
-            Vec<PCS::Field>,
-        ),
-        SpartanError,
-    >
-    where
-        PCS: CommitmentScheme,
-        T: Transcript<Challenge = u128>,
-    {
-        let (az, bz, cz) = r1cs.multiply_witness(witness);
-
-        for i in 0..az.len() {
-            if az[i] * bz[i] != cz[i] {
-                return Err(SpartanError::ConstraintViolation(i));
-            }
-        }
-
-        let witness_poly = pad_to_power_of_two(witness, key.num_variables_padded);
-        let az_poly = pad_to_power_of_two(&az, key.num_constraints_padded);
-        let bz_poly = pad_to_power_of_two(&bz, key.num_constraints_padded);
-        let cz_poly = pad_to_power_of_two(&cz, key.num_constraints_padded);
-
-        let (witness_commitment, _hint) = PCS::commit(witness_poly.evaluations(), pcs_setup);
-
-        transcript.append_bytes(format!("{witness_commitment:?}").as_bytes());
-
-        let num_sc_vars = key.num_sumcheck_vars();
-        let tau: Vec<PCS::Field> = (0..num_sc_vars)
-            .map(|_| PCS::Field::from_u128(transcript.challenge()))
-            .collect();
-
-        let tau_1 = tau.first().copied();
-
-        let eq_poly = Polynomial::new(EqPolynomial::new(tau).evaluations());
-        let mut outer_witness = OuterSumcheckCompute {
-            eq: eq_poly,
-            az: az_poly,
-            bz: bz_poly,
-            cz: cz_poly,
-        };
-
-        let outer_claim = SumcheckClaim {
-            num_vars: num_sc_vars,
-            degree: 3,
-            claimed_sum: PCS::Field::zero(),
-        };
-
-        let (outer_sumcheck_proof, r_x) = match strategy {
-            FirstRoundStrategy::UnivariateSkip if num_sc_vars > 0 => {
-                prove_outer_uniskip(&outer_claim, &mut outer_witness, transcript, tau_1.unwrap())
-            }
-            _ => {
-                let handler = TrackingHandler::new(num_sc_vars);
-                SumcheckProver::prove_with_handler(
-                    &outer_claim,
-                    &mut outer_witness,
-                    transcript,
-                    |c: u128| PCS::Field::from_u128(c),
-                    handler,
-                )
-            }
-        };
-
-        let az_eval = outer_witness.az.evaluations()[0];
-        let bz_eval = outer_witness.bz.evaluations()[0];
-        let cz_eval = outer_witness.cz.evaluations()[0];
-
-        transcript.append(&az_eval);
-        transcript.append(&bz_eval);
-        transcript.append(&cz_eval);
-
-        let rho_a = PCS::Field::from_u128(transcript.challenge());
-        let rho_b = PCS::Field::from_u128(transcript.challenge());
-        let rho_c = PCS::Field::from_u128(transcript.challenge());
-
-        let combined_row = combined_partial_evaluate(
-            key.a_mle(),
-            key.b_mle(),
-            key.c_mle(),
-            &r_x,
-            rho_a,
-            rho_b,
-            rho_c,
-        );
-
-        let num_witness_vars = key.num_witness_vars();
-        let inner_claim = SumcheckClaim {
-            num_vars: num_witness_vars,
-            degree: 2,
-            claimed_sum: rho_a * az_eval + rho_b * bz_eval + rho_c * cz_eval,
-        };
-
-        let mut inner_witness = InnerSumcheckCompute::new(combined_row, &witness_poly);
-
-        let inner_handler = TrackingHandler::new(num_witness_vars);
-        let (inner_sumcheck_proof, r_y) = SumcheckProver::prove_with_handler(
-            &inner_claim,
-            &mut inner_witness,
-            transcript,
-            |c: u128| PCS::Field::from_u128(c),
-            inner_handler,
-        );
-
-        let witness_eval = witness_poly.evaluate(&r_y);
-
-        let pcs_poly: PCS::Polynomial = witness_poly.evaluations().to_vec().into();
-        let witness_opening_proof =
-            PCS::open(&pcs_poly, &r_y, witness_eval, pcs_setup, None, transcript);
 
         let proof = SpartanProof {
-            witness_commitment,
             outer_sumcheck_proof,
             az_eval,
             bz_eval,
             cz_eval,
             inner_sumcheck_proof,
             witness_eval,
-            witness_opening_proof,
         };
 
         Ok((proof, r_x, r_y))

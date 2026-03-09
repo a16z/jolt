@@ -5,7 +5,9 @@
 
 use jolt_crypto::Bn254;
 use jolt_field::{Field, Fr};
-use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
+use jolt_hyperkzg::{
+    HyperKZGCommitment, HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup,
+};
 use jolt_openings::CommitmentScheme;
 use jolt_spartan::{
     FirstRoundStrategy, SimpleR1CS, SpartanError, SpartanKey, SpartanProver, SpartanVerifier,
@@ -25,6 +27,21 @@ fn make_setup(max_degree: usize) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifie
     (pk, vk)
 }
 
+/// Pads witness, commits via HyperKZG, appends commitment, and returns it.
+fn commit_and_append(
+    witness: &[Fr],
+    padded_len: usize,
+    pk: &HyperKZGProverSetup<Bn254>,
+    transcript: &mut Blake2bTranscript,
+) -> HyperKZGCommitment<Bn254> {
+    let mut padded = vec![Fr::from_u64(0); padded_len];
+    let copy_len = witness.len().min(padded_len);
+    padded[..copy_len].copy_from_slice(&witness[..copy_len]);
+    let (commitment, ()) = KzgPCS::commit(&padded, pk);
+    transcript.append_bytes(format!("{commitment:?}").as_bytes());
+    commitment
+}
+
 fn prove_and_verify(
     r1cs: &SimpleR1CS<Fr>,
     key: &SpartanKey<Fr>,
@@ -33,20 +50,41 @@ fn prove_and_verify(
     vk: &HyperKZGVerifierSetup<Bn254>,
     label: &'static [u8],
 ) {
+    // Prover: commit + append + prove PIOP + open
     let mut t_p = Blake2bTranscript::new(label);
-    let proof = SpartanProver::prove::<KzgPCS, _>(
+    let commitment = commit_and_append(witness, key.num_variables_padded, pk, &mut t_p);
+    let (proof, _r_x, r_y) = SpartanProver::prove_with_challenges(
         r1cs,
         key,
         witness,
-        pk,
         &mut t_p,
         FirstRoundStrategy::Standard,
     )
     .expect("proving should succeed");
 
+    // Open witness at r_y
+    let mut padded = vec![Fr::from_u64(0); key.num_variables_padded];
+    let copy_len = witness.len().min(key.num_variables_padded);
+    padded[..copy_len].copy_from_slice(&witness[..copy_len]);
+    let pcs_poly: jolt_poly::Polynomial<Fr> = padded.into();
+    let opening_proof =
+        <KzgPCS as CommitmentScheme>::open(&pcs_poly, &r_y, proof.witness_eval, pk, None, &mut t_p);
+
+    // Verifier: append commitment + verify PIOP + verify opening
     let mut t_v = Blake2bTranscript::new(label);
-    SpartanVerifier::verify::<KzgPCS, _>(key, &proof, vk, &mut t_v)
+    t_v.append_bytes(format!("{commitment:?}").as_bytes());
+    let (_v_r_x, v_r_y) = SpartanVerifier::verify_with_challenges(key, &proof, &mut t_v)
         .expect("verification should succeed");
+
+    <KzgPCS as CommitmentScheme>::verify(
+        &commitment,
+        &v_r_y,
+        proof.witness_eval,
+        &opening_proof,
+        vk,
+        &mut t_v,
+    )
+    .expect("opening verification should succeed");
 }
 
 // Basic circuits
@@ -82,14 +120,8 @@ fn reject_bad_witness() {
 
     let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(10)]; // 3*3 != 10
     let mut t = Blake2bTranscript::new(b"kzg-bad");
-    let result = SpartanProver::prove::<KzgPCS, _>(
-        &r1cs,
-        &key,
-        &witness,
-        &pk,
-        &mut t,
-        FirstRoundStrategy::Standard,
-    );
+    let _ = commit_and_append(&witness, key.num_variables_padded, &pk, &mut t);
+    let result = SpartanProver::prove(&r1cs, &key, &witness, &mut t, FirstRoundStrategy::Standard);
     assert!(
         matches!(result, Err(SpartanError::ConstraintViolation(0))),
         "expected constraint violation"
@@ -157,35 +189,23 @@ fn uniskip_matches_standard() {
     let witness = [one, Fr::from_u64(2), Fr::from_u64(4), Fr::from_u64(8)];
 
     // Standard
-    {
-        let mut t_p = Blake2bTranscript::new(b"kzg-std");
-        let proof = SpartanProver::prove::<KzgPCS, _>(
-            &r1cs,
-            &key,
-            &witness,
-            &pk,
-            &mut t_p,
-            FirstRoundStrategy::Standard,
-        )
-        .unwrap();
-        let mut t_v = Blake2bTranscript::new(b"kzg-std");
-        SpartanVerifier::verify::<KzgPCS, _>(&key, &proof, &vk, &mut t_v).unwrap();
-    }
+    prove_and_verify(&r1cs, &key, &witness, &pk, &vk, b"kzg-std");
 
-    // UnivariateSkip
+    // UnivariateSkip (same protocol, different first round strategy)
     {
         let mut t_p = Blake2bTranscript::new(b"kzg-uni");
-        let proof = SpartanProver::prove::<KzgPCS, _>(
+        let _ = commit_and_append(&witness, key.num_variables_padded, &pk, &mut t_p);
+        let proof = SpartanProver::prove(
             &r1cs,
             &key,
             &witness,
-            &pk,
             &mut t_p,
             FirstRoundStrategy::UnivariateSkip,
         )
         .unwrap();
         let mut t_v = Blake2bTranscript::new(b"kzg-uni");
-        SpartanVerifier::verify::<KzgPCS, _>(&key, &proof, &vk, &mut t_v).unwrap();
+        let _ = commit_and_append(&witness, key.num_variables_padded, &pk, &mut t_v);
+        SpartanVerifier::verify(&key, &proof, &mut t_v).unwrap();
     }
 }
 

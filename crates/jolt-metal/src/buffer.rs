@@ -83,6 +83,19 @@ impl<T: Scalar> MetalBuffer<T> {
         }
     }
 
+    /// Mutable slice view of the buffer's shared memory.
+    ///
+    /// # Safety
+    /// Caller must ensure no Metal command is concurrently reading or writing
+    /// this buffer. Only safe between command buffer completions.
+    pub(crate) unsafe fn as_mut_slice(&mut self) -> &mut [T] {
+        if self.len == 0 {
+            return &mut [];
+        }
+        let ptr = self.raw.contents().cast::<T>();
+        std::slice::from_raw_parts_mut(ptr, self.len)
+    }
+
     /// Read buffer contents back to host memory.
     ///
     /// Caller must ensure all Metal commands writing to this buffer have

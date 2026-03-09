@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::CpuBackend;
+use jolt_compute::{ComputeBackend, CpuBackend};
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -15,7 +15,8 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
 use crate::claims::ram;
-use crate::evaluators::formula::{formula_descriptor, FormulaEvaluator, Term};
+use crate::evaluators::catalog::{formula_descriptor, Term};
+use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
 
 /// RAM read-write checking prover stage.
@@ -60,7 +61,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
 
         let [c0, c1] = self.challenges;
 
-        let poly_tables = vec![ra.clone(), val.clone(), inc.clone()];
+        let poly_tables = [ra.clone(), val.clone(), inc.clone()];
 
         let terms = vec![
             Term {
@@ -88,14 +89,10 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
         let backend = Arc::new(CpuBackend);
         let (desc, challenges) = formula_descriptor(&terms, poly_tables.len(), degree);
         let kernel = jolt_cpu_kernels::compile_with_challenges::<F>(&desc, &challenges);
-        let poly_bufs: Vec<_> = poly_tables.iter().map(|t| backend.upload(t)).collect();
-        let witness = FormulaEvaluator::new(
-            backend.upload(&eq_table),
-            poly_bufs,
-            kernel,
-            degree,
-            backend,
-        );
+        let mut inputs = Vec::with_capacity(1 + poly_tables.len());
+        inputs.push(backend.upload(&eq_table));
+        inputs.extend(poly_tables.iter().map(|t| backend.upload(t)));
+        let witness = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         StageBatch {
             claims: vec![SumcheckClaim {

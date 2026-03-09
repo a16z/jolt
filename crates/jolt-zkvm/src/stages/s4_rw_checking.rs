@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::CpuBackend;
+use jolt_compute::{ComputeBackend, CpuBackend};
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -20,14 +20,16 @@ use jolt_sumcheck::prover::SumcheckCompute;
 use jolt_transcript::Transcript;
 
 use crate::claims::{ram, registers};
-use crate::evaluators::formula::{formula_descriptor, FormulaEvaluator, Term};
+use crate::evaluators::catalog::{formula_descriptor, Term};
+use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
 
 /// Register read-write checking + RAM value check prover stage.
 ///
 /// The register RW checking formula has degree 4 (products of up to 3
 /// polynomials plus eq). The RAM value check has degree 3 (c0·inc·wa).
-/// Both use [`FormulaEvaluator`] as the sumcheck evaluator.
+/// Both use [`KernelEvaluator`](crate::evaluators::kernel::KernelEvaluator)
+/// with formula-derived kernels.
 pub struct RwCheckingStage<F: Field> {
     // Register RW checking polynomials
     reg_val: Option<Vec<F>>,
@@ -107,7 +109,7 @@ impl<F: Field> RwCheckingStage<F> {
         let gamma = self.reg_challenges[1];
         let gamma_sq = self.reg_challenges[2];
 
-        let poly_tables = vec![
+        let poly_tables = [
             val.clone(),
             rs1_ra.clone(),
             rs2_ra.clone(),
@@ -156,14 +158,10 @@ impl<F: Field> RwCheckingStage<F> {
         let backend = Arc::new(CpuBackend);
         let (desc, challenges) = formula_descriptor(&terms, poly_tables.len(), degree);
         let kernel = jolt_cpu_kernels::compile_with_challenges::<F>(&desc, &challenges);
-        let poly_bufs: Vec<_> = poly_tables.iter().map(|t| backend.upload(t)).collect();
-        let witness = FormulaEvaluator::new(
-            backend.upload(&eq_table),
-            poly_bufs,
-            kernel,
-            degree,
-            backend,
-        );
+        let mut inputs = Vec::with_capacity(1 + poly_tables.len());
+        inputs.push(backend.upload(&eq_table));
+        inputs.extend(poly_tables.iter().map(|t| backend.upload(t)));
+        let witness = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let claim = SumcheckClaim {
             num_vars: self.num_vars,
@@ -178,7 +176,7 @@ impl<F: Field> RwCheckingStage<F> {
         let inc = self.ram_inc.as_ref().unwrap();
         let wa = self.ram_wa.as_ref().unwrap();
 
-        let poly_tables = vec![inc.clone(), wa.clone()];
+        let poly_tables = [inc.clone(), wa.clone()];
 
         let terms = vec![Term {
             coeff: self.ram_c0,
@@ -197,14 +195,10 @@ impl<F: Field> RwCheckingStage<F> {
         let backend = Arc::new(CpuBackend);
         let (desc, challenges) = formula_descriptor(&terms, poly_tables.len(), degree);
         let kernel = jolt_cpu_kernels::compile_with_challenges::<F>(&desc, &challenges);
-        let poly_bufs: Vec<_> = poly_tables.iter().map(|t| backend.upload(t)).collect();
-        let witness = FormulaEvaluator::new(
-            backend.upload(&eq_table),
-            poly_bufs,
-            kernel,
-            degree,
-            backend,
-        );
+        let mut inputs = Vec::with_capacity(1 + poly_tables.len());
+        inputs.push(backend.upload(&eq_table));
+        inputs.extend(poly_tables.iter().map(|t| backend.upload(t)));
+        let witness = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let claim = SumcheckClaim {
             num_vars: self.num_vars,

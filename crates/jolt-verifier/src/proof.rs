@@ -44,16 +44,19 @@ pub struct BatchOpeningProofs<PCS: CommitmentScheme> {
 /// Produced by stages S1 (uniform Spartan) through S8 (batch openings). The
 /// verifier replays the Fiat-Shamir transcript and checks each component
 /// in sequence.
+///
+/// The Spartan proof is PIOP-only — the witness commitment and opening proof
+/// are separate fields, decoupling Spartan from PCS concerns.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct JoltProof<F: Field, PCS: CommitmentScheme<Field = F>> {
-    /// Uniform Spartan R1CS proof (outer + inner sumcheck + witness opening).
-    pub spartan_proof: UniformSpartanProof<F, PCS>,
+    /// Uniform Spartan R1CS proof (PIOP only — no PCS).
+    pub spartan_proof: UniformSpartanProof<F>,
     /// Per-stage sumcheck proofs (S2–S7) with claimed evaluations.
     pub stage_proofs: Vec<SumcheckStageProof<F>>,
     /// Batch PCS opening proofs from the opening reduction phase.
     pub opening_proofs: BatchOpeningProofs<PCS>,
-    /// Commitments to all committed polynomials.
+    /// Commitments to all committed polynomials (including witness).
     pub commitments: Vec<PCS::Output>,
     /// Number of execution cycles in the trace.
     pub trace_length: usize,

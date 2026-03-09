@@ -2,9 +2,11 @@ use std::ffi::c_void;
 
 use jolt_compute::{BindingOrder, ComputeBackend, Scalar};
 use jolt_field::Field;
+use jolt_ir::KernelDescriptor;
 use metal::{Device, MTLResourceOptions, MTLSize};
 
 use crate::buffer::MetalBuffer;
+use crate::compiler;
 use crate::kernel::MetalKernel;
 use crate::shaders::{ElementwiseKernels, InterpolationKernels};
 
@@ -65,6 +67,89 @@ impl MetalBackend {
     /// The command queue used for dispatches.
     pub fn queue(&self) -> &metal::CommandQueue {
         &self.queue
+    }
+
+    /// Compile a `KernelDescriptor` into a Metal compute pipeline.
+    pub fn compile_kernel<F: Field>(&self, descriptor: &KernelDescriptor) -> MetalKernel<F> {
+        compiler::compile(&self.device, descriptor)
+    }
+
+    /// Compile with baked challenge values for Custom expression kernels.
+    pub fn compile_kernel_with_challenges<F: Field>(
+        &self,
+        descriptor: &KernelDescriptor,
+        challenges: &[F],
+    ) -> MetalKernel<F> {
+        compiler::compile_with_challenges(&self.device, descriptor, challenges)
+    }
+
+    /// Dispatch a multi-dimensional reduce and finish partial sums on CPU.
+    ///
+    /// The kernel must already have input buffers, weights, partials, and params
+    /// bound. This dispatches threadgroups and reads back the per-group partial
+    /// sums, then sums them on the CPU for each of `num_evals` dimensions.
+    fn reduce_multi<F: Field>(
+        &self,
+        kernel: &MetalKernel<F>,
+        inputs: &[&MetalBuffer<F>],
+        weights: &MetalBuffer<F>,
+        n_pairs: usize,
+        half_n: usize,
+        order: BindingOrder,
+    ) -> Vec<F> {
+        let num_evals = kernel.num_evals;
+        if n_pairs == 0 {
+            return vec![F::zero(); num_evals];
+        }
+
+        let num_groups = n_pairs
+            .div_ceil(compiler::REDUCE_GROUP_SIZE)
+            .min(compiler::MAX_REDUCE_GROUPS);
+
+        let partials_buf = self.device.new_buffer(
+            (num_groups * num_evals * std::mem::size_of::<F>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let order_flag: u32 = match order {
+            BindingOrder::LowToHigh => 0,
+            BindingOrder::HighToLow => 1,
+        };
+        let params_buf = self.upload_params(&[n_pairs as u32, half_n as u32, order_flag]);
+
+        let cmd = self.queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&kernel.pipeline);
+
+        for (i, buf) in inputs.iter().enumerate() {
+            enc.set_buffer(i as u64, Some(&buf.raw), 0);
+        }
+        let k = inputs.len() as u64;
+        enc.set_buffer(k, Some(&weights.raw), 0);
+        enc.set_buffer(k + 1, Some(&partials_buf), 0);
+        enc.set_buffer(k + 2, Some(&params_buf), 0);
+
+        enc.dispatch_thread_groups(
+            MTLSize::new(num_groups as u64, 1, 1),
+            MTLSize::new(compiler::REDUCE_GROUP_SIZE as u64, 1, 1),
+        );
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+
+        // SAFETY: shared memory is coherent after command buffer completion.
+        let partials: &[F] = unsafe {
+            let ptr = partials_buf.contents().cast::<F>();
+            std::slice::from_raw_parts(ptr, num_groups * num_evals)
+        };
+
+        // Sum partials per eval dimension
+        let mut result = vec![F::zero(); num_evals];
+        for g in 0..num_groups {
+            for d in 0..num_evals {
+                result[d] += partials[g * num_evals + d];
+            }
+        }
+        result
     }
 
     /// Upload a single scalar value to a 1-element Metal buffer.
@@ -245,9 +330,7 @@ impl ComputeBackend for MetalBackend {
         debug_assert!(n % 2 == 0 || n == 0);
         let half = n / 2;
 
-        if std::mem::size_of::<T>() == std::mem::size_of::<F>()
-            && std::mem::size_of::<F>() == 32
-        {
+        if std::mem::size_of::<T>() == std::mem::size_of::<F>() && std::mem::size_of::<F>() == 32 {
             // T and F are both 32-byte field elements — dispatch Metal kernel.
             let out: MetalBuffer<F> = MetalBuffer::zeroed(&self.device, half);
             let scalar_buf = self.upload_scalar(&scalar);
@@ -309,32 +392,43 @@ impl ComputeBackend for MetalBackend {
     }
 
     fn product_table<F: Field>(&self, point: &[F]) -> Self::Buffer<F> {
+        // Must match CpuBackend's mixed ordering: interleaved for small rounds
+        // (prev_len < 1024), split-half for large rounds (prev_len >= 1024).
+        const PAR_THRESHOLD: usize = 1024;
+
         let n = point.len();
         let table_size = 1usize << n;
 
-        // Initialize on CPU: table[0] = one, rest unused (will be overwritten
-        // by subsequent rounds before being read).
-        let mut init: Vec<F> = Vec::with_capacity(table_size);
-        init.push(F::one());
-        // Fill the rest with zeros to ensure deterministic Metal buffer contents.
-        init.resize(table_size, F::zero());
-        let table = MetalBuffer::from_data(&self.device, &init);
-        drop(init);
+        let mut table: MetalBuffer<F> = MetalBuffer::zeroed(&self.device, table_size);
 
-        // Each round doubles the active region: table[0..2^k] → table[0..2^(k+1)].
-        for (k, r) in point.iter().enumerate() {
+        // SAFETY: no Metal commands in flight — we just allocated the buffer.
+        unsafe { table.as_mut_slice()[0] = F::one() };
+
+        for (k, &r) in point.iter().enumerate() {
             let prev_len = 1usize << k;
-            let one_minus_r = F::one() - *r;
+            let one_minus_r = F::one() - r;
 
-            let r_buf = self.upload_scalar(r);
-            let omr_buf = self.upload_scalar(&one_minus_r);
-            let params_buf = self.upload_params(&[prev_len as u32]);
+            if prev_len < PAR_THRESHOLD {
+                // CPU path: interleaved indexing on shared memory (zero-copy).
+                // SAFETY: no Metal commands in flight between dispatches.
+                let slice = unsafe { table.as_mut_slice() };
+                for j in (0..prev_len).rev() {
+                    let base = slice[j];
+                    slice[2 * j] = base * one_minus_r;
+                    slice[2 * j + 1] = base * r;
+                }
+            } else {
+                // Metal path: split-half kernel matching CpuBackend's parallel path.
+                let r_buf = self.upload_scalar(&r);
+                let omr_buf = self.upload_scalar(&one_minus_r);
+                let params_buf = self.upload_params(&[prev_len as u32]);
 
-            self.dispatch_1d(
-                &self.interpolation.product_table_round,
-                &[&table.raw, &r_buf, &omr_buf, &params_buf],
-                prev_len,
-            );
+                self.dispatch_1d(
+                    &self.interpolation.product_table_round,
+                    &[&table.raw, &r_buf, &omr_buf, &params_buf],
+                    prev_len,
+                );
+            }
         }
 
         table
@@ -342,23 +436,46 @@ impl ComputeBackend for MetalBackend {
 
     fn pairwise_reduce<F: Field>(
         &self,
-        _inputs: &[&Self::Buffer<F>],
-        _weights: &Self::Buffer<F>,
-        _kernel: &Self::CompiledKernel<F>,
+        inputs: &[&Self::Buffer<F>],
+        weights: &Self::Buffer<F>,
+        kernel: &Self::CompiledKernel<F>,
         _num_evals: usize,
-        _order: BindingOrder,
+        order: BindingOrder,
     ) -> Vec<F> {
-        todo!()
+        debug_assert!(!inputs.is_empty());
+        let n = inputs[0].len();
+        let n_pairs = n / 2;
+        self.reduce_multi(kernel, inputs, weights, n_pairs, n_pairs, order)
     }
 
     fn tensor_pairwise_reduce<F: Field>(
         &self,
-        _inputs: &[&Self::Buffer<F>],
-        _outer_weights: &Self::Buffer<F>,
-        _inner_weights: &Self::Buffer<F>,
-        _kernel: &Self::CompiledKernel<F>,
+        inputs: &[&Self::Buffer<F>],
+        outer_weights: &Self::Buffer<F>,
+        inner_weights: &Self::Buffer<F>,
+        kernel: &Self::CompiledKernel<F>,
         _num_evals: usize,
     ) -> Vec<F> {
-        todo!()
+        // Compute full weight table (Kronecker product) and delegate.
+        // Tensor-optimized dispatch with two-level reduction is a future optimization.
+        let outer = outer_weights.to_vec();
+        let inner = inner_weights.to_vec();
+        let mut full_weights = Vec::with_capacity(outer.len() * inner.len());
+        for &o in &outer {
+            for &i in &inner {
+                full_weights.push(o * i);
+            }
+        }
+        let weights_buf: MetalBuffer<F> = MetalBuffer::from_data(&self.device, &full_weights);
+        let n = inputs[0].len();
+        let n_pairs = n / 2;
+        self.reduce_multi(
+            kernel,
+            inputs,
+            &weights_buf,
+            n_pairs,
+            n_pairs,
+            BindingOrder::LowToHigh,
+        )
     }
 }

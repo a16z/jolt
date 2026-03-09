@@ -6,7 +6,7 @@
 
 use jolt_field::{Field, Fr};
 use jolt_openings::mock::MockCommitmentScheme;
-use jolt_openings::AdditivelyHomomorphic;
+use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_spartan::UniformSpartanKey;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_zkvm::preprocessing::{interleave_witnesses, preprocess, JoltConfig};
@@ -78,15 +78,23 @@ fn add_cycle_witness(unexpanded_pc: u64, pc: u64) -> Vec<Fr> {
     w
 }
 
-/// Run S1 (Uniform Spartan) with the Jolt R1CS.
-fn run_s1_uniform<PCS: AdditivelyHomomorphic<Field = Fr>>(
-    key: &UniformSpartanKey<Fr>,
-    cycle_witnesses: &[Vec<Fr>],
+/// Commit witness and append commitment to transcript.
+fn commit_and_append<PCS: CommitmentScheme<Field = Fr>>(
     flat_witness: &[Fr],
     pcs_setup: &PCS::ProverSetup,
     transcript: &mut Blake2bTranscript,
-) -> UniformSpartanResult<Fr, PCS> {
-    UniformSpartanStage::<PCS>::prove(key, cycle_witnesses, flat_witness, pcs_setup, transcript)
+) {
+    let (commitment, _hint) = PCS::commit(flat_witness, pcs_setup);
+    transcript.append_bytes(format!("{commitment:?}").as_bytes());
+}
+
+/// Run S1 (Uniform Spartan PIOP) with the Jolt R1CS.
+fn run_s1_uniform(
+    key: &UniformSpartanKey<Fr>,
+    flat_witness: &[Fr],
+    transcript: &mut Blake2bTranscript,
+) -> UniformSpartanResult<Fr> {
+    UniformSpartanStage::prove(key, flat_witness, flat_witness, transcript)
         .expect("S1 proving should succeed")
 }
 
@@ -106,13 +114,13 @@ fn build_reduction_stage(r_y: &[Fr], rng: &mut ChaCha20Rng) -> ClaimReductionSta
 /// Full E2E test with the actual Jolt R1CS.
 fn run_jolt_r1cs_e2e<PCS: AdditivelyHomomorphic<Field = Fr>>(
     prover_setup: &PCS::ProverSetup,
-    verifier_setup: &PCS::VerifierSetup,
+    _verifier_setup: &PCS::VerifierSetup,
 ) {
     let mut rng = ChaCha20Rng::seed_from_u64(42);
 
     // 4 cycles: NOP, ADD, NOP, NOP
     let config = JoltConfig { num_cycles: 4 };
-    let key = preprocess::<Fr, PCS>(&config, |_| (prover_setup.clone(), verifier_setup.clone()));
+    let key = preprocess::<Fr, PCS>(&config, |_| (prover_setup.clone(), _verifier_setup.clone()));
 
     let cycle_witnesses = vec![
         nop_cycle_witness(0, 0),
@@ -124,13 +132,10 @@ fn run_jolt_r1cs_e2e<PCS: AdditivelyHomomorphic<Field = Fr>>(
 
     let mut pt = Blake2bTranscript::new(b"jolt-e2e");
 
-    let spartan_result = run_s1_uniform::<PCS>(
-        &key.spartan_key,
-        &cycle_witnesses,
-        &flat_witness,
-        prover_setup,
-        &mut pt,
-    );
+    // Commit witness and append to transcript before S1
+    commit_and_append::<PCS>(&flat_witness, prover_setup, &mut pt);
+
+    let spartan_result = run_s1_uniform(&key.spartan_key, &flat_witness, &mut pt);
 
     let r_y = spartan_result.r_y.clone();
 
@@ -138,11 +143,19 @@ fn run_jolt_r1cs_e2e<PCS: AdditivelyHomomorphic<Field = Fr>>(
     let mut stages: Vec<Box<dyn ProverStage<Fr, Blake2bTranscript>>> =
         vec![Box::new(reduction_stage)];
 
-    let proof: JoltProof<Fr, PCS> =
-        prove::<PCS, Blake2bTranscript>(spartan_result, &mut stages, &key, &mut pt, challenge_fn);
+    let commitments: Vec<PCS::Output> = Vec::new();
+    let proof: JoltProof<Fr, PCS> = prove::<PCS, Blake2bTranscript>(
+        spartan_result,
+        &mut stages,
+        &key,
+        commitments,
+        4,
+        &mut pt,
+        challenge_fn,
+    );
 
     assert_eq!(
-        proof.sumcheck_proofs.len(),
+        proof.stage_proofs.len(),
         1,
         "one stage → one sumcheck proof"
     );
@@ -153,13 +166,9 @@ fn run_jolt_r1cs_e2e<PCS: AdditivelyHomomorphic<Field = Fr>>(
 
     // Verify S1
     let mut vt = Blake2bTranscript::new(b"jolt-e2e");
-    UniformSpartanStage::<PCS>::verify(
-        &key.spartan_key,
-        &proof.spartan_proof,
-        verifier_setup,
-        &mut vt,
-    )
-    .expect("S1 verification should succeed");
+    commit_and_append::<PCS>(&flat_witness, prover_setup, &mut vt);
+    let _ = UniformSpartanStage::verify(&key.spartan_key, &proof.spartan_proof, &mut vt)
+        .expect("S1 verification should succeed");
 }
 
 #[test]
@@ -191,12 +200,13 @@ fn uniform_spartan_nop_only() {
     let flat = interleave_witnesses(&key, &witnesses);
 
     let mut pt = Blake2bTranscript::new(b"nop-only");
-    let result =
-        UniformSpartanStage::<MockPCS>::prove(&key, &witnesses, &flat, &(), &mut pt)
-            .expect("NOP-only proving should succeed");
+    commit_and_append::<MockPCS>(&flat, &(), &mut pt);
+    let result = UniformSpartanStage::prove(&key, &flat, &flat, &mut pt)
+        .expect("NOP-only proving should succeed");
 
     let mut vt = Blake2bTranscript::new(b"nop-only");
-    UniformSpartanStage::<MockPCS>::verify(&key, &result.proof, &(), &mut vt)
+    commit_and_append::<MockPCS>(&flat, &(), &mut vt);
+    let _ = UniformSpartanStage::verify(&key, &result.proof, &mut vt)
         .expect("NOP-only verification should succeed");
 }
 
@@ -215,12 +225,13 @@ fn uniform_spartan_mixed_cycles() {
     let flat = interleave_witnesses(&key, &witnesses);
 
     let mut pt = Blake2bTranscript::new(b"mixed-cycles");
-    let result =
-        UniformSpartanStage::<MockPCS>::prove(&key, &witnesses, &flat, &(), &mut pt)
-            .expect("mixed-cycle proving should succeed");
+    commit_and_append::<MockPCS>(&flat, &(), &mut pt);
+    let result = UniformSpartanStage::prove(&key, &flat, &flat, &mut pt)
+        .expect("mixed-cycle proving should succeed");
 
     let mut vt = Blake2bTranscript::new(b"mixed-cycles");
-    UniformSpartanStage::<MockPCS>::verify(&key, &result.proof, &(), &mut vt)
+    commit_and_append::<MockPCS>(&flat, &(), &mut vt);
+    let _ = UniformSpartanStage::verify(&key, &result.proof, &mut vt)
         .expect("mixed-cycle verification should succeed");
 }
 
@@ -239,9 +250,9 @@ fn s1_challenge_vector_dimensions() {
     let flat = interleave_witnesses(&key, &witnesses);
 
     let mut pt = Blake2bTranscript::new(b"s1-dims");
+    commit_and_append::<MockPCS>(&flat, &(), &mut pt);
     let result =
-        UniformSpartanStage::<MockPCS>::prove(&key, &witnesses, &flat, &(), &mut pt)
-            .expect("proving should succeed");
+        UniformSpartanStage::prove(&key, &flat, &flat, &mut pt).expect("proving should succeed");
 
     assert_eq!(result.r_x.len(), key.num_row_vars());
     assert_eq!(result.r_y.len(), key.num_col_vars());
