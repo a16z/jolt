@@ -236,9 +236,11 @@ mod tests {
     use jolt_core::field::JoltField;
     use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
+    /// Verifies new_with_claims stores all three opening ID variants (virtual,
+    /// committed, advice) with correct claims and empty points. Uses distinct
+    /// sumcheck IDs to ensure keys don't collide.
     #[test]
     fn test_new_with_claims_populates_openings() {
-        // CRITICAL: new_with_claims must correctly store all claims
         let claims = vec![
             (
                 OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
@@ -268,6 +270,8 @@ mod tests {
         }
     }
 
+    /// Verifies append_virtual replaces the initially-empty point with the
+    /// provided OpeningPoint while preserving the original claim.
     #[test]
     fn test_append_virtual_updates_point() {
         let claims = vec![(
@@ -295,6 +299,8 @@ mod tests {
         assert_eq!(stored_point[1].root(), point_values[1].root());
     }
 
+    /// Verifies get_committed_polynomial_opening retrieves the correct claim
+    /// for a committed polynomial before any point has been appended.
     #[test]
     fn test_get_committed_polynomial_opening() {
         let claim = MleAst::from_u64(12345);
@@ -314,6 +320,266 @@ mod tests {
         assert_eq!(point.r.len(), 0);
     }
 
+    /// Verifies the full round-trip for virtual polynomials:
+    /// create claims → append point → get returns both correct point and claim.
+    /// This exercises the append→get contract that the verifier relies on.
+    #[test]
+    fn test_virtual_polynomial_round_trip() {
+        let claim = MleAst::from_u64(42);
+        let claims = vec![(
+            OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
+            claim,
+        )];
+
+        let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+
+        // Before append: point is empty, claim is set
+        let (point, retrieved_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
+        assert_eq!(retrieved_claim.root(), claim.root());
+        assert_eq!(point.r.len(), 0, "Point should be empty before append");
+
+        // After append: point is populated, claim is unchanged
+        let point_values = vec![MleAst::from_u64(10), MleAst::from_u64(20)];
+        accumulator.append_virtual(
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(point_values.clone()),
+        );
+
+        let (point, retrieved_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
+        assert_eq!(retrieved_claim.root(), claim.root(), "Claim must survive append");
+        assert_eq!(point.r.len(), 2);
+        assert_eq!(point.r[0].root(), point_values[0].root());
+        assert_eq!(point.r[1].root(), point_values[1].root());
+    }
+
+    /// Verifies get_advice_opening dispatches correctly on AdviceKind, returning
+    /// the right claim for Trusted vs Untrusted, and None for missing keys.
+    #[test]
+    fn test_get_advice_opening_dispatch() {
+        let trusted_claim = MleAst::from_u64(111);
+        let untrusted_claim = MleAst::from_u64(222);
+        let claims = vec![
+            (
+                OpeningId::TrustedAdvice(SumcheckId::SpartanOuter),
+                trusted_claim,
+            ),
+            (
+                OpeningId::UntrustedAdvice(SumcheckId::SpartanOuter),
+                untrusted_claim,
+            ),
+        ];
+
+        let accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+
+        // Trusted returns trusted claim (not untrusted)
+        let (_, claim) = accumulator
+            .get_advice_opening(AdviceKind::Trusted, SumcheckId::SpartanOuter)
+            .expect("trusted advice should exist");
+        assert_eq!(claim.root(), trusted_claim.root());
+        assert_ne!(
+            claim.root(),
+            untrusted_claim.root(),
+            "Must not confuse trusted and untrusted"
+        );
+
+        // Untrusted returns untrusted claim
+        let (_, claim) = accumulator
+            .get_advice_opening(AdviceKind::Untrusted, SumcheckId::SpartanOuter)
+            .expect("untrusted advice should exist");
+        assert_eq!(claim.root(), untrusted_claim.root());
+
+        // Missing sumcheck ID returns None
+        let result = accumulator.get_advice_opening(
+            AdviceKind::Trusted,
+            SumcheckId::SpartanProductVirtualization,
+        );
+        assert!(result.is_none(), "Missing advice should return None");
+    }
+
+    /// Verifies the full round-trip for dense (committed) polynomials:
+    /// append_dense stores the point, then get_committed retrieves it correctly.
+    /// Tests a different code path than append_virtual (takes Vec directly, not OpeningPoint).
+    #[test]
+    fn test_dense_polynomial_round_trip() {
+        let claim = MleAst::from_u64(100);
+        let claims = vec![(
+            OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter),
+            claim,
+        )];
+
+        let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+
+        let point_values = vec![MleAst::from_u64(5), MleAst::from_u64(6)];
+        accumulator.append_dense(
+            CommittedPolynomial::RdInc,
+            SumcheckId::SpartanOuter,
+            point_values.clone(),
+        );
+
+        // Retrieve via the get_ accessor (not raw map access)
+        let (point, retrieved_claim) = accumulator
+            .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter);
+        assert_eq!(retrieved_claim.root(), claim.root());
+        assert_eq!(point.r.len(), 2);
+        assert_eq!(point.r[0].root(), point_values[0].root());
+        assert_eq!(point.r[1].root(), point_values[1].root());
+    }
+
+    /// Verifies the round-trip for both advice variants: append stores points,
+    /// get_advice_opening retrieves them correctly by AdviceKind dispatch.
+    #[test]
+    fn test_advice_round_trip() {
+        let trusted_claim = MleAst::from_u64(100);
+        let untrusted_claim = MleAst::from_u64(200);
+        let claims = vec![
+            (
+                OpeningId::TrustedAdvice(SumcheckId::SpartanOuter),
+                trusted_claim,
+            ),
+            (
+                OpeningId::UntrustedAdvice(SumcheckId::SpartanOuter),
+                untrusted_claim,
+            ),
+        ];
+
+        let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+
+        let trusted_point = vec![MleAst::from_u64(7), MleAst::from_u64(8)];
+        accumulator.append_trusted_advice(
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(trusted_point.clone()),
+        );
+
+        let untrusted_point = vec![MleAst::from_u64(9)];
+        accumulator.append_untrusted_advice(
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(untrusted_point.clone()),
+        );
+
+        // Trusted: correct point length and values
+        let (point, claim) = accumulator
+            .get_advice_opening(AdviceKind::Trusted, SumcheckId::SpartanOuter)
+            .unwrap();
+        assert_eq!(claim.root(), trusted_claim.root());
+        assert_eq!(point.r.len(), 2);
+        assert_eq!(point.r[0].root(), trusted_point[0].root());
+
+        // Untrusted: different point length (verifies no cross-contamination)
+        let (point, claim) = accumulator
+            .get_advice_opening(AdviceKind::Untrusted, SumcheckId::SpartanOuter)
+            .unwrap();
+        assert_eq!(claim.root(), untrusted_claim.root());
+        assert_eq!(point.r.len(), 1);
+        assert_eq!(point.r[0].root(), untrusted_point[0].root());
+    }
+
+    /// Verifies that each append pushes the stored claim (not the point) to pending_claims.
+    /// This is the mechanism the verifier uses to batch claims for transcript flushing.
+    /// Uses different append methods to ensure they all share the same store_opening path.
+    #[test]
+    fn test_append_pushes_claims_to_pending() {
+        let claim_a = MleAst::from_u64(100);
+        let claim_b = MleAst::from_u64(200);
+        let claim_c = MleAst::from_u64(300);
+        let claims = vec![
+            (
+                OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
+                claim_a,
+            ),
+            (
+                OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter),
+                claim_b,
+            ),
+            (
+                OpeningId::TrustedAdvice(SumcheckId::SpartanOuter),
+                claim_c,
+            ),
+        ];
+
+        let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+        assert!(accumulator.pending_claims.is_empty(), "Should start empty");
+
+        // Virtual append
+        accumulator.append_virtual(
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(vec![MleAst::from_u64(1)]),
+        );
+        assert_eq!(accumulator.pending_claims.len(), 1);
+        assert_eq!(accumulator.pending_claims[0].root(), claim_a.root());
+
+        // Dense append
+        accumulator.append_dense(
+            CommittedPolynomial::RdInc,
+            SumcheckId::SpartanOuter,
+            vec![MleAst::from_u64(2)],
+        );
+        assert_eq!(accumulator.pending_claims.len(), 2);
+        assert_eq!(accumulator.pending_claims[1].root(), claim_b.root());
+
+        // Advice append
+        accumulator.append_trusted_advice(
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(vec![MleAst::from_u64(3)]),
+        );
+        assert_eq!(accumulator.pending_claims.len(), 3);
+        assert_eq!(accumulator.pending_claims[2].root(), claim_c.root());
+    }
+
+    /// Verifies take_pending_claims returns accumulated claims and drains the buffer.
+    /// Also verifies that claims accumulated after a take are independent of previous ones.
+    #[test]
+    fn test_take_pending_claims_drains_and_resets() {
+        let claim_a = MleAst::from_u64(100);
+        let claim_b = MleAst::from_u64(200);
+        let claims = vec![
+            (
+                OpeningId::virt(VirtualPolynomial::PC, SumcheckId::SpartanOuter),
+                claim_a,
+            ),
+            (
+                OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter),
+                claim_b,
+            ),
+        ];
+
+        let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
+
+        // Append first claim
+        accumulator.append_virtual(
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(vec![MleAst::from_u64(1)]),
+        );
+
+        // Take drains the first claim
+        let taken = accumulator.take_pending_claims();
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].root(), claim_a.root());
+        assert!(accumulator.pending_claims.is_empty(), "Must be empty after take");
+
+        // Append second claim after the take
+        accumulator.append_dense(
+            CommittedPolynomial::RdInc,
+            SumcheckId::SpartanOuter,
+            vec![MleAst::from_u64(2)],
+        );
+
+        // Second take only returns the new claim, not the old one
+        let taken2 = accumulator.take_pending_claims();
+        assert_eq!(taken2.len(), 1);
+        assert_eq!(taken2[0].root(), claim_b.root());
+
+        // Third take is empty
+        assert!(accumulator.take_pending_claims().is_empty());
+    }
+
+    /// Verifies append_sparse broadcasts the same opening point to multiple
+    /// committed polynomials in a single call. This is the batch path used for
+    /// sparse polynomial openings where all share the same evaluation point.
     #[test]
     fn test_append_sparse_multiple_polynomials() {
         let claims = vec![
