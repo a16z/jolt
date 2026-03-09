@@ -135,7 +135,6 @@ impl AstOpeningAccumulator {
 // Trait Implementations
 // =============================================================================
 
-
 impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
     // Methods ordered to match trait definition in opening_proof.rs
 
@@ -174,10 +173,7 @@ impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, MleAst>,
     ) {
-        self.store_opening(
-            &OpeningId::virt(polynomial, sumcheck),
-            opening_point.r,
-        );
+        self.store_opening(&OpeningId::virt(polynomial, sumcheck), opening_point.r);
     }
 
     fn append_untrusted_advice(
@@ -185,10 +181,7 @@ impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, MleAst>,
     ) {
-        self.store_opening(
-            &OpeningId::UntrustedAdvice(sumcheck_id),
-            opening_point.r,
-        );
+        self.store_opening(&OpeningId::UntrustedAdvice(sumcheck_id), opening_point.r);
     }
 
     fn append_trusted_advice(
@@ -196,10 +189,7 @@ impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
         sumcheck_id: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, MleAst>,
     ) {
-        self.store_opening(
-            &OpeningId::TrustedAdvice(sumcheck_id),
-            opening_point.r,
-        );
+        self.store_opening(&OpeningId::TrustedAdvice(sumcheck_id), opening_point.r);
     }
 
     fn append_dense(
@@ -208,10 +198,7 @@ impl OpeningAccumulator<MleAst> for AstOpeningAccumulator {
         sumcheck: SumcheckId,
         opening_point: Vec<MleAst>,
     ) {
-        self.store_opening(
-            &OpeningId::committed(polynomial, sumcheck),
-            opening_point,
-        );
+        self.store_opening(&OpeningId::committed(polynomial, sumcheck), opening_point);
     }
 
     fn append_sparse(
@@ -318,10 +305,8 @@ mod tests {
 
         let accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
 
-        let (point, retrieved_claim) = accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RdInc,
-            SumcheckId::SpartanOuter,
-        );
+        let (point, retrieved_claim) = accumulator
+            .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter);
 
         // Verify correct claim was retrieved
         assert_eq!(retrieved_claim.root(), claim.root());

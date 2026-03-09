@@ -273,7 +273,11 @@ fn main() {
     bundle.run_cse();
     println!(
         "  CSE bindings: {} total across {} constraints",
-        bundle.constraint_cse.iter().map(|c| c.bindings.len()).sum::<usize>(),
+        bundle
+            .constraint_cse
+            .iter()
+            .map(|c| c.bindings.len())
+            .sum::<usize>(),
         bundle.constraint_cse.len()
     );
 
@@ -337,9 +341,7 @@ fn main() {
             println!("  Witness variables: {}", witness_map.len());
 
             println!("\n=== SUCCESS ===");
-            println!(
-                "Stages 1-7 transpiled to Gnark. Run 'go test' in {output_dir:?} to verify.",
-            );
+            println!("Stages 1-7 transpiled to Gnark. Run 'go test' in {output_dir:?} to verify.",);
         }
         TranspilationTarget::AstBundle => {
             println!("\n=== SUCCESS ===");

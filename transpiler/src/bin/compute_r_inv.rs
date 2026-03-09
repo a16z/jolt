@@ -76,7 +76,10 @@ fn main() {
     println!("\n=== Testing from_bigint_unchecked ===");
     let bigint_one = BigInt::new([1u64, 0, 0, 0]);
     let fr_unchecked = Fr::from_bigint_unchecked(bigint_one).unwrap();
-    println!("from_bigint_unchecked([1, 0, 0, 0]) = {}", fr_to_string(&fr_unchecked));
+    println!(
+        "from_bigint_unchecked([1, 0, 0, 0]) = {}",
+        fr_to_string(&fr_unchecked)
+    );
     println!("Expected (R^-1 mod p) = {r_inv}");
 
     // Verify MontU128Challenge conversion (used in sumcheck challenges)

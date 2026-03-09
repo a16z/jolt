@@ -60,8 +60,8 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use zklean_extractor::mle_ast::{
-    Atom, Edge, Node, Scalar, TargetField, TranscriptHashData, scalar_add_mod, scalar_mul_mod,
-    scalar_neg_mod, scalar_sub_mod,
+    scalar_add_mod, scalar_mul_mod, scalar_neg_mod, scalar_sub_mod, Atom, Edge, Node, Scalar,
+    TargetField, TranscriptHashData,
 };
 
 // =============================================================================
@@ -552,12 +552,8 @@ pub fn generate_circuit_from_bundle_with_stats(
     for (constraint_idx, c) in bundle.constraints.iter().enumerate() {
         // Use pre-computed CSE bindings from AstBundle
         let cse_bindings = bundle.get_cse_bindings(constraint_idx).unwrap_or(&[]);
-        let mut codegen = GnarkCodeGen::new(
-            &bundle.nodes,
-            &var_names,
-            constraint_idx,
-            cse_bindings,
-        );
+        let mut codegen =
+            GnarkCodeGen::new(&bundle.nodes, &var_names, constraint_idx, cse_bindings);
 
         // Generate expression for this constraint
         let expr = codegen.generate_expr(c.root);
@@ -668,9 +664,7 @@ pub fn generate_circuit_from_bundle_with_stats(
                 "emulated.Element[emulated.BN254Fp]"
             }
         };
-        output.push_str(&format!(
-            "\t{field_name} {go_type} `gnark:\",public\"`\n"
-        ));
+        output.push_str(&format!("\t{field_name} {go_type} `gnark:\",public\"`\n"));
     }
     output.push_str("}\n\n");
 
@@ -839,7 +833,10 @@ fn is_node_constant_in(nodes: &[Node], node_id: usize) -> bool {
         Node::TranscriptHash(ref hash_data, e1, e2) => {
             is_edge_constant_in(nodes, e1)
                 && is_edge_constant_in(nodes, e2)
-                && hash_data.as_slice().iter().all(|e| is_edge_constant_in(nodes, *e))
+                && hash_data
+                    .as_slice()
+                    .iter()
+                    .all(|e| is_edge_constant_in(nodes, *e))
         }
     }
 }
@@ -928,11 +925,15 @@ mod tests {
     #[test]
     fn test_non_native_panic_message_includes_variable_name() {
         let mut bundle = AstBundle::new();
-        bundle.add_input_with_field(0, "my_non_native_test_variable", WitnessType::ProofData, TargetField::Fq);
+        bundle.add_input_with_field(
+            0,
+            "my_non_native_test_variable",
+            WitnessType::ProofData,
+            TargetField::Fq,
+        );
 
-        let result = std::panic::catch_unwind(|| {
-            generate_circuit_from_bundle(&bundle, "TestCircuit")
-        });
+        let result =
+            std::panic::catch_unwind(|| generate_circuit_from_bundle(&bundle, "TestCircuit"));
 
         let panic_msg = result
             .expect_err("Expected panic for non-native field variable")
@@ -968,7 +969,10 @@ mod tests {
     #[test]
     fn test_sanitize_go_name_bracket_replacement() {
         // Brackets and other special chars become underscores
-        assert_eq!(sanitize_go_name("compressed_polys[0]"), "Compressed_Polys_0");
+        assert_eq!(
+            sanitize_go_name("compressed_polys[0]"),
+            "Compressed_Polys_0"
+        );
         assert_eq!(sanitize_go_name("point(x,y)"), "Point_X_Y");
         assert_eq!(sanitize_go_name("foo-bar"), "Foo_Bar");
     }

@@ -168,9 +168,7 @@ impl VarAllocator {
 
     /// Check if any variables with the specified field kind were allocated.
     pub fn has_variables_for_field(&self, field: TargetField) -> bool {
-        self.descriptions
-            .iter()
-            .any(|(_, _, tf)| *tf == field)
+        self.descriptions.iter().any(|(_, _, tf)| *tf == field)
     }
 
     /// Allocate variables for a commitment's 12 chunks and record witness values (Fr field).
@@ -595,10 +593,7 @@ mod tests {
         // Verify witness values
         let witness = alloc.witness_values();
         for (i, val) in values.iter().enumerate() {
-            assert_eq!(
-                witness.get(&i).unwrap(),
-                &format!("{}", val.into_bigint())
-            );
+            assert_eq!(witness.get(&i).unwrap(), &format!("{}", val.into_bigint()));
         }
 
         // Verify descriptions
