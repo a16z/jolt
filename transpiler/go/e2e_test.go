@@ -107,6 +107,85 @@ func TestEndToEndPipeline(t *testing.T) {
 	t.Log("========================================")
 }
 
+// TestEndToEndMerkleTree runs the complete pipeline for the merkle-tree example,
+// which uses TrustedAdvice and UntrustedAdvice. This catches regressions in the
+// advice path that the fibonacci E2E cannot detect.
+//
+// Usage: go test -run TestEndToEndMerkleTree -v -timeout 30m
+func TestEndToEndMerkleTree(t *testing.T) {
+	t.Log("=== End-to-End Merkle-Tree (with Advice) Pipeline ===")
+	root := getWorkspaceRoot()
+	_, thisFile, _, _ := runtime.Caller(0)
+	goDir := filepath.Dir(thisFile)
+
+	// Step 0: Build Rust binaries
+	t.Log("--- Step 0: Building Rust binaries ---")
+	runCommand(t, "build-merkle-tree", root,
+		"cargo", "build", "-p", "merkle-tree", "--release",
+		"--features", "transcript-poseidon",
+	)
+	runCommand(t, "build-transpiler", root,
+		"cargo", "build", "-p", "transpiler", "--bin", "transpiler", "--release",
+		"--features", "transcript-poseidon",
+	)
+	t.Log("Rust binaries ready")
+
+	totalStart := time.Now()
+
+	// Step 1: Generate merkle-tree proof with advice
+	t.Log("--- Step 1: Merkle-Tree Proof (with TrustedAdvice) ---")
+	merkleBin := filepath.Join(root, "target", "release", "merkle-tree")
+	merkleTime := runCommand(t, "merkle-tree", root,
+		merkleBin, "--save",
+	)
+
+	// Step 2: Transpile with trusted advice commitment
+	t.Log("--- Step 2: Transpile (with --trusted-advice) ---")
+	transpilerBin := filepath.Join(root, "target", "release", "transpiler")
+	transpileTime := runCommand(t, "transpiler", root,
+		transpilerBin,
+		"--proof", "/tmp/merkle_proof.bin",
+		"--io-device", "/tmp/merkle_io_device.bin",
+		"--trusted-advice", "/tmp/merkle_trusted_advice.bin",
+	)
+
+	// Step 3: Groth16 prove + verify (subprocess to pick up regenerated circuit)
+	t.Log("--- Step 3: Groth16 ---")
+	groth16Time := runCommand(t, "groth16", goDir,
+		"go", "test", "-run", "TestStagesCircuitProveVerify",
+		"-v", "-timeout", "25m", "-count=1",
+	)
+
+	// Read detailed results written by TestStagesCircuitProveVerify
+	resultsPath := filepath.Join(goDir, "groth16_results.json")
+	data, err := os.ReadFile(resultsPath)
+	if err != nil {
+		t.Fatalf("Failed to read groth16_results.json: %v", err)
+	}
+	var results map[string]float64
+	if err := json.Unmarshal(data, &results); err != nil {
+		t.Fatalf("Failed to parse groth16_results.json: %v", err)
+	}
+
+	totalTime := time.Since(totalStart)
+	t.Log("")
+	t.Log("========================================")
+	t.Log("=== Merkle-Tree E2E Summary ===")
+	t.Log("========================================")
+	t.Logf("Merkle-tree proof (Rust): %v", merkleTime)
+	t.Logf("Transpile (Rust):         %v", transpileTime)
+	t.Logf("Circuit compile (Go):     %v", time.Duration(results["compile_ms"])*time.Millisecond)
+	t.Logf("Groth16 setup (Go):       %v", time.Duration(results["setup_ms"])*time.Millisecond)
+	t.Logf("Groth16 prove (Go):       %v", time.Duration(results["prove_ms"])*time.Millisecond)
+	t.Logf("Groth16 verify (Go):      %v", time.Duration(results["verify_ms"])*time.Millisecond)
+	t.Log("----------------------------------------")
+	t.Logf("TOTAL pipeline:           %v", totalTime)
+	t.Logf("Groth16 total:            %v", groth16Time)
+	t.Logf("Constraints:              %.0f", results["constraints"])
+	t.Logf("Proof size:               %.0f bytes", results["proof_bytes"])
+	t.Log("========================================")
+}
+
 // loadWitnessMap is a helper to load raw witness JSON
 func loadWitnessMap(path string) (map[string]string, error) {
 	data, err := os.ReadFile(path)
