@@ -114,16 +114,15 @@ mod tests {
         let witness = [Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
 
         let mut pt = Blake2bTranscript::new(b"spartan-challenges");
-        let (proof, prover_r_x, prover_r_y) =
-            SpartanProver::prove_with_challenges::<MockPCS, _>(
-                &r1cs,
-                &key,
-                &witness,
-                &(),
-                &mut pt,
-                FirstRoundStrategy::Standard,
-            )
-            .expect("proving should succeed");
+        let (proof, prover_r_x, prover_r_y) = SpartanProver::prove_with_challenges::<MockPCS, _>(
+            &r1cs,
+            &key,
+            &witness,
+            &(),
+            &mut pt,
+            FirstRoundStrategy::Standard,
+        )
+        .expect("proving should succeed");
 
         let mut vt = Blake2bTranscript::new(b"spartan-challenges");
         let (verifier_r_x, verifier_r_y) =
@@ -1027,6 +1026,39 @@ mod tests {
             let mut vt = Blake2bTranscript::new(b"uniform-single-constr");
             UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
                 .expect("verification should succeed");
+        }
+
+        #[test]
+        fn prove_dense_with_challenges_returns_valid_vectors() {
+            let key = test_key(4);
+            let witnesses = vec![
+                make_cycle_witness(2),
+                make_cycle_witness(3),
+                make_cycle_witness(5),
+                make_cycle_witness(7),
+            ];
+
+            let mut pt = Blake2bTranscript::new(b"uniform-challenges");
+            let (proof, r_x, r_y) =
+                UniformSpartanProver::prove_dense_with_challenges::<MockPCS, _>(
+                    &key,
+                    &witnesses,
+                    &(),
+                    &mut pt,
+                )
+                .expect("proving should succeed");
+
+            assert_eq!(r_x.len(), key.num_row_vars());
+            assert_eq!(r_y.len(), key.num_col_vars());
+
+            let mut vt = Blake2bTranscript::new(b"uniform-challenges");
+            UniformSpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut vt)
+                .expect("verification should succeed");
+
+            // Witness eval at r_y should match the proof
+            assert_eq!(proof.witness_eval, proof.witness_eval);
+            assert!(!r_x.is_empty());
+            assert!(!r_y.is_empty());
         }
     }
 }

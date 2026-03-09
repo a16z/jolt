@@ -9,7 +9,13 @@
 //! 2. **RAM RAF evaluation** (degree 2):
 //!    `eq · (c0·ra)` — relates the read-address polynomial to the
 //!    address unmapping polynomial.
+//!
+//! **Migration path**: The `g` table pre-computation loops (scale + accumulate)
+//! can become element-wise backend ops once stages hold a backend reference.
 
+use std::sync::Arc;
+
+use jolt_compute::CpuBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -18,12 +24,12 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
 use crate::claims::ram;
+use crate::evaluators::eq_product::EqProductEvaluator;
 use crate::stage::{ProverStage, StageBatch};
-use crate::witnesses::eq_product::EqProductCompute;
 
 /// RAM output check + RAF evaluation prover stage.
 ///
-/// Both instances are degree 2 and use the pre-compute-g + EqProductCompute
+/// Both instances are degree 2 and use the pre-compute-g + EqProductEvaluator
 /// pattern.
 pub struct RamCheckingStage<F: Field> {
     /// RAM val_final polynomial evaluations.
@@ -103,6 +109,12 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
         let raf_eq = EqPolynomial::new(self.raf_eq_point.clone()).evaluations();
         let raf_sum: F = raf_eq.iter().zip(raf_g.iter()).map(|(&e, &g)| e * g).sum();
 
+        let backend = Arc::new(CpuBackend);
+        let desc = EqProductEvaluator::<F, CpuBackend>::descriptor();
+
+        let kernel_output = jolt_cpu_kernels::compile::<F>(&desc);
+        let kernel_raf = jolt_cpu_kernels::compile::<F>(&desc);
+
         StageBatch {
             claims: vec![
                 SumcheckClaim {
@@ -117,8 +129,18 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
                 },
             ],
             witnesses: vec![
-                Box::new(EqProductCompute::new(output_g, output_eq, self.num_vars)),
-                Box::new(EqProductCompute::new(raf_g, raf_eq, self.num_vars)),
+                Box::new(EqProductEvaluator::new(
+                    backend.upload(&output_eq),
+                    backend.upload(&output_g),
+                    kernel_output,
+                    Arc::clone(&backend),
+                )),
+                Box::new(EqProductEvaluator::new(
+                    backend.upload(&raf_eq),
+                    backend.upload(&raf_g),
+                    kernel_raf,
+                    backend,
+                )),
             ],
         }
     }

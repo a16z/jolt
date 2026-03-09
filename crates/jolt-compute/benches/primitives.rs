@@ -1,7 +1,7 @@
 #![allow(unused_results)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_compute::{ComputeBackend, CpuBackend, CpuKernel};
+use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend, CpuKernel};
 use jolt_field::{Field, Fr};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -113,7 +113,13 @@ fn bench_pairwise_reduce(c: &mut Criterion) {
                 &n,
                 |b, _| {
                     b.iter(|| {
-                        black_box(backend.pairwise_reduce(&input_refs, &weights, &kernel, d));
+                        black_box(backend.pairwise_reduce(
+                            &input_refs,
+                            &weights,
+                            &kernel,
+                            d,
+                            BindingOrder::LowToHigh,
+                        ));
                     });
                 },
             );
@@ -236,7 +242,13 @@ fn bench_pairwise_reduce_fixed(c: &mut Criterion) {
                 &n,
                 |b, _| {
                     b.iter(|| {
-                        black_box(backend.pairwise_reduce(&input_refs, &weights, &kernel, d));
+                        black_box(backend.pairwise_reduce(
+                            &input_refs,
+                            &weights,
+                            &kernel,
+                            d,
+                            BindingOrder::LowToHigh,
+                        ));
                     });
                 },
             );
@@ -248,10 +260,12 @@ fn bench_pairwise_reduce_fixed(c: &mut Criterion) {
                         &n,
                         |b, _| {
                             b.iter(|| {
-                                black_box(
-                                    backend
-                                        .pairwise_reduce_fixed::<Fr, 4>(&input_refs, &weights, &kernel),
-                                );
+                                black_box(backend.pairwise_reduce_fixed::<Fr, 4>(
+                                    &input_refs,
+                                    &weights,
+                                    &kernel,
+                                    BindingOrder::LowToHigh,
+                                ));
                             });
                         },
                     );
@@ -262,10 +276,12 @@ fn bench_pairwise_reduce_fixed(c: &mut Criterion) {
                         &n,
                         |b, _| {
                             b.iter(|| {
-                                black_box(
-                                    backend
-                                        .pairwise_reduce_fixed::<Fr, 8>(&input_refs, &weights, &kernel),
-                                );
+                                black_box(backend.pairwise_reduce_fixed::<Fr, 8>(
+                                    &input_refs,
+                                    &weights,
+                                    &kernel,
+                                    BindingOrder::LowToHigh,
+                                ));
                             });
                         },
                     );
@@ -276,13 +292,12 @@ fn bench_pairwise_reduce_fixed(c: &mut Criterion) {
                         &n,
                         |b, _| {
                             b.iter(|| {
-                                black_box(
-                                    backend.pairwise_reduce_fixed::<Fr, 16>(
-                                        &input_refs,
-                                        &weights,
-                                        &kernel,
-                                    ),
-                                );
+                                black_box(backend.pairwise_reduce_fixed::<Fr, 16>(
+                                    &input_refs,
+                                    &weights,
+                                    &kernel,
+                                    BindingOrder::LowToHigh,
+                                ));
                             });
                         },
                     );
@@ -328,31 +343,29 @@ fn bench_tensor_pairwise_reduce(c: &mut Criterion) {
 
         let label = format!("{outer_log}+{inner_log}");
 
-        group.bench_with_input(
-            BenchmarkId::new("flat", &label),
-            &total_pairs,
-            |b, _| {
-                b.iter(|| {
-                    black_box(backend.pairwise_reduce(&input_refs, &flat_w, &kernel, d));
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("flat", &label), &total_pairs, |b, _| {
+            b.iter(|| {
+                black_box(backend.pairwise_reduce(
+                    &input_refs,
+                    &flat_w,
+                    &kernel,
+                    d,
+                    BindingOrder::LowToHigh,
+                ));
+            });
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("tensor", &label),
-            &total_pairs,
-            |b, _| {
-                b.iter(|| {
-                    black_box(backend.tensor_pairwise_reduce(
-                        &input_refs,
-                        &outer_w,
-                        &inner_w,
-                        &kernel,
-                        d,
-                    ));
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("tensor", &label), &total_pairs, |b, _| {
+            b.iter(|| {
+                black_box(backend.tensor_pairwise_reduce(
+                    &input_refs,
+                    &outer_w,
+                    &inner_w,
+                    &kernel,
+                    d,
+                ));
+            });
+        });
 
         group.bench_with_input(
             BenchmarkId::new("tensor_fixed", &label),
@@ -397,8 +410,20 @@ fn bench_pairwise_reduce_multi(c: &mut Criterion) {
             &n,
             |b, _| {
                 b.iter(|| {
-                    black_box(backend.pairwise_reduce(&input_refs, &weights, &k1, 4));
-                    black_box(backend.pairwise_reduce(&input_refs, &weights, &k2, 4));
+                    black_box(backend.pairwise_reduce(
+                        &input_refs,
+                        &weights,
+                        &k1,
+                        4,
+                        BindingOrder::LowToHigh,
+                    ));
+                    black_box(backend.pairwise_reduce(
+                        &input_refs,
+                        &weights,
+                        &k2,
+                        4,
+                        BindingOrder::LowToHigh,
+                    ));
                 });
             },
         );
@@ -412,6 +437,7 @@ fn bench_pairwise_reduce_multi(c: &mut Criterion) {
                         &input_refs,
                         &weights,
                         &[(&k1, 4), (&k2, 4)],
+                        BindingOrder::LowToHigh,
                     ));
                 });
             },

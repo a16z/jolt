@@ -43,6 +43,7 @@ members = [
   "crates/jolt-verifier",
   "crates/jolt-witness",
   "crates/jolt-zkvm",
+  "crates/jolt-metal",
   "jolt-core",
   "tracer",
   "common",

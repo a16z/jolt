@@ -8,7 +8,13 @@
 //!
 //! where $c_i$ are pre-computed scalar coefficients combining eq
 //! evaluations and γ-powers.
+//!
+//! **Migration path**: The `g` table pre-computation loop (γ-weighted accumulate)
+//! can become an element-wise backend op once stages hold a backend reference.
 
+use std::sync::Arc;
+
+use jolt_compute::CpuBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -17,8 +23,8 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
 use crate::claims::reductions;
+use crate::evaluators::eq_product::EqProductEvaluator;
 use crate::stage::{ProverStage, StageBatch};
-use crate::witnesses::eq_product::EqProductCompute;
 
 /// Hamming weight claim reduction prover stage.
 ///
@@ -103,7 +109,15 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
             claimed_sum,
         };
 
-        let witness = EqProductCompute::new(g_table, eq_table, self.num_vars);
+        let backend = Arc::new(CpuBackend);
+        let desc = EqProductEvaluator::<F, CpuBackend>::descriptor();
+        let kernel = jolt_cpu_kernels::compile::<F>(&desc);
+        let witness = EqProductEvaluator::new(
+            backend.upload(&eq_table),
+            backend.upload(&g_table),
+            kernel,
+            backend,
+        );
 
         StageBatch {
             claims: vec![claim],

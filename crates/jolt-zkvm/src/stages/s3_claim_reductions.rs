@@ -8,16 +8,20 @@
 //! $\sum_{x} \widetilde{eq}(r, x) \cdot \sum_i c_i \cdot p_i(x) = v$
 //! which is degree 2 (1 from eq + 1 from p_i).
 
+use std::sync::Arc;
+
+use jolt_compute::CpuBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_sumcheck::claim::SumcheckClaim;
+use jolt_sumcheck::prover::SumcheckCompute;
 use jolt_transcript::Transcript;
 
 use crate::claims::reductions;
+use crate::evaluators::eq_product::EqProductEvaluator;
 use crate::stage::{ProverStage, StageBatch};
-use crate::witnesses::eq_product::EqProductCompute;
 
 /// A single claim reduction instance within the stage.
 ///
@@ -144,6 +148,8 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
             .expect("build() called after extract_claims()");
         let n = 1usize << self.num_vars;
         let eq_table = EqPolynomial::new(self.eq_point.clone()).evaluations();
+        let backend = Arc::new(CpuBackend);
+        let desc = EqProductEvaluator::<F, CpuBackend>::descriptor();
 
         let mut claims = Vec::with_capacity(instances.len());
         let mut witnesses: Vec<Box<dyn SumcheckCompute<F>>> = Vec::with_capacity(instances.len());
@@ -169,10 +175,12 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
                 claimed_sum,
             });
 
-            witnesses.push(Box::new(EqProductCompute::new(
-                g_table,
-                eq_table.clone(),
-                self.num_vars,
+            let kernel = jolt_cpu_kernels::compile::<F>(&desc);
+            witnesses.push(Box::new(EqProductEvaluator::new(
+                backend.upload(&eq_table),
+                backend.upload(&g_table),
+                kernel,
+                Arc::clone(&backend),
             )));
         }
 
@@ -205,8 +213,6 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
         self.claim_def_fns.iter().map(|f| f()).collect()
     }
 }
-
-use jolt_sumcheck::prover::SumcheckCompute;
 
 #[cfg(test)]
 mod tests {

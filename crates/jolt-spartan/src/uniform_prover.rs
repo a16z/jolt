@@ -72,6 +72,35 @@ impl UniformSpartanProver {
         PCS: CommitmentScheme,
         T: Transcript<Challenge = u128>,
     {
+        let (proof, _r_x, _r_y) =
+            Self::prove_dense_with_challenges::<PCS, T>(key, cycle_witnesses, pcs_setup, transcript)?;
+        Ok(proof)
+    }
+
+    /// Like [`prove_dense`](Self::prove_dense) but also returns the outer and
+    /// inner sumcheck challenge vectors `(r_x, r_y)`.
+    ///
+    /// Downstream stages need `r_x` and `r_y` to construct eq-weighted
+    /// sumcheck claims and evaluate witness polynomials at the correct points.
+    #[tracing::instrument(skip_all, name = "UniformSpartanProver::prove_dense_with_challenges")]
+    #[allow(clippy::type_complexity)]
+    pub fn prove_dense_with_challenges<PCS, T>(
+        key: &UniformSpartanKey<PCS::Field>,
+        cycle_witnesses: &[Vec<PCS::Field>],
+        pcs_setup: &PCS::ProverSetup,
+        transcript: &mut T,
+    ) -> Result<
+        (
+            UniformSpartanProof<PCS::Field, PCS>,
+            Vec<PCS::Field>,
+            Vec<PCS::Field>,
+        ),
+        SpartanError,
+    >
+    where
+        PCS: CommitmentScheme,
+        T: Transcript<Challenge = u128>,
+    {
         assert_eq!(cycle_witnesses.len(), key.num_cycles);
 
         let total_rows = key.total_rows();
@@ -79,7 +108,6 @@ impl UniformSpartanProver {
         let total_rows_padded = total_rows.next_power_of_two();
         let total_cols_padded = total_cols.next_power_of_two();
 
-        // Build the flat witness z: interleave cycle witnesses with padding
         let mut witness_flat = vec![PCS::Field::zero(); total_cols_padded];
         for (c, cycle_w) in cycle_witnesses.iter().enumerate() {
             assert!(cycle_w.len() >= key.num_vars);
@@ -89,7 +117,6 @@ impl UniformSpartanProver {
             }
         }
 
-        // Compute Az, Bz, Cz
         let mut az = vec![PCS::Field::zero(); total_rows_padded];
         let mut bz = vec![PCS::Field::zero(); total_rows_padded];
         let mut cz = vec![PCS::Field::zero(); total_rows_padded];
@@ -124,20 +151,17 @@ impl UniformSpartanProver {
             }
         }
 
-        // Check constraint satisfaction
         for i in 0..total_rows {
             if az[i] * bz[i] != cz[i] {
                 return Err(SpartanError::ConstraintViolation(i));
             }
         }
 
-        // Build witness polynomial and commit
         let witness_poly = Polynomial::new(witness_flat.clone());
         let (witness_commitment, _hint) = PCS::commit(witness_poly.evaluations(), pcs_setup);
 
         transcript.append_bytes(format!("{witness_commitment:?}").as_bytes());
 
-        // Sample tau
         let num_row_vars = log2_padded(total_rows_padded);
         let tau: Vec<PCS::Field> = (0..num_row_vars)
             .map(|_| PCS::Field::from_u128(transcript.challenge()))
@@ -212,7 +236,7 @@ impl UniformSpartanProver {
         let witness_opening_proof =
             PCS::open(&pcs_poly, &r_y, witness_eval, pcs_setup, None, transcript);
 
-        Ok(UniformSpartanProof {
+        let proof = UniformSpartanProof {
             witness_commitment,
             outer_sumcheck_proof,
             az_eval,
@@ -221,7 +245,9 @@ impl UniformSpartanProver {
             inner_sumcheck_proof,
             witness_eval,
             witness_opening_proof,
-        })
+        };
+
+        Ok((proof, r_x, r_y))
     }
 }
 

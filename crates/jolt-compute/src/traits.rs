@@ -117,11 +117,12 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// For each position `i` in `[0, n/2)` where `n` is the active buffer
     /// length:
     ///
-    /// 1. Reads pairs $(\text{inputs}[k][2i],\; \text{inputs}[k][2i+1])$
-    ///    for all `k` input buffers
+    /// 1. Reads pairs from all `k` input buffers according to `order`:
+    ///    - [`LowToHigh`](BindingOrder::LowToHigh): `(inputs[k][2i], inputs[k][2i+1])`
+    ///    - [`HighToLow`](BindingOrder::HighToLow): `(inputs[k][i], inputs[k][i + n/2])`
     /// 2. Executes the compiled kernel on those pairs, producing
     ///    `num_evals` values
-    /// 3. Multiplies each value by $\text{weights}[i]$
+    /// 3. Multiplies each value by `weights[i]`
     /// 4. Accumulates into `num_evals` running sums
     ///
     /// Returns `num_evals` field elements after reducing across all
@@ -139,6 +140,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
         weights: &Self::Buffer<F>,
         kernel: &Self::CompiledKernel<F>,
         num_evals: usize,
+        order: BindingOrder,
     ) -> Vec<F>;
 
     /// Batched pairwise linear interpolation across multiple buffers.
@@ -202,8 +204,9 @@ pub trait ComputeBackend: Send + Sync + 'static {
         inputs: &[&Self::Buffer<F>],
         weights: &Self::Buffer<F>,
         kernel: &Self::CompiledKernel<F>,
+        order: BindingOrder,
     ) -> [F; D] {
-        let v = self.pairwise_reduce(inputs, weights, kernel, D);
+        let v = self.pairwise_reduce(inputs, weights, kernel, D, order);
         core::array::from_fn(|i| v[i])
     }
 
@@ -259,10 +262,13 @@ pub trait ComputeBackend: Send + Sync + 'static {
         inputs: &[&Self::Buffer<F>],
         weights: &Self::Buffer<F>,
         kernels: &[(&Self::CompiledKernel<F>, usize)],
+        order: BindingOrder,
     ) -> Vec<Vec<F>> {
         kernels
             .iter()
-            .map(|(kernel, num_evals)| self.pairwise_reduce(inputs, weights, kernel, *num_evals))
+            .map(|(kernel, num_evals)| {
+                self.pairwise_reduce(inputs, weights, kernel, *num_evals, order)
+            })
             .collect()
     }
 
@@ -276,4 +282,64 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// transfer across the bus. On CPU this is equivalent to
     /// `EqPolynomial::evaluations()`.
     fn product_table<F: Field>(&self, point: &[F]) -> Self::Buffer<F>;
+
+    // ── Element-wise buffer operations ──────────────────────────────────
+
+    /// Sum all elements in a buffer: $\sum_i \text{buf}[i]$.
+    ///
+    /// Uses delayed modular reduction internally for large buffers.
+    fn sum<F: Field>(&self, buf: &Self::Buffer<F>) -> F;
+
+    /// Dot product of two buffers: $\sum_i a[i] \cdot b[i]$.
+    ///
+    /// Both buffers must have equal length. Uses delayed modular reduction.
+    fn dot_product<F: Field>(&self, a: &Self::Buffer<F>, b: &Self::Buffer<F>) -> F;
+
+    /// Multiply every element by a scalar: `buf[i] *= scalar`.
+    fn scale<F: Field>(&self, buf: &mut Self::Buffer<F>, scalar: F);
+
+    /// Element-wise addition: `out[i] = a[i] + b[i]`.
+    ///
+    /// Both buffers must have equal length. Returns a new buffer.
+    fn add<F: Field>(&self, a: &Self::Buffer<F>, b: &Self::Buffer<F>) -> Self::Buffer<F>;
+
+    /// Element-wise subtraction: `out[i] = a[i] - b[i]`.
+    ///
+    /// Both buffers must have equal length. Returns a new buffer.
+    fn sub<F: Field>(&self, a: &Self::Buffer<F>, b: &Self::Buffer<F>) -> Self::Buffer<F>;
+
+    /// Fused multiply-add into buffer: `buf[i] += scalar * other[i]`.
+    ///
+    /// Both buffers must have equal length.
+    fn accumulate<F: Field>(&self, buf: &mut Self::Buffer<F>, scalar: F, other: &Self::Buffer<F>);
+
+    /// Weighted accumulation from multiple buffers:
+    /// `buf[i] += Σ_k scalars[k] * inputs[k][i]`.
+    ///
+    /// All buffers must have equal length. `scalars.len()` must equal
+    /// `inputs.len()`. Equivalent to calling [`accumulate`](Self::accumulate)
+    /// in a loop, but enables backends to fuse the operation into a single
+    /// pass over memory and a single GPU dispatch.
+    fn accumulate_weighted<F: Field>(
+        &self,
+        buf: &mut Self::Buffer<F>,
+        scalars: &[F],
+        inputs: &[&Self::Buffer<F>],
+    ) {
+        debug_assert_eq!(scalars.len(), inputs.len());
+        for (&s, &input) in scalars.iter().zip(inputs.iter()) {
+            self.accumulate(buf, s, input);
+        }
+    }
+
+    /// Multiply every element of each buffer by the same scalar.
+    ///
+    /// Equivalent to calling [`scale`](Self::scale) on each buffer, but
+    /// enables backends to parallelize across all buffers in a single
+    /// dispatch.
+    fn scale_batch<F: Field>(&self, bufs: &mut [Self::Buffer<F>], scalar: F) {
+        for buf in bufs.iter_mut() {
+            self.scale(buf, scalar);
+        }
+    }
 }

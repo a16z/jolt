@@ -4,6 +4,9 @@
 //! the Boolean hypercube using a sumcheck over
 //! $\widetilde{eq}(r, x) \cdot h(x) \cdot (h(x) - 1) = 0$.
 
+use std::sync::Arc;
+
+use jolt_compute::CpuBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -12,8 +15,8 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
 use crate::claims::ram;
+use crate::evaluators::hamming::HammingBooleanityEvaluator;
 use crate::stage::{ProverStage, StageBatch};
-use crate::witnesses::hamming::HammingBooleanityCompute;
 
 /// Hamming booleanity prover stage.
 ///
@@ -69,7 +72,15 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingBooleanityStage<F> {
             claimed_sum: F::zero(),
         };
 
-        let witness = HammingBooleanityCompute::new(h_evals.clone(), eq_table, self.num_vars);
+        let backend = Arc::new(CpuBackend);
+        let desc = HammingBooleanityEvaluator::<F, CpuBackend>::descriptor();
+        let kernel = jolt_cpu_kernels::compile::<F>(&desc);
+        let witness = HammingBooleanityEvaluator::new(
+            backend.upload(&eq_table),
+            backend.upload(h_evals),
+            kernel,
+            backend,
+        );
 
         StageBatch {
             claims: vec![claim],
@@ -142,7 +153,6 @@ mod tests {
         assert_eq!(batch.claims.len(), 1);
         let claim = batch.claims[0].clone();
 
-        // Prove using batched prover (accepts Box<dyn SumcheckCompute>)
         let proof = BatchedSumcheckProver::prove(
             &batch.claims,
             &mut batch.witnesses,
@@ -150,7 +160,6 @@ mod tests {
             |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
-        // Verify
         let mut verifier_transcript = Blake2bTranscript::new(b"stage_roundtrip");
         let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
             &[claim],
@@ -160,7 +169,6 @@ mod tests {
         )
         .expect("verification should succeed");
 
-        // Extract claims
         let prover_claims =
             <HammingBooleanityStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
                 &mut stage,
@@ -169,7 +177,6 @@ mod tests {
             );
         assert_eq!(prover_claims.len(), 1);
 
-        // The opening claim's eval should match evaluating h at the challenge point
         let h_poly = Polynomial::new(prover_claims[0].evaluations.clone());
         let expected_eval = h_poly.evaluate(&challenges);
         assert_eq!(prover_claims[0].eval, expected_eval);

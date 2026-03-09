@@ -3,7 +3,7 @@
 //! Verifies that CpuBackend primitives agree with the canonical implementations
 //! in jolt-poly (Polynomial::bind, EqPolynomial::evaluations).
 
-use jolt_compute::{ComputeBackend, CpuBackend, CpuKernel};
+use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend, CpuKernel};
 use jolt_field::{Field, Fr};
 use jolt_poly::{EqPolynomial, Polynomial};
 use rand_chacha::ChaCha20Rng;
@@ -150,7 +150,13 @@ fn pairwise_reduce_identity_kernel() {
         Fr::from_u64(1),
     ]);
 
-    let result = b.pairwise_reduce(&[&buf_a, &buf_b], &weights, &kernel, num_evals);
+    let result = b.pairwise_reduce(
+        &[&buf_a, &buf_b],
+        &weights,
+        &kernel,
+        num_evals,
+        BindingOrder::LowToHigh,
+    );
 
     // t=0: sum over pairs of (lo_a + lo_b) * 1
     // pair 0: lo_a=1, lo_b=10 → 11; pair 1: lo_a=3, lo_b=30 → 33; ...

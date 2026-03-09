@@ -6,7 +6,7 @@
 
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_spartan::SpartanProof;
+use jolt_spartan::UniformSpartanProof;
 use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
 
@@ -41,13 +41,14 @@ pub struct BatchOpeningProofs<PCS: CommitmentScheme> {
 
 /// Complete Jolt proof for one program execution.
 ///
-/// Produced by stages S1 (Spartan) through S8 (batch openings). The verifier
-/// replays the Fiat-Shamir transcript and checks each component in sequence.
+/// Produced by stages S1 (uniform Spartan) through S8 (batch openings). The
+/// verifier replays the Fiat-Shamir transcript and checks each component
+/// in sequence.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct JoltProof<F: Field, PCS: CommitmentScheme<Field = F>> {
-    /// Spartan R1CS proof (outer + inner sumcheck + witness opening).
-    pub spartan_proof: SpartanProof<F, PCS>,
+    /// Uniform Spartan R1CS proof (outer + inner sumcheck + witness opening).
+    pub spartan_proof: UniformSpartanProof<F, PCS>,
     /// Per-stage sumcheck proofs (S2–S7) with claimed evaluations.
     pub stage_proofs: Vec<SumcheckStageProof<F>>,
     /// Batch PCS opening proofs from the opening reduction phase.

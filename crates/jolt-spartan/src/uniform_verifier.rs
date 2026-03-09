@@ -41,6 +41,27 @@ impl UniformSpartanVerifier {
         PCS: CommitmentScheme,
         T: Transcript<Challenge = u128>,
     {
+        Self::verify_with_challenges::<PCS, T>(key, proof, verifier_setup, transcript)
+            .map(|_| ())
+    }
+
+    /// Verifies a uniform Spartan proof and returns the challenge vectors.
+    ///
+    /// Same as [`verify`](Self::verify) but returns `(r_x, r_y)` — the outer
+    /// and inner sumcheck challenge points. Downstream stages need these to
+    /// construct eq-weighted sumcheck claims.
+    #[allow(clippy::type_complexity)]
+    #[tracing::instrument(skip_all, name = "UniformSpartanVerifier::verify_with_challenges")]
+    pub fn verify_with_challenges<PCS, T>(
+        key: &UniformSpartanKey<PCS::Field>,
+        proof: &UniformSpartanProof<PCS::Field, PCS>,
+        verifier_setup: &PCS::VerifierSetup,
+        transcript: &mut T,
+    ) -> Result<(Vec<PCS::Field>, Vec<PCS::Field>), SpartanError>
+    where
+        PCS: CommitmentScheme,
+        T: Transcript<Challenge = u128>,
+    {
         let total_rows_padded = key.total_rows().next_power_of_two();
         let total_cols_padded = key.total_cols().next_power_of_two();
         let num_row_vars = total_rows_padded.trailing_zeros() as usize;
@@ -108,6 +129,6 @@ impl UniformSpartanVerifier {
             transcript,
         )?;
 
-        Ok(())
+        Ok((r_x, r_y))
     }
 }

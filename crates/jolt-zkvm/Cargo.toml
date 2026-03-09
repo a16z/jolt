@@ -21,6 +21,7 @@ jolt-poly = { path = "../jolt-poly" }
 jolt-spartan = { path = "../jolt-spartan" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-transcript = { path = "../jolt-transcript" }
+jolt-verifier = { path = "../jolt-verifier" }
 rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true

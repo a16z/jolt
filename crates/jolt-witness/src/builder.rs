@@ -156,7 +156,10 @@ fn emit_ram_ra<F: Field>(
     sink.on_polynomial_start(tag, len, PolynomialKind::OneHot { k });
     let indices: Vec<Option<u8>> = trace
         .iter()
-        .map(|c| c.ram_address.map(|addr| config.ram_address_chunk(addr, idx)))
+        .map(|c| {
+            c.ram_address
+                .map(|addr| config.ram_address_chunk(addr, idx))
+        })
         .collect();
     sink.on_chunk(tag, ChunkData::OneHot(&indices));
     sink.on_polynomial_end(tag);

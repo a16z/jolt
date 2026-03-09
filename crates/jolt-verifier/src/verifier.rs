@@ -2,7 +2,7 @@
 //!
 //! [`verify`] orchestrates the full verification pipeline:
 //!
-//! 1. **S1 (Spartan)**: Verify R1CS satisfiability via [`SpartanVerifier`]
+//! 1. **S1 (Spartan)**: Verify R1CS satisfiability via [`UniformSpartanVerifier`]
 //! 2. **S2–S7**: For each stage, verify the batched sumcheck proof, check
 //!    claimed polynomial evaluations, and accumulate opening claims
 //! 3. **S8 (Openings)**: Reduce all opening claims via RLC and verify PCS
@@ -12,7 +12,7 @@ use jolt_field::Field;
 use jolt_openings::{
     AdditivelyHomomorphic, OpeningReduction, OpeningsError, RlcReduction, VerifierClaim,
 };
-use jolt_spartan::{SpartanError, SpartanKey, SpartanProof, SpartanVerifier};
+use jolt_spartan::{SpartanError, UniformSpartanKey, UniformSpartanProof, UniformSpartanVerifier};
 use jolt_sumcheck::BatchedSumcheckVerifier;
 use jolt_transcript::Transcript;
 
@@ -21,18 +21,20 @@ use crate::key::JoltVerifyingKey;
 use crate::proof::{BatchOpeningProofs, JoltProof, SumcheckStageProof};
 use crate::stage::VerifierStage;
 
-/// Verifies the Spartan R1CS proof (stage 1) and returns the challenge vectors.
+/// Verifies the uniform Spartan R1CS proof (stage 1) and returns the
+/// challenge vectors.
 ///
-/// The returned `(r_x, r_y)` are the outer and inner sumcheck challenge points,
-/// needed by downstream stages to construct eq-weighted sumcheck claims.
+/// The returned `(r_x, r_y)` are the outer and inner sumcheck challenge
+/// points, needed by downstream stages to construct eq-weighted sumcheck
+/// claims.
 ///
-/// The transcript is left in the same state as the prover's transcript after S1,
-/// so subsequent stages can sample consistent challenges.
+/// The transcript is left in the same state as the prover's transcript
+/// after S1, so subsequent stages can sample consistent challenges.
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "verify_spartan")]
 pub fn verify_spartan<PCS, T>(
-    key: &SpartanKey<PCS::Field>,
-    proof: &SpartanProof<PCS::Field, PCS>,
+    key: &UniformSpartanKey<PCS::Field>,
+    proof: &UniformSpartanProof<PCS::Field, PCS>,
     verifier_setup: &PCS::VerifierSetup,
     transcript: &mut T,
 ) -> Result<(Vec<PCS::Field>, Vec<PCS::Field>), SpartanError>
@@ -40,7 +42,7 @@ where
     PCS: jolt_openings::CommitmentScheme,
     T: Transcript<Challenge = u128>,
 {
-    SpartanVerifier::verify_with_challenges::<PCS, T>(key, proof, verifier_setup, transcript)
+    UniformSpartanVerifier::verify_with_challenges::<PCS, T>(key, proof, verifier_setup, transcript)
 }
 
 /// Verifies one sumcheck stage (S2–S7).
@@ -134,28 +136,13 @@ where
 ///
 /// Orchestrates the full verification pipeline:
 ///
-/// 1. **S1**: Verify Spartan R1CS proof, extract challenge vectors `(r_x, r_y)`
+/// 1. **S1**: Verify uniform Spartan R1CS proof, extract `(r_x, r_y)`
 /// 2. **S2–S7**: For each stage, verify sumcheck and accumulate opening claims
 /// 3. **S8**: Reduce opening claims via RLC and verify PCS opening proofs
 ///
 /// The caller provides [`VerifierStage`] implementations for S2–S7. These are
 /// config-driven — constructed using [`ClaimDefinition`](jolt_ir::ClaimDefinition)s
 /// and stage metadata from the proof configuration.
-///
-/// # Arguments
-///
-/// * `proof` — complete Jolt proof
-/// * `vk` — verification key (Spartan key + PCS setup)
-/// * `stages` — verifier-side stage implementations for S2–S7
-/// * `transcript` — Fiat-Shamir transcript, initialized with the same label as
-///   the prover's transcript
-/// * `challenge_fn` — converts transcript challenges to field elements
-///
-/// # Returns
-///
-/// `(r_x, r_y)` — the Spartan challenge vectors, useful for the caller to
-/// inspect the Spartan output if needed. Returns `Err(JoltError)` if any
-/// verification step fails.
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "verify")]
 pub fn verify<PCS, T>(
@@ -177,7 +164,7 @@ where
         )));
     }
 
-    // S1: Spartan
+    // S1: Uniform Spartan
     let (r_x, r_y) = verify_spartan::<PCS, T>(
         &vk.spartan_key,
         &proof.spartan_proof,

@@ -4,6 +4,9 @@
 //!
 //! This is degree 3 (1 from eq + 2 from ra·val or ra·inc).
 
+use std::sync::Arc;
+
+use jolt_compute::CpuBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -12,8 +15,8 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
 use crate::claims::ram;
+use crate::evaluators::formula::{formula_descriptor, FormulaEvaluator, Term};
 use crate::stage::{ProverStage, StageBatch};
-use crate::witnesses::formula::{FormulaCompute, Term};
 
 /// RAM read-write checking prover stage.
 ///
@@ -81,7 +84,18 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
             .sum();
 
         let degree = 3;
-        let witness = FormulaCompute::new(poly_tables, eq_table, terms, degree, self.num_vars);
+
+        let backend = Arc::new(CpuBackend);
+        let (desc, challenges) = formula_descriptor(&terms, poly_tables.len(), degree);
+        let kernel = jolt_cpu_kernels::compile_with_challenges::<F>(&desc, &challenges);
+        let poly_bufs: Vec<_> = poly_tables.iter().map(|t| backend.upload(t)).collect();
+        let witness = FormulaEvaluator::new(
+            backend.upload(&eq_table),
+            poly_bufs,
+            kernel,
+            degree,
+            backend,
+        );
 
         StageBatch {
             claims: vec![SumcheckClaim {

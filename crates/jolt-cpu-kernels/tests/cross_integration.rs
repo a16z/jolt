@@ -3,7 +3,7 @@
 //! Compiles kernel descriptors from IR, then executes them through the
 //! CpuBackend pairwise_reduce pipeline and verifies correctness.
 
-use jolt_compute::{ComputeBackend, CpuBackend, CpuKernel};
+use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend, CpuKernel};
 use jolt_cpu_kernels::{compile, compile_with_challenges};
 use jolt_field::{Field, Fr};
 use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
@@ -102,7 +102,13 @@ fn product_sum_d4_via_pairwise_reduce() {
 
     let weights = b.upload(&vec![Fr::from_u64(1); num_pairs]);
     let buf_refs: Vec<&Vec<Fr>> = bufs.iter().collect();
-    let result = b.pairwise_reduce(&buf_refs, &weights, &kernel, desc.num_evals());
+    let result = b.pairwise_reduce(
+        &buf_refs,
+        &weights,
+        &kernel,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
 
     assert_eq!(result.len(), 4); // D outputs (Toom-Cook)
 
@@ -140,7 +146,13 @@ fn product_sum_d8_multiple_groups() {
     let weights_data = vec![Fr::from_u64(1); num_pairs];
     let weights = b.upload(&weights_data);
     let buf_refs: Vec<&Vec<Fr>> = bufs.iter().collect();
-    let result = b.pairwise_reduce(&buf_refs, &weights, &kernel, desc.num_evals());
+    let result = b.pairwise_reduce(
+        &buf_refs,
+        &weights,
+        &kernel,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
     assert_eq!(result.len(), d);
 
     let expected = reference_toom_cook_reduce(&buf_refs, &weights_data, d, num_products);
@@ -182,7 +194,13 @@ fn custom_product_via_pairwise_reduce() {
     let weights = b.upload(&vec![Fr::from_u64(1); num_pairs]);
 
     // Custom degree-2: num_evals = degree + 1 = 3
-    let result = b.pairwise_reduce(&[&buf_a, &buf_b], &weights, &kernel, desc.num_evals());
+    let result = b.pairwise_reduce(
+        &[&buf_a, &buf_b],
+        &weights,
+        &kernel,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
     assert_eq!(result.len(), 3);
 
     // t=0: sum over pairs of (lo_a * lo_b)
@@ -231,7 +249,13 @@ fn custom_with_challenge_via_pairwise_reduce() {
     let weights = b.upload(&[Fr::from_u64(1); 3]);
 
     // Custom degree-2: num_evals = degree + 1 = 3
-    let result = b.pairwise_reduce(&[&buf], &weights, &kernel, desc.num_evals());
+    let result = b.pairwise_reduce(
+        &[&buf],
+        &weights,
+        &kernel,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
     assert_eq!(result.len(), 3);
 
     // t=0: gamma * (lo^2 - lo) for each pair, with lo in {0, 1, 0}

@@ -7,7 +7,7 @@
 //! (`mles_product_sum.rs`).
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_compute::{ComputeBackend, CpuBackend};
+use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend};
 use jolt_cpu_kernels::{compile, toom_cook};
 use jolt_field::{Field, FieldAccumulator, Fr};
 use jolt_ir::{KernelDescriptor, KernelShape};
@@ -163,7 +163,13 @@ fn bench_rayon_vs_backend(c: &mut Criterion) {
                 &n,
                 |b, _| {
                     b.iter(|| {
-                        black_box(backend.pairwise_reduce(&input_refs, &weights, &kernel, d));
+                        black_box(backend.pairwise_reduce(
+                            &input_refs,
+                            &weights,
+                            &kernel,
+                            d,
+                            BindingOrder::LowToHigh,
+                        ));
                     });
                 },
             );

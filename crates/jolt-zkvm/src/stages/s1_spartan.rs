@@ -15,7 +15,7 @@ use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, ProverClaim};
 use jolt_spartan::{
     FirstRoundStrategy, SpartanError, SpartanKey, SpartanProof, SpartanProver, SpartanVerifier,
-    R1CS,
+    UniformSpartanKey, UniformSpartanProof, UniformSpartanProver, UniformSpartanVerifier, R1CS,
 };
 use jolt_transcript::Transcript;
 
@@ -78,6 +78,88 @@ impl<PCS: CommitmentScheme> SpartanStage<PCS> {
         transcript: &mut T,
     ) -> Result<(), SpartanError> {
         SpartanVerifier::verify::<PCS, T>(key, proof, verifier_setup, transcript)
+    }
+}
+
+/// Output of [`UniformSpartanStage::prove`].
+pub struct UniformSpartanResult<F: Field, PCS: CommitmentScheme> {
+    /// The uniform Spartan proof.
+    pub proof: UniformSpartanProof<F, PCS>,
+    /// Witness polynomial opening claim at the inner sumcheck challenge point.
+    pub witness_opening_claim: ProverClaim<F>,
+    /// Outer sumcheck challenge vector (`log2(total_rows)` elements).
+    ///
+    /// Decomposes as `(r_cycle, r_constraint)` — the cycle and within-cycle
+    /// dimensions of the row index. Downstream stages use `r_cycle` as the
+    /// eq point for claim reductions.
+    pub r_x: Vec<F>,
+    /// Inner sumcheck challenge vector (`log2(total_cols)` elements).
+    ///
+    /// Decomposes as `(r_cycle, r_var)` — the cycle and within-cycle
+    /// dimensions of the column index. This is the evaluation point for the
+    /// interleaved witness polynomial.
+    pub r_y: Vec<F>,
+}
+
+/// Thin wrapper around the uniform Spartan prover.
+///
+/// Uses [`UniformSpartanKey`] (per-cycle sparse constraints) instead of the
+/// dense [`SpartanKey`], enabling O(K) key storage regardless of cycle count.
+pub struct UniformSpartanStage<PCS: CommitmentScheme> {
+    _marker: PhantomData<PCS>,
+}
+
+impl<PCS: CommitmentScheme> UniformSpartanStage<PCS> {
+    /// Runs the uniform Spartan protocol (dense mode) and returns the proof
+    /// alongside challenge vectors and witness opening claim.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` — Uniform Spartan key with per-cycle sparse constraints.
+    /// * `cycle_witnesses` — Per-cycle witness vectors. `cycle_witnesses[c][v]`
+    ///   is variable `v` in cycle `c`.
+    /// * `witness_evals` — Flat interleaved witness evaluations for the opening
+    ///   claim (length = `total_cols_padded`).
+    /// * `pcs_setup` — PCS prover setup.
+    /// * `transcript` — Fiat-Shamir transcript.
+    #[tracing::instrument(skip_all, name = "UniformSpartanStage::prove")]
+    pub fn prove<T: Transcript<Challenge = u128>>(
+        key: &UniformSpartanKey<PCS::Field>,
+        cycle_witnesses: &[Vec<PCS::Field>],
+        witness_evals: &[PCS::Field],
+        pcs_setup: &PCS::ProverSetup,
+        transcript: &mut T,
+    ) -> Result<UniformSpartanResult<PCS::Field, PCS>, SpartanError> {
+        let (proof, r_x, r_y) = UniformSpartanProver::prove_dense_with_challenges::<PCS, T>(
+            key,
+            cycle_witnesses,
+            pcs_setup,
+            transcript,
+        )?;
+
+        let witness_opening_claim = ProverClaim {
+            evaluations: witness_evals.to_vec(),
+            point: r_y.clone(),
+            eval: proof.witness_eval,
+        };
+
+        Ok(UniformSpartanResult {
+            proof,
+            witness_opening_claim,
+            r_x,
+            r_y,
+        })
+    }
+
+    /// Verifies a uniform Spartan proof.
+    #[tracing::instrument(skip_all, name = "UniformSpartanStage::verify")]
+    pub fn verify<T: Transcript<Challenge = u128>>(
+        key: &UniformSpartanKey<PCS::Field>,
+        proof: &UniformSpartanProof<PCS::Field, PCS>,
+        verifier_setup: &PCS::VerifierSetup,
+        transcript: &mut T,
+    ) -> Result<(), SpartanError> {
+        UniformSpartanVerifier::verify::<PCS, T>(key, proof, verifier_setup, transcript)
     }
 }
 
@@ -199,6 +281,85 @@ mod tests {
             FirstRoundStrategy::Standard,
         );
         assert!(matches!(result, Err(SpartanError::ConstraintViolation(0))));
+    }
+
+    mod uniform {
+        use super::*;
+        use jolt_spartan::UniformSpartanKey;
+        use num_traits::One;
+
+        fn test_key(num_cycles: usize) -> UniformSpartanKey<Fr> {
+            let one = Fr::from_u64(1);
+            UniformSpartanKey::new(
+                num_cycles,
+                2,
+                4,
+                vec![vec![(1, one)], vec![(2, one)]],
+                vec![vec![(1, one)], vec![(1, one)]],
+                vec![vec![(2, one)], vec![(3, one)]],
+            )
+        }
+
+        fn make_cycle_witness(x: u64) -> Vec<Fr> {
+            vec![
+                Fr::one(),
+                Fr::from_u64(x),
+                Fr::from_u64(x * x),
+                Fr::from_u64(x * x * x),
+            ]
+        }
+
+        fn make_flat_witness(key: &UniformSpartanKey<Fr>, cycle_witnesses: &[Vec<Fr>]) -> Vec<Fr> {
+            let total_cols_padded = key.total_cols().next_power_of_two();
+            let mut flat = vec![Fr::from_u64(0); total_cols_padded];
+            for (c, w) in cycle_witnesses.iter().enumerate() {
+                let base = c * key.num_vars_padded;
+                for (v, &val) in w.iter().enumerate().take(key.num_vars) {
+                    flat[base + v] = val;
+                }
+            }
+            flat
+        }
+
+        #[test]
+        fn uniform_prove_and_verify_round_trip() {
+            let key = test_key(4);
+            let witnesses = vec![
+                make_cycle_witness(2),
+                make_cycle_witness(3),
+                make_cycle_witness(5),
+                make_cycle_witness(7),
+            ];
+            let flat = make_flat_witness(&key, &witnesses);
+
+            let mut pt = Blake2bTranscript::new(b"uniform-s1");
+            let result =
+                UniformSpartanStage::<MockPCS>::prove(&key, &witnesses, &flat, &(), &mut pt)
+                    .expect("proving should succeed");
+
+            assert_eq!(result.r_x.len(), key.num_row_vars());
+            assert_eq!(result.r_y.len(), key.num_col_vars());
+            assert_eq!(result.witness_opening_claim.eval, result.proof.witness_eval);
+            assert_eq!(result.witness_opening_claim.point, result.r_y);
+
+            let mut vt = Blake2bTranscript::new(b"uniform-s1");
+            UniformSpartanStage::<MockPCS>::verify(&key, &result.proof, &(), &mut vt)
+                .expect("verification should succeed");
+        }
+
+        #[test]
+        fn uniform_bad_witness_rejected() {
+            let key = test_key(2);
+            let mut witnesses = vec![make_cycle_witness(3), make_cycle_witness(5)];
+            witnesses[1][2] = Fr::from_u64(26); // y should be 25
+
+            let flat = make_flat_witness(&key, &witnesses);
+
+            let mut pt = Blake2bTranscript::new(b"uniform-s1-bad");
+            let result =
+                UniformSpartanStage::<MockPCS>::prove(&key, &witnesses, &flat, &(), &mut pt);
+            assert!(matches!(result, Err(SpartanError::ConstraintViolation(_))));
+        }
     }
 
     #[test]

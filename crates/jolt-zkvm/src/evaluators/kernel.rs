@@ -1,13 +1,13 @@
 //! Backend-generic [`SumcheckCompute`] via compiled kernels.
 //!
-//! [`KernelWitness`] implements the sumcheck witness protocol by delegating
-//! all heavy computation to a [`ComputeBackend`]. The composition formula
-//! lives in a [`CompiledKernel`](jolt_compute::ComputeBackend::CompiledKernel),
+//! [`KernelEvaluator`] implements the sumcheck round-polynomial evaluation by
+//! delegating all heavy computation to a [`ComputeBackend`]. The composition
+//! formula lives in a [`CompiledKernel`](jolt_compute::ComputeBackend::CompiledKernel),
 //! compiled from a [`KernelDescriptor`](jolt_ir::KernelDescriptor) at setup
 //! time.
 //!
-//! This replaces hand-written witnesses like [`EqProductCompute`](super::eq_product::EqProductCompute)
-//! and [`HammingBooleanityCompute`](super::hamming::HammingBooleanityCompute)
+//! This replaces hand-written evaluators like [`EqProductEvaluator`](super::eq_product::EqProductEvaluator)
+//! and [`HammingBooleanityEvaluator`](super::hamming::HammingBooleanityEvaluator)
 //! with a single generic implementation that works on any backend (CPU, GPU).
 //!
 //! # Data layout
@@ -26,21 +26,21 @@
 
 use std::sync::Arc;
 
-use jolt_compute::ComputeBackend;
+use jolt_compute::{BindingOrder, ComputeBackend};
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::prover::SumcheckCompute;
 
-/// Backend-generic sumcheck witness using a compiled kernel.
+/// Backend-generic sumcheck evaluator using a compiled kernel.
 ///
 /// Stores polynomial evaluation tables as backend buffers and delegates
 /// `round_polynomial()` to [`pairwise_reduce`](ComputeBackend::pairwise_reduce)
 /// and `bind()` to [`interpolate_pairs_batch`](ComputeBackend::interpolate_pairs_batch).
 ///
 /// After monomorphization over [`CpuBackend`](jolt_compute::CpuBackend), this
-/// compiles to the same code as a hand-written witness — the `ComputeBackend`
+/// compiles to the same code as a hand-written evaluator — the `ComputeBackend`
 /// trait calls become direct function calls with no indirection.
-pub struct KernelWitness<F: Field, B: ComputeBackend> {
+pub struct KernelEvaluator<F: Field, B: ComputeBackend> {
     /// Input buffers (interleaved lo/hi pairs).
     ///
     /// The ordering matches the kernel's `Opening(i)` indices. Typically
@@ -66,8 +66,8 @@ pub struct KernelWitness<F: Field, B: ComputeBackend> {
     backend: Arc<B>,
 }
 
-impl<F: Field, B: ComputeBackend> KernelWitness<F, B> {
-    /// Creates a kernel witness from pre-uploaded buffers.
+impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
+    /// Creates a kernel evaluator from pre-uploaded buffers.
     ///
     /// # Arguments
     ///
@@ -90,7 +90,7 @@ impl<F: Field, B: ComputeBackend> KernelWitness<F, B> {
     ) -> Self {
         assert!(
             !inputs.is_empty(),
-            "KernelWitness requires at least one input"
+            "KernelEvaluator requires at least one input"
         );
         let n = backend.len(&inputs[0]);
         assert!(
@@ -121,7 +121,7 @@ impl<F: Field, B: ComputeBackend> KernelWitness<F, B> {
         }
     }
 
-    /// Creates a kernel witness with unit weights (all ones).
+    /// Creates a kernel evaluator with unit weights (all ones).
     ///
     /// Convenience constructor that allocates a weight buffer filled with
     /// `F::one()`. Use this for non-split-eq sumcheck instances where the
@@ -134,7 +134,7 @@ impl<F: Field, B: ComputeBackend> KernelWitness<F, B> {
     ) -> Self {
         assert!(
             !inputs.is_empty(),
-            "KernelWitness requires at least one input"
+            "KernelEvaluator requires at least one input"
         );
         let n = backend.len(&inputs[0]);
         let half = n / 2;
@@ -154,12 +154,16 @@ impl<F: Field, B: ComputeBackend> KernelWitness<F, B> {
     }
 }
 
-impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelWitness<F, B> {
+impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let input_refs: Vec<&B::Buffer<F>> = self.inputs.iter().collect();
-        let evals =
-            self.backend
-                .pairwise_reduce(&input_refs, &self.weights, &self.kernel, self.num_evals);
+        let evals = self.backend.pairwise_reduce(
+            &input_refs,
+            &self.weights,
+            &self.kernel,
+            self.num_evals,
+            BindingOrder::LowToHigh,
+        );
         UnivariatePoly::interpolate_over_integers(&evals)
     }
 
@@ -181,8 +185,8 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelWitness<F, B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::witnesses::eq_product::EqProductCompute;
-    use crate::witnesses::hamming::HammingBooleanityCompute;
+    use crate::evaluators::eq_product::EqProductEvaluator;
+    use crate::evaluators::hamming::HammingBooleanityEvaluator;
     use jolt_compute::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
@@ -237,8 +241,8 @@ mod tests {
         (desc, kernel)
     }
 
-    /// Verifies that KernelWitness produces the same round polynomial as
-    /// EqProductCompute at each round, with the same bind behavior.
+    /// Verifies that KernelEvaluator produces the same round polynomial as
+    /// EqProductEvaluator at each round, with the same bind behavior.
     #[test]
     fn kernel_witness_matches_eq_product_round_by_round() {
         let backend = cpu();
@@ -250,11 +254,11 @@ mod tests {
         let eq_table = EqPolynomial::new(r).evaluations();
         let g_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let mut hand = EqProductCompute::new(g_table.clone(), eq_table.clone(), num_vars);
+        let mut hand = EqProductEvaluator::new(g_table.clone(), eq_table.clone(), num_vars);
 
         let (desc, kernel) = compile_eq_product_kernel();
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
-        let mut kw = KernelWitness::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+        let mut kw = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         for round in 0..num_vars {
             let hand_poly = hand.round_polynomial();
@@ -276,8 +280,8 @@ mod tests {
         }
     }
 
-    /// Verifies that KernelWitness produces the same round polynomial as
-    /// HammingBooleanityCompute at each round.
+    /// Verifies that KernelEvaluator produces the same round polynomial as
+    /// HammingBooleanityEvaluator at each round.
     #[test]
     fn kernel_witness_matches_hamming_round_by_round() {
         let backend = cpu();
@@ -290,11 +294,11 @@ mod tests {
         // Boolean-valued polynomial
         let h_table: Vec<Fr> = (0..n).map(|i| Fr::from_u64(i as u64 % 2)).collect();
 
-        let mut hand = HammingBooleanityCompute::new(h_table.clone(), eq_table.clone(), num_vars);
+        let mut hand = HammingBooleanityEvaluator::new(h_table.clone(), eq_table.clone(), num_vars);
 
         let (desc, kernel) = compile_hamming_kernel();
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
-        let mut kw = KernelWitness::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+        let mut kw = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         for round in 0..num_vars {
             let hand_poly = hand.round_polynomial();
@@ -315,7 +319,7 @@ mod tests {
         }
     }
 
-    /// Full sumcheck prove/verify using KernelWitness for eq · g.
+    /// Full sumcheck prove/verify using KernelEvaluator for eq · g.
     #[test]
     fn kernel_witness_eq_product_prove_verify() {
         let backend = cpu();
@@ -342,7 +346,7 @@ mod tests {
         let (desc, kernel) = compile_eq_product_kernel();
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut witness =
-            KernelWitness::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"kw_eq_product");
         let proof = SumcheckProver::prove(
@@ -362,7 +366,7 @@ mod tests {
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
 
-    /// Full sumcheck prove/verify using KernelWitness for hamming booleanity.
+    /// Full sumcheck prove/verify using KernelEvaluator for hamming booleanity.
     #[test]
     fn kernel_witness_hamming_prove_verify() {
         let backend = cpu();
@@ -390,7 +394,7 @@ mod tests {
         let (desc, kernel) = compile_hamming_kernel();
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
         let mut witness =
-            KernelWitness::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"kw_hamming");
         let proof = SumcheckProver::prove(
@@ -438,7 +442,7 @@ mod tests {
         let (desc, kernel) = compile_hamming_kernel();
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
         let mut witness =
-            KernelWitness::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"kw_hamming_random");
         let proof = SumcheckProver::prove(
@@ -509,7 +513,7 @@ mod tests {
             backend.upload(&c_table),
         ];
         let mut witness =
-            KernelWitness::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let claim = SumcheckClaim {
             num_vars,
@@ -548,7 +552,7 @@ mod tests {
 
         let (desc, kernel) = compile_eq_product_kernel();
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
-        let mut kw = KernelWitness::with_unit_weights(
+        let mut kw = KernelEvaluator::with_unit_weights(
             inputs,
             kernel,
             desc.num_evals(),
@@ -581,7 +585,7 @@ mod tests {
 
         let (desc, kernel) = compile_eq_product_kernel();
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
-        let mut kw = KernelWitness::with_unit_weights(
+        let mut kw = KernelEvaluator::with_unit_weights(
             inputs,
             kernel,
             desc.num_evals(),

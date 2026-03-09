@@ -1,91 +1,83 @@
-//! Generic eq · g product [`SumcheckCompute`] (degree 2).
+//! Generic eq · g product [`SumcheckCompute`] evaluator (degree 2).
 //!
 //! Proves $\sum_{x \in \{0,1\}^n} \widetilde{eq}(r, x) \cdot g(x) = v$ where
 //! $g$ is a pre-computed multilinear polynomial and $v$ is the claimed sum.
 //!
 //! Used by claim reduction stages where $g$ is a random linear combination
 //! of the input polynomials.
+//!
+//! Thin wrapper around [`KernelEvaluator`](super::kernel::KernelEvaluator)
+//! with a degree-2 `Custom` kernel (`eq · g`).
 
+use std::sync::Arc;
+
+use jolt_compute::ComputeBackend;
 use jolt_field::Field;
+use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::prover::SumcheckCompute;
 
-/// Sumcheck witness for the product $\widetilde{eq}(r, x) \cdot g(x)$.
+use super::kernel::KernelEvaluator;
+
+/// Sumcheck evaluator for the product $\widetilde{eq}(r, x) \cdot g(x)$.
 ///
-/// Degree 2 per variable (1 from eq + 1 from g). Each round evaluates
-/// at $t = 0, 1, 2$ and interpolates the quadratic round polynomial.
-pub struct EqProductCompute<F: Field> {
-    g_table: Vec<F>,
-    eq_table: Vec<F>,
-    num_vars: usize,
-    round: usize,
+/// Degree 2 per variable (1 from eq + 1 from g). Delegates all computation
+/// to [`KernelEvaluator`] via a compiled `eq · g` kernel.
+pub struct EqProductEvaluator<F: Field, B: ComputeBackend> {
+    inner: KernelEvaluator<F, B>,
 }
 
-impl<F: Field> EqProductCompute<F> {
-    /// Creates a witness from the pre-computed $g$ table and eq table.
+impl<F: Field, B: ComputeBackend> EqProductEvaluator<F, B> {
+    /// Creates an evaluator from pre-uploaded eq and g buffers.
     ///
-    /// Both must have length $2^n$.
-    pub fn new(g_table: Vec<F>, eq_table: Vec<F>, num_vars: usize) -> Self {
-        let expected = 1usize << num_vars;
-        assert_eq!(g_table.len(), expected);
-        assert_eq!(eq_table.len(), expected);
+    /// `kernel` must be compiled from [`descriptor()`](Self::descriptor).
+    pub fn new(
+        eq_table: B::Buffer<F>,
+        g_table: B::Buffer<F>,
+        kernel: B::CompiledKernel<F>,
+        backend: Arc<B>,
+    ) -> Self {
+        let num_evals = Self::descriptor().num_evals();
         Self {
-            g_table,
-            eq_table,
-            num_vars,
-            round: 0,
+            inner: KernelEvaluator::with_unit_weights(
+                vec![eq_table, g_table],
+                kernel,
+                num_evals,
+                backend,
+            ),
         }
     }
 
-    #[inline]
-    fn current_size(&self) -> usize {
-        1usize << (self.num_vars - self.round)
+    /// Canonical kernel descriptor for `eq · g`.
+    pub fn descriptor() -> KernelDescriptor {
+        let b = ExprBuilder::new();
+        let eq = b.opening(0);
+        let g = b.opening(1);
+        KernelDescriptor {
+            shape: KernelShape::Custom {
+                expr: b.build(eq * g),
+                num_inputs: 2,
+            },
+            degree: 2,
+            tensor_split: None,
+        }
     }
 }
 
-impl<F: Field> SumcheckCompute<F> for EqProductCompute<F> {
+impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for EqProductEvaluator<F, B> {
     fn round_polynomial(&self) -> UnivariatePoly<F> {
-        let half = self.current_size() / 2;
-        let two = F::from_u64(2);
-        let mut evals = [F::zero(); 3];
-
-        for j in 0..half {
-            let g0 = self.g_table[2 * j];
-            let g1 = self.g_table[2 * j + 1];
-            let e0 = self.eq_table[2 * j];
-            let e1 = self.eq_table[2 * j + 1];
-
-            let dg = g1 - g0;
-            let de = e1 - e0;
-
-            // t=0
-            evals[0] += e0 * g0;
-            // t=1
-            evals[1] += e1 * g1;
-            // t=2
-            evals[2] += (e0 + two * de) * (g0 + two * dg);
-        }
-
-        UnivariatePoly::interpolate_over_integers(&evals)
+        self.inner.round_polynomial()
     }
 
     fn bind(&mut self, challenge: F) {
-        let half = self.current_size() / 2;
-        for j in 0..half {
-            self.g_table[j] =
-                self.g_table[2 * j] + challenge * (self.g_table[2 * j + 1] - self.g_table[2 * j]);
-            self.eq_table[j] = self.eq_table[2 * j]
-                + challenge * (self.eq_table[2 * j + 1] - self.eq_table[2 * j]);
-        }
-        self.g_table.truncate(half);
-        self.eq_table.truncate(half);
-        self.round += 1;
+        self.inner.bind(challenge);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_compute::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_poly::EqPolynomial;
     use jolt_sumcheck::{SumcheckClaim, SumcheckProver, SumcheckVerifier};
@@ -94,8 +86,18 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
+    fn cpu() -> Arc<CpuBackend> {
+        Arc::new(CpuBackend)
+    }
+
+    fn compile_kernel() -> <CpuBackend as ComputeBackend>::CompiledKernel<Fr> {
+        let desc = EqProductEvaluator::<Fr, CpuBackend>::descriptor();
+        jolt_cpu_kernels::compile::<Fr>(&desc)
+    }
+
     #[test]
     fn round_polynomial_consistency_degree_2() {
+        let backend = cpu();
         let num_vars = 3;
         let n = 1usize << num_vars;
         let mut rng = ChaCha20Rng::seed_from_u64(42);
@@ -103,10 +105,15 @@ mod tests {
         let eq_table = EqPolynomial::new(r).evaluations();
         let g_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let witness = EqProductCompute::new(g_table.clone(), eq_table.clone(), num_vars);
+        let kernel = compile_kernel();
+        let witness = EqProductEvaluator::new(
+            backend.upload(&eq_table),
+            backend.upload(&g_table),
+            kernel,
+            backend,
+        );
         let poly = witness.round_polynomial();
 
-        // Verify at t=0 and t=1
         let s0: Fr = (0..n / 2).map(|j| eq_table[2 * j] * g_table[2 * j]).sum();
         let s1: Fr = (0..n / 2)
             .map(|j| eq_table[2 * j + 1] * g_table[2 * j + 1])
@@ -118,6 +125,7 @@ mod tests {
 
     #[test]
     fn full_prove_verify() {
+        let backend = cpu();
         let num_vars = 4;
         let n = 1usize << num_vars;
         let mut rng = ChaCha20Rng::seed_from_u64(99);
@@ -137,7 +145,13 @@ mod tests {
             claimed_sum,
         };
 
-        let mut witness = EqProductCompute::new(g_table, eq_table, num_vars);
+        let kernel = compile_kernel();
+        let mut witness = EqProductEvaluator::new(
+            backend.upload(&eq_table),
+            backend.upload(&g_table),
+            kernel,
+            backend,
+        );
 
         let mut pt = Blake2bTranscript::new(b"eq_product_test");
         let proof = SumcheckProver::prove(

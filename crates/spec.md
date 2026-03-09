@@ -1269,7 +1269,7 @@ jolt-dory/
 
 ---
 
-### 4.9 `jolt-compute` — Backend-Agnostic Compute Device Abstraction — **PLANNED**
+### 4.9 `jolt-compute` — Backend-Agnostic Compute Device Abstraction — **DONE**
 
 **Purpose:** Defines buffer management and parallel primitives on typed field-element buffers, abstracting over CPU and GPU compute backends. No awareness of sumcheck, polynomials, or cryptographic protocols — purely a compute-infrastructure crate. See [backend_agnostic.md](./backend_agnostic.md) for the full design rationale.
 
@@ -1281,15 +1281,18 @@ jolt-dory/
 - **Compact buffer support.** Buffers are generic over element type (`u8`, `bool`, `i64`, `F`), matching `jolt-poly`'s `Polynomial<T>` pattern. Compact buffers use up to 32x less device memory.
 - **Opaque kernel compilation.** `CompiledKernel` is an associated type. Each backend compiles from `jolt-ir::KernelDescriptor` via an inherent `compile` method — jolt-compute does not depend on jolt-ir.
 - **Delayed modular reduction.** Both CPU and GPU backends accumulate multiply-add results as wide integers internally, reducing once per accumulation group. This is an implementation detail of `pairwise_reduce`, not exposed in the trait.
+- **Hybrid CPU/GPU switching.** The trait's opaque `Buffer<T>` associated type enables a `HybridBackend` that wraps both CPU and GPU backends with threshold-based routing, downloading GPU buffers to CPU when they shrink below a size threshold. See [backend_agnostic.md §9](./backend_agnostic.md) for the design.
 
 #### Core Trait
 
 ```rust
 pub trait Scalar: Copy + Send + Sync + 'static {}
 
+pub enum BindingOrder { LowToHigh, HighToLow }
+
 pub trait ComputeBackend: Send + Sync + 'static {
     type Buffer<T: Scalar>: Send + Sync;
-    type CompiledKernel: Send + Sync;
+    type CompiledKernel<F: Field>: Send + Sync;
 
     // Buffer management
     fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T>;
@@ -1297,21 +1300,51 @@ pub trait ComputeBackend: Send + Sync + 'static {
     fn alloc<T: Scalar>(&self, len: usize) -> Self::Buffer<T>;
     fn len<T: Scalar>(&self, buf: &Self::Buffer<T>) -> usize;
 
-    // Parallel primitives
+    // Pairwise interpolation (allocating and in-place, single and batched)
     fn interpolate_pairs<T, F>(&self, buf: Self::Buffer<T>, scalar: F) -> Self::Buffer<F>
     where T: Scalar, F: Field + From<T>;
+    fn interpolate_pairs_batch<F: Field>(&self, bufs: Vec<Self::Buffer<F>>, scalar: F) -> Vec<Self::Buffer<F>>;
+    fn interpolate_pairs_inplace<F: Field>(&self, buf: &mut Self::Buffer<F>, scalar: F, order: BindingOrder);
+    fn interpolate_pairs_batch_inplace<F: Field>(&self, bufs: &mut [Self::Buffer<F>], scalar: F, order: BindingOrder);
 
+    // Composition-reduce (weighted kernel evaluation over pairs)
     fn pairwise_reduce<F: Field>(
-        &self,
-        inputs: &[&Self::Buffer<F>],
-        weights: &Self::Buffer<F>,
-        kernel: &Self::CompiledKernel,
-        degree: usize,
+        &self, inputs: &[&Self::Buffer<F>], weights: &Self::Buffer<F>,
+        kernel: &Self::CompiledKernel<F>, num_evals: usize, order: BindingOrder,
     ) -> Vec<F>;
+    fn pairwise_reduce_fixed<F: Field, const D: usize>(
+        &self, inputs: &[&Self::Buffer<F>], weights: &Self::Buffer<F>,
+        kernel: &Self::CompiledKernel<F>, order: BindingOrder,
+    ) -> [F; D];
+    fn pairwise_reduce_multi<F: Field>(
+        &self, inputs: &[&Self::Buffer<F>], weights: &Self::Buffer<F>,
+        kernels: &[(&Self::CompiledKernel<F>, usize)], order: BindingOrder,
+    ) -> Vec<Vec<F>>;
 
+    // Split-eq tensor-product reduce (factored outer × inner weights)
+    fn tensor_pairwise_reduce<F: Field>(
+        &self, inputs: &[&Self::Buffer<F>], outer_weights: &Self::Buffer<F>,
+        inner_weights: &Self::Buffer<F>, kernel: &Self::CompiledKernel<F>, num_evals: usize,
+    ) -> Vec<F>;
+    fn tensor_pairwise_reduce_fixed<F: Field, const D: usize>(
+        &self, inputs: &[&Self::Buffer<F>], outer_weights: &Self::Buffer<F>,
+        inner_weights: &Self::Buffer<F>, kernel: &Self::CompiledKernel<F>,
+    ) -> [F; D];
+
+    // Eq polynomial
     fn product_table<F: Field>(&self, point: &[F]) -> Self::Buffer<F>;
+
+    // Element-wise buffer operations
+    fn sum<F: Field>(&self, buf: &Self::Buffer<F>) -> F;
+    fn dot_product<F: Field>(&self, a: &Self::Buffer<F>, b: &Self::Buffer<F>) -> F;
+    fn scale<F: Field>(&self, buf: &mut Self::Buffer<F>, scalar: F);
+    fn add<F: Field>(&self, a: &Self::Buffer<F>, b: &Self::Buffer<F>) -> Self::Buffer<F>;
+    fn sub<F: Field>(&self, a: &Self::Buffer<F>, b: &Self::Buffer<F>) -> Self::Buffer<F>;
+    fn accumulate<F: Field>(&self, buf: &mut Self::Buffer<F>, scalar: F, other: &Self::Buffer<F>);
 }
 ```
+
+`BindingOrder` controls how pairs are formed: `LowToHigh` reads interleaved `(buf[2i], buf[2i+1])` (default for most sumcheck instances), `HighToLow` reads split-half `(buf[i], buf[i+n/2])` (Spartan outer, RAM checking).
 
 #### Integration with jolt-ir
 
@@ -1319,7 +1352,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
 - `ProductSum { num_inputs_per_product, num_products }` — explicit fast-path for the dominant product-of-linear-interpolants pattern (~80% of prover time)
 - `Custom { expr, num_inputs }` — escape hatch for bespoke compositions (RAM read-write phases, Spartan outer)
 
-Each backend compiles `KernelDescriptor` into its `CompiledKernel` type at setup time. For `ProductSum`, GPU backends generate D-specialized kernels with fully unrolled product evaluation. For `Custom`, they either interpret the Expr or generate shader source via the `CircuitEmitter` visitor pattern.
+Each backend compiles `KernelDescriptor` into its `CompiledKernel<F>` type at setup time. For `ProductSum`, GPU backends generate D-specialized kernels with fully unrolled product evaluation. For `Custom`, they either interpret the Expr or generate shader source via the `CircuitEmitter` visitor pattern.
 
 #### Integration with jolt-zkvm
 
@@ -1332,13 +1365,13 @@ jolt-compute/
 ├── Cargo.toml
 ├── README.md
 ├── src/
-│   ├── lib.rs              # Scalar, ComputeBackend, DeviceBuffer traits
-│   ├── cpu.rs              # CpuBackend, CpuKernel (Rayon-based)
-│   └── error.rs            # ComputeError
+│   ├── lib.rs              # Re-exports
+│   ├── traits.rs           # Scalar, BindingOrder, ComputeBackend trait
+│   └── cpu.rs              # CpuBackend, CpuKernel (Rayon-based, 57 tests)
 ├── tests/
-│   └── cpu_backend.rs      # CpuBackend correctness tests
+│   └── cross_crate.rs      # Cross-crate integration tests
 └── benches/
-    └── primitives.rs       # interpolate_pairs, pairwise_reduce benchmarks
+    └── primitives.rs       # 9 benchmark groups (interpolate, reduce, tensor, product_table)
 ```
 
 ---

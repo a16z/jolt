@@ -10,6 +10,7 @@ use jolt_sumcheck::handler::RoundHandler;
 use jolt_sumcheck::{BatchedSumcheckProver, ClearRoundHandler, SumcheckProof};
 use jolt_transcript::Transcript;
 
+use crate::proof::SumcheckStageProof;
 use crate::stage::ProverStage;
 
 /// Wrapper handler that captures Fiat-Shamir challenges alongside the proof.
@@ -46,13 +47,14 @@ impl<F: Field> RoundHandler<F> for CaptureHandler<F> {
     }
 }
 
-/// Drives the proving pipeline, returning per-stage sumcheck proofs and
-/// the accumulated opening claims.
+/// Drives the proving pipeline, returning per-stage sumcheck proofs (with
+/// evaluations) and the accumulated opening claims.
 ///
 /// For each stage:
 /// 1. [`build()`](ProverStage::build) — construct claims and witnesses
 /// 2. [`BatchedSumcheckProver::prove_with_handler`] — run the sumcheck
 /// 3. [`extract_claims()`](ProverStage::extract_claims) — produce opening claims
+///    and capture per-polynomial evaluations for the proof
 ///
 /// Opening claims accumulate across stages and feed into each subsequent
 /// stage's `build()` method, threading data through the pipeline.
@@ -60,13 +62,13 @@ pub fn prove_stages<F, T>(
     stages: &mut [Box<dyn ProverStage<F, T>>],
     transcript: &mut T,
     challenge_fn: impl Fn(T::Challenge) -> F + Copy,
-) -> (Vec<SumcheckProof<F>>, Vec<ProverClaim<F>>)
+) -> (Vec<SumcheckStageProof<F>>, Vec<ProverClaim<F>>)
 where
     F: Field,
     T: Transcript,
 {
     let mut all_opening_claims: Vec<ProverClaim<F>> = Vec::new();
-    let mut stage_proofs: Vec<SumcheckProof<F>> = Vec::new();
+    let mut stage_proofs: Vec<SumcheckStageProof<F>> = Vec::new();
 
     for stage in stages.iter_mut() {
         let mut batch = stage.build(&all_opening_claims, transcript);
@@ -92,8 +94,15 @@ where
         };
 
         let new_claims = stage.extract_claims(&challenges, final_eval);
+
+        // Capture per-polynomial evaluations for the verifier
+        let evaluations: Vec<F> = new_claims.iter().map(|c| c.eval).collect();
+
         all_opening_claims.extend(new_claims);
-        stage_proofs.push(proof);
+        stage_proofs.push(SumcheckStageProof {
+            sumcheck_proof: proof,
+            evaluations,
+        });
     }
 
     (stage_proofs, all_opening_claims)

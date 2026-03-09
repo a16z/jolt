@@ -641,11 +641,67 @@ The witness in jolt-zkvm just holds a `B::CompiledKernel` — it doesn't know or
 
 ---
 
-## 9. Open Questions and Future Work
+## 9. Hybrid CPU/GPU Backend
+
+Sumcheck rounds shrink buffers exponentially — a 2^20-element buffer becomes 2^10 after 10 rounds. GPU kernel launch overhead (~5–15 µs on Metal) dominates at small sizes, making CPU faster for the tail rounds. The `ComputeBackend` trait already supports this without modification via a `HybridBackend` that wraps both backends and routes dynamically.
+
+### Design
+
+```rust
+pub struct HybridBackend<G: ComputeBackend, C: ComputeBackend> {
+    gpu: G,
+    cpu: C,
+    threshold: usize,  // e.g. 4096 elements
+}
+
+pub enum HybridBuffer<T: Scalar, G: ComputeBackend, C: ComputeBackend> {
+    Gpu(G::Buffer<T>),
+    Cpu(C::Buffer<T>),
+}
+```
+
+`HybridBackend` implements `ComputeBackend` by dispatching on the buffer variant:
+
+- **Large buffers (≥ threshold):** Operations dispatch to the GPU backend.
+- **Small buffers (< threshold):** Operations dispatch to the CPU backend.
+- **Transition:** When `interpolate_pairs_inplace` shrinks a GPU buffer below the threshold, the implementation downloads the data and converts to a `Cpu` variant. This is a one-time transfer per buffer; once on CPU, it stays there.
+
+```rust
+fn interpolate_pairs_inplace<F: Field>(
+    &self, buf: &mut Self::Buffer<F>, scalar: F, order: BindingOrder,
+) {
+    match buf {
+        HybridBuffer::Gpu(g) => {
+            self.gpu.interpolate_pairs_inplace(g, scalar, order);
+            if self.gpu.len(g) < self.threshold {
+                let data = self.gpu.download(g);
+                *buf = HybridBuffer::Cpu(self.cpu.upload(&data));
+            }
+        }
+        HybridBuffer::Cpu(c) => self.cpu.interpolate_pairs_inplace(c, scalar, order),
+    }
+}
+```
+
+### Why this requires zero trait changes
+
+`ComputeBackend::Buffer<T>` is an associated type — callers never index into it or assume its representation. The `HybridBuffer` enum satisfies `Send + Sync` as long as both inner buffers do. All other trait methods follow the same match-and-dispatch pattern.
+
+### Cross-variant operations
+
+`pairwise_reduce` takes `&[&Self::Buffer<F>]` — all inputs must be the same variant. In practice this holds because all buffers in a sumcheck instance start at the same size and shrink together. If a mixed case arose, the implementation would download GPU buffers to CPU (small buffers are cheap to transfer).
+
+### Threshold selection
+
+The crossover point depends on hardware. On Apple M-series, GPU launch overhead is ~5 µs, while a 4096-element `pairwise_reduce` on CPU takes ~2 µs. A threshold of 4096–8192 elements works well. The threshold can be tuned at construction time or auto-calibrated with a one-time microbenchmark during backend initialization.
+
+---
+
+## 10. Open Questions and Future Work
 
 ### Immediate open questions
 
-1. **Buffer lifetime on bind:** `interpolate_pairs` currently consumes the input buffer and returns a new one (needed for type transition `T → F`). For `F → F` rounds, should there be an in-place variant that avoids reallocation? The `From<F> for F` identity should allow the compiler to optimize this, but explicit in-place may be clearer for GPU backends.
+1. ~~**Buffer lifetime on bind:**~~ Resolved — `interpolate_pairs_inplace` and `interpolate_pairs_batch_inplace` provide in-place `F → F` binding with configurable `BindingOrder`.
 
 2. **Mixed-type inputs to `pairwise_reduce`:** If some buffers in a product group are `Buffer<u8>` and others are `Buffer<Fr>`, the current signature requires all `Buffer<F>`. Should promotion happen before `pairwise_reduce` (simpler API) or inside it (less memory)?
 
@@ -656,5 +712,5 @@ The witness in jolt-zkvm just holds a `B::CompiledKernel` — it doesn't know or
 - **MSM engine trait:** If MSM (multi-scalar multiplication) becomes a bottleneck independent of PCS, a similar `msm_reduce` primitive could be added to `ComputeBackend`.
 - **NTT primitives:** If Jolt adds NTT-based polynomial operations (e.g., for univariate skip), the same pattern applies.
 - **Streaming support:** For polynomials too large to fit in device memory, a `StreamingComputeBackend` extension with chunk-based processing.
-- **Multi-device:** Splitting work across multiple GPUs or GPU + CPU hybrid.
+- **Multi-device:** Splitting work across multiple GPUs (the single-GPU hybrid CPU/GPU case is covered in §9).
 - **Kernel caching:** AOT-compiled kernels cached to disk for instant startup on subsequent runs.

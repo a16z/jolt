@@ -1,0 +1,37 @@
+[package]
+name = "jolt-metal"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Apple Metal GPU compute backend for the Jolt zkVM"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-compute = { path = "../jolt-compute", default-features = false }
+jolt-field = { path = "../jolt-field", default-features = false }
+jolt-ir = { path = "../jolt-ir", default-features = false }
+metal = "0.31"
+objc = "0.2"
+block = "0.1"
+tracing.workspace = true
+
+[dev-dependencies]
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-compute = { path = "../jolt-compute" }
+jolt-cpu-kernels = { path = "../jolt-cpu-kernels" }
+rand = { workspace = true }
+rand_core = { workspace = true }
+rand_chacha = { workspace = true }
+num-traits = { workspace = true }
+criterion = { workspace = true }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+
+[features]
+default = []
+
+[[bench]]
+name = "metal_vs_cpu"
+harness = false

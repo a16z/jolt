@@ -6,7 +6,7 @@
 //! Cross-checks against a hand-written SumcheckCompute reference implementation
 //! to ensure the compute layer produces identical round polynomials.
 
-use jolt_compute::{ComputeBackend, CpuBackend};
+use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend};
 use jolt_cpu_kernels::compile;
 use jolt_field::{Field, Fr};
 use jolt_ir::{KernelDescriptor, KernelShape};
@@ -181,6 +181,7 @@ impl SumcheckCompute<Fr> for ComputeWitness {
             &ones,
             &self.kernel,
             3,
+            BindingOrder::LowToHigh,
         );
 
         // Compute P(0) = Σ_i eq_lo[i] * f_lo[i] * g_lo[i]
