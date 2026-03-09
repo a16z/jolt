@@ -295,7 +295,6 @@ impl Transcript for PoseidonTranscript {
         }
         q_powers
     }
-
 }
 
 #[cfg(test)]
@@ -433,8 +432,9 @@ mod tests {
         assert_ne!(t1.state, t3.state, "Infinity vs non-infinity should differ");
 
         // Test 4: Batch and sequential appends differ (different label handling)
-        let points: Vec<Bn254G1> =
-            (0..3).map(|_| Bn254G1(G1Projective::rand(&mut rng))).collect();
+        let points: Vec<Bn254G1> = (0..3)
+            .map(|_| Bn254G1(G1Projective::rand(&mut rng)))
+            .collect();
 
         let mut t_batch = TestTranscript::new(b"batch_test");
         t_batch.append_commitments(b"pts", &points);
@@ -452,7 +452,10 @@ mod tests {
         // Batch determinism
         let mut t_batch2 = TestTranscript::new(b"batch_test");
         t_batch2.append_commitments(b"pts", &points);
-        assert_eq!(t_batch.state, t_batch2.state, "Batch should be deterministic");
+        assert_eq!(
+            t_batch.state, t_batch2.state,
+            "Batch should be deterministic"
+        );
     }
 
     // ============================================================================

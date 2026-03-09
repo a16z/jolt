@@ -50,31 +50,58 @@ fn main() {
 
     println!("\n--- new_circom(4) = 4 inputs, width 5 ---");
     let mut hasher_c4 = Poseidon::<Fr>::new_circom(4).unwrap();
-    let inputs_c4 = [Fr::from(0u64), Fr::from(0u64), Fr::from(0u64), Fr::from(0u64)];
+    let inputs_c4 = [
+        Fr::from(0u64),
+        Fr::from(0u64),
+        Fr::from(0u64),
+        Fr::from(0u64),
+    ];
     let result_c4 = hasher_c4.hash(&inputs_c4).unwrap();
     print_fr("circom(4) hash([0, 0, 0, 0])", result_c4);
 
     let mut hasher4b = Poseidon::<Fr>::new_circom(4).unwrap();
-    let inputs4b = [Fr::from(1u64), Fr::from(2u64), Fr::from(3u64), Fr::from(4u64)];
+    let inputs4b = [
+        Fr::from(1u64),
+        Fr::from(2u64),
+        Fr::from(3u64),
+        Fr::from(4u64),
+    ];
     let result4b = hasher4b.hash(&inputs4b).unwrap();
     print_fr("W4 hash([1, 2, 3, 4])", result4b);
 
     // Width-5 tests
     println!("\n--- Width-5 ---");
     let mut hasher5 = Poseidon::<Fr>::new_circom(5).unwrap();
-    let inputs5 = [Fr::from(0u64), Fr::from(0u64), Fr::from(0u64), Fr::from(0u64), Fr::from(0u64)];
+    let inputs5 = [
+        Fr::from(0u64),
+        Fr::from(0u64),
+        Fr::from(0u64),
+        Fr::from(0u64),
+        Fr::from(0u64),
+    ];
     let result5 = hasher5.hash(&inputs5).unwrap();
     print_fr("W5 hash([0, 0, 0, 0, 0])", result5);
 
     let mut hasher5b = Poseidon::<Fr>::new_circom(5).unwrap();
-    let inputs5b = [Fr::from(1u64), Fr::from(2u64), Fr::from(3u64), Fr::from(4u64), Fr::from(5u64)];
+    let inputs5b = [
+        Fr::from(1u64),
+        Fr::from(2u64),
+        Fr::from(3u64),
+        Fr::from(4u64),
+        Fr::from(5u64),
+    ];
     let result5b = hasher5b.hash(&inputs5b).unwrap();
     print_fr("W5 hash([1, 2, 3, 4, 5])", result5b);
 
     // Go Hash style comparison
     println!("\n--- Go Hash style (width-4, [0, in1, in2, in3]) ---");
     let mut hasher_go_style = Poseidon::<Fr>::new_circom(4).unwrap();
-    let go_style_inputs = [Fr::from(0u64), Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)];
+    let go_style_inputs = [
+        Fr::from(0u64),
+        Fr::from(1u64),
+        Fr::from(2u64),
+        Fr::from(3u64),
+    ];
     let go_style_result = hasher_go_style.hash(&go_style_inputs).unwrap();
     print_fr("W4 hash([0, 1, 2, 3]) (Go Hash style)", go_style_result);
 
@@ -92,7 +119,10 @@ fn main() {
     let mut hasher_init = Poseidon::<Fr>::new_circom(4).unwrap();
     let init_inputs = [label_f, Fr::from(0u64), Fr::from(0u64), Fr::from(0u64)];
     let init_result = hasher_init.hash(&init_inputs).unwrap();
-    println!("Initial state = hash([Jolt, 0, 0, 0]) = {}", init_result.into_bigint());
+    println!(
+        "Initial state = hash([Jolt, 0, 0, 0]) = {}",
+        init_result.into_bigint()
+    );
 }
 
 /// Extract Poseidon constants from light-poseidon for Go implementation
@@ -108,7 +138,10 @@ fn extract_constants() {
     println!();
     println!("// Poseidon constants extracted from light-poseidon (circom-compatible)");
     println!("// For UNOPTIMIZED algorithm: full MDS in all rounds");
-    println!("// Width: 4, Full rounds: {}, Partial rounds: {}", params.full_rounds, params.partial_rounds);
+    println!(
+        "// Width: 4, Full rounds: {}, Partial rounds: {}",
+        params.full_rounds, params.partial_rounds
+    );
     println!();
 
     // ARK constants
@@ -122,7 +155,11 @@ fn extract_constants() {
     println!();
 
     for (i, c) in params.ark.iter().enumerate() {
-        println!("\tarkConstants[{}], _ = new(big.Int).SetString(\"{}\", 10)", i, c.into_bigint());
+        println!(
+            "\tarkConstants[{}], _ = new(big.Int).SetString(\"{}\", 10)",
+            i,
+            c.into_bigint()
+        );
     }
 
     println!();
@@ -134,7 +171,12 @@ fn extract_constants() {
 
     for i in 0..4 {
         for j in 0..4 {
-            println!("\tmdsMatrix[{}][{}], _ = new(big.Int).SetString(\"{}\", 10)", i, j, params.mds[i][j].into_bigint());
+            println!(
+                "\tmdsMatrix[{}][{}], _ = new(big.Int).SetString(\"{}\", 10)",
+                i,
+                j,
+                params.mds[i][j].into_bigint()
+            );
         }
     }
 
@@ -165,7 +207,12 @@ fn debug_poseidon() {
     println!("\nMDS[0][0] = {}", params.mds[0][0].into_bigint());
 
     // Run full Poseidon manually and compare
-    let mut state = vec![Fr::from(0u64), Fr::from(0u64), Fr::from(0u64), Fr::from(0u64)];
+    let mut state = vec![
+        Fr::from(0u64),
+        Fr::from(0u64),
+        Fr::from(0u64),
+        Fr::from(0u64),
+    ];
     let half_rounds = params.full_rounds / 2;
     let all_rounds = params.full_rounds + params.partial_rounds;
 
@@ -190,10 +237,17 @@ fn debug_poseidon() {
             }
         }
         if round < 2 {
-            println!("After full round {round}: {} ...", &state[0].into_bigint().to_string()[..20]);
+            println!(
+                "After full round {round}: {} ...",
+                &state[0].into_bigint().to_string()[..20]
+            );
         }
     }
-    println!("After first half ({} full rounds): {} ...", half_rounds, &state[0].into_bigint().to_string()[..20]);
+    println!(
+        "After first half ({} full rounds): {} ...",
+        half_rounds,
+        &state[0].into_bigint().to_string()[..20]
+    );
 
     // Partial rounds
     for round in half_rounds..(half_rounds + params.partial_rounds) {
@@ -212,7 +266,10 @@ fn debug_poseidon() {
             }
         }
     }
-    println!("After partial rounds: {} ...", &state[0].into_bigint().to_string()[..20]);
+    println!(
+        "After partial rounds: {} ...",
+        &state[0].into_bigint().to_string()[..20]
+    );
 
     // Second half full rounds
     for round in (half_rounds + params.partial_rounds)..all_rounds {
@@ -237,7 +294,12 @@ fn debug_poseidon() {
 
     // Verify against library
     let mut hasher4 = Poseidon::<Fr>::new_circom(4).unwrap();
-    let inputs4 = [Fr::from(0u64), Fr::from(0u64), Fr::from(0u64), Fr::from(0u64)];
+    let inputs4 = [
+        Fr::from(0u64),
+        Fr::from(0u64),
+        Fr::from(0u64),
+        Fr::from(0u64),
+    ];
     let result4 = hasher4.hash(&inputs4).unwrap();
     println!("Library result: {}", result4.into_bigint());
 }

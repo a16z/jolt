@@ -589,4 +589,3 @@ impl PartialEq for AstCommitment {
                 .all(|(a, b)| a.root() == b.root())
     }
 }
-

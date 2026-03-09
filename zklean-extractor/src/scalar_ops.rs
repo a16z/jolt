@@ -85,7 +85,8 @@ pub fn scalar_neg_mod(a: Scalar) -> Scalar {
 /// Note: This uses BigUint for simplicity. For performance-critical code,
 /// Montgomery multiplication would be more efficient.
 pub fn scalar_mul_mod(a: Scalar, b: Scalar) -> Scalar {
-    let result = (scalar_to_biguint(&a) * scalar_to_biguint(&b)) % scalar_to_biguint(&BN254_MODULUS);
+    let result =
+        (scalar_to_biguint(&a) * scalar_to_biguint(&b)) % scalar_to_biguint(&BN254_MODULUS);
     biguint_to_scalar(result)
 }
 

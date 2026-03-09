@@ -1698,10 +1698,7 @@ mod tests {
     #[test]
     fn test_pending_point_elements_round_trip() {
         // Test thread-local point elements tunneling (must be exactly 2 elements)
-        let elements = vec![
-            MleAst::from_u64(100),
-            MleAst::from_u64(200),
-        ];
+        let elements = vec![MleAst::from_u64(100), MleAst::from_u64(200)];
 
         set_pending_point_elements(elements.clone());
         let retrieved = take_pending_point_elements();
@@ -1721,7 +1718,11 @@ mod tests {
     #[should_panic(expected = "Point must have exactly 2 elements")]
     fn test_pending_point_elements_wrong_length() {
         // Should panic if not exactly 2 elements
-        let elements = vec![MleAst::from_u64(1), MleAst::from_u64(2), MleAst::from_u64(3)];
+        let elements = vec![
+            MleAst::from_u64(1),
+            MleAst::from_u64(2),
+            MleAst::from_u64(3),
+        ];
         set_pending_point_elements(elements);
     }
 
@@ -1772,7 +1773,10 @@ mod tests {
     fn test_mle_ast_from_primitives() {
         // Test from_u64
         let val_u64 = MleAst::from_u64(42);
-        assert!(matches!(get_node(val_u64.root()), Node::Atom(Atom::Scalar([42, 0, 0, 0]))));
+        assert!(matches!(
+            get_node(val_u64.root()),
+            Node::Atom(Atom::Scalar([42, 0, 0, 0]))
+        ));
 
         // Test from_u128
         let val_u128 = MleAst::from_u128(0xFEDCBA9876543210_123456789ABCDEF0u128);
@@ -1785,20 +1789,37 @@ mod tests {
 
         // Test from_i64 positive
         let val_i64_pos = MleAst::from_i64(123);
-        assert!(matches!(get_node(val_i64_pos.root()), Node::Atom(Atom::Scalar([123, 0, 0, 0]))));
+        assert!(matches!(
+            get_node(val_i64_pos.root()),
+            Node::Atom(Atom::Scalar([123, 0, 0, 0]))
+        ));
 
         // Test from_i64 negative (should compute p - |n|)
         let val_i64_neg = MleAst::from_i64(-1);
         let node_neg = get_node(val_i64_neg.root());
         // -1 in BN254 is p-1
-        assert!(matches!(node_neg, Node::Atom(Atom::Scalar([0x43e1f593f0000000, 0x2833e84879b97091, 0xb85045b68181585d, 0x30644e72e131a029]))));
+        assert!(matches!(
+            node_neg,
+            Node::Atom(Atom::Scalar([
+                0x43e1f593f0000000,
+                0x2833e84879b97091,
+                0xb85045b68181585d,
+                0x30644e72e131a029
+            ]))
+        ));
 
         // Test from_bool
         let val_true = MleAst::from_bool(true);
-        assert!(matches!(get_node(val_true.root()), Node::Atom(Atom::Scalar([1, 0, 0, 0]))));
+        assert!(matches!(
+            get_node(val_true.root()),
+            Node::Atom(Atom::Scalar([1, 0, 0, 0]))
+        ));
 
         let val_false = MleAst::from_bool(false);
-        assert!(matches!(get_node(val_false.root()), Node::Atom(Atom::Scalar([0, 0, 0, 0]))));
+        assert!(matches!(
+            get_node(val_false.root()),
+            Node::Atom(Atom::Scalar([0, 0, 0, 0]))
+        ));
     }
 
     // =============================================================================

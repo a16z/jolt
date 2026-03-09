@@ -268,7 +268,6 @@ impl Transcript for PoseidonAstTranscript {
         }
         q_powers
     }
-
 }
 
 impl Default for PoseidonAstTranscript {
@@ -335,7 +334,10 @@ mod tests {
         let root = transcript.state.root();
         let node = zklean_extractor::mle_ast::get_node(root);
         assert!(
-            matches!(node, zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)),
+            matches!(
+                node,
+                zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)
+            ),
             "Expected TranscriptHash node after hash_and_update"
         );
     }
@@ -354,7 +356,10 @@ mod tests {
         let root = challenge.root();
         let node = zklean_extractor::mle_ast::get_node(root);
         assert!(
-            matches!(node, zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)),
+            matches!(
+                node,
+                zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)
+            ),
             "Expected TranscriptHash node for challenge"
         );
 
@@ -384,7 +389,10 @@ mod tests {
         let root = transcript.state.root();
         let node = zklean_extractor::mle_ast::get_node(root);
         assert!(
-            matches!(node, zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)),
+            matches!(
+                node,
+                zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)
+            ),
             "Expected TranscriptHash node after append_field_elements"
         );
     }
@@ -426,7 +434,10 @@ mod tests {
         let root = transcript.state.root();
         let node = zklean_extractor::mle_ast::get_node(root);
         assert!(
-            matches!(node, zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)),
+            matches!(
+                node,
+                zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)
+            ),
             "Expected TranscriptHash node after raw_append_u64"
         );
     }
@@ -450,7 +461,9 @@ mod tests {
 
         match node {
             zklean_extractor::mle_ast::Node::TranscriptHash(
-                zklean_extractor::mle_ast::TranscriptHashData::Poseidon(data_edge), _, _
+                zklean_extractor::mle_ast::TranscriptHashData::Poseidon(data_edge),
+                _,
+                _,
             ) => {
                 // Poseidon data element should be Var(42) directly (no ByteReverse)
                 match data_edge {
@@ -459,9 +472,7 @@ mod tests {
                     ) => {
                         assert_eq!(idx, 42, "Expected Var(42), got Var({idx})");
                     }
-                    other => panic!(
-                        "Expected Atom(Var(42)) as Poseidon data arg, got {other:?}"
-                    ),
+                    other => panic!("Expected Atom(Var(42)) as Poseidon data arg, got {other:?}"),
                 }
             }
             _ => panic!("Expected Poseidon node, got {node:?}"),
@@ -503,7 +514,10 @@ mod tests {
         let root = transcript.state.root();
         let node = zklean_extractor::mle_ast::get_node(root);
         assert!(
-            matches!(node, zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)),
+            matches!(
+                node,
+                zklean_extractor::mle_ast::Node::TranscriptHash(_, _, _)
+            ),
             "Expected TranscriptHash node after appending commitment"
         );
     }
