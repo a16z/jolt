@@ -303,7 +303,7 @@ impl R1CSCycleInputs {
         let (ram_read_value, ram_write_value) = match cycle.ram_access() {
             tracer::instruction::RAMAccess::Read(r) => (r.value, r.value),
             tracer::instruction::RAMAccess::Write(w) => (w.pre_value, w.post_value),
-            tracer::instruction::RAMAccess::ReadWrite(rw) => (rw.read.value, rw.write.post_value),
+            tracer::instruction::RAMAccess::ReadWrite(_) => unreachable!("ReadWrite instructions are expanded into inline sequences"),
             tracer::instruction::RAMAccess::NoOp => (0u64, 0u64),
         };
 

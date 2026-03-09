@@ -798,9 +798,8 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
                 let diff = s64_from_diff_u64s(write.post_value, write.pre_value);
                 dense_acc.fmadd(&scaled_ram_inc, &diff);
             }
-            tracer::instruction::RAMAccess::ReadWrite(rw) => {
-                let diff = s64_from_diff_u64s(rw.write.post_value, rw.read.value);
-                dense_acc.fmadd(&scaled_ram_inc, &diff);
+            tracer::instruction::RAMAccess::ReadWrite(_) => {
+                unreachable!("ReadWrite instructions are expanded into inline sequences")
             }
             _ => {}
         }

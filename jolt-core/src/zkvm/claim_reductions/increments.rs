@@ -395,7 +395,7 @@ impl<F: JoltField> IncClaimReductionPhase1State<F> {
                         // RamInc = post_value - pre_value for RAM writes
                         let ram_inc: S64 = match cycle.ram_access() {
                             RAMAccess::Write(w) => s64_from_diff_u64s(w.post_value, w.pre_value),
-                            RAMAccess::ReadWrite(rw) => s64_from_diff_u64s(rw.write.post_value, rw.read.value),
+                            RAMAccess::ReadWrite(_) => unreachable!("ReadWrite instructions are expanded into inline sequences"),
                             _ => S64::from(0i64),
                         };
 
@@ -597,7 +597,7 @@ impl<F: JoltField> IncClaimReductionPhase2State<F> {
 
                         let ram_inc_val: S64 = match cycle.ram_access() {
                             RAMAccess::Write(w) => s64_from_diff_u64s(w.post_value, w.pre_value),
-                            RAMAccess::ReadWrite(rw) => s64_from_diff_u64s(rw.write.post_value, rw.read.value),
+                            RAMAccess::ReadWrite(_) => unreachable!("ReadWrite instructions are expanded into inline sequences"),
                             _ => S64::from(0i64),
                         };
                         let (_, pre_rd, post_rd) = cycle.rd_write().unwrap_or_default();
