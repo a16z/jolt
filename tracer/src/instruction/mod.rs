@@ -310,9 +310,16 @@ pub struct RAMWrite {
     pub post_value: u64,
 }
 
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RAMReadWrite {
+    pub read: RAMRead,
+    pub write: RAMWrite,
+}
+
 pub enum RAMAccess {
     Read(RAMRead),
     Write(RAMWrite),
+    ReadWrite(RAMReadWrite),
     NoOp,
 }
 
@@ -321,6 +328,7 @@ impl RAMAccess {
         match self {
             RAMAccess::Read(read) => read.address as usize,
             RAMAccess::Write(write) => write.address as usize,
+            RAMAccess::ReadWrite(rw) => rw.read.address as usize,
             RAMAccess::NoOp => 0,
         }
     }
@@ -335,6 +343,12 @@ impl From<RAMRead> for RAMAccess {
 impl From<RAMWrite> for RAMAccess {
     fn from(write: RAMWrite) -> Self {
         Self::Write(write)
+    }
+}
+
+impl From<RAMReadWrite> for RAMAccess {
+    fn from(rw: RAMReadWrite) -> Self {
+        Self::ReadWrite(rw)
     }
 }
 
@@ -1723,7 +1737,7 @@ mod tests {
     // Check that the size of Cycle is as expected.
     fn rv32im_cycle_size() {
         let size = size_of::<Cycle>();
-        let expected = 96;
+        let expected = 112;
         assert_eq!(
             size, expected,
             "Cycle size should be {expected} bytes, but is {size} bytes"

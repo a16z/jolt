@@ -90,6 +90,18 @@ impl<F: JoltField> RamCycleMajorEntry<F> {
                     next_val: read_value,
                 })
             }
+            RAMAccess::ReadWrite(rw) => {
+                let read_value = rw.read.value;
+                let post_value = rw.write.post_value;
+                Some(RamCycleMajorEntry {
+                    row: cycle_index,
+                    col: remap_address(rw.read.address, memory_layout).unwrap() as usize,
+                    ra_coeff: F::one(),
+                    val_coeff: F::from_u64(read_value),
+                    prev_val: read_value,
+                    next_val: post_value,
+                })
+            }
             _ => None,
         }
     }
