@@ -1,9 +1,11 @@
-use jolt_sdk::{TrustedAdvice, UntrustedAdvice};
+use jolt_sdk::{serialize_and_print_size, TrustedAdvice, UntrustedAdvice};
 use std::time::Instant;
 use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
+
+    let save_to_disk = std::env::args().any(|arg| arg == "--save");
 
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_merkle_tree(target_dir);
@@ -16,16 +18,26 @@ pub fn main() {
         None,
     );
 
+    if save_to_disk {
+        serialize_and_print_size(
+            "Verifier Preprocessing",
+            "/tmp/jolt_verifier_preprocessing.dat",
+            &verifier_preprocessing,
+        )
+        .expect("Could not serialize preprocessing.");
+    }
+
     let leaf1: &[u8] = &[5u8; 32];
     let leaf2 = [6u8; 32];
     let leaf3 = [7u8; 32];
     let leaf4 = [8u8; 32];
 
-    let (trusted_advice_commitment, trusted_advice_hint) = guest::commit_trusted_advice_merkle_tree(
-        TrustedAdvice::new(leaf2),
-        TrustedAdvice::new(leaf3),
-        &prover_preprocessing,
-    );
+    let (trusted_advice_commitment, trusted_advice_hint) =
+        guest::commit_trusted_advice_merkle_tree(
+            TrustedAdvice::new(leaf2),
+            TrustedAdvice::new(leaf3),
+            &prover_preprocessing,
+        );
 
     let prove_merkle_tree = guest::build_prover_merkle_tree(program, prover_preprocessing.clone());
     let verify_merkle_tree = guest::build_verifier_merkle_tree(verifier_preprocessing);
@@ -40,6 +52,19 @@ pub fn main() {
         trusted_advice_hint,
     );
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+
+    if save_to_disk {
+        serialize_and_print_size("Proof", "/tmp/merkle_proof.bin", &proof)
+            .expect("Could not serialize proof.");
+        serialize_and_print_size("io_device", "/tmp/merkle_io_device.bin", &program_io)
+            .expect("Could not serialize io_device.");
+        serialize_and_print_size(
+            "Trusted Advice Commitment",
+            "/tmp/merkle_trusted_advice.bin",
+            &trusted_advice_commitment,
+        )
+        .expect("Could not serialize trusted advice commitment.");
+    }
 
     // Pass only the first input and trusted_advice commitment to the verifier
     let is_valid = verify_merkle_tree(
