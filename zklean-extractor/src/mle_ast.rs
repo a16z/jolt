@@ -341,6 +341,8 @@ pub enum TranscriptHashData {
     Poseidon(Edge),
     /// Blake2b: variable arity (0..N data elements in a single hash call).
     Blake2b(Vec<Edge>),
+    /// Keccak: variable arity (0..N data elements in a single hash call).
+    Keccak(Vec<Edge>),
 }
 
 impl TranscriptHashData {
@@ -349,6 +351,7 @@ impl TranscriptHashData {
         match self {
             Self::Poseidon(e) => std::slice::from_ref(e),
             Self::Blake2b(v) => v.as_slice(),
+            Self::Keccak(v) => v.as_slice(),
         }
     }
 }
@@ -494,6 +497,20 @@ impl MleAst {
         let data_edges: Vec<Edge> = data.iter().map(|d| edge_for_root(d.root)).collect();
         let root = insert_node(Node::TranscriptHash(
             TranscriptHashData::Blake2b(data_edges),
+            edge_for_root(state.root),
+            edge_for_root(n_rounds.root),
+        ));
+        Self {
+            root,
+            reg_name: state.reg_name.or(n_rounds.reg_name),
+        }
+    }
+
+    /// Keccak hash with variable-arity data.
+    pub fn keccak(state: &Self, n_rounds: &Self, data: &[Self]) -> Self {
+        let data_edges: Vec<Edge> = data.iter().map(|d| edge_for_root(d.root)).collect();
+        let root = insert_node(Node::TranscriptHash(
+            TranscriptHashData::Keccak(data_edges),
             edge_for_root(state.root),
             edge_for_root(n_rounds.root),
         ));
@@ -680,6 +697,7 @@ fn fmt_node(
             let backend_name = match hash_data {
                 TranscriptHashData::Poseidon(_) => "Poseidon",
                 TranscriptHashData::Blake2b(_) => "Blake2b",
+                TranscriptHashData::Keccak(_) => "Keccak",
             };
             write!(f, "transcript_hash({backend_name}, ")?;
             fmt_edge(f, fmt_data, e1, false)?;

@@ -332,6 +332,9 @@ impl<'a> GnarkCodeGen<'a> {
                         TranscriptHashData::Blake2b(_data_edges) => {
                             todo!("Blake2b Go codegen will be implemented in Phase 4")
                         }
+                        TranscriptHashData::Keccak(_data_edges) => {
+                            todo!("Keccak Go codegen will be implemented in Phase 4")
+                        }
                     }
                 }
 
