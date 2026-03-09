@@ -5,8 +5,8 @@
 //! type parameter. This module provides a minimal stub that satisfies the trait
 //! bounds without doing any cryptographic work.
 //!
-//! All curve operations panic since they should never be called during
-//! symbolic execution of stages 1-7.
+//! All curve operations are `unimplemented!()` since they should never be
+//! called during symbolic execution of stages 1-7.
 
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Read, SerializationError, Valid, Write,
@@ -17,54 +17,54 @@ use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
 /// Stub group element for symbolic execution.
 ///
-/// Never constructed at runtime; all operations panic.
+/// Never constructed at runtime; all operations are unimplemented.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AstGroupElement;
 
 impl Add for AstGroupElement {
     type Output = Self;
     fn add(self, _rhs: Self) -> Self {
-        panic!("AstGroupElement::add called during symbolic execution")
+        unimplemented!("AstGroupElement::add called during symbolic execution")
     }
 }
 
 impl<'a> Add<&'a AstGroupElement> for AstGroupElement {
     type Output = Self;
     fn add(self, _rhs: &'a AstGroupElement) -> Self {
-        panic!("AstGroupElement::add called during symbolic execution")
+        unimplemented!("AstGroupElement::add called during symbolic execution")
     }
 }
 
 impl Sub for AstGroupElement {
     type Output = Self;
     fn sub(self, _rhs: Self) -> Self {
-        panic!("AstGroupElement::sub called during symbolic execution")
+        unimplemented!("AstGroupElement::sub called during symbolic execution")
     }
 }
 
 impl<'a> Sub<&'a AstGroupElement> for AstGroupElement {
     type Output = Self;
     fn sub(self, _rhs: &'a AstGroupElement) -> Self {
-        panic!("AstGroupElement::sub called during symbolic execution")
+        unimplemented!("AstGroupElement::sub called during symbolic execution")
     }
 }
 
 impl Neg for AstGroupElement {
     type Output = Self;
     fn neg(self) -> Self {
-        panic!("AstGroupElement::neg called during symbolic execution")
+        unimplemented!("AstGroupElement::neg called during symbolic execution")
     }
 }
 
 impl AddAssign for AstGroupElement {
     fn add_assign(&mut self, _rhs: Self) {
-        panic!("AstGroupElement::add_assign called during symbolic execution")
+        unimplemented!("AstGroupElement::add_assign called during symbolic execution")
     }
 }
 
 impl SubAssign for AstGroupElement {
     fn sub_assign(&mut self, _rhs: Self) {
-        panic!("AstGroupElement::sub_assign called during symbolic execution")
+        unimplemented!("AstGroupElement::sub_assign called during symbolic execution")
     }
 }
 
@@ -108,11 +108,11 @@ impl JoltGroupElement for AstGroupElement {
     }
 
     fn double(&self) -> Self {
-        panic!("AstGroupElement::double called during symbolic execution")
+        unimplemented!("AstGroupElement::double called during symbolic execution")
     }
 
     fn scalar_mul<F: JoltField>(&self, _scalar: &F) -> Self {
-        panic!("AstGroupElement::scalar_mul called during symbolic execution")
+        unimplemented!("AstGroupElement::scalar_mul called during symbolic execution")
     }
 }
 
@@ -123,20 +123,20 @@ pub struct AstGTElement;
 impl Add for AstGTElement {
     type Output = Self;
     fn add(self, _rhs: Self) -> Self {
-        panic!("AstGTElement::add called during symbolic execution")
+        unimplemented!("AstGTElement::add called during symbolic execution")
     }
 }
 
 impl<'a> Add<&'a AstGTElement> for AstGTElement {
     type Output = Self;
     fn add(self, _rhs: &'a AstGTElement) -> Self {
-        panic!("AstGTElement::add called during symbolic execution")
+        unimplemented!("AstGTElement::add called during symbolic execution")
     }
 }
 
 impl AddAssign for AstGTElement {
     fn add_assign(&mut self, _rhs: Self) {
-        panic!("AstGTElement::add_assign called during symbolic execution")
+        unimplemented!("AstGTElement::add_assign called during symbolic execution")
     }
 }
 
@@ -183,30 +183,30 @@ impl JoltCurve for AstCurve {
     type GT = AstGTElement;
 
     fn g1_generator() -> Self::G1 {
-        panic!("AstCurve::g1_generator called during symbolic execution")
+        unimplemented!("AstCurve::g1_generator called during symbolic execution")
     }
 
     fn g2_generator() -> Self::G2 {
-        panic!("AstCurve::g2_generator called during symbolic execution")
+        unimplemented!("AstCurve::g2_generator called during symbolic execution")
     }
 
     fn pairing(_g1: &Self::G1, _g2: &Self::G2) -> Self::GT {
-        panic!("AstCurve::pairing called during symbolic execution")
+        unimplemented!("AstCurve::pairing called during symbolic execution")
     }
 
     fn multi_pairing(_g1s: &[Self::G1], _g2s: &[Self::G2]) -> Self::GT {
-        panic!("AstCurve::multi_pairing called during symbolic execution")
+        unimplemented!("AstCurve::multi_pairing called during symbolic execution")
     }
 
     fn g1_msm<F: JoltField>(_bases: &[Self::G1], _scalars: &[F]) -> Self::G1 {
-        panic!("AstCurve::g1_msm called during symbolic execution")
+        unimplemented!("AstCurve::g1_msm called during symbolic execution")
     }
 
     fn g2_msm<F: JoltField>(_bases: &[Self::G2], _scalars: &[F]) -> Self::G2 {
-        panic!("AstCurve::g2_msm called during symbolic execution")
+        unimplemented!("AstCurve::g2_msm called during symbolic execution")
     }
 
     fn random_g1<R: rand_core::RngCore>(_rng: &mut R) -> Self::G1 {
-        panic!("AstCurve::random_g1 called during symbolic execution")
+        unimplemented!("AstCurve::random_g1 called during symbolic execution")
     }
 }
