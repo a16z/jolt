@@ -52,6 +52,9 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
     /// G2 group element type
     type G2: JoltGroupElement;
 
+    /// G1 affine representation — pre-converted for fast MSM
+    type G1Affine: Clone + Copy + Debug + Send + Sync + 'static;
+
     /// Target group element type (result of pairing)
     type GT: Clone
         + Debug
@@ -72,6 +75,9 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
     /// Returns the generator of G2
     fn g2_generator() -> Self::G2;
 
+    /// Convert projective G1 to affine (field inversion)
+    fn g1_to_affine(point: &Self::G1) -> Self::G1Affine;
+
     /// Compute pairing e(g1, g2)
     fn pairing(g1: &Self::G1, g2: &Self::G2) -> Self::GT;
 
@@ -80,6 +86,9 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
 
     /// Multi-scalar multiplication in G1: Σᵢ scalars[i] * bases[i]
     fn g1_msm<F: JoltField>(bases: &[Self::G1], scalars: &[F]) -> Self::G1;
+
+    /// Multi-scalar multiplication in G1 with pre-converted affine bases
+    fn g1_affine_msm<F: JoltField>(bases: &[Self::G1Affine], scalars: &[F]) -> Self::G1;
 
     /// Multi-scalar multiplication in G2: Σᵢ scalars[i] * bases[i]
     fn g2_msm<F: JoltField>(bases: &[Self::G2], scalars: &[F]) -> Self::G2;
@@ -140,7 +149,8 @@ macro_rules! impl_group_ops {
         impl<F: JoltField> Mul<F> for $Name {
             type Output = Self;
             fn mul(mut self, rhs: F) -> Self {
-                self.0.mul_assign(jolt_field_to_fr(&rhs));
+                self.0
+                    .mul_assign(Fr::from_bigint(rhs.to_ark_bigint()).expect("valid bigint"));
                 self
             }
         }
@@ -160,7 +170,9 @@ macro_rules! impl_group_element {
                 $Name(AdditiveGroup::double(&self.0))
             }
             fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self {
-                $Name(self.0 * jolt_field_to_fr(scalar))
+                let mut result = self.0;
+                result.mul_assign(Fr::from_bigint(scalar.to_ark_bigint()).expect("valid bigint"));
+                $Name(result)
             }
         }
     };
@@ -216,6 +228,7 @@ pub struct Bn254Curve;
 impl JoltCurve for Bn254Curve {
     type G1 = Bn254G1;
     type G2 = Bn254G2;
+    type G1Affine = G1Affine;
     type GT = Bn254GT;
 
     fn g1_generator() -> Self::G1 {
@@ -224,6 +237,11 @@ impl JoltCurve for Bn254Curve {
 
     fn g2_generator() -> Self::G2 {
         Bn254G2(G2Affine::generator().into())
+    }
+
+    #[inline]
+    fn g1_to_affine(point: &Self::G1) -> G1Affine {
+        point.0.into_affine()
     }
 
     fn pairing(g1: &Self::G1, g2: &Self::G2) -> Self::GT {
@@ -243,18 +261,24 @@ impl JoltCurve for Bn254Curve {
         debug_assert_eq!(bases.len(), scalars.len());
 
         let affine_bases: Vec<G1Affine> = bases.iter().map(|b| b.0.into_affine()).collect();
-        let fr_scalars: Vec<Fr> = scalars.iter().map(jolt_field_to_fr).collect();
-        let bigint_scalars: Vec<_> = fr_scalars.iter().map(|s| s.into_bigint()).collect();
+        let bigint_scalars: Vec<_> = scalars.iter().map(|s| s.to_ark_bigint()).collect();
 
         Bn254G1(G1Projective::msm_bigint(&affine_bases, &bigint_scalars))
+    }
+
+    #[inline]
+    fn g1_affine_msm<F: JoltField>(bases: &[G1Affine], scalars: &[F]) -> Self::G1 {
+        debug_assert_eq!(bases.len(), scalars.len());
+
+        let bigint_scalars: Vec<_> = scalars.iter().map(|s| s.to_ark_bigint()).collect();
+        Bn254G1(G1Projective::msm_bigint(bases, &bigint_scalars))
     }
 
     fn g2_msm<F: JoltField>(bases: &[Self::G2], scalars: &[F]) -> Self::G2 {
         debug_assert_eq!(bases.len(), scalars.len());
 
         let affine_bases: Vec<G2Affine> = bases.iter().map(|b| b.0.into_affine()).collect();
-        let fr_scalars: Vec<Fr> = scalars.iter().map(jolt_field_to_fr).collect();
-        let bigint_scalars: Vec<_> = fr_scalars.iter().map(|s| s.into_bigint()).collect();
+        let bigint_scalars: Vec<_> = scalars.iter().map(|s| s.to_ark_bigint()).collect();
 
         Bn254G2(G2Projective::msm_bigint(&affine_bases, &bigint_scalars))
     }
@@ -262,20 +286,6 @@ impl JoltCurve for Bn254Curve {
     fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Self::G1 {
         Bn254G1(G1Projective::rand(rng))
     }
-}
-
-/// Convert a JoltField element to BN254 Fr.
-///
-/// This assumes the JoltField is compatible with BN254's scalar field.
-/// For ark_bn254::Fr, this is a direct conversion.
-#[inline]
-fn jolt_field_to_fr<F: JoltField>(f: &F) -> Fr {
-    // Serialize the field element and deserialize as Fr
-    // This is safe because JoltField elements are assumed to be in the same field
-    let mut bytes = [0u8; 32];
-    f.serialize_uncompressed(&mut bytes[..])
-        .expect("serialization should succeed");
-    Fr::from_le_bytes_mod_order(&bytes)
 }
 
 #[cfg(test)]

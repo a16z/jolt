@@ -302,6 +302,10 @@ pub trait JoltField:
     fn reduce_mul_u128_accum(x: Self::UnreducedMulU128Accum) -> Self;
     fn reduce_product(x: Self::UnreducedProduct) -> Self;
     fn reduce_product_accum(x: Self::UnreducedProductAccum) -> Self;
+
+    /// Convert to arkworks BigInt<4> representation (standard form, not Montgomery).
+    /// Used by curve operations to avoid serialize/deserialize roundtrips.
+    fn to_ark_bigint(&self) -> BigInt<4>;
 }
 
 /// Unified fused-multiply-add trait for accumulators.

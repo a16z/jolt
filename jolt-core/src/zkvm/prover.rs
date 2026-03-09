@@ -1382,6 +1382,9 @@ impl<
     #[tracing::instrument(skip_all)]
     #[cfg(feature = "zk")]
     fn prove_blindfold(&mut self, joint_opening_proof: &PCS::Proof) -> BlindFoldProof<F, C> {
+        use crate::curve::JoltGroupElement;
+        use rayon::prelude::*;
+
         let stage8_data = self.blindfold_accumulator.take_opening_proof_data();
         tracing::info!("BlindFold proving");
 
@@ -1776,20 +1779,24 @@ impl<
 
         // Regular noncoeff rows: committed fresh by the prover
         let regular_noncoeff_start = (R_coeff + output_claims_rows) * hyrax_C;
-        let mut noncoeff_row_commitments = Vec::with_capacity(regular_noncoeff_rows);
-        let mut noncoeff_row_blindings = Vec::with_capacity(regular_noncoeff_rows);
-        for row_idx in 0..regular_noncoeff_rows {
-            let row_start = regular_noncoeff_start + row_idx * hyrax_C;
-            let mut row_data = vec![F::zero(); hyrax_C];
-            for k in 0..hyrax_C {
-                if row_start + k < witness.len() {
-                    row_data[k] = witness[row_start + k];
+        let noncoeff_row_blindings: Vec<F> = (0..regular_noncoeff_rows)
+            .map(|_| F::random(&mut rng))
+            .collect();
+        let noncoeff_row_commitments: Vec<C::G1> = (0..regular_noncoeff_rows)
+            .into_par_iter()
+            .map(|row_idx| {
+                let row_start = regular_noncoeff_start + row_idx * hyrax_C;
+                let end = (row_start + hyrax_C).min(witness.len());
+                if row_start >= witness.len() {
+                    pedersen_generators
+                        .blinding_generator
+                        .scalar_mul(&noncoeff_row_blindings[row_idx])
+                } else {
+                    pedersen_generators
+                        .commit(&witness[row_start..end], &noncoeff_row_blindings[row_idx])
                 }
-            }
-            let blinding = F::random(&mut rng);
-            noncoeff_row_commitments.push(pedersen_generators.commit(&row_data, &blinding));
-            noncoeff_row_blindings.push(blinding);
-        }
+            })
+            .collect();
 
         // w_row_blindings: [round | pad to R_coeff | oc_rows | regular_noncoeff | pad to R']
         let mut w_row_blindings = Vec::with_capacity(R_prime);

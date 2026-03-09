@@ -7,6 +7,7 @@ use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use rand_core::CryptoRngCore;
+use rayon::prelude::*;
 
 use super::r1cs::VerifierR1CS;
 use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
@@ -45,6 +46,7 @@ fn commit_rows<F: JoltField, C: JoltCurve>(
 ) -> Vec<C::G1> {
     debug_assert_eq!(row_blindings.len(), R);
     (0..R)
+        .into_par_iter()
         .map(|i| {
             let start = i * hyrax_C;
             let end = (start + hyrax_C).min(flat.len());
@@ -61,6 +63,9 @@ fn commit_rows<F: JoltField, C: JoltCurve>(
 ///
 /// W is arranged in grid layout: coefficient rows first (one per round, padded to C),
 /// then non-coefficient values packed in subsequent rows.
+///
+/// Two-pass approach: (1) fill W with random values (sequential, RNG-dependent),
+/// (2) commit all rows in parallel.
 #[tracing::instrument(skip_all, name = "BlindFold::sample_random_satisfying_pair")]
 pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCore>(
     gens: &PedersenGenerators<C>,
@@ -78,7 +83,6 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
 
     let mut W = vec![F::zero(); witness_len];
     let mut w_row_blindings = vec![F::zero(); R_prime];
-    let mut round_commitments: Vec<C::G1> = Vec::new();
     let mut eval_commitments: Vec<C::G1> = Vec::new();
 
     let oc_rows = hyrax.output_claims_rows;
@@ -96,7 +100,9 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
 
     let layout = compute_witness_layout(&r1cs.stage_configs, &r1cs.extra_constraints);
     let mut seen_openings = std::collections::HashSet::new();
+    let mut round_indices: Vec<usize> = Vec::new();
 
+    // Pass 1: fill W with random values, generate blindings (sequential, RNG-dependent)
     for step in &layout {
         match step {
             LayoutStep::ConstantInitialClaim { .. } => {}
@@ -109,7 +115,6 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                 aux_var_count,
                 ..
             } => {
-                // Only allocate noncoeff vars for openings NOT in the OC region
                 for id in &constraint.required_openings {
                     if seen_openings.insert(*id) && !oc_opening_ids.contains(id) {
                         W[noncoeff_idx] = F::random(rng);
@@ -129,12 +134,8 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                 for k in 0..*num_coeffs {
                     W[round_idx * hyrax_C + k] = F::random(rng);
                 }
-
-                let blinding = F::random(rng);
-                let row_start = round_idx * hyrax_C;
-                let commitment = gens.commit(&W[row_start..row_start + hyrax_C], &blinding);
-                w_row_blindings[*round_idx] = blinding;
-                round_commitments.push(commitment);
+                w_row_blindings[*round_idx] = F::random(rng);
+                round_indices.push(*round_idx);
             }
             LayoutStep::NextClaim { .. } => {
                 W[noncoeff_idx] = F::random(rng);
@@ -186,24 +187,13 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         }
     }
 
-    let mut oc_row_commitments = Vec::with_capacity(oc_rows);
+    // Generate blindings for OC and noncoeff rows
     for row in 0..oc_rows {
-        let start = R_coeff * hyrax_C + row * hyrax_C;
-        let end = (start + hyrax_C).min(W.len());
-        let row_blinding = F::random(rng);
-        oc_row_commitments.push(gens.commit(&W[start..end], &row_blinding));
-        w_row_blindings[R_coeff + row] = row_blinding;
+        w_row_blindings[R_coeff + row] = F::random(rng);
     }
-
-    // Commit regular non-coeff rows
     let regular_noncoeff_rows = hyrax.regular_noncoeff_rows();
-    let mut noncoeff_row_commitments = Vec::with_capacity(regular_noncoeff_rows);
     for row in 0..regular_noncoeff_rows {
-        let start = (R_coeff + oc_rows) * hyrax_C + row * hyrax_C;
-        let end = (start + hyrax_C).min(W.len());
-        let row_blinding = F::random(rng);
-        noncoeff_row_commitments.push(gens.commit(&W[start..end], &row_blinding));
-        w_row_blindings[R_coeff + oc_rows + row] = row_blinding;
+        w_row_blindings[R_coeff + oc_rows + row] = F::random(rng);
     }
 
     let u = loop {
@@ -227,7 +217,6 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         W.len()
     );
 
-    // Compute E to satisfy: E = (AZ) ∘ (BZ) - u*(CZ)
     let az = r1cs.a.mul_vector(&z);
     let bz = r1cs.b.mul_vector(&z);
     let cz = r1cs.c.mul_vector(&z);
@@ -236,9 +225,38 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         .map(|i| az[i] * bz[i] - u * cz[i])
         .collect();
 
-    // Commit E rows
     let (R_E, C_E) = hyrax.e_grid(r1cs.num_constraints);
     let e_row_blindings: Vec<F> = (0..R_E).map(|_| F::random(rng)).collect();
+
+    let round_commitments: Vec<C::G1> = round_indices
+        .par_iter()
+        .map(|&round_idx| {
+            let row_start = round_idx * hyrax_C;
+            gens.commit(
+                &W[row_start..row_start + hyrax_C],
+                &w_row_blindings[round_idx],
+            )
+        })
+        .collect();
+
+    let oc_row_commitments: Vec<C::G1> = (0..oc_rows)
+        .into_par_iter()
+        .map(|row| {
+            let start = R_coeff * hyrax_C + row * hyrax_C;
+            let end = (start + hyrax_C).min(W.len());
+            gens.commit(&W[start..end], &w_row_blindings[R_coeff + row])
+        })
+        .collect();
+
+    let noncoeff_row_commitments: Vec<C::G1> = (0..regular_noncoeff_rows)
+        .into_par_iter()
+        .map(|row| {
+            let start = (R_coeff + oc_rows) * hyrax_C + row * hyrax_C;
+            let end = (start + hyrax_C).min(W.len());
+            gens.commit(&W[start..end], &w_row_blindings[R_coeff + oc_rows + row])
+        })
+        .collect();
+
     let padded_E = {
         let mut e = E.clone();
         e.resize(R_E * C_E, F::zero());

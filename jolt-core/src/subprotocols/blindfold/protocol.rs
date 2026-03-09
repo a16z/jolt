@@ -455,10 +455,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let (rx_row, rx_col) = rx.split_at(log_R_E);
 
         let eq_rx_row: Vec<F> = EqPolynomial::evals(rx_row);
-        let mut c_combined_e = C::G1::zero();
-        for (i, com) in folded_instance.e_row_commitments.iter().enumerate() {
-            c_combined_e += com.scalar_mul(&eq_rx_row[i]);
-        }
+        let c_combined_e = C::g1_msm(&folded_instance.e_row_commitments, &eq_rx_row);
         let expected_e_com = self.gens.commit(
             &proof.e_opening.combined_row,
             &proof.e_opening.combined_blinding,
@@ -479,10 +476,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
 
         let all_w_rows = folded_instance.all_w_row_commitments(hyrax.R_coeff, hyrax.R_prime)?;
         let eq_ry_row: Vec<F> = EqPolynomial::evals(ry_row);
-        let mut c_combined_w = C::G1::zero();
-        for (i, com) in all_w_rows.iter().enumerate() {
-            c_combined_w += com.scalar_mul(&eq_ry_row[i]);
-        }
+        let c_combined_w = C::g1_msm(&all_w_rows, &eq_ry_row);
         let expected_w_com = self.gens.commit(
             &proof.w_opening.combined_row,
             &proof.w_opening.combined_blinding,

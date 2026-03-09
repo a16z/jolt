@@ -4,15 +4,58 @@
 //!   C = Σᵢ mᵢ * Gᵢ + r * H
 //! where Gᵢ are message generators and H is the blinding generator.
 
-use crate::curve::{JoltCurve, JoltGroupElement};
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
 use rand_core::CryptoRngCore;
 
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug)]
 pub struct PedersenGenerators<C: JoltCurve> {
     pub message_generators: Vec<C::G1>,
     pub blinding_generator: C::G1,
+    /// Pre-converted affine bases: [msg_0, msg_1, ..., msg_{n-1}, blinding]
+    /// Avoids per-commit field inversion from projective→affine conversion.
+    affine_bases: Vec<C::G1Affine>,
+}
+
+impl<C: JoltCurve> CanonicalSerialize for PedersenGenerators<C> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.message_generators
+            .serialize_with_mode(&mut writer, compress)?;
+        self.blinding_generator
+            .serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.message_generators.serialized_size(compress)
+            + self.blinding_generator.serialized_size(compress)
+    }
+}
+
+impl<C: JoltCurve> Valid for PedersenGenerators<C> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.message_generators.check()?;
+        self.blinding_generator.check()
+    }
+}
+
+impl<C: JoltCurve> CanonicalDeserialize for PedersenGenerators<C> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let message_generators =
+            Vec::<C::G1>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let blinding_generator = C::G1::deserialize_with_mode(&mut reader, compress, validate)?;
+        Ok(Self::new(message_generators, blinding_generator))
+    }
 }
 
 impl<C: JoltCurve> PedersenGenerators<C> {
@@ -21,28 +64,38 @@ impl<C: JoltCurve> PedersenGenerators<C> {
             !message_generators.is_empty(),
             "Need at least one generator"
         );
+        let mut affine_bases: Vec<C::G1Affine> =
+            message_generators.iter().map(C::g1_to_affine).collect();
+        affine_bases.push(C::g1_to_affine(&blinding_generator));
         Self {
             message_generators,
             blinding_generator,
+            affine_bases,
         }
     }
 
+    /// Single MSM including blinding — no separate scalar_mul + add.
     pub fn commit<F: JoltField>(&self, coeffs: &[F], blinding: &F) -> C::G1 {
+        let n = coeffs.len();
         assert!(
-            coeffs.len() <= self.message_generators.len(),
+            n <= self.message_generators.len(),
             "Too many coefficients: {} > {}",
-            coeffs.len(),
+            n,
             self.message_generators.len()
         );
 
-        let msg_commitment = if coeffs.is_empty() {
-            C::G1::zero()
-        } else {
-            C::g1_msm(&self.message_generators[..coeffs.len()], coeffs)
-        };
+        // Build combined scalar vector: [coeffs..., blinding]
+        // Uses affine_bases[0..n] for message gens, affine_bases[last] for blinding
+        let blinding_affine_idx = self.message_generators.len();
+        let mut combined_bases = Vec::with_capacity(n + 1);
+        combined_bases.extend_from_slice(&self.affine_bases[..n]);
+        combined_bases.push(self.affine_bases[blinding_affine_idx]);
 
-        let blinding_commitment = self.blinding_generator.scalar_mul(blinding);
-        msg_commitment + blinding_commitment
+        let mut combined_scalars = Vec::with_capacity(n + 1);
+        combined_scalars.extend_from_slice(coeffs);
+        combined_scalars.push(*blinding);
+
+        C::g1_affine_msm(&combined_bases, &combined_scalars)
     }
 
     pub fn commit_chunked<F: JoltField, R: CryptoRngCore>(
@@ -135,7 +188,7 @@ impl<F: JoltField> BlindedVector<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve::Bn254Curve;
+    use crate::curve::{Bn254Curve, JoltGroupElement};
     use ark_bn254::Fr;
     use ark_std::UniformRand;
     use rand::thread_rng;

@@ -18,6 +18,7 @@
 use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use rayon::prelude::*;
 
 use super::protocol::BlindFoldVerifyError;
 use super::r1cs::VerifierR1CS;
@@ -114,50 +115,77 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
         let r_squared = r * r;
         let u = self.u + r * other.u;
 
-        let fold_row = |c1: &C::G1, c2: &C::G1| *c1 + c2.scalar_mul(&r);
+        // Collect all fold operations into a single batch for parallelism.
+        // Each entry: (self_commitment, other_commitment, kind)
+        // For W rows: folded = c1 + r * c2
+        // For E rows: folded = e1 + r * t + r^2 * e2
+        let n_round = self.round_commitments.len();
+        let n_oc = self.output_claims_row_commitments.len();
+        let n_noncoeff = self.noncoeff_row_commitments.len();
+        let n_eval = self.eval_commitments.len();
+        let total_w = n_round + n_oc + n_noncoeff + n_eval;
 
-        let round_commitments: Vec<C::G1> = self
-            .round_commitments
-            .iter()
-            .zip(&other.round_commitments)
-            .map(|(c1, c2)| fold_row(c1, c2))
-            .collect();
-
-        let output_claims_row_commitments: Vec<C::G1> = self
+        // Batch all w-type folds (c1 + r * c2) into one parallel iterator
+        let mut w_self: Vec<&C::G1> = Vec::with_capacity(total_w);
+        let mut w_other: Vec<&C::G1> = Vec::with_capacity(total_w);
+        for (c1, c2) in self.round_commitments.iter().zip(&other.round_commitments) {
+            w_self.push(c1);
+            w_other.push(c2);
+        }
+        for (c1, c2) in self
             .output_claims_row_commitments
             .iter()
             .zip(&other.output_claims_row_commitments)
-            .map(|(c1, c2)| fold_row(c1, c2))
-            .collect();
-
-        let noncoeff_row_commitments: Vec<C::G1> = self
+        {
+            w_self.push(c1);
+            w_other.push(c2);
+        }
+        for (c1, c2) in self
             .noncoeff_row_commitments
             .iter()
             .zip(&other.noncoeff_row_commitments)
-            .map(|(c1, c2)| fold_row(c1, c2))
-            .collect();
+        {
+            w_self.push(c1);
+            w_other.push(c2);
+        }
+        for (c1, c2) in self.eval_commitments.iter().zip(&other.eval_commitments) {
+            w_self.push(c1);
+            w_other.push(c2);
+        }
 
-        let e_row_commitments: Vec<C::G1> = self
-            .e_row_commitments
-            .iter()
-            .zip(t_row_commitments)
-            .zip(&other.e_row_commitments)
-            .map(|((e1, t), e2)| *e1 + t.scalar_mul(&r) + e2.scalar_mul(&r_squared))
-            .collect();
+        let (w_folded, e_folded) = rayon::join(
+            || {
+                w_self
+                    .par_iter()
+                    .zip(w_other.par_iter())
+                    .map(|(c1, c2)| **c1 + c2.scalar_mul(&r))
+                    .collect::<Vec<C::G1>>()
+            },
+            || {
+                self.e_row_commitments
+                    .par_iter()
+                    .zip(t_row_commitments.par_iter())
+                    .zip(other.e_row_commitments.par_iter())
+                    .map(|((e1, t), e2)| *e1 + t.scalar_mul(&r) + e2.scalar_mul(&r_squared))
+                    .collect::<Vec<C::G1>>()
+            },
+        );
 
-        let eval_commitments: Vec<C::G1> = self
-            .eval_commitments
-            .iter()
-            .zip(&other.eval_commitments)
-            .map(|(c1, c2)| fold_row(c1, c2))
-            .collect();
+        let mut offset = 0;
+        let round_commitments = w_folded[offset..offset + n_round].to_vec();
+        offset += n_round;
+        let output_claims_row_commitments = w_folded[offset..offset + n_oc].to_vec();
+        offset += n_oc;
+        let noncoeff_row_commitments = w_folded[offset..offset + n_noncoeff].to_vec();
+        offset += n_noncoeff;
+        let eval_commitments = w_folded[offset..offset + n_eval].to_vec();
 
         Ok(Self {
             u,
             round_commitments,
             output_claims_row_commitments,
             noncoeff_row_commitments,
-            e_row_commitments,
+            e_row_commitments: e_folded,
             eval_commitments,
         })
     }
