@@ -2183,9 +2183,11 @@ where
     where
         PCS: ZkEvalCommitment<C>,
     {
-        let mut gens: PedersenGenerators<C> = self.blindfold_setup().into();
-        gens.message_generators.truncate(count);
-        gens
+        let gens: PedersenGenerators<C> = self.blindfold_setup().into();
+        PedersenGenerators::new(
+            gens.message_generators[..count].to_vec(),
+            gens.blinding_generator,
+        )
     }
 
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {

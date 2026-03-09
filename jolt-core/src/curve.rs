@@ -261,9 +261,7 @@ impl JoltCurve for Bn254Curve {
         debug_assert_eq!(bases.len(), scalars.len());
 
         let affine_bases: Vec<G1Affine> = bases.iter().map(|b| b.0.into_affine()).collect();
-        let bigint_scalars: Vec<_> = scalars.iter().map(|s| s.to_ark_bigint()).collect();
-
-        Bn254G1(G1Projective::msm_bigint(&affine_bases, &bigint_scalars))
+        Self::g1_affine_msm(&affine_bases, scalars)
     }
 
     #[inline]
