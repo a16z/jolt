@@ -14,14 +14,14 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_amo::FormatAMO, Cycle, RAMReadWrite, RISCVInstruction, RISCVTrace};
+use super::{format::format_amo::FormatAMO, Cycle, RAMWrite, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOMIND,
     mask   = 0xf800707f,
     match  = 0x8000302f,
     format = FormatAMO,
-    ram    = RAMReadWrite,
+    ram    = RAMWrite,
     side_effects = true
 );
 

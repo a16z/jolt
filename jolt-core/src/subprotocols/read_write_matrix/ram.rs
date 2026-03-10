@@ -90,9 +90,6 @@ impl<F: JoltField> RamCycleMajorEntry<F> {
                     next_val: read_value,
                 })
             }
-            RAMAccess::ReadWrite(_) => {
-                unreachable!("ReadWrite instructions are expanded into inline sequences")
-            }
             _ => None,
         }
     }

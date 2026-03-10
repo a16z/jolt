@@ -793,15 +793,9 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         let diff = s64_from_diff_u64s(post_value, pre_value);
         dense_acc.fmadd(&scaled_rd_inc, &diff);
 
-        match cycle.ram_access() {
-            tracer::instruction::RAMAccess::Write(write) => {
-                let diff = s64_from_diff_u64s(write.post_value, write.pre_value);
-                dense_acc.fmadd(&scaled_ram_inc, &diff);
-            }
-            tracer::instruction::RAMAccess::ReadWrite(_) => {
-                unreachable!("ReadWrite instructions are expanded into inline sequences")
-            }
-            _ => {}
+        if let tracer::instruction::RAMAccess::Write(write) = cycle.ram_access() {
+            let diff = s64_from_diff_u64s(write.post_value, write.pre_value);
+            dense_acc.fmadd(&scaled_ram_inc, &diff);
         }
 
         // One-hot polynomials: accumulate using pre-folded K tables (unreduced)

@@ -89,9 +89,6 @@ impl CommittedPolynomial {
                         tracer::instruction::RAMAccess::Write(write) => {
                             write.post_value as i128 - write.pre_value as i128
                         }
-                        tracer::instruction::RAMAccess::ReadWrite(_) => {
-                            unreachable!("ReadWrite instructions are expanded into inline sequences")
-                        }
                         _ => 0,
                     })
                     .collect();
@@ -194,9 +191,6 @@ impl CommittedPolynomial {
                         match ram_op {
                             tracer::instruction::RAMAccess::Write(write) => {
                                 write.post_value as i128 - write.pre_value as i128
-                            }
-                            tracer::instruction::RAMAccess::ReadWrite(_) => {
-                                unreachable!("ReadWrite instructions are expanded into inline sequences")
                             }
                             _ => 0,
                         }
