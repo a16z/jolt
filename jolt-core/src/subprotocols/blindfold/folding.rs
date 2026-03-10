@@ -37,7 +37,7 @@ pub fn compute_cross_term<F: JoltField>(
 }
 
 /// Commit rows of a flat vector interpreted as an R × C grid.
-fn commit_rows<F: JoltField, C: JoltCurve>(
+fn commit_rows<F: JoltField, C: JoltCurve<F = F>>(
     gens: &PedersenGenerators<C>,
     flat: &[F],
     hyrax_C: usize,
@@ -67,7 +67,7 @@ fn commit_rows<F: JoltField, C: JoltCurve>(
 /// Two-pass approach: (1) fill W with random values (sequential, RNG-dependent),
 /// (2) commit all rows in parallel.
 #[tracing::instrument(skip_all, name = "BlindFold::sample_random_satisfying_pair")]
-pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCore>(
+pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve<F = F>, R: CryptoRngCore>(
     gens: &PedersenGenerators<C>,
     r1cs: &VerifierR1CS<F>,
     eval_commitment_gens: Option<(C::G1, C::G1)>,
@@ -288,7 +288,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
 /// T is the cross-term vector. We lay it out as rows × columns (same grid as E)
 /// and commit each row.
 #[tracing::instrument(skip_all, name = "BlindFold::commit_cross_term_rows")]
-pub fn commit_cross_term_rows<F: JoltField, C: JoltCurve>(
+pub fn commit_cross_term_rows<F: JoltField, C: JoltCurve<F = F>>(
     gens: &PedersenGenerators<C>,
     T: &[F],
     R_E: usize,

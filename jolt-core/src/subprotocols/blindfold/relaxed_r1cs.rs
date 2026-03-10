@@ -31,7 +31,7 @@ use super::r1cs::VerifierR1CS;
 /// - `noncoeff_row_commitments`: non-coefficient row commitments (prover sends in proof)
 /// - `e_row_commitments`: E row commitments (derived from cross-term and random instance)
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct RelaxedR1CSInstance<F: JoltField, C: JoltCurve> {
+pub struct RelaxedR1CSInstance<F: JoltField, C: JoltCurve<F = F>> {
     pub u: F,
     /// Per-round commitments from ZK sumcheck (= coefficient row commitments)
     pub round_commitments: Vec<C::G1>,
@@ -62,7 +62,7 @@ pub struct RelaxedR1CSWitness<F: JoltField> {
     pub e_row_blindings: Vec<F>,
 }
 
-impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
+impl<F: JoltField, C: JoltCurve<F = F>> RelaxedR1CSInstance<F, C> {
     #[allow(clippy::too_many_arguments)]
     pub fn new_non_relaxed(
         witness: &[F],

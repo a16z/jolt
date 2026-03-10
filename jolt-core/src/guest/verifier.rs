@@ -36,7 +36,7 @@ fn preprocess_shared(guest: &Program, max_trace_length: usize) -> JoltSharedPrep
 
 pub fn verify<
     F: JoltField,
-    C: JoltCurve,
+    C: JoltCurve<F = F>,
     PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
     FS: Transcript,
 >(

@@ -306,11 +306,6 @@ impl JoltField for ark_bn254::Fr {
     fn reduce_product_accum(x: Folded256ProductAccum) -> Self {
         ark_bn254::Fr::from_montgomery_reduce::<9, 5>(x.normalize())
     }
-
-    #[inline]
-    fn to_ark_bigint(&self) -> BigInt<4> {
-        PrimeField::into_bigint(*self)
-    }
 }
 
 #[cfg(test)]

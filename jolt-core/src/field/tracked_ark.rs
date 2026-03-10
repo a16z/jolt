@@ -503,11 +503,6 @@ impl JoltField for TrackedFr {
         MONT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<Fr as JoltField>::reduce_product_accum(x))
     }
-
-    #[inline]
-    fn to_ark_bigint(&self) -> ark_ff::BigInt<4> {
-        self.0.to_ark_bigint()
-    }
 }
 
 impl TrackedFr {

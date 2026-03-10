@@ -795,9 +795,6 @@ impl JoltField for MleAst {
     fn reduce_product_accum(x: Self::UnreducedProductAccum) -> Self {
         x
     }
-    fn to_ark_bigint(&self) -> ark_ff::BigInt<4> {
-        unimplemented!("Not needed for constructing ASTs");
-    }
 }
 
 /**********************************************************************

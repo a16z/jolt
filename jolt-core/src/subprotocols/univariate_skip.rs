@@ -153,7 +153,7 @@ pub fn prove_uniskip_round<F: JoltField, T: Transcript, I: SumcheckInstanceProve
 #[cfg(feature = "zk")]
 pub fn prove_uniskip_round_zk<
     F: JoltField,
-    C: JoltCurve,
+    C: JoltCurve<F = F>,
     T: Transcript,
     I: SumcheckInstanceProver<F, T>,
     R: CryptoRngCore,
@@ -269,7 +269,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
 /// Contains only the Pedersen commitment to polynomial coefficients.
 /// Actual verification is deferred to BlindFold R1CS.
 #[derive(Debug, Clone)]
-pub struct ZkUniSkipFirstRoundProof<F: JoltField, C: JoltCurve, T: Transcript> {
+pub struct ZkUniSkipFirstRoundProof<F: JoltField, C: JoltCurve<F = F>, T: Transcript> {
     pub commitment: C::G1,
     pub poly_degree: usize,
     /// Pedersen commitments to output claims, chunked to fit generator count
@@ -277,7 +277,7 @@ pub struct ZkUniSkipFirstRoundProof<F: JoltField, C: JoltCurve, T: Transcript> {
     _marker: PhantomData<(F, T)>,
 }
 
-impl<F: JoltField, C: JoltCurve, T: Transcript> ZkUniSkipFirstRoundProof<F, C, T> {
+impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ZkUniSkipFirstRoundProof<F, C, T> {
     pub fn new(
         commitment: C::G1,
         poly_degree: usize,
@@ -319,7 +319,7 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> ZkUniSkipFirstRoundProof<F, C, T
     }
 }
 
-impl<F: JoltField, C: JoltCurve, T: Transcript> CanonicalSerialize
+impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalSerialize
     for ZkUniSkipFirstRoundProof<F, C, T>
 {
     fn serialize_with_mode<W: std::io::Write>(
@@ -341,7 +341,7 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> CanonicalSerialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve, T: Transcript> CanonicalDeserialize
+impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalDeserialize
     for ZkUniSkipFirstRoundProof<F, C, T>
 {
     fn deserialize_with_mode<R: std::io::Read>(
@@ -361,7 +361,7 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> CanonicalDeserialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve, T: Transcript> ark_serialize::Valid
+impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ark_serialize::Valid
     for ZkUniSkipFirstRoundProof<F, C, T>
 {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
@@ -372,12 +372,12 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> ark_serialize::Valid
 
 /// Unified proof enum for uni-skip first round (similar to SumcheckInstanceProof).
 #[derive(Debug, Clone)]
-pub enum UniSkipFirstRoundProofVariant<F: JoltField, C: JoltCurve, T: Transcript> {
+pub enum UniSkipFirstRoundProofVariant<F: JoltField, C: JoltCurve<F = F>, T: Transcript> {
     Standard(UniSkipFirstRoundProof<F, T>),
     Zk(ZkUniSkipFirstRoundProof<F, C, T>),
 }
 
-impl<F: JoltField, C: JoltCurve, T: Transcript> UniSkipFirstRoundProofVariant<F, C, T> {
+impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> UniSkipFirstRoundProofVariant<F, C, T> {
     /// Returns the polynomial degree for BlindFold R1CS configuration.
     pub fn poly_degree(&self) -> usize {
         match self {
@@ -387,7 +387,7 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> UniSkipFirstRoundProofVariant<F,
     }
 }
 
-impl<F: JoltField, C: JoltCurve, T: Transcript> CanonicalSerialize
+impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalSerialize
     for UniSkipFirstRoundProofVariant<F, C, T>
 {
     fn serialize_with_mode<W: std::io::Write>(
@@ -415,7 +415,7 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> CanonicalSerialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve, T: Transcript> CanonicalDeserialize
+impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalDeserialize
     for UniSkipFirstRoundProofVariant<F, C, T>
 {
     fn deserialize_with_mode<R: std::io::Read>(
@@ -440,7 +440,7 @@ impl<F: JoltField, C: JoltCurve, T: Transcript> CanonicalDeserialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve, T: Transcript> ark_serialize::Valid
+impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ark_serialize::Valid
     for UniSkipFirstRoundProofVariant<F, C, T>
 {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {

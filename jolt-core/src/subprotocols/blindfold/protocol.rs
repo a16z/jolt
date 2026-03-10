@@ -28,7 +28,7 @@ use super::spartan::{INNER_SUMCHECK_DEGREE_BOUND, SPARTAN_DEGREE_BOUND};
 /// eval_commitments, public_inputs. The random instance IS included — verifier reads
 /// it from the proof and absorbs into transcript, never learning the random witness.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
+pub struct BlindFoldProof<F: JoltField, C: JoltCurve<F = F>> {
     pub random_instance: RelaxedR1CSInstance<F, C>,
 
     /// Non-coefficient W row commitments from the real instance
@@ -49,13 +49,13 @@ pub struct BlindFoldProof<F: JoltField, C: JoltCurve> {
     pub folded_eval_blindings: Vec<F>,
 }
 
-pub struct BlindFoldProver<'a, F: JoltField, C: JoltCurve> {
+pub struct BlindFoldProver<'a, F: JoltField, C: JoltCurve<F = F>> {
     gens: &'a PedersenGenerators<C>,
     r1cs: &'a VerifierR1CS<F>,
     eval_commitment_gens: Option<(C::G1, C::G1)>,
 }
 
-impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
+impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
     pub fn new(
         gens: &'a PedersenGenerators<C>,
         r1cs: &'a VerifierR1CS<F>,
@@ -276,13 +276,13 @@ pub struct BlindFoldVerifierInput<C: JoltCurve> {
     pub eval_commitments: Vec<C::G1>,
 }
 
-pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve> {
+pub struct BlindFoldVerifier<'a, F: JoltField, C: JoltCurve<F = F>> {
     gens: &'a PedersenGenerators<C>,
     r1cs: &'a VerifierR1CS<F>,
     eval_commitment_gens: Option<(C::G1, C::G1)>,
 }
 
-impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
+impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
     pub fn new(
         gens: &'a PedersenGenerators<C>,
         r1cs: &'a VerifierR1CS<F>,
@@ -496,7 +496,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
     }
 }
 
-fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
+fn append_instance_to_transcript<F: JoltField, C: JoltCurve<F = F>>(
     instance: &RelaxedR1CSInstance<F, C>,
     transcript: &mut impl Transcript,
 ) {

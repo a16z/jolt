@@ -75,7 +75,7 @@ impl<C: JoltCurve> PedersenGenerators<C> {
     }
 
     /// Single MSM including blinding — no separate scalar_mul + add.
-    pub fn commit<F: JoltField>(&self, coeffs: &[F], blinding: &F) -> C::G1 {
+    pub fn commit(&self, coeffs: &[C::F], blinding: &C::F) -> C::G1 {
         let n = coeffs.len();
         assert!(
             n <= self.message_generators.len(),
@@ -98,22 +98,22 @@ impl<C: JoltCurve> PedersenGenerators<C> {
         C::g1_affine_msm(&combined_bases, &combined_scalars)
     }
 
-    pub fn commit_chunked<F: JoltField, R: CryptoRngCore>(
+    pub fn commit_chunked<R: CryptoRngCore>(
         &self,
-        values: &[F],
+        values: &[C::F],
         rng: &mut R,
-    ) -> Vec<(C::G1, F)> {
+    ) -> Vec<(C::G1, C::F)> {
         values
             .chunks(self.message_generators.len())
             .map(|chunk| {
-                let blinding = F::random(rng);
+                let blinding = C::F::random(rng);
                 let commitment = self.commit(chunk, &blinding);
                 (commitment, blinding)
             })
             .collect()
     }
 
-    pub fn verify<F: JoltField>(&self, commitment: &C::G1, coeffs: &[F], blinding: &F) -> bool {
+    pub fn verify(&self, commitment: &C::G1, coeffs: &[C::F], blinding: &C::F) -> bool {
         let expected = self.commit(coeffs, blinding);
         *commitment == expected
     }

@@ -167,7 +167,7 @@ use crate::zkvm::verifier::BlindfoldSetup;
 pub struct JoltCpuProver<
     'a,
     F: JoltField,
-    C: JoltCurve,
+    C: JoltCurve<F = F>,
     PCS: StreamingCommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 > {
@@ -202,7 +202,7 @@ pub struct JoltCpuProver<
 impl<
         'a,
         F: JoltField,
-        C: JoltCurve,
+        C: JoltCurve<F = F>,
         PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
         ProofTranscript: Transcript,
     > JoltCpuProver<'a, F, C, PCS, ProofTranscript>
@@ -2135,7 +2135,11 @@ fn write_instance_flamegraph_svg(
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProverPreprocessing<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>> {
+pub struct JoltProverPreprocessing<
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+> {
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
     _curve: std::marker::PhantomData<C>,
@@ -2144,7 +2148,7 @@ pub struct JoltProverPreprocessing<F: JoltField, C: JoltCurve, PCS: CommitmentSc
 impl<F, C, PCS> JoltProverPreprocessing<F, C, PCS>
 where
     F: JoltField,
-    C: JoltCurve,
+    C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::gen")]
@@ -2208,7 +2212,7 @@ where
     }
 }
 
-impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>> Serializable
+impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>> Serializable
     for JoltProverPreprocessing<F, C, PCS>
 {
 }
@@ -2244,7 +2248,7 @@ mod tests {
     use crate::{curve::JoltCurve, field::JoltField};
 
     #[cfg(feature = "zk")]
-    fn round_commitment_data<F: JoltField, C: JoltCurve, R: rand_core::RngCore>(
+    fn round_commitment_data<F: JoltField, C: JoltCurve<F = F>, R: rand_core::RngCore>(
         gens: &PedersenGenerators<C>,
         stages: &[crate::subprotocols::blindfold::StageWitness<F>],
         rng: &mut R,

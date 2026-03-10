@@ -59,7 +59,7 @@ pub fn bind_opening_inputs<F: JoltField, ProofTranscript: Transcript>(
 }
 
 #[cfg(feature = "zk")]
-pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>(
+pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>(
     transcript: &mut ProofTranscript,
     opening_point: &[F::Challenge],
     y_com: &C::G1,
