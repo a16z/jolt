@@ -78,6 +78,7 @@ members = [
     "examples/malloc/guest",
     "examples/merkle-tree",
     "examples/merkle-tree/guest",
+    "examples/merkle-tree-save",
     "examples/hash-bench",
     "examples/hash-bench/guest",
     "examples/modinv",
