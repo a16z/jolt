@@ -18,8 +18,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+            LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
@@ -162,7 +162,7 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
         ram_K: usize,
         _rw_config: &ReadWriteConfig,
         gamma: F,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         // (r_address, r_cycle) from RamVal/RamReadWriteChecking.
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -473,7 +473,7 @@ impl<F: JoltField> RamValCheckSumcheckVerifier<F> {
         ram_K: usize,
         rw_config: &ReadWriteConfig,
         gamma: F,
-        opening_accumulator: &VerifierOpeningAccumulator<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
         let params = RamValCheckSumcheckParams::new_from_verifier(
             initial_ram_state,

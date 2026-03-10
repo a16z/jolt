@@ -350,9 +350,12 @@ impl<'a> GnarkCodeGen<'a> {
                 }
             };
 
-            // Hoist to CSE variable if referenced more than once
+            // Hoist to CSE variable if referenced more than once OR expression is too large.
+            // Large single-use expressions would create massive single-line Go code that
+            // overwhelms the Go compiler (e.g., 48MB expression on one line).
+            const MAX_INLINE_EXPR_LEN: usize = 1000;
             let ref_count = self.ref_counts.get(&node_id).copied().unwrap_or(1);
-            if ref_count > 1 {
+            if ref_count > 1 || expr.len() > MAX_INLINE_EXPR_LEN {
                 let var_name = self.make_cse_name();
                 self.cse_counter += 1;
                 self.bindings.push(format!("\t{var_name} := {expr}\n"));
@@ -671,82 +674,199 @@ pub fn generate_circuit_from_bundle_with_stats(
     }
     output.push_str("}\n\n");
 
-    // Define method
-    output.push_str(&format!(
-        "func (circuit *{circuit_name}) Define(api frontend.API) error {{\n"
-    ));
+    // Emit per-constraint helper methods.
+    // Each constraint gets its own function to avoid arm64 "branch too far" compiler
+    // errors when the entire circuit is in a single Define() method.
+    // Large constraints are further split into sub-functions (max ~2000 binding lines each).
+    const MAX_BINDING_LINES: usize = 2000;
+    let mut constraint_func_names: Vec<String> = Vec::new();
 
-    // Emit CSE bindings only for non-skipped constraints
-    let mut has_bindings = false;
-    for pc in &processed_constraints {
-        // Skip bindings for constant-zero constraints (they'll be skipped entirely)
-        let is_skippable_constant = pc.is_const
-            && matches!(&pc.assertion, ConstraintAssertion::EqualZero)
-            && pc.const_val.unwrap_or([0, 0, 0, 0]) == [0, 0, 0, 0];
-
-        if is_skippable_constant {
-            continue;
-        }
-        if !pc.bindings.is_empty() {
-            if !has_bindings {
-                output.push_str("\t// Memoized subexpressions\n");
-                has_bindings = true;
-            }
-            output.push_str(&pc.bindings);
-        }
-    }
-    if has_bindings {
-        output.push('\n');
-    }
-
-    // Generate constraints
-    for pc in &processed_constraints {
+    for (idx, pc) in processed_constraints.iter().enumerate() {
         // Static verification for constant EqualZero assertions
         if pc.is_const && matches!(&pc.assertion, ConstraintAssertion::EqualZero) {
             let val = pc.const_val.unwrap_or([0, 0, 0, 0]);
             if val == [0, 0, 0, 0] {
                 // Constant equals zero - statically satisfied, skip entirely
                 output.push_str(&format!(
-                    "\t// {} = 0 (statically verified, skipped)\n\n",
+                    "// {} = 0 (statically verified, skipped)\n\n",
                     pc.name
                 ));
                 stats.constant_skipped += 1;
                 continue;
             } else {
                 // Constant != 0 - static failure, emit warning comment but still generate constraint
-                output.push_str(&format!("\t// {} STATIC FAILURE: constant != 0\n", pc.name));
+                output.push_str(&format!("// {} STATIC FAILURE: constant != 0\n", pc.name));
                 stats.constant_failed += 1;
                 stats.failed_names.push(pc.name.clone());
             }
         }
 
-        // Emit constraint
-        output.push_str(&format!("\t// {}\n", pc.name));
-        let var_name = sanitize_go_name(&pc.name);
-        output.push_str(&format!("\t{var_name} := {}\n", pc.expr));
+        let func_name = format!("verifyConstraint{idx}");
+        constraint_func_names.push(func_name.clone());
 
+        // Count binding lines to decide if we need sub-function splitting
+        let binding_lines: Vec<&str> = if pc.bindings.is_empty() {
+            Vec::new()
+        } else {
+            pc.bindings.lines().filter(|l| !l.is_empty()).collect()
+        };
+
+        let needs_splitting = binding_lines.len() > MAX_BINDING_LINES;
+        let var_name = sanitize_go_name(&pc.name);
+
+        if needs_splitting {
+            // Split bindings into sub-functions that share state via a slice.
+            // CSE bindings reference each other by name (cse_K_N). We rewrite them
+            // to use a slice (cse[N]) so sub-functions can share intermediate values.
+            let num_bindings = binding_lines.len();
+            let num_parts = num_bindings.div_ceil(MAX_BINDING_LINES);
+
+            // Emit sub-functions for binding batches
+            for part in 0..num_parts {
+                let start = part * MAX_BINDING_LINES;
+                let end = std::cmp::min(start + MAX_BINDING_LINES, num_bindings);
+
+                output.push_str(&format!(
+                    "func (circuit *{circuit_name}) {func_name}Bindings{part}(api frontend.API, cse []frontend.Variable) {{\n"
+                ));
+
+                for line in &binding_lines[start..end] {
+                    // Rewrite "cse_K_N := expr" to "cse[N] = expr" and
+                    // references to "cse_K_M" to "cse[M]" within the expression
+                    let rewritten = rewrite_cse_to_slice(line, idx);
+                    output.push_str(&rewritten);
+                    output.push('\n');
+                }
+
+                output.push_str("}\n\n");
+            }
+
+            // Emit the main constraint function that calls sub-functions
+            output.push_str(&format!("// {func_name} verifies: {}\n", pc.name));
+            output.push_str(&format!(
+                "func (circuit *{circuit_name}) {func_name}(api frontend.API) {{\n"
+            ));
+            output.push_str(&format!(
+                "\tcse := make([]frontend.Variable, {num_bindings})\n"
+            ));
+
+            for part in 0..num_parts {
+                output.push_str(&format!("\tcircuit.{func_name}Bindings{part}(api, cse)\n"));
+            }
+
+            // Rewrite the final expression to use cse[N] references
+            let rewritten_expr = rewrite_cse_refs_to_slice(&pc.expr, idx);
+            output.push_str(&format!("\t{var_name} := {rewritten_expr}\n"));
+        } else {
+            // Small constraint: emit as a single function with named CSE variables
+            output.push_str(&format!("// {func_name} verifies: {}\n", pc.name));
+            output.push_str(&format!(
+                "func (circuit *{circuit_name}) {func_name}(api frontend.API) {{\n"
+            ));
+
+            if !pc.bindings.is_empty() {
+                output.push_str(&pc.bindings);
+            }
+
+            output.push_str(&format!("\t{var_name} := {}\n", pc.expr));
+        }
+
+        // Emit assertion
         match &pc.assertion {
             ConstraintAssertion::EqualZero => {
-                output.push_str(&format!("\tapi.AssertIsEqual({var_name}, 0)\n\n"));
+                output.push_str(&format!("\tapi.AssertIsEqual({var_name}, 0)\n"));
             }
             ConstraintAssertion::EqualPublicInput { name: pub_name } => {
                 output.push_str(&format!(
-                    "\tapi.AssertIsEqual({var_name}, circuit.{})\n\n",
+                    "\tapi.AssertIsEqual({var_name}, circuit.{})\n",
                     sanitize_go_name(pub_name)
                 ));
             }
             ConstraintAssertion::EqualNode { other_expr } => {
-                output.push_str(&format!(
-                    "\tapi.AssertIsEqual({var_name}, {other_expr})\n\n"
-                ));
+                let rewritten = if needs_splitting {
+                    rewrite_cse_refs_to_slice(other_expr, idx)
+                } else {
+                    other_expr.clone()
+                };
+                output.push_str(&format!("\tapi.AssertIsEqual({var_name}, {rewritten})\n"));
             }
         }
+
+        output.push_str("}\n\n");
+    }
+
+    // Define method: calls each per-constraint helper
+    output.push_str(&format!(
+        "func (circuit *{circuit_name}) Define(api frontend.API) error {{\n"
+    ));
+
+    for func_name in &constraint_func_names {
+        output.push_str(&format!("\tcircuit.{func_name}(api)\n"));
     }
 
     output.push_str("\treturn nil\n");
     output.push_str("}\n");
 
     (output, stats)
+}
+
+/// Rewrite a CSE binding line from named variables to slice indexing.
+///
+/// Converts `\tcse_18_42 := api.Add(cse_18_3, circuit.X)` to
+/// `\tcse[42] = api.Add(cse[3], circuit.X)`.
+fn rewrite_cse_to_slice(line: &str, constraint_idx: usize) -> String {
+    let prefix = format!("cse_{constraint_idx}_");
+    let mut result = String::with_capacity(line.len());
+    let mut i = 0;
+    let bytes = line.as_bytes();
+
+    while i < bytes.len() {
+        if line[i..].starts_with(&prefix) {
+            // Found a cse reference, extract the number
+            let num_start = i + prefix.len();
+            let mut num_end = num_start;
+            while num_end < bytes.len() && bytes[num_end].is_ascii_digit() {
+                num_end += 1;
+            }
+            let num = &line[num_start..num_end];
+            result.push_str(&format!("cse[{num}]"));
+            i = num_end;
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    // Replace first `:=` with `=` (slice assignment, not declaration)
+    result.replacen(":=", "=", 1)
+}
+
+/// Rewrite CSE references in an expression from named variables to slice indexing.
+///
+/// Converts `cse_18_42` to `cse[42]` in expression strings.
+fn rewrite_cse_refs_to_slice(expr: &str, constraint_idx: usize) -> String {
+    let prefix = format!("cse_{constraint_idx}_");
+    let mut result = String::with_capacity(expr.len());
+    let mut i = 0;
+    let bytes = expr.as_bytes();
+
+    while i < bytes.len() {
+        if expr[i..].starts_with(&prefix) {
+            let num_start = i + prefix.len();
+            let mut num_end = num_start;
+            while num_end < bytes.len() && bytes[num_end].is_ascii_digit() {
+                num_end += 1;
+            }
+            let num = &expr[num_start..num_end];
+            result.push_str(&format!("cse[{num}]"));
+            i = num_end;
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    result
 }
 
 /// Sanitize a name for use as a Go identifier (PascalCase with underscores).

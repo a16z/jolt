@@ -39,13 +39,10 @@
 //! - Stage 6: CycleVariables phase (bind cycle-derived coordinates)
 //! - Stage 7: AddressVariables phase (bind address-derived coordinates)
 
-use std::iter::zip;
-
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 #[cfg(not(feature = "zk"))]
-use crate::poly::opening_proof::BIG_ENDIAN;
+use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheckProof, SumcheckInstanceProof};
 use crate::zkvm::claim_reductions::{
     AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier, ReductionPhase,
@@ -69,7 +66,7 @@ use crate::zkvm::{
         compute_min_ram_K, hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
-        read_write_checking::RamReadWriteCheckingVerifier, val_check::RamValCheckSumcheckParams,
+        read_write_checking::RamReadWriteCheckingVerifier, val_check::RamValCheckSumcheckVerifier,
         verifier_accumulate_advice,
     },
     registers::{
@@ -82,148 +79,20 @@ use crate::zkvm::{
         verify_stage1_uni_skip, verify_stage2_uni_skip,
     },
     verifier::JoltVerifierPreprocessing,
-    witness::{CommittedPolynomial, VirtualPolynomial},
     ProverDebugInfo,
 };
 use crate::{
     field::JoltField,
-    poly::opening_proof::{
-        OpeningAccumulator, OpeningPoint, SumcheckId, VerifierOpeningAccumulator,
-    },
+    poly::opening_proof::{OpeningAccumulator, VerifierOpeningAccumulator},
     pprof_scope,
     subprotocols::{
         booleanity::{BooleanitySumcheckParams, BooleanitySumcheckVerifier},
-        sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
+        sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
 };
 use tracer::JoltDevice;
-
-/// Generic wrapper around `RamValCheckSumcheckParams` that implements `SumcheckInstanceVerifier`
-/// for any `A: OpeningAccumulator<F>`. The upstream `RamValCheckSumcheckVerifier::new` requires
-/// `&VerifierOpeningAccumulator<F>`, which is incompatible with the generic accumulator `A` used
-/// in `TranspilableVerifier`. This wrapper constructs the params using only the
-/// `OpeningAccumulator` trait, enabling symbolic transpilation.
-struct GenericRamValCheckVerifier<F: JoltField> {
-    params: RamValCheckSumcheckParams<F>,
-}
-
-impl<F: JoltField> GenericRamValCheckVerifier<F> {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        initial_ram_state: &[u64],
-        program_io: &JoltDevice,
-        ram_preprocessing: &crate::zkvm::ram::RAMPreprocessing,
-        trace_len: usize,
-        ram_K: usize,
-        _rw_config: &crate::zkvm::config::ReadWriteConfig,
-        gamma: F,
-        opening_accumulator: &dyn OpeningAccumulator<F>,
-    ) -> Self {
-        let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamVal,
-            SumcheckId::RamReadWriteChecking,
-        );
-        let (r_address, r_cycle) = r.split_at(ram_K.log_2());
-
-        let val_init: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let init_eval = val_init.evaluate(&r_address.r);
-
-        #[cfg(feature = "zk")]
-        let init_eval_public = crate::zkvm::ram::eval_initial_ram_mle::<F>(
-            ram_preprocessing,
-            program_io,
-            &r_address.r,
-        );
-
-        #[cfg(feature = "zk")]
-        let advice_contributions = crate::zkvm::ram::compute_advice_init_contributions(
-            opening_accumulator,
-            &program_io.memory_layout,
-            &r_address.r,
-            ram_K.log_2(),
-            SumcheckId::RamValCheck,
-        );
-
-        #[cfg(not(feature = "zk"))]
-        let _ = (ram_preprocessing, program_io, _rw_config);
-
-        let params = RamValCheckSumcheckParams {
-            T: trace_len,
-            K: ram_K,
-            gamma,
-            r_address,
-            r_cycle,
-            init_eval,
-            #[cfg(feature = "zk")]
-            init_eval_public,
-            #[cfg(feature = "zk")]
-            advice_contributions,
-        };
-
-        Self { params }
-    }
-}
-
-impl<F: JoltField, T: Transcript, A: OpeningAccumulator<F>> SumcheckInstanceVerifier<F, T, A>
-    for GenericRamValCheckVerifier<F>
-{
-    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
-        &self.params
-    }
-
-    fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
-        let (r_val, _) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamVal,
-            SumcheckId::RamReadWriteChecking,
-        );
-        let (_, r_cycle) = r_val.split_at(self.params.K.log_2());
-        let r_cycle_prime = self.params.normalize_opening_point(sumcheck_challenges);
-
-        let mut lt_eval = F::zero();
-        let mut eq_term = F::one();
-        for (x, y) in zip(&r_cycle_prime.r, &r_cycle.r) {
-            lt_eval += (F::one() - x) * y * eq_term;
-            eq_term *= F::one() - x - y + *x * y + *x * y;
-        }
-
-        let inc_claim = accumulator
-            .get_committed_polynomial_opening(CommittedPolynomial::RamInc, SumcheckId::RamValCheck)
-            .1;
-        let wa_claim = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamValCheck)
-            .1;
-
-        inc_claim * wa_claim * (lt_eval + self.params.gamma)
-    }
-
-    fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
-        let r_cycle_prime = self.params.normalize_opening_point(sumcheck_challenges);
-
-        let r_rw = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamVal,
-                SumcheckId::RamReadWriteChecking,
-            )
-            .0;
-        let (r_address, _) = r_rw.split_at(r_rw.len() - r_cycle_prime.len());
-        let wa_opening_point =
-            OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
-
-        accumulator.append_virtual(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamValCheck,
-            wa_opening_point,
-        );
-        accumulator.append_dense(
-            CommittedPolynomial::RamInc,
-            SumcheckId::RamValCheck,
-            r_cycle_prime.r,
-        );
-    }
-}
 
 /// Extract the Clear (non-ZK) proof from a SumcheckInstanceProof enum.
 /// TranspilableVerifier only handles non-ZK proofs; ZK mode uses the main verifier.
@@ -604,7 +473,7 @@ impl<
             &self.preprocessing.shared.ram,
             &self.program_io,
         );
-        let ram_val_check = GenericRamValCheckVerifier::new(
+        let ram_val_check = RamValCheckSumcheckVerifier::new(
             &initial_ram_state,
             &self.program_io,
             &self.preprocessing.shared.ram,
