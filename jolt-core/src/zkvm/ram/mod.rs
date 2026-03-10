@@ -57,7 +57,7 @@ use crate::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{
             OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            BIG_ENDIAN,
         },
     },
     utils::{accumulation::MedAccumU, math::Math},
@@ -415,15 +415,23 @@ pub fn compute_advice_init_contributions<F: JoltField>(
 pub fn reconstruct_full_eval<F: JoltField>(
     public_eval: F,
     advice_contributions: &[(F, OpeningId)],
-    accumulator: &VerifierOpeningAccumulator<F>,
+    accumulator: &dyn OpeningAccumulator<F>,
 ) -> F {
     let mut eval = public_eval;
     for (neg_selector, opening_id) in advice_contributions {
-        let advice_eval = accumulator
-            .openings
-            .get(opening_id)
-            .map(|(_, c)| *c)
-            .unwrap_or(F::zero());
+        let advice_eval = match opening_id {
+            OpeningId::UntrustedAdvice(sid) => accumulator
+                .get_advice_opening(AdviceKind::Untrusted, *sid)
+                .map(|(_, eval)| eval)
+                .unwrap_or(F::zero()),
+            OpeningId::TrustedAdvice(sid) => accumulator
+                .get_advice_opening(AdviceKind::Trusted, *sid)
+                .map(|(_, eval)| eval)
+                .unwrap_or(F::zero()),
+            OpeningId::Polynomial(..) => {
+                unreachable!("advice contributions should only contain advice OpeningIds")
+            }
+        };
         eval -= *neg_selector * advice_eval;
     }
     eval
