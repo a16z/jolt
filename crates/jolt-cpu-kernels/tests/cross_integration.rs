@@ -193,7 +193,7 @@ fn custom_product_via_pairwise_reduce() {
     );
     let weights = b.upload(&vec![Fr::from_u64(1); num_pairs]);
 
-    // Custom degree-2: num_evals = degree + 1 = 3
+    // Custom degree-2: num_evals = degree = 2, grid {0, 2}
     let result = b.pairwise_reduce(
         &[&buf_a, &buf_b],
         &weights,
@@ -201,7 +201,7 @@ fn custom_product_via_pairwise_reduce() {
         desc.num_evals(),
         BindingOrder::LowToHigh,
     );
-    assert_eq!(result.len(), 3);
+    assert_eq!(result.len(), 2);
 
     // t=0: sum over pairs of (lo_a * lo_b)
     let mut t0 = Fr::from_u64(0);
@@ -248,7 +248,7 @@ fn custom_with_challenge_via_pairwise_reduce() {
     let buf = b.upload(&data);
     let weights = b.upload(&[Fr::from_u64(1); 3]);
 
-    // Custom degree-2: num_evals = degree + 1 = 3
+    // Custom degree-2: num_evals = degree = 2, grid {0, 2}
     let result = b.pairwise_reduce(
         &[&buf],
         &weights,
@@ -256,19 +256,13 @@ fn custom_with_challenge_via_pairwise_reduce() {
         desc.num_evals(),
         BindingOrder::LowToHigh,
     );
-    assert_eq!(result.len(), 3);
+    assert_eq!(result.len(), 2);
 
     // t=0: gamma * (lo^2 - lo) for each pair, with lo in {0, 1, 0}
     assert_eq!(
         result[0],
         Fr::from_u64(0),
         "boolean inputs should give 0 at t=0"
-    );
-    // t=1: gamma * (hi^2 - hi) for each pair, with hi in {1, 0, 0}
-    assert_eq!(
-        result[1],
-        Fr::from_u64(0),
-        "boolean inputs should give 0 at t=1"
     );
 }
 

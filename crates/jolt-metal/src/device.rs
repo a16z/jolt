@@ -83,21 +83,20 @@ impl MetalBackend {
         compiler::compile_with_challenges(&self.device, descriptor, challenges)
     }
 
-    /// Dispatch a multi-dimensional reduce and finish partial sums on CPU.
+    /// Dispatch a reduce kernel and finish partial sums on CPU.
     ///
-    /// The kernel must already have input buffers, weights, partials, and params
-    /// bound. This dispatches threadgroups and reads back the per-group partial
-    /// sums, then sums them on the CPU for each of `num_evals` dimensions.
-    fn reduce_multi<F: Field>(
+    /// Generic over buffer layout: binds inputs at indices `0..K-1`, then
+    /// `weight_buffers` at `K..K+W-1`, partials at `K+W`, params at `K+W+1`.
+    /// This handles both standard (1 weight buffer) and tensor (2 weight buffers).
+    fn dispatch_reduce<F: Field>(
         &self,
-        kernel: &MetalKernel<F>,
+        pipeline: &metal::ComputePipelineState,
+        num_evals: usize,
         inputs: &[&MetalBuffer<F>],
-        weights: &MetalBuffer<F>,
+        weight_buffers: &[&metal::Buffer],
+        params: &[u32],
         n_pairs: usize,
-        half_n: usize,
-        order: BindingOrder,
     ) -> Vec<F> {
-        let num_evals = kernel.num_evals;
         if n_pairs == 0 {
             return vec![F::zero(); num_evals];
         }
@@ -110,23 +109,22 @@ impl MetalBackend {
             (num_groups * num_evals * std::mem::size_of::<F>()) as u64,
             MTLResourceOptions::StorageModeShared,
         );
-        let order_flag: u32 = match order {
-            BindingOrder::LowToHigh => 0,
-            BindingOrder::HighToLow => 1,
-        };
-        let params_buf = self.upload_params(&[n_pairs as u32, half_n as u32, order_flag]);
+        let params_buf = self.upload_params(params);
 
         let cmd = self.queue.new_command_buffer();
         let enc = cmd.new_compute_command_encoder();
-        enc.set_compute_pipeline_state(&kernel.pipeline);
+        enc.set_compute_pipeline_state(pipeline);
 
         for (i, buf) in inputs.iter().enumerate() {
             enc.set_buffer(i as u64, Some(&buf.raw), 0);
         }
-        let k = inputs.len() as u64;
-        enc.set_buffer(k, Some(&weights.raw), 0);
-        enc.set_buffer(k + 1, Some(&partials_buf), 0);
-        enc.set_buffer(k + 2, Some(&params_buf), 0);
+        let mut idx = inputs.len() as u64;
+        for wbuf in weight_buffers {
+            enc.set_buffer(idx, Some(wbuf), 0);
+            idx += 1;
+        }
+        enc.set_buffer(idx, Some(&partials_buf), 0);
+        enc.set_buffer(idx + 1, Some(&params_buf), 0);
 
         enc.dispatch_thread_groups(
             MTLSize::new(num_groups as u64, 1, 1),
@@ -404,31 +402,60 @@ impl ComputeBackend for MetalBackend {
         // SAFETY: no Metal commands in flight — we just allocated the buffer.
         unsafe { table.as_mut_slice()[0] = F::one() };
 
+        // CPU rounds: interleaved indexing on shared memory (zero-copy).
+        let mut first_gpu_round = n;
         for (k, &r) in point.iter().enumerate() {
             let prev_len = 1usize << k;
-            let one_minus_r = F::one() - r;
-
-            if prev_len < PAR_THRESHOLD {
-                // CPU path: interleaved indexing on shared memory (zero-copy).
-                // SAFETY: no Metal commands in flight between dispatches.
-                let slice = unsafe { table.as_mut_slice() };
-                for j in (0..prev_len).rev() {
-                    let base = slice[j];
-                    slice[2 * j] = base * one_minus_r;
-                    slice[2 * j + 1] = base * r;
-                }
-            } else {
-                // Metal path: split-half kernel matching CpuBackend's parallel path.
-                let r_buf = self.upload_scalar(&r);
-                let omr_buf = self.upload_scalar(&one_minus_r);
-                let params_buf = self.upload_params(&[prev_len as u32]);
-
-                self.dispatch_1d(
-                    &self.interpolation.product_table_round,
-                    &[&table.raw, &r_buf, &omr_buf, &params_buf],
-                    prev_len,
-                );
+            if prev_len >= PAR_THRESHOLD {
+                first_gpu_round = k;
+                break;
             }
+            let one_minus_r = F::one() - r;
+            // SAFETY: no Metal commands in flight between CPU rounds.
+            let slice = unsafe { table.as_mut_slice() };
+            for j in (0..prev_len).rev() {
+                let base = slice[j];
+                slice[2 * j] = base * one_minus_r;
+                slice[2 * j + 1] = base * r;
+            }
+        }
+
+        // GPU rounds: batched into a single command buffer. Metal guarantees
+        // sequential execution with implicit memory barriers between compute
+        // command encoders within one command buffer.
+        if first_gpu_round < n {
+            // Pre-upload scalar/params buffers (must outlive command buffer).
+            let gpu_rounds = first_gpu_round..n;
+            let r_bufs: Vec<_> = gpu_rounds
+                .clone()
+                .map(|k| self.upload_scalar(&point[k]))
+                .collect();
+            let params_bufs: Vec<_> = gpu_rounds
+                .clone()
+                .map(|k| self.upload_params(&[(1usize << k) as u32]))
+                .collect();
+
+            let cmd = self.queue.new_command_buffer();
+            for (idx, k) in gpu_rounds.enumerate() {
+                let prev_len = 1usize << k;
+                let enc = cmd.new_compute_command_encoder();
+                enc.set_compute_pipeline_state(&self.interpolation.product_table_round);
+                enc.set_buffer(0, Some(&table.raw), 0);
+                enc.set_buffer(1, Some(&r_bufs[idx]), 0);
+                enc.set_buffer(2, Some(&params_bufs[idx]), 0);
+                let tpg = self
+                    .interpolation
+                    .product_table_round
+                    .max_total_threads_per_threadgroup()
+                    .min(prev_len as u64);
+                enc.dispatch_threads(
+                    MTLSize::new(prev_len as u64, 1, 1),
+                    MTLSize::new(tpg, 1, 1),
+                );
+                enc.end_encoding();
+            }
+            cmd.commit();
+            cmd.wait_until_completed();
         }
 
         table
@@ -445,7 +472,173 @@ impl ComputeBackend for MetalBackend {
         debug_assert!(!inputs.is_empty());
         let n = inputs[0].len();
         let n_pairs = n / 2;
-        self.reduce_multi(kernel, inputs, weights, n_pairs, n_pairs, order)
+        let pipeline = match order {
+            BindingOrder::LowToHigh => &kernel.pipeline_l2h,
+            BindingOrder::HighToLow => &kernel.pipeline_h2l,
+        };
+        self.dispatch_reduce(
+            pipeline,
+            kernel.num_evals,
+            inputs,
+            &[&weights.raw],
+            &[n_pairs as u32],
+            n_pairs,
+        )
+    }
+
+    fn pairwise_reduce_unweighted<F: Field>(
+        &self,
+        inputs: &[&Self::Buffer<F>],
+        kernel: &Self::CompiledKernel<F>,
+        _num_evals: usize,
+        order: BindingOrder,
+    ) -> Vec<F> {
+        debug_assert!(!inputs.is_empty());
+        let n = inputs[0].len();
+        let n_pairs = n / 2;
+        let pipeline = match order {
+            BindingOrder::LowToHigh => &kernel.pipeline_l2h_unw,
+            BindingOrder::HighToLow => &kernel.pipeline_h2l_unw,
+        };
+        // Empty weight_buffers — unweighted kernels don't bind a weight buffer,
+        // so partials lands at buffer(K) and params at buffer(K+1).
+        self.dispatch_reduce(
+            pipeline,
+            kernel.num_evals,
+            inputs,
+            &[],
+            &[n_pairs as u32],
+            n_pairs,
+        )
+    }
+
+    fn interpolate_pairs_batch<F: Field>(
+        &self,
+        bufs: Vec<Self::Buffer<F>>,
+        scalar: F,
+    ) -> Vec<Self::Buffer<F>> {
+        if bufs.is_empty() {
+            return vec![];
+        }
+
+        let scalar_buf = self.upload_scalar(&scalar);
+        let cmd = self.queue.new_command_buffer();
+
+        let outputs: Vec<MetalBuffer<F>> = bufs
+            .iter()
+            .map(|buf| {
+                let n = buf.len();
+                debug_assert!(n % 2 == 0 || n == 0);
+                let half = n / 2;
+                let out: MetalBuffer<F> = MetalBuffer::zeroed(&self.device, half);
+
+                let enc = cmd.new_compute_command_encoder();
+                enc.set_compute_pipeline_state(&self.interpolation.interpolate_low);
+                enc.set_buffer(0, Some(&buf.raw), 0);
+                enc.set_buffer(1, Some(&scalar_buf), 0);
+                enc.set_buffer(2, Some(&out.raw), 0);
+                let tpg = self
+                    .interpolation
+                    .interpolate_low
+                    .max_total_threads_per_threadgroup()
+                    .min(half.max(1) as u64);
+                enc.dispatch_threads(
+                    MTLSize::new(half.max(1) as u64, 1, 1),
+                    MTLSize::new(tpg, 1, 1),
+                );
+                enc.end_encoding();
+
+                out
+            })
+            .collect();
+
+        cmd.commit();
+        cmd.wait_until_completed();
+
+        outputs
+    }
+
+    fn interpolate_pairs_batch_inplace<F: Field>(
+        &self,
+        bufs: &mut [Self::Buffer<F>],
+        scalar: F,
+        order: BindingOrder,
+    ) {
+        if bufs.is_empty() {
+            return;
+        }
+
+        let scalar_buf = self.upload_scalar(&scalar);
+        let cmd = self.queue.new_command_buffer();
+
+        match order {
+            BindingOrder::HighToLow => {
+                // Safe in-place: thread i reads buf[i] and buf[i+half], writes buf[i].
+                let params_bufs: Vec<_> = bufs
+                    .iter()
+                    .map(|buf| self.upload_params(&[(buf.len() / 2) as u32]))
+                    .collect();
+
+                for (buf, params) in bufs.iter().zip(params_bufs.iter()) {
+                    let half = buf.len() / 2;
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(&self.interpolation.interpolate_inplace_high);
+                    enc.set_buffer(0, Some(&buf.raw), 0);
+                    enc.set_buffer(1, Some(&scalar_buf), 0);
+                    enc.set_buffer(2, Some(params), 0);
+                    let tpg = self
+                        .interpolation
+                        .interpolate_inplace_high
+                        .max_total_threads_per_threadgroup()
+                        .min(half.max(1) as u64);
+                    enc.dispatch_threads(
+                        MTLSize::new(half.max(1) as u64, 1, 1),
+                        MTLSize::new(tpg, 1, 1),
+                    );
+                    enc.end_encoding();
+                }
+
+                cmd.commit();
+                cmd.wait_until_completed();
+
+                for buf in bufs.iter_mut() {
+                    buf.len /= 2;
+                }
+            }
+            BindingOrder::LowToHigh => {
+                // NOT safe in-place — dispatch to separate output buffers.
+                let outputs: Vec<MetalBuffer<F>> = bufs
+                    .iter()
+                    .map(|buf| {
+                        let half = buf.len() / 2;
+                        let out: MetalBuffer<F> = MetalBuffer::zeroed(&self.device, half);
+                        let enc = cmd.new_compute_command_encoder();
+                        enc.set_compute_pipeline_state(&self.interpolation.interpolate_low);
+                        enc.set_buffer(0, Some(&buf.raw), 0);
+                        enc.set_buffer(1, Some(&scalar_buf), 0);
+                        enc.set_buffer(2, Some(&out.raw), 0);
+                        let tpg = self
+                            .interpolation
+                            .interpolate_low
+                            .max_total_threads_per_threadgroup()
+                            .min(half.max(1) as u64);
+                        enc.dispatch_threads(
+                            MTLSize::new(half.max(1) as u64, 1, 1),
+                            MTLSize::new(tpg, 1, 1),
+                        );
+                        enc.end_encoding();
+                        out
+                    })
+                    .collect();
+
+                cmd.commit();
+                cmd.wait_until_completed();
+
+                for (buf, out) in bufs.iter_mut().zip(outputs) {
+                    *buf = out;
+                }
+            }
+        }
     }
 
     fn tensor_pairwise_reduce<F: Field>(
@@ -456,26 +649,19 @@ impl ComputeBackend for MetalBackend {
         kernel: &Self::CompiledKernel<F>,
         _num_evals: usize,
     ) -> Vec<F> {
-        // Compute full weight table (Kronecker product) and delegate.
-        // Tensor-optimized dispatch with two-level reduction is a future optimization.
-        let outer = outer_weights.to_vec();
-        let inner = inner_weights.to_vec();
-        let mut full_weights = Vec::with_capacity(outer.len() * inner.len());
-        for &o in &outer {
-            for &i in &inner {
-                full_weights.push(o * i);
-            }
-        }
-        let weights_buf: MetalBuffer<F> = MetalBuffer::from_data(&self.device, &full_weights);
+        debug_assert!(!inputs.is_empty());
         let n = inputs[0].len();
         let n_pairs = n / 2;
-        self.reduce_multi(
-            kernel,
+        let inner_len = inner_weights.len();
+        let inner_log = inner_len.trailing_zeros();
+        let inner_mask = (inner_len - 1) as u32;
+        self.dispatch_reduce(
+            &kernel.pipeline_tensor,
+            kernel.num_evals,
             inputs,
-            &weights_buf,
+            &[&outer_weights.raw, &inner_weights.raw],
+            &[n_pairs as u32, inner_log, inner_mask],
             n_pairs,
-            n_pairs,
-            BindingOrder::LowToHigh,
         )
     }
 }

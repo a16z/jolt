@@ -35,6 +35,7 @@ pub struct JoltConfig {
 /// - Uniform Spartan key (per-cycle sparse constraint matrices)
 /// - PCS prover setup (SRS/generators)
 /// - PCS verifier setup
+#[tracing::instrument(skip_all, name = "preprocess")]
 pub fn preprocess<F: Field, PCS: CommitmentScheme<Field = F>>(
     config: &JoltConfig,
     setup_fn: impl FnOnce(usize) -> (PCS::ProverSetup, PCS::VerifierSetup),
@@ -67,6 +68,7 @@ pub fn preprocess<F: Field, PCS: CommitmentScheme<Field = F>>(
 /// # Returns
 ///
 /// Flat interleaved witness suitable for `UniformSpartanStage::prove()`.
+#[tracing::instrument(skip_all, name = "interleave_witnesses")]
 pub fn interleave_witnesses<F: Field>(
     key: &UniformSpartanKey<F>,
     cycle_witnesses: &[Vec<F>],

@@ -31,23 +31,47 @@ inline WideAcc acc_zero() {
     return a;
 }
 
+// Add a field element to the accumulator without multiplication.
+//
+// For summation: acc += a_mont. The accumulated wide value is Σ a_i_mont.
+// After acc_reduce this gives Σ a_i (standard form); use fr_to_mont to
+// convert back to Montgomery representation.
+inline void acc_add_fr(thread WideAcc &acc, Fr a) {
+    uint carry = 0;
+    for (int i = 0; i < 8; i++) {
+        uint2 r = adc(acc.limbs[i], a.limbs[i], carry);
+        acc.limbs[i] = r.x;
+        carry = r.y;
+    }
+    for (int i = 8; i < ACC_LIMBS && carry; i++) {
+        uint2 r = adc(acc.limbs[i], 0u, carry);
+        acc.limbs[i] = r.x;
+        carry = r.y;
+    }
+}
+
 // Fused multiply-add: acc += a * b (schoolbook, 8×8 → 16 limbs, accumulated into 18).
+// Pure 32-bit: uses mul + mulhi instead of ulong emulation.
 inline void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {
     for (int j = 0; j < 8; j++) {
-        ulong carry = 0;
+        uint carry = 0;
         for (int i = 0; i < 8; i++) {
             int idx = i + j;
-            ulong prod = ulong(a.limbs[i]) * ulong(b.limbs[j])
-                       + ulong(acc.limbs[idx]) + carry;
-            acc.limbs[idx] = uint(prod);
-            carry = prod >> 32;
+            uint p_lo = a.limbs[i] * b.limbs[j];
+            uint p_hi = mulhi(a.limbs[i], b.limbs[j]);
+            uint s1 = acc.limbs[idx] + p_lo;
+            uint c1 = uint(s1 < acc.limbs[idx]);
+            uint s2 = s1 + carry;
+            uint c2 = uint(s2 < s1);
+            acc.limbs[idx] = s2;
+            carry = p_hi + c1 + c2;
         }
-        // Propagate carry through remaining limbs
         int k = j + 8;
         while (carry != 0 && k < ACC_LIMBS) {
-            ulong sum = ulong(acc.limbs[k]) + carry;
-            acc.limbs[k] = uint(sum);
-            carry = sum >> 32;
+            uint old = acc.limbs[k];
+            uint s = old + carry;
+            carry = uint(s < old);
+            acc.limbs[k] = s;
             k++;
         }
     }
@@ -86,18 +110,26 @@ inline void acc_merge(threadgroup WideAcc &dst, threadgroup WideAcc &src) {
 inline Fr acc_reduce(WideAcc acc) {
     for (int round = 0; round < 8; round++) {
         uint m = acc.limbs[round] * FR_INV32;
-        ulong carry = 0;
-        carry = (ulong(acc.limbs[round]) + ulong(m) * ulong(FR_MODULUS[0])) >> 32;
+        // First limb: acc[round] + m * MODULUS[0] ≡ 0 mod 2^32 (CIOS property)
+        uint m_hi = mulhi(m, (uint)FR_MODULUS[0]);
+        uint s0 = acc.limbs[round] + m * (uint)FR_MODULUS[0];
+        uint carry = m_hi + uint(s0 < acc.limbs[round]);
         for (int i = 1; i < 8; i++) {
-            ulong sum = ulong(acc.limbs[round + i]) + ulong(m) * ulong(FR_MODULUS[i]) + carry;
-            acc.limbs[round + i] = uint(sum);
-            carry = sum >> 32;
+            uint p_lo = m * (uint)FR_MODULUS[i];
+            uint p_hi = mulhi(m, (uint)FR_MODULUS[i]);
+            uint s1 = acc.limbs[round + i] + p_lo;
+            uint c1 = uint(s1 < acc.limbs[round + i]);
+            uint s2 = s1 + carry;
+            uint c2 = uint(s2 < s1);
+            acc.limbs[round + i] = s2;
+            carry = p_hi + c1 + c2;
         }
         int k = round + 8;
         while (carry != 0 && k < ACC_LIMBS) {
-            ulong sum = ulong(acc.limbs[k]) + carry;
-            acc.limbs[k] = uint(sum);
-            carry = sum >> 32;
+            uint old = acc.limbs[k];
+            uint s = old + carry;
+            carry = uint(s < old);
+            acc.limbs[k] = s;
             k++;
         }
     }

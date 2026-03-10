@@ -229,11 +229,16 @@ where
     type Polynomial = Polynomial<P::ScalarField>;
     type OpeningHint = ();
 
-    fn commit(
-        evaluations: &[Self::Field],
+    fn commit<S: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &S,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        let point = kzg::kzg_commit::<P>(evaluations, setup)
+        // HyperKZG always works on dense evaluations.
+        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
+        poly.for_each_row(poly.num_vars(), &mut |_, row| {
+            evaluations.extend_from_slice(row);
+        });
+        let point = kzg::kzg_commit::<P>(&evaluations, setup)
             .expect("SRS must be large enough for the polynomial");
         (HyperKZGCommitment { point }, ())
     }

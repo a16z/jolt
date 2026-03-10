@@ -13,18 +13,17 @@
 
 use std::sync::Arc;
 
+use jolt_compute::{ComputeBackend, CpuBackend};
 use jolt_field::WithChallenge;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
-use jolt_poly::{BindingOrder, Polynomial};
+use jolt_poly::Polynomial;
 use jolt_sumcheck::claim::SumcheckClaim;
-use jolt_sumcheck::prover::SumcheckCompute;
-use jolt_sumcheck::SplitEqEvaluator;
 use jolt_transcript::Transcript;
 
-use crate::claims::instruction;
-use crate::evaluators::ra_poly::RaPolynomial;
-use crate::evaluators::ra_virtual::RaVirtualCompute;
+use jolt_ir::zkvm::claims::instruction;
+use crate::evaluators::catalog;
+use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
 
 /// RA virtual sumcheck prover stage.
@@ -40,7 +39,6 @@ pub struct RaVirtualStage<F: WithChallenge> {
     /// Eq polynomial evaluation point (from transcript challenges).
     eq_point: Vec<F::Challenge>,
     /// γ-power coefficients for combining virtual polynomials.
-    #[allow(dead_code)]
     gamma_powers: Vec<F>,
     /// Number of virtual RA polynomials.
     n_virtual: usize,
@@ -95,44 +93,65 @@ impl<F: WithChallenge> RaVirtualStage<F> {
 }
 
 impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for RaVirtualStage<F> {
+    fn name(&self) -> &'static str {
+        "S2_ra_virtual"
+    }
+
     fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let ra_tables = self
             .ra_tables
             .as_ref()
             .expect("build() called after extract_claims()");
 
-        let mut ra_polys: Vec<RaPolynomial<u8, F>> =
-            Vec::with_capacity(self.n_virtual * self.n_committed_per_virtual);
+        let n = 1usize << self.num_vars;
+        let total_chunks = self.n_virtual * self.n_committed_per_virtual;
+        let d = self.n_committed_per_virtual;
 
-        for (chunk_idx, table) in ra_tables.iter().enumerate() {
-            let indices = Arc::clone(&self.lookup_indices[chunk_idx]);
-            let ra = RaPolynomial::new(indices, table.clone());
-            ra_polys.push(ra);
-        }
+        // Materialize RA polynomials to dense evaluation tables by gathering
+        // through lookup indices. Pre-scale the first polynomial of each
+        // product group by γ^t so the plain ProductSum kernel computes
+        // Σ_t γ^t · Π_k p_{t·D+k} without needing per-term coefficients.
+        let dense_polys: Vec<Vec<F>> = (0..total_chunks)
+            .map(|chunk_idx| {
+                let table = &ra_tables[chunk_idx];
+                let indices = &self.lookup_indices[chunk_idx];
+                let group = chunk_idx / d;
+                let is_first_in_group = chunk_idx % d == 0;
+                let gamma = if is_first_in_group {
+                    self.gamma_powers[group]
+                } else {
+                    F::one()
+                };
+                (0..n)
+                    .map(|j| indices[j].map_or(F::zero(), |i| gamma * table[i as usize]))
+                    .collect()
+            })
+            .collect();
 
-        let eq_poly =
-            SplitEqEvaluator::new_with_scaling(&self.eq_point, BindingOrder::LowToHigh, None);
+        let eq_f: Vec<F> = self.eq_point.iter().map(|&c| c.into()).collect();
+        let degree = d + 1;
 
-        let degree = self.n_committed_per_virtual + 1; // eq contributes 1
+        let desc = catalog::product_sum(d, self.n_virtual);
+        let kernel = jolt_cpu_kernels::compile::<F>(&desc);
 
-        let claim = SumcheckClaim {
-            num_vars: self.num_vars,
-            degree,
-            claimed_sum: self.claimed_sum,
-        };
-
-        let witness: Box<dyn SumcheckCompute<F>> = Box::new(RaVirtualCompute {
-            mles: ra_polys,
-            eq_poly,
-            claim: self.claimed_sum,
-            binding_order: BindingOrder::LowToHigh,
-            gamma_powers: self.gamma_powers.clone(),
-            n_products: self.n_virtual,
-        });
+        let backend = Arc::new(CpuBackend);
+        let inputs: Vec<_> = dense_polys.iter().map(|p| backend.upload(p)).collect();
+        let witness = KernelEvaluator::with_toom_cook_eq(
+            inputs,
+            kernel,
+            desc.num_evals(),
+            eq_f,
+            self.claimed_sum,
+            backend,
+        );
 
         StageBatch {
-            claims: vec![claim],
-            witnesses: vec![witness],
+            claims: vec![SumcheckClaim {
+                num_vars: self.num_vars,
+                degree,
+                claimed_sum: self.claimed_sum,
+            }],
+            witnesses: vec![Box::new(witness)],
         }
     }
 
@@ -142,14 +161,17 @@ impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for RaVirtualStage<F> {
             .take()
             .expect("extract_claims() called twice");
 
+        // LowToHigh binding → reverse for MSB-first evaluation.
+        let eval_point: Vec<F> = challenges.iter().rev().copied().collect();
+
         ra_tables
             .into_iter()
             .map(|evals| {
                 let poly = Polynomial::new(evals.clone());
-                let eval = poly.evaluate(challenges);
+                let eval = poly.evaluate(&eval_point);
                 ProverClaim {
                     evaluations: evals,
-                    point: challenges.to_vec(),
+                    point: eval_point.clone(),
                     eval,
                 }
             })
@@ -361,11 +383,12 @@ mod tests {
         );
         assert_eq!(claims.len(), total);
 
+        let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();
         for (i, claim) in claims.iter().enumerate() {
             let poly = Polynomial::new(tables[i].clone());
-            let expected_eval = poly.evaluate(&challenges);
+            let expected_eval = poly.evaluate(&eval_point);
             assert_eq!(claim.eval, expected_eval, "claim {i} eval mismatch");
-            assert_eq!(claim.point, challenges);
+            assert_eq!(claim.point, eval_point);
         }
     }
 

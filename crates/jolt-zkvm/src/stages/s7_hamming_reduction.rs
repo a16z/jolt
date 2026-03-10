@@ -8,9 +8,6 @@
 //!
 //! where $c_i$ are pre-computed scalar coefficients combining eq
 //! evaluations and γ-powers.
-//!
-//! **Migration path**: The `g` table pre-computation loop (γ-weighted accumulate)
-//! can become an element-wise backend op once stages hold a backend reference.
 
 use std::sync::Arc;
 
@@ -22,7 +19,7 @@ use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
-use crate::claims::reductions;
+use jolt_ir::zkvm::claims::reductions;
 use crate::evaluators::catalog;
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
@@ -81,6 +78,10 @@ impl<F: Field> HammingReductionStage<F> {
 }
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
+    fn name(&self) -> &'static str {
+        "S7_hamming_reduction"
+    }
+
     fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let poly_tables = self
             .poly_tables
@@ -128,14 +129,17 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
             .take()
             .expect("extract_claims() called twice");
 
+        // LowToHigh binding → reverse for MSB-first evaluation.
+        let eval_point: Vec<F> = challenges.iter().rev().copied().collect();
+
         poly_tables
             .into_iter()
             .map(|evals| {
                 let poly = Polynomial::new(evals.clone());
-                let eval = poly.evaluate(challenges);
+                let eval = poly.evaluate(&eval_point);
                 ProverClaim {
                     evaluations: evals,
-                    point: challenges.to_vec(),
+                    point: eval_point.clone(),
                     eval,
                 }
             })
@@ -225,10 +229,11 @@ mod tests {
             );
         assert_eq!(prover_claims.len(), 3);
 
+        let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();
         for pc in &prover_claims {
             let poly = Polynomial::new(pc.evaluations.clone());
-            assert_eq!(poly.evaluate(&challenges), pc.eval);
-            assert_eq!(pc.point, challenges);
+            assert_eq!(poly.evaluate(&eval_point), pc.eval);
+            assert_eq!(pc.point, eval_point);
         }
     }
 

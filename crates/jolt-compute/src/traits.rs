@@ -99,7 +99,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// Pairwise linear interpolation, halving the buffer.
     ///
     /// For each `i` in `[0, n/2)` where `n` is the active buffer length:
-    /// $$\text{out}[i] = \text{buf}[2i] + \text{scalar} \cdot (\text{buf}[2i+1] - \text{buf}[2i])$$
+    /// $$\text{out}_i = \text{buf}_{2i} + \text{scalar} \cdot (\text{buf}_{2i+1} - \text{buf}_{2i})$$
     ///
     /// When `T` is a compact type (e.g., `u8`), elements are promoted to `F`
     /// during the operation via `F: From<T>`. The returned buffer has element
@@ -163,10 +163,10 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// In-place pairwise linear interpolation, halving the buffer.
     ///
     /// For [`LowToHigh`](BindingOrder::LowToHigh) order (interleaved pairs):
-    /// $$\text{buf}[i] \leftarrow \text{buf}[2i] + s \cdot (\text{buf}[2i+1] - \text{buf}[2i])$$
+    /// $$\text{buf}_i \leftarrow \text{buf}_{2i} + s \cdot (\text{buf}_{2i+1} - \text{buf}_{2i})$$
     ///
     /// For [`HighToLow`](BindingOrder::HighToLow) order (split-half pairs):
-    /// $$\text{buf}[i] \leftarrow \text{buf}[i] + s \cdot (\text{buf}[i + n/2] - \text{buf}[i])$$
+    /// $$\text{buf}_i \leftarrow \text{buf}_i + s \cdot (\text{buf}_{i + n/2} - \text{buf}_i)$$
     ///
     /// The buffer is truncated to half its original length. Only works for
     /// field-to-field binding (no compact type promotion).
@@ -210,13 +210,32 @@ pub trait ComputeBackend: Send + Sync + 'static {
         core::array::from_fn(|i| v[i])
     }
 
+    /// Composition-reduce with implicit unit weights (all ones).
+    ///
+    /// Equivalent to [`pairwise_reduce`](Self::pairwise_reduce) with a weights
+    /// buffer of all `F::one()`, but avoids allocating the buffer and skips the
+    /// per-element weight multiply. On GPU backends this dispatches a specialized
+    /// unweighted kernel that saves one `fr_mul` per pair per evaluation slot.
+    fn pairwise_reduce_unweighted<F: Field>(
+        &self,
+        inputs: &[&Self::Buffer<F>],
+        kernel: &Self::CompiledKernel<F>,
+        num_evals: usize,
+        order: BindingOrder,
+    ) -> Vec<F> {
+        let n = self.len(inputs[0]);
+        let ones = vec![F::one(); n / 2];
+        let weights = self.upload(&ones);
+        self.pairwise_reduce(inputs, &weights, kernel, num_evals, order)
+    }
+
     /// Split-eq tensor-product composition-reduce.
     ///
     /// Like [`pairwise_reduce`](Self::pairwise_reduce) but with factored
     /// weights. Instead of a flat weight buffer, takes two tables whose
     /// tensor product forms the weights:
     ///
-    /// $$w(x_{\text{out}}, x_{\text{in}}) = \text{outer}[x_{\text{out}}] \cdot \text{inner}[x_{\text{in}}]$$
+    /// $$w(x_{\text{out}}, x_{\text{in}}) = \text{outer}_{x_{\text{out}}} \cdot \text{inner}_{x_{\text{in}}}$$
     ///
     /// Input buffers have `2 × |outer| × |inner|` elements. Position
     /// $(x_{\text{out}}, x_{\text{in}})$ maps to pair index
@@ -275,7 +294,7 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// Multiplicative product table over the Boolean hypercube.
     ///
     /// Computes $2^n$ evaluations where $n = \text{point.len()}$:
-    /// $$\text{out}[x] = \prod_{i=0}^{n-1} \bigl(r_i \cdot x_i + (1 - r_i)(1 - x_i)\bigr)$$
+    /// $$\text{out}_x = \prod_{i=0}^{n-1} \bigl(r_i \cdot x_i + (1 - r_i)(1 - x_i)\bigr)$$
     /// for all `x` in `{0,1}^n`, where `x_i` is the `i`-th bit of `x`.
     ///
     /// On GPU this is constructed on-device, avoiding a $2^n$ field-element
@@ -283,14 +302,12 @@ pub trait ComputeBackend: Send + Sync + 'static {
     /// `EqPolynomial::evaluations()`.
     fn product_table<F: Field>(&self, point: &[F]) -> Self::Buffer<F>;
 
-    // ── Element-wise buffer operations ──────────────────────────────────
-
-    /// Sum all elements in a buffer: $\sum_i \text{buf}[i]$.
+    /// Sum all elements in a buffer: $\sum_i \text{buf}_i$.
     ///
     /// Uses delayed modular reduction internally for large buffers.
     fn sum<F: Field>(&self, buf: &Self::Buffer<F>) -> F;
 
-    /// Dot product of two buffers: $\sum_i a[i] \cdot b[i]$.
+    /// Dot product of two buffers: $\sum_i a_i \cdot b_i$.
     ///
     /// Both buffers must have equal length. Uses delayed modular reduction.
     fn dot_product<F: Field>(&self, a: &Self::Buffer<F>, b: &Self::Buffer<F>) -> F;

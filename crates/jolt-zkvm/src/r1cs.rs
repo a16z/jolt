@@ -21,8 +21,6 @@
 use jolt_field::Field;
 use jolt_spartan::UniformSpartanKey;
 
-// ── Dimensions ──────────────────────────────────────────────────────────────
-
 /// Number of per-cycle R1CS inputs from the outer sumcheck.
 pub const NUM_R1CS_INPUTS: usize = 37;
 
@@ -32,21 +30,14 @@ pub const NUM_PRODUCT_FACTORS: usize = 3;
 /// Total variables per cycle: constant-1 + R1CS inputs + product factors.
 pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 41
 
-/// Number of eq-conditional constraints.
 pub const NUM_EQ_CONSTRAINTS: usize = 19;
 
-/// Number of product constraints.
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 5;
 
-/// Total constraints per cycle.
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 24
 
-// ── Variable indices ────────────────────────────────────────────────────────
-
-/// Constant 1 wire.
 pub const V_CONST: usize = 0;
 
-// R1CS inputs [1..=37], matching canonical `JoltR1CSInputs` order.
 pub const V_LEFT_INSTRUCTION_INPUT: usize = 1;
 pub const V_RIGHT_INSTRUCTION_INPUT: usize = 2;
 pub const V_PRODUCT: usize = 3;
@@ -85,12 +76,9 @@ pub const V_FLAG_IS_COMPRESSED: usize = 35;
 pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 36;
 pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 37;
 
-// Product factor variables [38..=40].
 pub const V_IS_RD_NOT_ZERO: usize = 38;
 pub const V_BRANCH: usize = 39;
 pub const V_NEXT_IS_NOOP: usize = 40;
-
-// ── Sparse matrix builder ───────────────────────────────────────────────────
 
 type Sparse<F> = Vec<Vec<(usize, F)>>;
 
@@ -112,8 +100,6 @@ pub fn build_jolt_spartan_key<F: Field>(num_cycles: usize) -> UniformSpartanKey<
     let mut a_sparse: Sparse<F> = Vec::with_capacity(NUM_CONSTRAINTS_PER_CYCLE);
     let mut b_sparse: Sparse<F> = Vec::with_capacity(NUM_CONSTRAINTS_PER_CYCLE);
     let mut c_sparse: Sparse<F> = Vec::with_capacity(NUM_CONSTRAINTS_PER_CYCLE);
-
-    // ── Eq-conditional constraints: guard · (left − right) = 0 ──────────
 
     // 0: RamAddrEqRs1PlusImmIfLoadStore
     //    guard = Load + Store
@@ -318,8 +304,6 @@ pub fn build_jolt_spartan_key<F: Field>(num_cycles: usize) -> UniformSpartanKey<
         (V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC, neg_one),
     ]);
     c_sparse.push(vec![]);
-
-    // ── Product constraints: left · right = output ──────────────────────
 
     // 19: Product = LeftInstructionInput · RightInstructionInput
     a_sparse.push(vec![(V_LEFT_INSTRUCTION_INPUT, one)]);

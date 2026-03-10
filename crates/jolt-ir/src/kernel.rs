@@ -42,6 +42,25 @@ pub enum KernelShape {
         num_products: usize,
     },
 
+    /// `opening(0) * opening(1)` — degree 2, 2 inputs.
+    ///
+    /// Hand-coded kernel that evaluates the product of two linear interpolants
+    /// on the standard grid `{0, 2}` (skipping `t=1`). Eliminates stack-VM
+    /// dispatch overhead compared to the equivalent `Custom` expression.
+    ///
+    /// Used by claim reduction stages (S3, S5, S7) where `opening(0) = eq`
+    /// and `opening(1) = g` (pre-computed linear combination).
+    EqProduct,
+
+    /// `opening(0) * opening(1) * (opening(1) - 1)` — degree 3, 2 inputs.
+    ///
+    /// Hand-coded kernel for Hamming booleanity checks. Evaluates on the
+    /// standard grid `{0, 2, 3}` (skipping `t=1`) without stack-VM dispatch.
+    ///
+    /// Used by stage 6 to prove that the Hamming weight polynomial is
+    /// Boolean-valued on the hypercube.
+    HammingBooleanity,
+
     /// Arbitrary composition defined by a symbolic expression.
     ///
     /// The [`Expr`] references `num_inputs` input buffers via
@@ -67,6 +86,8 @@ impl KernelShape {
                 num_inputs_per_product,
                 num_products,
             } => num_inputs_per_product * num_products,
+            Self::EqProduct => 2,
+            Self::HammingBooleanity => 2,
             Self::Custom { num_inputs, .. } => *num_inputs,
         }
     }
@@ -82,6 +103,8 @@ impl KernelShape {
                 num_inputs_per_product,
                 ..
             } => Some(*num_inputs_per_product),
+            Self::EqProduct => Some(2),
+            Self::HammingBooleanity => Some(3),
             Self::Custom { .. } => None,
         }
     }
@@ -156,7 +179,8 @@ pub struct KernelDescriptor {
     /// For `ProductSum`, this must equal `num_inputs_per_product` and the
     /// kernel produces `degree` evaluations on the Toom-Cook grid.
     /// For `Custom`, this is caller-specified and the kernel produces
-    /// `degree + 1` evaluations on the standard grid.
+    /// `degree` evaluations on the standard grid `{0, 2, ..., degree}`
+    /// (skipping `t=1`, which is derived from the sumcheck claim).
     pub degree: usize,
 
     /// Optional tensor-product decomposition of the weight buffer.
@@ -173,7 +197,8 @@ impl KernelDescriptor {
     /// Number of evaluation values produced per pair position.
     ///
     /// For `ProductSum`: $D$ (Toom-Cook grid `{1, ..., D-1, ∞}`).
-    /// For `Custom`: `degree + 1` (standard grid `{0, 1, ..., degree}`).
+    /// For standard-grid kernels: `degree` (grid `{0, 2, ..., degree}`,
+    /// skipping `t=1` which is derived from the sumcheck claim).
     #[inline]
     pub fn num_evals(&self) -> usize {
         match &self.shape {
@@ -181,7 +206,9 @@ impl KernelDescriptor {
                 num_inputs_per_product,
                 ..
             } => *num_inputs_per_product,
-            KernelShape::Custom { .. } => self.degree + 1,
+            KernelShape::EqProduct => 2,              // {0, 2}
+            KernelShape::HammingBooleanity => 3,      // {0, 2, 3}
+            KernelShape::Custom { .. } => self.degree,
         }
     }
 
@@ -207,6 +234,8 @@ impl KernelDescriptor {
                     && *num_products > 0
                     && self.degree == *num_inputs_per_product
             }
+            KernelShape::EqProduct => self.degree == 2,
+            KernelShape::HammingBooleanity => self.degree == 3,
             KernelShape::Custom { num_inputs, .. } => *num_inputs > 0 && self.degree > 0,
         };
         shape_ok && self.tensor_split.is_none_or(|ts| ts.total_vars() > 0)
@@ -366,7 +395,7 @@ mod tests {
             }),
         };
         assert!(desc.is_valid());
-        // Custom: num_evals = degree + 1 (standard grid)
-        assert_eq!(desc.num_evals(), 3);
+        // Custom: num_evals = degree (standard grid, skipping t=1)
+        assert_eq!(desc.num_evals(), 2);
     }
 }

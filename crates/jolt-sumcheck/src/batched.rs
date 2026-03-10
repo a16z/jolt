@@ -9,7 +9,7 @@
 
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::Transcript;
+use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::claim::SumcheckClaim;
 use crate::error::SumcheckError;
@@ -62,6 +62,12 @@ impl BatchedSumcheckProver {
         let max_num_vars = claims.iter().map(|c| c.num_vars).max().unwrap();
         let max_degree = claims.iter().map(|c| c.degree).max().unwrap();
 
+        // Fiat-Shamir: bind each claimed sum before deriving the batching
+        // coefficient. This ensures α depends on all input claims.
+        for claim in claims {
+            claim.claimed_sum.append_to_transcript(transcript);
+        }
+
         let alpha = challenge_fn(transcript.challenge());
 
         let offsets: Vec<usize> = claims.iter().map(|c| max_num_vars - c.num_vars).collect();
@@ -77,6 +83,14 @@ impl BatchedSumcheckProver {
             .expect("2 is invertible in any prime field of order > 2");
 
         for round in 0..max_num_vars {
+            // Provide running claims to active witnesses before computing round polys.
+            for (i, witness) in witnesses.iter_mut().enumerate() {
+                let active = round >= offsets[i] && round < offsets[i] + claims[i].num_vars;
+                if active {
+                    witness.set_claim(individual_claims[i]);
+                }
+            }
+
             let instance_polys: Vec<UnivariatePoly<F>> = witnesses
                 .iter()
                 .enumerate()
@@ -190,6 +204,11 @@ impl BatchedSumcheckVerifier {
 
         let max_num_vars = claims.iter().map(|c| c.num_vars).max().unwrap();
         let max_degree = claims.iter().map(|c| c.degree).max().unwrap();
+
+        // Fiat-Shamir: absorb claimed sums (must match prover).
+        for claim in claims {
+            claim.claimed_sum.append_to_transcript(transcript);
+        }
 
         let alpha = challenge_fn(transcript.challenge());
 

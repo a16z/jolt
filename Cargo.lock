@@ -3061,6 +3061,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-host"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "common",
+ "serde",
+ "tracer",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-hyperkzg"
 version = "0.1.0"
 dependencies = [
@@ -3404,18 +3415,23 @@ dependencies = [
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
+ "jolt-host",
+ "jolt-instructions",
  "jolt-ir",
  "jolt-openings",
  "jolt-poly",
+ "jolt-profiling",
  "jolt-spartan",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier",
+ "jolt-witness",
  "num-traits",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "tracer",
  "tracing",
 ]
 

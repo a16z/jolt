@@ -6,7 +6,7 @@
 
 use jolt_field::{Field, Fr};
 use jolt_poly::{
-    EqPolynomial, EvaluationSource, IdentityPolynomial, Polynomial, RlcSource, UnivariatePoly,
+    EqPolynomial, IdentityPolynomial, MultilinearPoly, Polynomial, RlcSource, UnivariatePoly,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

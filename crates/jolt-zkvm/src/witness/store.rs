@@ -11,9 +11,9 @@ use jolt_field::Field;
 
 /// Opaque polynomial identity tag.
 ///
-/// Maps to constants in [`crate::tags::poly`]. The WitnessStore treats
+/// Maps to constants in [`jolt_ir::zkvm::tags::poly`]. The WitnessStore treats
 /// these as opaque keys — all semantic interpretation happens in the
-/// tags module and stage implementations.
+/// jolt-ir tags module and stage implementations.
 pub type PolynomialTag = u64;
 
 /// Owns all committed polynomial evaluation tables for the duration of proving.

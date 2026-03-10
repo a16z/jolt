@@ -56,13 +56,15 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
     type Polynomial = Polynomial<F>;
     type OpeningHint = ();
 
-    fn commit(evaluations: &[Self::Field], _setup: &Self::ProverSetup) -> (Self::Output, ()) {
-        (
-            MockCommitment {
-                evaluations: evaluations.to_vec(),
-            },
-            (),
-        )
+    fn commit<P: jolt_poly::MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P,
+        _setup: &Self::ProverSetup,
+    ) -> (Self::Output, ()) {
+        let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
+        poly.for_each_row(poly.num_vars(), &mut |_, row| {
+            evaluations.extend_from_slice(row);
+        });
+        (MockCommitment { evaluations }, ())
     }
 
     fn open(

@@ -8,7 +8,7 @@ use jolt_openings::ProverClaim;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::handler::RoundHandler;
 use jolt_sumcheck::{BatchedSumcheckProver, ClearRoundHandler, SumcheckProof};
-use jolt_transcript::Transcript;
+use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::proof::SumcheckStageProof;
 use crate::stage::ProverStage;
@@ -47,6 +47,38 @@ impl<F: Field> RoundHandler<F> for CaptureHandler<F> {
     }
 }
 
+/// Creates a tracing span whose name in Perfetto matches the stage's
+/// `name()` string. Since `tracing::info_span!` requires a string literal,
+/// we dispatch through a match on known stage names.
+macro_rules! stage_span {
+    ($name:expr, $claims:expr, $rounds:expr) => {
+        match $name {
+            "S2_ra_virtual" => {
+                tracing::info_span!("S2_ra_virtual", claims = $claims, rounds = $rounds)
+            }
+            "S3_claim_reductions" => {
+                tracing::info_span!("S3_claim_reductions", claims = $claims, rounds = $rounds)
+            }
+            "S4_rw_checking" => {
+                tracing::info_span!("S4_rw_checking", claims = $claims, rounds = $rounds)
+            }
+            "S4_ram_rw_checking" => {
+                tracing::info_span!("S4_ram_rw_checking", claims = $claims, rounds = $rounds)
+            }
+            "S5_ram_checking" => {
+                tracing::info_span!("S5_ram_checking", claims = $claims, rounds = $rounds)
+            }
+            "S6_booleanity" => {
+                tracing::info_span!("S6_booleanity", claims = $claims, rounds = $rounds)
+            }
+            "S7_hamming_reduction" => {
+                tracing::info_span!("S7_hamming_reduction", claims = $claims, rounds = $rounds)
+            }
+            other => tracing::info_span!("stage", name = other, claims = $claims, rounds = $rounds),
+        }
+    };
+}
+
 /// Drives the proving pipeline, returning per-stage sumcheck proofs (with
 /// evaluations) and the accumulated opening claims.
 ///
@@ -58,6 +90,7 @@ impl<F: Field> RoundHandler<F> for CaptureHandler<F> {
 ///
 /// Opening claims accumulate across stages and feed into each subsequent
 /// stage's `build()` method, threading data through the pipeline.
+#[tracing::instrument(skip_all, name = "prove_stages")]
 pub fn prove_stages<F, T>(
     stages: &mut [Box<dyn ProverStage<F, T>>],
     transcript: &mut T,
@@ -71,19 +104,34 @@ where
     let mut stage_proofs: Vec<SumcheckStageProof<F>> = Vec::new();
 
     for stage in stages.iter_mut() {
-        let mut batch = stage.build(&all_opening_claims, transcript);
+        let stage_name = stage.name();
+
+        let mut batch = {
+            let _build_span = tracing::info_span!("build", stage = stage_name).entered();
+            stage.build(&all_opening_claims, transcript)
+        };
 
         let max_rounds = batch.claims.iter().map(|c| c.num_vars).max().unwrap_or(0);
+        let num_claims = batch.claims.len();
+        let degrees: Vec<usize> = batch.claims.iter().map(|c| c.degree).collect();
+
+        let stage_span = stage_span!(stage_name, num_claims, max_rounds);
+        let _stage_guard = stage_span.enter();
+
+        tracing::info!(claims = num_claims, max_rounds, ?degrees, "sumcheck start");
 
         let handler = CaptureHandler::new(max_rounds);
 
-        let (proof, challenges) = BatchedSumcheckProver::prove_with_handler(
-            &batch.claims,
-            &mut batch.witnesses,
-            transcript,
-            challenge_fn,
-            handler,
-        );
+        let (proof, challenges) = {
+            let _sc_span = tracing::info_span!("sumcheck", rounds = max_rounds).entered();
+            BatchedSumcheckProver::prove_with_handler(
+                &batch.claims,
+                &mut batch.witnesses,
+                transcript,
+                challenge_fn,
+                handler,
+            )
+        };
 
         let final_eval = if let (Some(last_poly), Some(&last_challenge)) =
             (proof.round_polynomials.last(), challenges.last())
@@ -93,10 +141,21 @@ where
             F::zero()
         };
 
-        let new_claims = stage.extract_claims(&challenges, final_eval);
+        let new_claims = {
+            let _extract_span = tracing::info_span!("extract_claims").entered();
+            stage.extract_claims(&challenges, final_eval)
+        };
 
-        // Capture per-polynomial evaluations for the verifier
         let evaluations: Vec<F> = new_claims.iter().map(|c| c.eval).collect();
+
+        tracing::info!(opening_claims = new_claims.len(), "stage complete");
+
+        // Fiat-Shamir: absorb opening claim evaluations before the next
+        // stage derives its challenges. Matches the old pipeline's
+        // `opening_accumulator.flush_to_transcript(transcript)`.
+        for claim in &new_claims {
+            claim.eval.append_to_transcript(transcript);
+        }
 
         all_opening_claims.extend(new_claims);
         stage_proofs.push(SumcheckStageProof {

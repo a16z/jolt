@@ -10,10 +10,12 @@ This crate composes all Jolt sub-crates into a complete proving system for RISC-
 
 ## Modules
 
-- **`claims`** -- IR-based claim definitions (single source of truth for all sumcheck formulas).
+- **`evaluators`** -- `SumcheckCompute` implementations and kernel descriptor catalog.
 - **`pipeline`** -- `prove_stages` driver that runs the batched sumcheck pipeline.
-- **`proof`** -- Proof data structures.
+- **`preprocessing`** -- Circuit key construction and PCS setup.
+- **`proof`** -- Proof and key data structures.
 - **`prover`** -- Top-level prover orchestration.
+- **`r1cs`** -- Jolt R1CS constraint definitions and `UniformSpartanKey` construction.
 - **`stage`** -- `ProverStage` trait and `StageBatch` batching abstraction.
 - **`stages`** -- Concrete `ProverStage` implementations:
   - `s1_spartan` -- Spartan R1CS stage.
@@ -24,9 +26,7 @@ This crate composes all Jolt sub-crates into a complete proving system for RISC-
   - `s6_booleanity` -- Hamming booleanity checks.
   - `s7_hamming_reduction` -- Hamming weight reduction.
   - `s8_opening` -- Opening proof stage.
-- **`tags`** -- Opaque polynomial and sumcheck identity tags.
-- **`witness`** -- `WitnessStore` for polynomial evaluation table storage.
-- **`witnesses`** -- `SumcheckCompute` implementations for each sumcheck composition.
+- **`witness`** -- `WitnessStore` for polynomial evaluation table storage, plus trace-to-witness conversion.
 
 ## Feature Flags
 

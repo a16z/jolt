@@ -10,21 +10,33 @@
 use jolt_field::Field;
 use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
 
+/// Descriptor for a sum-of-products composition on the Toom-Cook grid.
+///
+/// Produces D evaluations at `{1, ..., D-1, ∞}` for each pair position,
+/// summing across `num_products` product groups. Used with
+/// [`KernelEvaluator::with_toom_cook_eq`](super::kernel::KernelEvaluator::with_toom_cook_eq)
+/// for RA virtual sumchecks.
+///
+/// Input layout: `opening(g*D + k)` for group `g`, factor `k`.
+pub fn product_sum(d: usize, num_products: usize) -> KernelDescriptor {
+    KernelDescriptor {
+        shape: KernelShape::ProductSum {
+            num_inputs_per_product: d,
+            num_products,
+        },
+        degree: d,
+        tensor_split: None,
+    }
+}
+
 /// Descriptor for `eq(x) · g(x)` — degree 2, 2 inputs.
 ///
-/// Used by claim reduction stages where `g` is a pre-computed linear
-/// combination of the input polynomials.
+/// Uses a hand-coded kernel that eliminates stack-VM dispatch overhead.
 ///
 /// Input layout: `opening(0) = eq`, `opening(1) = g`.
 pub fn eq_product() -> KernelDescriptor {
-    let b = ExprBuilder::new();
-    let eq = b.opening(0);
-    let g = b.opening(1);
     KernelDescriptor {
-        shape: KernelShape::Custom {
-            expr: b.build(eq * g),
-            num_inputs: 2,
-        },
+        shape: KernelShape::EqProduct,
         degree: 2,
         tensor_split: None,
     }
@@ -32,19 +44,12 @@ pub fn eq_product() -> KernelDescriptor {
 
 /// Descriptor for `eq(x) · h(x) · (h(x) − 1)` — degree 3, 2 inputs.
 ///
-/// Used by the Hamming booleanity stage to prove that `h` is Boolean-valued
-/// on the hypercube.
+/// Uses a hand-coded kernel that eliminates stack-VM dispatch overhead.
 ///
 /// Input layout: `opening(0) = eq`, `opening(1) = h`.
 pub fn hamming_booleanity() -> KernelDescriptor {
-    let b = ExprBuilder::new();
-    let eq = b.opening(0);
-    let h = b.opening(1);
     KernelDescriptor {
-        shape: KernelShape::Custom {
-            expr: b.build(eq * (h * h - h)),
-            num_inputs: 2,
-        },
+        shape: KernelShape::HammingBooleanity,
         degree: 3,
         tensor_split: None,
     }
@@ -135,8 +140,6 @@ mod tests {
         Arc::new(CpuBackend)
     }
 
-    // ── eq_product tests ─────────────────────────────────────────────
-
     #[test]
     fn eq_product_round_polynomial_consistency() {
         let backend = cpu();
@@ -147,16 +150,20 @@ mod tests {
         let eq_table = EqPolynomial::new(r).evaluations();
         let g_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let desc = eq_product();
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
-        let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
-        let witness = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
-        let poly = witness.round_polynomial();
-
         let s0: Fr = (0..n / 2).map(|j| eq_table[2 * j] * g_table[2 * j]).sum();
         let s1: Fr = (0..n / 2)
             .map(|j| eq_table[2 * j + 1] * g_table[2 * j + 1])
             .sum();
+
+        let desc = eq_product();
+        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
+        let mut witness =
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+
+        // P(1) is derived from the claim, so set it before round_polynomial()
+        witness.set_claim(s0 + s1);
+        let poly = witness.round_polynomial();
 
         assert_eq!(poly.evaluate(Fr::zero()), s0);
         assert_eq!(poly.evaluate(Fr::one()), s1);
@@ -208,8 +215,6 @@ mod tests {
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
 
-    // ── hamming_booleanity tests ─────────────────────────────────────
-
     fn brute_force_booleanity_sum(h: &[Fr], eq: &[Fr]) -> Fr {
         h.iter()
             .zip(eq.iter())
@@ -246,12 +251,6 @@ mod tests {
             .map(Fr::from_u64)
             .collect();
 
-        let desc = hamming_booleanity();
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
-        let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
-        let witness = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
-        let poly = witness.round_polynomial();
-
         let one = Fr::one();
         let s0: Fr = (0..4)
             .map(|j| eq_table[2 * j] * h_table[2 * j] * (h_table[2 * j] - one))
@@ -259,6 +258,15 @@ mod tests {
         let s1: Fr = (0..4)
             .map(|j| eq_table[2 * j + 1] * h_table[2 * j + 1] * (h_table[2 * j + 1] - one))
             .sum();
+
+        let desc = hamming_booleanity();
+        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
+        let mut witness =
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+
+        witness.set_claim(s0 + s1);
+        let poly = witness.round_polynomial();
 
         assert_eq!(poly.evaluate(Fr::zero()), s0);
         assert_eq!(poly.evaluate(Fr::one()), s1);
@@ -307,8 +315,6 @@ mod tests {
         );
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
-
-    // ── formula_descriptor tests ─────────────────────────────────────
 
     fn brute_force_formula(eq: &[Fr], polys: &[Vec<Fr>], terms: &[Term<Fr>]) -> Fr {
         let n = eq.len();

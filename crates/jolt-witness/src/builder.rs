@@ -46,7 +46,6 @@ impl WitnessBuilder {
         Self { config }
     }
 
-    /// Access the underlying config.
     pub fn config(&self) -> &WitnessConfig {
         &self.config
     }

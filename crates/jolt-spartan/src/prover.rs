@@ -88,11 +88,17 @@ impl SpartanProver {
         F: Field,
         T: Transcript<Challenge = u128>,
     {
-        let (az, bz, cz) = r1cs.multiply_witness(witness);
+        let (az, bz, cz) = {
+            let _span = tracing::info_span!("multiply_witness").entered();
+            r1cs.multiply_witness(witness)
+        };
 
-        for i in 0..az.len() {
-            if az[i] * bz[i] != cz[i] {
-                return Err(SpartanError::ConstraintViolation(i));
+        {
+            let _span = tracing::info_span!("constraint_check").entered();
+            for i in 0..az.len() {
+                if az[i] * bz[i] != cz[i] {
+                    return Err(SpartanError::ConstraintViolation(i));
+                }
             }
         }
 
@@ -122,19 +128,22 @@ impl SpartanProver {
             claimed_sum: F::zero(),
         };
 
-        let (outer_sumcheck_proof, r_x) = match strategy {
-            FirstRoundStrategy::UnivariateSkip if num_sc_vars > 0 => {
-                prove_outer_uniskip(&outer_claim, &mut outer_witness, transcript, tau_1.unwrap())
-            }
-            _ => {
-                let handler = TrackingHandler::new(num_sc_vars);
-                SumcheckProver::prove_with_handler(
-                    &outer_claim,
-                    &mut outer_witness,
-                    transcript,
-                    |c: u128| F::from_u128(c),
-                    handler,
-                )
+        let (outer_sumcheck_proof, r_x) = {
+            let _span = tracing::info_span!("outer_sumcheck", num_vars = num_sc_vars).entered();
+            match strategy {
+                FirstRoundStrategy::UnivariateSkip if num_sc_vars > 0 => {
+                    prove_outer_uniskip(&outer_claim, &mut outer_witness, transcript, tau_1.unwrap())
+                }
+                _ => {
+                    let handler = TrackingHandler::new(num_sc_vars);
+                    SumcheckProver::prove_with_handler(
+                        &outer_claim,
+                        &mut outer_witness,
+                        transcript,
+                        |c: u128| F::from_u128(c),
+                        handler,
+                    )
+                }
             }
         };
 
@@ -152,15 +161,18 @@ impl SpartanProver {
 
         // Fuse partial-evaluation of all three matrix MLEs into a single combined
         // row: M(r_x, ·) = ρ_A·A(r_x,·) + ρ_B·B(r_x,·) + ρ_C·C(r_x,·).
-        let combined_row = combined_partial_evaluate(
-            key.a_mle(),
-            key.b_mle(),
-            key.c_mle(),
-            &r_x,
-            rho_a,
-            rho_b,
-            rho_c,
-        );
+        let combined_row = {
+            let _span = tracing::info_span!("combined_partial_evaluate").entered();
+            combined_partial_evaluate(
+                key.a_mle(),
+                key.b_mle(),
+                key.c_mle(),
+                &r_x,
+                rho_a,
+                rho_b,
+                rho_c,
+            )
+        };
 
         let num_witness_vars = key.num_witness_vars();
         let inner_claim = SumcheckClaim {
@@ -175,13 +187,16 @@ impl SpartanProver {
         let mut inner_witness = InnerSumcheckCompute::new(combined_row, &witness_poly);
 
         let inner_handler = TrackingHandler::new(num_witness_vars);
-        let (inner_sumcheck_proof, r_y) = SumcheckProver::prove_with_handler(
-            &inner_claim,
-            &mut inner_witness,
-            transcript,
-            |c: u128| F::from_u128(c),
-            inner_handler,
-        );
+        let (inner_sumcheck_proof, r_y) = {
+            let _span = tracing::info_span!("inner_sumcheck", num_vars = num_witness_vars).entered();
+            SumcheckProver::prove_with_handler(
+                &inner_claim,
+                &mut inner_witness,
+                transcript,
+                |c: u128| F::from_u128(c),
+                inner_handler,
+            )
+        };
 
         let witness_eval = witness_poly.evaluate(&r_y);
 

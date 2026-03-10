@@ -7,9 +7,9 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_spartan::UniformSpartanKey;
 
-pub use jolt_verifier::proof::{BatchOpeningProofs, JoltProof, SumcheckStageProof};
+pub use jolt_verifier::proof::{JoltProof, SumcheckStageProof};
 pub use jolt_verifier::{verify, verify_openings, verify_spartan};
-pub use jolt_verifier::{JoltError, JoltVerifyingKey, VerifierStage};
+pub use jolt_verifier::{JoltError, JoltVerifyingKey, OneHotConfig, OneHotParams, ProverConfig, ReadWriteConfig, StageDescriptor};
 
 /// Proving key containing preprocessed circuit data and PCS parameters.
 ///

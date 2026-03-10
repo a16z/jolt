@@ -45,7 +45,7 @@ The `ExprVisitor` trait provides bottom-up traversal. Each backend implements 6 
 ### Kernel descriptors
 
 - **`KernelDescriptor`** -- Describes a compute kernel for sumcheck evaluation.
-- **`KernelShape`** -- Shape metadata for kernel dispatch.
+- **`KernelShape`** -- Shape metadata for kernel dispatch: `ProductSum` (Toom-Cook grid), `EqProduct` (eq * g), `HammingBooleanity` (eq * h * (h-1)), `Custom` (arbitrary `Expr`).
 - **`TensorSplit`** -- Split-eq sqrt decomposition for GPU thread hierarchy.
 
 ### R1CS exports

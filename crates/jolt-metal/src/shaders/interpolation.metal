@@ -30,18 +30,20 @@ kernel void fr_interpolate_inplace_high_kernel(
     buf[tid] = fr_add(lo, fr_mul(s, fr_sub(hi, lo)));
 }
 
-// Product table round (split-half): table[j] *= (1-r), table[j+prev_len] = table[j] * r.
-// Matches the CPU parallel path. Safe in-place: thread j writes table[j] and
-// table[j+prev_len], no cross-thread aliasing. params[0] = prev_len.
+// Product table round (split-half): table[j+prev_len] = table[j] * r,
+// table[j] = table[j] - table[j+prev_len] (= table[j] * (1-r)).
+// Uses one fr_mul + one fr_sub instead of two fr_mul.
+// Safe in-place: thread j writes table[j] and table[j+prev_len].
+// params[0] = prev_len.
 kernel void fr_product_table_round_kernel(
     device Fr*         table       [[buffer(0)]],
     device const Fr*   r_val       [[buffer(1)]],
-    device const Fr*   one_minus_r [[buffer(2)]],
-    device const uint* params      [[buffer(3)]],
+    device const uint* params      [[buffer(2)]],
     uint tid                       [[thread_position_in_grid]]
 ) {
     uint prev_len = params[0];
     Fr base = table[tid];
-    table[tid + prev_len] = fr_mul(base, r_val[0]);
-    table[tid]            = fr_mul(base, one_minus_r[0]);
+    Fr br = fr_mul(base, r_val[0]);
+    table[tid + prev_len] = br;
+    table[tid] = fr_sub(base, br);
 }

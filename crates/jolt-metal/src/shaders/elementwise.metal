@@ -51,33 +51,32 @@ kernel void fr_sum_kernel(
     uint lid                      [[thread_position_in_threadgroup]],
     uint gid                      [[threadgroup_position_in_grid]]
 ) {
-    threadgroup WideAcc shared_acc[SUM_GROUP_SIZE];
-
     uint n = params[0];
+
+    // Per-thread accumulation: acc_add_fr avoids all multiplications.
+    // Accumulated value is Σ a_i_mont as a raw wide integer.
     WideAcc local_acc = acc_zero();
-
-    // Each thread accumulates its stripe: fmadd(buf[i], 1)
-    // Since we want sum, we use the identity: sum = Σ buf[i] * R_mont * R_mont_inv
-    // Simpler: just add elements directly using field addition, and use wide
-    // accumulator with fmadd(element, ONE_MONT).
-    Fr one = fr_one();
     for (uint i = tid; i < n; i += SUM_GROUP_SIZE * params[1]) {
-        acc_fmadd(local_acc, buf[i], one);
+        acc_add_fr(local_acc, buf[i]);
     }
-    shared_acc[lid] = local_acc;
 
+    // acc_reduce gives Σ a_i (standard form); fr_to_mont restores Montgomery.
+    Fr local_fr = fr_to_mont(acc_reduce(local_acc));
+
+    // Tree reduction with Fr values (8 KB shared vs 18 KB for WideAcc).
+    threadgroup Fr shared[SUM_GROUP_SIZE];
+    shared[lid] = local_fr;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    // Tree reduction within threadgroup
     for (uint stride = SUM_GROUP_SIZE / 2; stride > 0; stride >>= 1) {
         if (lid < stride) {
-            acc_merge(shared_acc[lid], shared_acc[lid + stride]);
+            shared[lid] = fr_add(shared[lid], shared[lid + stride]);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
     if (lid == 0) {
-        partials[gid] = acc_reduce_tg(shared_acc[0]);
+        partials[gid] = shared[0];
     }
 }
 
@@ -91,26 +90,29 @@ kernel void fr_dot_product_kernel(
     uint lid                      [[thread_position_in_threadgroup]],
     uint gid                      [[threadgroup_position_in_grid]]
 ) {
-    threadgroup WideAcc shared_acc[SUM_GROUP_SIZE];
-
     uint n = params[0];
-    WideAcc local_acc = acc_zero();
 
+    // Per-thread: acc_fmadd defers Montgomery reduction to the end.
+    WideAcc local_acc = acc_zero();
     for (uint i = tid; i < n; i += SUM_GROUP_SIZE * params[1]) {
         acc_fmadd(local_acc, a[i], b[i]);
     }
-    shared_acc[lid] = local_acc;
 
+    Fr local_fr = acc_reduce(local_acc);
+
+    // Tree reduction with Fr values.
+    threadgroup Fr shared[SUM_GROUP_SIZE];
+    shared[lid] = local_fr;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     for (uint stride = SUM_GROUP_SIZE / 2; stride > 0; stride >>= 1) {
         if (lid < stride) {
-            acc_merge(shared_acc[lid], shared_acc[lid + stride]);
+            shared[lid] = fr_add(shared[lid], shared[lid + stride]);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
     if (lid == 0) {
-        partials[gid] = acc_reduce_tg(shared_acc[0]);
+        partials[gid] = shared[0];
     }
 }

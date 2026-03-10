@@ -9,9 +9,6 @@
 //! 2. **RAM RAF evaluation** (degree 2):
 //!    `eq · (c0·ra)` — relates the read-address polynomial to the
 //!    address unmapping polynomial.
-//!
-//! **Migration path**: The `g` table pre-computation loops (scale + accumulate)
-//! can become element-wise backend ops once stages hold a backend reference.
 
 use std::sync::Arc;
 
@@ -23,7 +20,7 @@ use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
-use crate::claims::ram;
+use jolt_ir::zkvm::claims::ram;
 use crate::evaluators::catalog;
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
@@ -86,6 +83,10 @@ impl<F: Field> RamCheckingStage<F> {
 }
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
+    fn name(&self) -> &'static str {
+        "S5_ram_checking"
+    }
+
     fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let val_final = self.val_final.as_ref().unwrap();
         let ram_ra = self.ram_ra.as_ref().unwrap();
@@ -151,14 +152,17 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
         let val_final = self.val_final.take().unwrap();
         let ram_ra = self.ram_ra.take().unwrap();
 
+        // LowToHigh binding → reverse for MSB-first evaluation.
+        let eval_point: Vec<F> = challenges.iter().rev().copied().collect();
+
         vec![val_final, ram_ra]
             .into_iter()
             .map(|evals| {
                 let poly = Polynomial::new(evals.clone());
-                let eval = poly.evaluate(challenges);
+                let eval = poly.evaluate(&eval_point);
                 ProverClaim {
                     evaluations: evals,
-                    point: challenges.to_vec(),
+                    point: eval_point.clone(),
                     eval,
                 }
             })
@@ -251,9 +255,11 @@ mod tests {
             );
         assert_eq!(prover_claims.len(), 2);
 
+        let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();
         for pc in &prover_claims {
             let poly = Polynomial::new(pc.evaluations.clone());
-            assert_eq!(poly.evaluate(&challenges), pc.eval);
+            assert_eq!(poly.evaluate(&eval_point), pc.eval);
+            assert_eq!(pc.point, eval_point);
         }
     }
 }

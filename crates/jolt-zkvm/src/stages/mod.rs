@@ -5,6 +5,7 @@
 //! batched sumcheck prover.
 
 pub mod s1_spartan;
+pub mod s2_product_virtual;
 pub mod s2_ra_virtual;
 pub mod s3_claim_reductions;
 pub mod s4_ram_rw;

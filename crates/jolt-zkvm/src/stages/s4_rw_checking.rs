@@ -19,7 +19,7 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_sumcheck::prover::SumcheckCompute;
 use jolt_transcript::Transcript;
 
-use crate::claims::{ram, registers};
+use jolt_ir::zkvm::claims::{ram, registers};
 use crate::evaluators::catalog::{formula_descriptor, Term};
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
@@ -28,7 +28,7 @@ use crate::stage::{ProverStage, StageBatch};
 ///
 /// The register RW checking formula has degree 4 (products of up to 3
 /// polynomials plus eq). The RAM value check has degree 3 (c0·inc·wa).
-/// Both use [`KernelEvaluator`](crate::evaluators::kernel::KernelEvaluator)
+/// Both use [`KernelEvaluator`]
 /// with formula-derived kernels.
 pub struct RwCheckingStage<F: Field> {
     // Register RW checking polynomials
@@ -211,6 +211,10 @@ impl<F: Field> RwCheckingStage<F> {
 }
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for RwCheckingStage<F> {
+    fn name(&self) -> &'static str {
+        "S4_rw_checking"
+    }
+
     fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let (reg_claim, reg_witness) = self.build_register_rw();
         let (ram_claim, ram_witness) = self.build_ram_val_check();
@@ -232,14 +236,17 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RwCheckingStage<F> {
             self.ram_wa.take().unwrap(),
         ];
 
+        // LowToHigh binding → reverse for MSB-first evaluation.
+        let eval_point: Vec<F> = challenges.iter().rev().copied().collect();
+
         tables
             .into_iter()
             .map(|evals| {
                 let poly = Polynomial::new(evals.clone());
-                let eval = poly.evaluate(challenges);
+                let eval = poly.evaluate(&eval_point);
                 ProverClaim {
                     evaluations: evals,
-                    point: challenges.to_vec(),
+                    point: eval_point.clone(),
                     eval,
                 }
             })
@@ -359,9 +366,11 @@ mod tests {
         // 5 register polys + 2 RAM polys = 7
         assert_eq!(prover_claims.len(), 7);
 
+        let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();
         for pc in &prover_claims {
             let poly = Polynomial::new(pc.evaluations.clone());
-            assert_eq!(poly.evaluate(&challenges), pc.eval);
+            assert_eq!(poly.evaluate(&eval_point), pc.eval);
+            assert_eq!(pc.point, eval_point);
         }
     }
 

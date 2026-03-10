@@ -47,6 +47,11 @@ pub mod poly {
     pub const LEFT_INSTRUCTION_INPUT: u64 = 1203;
     pub const RIGHT_INSTRUCTION_INPUT: u64 = 1204;
 
+    pub const IS_RD_NOT_ZERO: u64 = 1205;
+    pub const WRITE_LOOKUP_OUTPUT_TO_RD_FLAG: u64 = 1206;
+    pub const JUMP_FLAG: u64 = 1207;
+    pub const BRANCH_FLAG: u64 = 1208;
+
     pub const NEXT_PC: u64 = 1300;
     pub const NEXT_UNEXPANDED_PC: u64 = 1301;
     pub const NEXT_IS_VIRTUAL: u64 = 1302;

@@ -19,7 +19,7 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_sumcheck::prover::SumcheckCompute;
 use jolt_transcript::Transcript;
 
-use crate::claims::reductions;
+use jolt_ir::zkvm::claims::reductions;
 use crate::evaluators::catalog;
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
@@ -142,6 +142,10 @@ impl<F: Field> ClaimReductionStage<F> {
 }
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
+    fn name(&self) -> &'static str {
+        "S3_claim_reductions"
+    }
+
     fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let instances = self
             .instances
@@ -195,15 +199,19 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
             .take()
             .expect("extract_claims() called twice");
 
+        // LowToHigh binding: round 0 binds the last variable, so sumcheck
+        // challenges [r_0, ..., r_{n-1}] map to evaluation point reversed.
+        let eval_point: Vec<F> = challenges.iter().rev().copied().collect();
+
         instances
             .into_iter()
             .flat_map(|inst| {
                 inst.poly_tables.into_iter().map(|evals| {
                     let poly = Polynomial::new(evals.clone());
-                    let eval = poly.evaluate(challenges);
+                    let eval = poly.evaluate(&eval_point);
                     ProverClaim {
                         evaluations: evals,
-                        point: challenges.to_vec(),
+                        point: eval_point.clone(),
                         eval,
                     }
                 })
@@ -274,7 +282,7 @@ mod tests {
 
         for pc in &prover_claims {
             let poly = Polynomial::new(pc.evaluations.clone());
-            assert_eq!(poly.evaluate(&challenges), pc.eval);
+            assert_eq!(poly.evaluate(&pc.point), pc.eval);
         }
     }
 

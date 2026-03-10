@@ -14,7 +14,7 @@ use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
-use crate::claims::ram;
+use jolt_ir::zkvm::claims::ram;
 use crate::evaluators::catalog;
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
@@ -59,6 +59,10 @@ impl<F: Field> HammingBooleanityStage<F> {
 }
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for HammingBooleanityStage<F> {
+    fn name(&self) -> &'static str {
+        "S6_booleanity"
+    }
+
     fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let h_evals = self
             .h_evals
@@ -88,12 +92,15 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingBooleanityStage<F> {
     fn extract_claims(&mut self, challenges: &[F], _final_eval: F) -> Vec<ProverClaim<F>> {
         let h_evals = self.h_evals.take().expect("extract_claims() called twice");
 
+        // LowToHigh binding → reverse for MSB-first evaluation.
+        let eval_point: Vec<F> = challenges.iter().rev().copied().collect();
+
         let poly = Polynomial::new(h_evals.clone());
-        let eval = poly.evaluate(challenges);
+        let eval = poly.evaluate(&eval_point);
 
         vec![ProverClaim {
             evaluations: h_evals,
-            point: challenges.to_vec(),
+            point: eval_point,
             eval,
         }]
     }
@@ -174,10 +181,11 @@ mod tests {
             );
         assert_eq!(prover_claims.len(), 1);
 
+        let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();
         let h_poly = Polynomial::new(prover_claims[0].evaluations.clone());
-        let expected_eval = h_poly.evaluate(&challenges);
+        let expected_eval = h_poly.evaluate(&eval_point);
         assert_eq!(prover_claims[0].eval, expected_eval);
-        assert_eq!(prover_claims[0].point, challenges);
+        assert_eq!(prover_claims[0].point, eval_point);
     }
 
     #[test]

@@ -42,6 +42,7 @@ impl<PCS: AdditivelyHomomorphic> OpeningStage<PCS> {
     ///
     /// The transcript must be in the same Fiat-Shamir state as the verifier's
     /// transcript at this protocol step.
+    #[tracing::instrument(skip_all, name = "OpeningStage::prove")]
     pub fn prove<T: Transcript>(
         claims: Vec<ProverClaim<PCS::Field>>,
         setup: &PCS::ProverSetup,
@@ -71,6 +72,7 @@ impl<PCS: AdditivelyHomomorphic> OpeningStage<PCS> {
     ///
     /// Returns [`OpeningsError::VerificationFailed`] if any opening proof
     /// is invalid, or if the reduction detects inconsistency.
+    #[tracing::instrument(skip_all, name = "OpeningStage::verify")]
     pub fn verify<T: Transcript>(
         claims: Vec<VerifierClaim<PCS::Field, PCS::Output>>,
         opening_proofs: &OpeningProofs<PCS>,

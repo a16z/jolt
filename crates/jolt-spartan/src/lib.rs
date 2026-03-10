@@ -25,6 +25,9 @@
 //! | [`prover`] | Proof generation |
 //! | [`verifier`] | Proof verification |
 //! | [`proof`] | Proof data structure |
+//! | [`uniform_key`] | Uniform Spartan key for repeated-constraint R1CS |
+//! | [`uniform_prover`] | Prover for uniform R1CS (per-cycle witnesses) |
+//! | [`uniform_verifier`] | Verifier for uniform Spartan proofs |
 //! | [`ir_r1cs`] | Bridge from `jolt-ir` R1CS emission to Spartan |
 //! | [`uni_skip`] | Univariate skip optimization strategy |
 //! | [`error`] | Error types |

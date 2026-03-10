@@ -15,7 +15,7 @@ use std::fmt::Debug;
 
 use jolt_crypto::{Commitment, JoltCommitment};
 use jolt_field::Field;
-use jolt_poly::EvaluationSource;
+use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -65,10 +65,10 @@ pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
 
     /// Polynomial representation accepted by [`open`](Self::open).
     ///
-    /// Must implement [`EvaluationSource`] to support streaming access
+    /// Must implement [`MultilinearPoly`] to support streaming access
     /// patterns during opening proofs (e.g., Dory's vector-matrix product
-    /// via [`fold_rows`](EvaluationSource::fold_rows), or row-wise iteration
-    /// via [`for_each_row`](EvaluationSource::for_each_row)).
+    /// via [`fold_rows`](MultilinearPoly::fold_rows), or row-wise iteration
+    /// via [`for_each_row`](MultilinearPoly::for_each_row)).
     ///
     /// Simple schemes use `jolt_poly::Polynomial<F>` (evaluation table with
     /// bind/evaluate). Schemes with streaming optimizations (e.g., Dory over
@@ -77,7 +77,7 @@ pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
     ///
     /// `From<Vec<F>>` ensures materialized evaluation tables (produced by
     /// RLC reduction) can always be passed to `open`.
-    type Polynomial: EvaluationSource<Self::Field> + From<Vec<Self::Field>>;
+    type Polynomial: MultilinearPoly<Self::Field> + From<Vec<Self::Field>>;
 
     /// Auxiliary data from the commit phase, reused during opening proofs.
     ///
@@ -85,12 +85,19 @@ pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
     /// For schemes without commit-phase hints: `()`.
     type OpeningHint: Clone + Send + Sync + Default;
 
-    /// Commits to a multilinear polynomial given its evaluation table over the Boolean hypercube.
+    /// Commits to a multilinear polynomial.
+    ///
+    /// Accepts any [`MultilinearPoly`] implementation: dense evaluation tables
+    /// (`&[F]`, `&Vec<F>`, `&Polynomial<F>`), sparse representations
+    /// ([`OneHotPolynomial`](jolt_poly::OneHotPolynomial)), or lazy compositions
+    /// ([`RlcSource`](jolt_poly::RlcSource)). PCS backends may check
+    /// [`is_sparse()`](MultilinearPoly::is_sparse) to select optimized commit
+    /// strategies (e.g., generator lookup instead of MSM for one-hot polynomials).
     ///
     /// Returns both the commitment and an opening hint. Callers that discard
     /// the hint can pattern-match with `let (commitment, _) = PCS::commit(...)`.
-    fn commit(
-        evaluations: &[Self::Field],
+    fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint);
 

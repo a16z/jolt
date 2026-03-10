@@ -9,8 +9,6 @@ use rayon::prelude::*;
 use jolt_field::{FieldAccumulator, WithChallenge};
 use jolt_poly::{math::Math, BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 
-/// Split equality polynomial evaluator for efficient sumcheck.
-///
 /// Factors `eq(w, x)` into three parts and precomputes prefix tables:
 ///
 /// ```text

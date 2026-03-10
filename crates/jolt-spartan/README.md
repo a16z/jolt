@@ -31,9 +31,9 @@ The implementation is generic over the commitment scheme and transcript.
 
 ### Proofs
 
-- **`SpartanProof<F, PCS>`** -- Standard Spartan proof (witness commitment, sumcheck proof, matrix evaluations, opening proof).
-- **`UniformSpartanProof<F, PCS>`** -- Proof for uniform R1CS.
-- **`RelaxedSpartanProof<F, PCS>`** -- Proof for relaxed R1CS (used by Nova folding).
+- **`SpartanProof<F>`** -- Standard Spartan proof (sumcheck proofs, matrix evaluations, witness evaluation). Witness commitment and opening proof handled externally.
+- **`UniformSpartanProof<F>`** -- Proof for uniform R1CS.
+- **`RelaxedSpartanProof<F, PCS>`** -- Proof for relaxed R1CS (used by Nova folding). Includes PCS opening proofs.
 
 ### jolt-ir Bridge
 
@@ -46,7 +46,7 @@ The implementation is generic over the commitment scheme and transcript.
 
 ### Errors
 
-- **`SpartanError`** -- Variants: `ConstraintViolation`, `Sumcheck`, `Opening`, `EvaluationMismatch`, `InnerEvaluationMismatch`, `RelaxedConstraintViolation`.
+- **`SpartanError`** -- Variants: `ConstraintViolation`, `Sumcheck`, `Opening`, `OuterEvaluationMismatch`, `InnerEvaluationMismatch`, `RelaxedConstraintViolation`.
 
 ## Feature Flags
 

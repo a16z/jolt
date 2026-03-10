@@ -12,7 +12,7 @@ use jolt_openings::{
     VerifierClaim,
 };
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -97,6 +97,11 @@ fn pipeline_round_trip<T: Transcript<Challenge = u128>>(
     let combined_hints: Vec<Option<DoryHintType>> = if use_hints {
         let hint_groups = group_by_point(hint_pairs);
         let mut replay = transcript_hint;
+        // reduce_prover absorbs all claim evaluations before drawing challenges.
+        // The replay must do the same to produce matching rho values.
+        for (poly, point) in polys.iter().zip(points.iter()) {
+            poly.evaluate(point).append_to_transcript(&mut replay);
+        }
         hint_groups
             .into_iter()
             .map(|(_point, group_hints)| {

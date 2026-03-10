@@ -1,39 +1,39 @@
-//! Evaluation source abstraction for multilinear polynomials.
+//! Abstract multilinear polynomial trait and compositions.
 //!
-//! [`EvaluationSource`] decouples polynomial *access* from polynomial *storage*.
-//! A source produces the same data as a materialized evaluation table but may
-//! compute it lazily — enabling streaming opening proofs where the full $2^n$
-//! table never needs to reside in memory simultaneously.
+//! [`MultilinearPoly`] is the core abstraction over multilinear polynomials
+//! in evaluation form. Implementations range from dense evaluation tables
+//! ([`Polynomial<F>`](crate::Polynomial)) to structured sparse representations
+//! ([`OneHotPolynomial`]) to lazy compositions ([`RlcSource`]). The trait
+//! decouples polynomial *access* from *storage*, enabling streaming opening
+//! proofs where the full $2^n$ table never resides in memory simultaneously.
 //!
-//! [`RlcSource`] composes multiple sources via random linear combination
-//! without materializing the combined polynomial. Its [`fold_rows`] distributes
-//! across constituent sources, avoiding allocation of the combined table.
+//! [`RlcSource`] composes multiple polynomials via random linear combination
+//! without materializing the combined table. Its [`fold_rows`] distributes
+//! across constituents, avoiding allocation of the combined table.
 //!
-//! [`EvaluationSource`]: trait.EvaluationSource.html
+//! [`MultilinearPoly`]: trait.MultilinearPoly.html
 //! [`RlcSource`]: struct.RlcSource.html
-//! [`fold_rows`]: trait.EvaluationSource.html#method.fold_rows
+//! [`OneHotPolynomial`]: struct.OneHotPolynomial.html
+//! [`fold_rows`]: trait.MultilinearPoly.html#method.fold_rows
 
 use jolt_field::Field;
 
 use crate::Polynomial;
 
-/// A source of multilinear polynomial evaluations.
+/// A multilinear polynomial $f : \{0,1\}^n \to \mathbb{F}$ in evaluation form.
 ///
-/// The evaluation table of a multilinear polynomial $f : \{0,1\}^n \to \mathbb{F}$
-/// can be viewed as a $(2^\nu \times 2^\sigma)$ matrix where $\nu + \sigma = n$.
-/// This trait provides four operations:
+/// The evaluation table can be viewed as a $(2^\nu \times 2^\sigma)$ matrix
+/// where $\nu + \sigma = n$. Implementations range from dense evaluation
+/// tables ([`Polynomial<F>`](crate::Polynomial)) to structured sparse forms
+/// ([`OneHotPolynomial`]) to lazy compositions ([`RlcSource`]).
 ///
-/// - [`num_vars`](Self::num_vars): dimensional metadata
-/// - [`evaluate`](Self::evaluate): point evaluation $f(r)$
-/// - [`for_each_row`](Self::for_each_row): sequential row-wise iteration
-///   (used by streaming commitment, row-based MSM)
-/// - [`fold_rows`](Self::fold_rows): matrix-vector product $v \cdot M$
-///   (used by Dory's opening protocol, Hyrax-style schemes)
-///
-/// Implementations range from trivial (wrapping a `Vec<F>`) to sophisticated
-/// (streaming from an execution trace with one-hot sparsity). The trait is
-/// object-safe when `F` is concrete, enabling `Box<dyn EvaluationSource<Fr>>`.
-pub trait EvaluationSource<F: Field>: Send + Sync {
+/// Core operations:
+/// - [`num_vars`](Self::num_vars) / [`evaluate`](Self::evaluate): metadata and point evaluation
+/// - [`for_each_row`](Self::for_each_row): row-wise iteration (streaming commit, row-based MSM)
+/// - [`fold_rows`](Self::fold_rows): matrix-vector product $v \cdot M$ (opening protocols)
+/// - [`is_sparse`](Self::is_sparse) / [`for_each_nonzero`](Self::for_each_nonzero): sparsity
+///   hints for PCS commit optimization (e.g., batch addition instead of MSM)
+pub trait MultilinearPoly<F: Field>: Send + Sync {
     /// Number of variables $n$. The polynomial has $2^n$ evaluations.
     fn num_vars(&self) -> usize;
 
@@ -77,9 +77,34 @@ pub trait EvaluationSource<F: Field>: Send + Sync {
         });
         result
     }
+
+    /// Whether this polynomial has sparse structure that allows more efficient
+    /// commitment (e.g., batch affine addition instead of full MSM).
+    ///
+    /// When true, PCS backends should use [`for_each_nonzero`](Self::for_each_nonzero)
+    /// to access only the nonzero entries.
+    fn is_sparse(&self) -> bool {
+        false
+    }
+
+    /// Iterates over nonzero entries as `(flat_index, value)` pairs.
+    ///
+    /// For dense polynomials, the default scans the full table. Structured
+    /// sparse types (e.g., [`OneHotPolynomial`]) yield only O(T) entries.
+    fn for_each_nonzero(&self, f: &mut dyn FnMut(usize, F)) {
+        let n = self.num_vars();
+        let total = 1usize << n;
+        self.for_each_row(n, &mut |_, row| {
+            for (i, &val) in row.iter().take(total).enumerate() {
+                if !val.is_zero() {
+                    f(i, val);
+                }
+            }
+        });
+    }
 }
 
-impl<F: Field> EvaluationSource<F> for Polynomial<F> {
+impl<F: Field> MultilinearPoly<F> for Polynomial<F> {
     #[inline]
     fn num_vars(&self) -> usize {
         Polynomial::num_vars(self)
@@ -116,28 +141,84 @@ impl<F: Field> EvaluationSource<F> for Polynomial<F> {
     }
 }
 
-/// Lazy RLC composition of evaluation sources.
+impl<F: Field> MultilinearPoly<F> for [F] {
+    #[inline]
+    fn num_vars(&self) -> usize {
+        if self.is_empty() {
+            return 0;
+        }
+        assert!(
+            self.len().is_power_of_two(),
+            "slice length must be a power of two, got {}",
+            self.len()
+        );
+        self.len().trailing_zeros() as usize
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        let eq_evals = crate::EqPolynomial::new(point.to_vec()).evaluations();
+        self.iter()
+            .zip(eq_evals.iter())
+            .map(|(&f, &e)| f * e)
+            .sum()
+    }
+
+    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
+        let num_cols = 1usize << sigma;
+        for (i, row) in self.chunks(num_cols).enumerate() {
+            f(i, row);
+        }
+    }
+
+    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
+        let num_cols = 1usize << sigma;
+        let mut result = vec![F::zero(); num_cols];
+        for (row_idx, row) in self.chunks(num_cols).enumerate() {
+            let l = left[row_idx];
+            for (r, &val) in result.iter_mut().zip(row.iter()) {
+                *r += l * val;
+            }
+        }
+        result
+    }
+}
+
+impl<F: Field> MultilinearPoly<F> for Vec<F> {
+    #[inline]
+    fn num_vars(&self) -> usize {
+        self.as_slice().num_vars()
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        self.as_slice().evaluate(point)
+    }
+
+    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
+        self.as_slice().for_each_row(sigma, f);
+    }
+
+    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
+        self.as_slice().fold_rows(left, sigma)
+    }
+}
+
+/// Lazy RLC composition of multilinear polynomials.
 ///
 /// Represents $f(x) = \sum_{i=0}^{k-1} s_i \cdot f_i(x)$ without
 /// materializing the combined evaluation table. Operations distribute
-/// over the constituent sources:
+/// over the constituents:
 ///
-/// - [`evaluate`](EvaluationSource::evaluate): $\sum_i s_i \cdot f_i(r)$
-/// - [`fold_rows`](EvaluationSource::fold_rows): $\sum_i s_i \cdot (v \cdot M_i)$ —
-///   each source computes its own fold, results are combined with scalars.
+/// - [`evaluate`](MultilinearPoly::evaluate): $\sum_i s_i \cdot f_i(r)$
+/// - [`fold_rows`](MultilinearPoly::fold_rows): $\sum_i s_i \cdot (v \cdot M_i)$ —
+///   each polynomial computes its own fold, results are combined with scalars.
 ///   No evaluation table is ever materialized.
-///
-/// This is the streaming counterpart of
-/// [`rlc_combine`](https://docs.rs/jolt-openings/*/jolt_openings/fn.rlc_combine.html):
-/// where `rlc_combine` materializes the combined evaluation table,
-/// `RlcSource` defers computation until `fold_rows` or `evaluate` is called.
-pub struct RlcSource<F: Field, S: EvaluationSource<F>> {
+pub struct RlcSource<F: Field, S: MultilinearPoly<F>> {
     sources: Vec<S>,
     scalars: Vec<F>,
     num_vars: usize,
 }
 
-impl<F: Field, S: EvaluationSource<F>> RlcSource<F, S> {
+impl<F: Field, S: MultilinearPoly<F>> RlcSource<F, S> {
     /// Creates a lazy RLC composition.
     ///
     /// # Panics
@@ -167,7 +248,7 @@ impl<F: Field, S: EvaluationSource<F>> RlcSource<F, S> {
     }
 }
 
-impl<F: Field, S: EvaluationSource<F>> EvaluationSource<F> for RlcSource<F, S> {
+impl<F: Field, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S> {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -435,7 +516,7 @@ mod tests {
 
     /// Calls the default `fold_rows` implementation (via `for_each_row`).
     fn default_fold_rows<F: Field>(
-        source: &impl EvaluationSource<F>,
+        source: &impl MultilinearPoly<F>,
         left: &[F],
         sigma: usize,
     ) -> Vec<F> {

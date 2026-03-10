@@ -34,6 +34,17 @@ pub trait SumcheckCompute<F: Field>: Send + Sync {
     /// Fixes the current leading variable to `challenge`, reducing the
     /// witness to one fewer variable.
     fn bind(&mut self, challenge: F);
+
+    /// Provides the running sumcheck claim before each round.
+    ///
+    /// Called by the prover before [`round_polynomial`](Self::round_polynomial)
+    /// with the current running sum: `claimed_sum` for round 0, then
+    /// `round_poly.evaluate(challenge)` for subsequent rounds.
+    ///
+    /// Implementations that derive evaluation points from the claim
+    /// (e.g., `P(1) = claim - P(0)` to skip one kernel evaluation)
+    /// should override this. The default is a no-op.
+    fn set_claim(&mut self, _claim: F) {}
 }
 
 /// Stateless sumcheck prover engine.
@@ -69,11 +80,14 @@ impl SumcheckProver {
         T: Transcript,
         H: RoundHandler<F>,
     {
+        let mut running_claim = claim.claimed_sum;
         for _round in 0..claim.num_vars {
+            witness.set_claim(running_claim);
             let round_poly = witness.round_polynomial();
             handler.absorb_round_poly(&round_poly, transcript);
             let challenge = challenge_fn(transcript.challenge());
             handler.on_challenge(challenge);
+            running_claim = round_poly.evaluate(challenge);
             witness.bind(challenge);
         }
         handler.finalize()

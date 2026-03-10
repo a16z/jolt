@@ -32,7 +32,6 @@ pub trait TraceSource {
     /// pads this to the next power of two.
     fn len(&self) -> usize;
 
-    /// Whether the trace is empty.
     fn is_empty(&self) -> bool {
         self.len() == 0
     }

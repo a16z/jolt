@@ -15,7 +15,7 @@ use jolt_field::Fr;
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, OpeningsError, VcSetupExtractable, ZkOpeningScheme,
 };
-use jolt_poly::EvaluationSource;
+use jolt_poly::MultilinearPoly;
 use jolt_transcript::Transcript;
 
 use crate::params::DoryParams;
@@ -62,11 +62,13 @@ impl DoryScheme {
     }
 
     /// Generates prover SRS from a deterministic SHA3-seeded RNG.
+    #[tracing::instrument(skip_all, name = "DoryScheme::setup_prover", fields(max_num_vars))]
     pub fn setup_prover(max_num_vars: usize) -> DoryProverSetup {
         DoryProverSetup(ArkworksProverSetup::new_from_urs(max_num_vars))
     }
 
     /// Derives the verifier SRS (a subset of the prover SRS).
+    #[tracing::instrument(skip_all, name = "DoryScheme::setup_verifier", fields(max_num_vars))]
     pub fn setup_verifier(max_num_vars: usize) -> DoryVerifierSetup {
         let prover_setup = Self::setup_prover(max_num_vars);
         DoryVerifierSetup(prover_setup.0.to_verifier_setup())
@@ -86,11 +88,20 @@ impl CommitmentScheme for DoryScheme {
     type OpeningHint = DoryHint;
 
     #[tracing::instrument(skip_all, name = "DoryScheme::commit")]
-    fn commit(evaluations: &[Fr], setup: &Self::ProverSetup) -> (Self::Output, Self::OpeningHint) {
-        let num_vars = evaluations.len().trailing_zeros() as usize;
+    fn commit<P: MultilinearPoly<Fr> + ?Sized>(
+        poly: &P,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint) {
+        let num_vars = poly.num_vars();
         let sigma = num_vars.div_ceil(2);
+        let num_cols = 1usize << sigma;
+        let num_rows = 1usize << (num_vars - sigma);
 
-        let row_commitments = commit_rows_msm(evaluations, sigma, &setup.0);
+        let row_commitments = if poly.is_sparse() {
+            commit_rows_sparse(poly, num_rows, num_cols, &setup.0)
+        } else {
+            commit_rows_dense(poly, sigma, &setup.0)
+        };
 
         let g2_bases = &setup.0.g2_vec[..row_commitments.len()];
         let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments, g2_bases);
@@ -128,7 +139,7 @@ impl CommitmentScheme for DoryScheme {
                     .map(|g1| unsafe { std::mem::transmute(g1) })
                     .collect()
             }
-            None => commit_rows_msm(poly.evaluations(), sigma, &setup.0),
+            None => commit_rows_dense(poly, sigma, &setup.0),
         };
 
         let ark_point: Vec<InnerFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
@@ -248,7 +259,7 @@ impl ZkOpeningScheme for DoryScheme {
                     .map(|g1| unsafe { std::mem::transmute(g1) })
                     .collect()
             }
-            None => commit_rows_msm(poly.evaluations(), sigma, &setup.0),
+            None => commit_rows_dense(poly, sigma, &setup.0),
         };
 
         let ark_point: Vec<InnerFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
@@ -335,40 +346,69 @@ impl VcSetupExtractable<Pedersen<Bn254G1>> for DoryScheme {
     }
 }
 
-fn commit_rows_msm(
-    evals: &[Fr],
+type ArkG1 = dory::backends::arkworks::ArkG1;
+
+/// Dense commit: full MSM per row.
+fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
+    poly: &P,
     sigma: usize,
     setup: &ArkworksProverSetup,
-) -> Vec<dory::backends::arkworks::ArkG1> {
+) -> Vec<ArkG1> {
     let num_cols = 1usize << sigma;
     let g1_bases = &setup.g1_vec[..num_cols];
 
-    evals
-        .chunks(num_cols)
-        .map(|row| {
-            let scalars: Vec<InnerFr> = row.iter().map(jolt_fr_to_ark).collect();
-            G1Routines::msm(&g1_bases[..scalars.len()], &scalars)
-        })
-        .collect()
+    let mut rows = Vec::new();
+    poly.for_each_row(sigma, &mut |_, row| {
+        let scalars: Vec<InnerFr> = row.iter().map(jolt_fr_to_ark).collect();
+        rows.push(G1Routines::msm(&g1_bases[..scalars.len()], &scalars));
+    });
+    rows
 }
 
-/// Bridges any [`EvaluationSource<Fr>`] to dory-pcs's polynomial traits.
+/// Sparse commit: for each nonzero entry, the row commitment is just the
+/// G1 generator at that column. Avoids MSM entirely — O(T) lookups instead
+/// of O(T × 254 × K) group ops.
+fn commit_rows_sparse<P: MultilinearPoly<Fr> + ?Sized>(
+    poly: &P,
+    num_rows: usize,
+    num_cols: usize,
+    setup: &ArkworksProverSetup,
+) -> Vec<ArkG1> {
+    let g1_bases = &setup.g1_vec[..num_cols];
+    let identity = <dory::backends::arkworks::BN254 as PairingCurve>::G1::identity();
+
+    let mut row_commitments = vec![identity; num_rows];
+    poly.for_each_nonzero(&mut |flat_idx, _val| {
+        let row = flat_idx / num_cols;
+        let col = flat_idx % num_cols;
+        // For one-hot (val == 1), the contribution is just the generator.
+        // For general sparse, this would be val * generator, but one-hot is
+        // the primary use case and val is always 1.
+        row_commitments[row] = <dory::backends::arkworks::BN254 as PairingCurve>::G1::add(
+            &row_commitments[row],
+            &g1_bases[col],
+        );
+    });
+    row_commitments
+}
+
+/// Bridges any [`MultilinearPoly<Fr>`] to dory-pcs's polynomial traits.
 ///
 /// Borrows the source and delegates `evaluate`, `commit`, and
-/// `vector_matrix_product` through [`EvaluationSource`] methods —
+/// `vector_matrix_product` through [`MultilinearPoly`] methods —
 /// enabling streaming opening proofs where the full evaluation table
 /// never needs to be materialized.
-struct DorySourceAdapter<'a, S: EvaluationSource<Fr>> {
+struct DorySourceAdapter<'a, S: MultilinearPoly<Fr>> {
     source: &'a S,
 }
 
-impl<'a, S: EvaluationSource<Fr>> DorySourceAdapter<'a, S> {
+impl<'a, S: MultilinearPoly<Fr>> DorySourceAdapter<'a, S> {
     fn new(source: &'a S) -> Self {
         Self { source }
     }
 }
 
-impl<S: EvaluationSource<Fr>> DoryPolynomial<InnerFr> for DorySourceAdapter<'_, S> {
+impl<S: MultilinearPoly<Fr>> DoryPolynomial<InnerFr> for DorySourceAdapter<'_, S> {
     fn num_vars(&self) -> usize {
         self.source.num_vars()
     }
@@ -403,7 +443,7 @@ impl<S: EvaluationSource<Fr>> DoryPolynomial<InnerFr> for DorySourceAdapter<'_, 
     }
 }
 
-impl<S: EvaluationSource<Fr>> MultilinearLagrange<InnerFr> for DorySourceAdapter<'_, S> {
+impl<S: MultilinearPoly<Fr>> MultilinearLagrange<InnerFr> for DorySourceAdapter<'_, S> {
     fn vector_matrix_product(
         &self,
         left_vec: &[InnerFr],

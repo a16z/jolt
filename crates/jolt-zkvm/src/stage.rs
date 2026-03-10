@@ -32,6 +32,13 @@ pub struct StageBatch<F: Field> {
 /// Generic over `T: Transcript` for dyn-compatibility — the pipeline fixes
 /// a concrete transcript type and uses `dyn ProverStage<F, T>`.
 pub trait ProverStage<F: Field, T: Transcript> {
+    /// Human-readable stage name for tracing and profiling.
+    ///
+    /// Used by the pipeline to create named tracing spans (e.g. in Perfetto).
+    /// Must be one of the known stage names so the pipeline can create
+    /// properly-named spans visible in Perfetto/Chrome traces.
+    fn name(&self) -> &'static str;
+
     /// Constructs sumcheck claims and witnesses for this stage.
     ///
     /// `prior_claims` contains opening claims from all previous stages,

@@ -15,7 +15,7 @@
 //! and scalar evaluations respectively.
 
 use jolt_field::Field;
-use jolt_transcript::Transcript;
+use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::claims::{ProverClaim, VerifierClaim};
@@ -47,10 +47,9 @@ pub trait OpeningReduction<PCS: CommitmentScheme> {
     ///
     /// Returns the reduced claims and any proof artifact.
     ///
-    /// **Precondition:** the transcript must already contain all claim data
-    /// (commitments, points, evaluations) that needs to be bound by
-    /// Fiat-Shamir. The reduction draws challenges from the transcript
-    /// without absorbing claims itself.
+    /// Implementations absorb claim evaluations into the transcript before
+    /// drawing any Fiat-Shamir challenges. Callers need not absorb claims
+    /// beforehand.
     fn reduce_prover<T: Transcript>(
         claims: Vec<ProverClaim<PCS::Field>>,
         transcript: &mut T,
@@ -60,10 +59,8 @@ pub trait OpeningReduction<PCS: CommitmentScheme> {
     /// Reduces verifier-side claims.
     ///
     /// Returns the reduced claims or an error if the reduction detects
-    /// inconsistency.
-    ///
-    /// **Precondition:** same transcript state requirement as
-    /// [`reduce_prover`](Self::reduce_prover).
+    /// inconsistency. Absorbs claim evaluations into the transcript
+    /// (must match prover).
     fn reduce_verifier<T: Transcript>(
         claims: Vec<VerifierClaim<PCS::Field, PCS::Output>>,
         proof: &Self::ReductionProof,
@@ -100,6 +97,11 @@ impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
     ) -> (Vec<ProverClaim<PCS::Field>>, ()) {
         if claims.is_empty() {
             return (Vec::new(), ());
+        }
+
+        // Bind all claim evaluations before drawing any RLC challenge rho.
+        for claim in &claims {
+            claim.eval.append_to_transcript(transcript);
         }
 
         let groups = group_prover_claims_by_point(claims);
@@ -147,6 +149,11 @@ impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
             return Ok(Vec::new());
         }
 
+        // Bind all claim evaluations (must match prover).
+        for claim in &claims {
+            claim.eval.append_to_transcript(transcript);
+        }
+
         let groups = group_verifier_claims_by_point(claims);
         let mut reduced = Vec::with_capacity(groups.len());
 
@@ -182,6 +189,7 @@ impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
 /// # Panics
 ///
 /// Panics if `polynomials` is empty or if the evaluation tables have different lengths.
+#[tracing::instrument(skip_all, name = "rlc_combine")]
 pub fn rlc_combine<F: Field>(polynomials: &[&[F]], rho: F) -> Vec<F> {
     assert!(!polynomials.is_empty(), "need at least one polynomial");
     let len = polynomials[0].len();

@@ -3,18 +3,19 @@
 //! Tests exercise:
 //! 1. Uniform Spartan with the actual Jolt R1CS (24 constraints × 41 vars/cycle)
 //! 2. Full `prove()` pipeline with uniform Spartan + sumcheck stages + openings
+//! 3. Multiple stage configurations and error cases
 
 use jolt_field::{Field, Fr};
-use jolt_openings::mock::MockCommitmentScheme;
+use jolt_openings::mock::{MockCommitment, MockCommitmentScheme};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
-use jolt_spartan::UniformSpartanKey;
+use jolt_poly::EqPolynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_verifier::StageDescriptor;
 use jolt_zkvm::preprocessing::{interleave_witnesses, preprocess, JoltConfig};
-use jolt_zkvm::proof::JoltProof;
 use jolt_zkvm::prover::prove;
 use jolt_zkvm::r1cs;
 use jolt_zkvm::stage::ProverStage;
-use jolt_zkvm::stages::s1_spartan::{UniformSpartanResult, UniformSpartanStage};
+use jolt_zkvm::stages::s1_spartan::UniformSpartanStage;
 use jolt_zkvm::stages::s3_claim_reductions::ClaimReductionStage;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -25,10 +26,7 @@ fn challenge_fn(c: u128) -> Fr {
     Fr::from_u128(c)
 }
 
-/// Build a NOP cycle witness at a given PC.
-///
-/// Variable 0 = constant 1, flags/operands = 0. PC update is straight-line
-/// (NextUnexpandedPC = UnexpandedPC + 4) to satisfy constraint 16.
+/// NOP cycle: all zeros except constant=1 and PC update.
 fn nop_cycle_witness(unexpanded_pc: u64, pc: u64) -> Vec<Fr> {
     let mut w = vec![Fr::from_u64(0); r1cs::NUM_VARS_PER_CYCLE];
     w[r1cs::V_CONST] = Fr::from_u64(1);
@@ -39,37 +37,34 @@ fn nop_cycle_witness(unexpanded_pc: u64, pc: u64) -> Vec<Fr> {
     w
 }
 
-/// Build an ADD cycle witness at a given PC.
+/// ADD cycle: left + right → lookup output → rd_write.
 ///
-/// rs1=7, rs2=3 → lookup_output=10 → rd_write=10.
-/// Mirrors the `add_witness()` from `r1cs.rs` unit tests.
-fn add_cycle_witness(unexpanded_pc: u64, pc: u64) -> Vec<Fr> {
+/// Satisfies constraints: Product = left*right, LeftLookup = 0 (ADD mode),
+/// RightLookup = left+right, LookupOutput = sum, RdWrite = sum.
+fn add_cycle_witness(unexpanded_pc: u64, pc: u64, left: u64, right: u64) -> Vec<Fr> {
+    let sum = left + right;
+    let product = left * right;
+
     let mut w = vec![Fr::from_u64(0); r1cs::NUM_VARS_PER_CYCLE];
     w[r1cs::V_CONST] = Fr::from_u64(1);
 
-    // Flags
     w[r1cs::V_FLAG_ADD_OPERANDS] = Fr::from_u64(1);
     w[r1cs::V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD] = Fr::from_u64(1);
     w[r1cs::V_IS_RD_NOT_ZERO] = Fr::from_u64(1);
 
-    // Instruction I/O
-    w[r1cs::V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(7);
-    w[r1cs::V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(3);
-    w[r1cs::V_PRODUCT] = Fr::from_u64(21); // 7 * 3
+    w[r1cs::V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(left);
+    w[r1cs::V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(right);
+    w[r1cs::V_PRODUCT] = Fr::from_u64(product);
 
-    // Lookup operands (add mode)
     w[r1cs::V_LEFT_LOOKUP_OPERAND] = Fr::from_u64(0);
-    w[r1cs::V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(10); // 7 + 3
-    w[r1cs::V_LOOKUP_OUTPUT] = Fr::from_u64(10);
+    w[r1cs::V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(sum);
+    w[r1cs::V_LOOKUP_OUTPUT] = Fr::from_u64(sum);
 
-    // Product-derived booleans
-    w[r1cs::V_WRITE_LOOKUP_OUTPUT_TO_RD] = Fr::from_u64(1); // IsRdNotZero(1) * Flag(1)
-    w[r1cs::V_WRITE_PC_TO_RD] = Fr::from_u64(0); // IsRdNotZero(1) * Jump(0)
+    // Product-derived boolean: IsRdNotZero(1) * FlagWriteLookupOutputToRd(1) = 1
+    w[r1cs::V_WRITE_LOOKUP_OUTPUT_TO_RD] = Fr::from_u64(1);
 
-    // Register write
-    w[r1cs::V_RD_WRITE_VALUE] = Fr::from_u64(10); // == LookupOutput
+    w[r1cs::V_RD_WRITE_VALUE] = Fr::from_u64(sum);
 
-    // PC update: straight-line
     w[r1cs::V_UNEXPANDED_PC] = Fr::from_u64(unexpanded_pc);
     w[r1cs::V_NEXT_UNEXPANDED_PC] = Fr::from_u64(unexpanded_pc + 4);
     w[r1cs::V_PC] = Fr::from_u64(pc);
@@ -78,7 +73,414 @@ fn add_cycle_witness(unexpanded_pc: u64, pc: u64) -> Vec<Fr> {
     w
 }
 
-/// Commit witness and append commitment to transcript.
+/// LOAD cycle: RAM[rs1 + imm] → rd_write.
+///
+/// Satisfies constraints: RamAddr = Rs1+Imm, RamRead = RamWrite (load),
+/// RamRead = RdWrite (load writes loaded value to register).
+fn load_cycle_witness(unexpanded_pc: u64, pc: u64, rs1: u64, imm: u64, ram_value: u64) -> Vec<Fr> {
+    let mut w = vec![Fr::from_u64(0); r1cs::NUM_VARS_PER_CYCLE];
+    w[r1cs::V_CONST] = Fr::from_u64(1);
+
+    w[r1cs::V_FLAG_LOAD] = Fr::from_u64(1);
+    w[r1cs::V_IS_RD_NOT_ZERO] = Fr::from_u64(1);
+
+    w[r1cs::V_RS1_VALUE] = Fr::from_u64(rs1);
+    w[r1cs::V_IMM] = Fr::from_u64(imm);
+    w[r1cs::V_RAM_ADDRESS] = Fr::from_u64(rs1 + imm);
+    w[r1cs::V_RAM_READ_VALUE] = Fr::from_u64(ram_value);
+    w[r1cs::V_RAM_WRITE_VALUE] = Fr::from_u64(ram_value);
+    w[r1cs::V_RD_WRITE_VALUE] = Fr::from_u64(ram_value);
+
+    w[r1cs::V_UNEXPANDED_PC] = Fr::from_u64(unexpanded_pc);
+    w[r1cs::V_NEXT_UNEXPANDED_PC] = Fr::from_u64(unexpanded_pc + 4);
+    w[r1cs::V_PC] = Fr::from_u64(pc);
+    w[r1cs::V_NEXT_PC] = Fr::from_u64(pc + 1);
+
+    w
+}
+
+/// STORE cycle: rs2 → RAM[rs1 + imm].
+///
+/// Satisfies constraints: RamAddr = Rs1+Imm, RamWrite = Rs2 (store).
+/// No register write (IsRdNotZero = 0).
+fn store_cycle_witness(unexpanded_pc: u64, pc: u64, rs1: u64, imm: u64, rs2_value: u64) -> Vec<Fr> {
+    let mut w = vec![Fr::from_u64(0); r1cs::NUM_VARS_PER_CYCLE];
+    w[r1cs::V_CONST] = Fr::from_u64(1);
+
+    w[r1cs::V_FLAG_STORE] = Fr::from_u64(1);
+
+    w[r1cs::V_RS1_VALUE] = Fr::from_u64(rs1);
+    w[r1cs::V_IMM] = Fr::from_u64(imm);
+    w[r1cs::V_RAM_ADDRESS] = Fr::from_u64(rs1 + imm);
+    w[r1cs::V_RS2_VALUE] = Fr::from_u64(rs2_value);
+    w[r1cs::V_RAM_WRITE_VALUE] = Fr::from_u64(rs2_value);
+
+    w[r1cs::V_UNEXPANDED_PC] = Fr::from_u64(unexpanded_pc);
+    w[r1cs::V_NEXT_UNEXPANDED_PC] = Fr::from_u64(unexpanded_pc + 4);
+    w[r1cs::V_PC] = Fr::from_u64(pc);
+    w[r1cs::V_NEXT_PC] = Fr::from_u64(pc + 1);
+
+    w
+}
+
+/// Random polynomial pair with linear combination coefficients.
+struct SyntheticReduction {
+    poly_a: Vec<Fr>,
+    poly_b: Vec<Fr>,
+    c0: Fr,
+    c1: Fr,
+}
+
+fn build_reduction_data(num_vars: usize, rng: &mut ChaCha20Rng) -> SyntheticReduction {
+    let n = 1usize << num_vars;
+    SyntheticReduction {
+        poly_a: (0..n).map(|_| Fr::random(rng)).collect(),
+        poly_b: (0..n).map(|_| Fr::random(rng)).collect(),
+        c0: Fr::random(rng),
+        c1: Fr::random(rng),
+    }
+}
+
+fn build_prover_stage(data: &SyntheticReduction, r_y: Vec<Fr>) -> ClaimReductionStage<Fr> {
+    ClaimReductionStage::increment(
+        data.poly_a.clone(),
+        data.poly_b.clone(),
+        r_y,
+        data.c0,
+        data.c1,
+    )
+}
+
+fn build_verifier_descriptor(
+    data: &SyntheticReduction,
+    eq_point: &[Fr],
+    base_index: usize,
+) -> StageDescriptor<Fr> {
+    let n = data.poly_a.len();
+    let eq_table = EqPolynomial::new(eq_point.to_vec()).evaluations();
+
+    let claimed_sum: Fr = (0..n)
+        .map(|j| eq_table[j] * (data.c0 * data.poly_a[j] + data.c1 * data.poly_b[j]))
+        .sum();
+
+    StageDescriptor::claim_reduction(
+        eq_point.to_vec(),
+        vec![data.c0, data.c1],
+        claimed_sum,
+        vec![base_index, base_index + 1],
+    )
+    .with_reverse_challenges()
+}
+
+/// Runs prove → verify for a given program (cycle witnesses) with one claim reduction stage.
+fn run_e2e<PCS: AdditivelyHomomorphic<Field = Fr>>(
+    cycle_witnesses: &[Vec<Fr>],
+    setup_fn: impl FnOnce(usize) -> (PCS::ProverSetup, PCS::VerifierSetup),
+) {
+    let mut rng = ChaCha20Rng::seed_from_u64(42);
+    let config = JoltConfig {
+        num_cycles: cycle_witnesses.len(),
+    };
+    let key = preprocess::<Fr, PCS>(&config, setup_fn);
+
+    let num_col_vars = key.spartan_key.num_col_vars();
+    let reduction_data = build_reduction_data(num_col_vars, &mut rng);
+
+    let (com_a, _) = PCS::commit(&reduction_data.poly_a, &key.pcs_prover_setup);
+    let (com_b, _) = PCS::commit(&reduction_data.poly_b, &key.pcs_prover_setup);
+    let poly_commitments: Vec<PCS::Output> = vec![com_a, com_b];
+
+    let mut pt = Blake2bTranscript::new(b"jolt-e2e");
+
+    let proof = prove::<PCS, Blake2bTranscript>(
+        &key,
+        cycle_witnesses,
+        poly_commitments,
+        |_r_x, r_y, _t| {
+            let stage = build_prover_stage(&reduction_data, r_y.to_vec());
+            vec![Box::new(stage)]
+        },
+        &mut pt,
+        challenge_fn,
+    )
+    .expect("proving should succeed");
+
+    assert_eq!(proof.stage_proofs.len(), 1);
+    assert!(!proof.opening_proofs.is_empty());
+
+    let vk = jolt_verifier::JoltVerifyingKey {
+        spartan_key: key.spartan_key.clone(),
+        pcs_setup: key.pcs_verifier_setup.clone(),
+    };
+
+    let mut vt = Blake2bTranscript::new(b"jolt-e2e");
+
+    let (v_r_x, v_r_y) = jolt_verifier::verify::<PCS, Blake2bTranscript>(
+        &proof,
+        &vk,
+        |_r_x, r_y, _t| {
+            vec![build_verifier_descriptor(&reduction_data, r_y, 0)]
+        },
+        &mut vt,
+        challenge_fn,
+    )
+    .expect("verification should succeed");
+
+    assert_eq!(v_r_x.len(), key.spartan_key.num_row_vars());
+    assert_eq!(v_r_y.len(), key.spartan_key.num_col_vars());
+}
+
+fn run_mock_e2e(cycle_witnesses: &[Vec<Fr>]) {
+    run_e2e::<MockPCS>(cycle_witnesses, |_| ((), ()));
+}
+
+/// 4 NOPs: trivial straight-line execution.
+#[test]
+fn e2e_nop_program() {
+    run_mock_e2e(&[
+        nop_cycle_witness(0, 0),
+        nop_cycle_witness(4, 1),
+        nop_cycle_witness(8, 2),
+        nop_cycle_witness(12, 3),
+    ]);
+}
+
+/// 4 ADDs with different operands.
+#[test]
+fn e2e_add_program() {
+    run_mock_e2e(&[
+        add_cycle_witness(0, 0, 7, 3),
+        add_cycle_witness(4, 1, 10, 5),
+        add_cycle_witness(8, 2, 100, 200),
+        add_cycle_witness(12, 3, 1, 1),
+    ]);
+}
+
+/// LOAD → ADD → STORE → NOP: load-compute-store pattern.
+#[test]
+fn e2e_load_compute_store() {
+    run_mock_e2e(&[
+        load_cycle_witness(0, 0, 100, 20, 42),
+        add_cycle_witness(4, 1, 42, 8),
+        store_cycle_witness(8, 2, 180, 20, 50),
+        nop_cycle_witness(12, 3),
+    ]);
+}
+
+/// All four instruction types in one program.
+#[test]
+fn e2e_mixed_instructions() {
+    run_mock_e2e(&[
+        nop_cycle_witness(0, 0),
+        add_cycle_witness(4, 1, 7, 3),
+        load_cycle_witness(8, 2, 100, 20, 42),
+        store_cycle_witness(12, 3, 180, 20, 55),
+    ]);
+}
+
+/// 8-cycle mixed workload: load → compute → store, repeated.
+#[test]
+fn e2e_eight_cycle_program() {
+    run_mock_e2e(&[
+        nop_cycle_witness(0, 0),
+        load_cycle_witness(4, 1, 0, 8, 100),
+        add_cycle_witness(8, 2, 100, 50),
+        store_cycle_witness(12, 3, 0, 16, 150),
+        load_cycle_witness(16, 4, 0, 24, 200),
+        add_cycle_witness(20, 5, 200, 150),
+        store_cycle_witness(24, 6, 0, 32, 350),
+        nop_cycle_witness(28, 7),
+    ]);
+}
+
+/// Single-cycle program (minimum size).
+#[test]
+fn e2e_single_cycle() {
+    run_mock_e2e(&[nop_cycle_witness(0, 0)]);
+}
+
+/// Two-cycle program (non-power-of-two padded).
+#[test]
+fn e2e_two_cycles() {
+    run_mock_e2e(&[add_cycle_witness(0, 0, 3, 4), add_cycle_witness(4, 1, 5, 6)]);
+}
+
+/// Load → compute → store with a trailing NOP (4 cycles).
+#[test]
+fn e2e_load_add_store_nop() {
+    run_mock_e2e(&[
+        load_cycle_witness(0, 0, 50, 10, 99),
+        add_cycle_witness(4, 1, 99, 1),
+        store_cycle_witness(8, 2, 60, 0, 100),
+        nop_cycle_witness(12, 3),
+    ]);
+}
+
+/// Two independent claim reduction stages through the full pipeline.
+#[test]
+fn e2e_multi_stage_pipeline() {
+    let mut rng = ChaCha20Rng::seed_from_u64(42);
+    let config = JoltConfig { num_cycles: 4 };
+    let key = preprocess::<Fr, MockPCS>(&config, |_| ((), ()));
+
+    let cycle_witnesses = vec![
+        nop_cycle_witness(0, 0),
+        add_cycle_witness(4, 1, 7, 3),
+        nop_cycle_witness(8, 2),
+        nop_cycle_witness(12, 3),
+    ];
+
+    let num_col_vars = key.spartan_key.num_col_vars();
+    let data1 = build_reduction_data(num_col_vars, &mut rng);
+    let data2 = build_reduction_data(num_col_vars, &mut rng);
+
+    let (com_a1, ()) = MockPCS::commit(&data1.poly_a, &());
+    let (com_b1, ()) = MockPCS::commit(&data1.poly_b, &());
+    let (com_a2, ()) = MockPCS::commit(&data2.poly_a, &());
+    let (com_b2, ()) = MockPCS::commit(&data2.poly_b, &());
+    let poly_commitments: Vec<MockCommitment<Fr>> = vec![com_a1, com_b1, com_a2, com_b2];
+
+    let mut pt = Blake2bTranscript::new(b"jolt-e2e");
+
+    let proof = prove::<MockPCS, Blake2bTranscript>(
+        &key,
+        &cycle_witnesses,
+        poly_commitments,
+        |_r_x, r_y, _t| {
+            let s1 = build_prover_stage(&data1, r_y.to_vec());
+            let s2 = build_prover_stage(&data2, r_y.to_vec());
+            vec![Box::new(s1), Box::new(s2)]
+        },
+        &mut pt,
+        challenge_fn,
+    )
+    .expect("proving should succeed");
+
+    assert_eq!(proof.stage_proofs.len(), 2);
+
+    let vk = jolt_verifier::JoltVerifyingKey {
+        spartan_key: key.spartan_key.clone(),
+        pcs_setup: (),
+    };
+
+    let mut vt = Blake2bTranscript::new(b"jolt-e2e");
+
+    let (v_r_x, v_r_y) = jolt_verifier::verify::<MockPCS, Blake2bTranscript>(
+        &proof,
+        &vk,
+        |_r_x, r_y, _t| {
+            vec![
+                build_verifier_descriptor(&data1, r_y, 0),
+                build_verifier_descriptor(&data2, r_y, 2),
+            ]
+        },
+        &mut vt,
+        challenge_fn,
+    )
+    .expect("verification should succeed");
+
+    assert_eq!(v_r_x.len(), key.spartan_key.num_row_vars());
+    assert_eq!(v_r_y.len(), key.spartan_key.num_col_vars());
+}
+
+/// Bad witness (violated constraint) causes prover to fail.
+#[test]
+fn e2e_bad_witness_rejected() {
+    let mut rng = ChaCha20Rng::seed_from_u64(42);
+    let config = JoltConfig { num_cycles: 4 };
+    let key = preprocess::<Fr, MockPCS>(&config, |_| ((), ()));
+
+    // Corrupt the ADD witness: wrong product value violates constraint 19.
+    let mut bad_add = add_cycle_witness(4, 1, 7, 3);
+    bad_add[r1cs::V_PRODUCT] = Fr::from_u64(999);
+
+    let witnesses = vec![
+        nop_cycle_witness(0, 0),
+        bad_add,
+        nop_cycle_witness(8, 2),
+        nop_cycle_witness(12, 3),
+    ];
+
+    let num_col_vars = key.spartan_key.num_col_vars();
+    let reduction_data = build_reduction_data(num_col_vars, &mut rng);
+    let (com_a, ()) = MockPCS::commit(&reduction_data.poly_a, &());
+    let (com_b, ()) = MockPCS::commit(&reduction_data.poly_b, &());
+
+    let mut pt = Blake2bTranscript::new(b"jolt-e2e");
+
+    let result = prove::<MockPCS, Blake2bTranscript>(
+        &key,
+        &witnesses,
+        vec![com_a, com_b],
+        |_r_x, r_y, _t| {
+            let stage = build_prover_stage(&reduction_data, r_y.to_vec());
+            vec![Box::new(stage)]
+        },
+        &mut pt,
+        challenge_fn,
+    );
+
+    assert!(result.is_err(), "proving with bad witness should fail");
+}
+
+/// Tampered proof is rejected by the verifier.
+#[test]
+fn e2e_tampered_proof_rejected() {
+    let mut rng = ChaCha20Rng::seed_from_u64(42);
+    let config = JoltConfig { num_cycles: 4 };
+    let key = preprocess::<Fr, MockPCS>(&config, |_| ((), ()));
+
+    let witnesses = vec![
+        nop_cycle_witness(0, 0),
+        add_cycle_witness(4, 1, 7, 3),
+        nop_cycle_witness(8, 2),
+        nop_cycle_witness(12, 3),
+    ];
+
+    let num_col_vars = key.spartan_key.num_col_vars();
+    let reduction_data = build_reduction_data(num_col_vars, &mut rng);
+    let (com_a, ()) = MockPCS::commit(&reduction_data.poly_a, &());
+    let (com_b, ()) = MockPCS::commit(&reduction_data.poly_b, &());
+
+    let mut pt = Blake2bTranscript::new(b"jolt-e2e");
+
+    let mut proof = prove::<MockPCS, Blake2bTranscript>(
+        &key,
+        &witnesses,
+        vec![com_a, com_b],
+        |_r_x, r_y, _t| {
+            let stage = build_prover_stage(&reduction_data, r_y.to_vec());
+            vec![Box::new(stage)]
+        },
+        &mut pt,
+        challenge_fn,
+    )
+    .expect("proving should succeed");
+
+    // Tamper: shift witness_eval to invalidate the Spartan inner sumcheck check.
+    proof.spartan_proof.witness_eval += Fr::from_u64(1);
+
+    let vk = jolt_verifier::JoltVerifyingKey {
+        spartan_key: key.spartan_key.clone(),
+        pcs_setup: (),
+    };
+
+    let mut vt = Blake2bTranscript::new(b"jolt-e2e");
+
+    let result = jolt_verifier::verify::<MockPCS, Blake2bTranscript>(
+        &proof,
+        &vk,
+        |_r_x, r_y, _t| {
+            vec![build_verifier_descriptor(&reduction_data, r_y, 0)]
+        },
+        &mut vt,
+        challenge_fn,
+    );
+
+    assert!(result.is_err(), "tampered proof should fail verification");
+}
+
+/// Helper to commit and append witness to transcript (for Spartan-only tests).
 fn commit_and_append<PCS: CommitmentScheme<Field = Fr>>(
     flat_witness: &[Fr],
     pcs_setup: &PCS::ProverSetup,
@@ -88,95 +490,6 @@ fn commit_and_append<PCS: CommitmentScheme<Field = Fr>>(
     transcript.append_bytes(format!("{commitment:?}").as_bytes());
 }
 
-/// Run S1 (Uniform Spartan PIOP) with the Jolt R1CS.
-fn run_s1_uniform(
-    key: &UniformSpartanKey<Fr>,
-    flat_witness: &[Fr],
-    transcript: &mut Blake2bTranscript,
-) -> UniformSpartanResult<Fr> {
-    UniformSpartanStage::prove(key, flat_witness, flat_witness, transcript)
-        .expect("S1 proving should succeed")
-}
-
-/// Build a synthetic claim reduction stage from Spartan's r_y.
-fn build_reduction_stage(r_y: &[Fr], rng: &mut ChaCha20Rng) -> ClaimReductionStage<Fr> {
-    let num_vars = r_y.len();
-    let n = 1usize << num_vars;
-
-    let poly_a: Vec<Fr> = (0..n).map(|_| Fr::random(rng)).collect();
-    let poly_b: Vec<Fr> = (0..n).map(|_| Fr::random(rng)).collect();
-    let c0 = Fr::random(rng);
-    let c1 = Fr::random(rng);
-
-    ClaimReductionStage::increment(poly_a, poly_b, r_y.to_vec(), c0, c1)
-}
-
-/// Full E2E test with the actual Jolt R1CS.
-fn run_jolt_r1cs_e2e<PCS: AdditivelyHomomorphic<Field = Fr>>(
-    prover_setup: &PCS::ProverSetup,
-    _verifier_setup: &PCS::VerifierSetup,
-) {
-    let mut rng = ChaCha20Rng::seed_from_u64(42);
-
-    // 4 cycles: NOP, ADD, NOP, NOP
-    let config = JoltConfig { num_cycles: 4 };
-    let key = preprocess::<Fr, PCS>(&config, |_| (prover_setup.clone(), _verifier_setup.clone()));
-
-    let cycle_witnesses = vec![
-        nop_cycle_witness(0, 0),
-        add_cycle_witness(4, 1),
-        nop_cycle_witness(8, 2),
-        nop_cycle_witness(12, 3),
-    ];
-    let flat_witness = interleave_witnesses(&key.spartan_key, &cycle_witnesses);
-
-    let mut pt = Blake2bTranscript::new(b"jolt-e2e");
-
-    // Commit witness and append to transcript before S1
-    commit_and_append::<PCS>(&flat_witness, prover_setup, &mut pt);
-
-    let spartan_result = run_s1_uniform(&key.spartan_key, &flat_witness, &mut pt);
-
-    let r_y = spartan_result.r_y.clone();
-
-    let reduction_stage = build_reduction_stage(&r_y, &mut rng);
-    let mut stages: Vec<Box<dyn ProverStage<Fr, Blake2bTranscript>>> =
-        vec![Box::new(reduction_stage)];
-
-    let commitments: Vec<PCS::Output> = Vec::new();
-    let proof: JoltProof<Fr, PCS> = prove::<PCS, Blake2bTranscript>(
-        spartan_result,
-        &mut stages,
-        &key,
-        commitments,
-        4,
-        &mut pt,
-        challenge_fn,
-    );
-
-    assert_eq!(
-        proof.stage_proofs.len(),
-        1,
-        "one stage → one sumcheck proof"
-    );
-    assert!(
-        !proof.opening_proofs.proofs.is_empty(),
-        "should have at least one opening proof"
-    );
-
-    // Verify S1
-    let mut vt = Blake2bTranscript::new(b"jolt-e2e");
-    commit_and_append::<PCS>(&flat_witness, prover_setup, &mut vt);
-    let _ = UniformSpartanStage::verify(&key.spartan_key, &proof.spartan_proof, &mut vt)
-        .expect("S1 verification should succeed");
-}
-
-#[test]
-fn e2e_jolt_r1cs_mock_pcs() {
-    run_jolt_r1cs_e2e::<MockPCS>(&(), &());
-}
-
-/// Verify that the Jolt R1CS key has expected dimensions.
 #[test]
 fn jolt_r1cs_key_dimensions() {
     let config = JoltConfig { num_cycles: 4 };
@@ -190,7 +503,6 @@ fn jolt_r1cs_key_dimensions() {
     assert_eq!(key.spartan_key.num_cycles, 4);
 }
 
-/// Verify uniform Spartan prove+verify with NOP-only cycles.
 #[test]
 fn uniform_spartan_nop_only() {
     let config = JoltConfig { num_cycles: 2 };
@@ -210,7 +522,6 @@ fn uniform_spartan_nop_only() {
         .expect("NOP-only verification should succeed");
 }
 
-/// Verify uniform Spartan prove+verify with mixed cycle types.
 #[test]
 fn uniform_spartan_mixed_cycles() {
     let config = JoltConfig { num_cycles: 4 };
@@ -218,9 +529,9 @@ fn uniform_spartan_mixed_cycles() {
 
     let witnesses = vec![
         nop_cycle_witness(0, 0),
-        add_cycle_witness(4, 1),
+        add_cycle_witness(4, 1, 7, 3),
         nop_cycle_witness(8, 2),
-        add_cycle_witness(12, 3),
+        add_cycle_witness(12, 3, 10, 5),
     ];
     let flat = interleave_witnesses(&key, &witnesses);
 
@@ -235,7 +546,31 @@ fn uniform_spartan_mixed_cycles() {
         .expect("mixed-cycle verification should succeed");
 }
 
-/// Verify that challenge vectors from S1 have correct dimensions.
+/// Spartan-only: LOAD and STORE cycles.
+#[test]
+fn uniform_spartan_load_store() {
+    let config = JoltConfig { num_cycles: 4 };
+    let key = preprocess::<Fr, MockPCS>(&config, |_| ((), ())).spartan_key;
+
+    let witnesses = vec![
+        load_cycle_witness(0, 0, 100, 20, 42),
+        store_cycle_witness(4, 1, 200, 50, 42),
+        load_cycle_witness(8, 2, 300, 0, 77),
+        store_cycle_witness(12, 3, 400, 10, 77),
+    ];
+    let flat = interleave_witnesses(&key, &witnesses);
+
+    let mut pt = Blake2bTranscript::new(b"load-store");
+    commit_and_append::<MockPCS>(&flat, &(), &mut pt);
+    let result = UniformSpartanStage::prove(&key, &flat, &flat, &mut pt)
+        .expect("LOAD/STORE proving should succeed");
+
+    let mut vt = Blake2bTranscript::new(b"load-store");
+    commit_and_append::<MockPCS>(&flat, &(), &mut vt);
+    let _ = UniformSpartanStage::verify(&key, &result.proof, &mut vt)
+        .expect("LOAD/STORE verification should succeed");
+}
+
 #[test]
 fn s1_challenge_vector_dimensions() {
     let config = JoltConfig { num_cycles: 4 };
@@ -260,19 +595,266 @@ fn s1_challenge_vector_dimensions() {
     assert_eq!(result.witness_opening_claim.eval, result.proof.witness_eval);
 }
 
+#[test]
+fn claim_reduction_prove_verify_standalone() {
+    let mut rng = ChaCha20Rng::seed_from_u64(42);
+    let num_vars = 4;
+    let n = 1usize << num_vars;
+
+    let eq_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+    let c0 = Fr::random(&mut rng);
+    let c1 = Fr::random(&mut rng);
+
+    let poly_a: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+    let poly_b: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+
+    let eq_table = EqPolynomial::new(eq_point.clone()).evaluations();
+    let claimed_sum: Fr = (0..n)
+        .map(|j| eq_table[j] * (c0 * poly_a[j] + c1 * poly_b[j]))
+        .sum();
+
+    let prover_stage = ClaimReductionStage::increment(poly_a, poly_b, eq_point.clone(), c0, c1);
+    let mut prover_stages: Vec<Box<dyn ProverStage<Fr, Blake2bTranscript>>> =
+        vec![Box::new(prover_stage)];
+
+    let mut pt = Blake2bTranscript::new(b"cr-standalone");
+    let (stage_proofs, _opening_claims) =
+        jolt_zkvm::pipeline::prove_stages(&mut prover_stages, &mut pt, challenge_fn);
+
+    assert_eq!(stage_proofs.len(), 1);
+
+    let desc = StageDescriptor::claim_reduction(eq_point, vec![c0, c1], claimed_sum, vec![0, 1])
+        .with_reverse_challenges();
+
+    let stage_proof = &stage_proofs[0];
+
+    let mut vt = Blake2bTranscript::new(b"cr-standalone");
+
+    // Build and verify sumcheck claim.
+    let claims = [jolt_sumcheck::SumcheckClaim {
+        num_vars: desc.num_vars,
+        degree: desc.degree,
+        claimed_sum: desc.claimed_sum,
+    }];
+
+    let (final_eval, challenges) = jolt_sumcheck::BatchedSumcheckVerifier::verify(
+        &claims,
+        &stage_proof.sumcheck_proof,
+        &mut vt,
+        challenge_fn,
+    )
+    .expect("sumcheck verification should succeed");
+
+    // LowToHigh: eval_point = challenges.reverse()
+    let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();
+    let eq_eval = EqPolynomial::new(desc.eq_point.clone()).evaluate(&eval_point);
+    let g_eval: Fr = desc
+        .output_expr
+        .evaluate(&stage_proof.evaluations, &desc.output_challenges);
+    let expected = eq_eval * g_eval;
+
+    assert_eq!(
+        expected, final_eval,
+        "eq * g should match final_eval"
+    );
+    assert_eq!(stage_proof.evaluations.len(), 2);
+}
+
+mod trace_based {
+    use super::*;
+    use jolt_zkvm::witness::generate_witnesses;
+    use tracer::instruction::{
+        add::ADD,
+        format::format_j::{FormatJ, RegisterStateFormatJ},
+        format::format_r::{FormatR, RegisterStateFormatR},
+        jal::JAL,
+        sub::SUB,
+        RISCVCycle,
+    };
+
+    fn make_add_cycle(addr: u64, rs1: u64, rs2: u64) -> tracer::instruction::Cycle {
+        tracer::instruction::Cycle::from(RISCVCycle {
+            instruction: ADD {
+                address: addr,
+                operands: FormatR {
+                    rd: 1,
+                    rs1: 2,
+                    rs2: 3,
+                },
+                ..ADD::default()
+            },
+            register_state: RegisterStateFormatR {
+                rd: (0, rs1.wrapping_add(rs2)),
+                rs1,
+                rs2,
+            },
+            ram_access: (),
+        })
+    }
+
+    fn make_sub_cycle(addr: u64, rs1: u64, rs2: u64) -> tracer::instruction::Cycle {
+        tracer::instruction::Cycle::from(RISCVCycle {
+            instruction: SUB {
+                address: addr,
+                operands: FormatR {
+                    rd: 1,
+                    rs1: 2,
+                    rs2: 3,
+                },
+                ..SUB::default()
+            },
+            register_state: RegisterStateFormatR {
+                rd: (0, rs1.wrapping_sub(rs2)),
+                rs1,
+                rs2,
+            },
+            ram_access: (),
+        })
+    }
+
+    /// JAL-to-self terminal cycle (rd=0, imm=0).
+    /// Sets FLAG_JUMP=1 which zeros constraint 16's guard, allowing
+    /// NextUnexpPC=0 when this is the last cycle (next=None).
+    fn make_jal_terminal(addr: u64) -> tracer::instruction::Cycle {
+        tracer::instruction::Cycle::from(RISCVCycle {
+            instruction: JAL {
+                address: addr,
+                operands: FormatJ { rd: 0, imm: 0 },
+                ..JAL::default()
+            },
+            register_state: RegisterStateFormatJ { rd: (0, 0) },
+            ram_access: (),
+        })
+    }
+
+    /// Runs generate_witnesses → prove → verify for a trace.
+    fn run_trace_e2e(trace: Vec<tracer::instruction::Cycle>, label: &'static [u8]) {
+        let output = generate_witnesses::<Fr>(&trace);
+
+        let mut rng = ChaCha20Rng::seed_from_u64(99);
+        let config = JoltConfig {
+            num_cycles: output.cycle_witnesses.len(),
+        };
+        let key = preprocess::<Fr, MockPCS>(&config, |_| ((), ()));
+
+        let num_col_vars = key.spartan_key.num_col_vars();
+        let reduction_data = build_reduction_data(num_col_vars, &mut rng);
+
+        let (com_a, ()) = MockPCS::commit(&reduction_data.poly_a, &());
+        let (com_b, ()) = MockPCS::commit(&reduction_data.poly_b, &());
+
+        let mut pt = Blake2bTranscript::new(label);
+
+        let proof = prove::<MockPCS, Blake2bTranscript>(
+            &key,
+            &output.cycle_witnesses,
+            vec![com_a, com_b],
+            |_r_x, r_y, _t| {
+                let stage = build_prover_stage(&reduction_data, r_y.to_vec());
+                vec![Box::new(stage)]
+            },
+            &mut pt,
+            challenge_fn,
+        )
+        .expect("trace-based proving should succeed");
+
+        assert_eq!(proof.stage_proofs.len(), 1);
+
+        let vk = jolt_verifier::JoltVerifyingKey {
+            spartan_key: key.spartan_key.clone(),
+            pcs_setup: (),
+        };
+
+        let mut vt = Blake2bTranscript::new(label);
+
+        let _ = jolt_verifier::verify::<MockPCS, Blake2bTranscript>(
+            &proof,
+            &vk,
+            |_r_x, r_y, _t| {
+                vec![build_verifier_descriptor(&reduction_data, r_y, 0)]
+            },
+            &mut vt,
+            challenge_fn,
+        )
+        .expect("trace-based verification should succeed");
+    }
+
+    /// ADDs terminated by JAL-to-self: straight-line compute with valid termination.
+    #[test]
+    fn trace_add_pipeline() {
+        run_trace_e2e(
+            vec![
+                make_add_cycle(0x1000, 3, 4),
+                make_add_cycle(0x1004, 10, 20),
+                make_add_cycle(0x1008, 100, 200),
+                make_jal_terminal(0x100C),
+            ],
+            b"jolt-trace-add",
+        );
+    }
+
+    /// Two NOOPs as Cycle::NoOp through the full pipeline.
+    #[test]
+    fn trace_noop_pipeline() {
+        run_trace_e2e(
+            vec![
+                tracer::instruction::Cycle::NoOp,
+                tracer::instruction::Cycle::NoOp,
+            ],
+            b"jolt-trace-noop",
+        );
+    }
+
+    /// Mixed instruction types (ADD + SUB) with valid PC sequencing and JAL termination.
+    #[test]
+    fn trace_mixed_pipeline() {
+        run_trace_e2e(
+            vec![
+                make_add_cycle(0x1000, 7, 3),
+                make_sub_cycle(0x1004, 42, 8),
+                make_add_cycle(0x1008, 1, 2),
+                make_jal_terminal(0x100C),
+            ],
+            b"jolt-trace-mixed",
+        );
+    }
+}
+
 mod dory {
     use super::*;
     use jolt_dory::DoryScheme;
 
     #[test]
-    fn e2e_jolt_r1cs_dory() {
-        let config = JoltConfig { num_cycles: 4 };
-        let key = preprocess::<Fr, MockPCS>(&config, |_| ((), ())).spartan_key;
-        let num_vars = key.num_col_vars();
+    fn e2e_dory_mixed() {
+        run_e2e::<DoryScheme>(
+            &[
+                nop_cycle_witness(0, 0),
+                add_cycle_witness(4, 1, 7, 3),
+                nop_cycle_witness(8, 2),
+                nop_cycle_witness(12, 3),
+            ],
+            |num_vars| {
+                let prover_setup = DoryScheme::setup_prover(num_vars);
+                let verifier_setup = DoryScheme::setup_verifier(num_vars);
+                (prover_setup, verifier_setup)
+            },
+        );
+    }
 
-        let prover_setup = DoryScheme::setup_prover(num_vars);
-        let verifier_setup = DoryScheme::setup_verifier(num_vars);
-
-        run_jolt_r1cs_e2e::<DoryScheme>(&prover_setup, &verifier_setup);
+    #[test]
+    fn e2e_dory_load_store() {
+        run_e2e::<DoryScheme>(
+            &[
+                load_cycle_witness(0, 0, 100, 20, 42),
+                add_cycle_witness(4, 1, 42, 8),
+                store_cycle_witness(8, 2, 180, 20, 50),
+                nop_cycle_witness(12, 3),
+            ],
+            |num_vars| {
+                let prover_setup = DoryScheme::setup_prover(num_vars);
+                let verifier_setup = DoryScheme::setup_verifier(num_vars);
+                (prover_setup, verifier_setup)
+            },
+        );
     }
 }

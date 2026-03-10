@@ -117,27 +117,49 @@ inline Fr fr_neg(Fr a) {
 
 // CIOS iteration: T += a[] * b_j, then reduce+shift.
 // After 8 iterations, T[0..7] holds the reduced product.
+// Pure 32-bit: uses mul + mulhi instead of ulong emulation.
 #define FR_CIOS_ROUND(T, a, b_j, T9_out)                                    \
 {                                                                            \
-    ulong carry = 0;                                                         \
-    for (int i = 0; i < 8; i++) {                                            \
-        ulong sum = ulong(T[i]) + ulong(a.limbs[i]) * ulong(b_j) + carry;   \
-        T[i] = uint(sum);                                                    \
-        carry = sum >> 32;                                                   \
+    /* Pass 1: T += a * b_j */                                               \
+    uint _carry = 0;                                                         \
+    for (int _i = 0; _i < 8; _i++) {                                        \
+        uint _p_lo = a.limbs[_i] * b_j;                                     \
+        uint _p_hi = mulhi(a.limbs[_i], b_j);                               \
+        uint _s1 = T[_i] + _p_lo;                                           \
+        uint _c1 = uint(_s1 < T[_i]);                                       \
+        uint _s2 = _s1 + _carry;                                            \
+        uint _c2 = uint(_s2 < _s1);                                         \
+        T[_i] = _s2;                                                        \
+        _carry = _p_hi + _c1 + _c2;                                         \
     }                                                                        \
-    ulong t8c = ulong(T[8]) + carry;                                         \
-    T[8] = uint(t8c);                                                        \
-    T9_out = uint(t8c >> 32);                                                \
-    uint m = T[0] * FR_INV32;                                                \
-    carry = (ulong(T[0]) + ulong(m) * ulong(FR_MODULUS[0])) >> 32;          \
-    for (int i = 1; i < 8; i++) {                                            \
-        ulong sum2 = ulong(T[i]) + ulong(m) * ulong(FR_MODULUS[i]) + carry; \
-        T[i - 1] = uint(sum2);                                              \
-        carry = sum2 >> 32;                                                  \
+    {                                                                        \
+        uint _s = T[8] + _carry;                                             \
+        T9_out = uint(_s < T[8]);                                            \
+        T[8] = _s;                                                           \
     }                                                                        \
-    ulong fs = ulong(T[8]) + carry;                                          \
-    T[7] = uint(fs);                                                         \
-    T[8] = T9_out + uint(fs >> 32);                                          \
+    /* Pass 2: Montgomery reduction + shift */                               \
+    uint _m = T[0] * FR_INV32;                                               \
+    {                                                                        \
+        uint _m_hi = mulhi(_m, (uint)FR_MODULUS[0]);                         \
+        uint _s = T[0] + _m * (uint)FR_MODULUS[0];                           \
+        _carry = _m_hi + uint(_s < T[0]);                                    \
+    }                                                                        \
+    for (int _i = 1; _i < 8; _i++) {                                        \
+        uint _p_lo = _m * (uint)FR_MODULUS[_i];                              \
+        uint _p_hi = mulhi(_m, (uint)FR_MODULUS[_i]);                        \
+        uint _s1 = T[_i] + _p_lo;                                           \
+        uint _c1 = uint(_s1 < T[_i]);                                       \
+        uint _s2 = _s1 + _carry;                                            \
+        uint _c2 = uint(_s2 < _s1);                                         \
+        T[_i - 1] = _s2;                                                    \
+        _carry = _p_hi + _c1 + _c2;                                         \
+    }                                                                        \
+    {                                                                        \
+        uint _s = T[8] + _carry;                                             \
+        uint _c = uint(_s < T[8]);                                           \
+        T[7] = _s;                                                           \
+        T[8] = T9_out + _c;                                                  \
+    }                                                                        \
 }
 
 inline Fr fr_mul(Fr a, Fr b) {

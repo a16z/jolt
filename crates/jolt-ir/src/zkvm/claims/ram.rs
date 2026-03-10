@@ -1,7 +1,7 @@
 //! RAM subsystem claim definitions.
 //!
 //! These encode the output claim formulas for the five RAM-related sumcheck
-//! instances. Each function returns a [`ClaimDefinition`](crate::ClaimDefinition)
+//! instances. Each function returns a [`ClaimDefinition`]
 //! whose expression captures the exact polynomial identity, and whose bindings
 //! map symbolic variables to concrete Jolt polynomials and sumcheck stages.
 

@@ -1,3 +1,2 @@
-// Reduction dispatch logic is implemented directly in device.rs via
-// MetalBackend::reduce_multi(). This module is reserved for future
-// tensor-optimized two-level reduction strategies.
+// Reduction dispatch logic is implemented in device.rs.
+// This module is reserved for tensor-optimized two-level reduction strategies.

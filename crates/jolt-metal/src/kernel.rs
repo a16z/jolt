@@ -2,14 +2,20 @@ use std::marker::PhantomData;
 
 use jolt_field::Field;
 
-/// Compiled Metal compute pipeline for a specific kernel shape.
+/// Compiled Metal compute pipelines for a specific kernel shape.
 ///
-/// Wraps a `MTLComputePipelineState` compiled from MSL source that was
-/// generated from a `jolt-ir::KernelDescriptor`. The pipeline is
-/// specialized for a particular field type and kernel shape (ProductSum
-/// or Custom).
+/// Contains five pipeline variants compiled from a single MSL source:
+/// - `pipeline_l2h`: Weighted, pairs as `(buf[2i], buf[2i+1])` (interleaved)
+/// - `pipeline_h2l`: Weighted, pairs as `(buf[i], buf[i+half])` (split-half)
+/// - `pipeline_tensor`: Weighted tensor-product weights, always LowToHigh
+/// - `pipeline_l2h_unw`: Unweighted LowToHigh (no weight buffer, no weight mul)
+/// - `pipeline_h2l_unw`: Unweighted HighToLow (no weight buffer, no weight mul)
 pub struct MetalKernel<F: Field> {
-    pub(crate) pipeline: metal::ComputePipelineState,
+    pub(crate) pipeline_l2h: metal::ComputePipelineState,
+    pub(crate) pipeline_h2l: metal::ComputePipelineState,
+    pub(crate) pipeline_tensor: metal::ComputePipelineState,
+    pub(crate) pipeline_l2h_unw: metal::ComputePipelineState,
+    pub(crate) pipeline_h2l_unw: metal::ComputePipelineState,
     pub(crate) num_evals: usize,
     pub(crate) num_inputs: usize,
     pub(crate) _marker: PhantomData<F>,

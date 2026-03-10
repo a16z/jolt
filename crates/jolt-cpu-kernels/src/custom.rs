@@ -86,11 +86,17 @@ fn compile_node<F: Field>(
 }
 
 /// Build a `CpuKernel<F>` from a compiled op sequence.
+///
+/// Evaluates on the grid `{0, 2, 3, ..., degree}`, skipping `t=1`.
+/// The output layout is `[P(0), P(2), P(3), ..., P(degree)]`.
+/// `P(1)` is derived from the sumcheck claim externally.
 fn kernel_from_ops<F: Field>(ops: Vec<CompiledOp<F>>) -> CpuKernel<F> {
     CpuKernel::new(move |lo: &[F], hi: &[F], out: &mut [F]| {
         let mut stack: Vec<F> = Vec::with_capacity(ops.len());
 
-        for (t, slot) in out.iter_mut().enumerate() {
+        for (slot_idx, slot) in out.iter_mut().enumerate() {
+            // Grid: {0, 2, 3, ...} — slot 0 maps to t=0, slot k≥1 maps to t=k+1
+            let t = if slot_idx == 0 { 0 } else { slot_idx + 1 };
             let t_f = F::from_u64(t as u64);
             stack.clear();
 
@@ -188,10 +194,11 @@ mod tests {
         let expr = b.build(a);
 
         let kernel: CpuKernel<Fr> = compile_with_challenges(&expr, 1, 1, &[]);
+        // Grid: {0, 2} — slot 0→t=0, slot 1→t=2
         let result = eval_kernel(&kernel, &[Fr::from_u64(3)], &[Fr::from_u64(7)], 2);
 
-        assert_eq!(result[0], Fr::from_u64(3)); // t=0
-        assert_eq!(result[1], Fr::from_u64(7)); // t=1
+        assert_eq!(result[0], Fr::from_u64(3));  // t=0: lo=3
+        assert_eq!(result[1], Fr::from_u64(11)); // t=2: 3+2*4=11
     }
 
     #[test]
@@ -204,10 +211,11 @@ mod tests {
         let kernel: CpuKernel<Fr> = compile_with_challenges(&expr, 2, 1, &[]);
         let lo = vec![Fr::from_u64(3), Fr::from_u64(10)];
         let hi = vec![Fr::from_u64(7), Fr::from_u64(20)];
+        // Grid: {0, 2} — slot 0→t=0, slot 1→t=2
         let result = eval_kernel(&kernel, &lo, &hi, 2);
 
-        assert_eq!(result[0], Fr::from_u64(13));
-        assert_eq!(result[1], Fr::from_u64(27));
+        assert_eq!(result[0], Fr::from_u64(13)); // t=0: 3+10=13
+        assert_eq!(result[1], Fr::from_u64(41)); // t=2: (3+8)+(10+20)=41
     }
 
     #[test]
@@ -231,10 +239,11 @@ mod tests {
         let kernel: CpuKernel<Fr> = compile_with_challenges(&expr, 2, 1, &[]);
         let lo = vec![Fr::from_u64(10), Fr::from_u64(3)];
         let hi = vec![Fr::from_u64(20), Fr::from_u64(7)];
+        // Grid: {0, 2} — slot 0→t=0, slot 1→t=2
         let result = eval_kernel(&kernel, &lo, &hi, 2);
 
-        assert_eq!(result[0], Fr::from_u64(7));
-        assert_eq!(result[1], Fr::from_u64(13));
+        assert_eq!(result[0], Fr::from_u64(7));  // t=0: 10-3=7
+        assert_eq!(result[1], Fr::from_u64(19)); // t=2: 30-11=19
     }
 
     #[test]
@@ -249,11 +258,12 @@ mod tests {
         let kernel: CpuKernel<Fr> = compile_with_challenges(&expr, 2, 2, &[]);
         let lo = vec![Fr::from_u64(2), Fr::from_u64(5)];
         let hi = vec![Fr::from_u64(4), Fr::from_u64(9)];
+        // Grid: {0, 2, 3} — slot 0→t=0, slot 1→t=2, slot 2→t=3
         let result = eval_kernel(&kernel, &lo, &hi, 3);
 
-        assert_eq!(result[0], Fr::from_u64(9));
-        assert_eq!(result[1], Fr::from_u64(25));
-        assert_eq!(result[2], Fr::from_u64(49));
+        assert_eq!(result[0], Fr::from_u64(9));  // t=0: (2+1)*(5-2)=9
+        assert_eq!(result[1], Fr::from_u64(49)); // t=2: (6+1)*(13-6)=49
+        assert_eq!(result[2], Fr::from_u64(81)); // t=3: (8+1)*(17-8)=81
     }
 
     #[test]
@@ -264,10 +274,11 @@ mod tests {
         let expr = b.build(gamma * a);
 
         let kernel = compile_with_challenges::<Fr>(&expr, 1, 1, &[Fr::from_u64(7)]);
+        // Grid: {0, 2} — slot 0→t=0, slot 1→t=2
         let result = eval_kernel(&kernel, &[Fr::from_u64(5)], &[Fr::from_u64(10)], 2);
 
-        assert_eq!(result[0], Fr::from_u64(35));
-        assert_eq!(result[1], Fr::from_u64(70));
+        assert_eq!(result[0], Fr::from_u64(35));  // t=0: 7*5=35
+        assert_eq!(result[1], Fr::from_u64(105)); // t=2: 7*(5+2*5)=105
     }
 
     #[test]
@@ -297,10 +308,11 @@ mod tests {
         let expr = b.build(gamma * (h * h - h));
 
         let kernel = compile_with_challenges::<Fr>(&expr, 1, 2, &[Fr::from_u64(11)]);
-        let result = eval_kernel(&kernel, &[Fr::from_u64(3)], &[Fr::from_u64(7)], 3);
+        // Grid: {0, 2} — slot 0→t=0, slot 1→t=2
+        let result = eval_kernel(&kernel, &[Fr::from_u64(3)], &[Fr::from_u64(7)], 2);
 
-        assert_eq!(result[0], Fr::from_u64(66));
-        assert_eq!(result[1], Fr::from_u64(462));
+        assert_eq!(result[0], Fr::from_u64(66));   // t=0: 11*(9-3)=66
+        assert_eq!(result[1], Fr::from_u64(1210));  // t=2: h=3+2*4=11, 11*(121-11)=1210
     }
 
     #[test]

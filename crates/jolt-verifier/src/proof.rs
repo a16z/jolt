@@ -1,9 +1,9 @@
-//! Jolt proof and associated types.
-//!
 //! [`JoltProof`] is the complete proof artifact sent from prover to verifier.
 //! It carries the Spartan R1CS proof, per-stage sumcheck proofs with claimed
-//! polynomial evaluations, and batch PCS opening proofs.
+//! polynomial evaluations, batch PCS opening proofs, and a [`ProverConfig`]
+//! so the verifier can reconstruct claim structure without external context.
 
+use crate::config::ProverConfig;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_spartan::UniformSpartanProof;
@@ -20,7 +20,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct SumcheckStageProof<F: Field> {
-    /// Batched sumcheck proof for this stage.
     pub sumcheck_proof: SumcheckProof<F>,
     /// Claimed evaluations of the stage's polynomials at the sumcheck
     /// challenge point. Ordering is stage-defined and must be consistent
@@ -28,36 +27,31 @@ pub struct SumcheckStageProof<F: Field> {
     pub evaluations: Vec<F>,
 }
 
-/// Batch PCS opening proofs.
-///
-/// After all sumcheck stages complete, the prover RLC-reduces opening claims
-/// by evaluation point and produces one PCS opening proof per distinct
-/// reduced claim.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct BatchOpeningProofs<PCS: CommitmentScheme> {
-    pub proofs: Vec<PCS::Proof>,
-}
-
 /// Complete Jolt proof for one program execution.
+///
+/// Self-contained: the [`config`](Self::config) field carries all parameters
+/// the verifier needs to reconstruct claim structure. The verifier only needs
+/// the proof and a [`JoltVerifyingKey`](crate::key::JoltVerifyingKey).
 ///
 /// Produced by stages S1 (uniform Spartan) through S8 (batch openings). The
 /// verifier replays the Fiat-Shamir transcript and checks each component
 /// in sequence.
-///
-/// The Spartan proof is PIOP-only — the witness commitment and opening proof
-/// are separate fields, decoupling Spartan from PCS concerns.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct JoltProof<F: Field, PCS: CommitmentScheme<Field = F>> {
+    /// Prover configuration — trace dimensions, one-hot config, RW config.
+    pub config: ProverConfig,
     /// Uniform Spartan R1CS proof (PIOP only — no PCS).
     pub spartan_proof: UniformSpartanProof<F>,
     /// Per-stage sumcheck proofs (S2–S7) with claimed evaluations.
     pub stage_proofs: Vec<SumcheckStageProof<F>>,
     /// Batch PCS opening proofs from the opening reduction phase.
-    pub opening_proofs: BatchOpeningProofs<PCS>,
-    /// Commitments to all committed polynomials (including witness).
+    pub opening_proofs: Vec<PCS::Proof>,
+    /// Commitment to the R1CS witness polynomial.
+    ///
+    /// Appended to the Fiat-Shamir transcript before Spartan verification.
+    /// Used by the verifier to construct the witness opening claim.
+    pub witness_commitment: PCS::Output,
+    /// Commitments to stage polynomials (RA chunks, inc, etc.).
     pub commitments: Vec<PCS::Output>,
-    /// Number of execution cycles in the trace.
-    pub trace_length: usize,
 }

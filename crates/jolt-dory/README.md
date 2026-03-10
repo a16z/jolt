@@ -18,7 +18,7 @@ The crate implements `CommitmentScheme`, `AdditivelyHomomorphic`, and `Streaming
 
 ### Parameters
 
-- **`DoryParams`** — Configuration for the Dory scheme: tier size `t`, `max_num_rows`, `num_columns`. Methods: `from_dimensions(k, t)` for deriving params from polynomial size, `sigma()` / `nu()` for log-dimensions, `total_num_vars()` for the total multilinear variable count.
+- **`DoryParams`** — Configuration for the Dory scheme: tier size `t`, `max_num_rows`, `num_columns`. Methods: `from_dimensions(k, t)` for deriving params from polynomial size, `sigma()` / `nu()` for log-dimensions, `total_vars()` for the total multilinear variable count.
 
 ### Types
 

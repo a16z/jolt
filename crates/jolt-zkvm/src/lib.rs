@@ -8,17 +8,17 @@
 //!
 //! | Module | Purpose |
 //! |--------|---------|
-//! | [`claims`] | IR-based claim definitions (single source of truth) |
 //! | [`preprocessing`] | Circuit key construction and PCS setup |
 //! | [`r1cs`] | Jolt R1CS constraints → [`UniformSpartanKey`](jolt_spartan::UniformSpartanKey) |
-//! | [`tags`] | Opaque polynomial and sumcheck identity tags |
-//! | [`witness`] | [`WitnessStore`](witness::WitnessStore) — polynomial evaluation table storage |
+//! | [`witness`] | Witness generation: trace → R1CS witnesses + committed polynomials |
 //! | [`stage`] | [`ProverStage`](stage::ProverStage) trait + [`StageBatch`](stage::StageBatch) |
 //! | [`pipeline`] | [`prove_stages`](pipeline::prove_stages) — prover pipeline driver |
 //! | [`evaluators`] | [`SumcheckCompute`](jolt_sumcheck::SumcheckCompute) implementations |
 //! | [`stages`] | [`ProverStage`](stage::ProverStage) implementations |
+//!
+//! Claim definitions and polynomial tags live in [`jolt_ir::zkvm`] — the
+//! single source of truth shared by prover and verifier.
 
-pub mod claims;
 pub mod evaluators;
 pub mod pipeline;
 pub mod preprocessing;
@@ -27,5 +27,4 @@ pub mod prover;
 pub mod r1cs;
 pub mod stage;
 pub mod stages;
-pub mod tags;
 pub mod witness;

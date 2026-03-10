@@ -644,7 +644,8 @@ fn pairwise_reduce_product_sum_d8_large() {
     };
     let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
 
-    let n = 1 << 14;
+    // 2K elements: enough to exercise multiple threadgroups without slow CPU reference
+    let n = 1 << 11;
     let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
     let weights = random_elements(&mut rng, n / 2);
 

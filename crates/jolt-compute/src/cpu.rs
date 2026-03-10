@@ -548,19 +548,17 @@ impl ComputeBackend for CpuBackend {
                     .fold(
                         || {
                             let accs = new_all_accs();
-                            let lo = Vec::with_capacity(num_inputs);
-                            let hi = Vec::with_capacity(num_inputs);
+                            let lo = vec![F::zero(); num_inputs];
+                            let hi = vec![F::zero(); num_inputs];
                             let evals_bufs: Vec<Vec<F>> =
                                 kernels.iter().map(|(_, ne)| vec![F::zero(); *ne]).collect();
                             (accs, lo, hi, evals_bufs)
                         },
                         |(mut accs, mut lo, mut hi, mut evals_bufs), i| {
-                            lo.clear();
-                            hi.clear();
-                            for &input in inputs {
+                            for (k, &input) in inputs.iter().enumerate() {
                                 let (l, h) = pair(input, i);
-                                lo.push(l);
-                                hi.push(h);
+                                lo[k] = l;
+                                hi[k] = h;
                             }
 
                             let w = weights[i];
@@ -591,18 +589,16 @@ impl ComputeBackend for CpuBackend {
         }
 
         let mut all_accs = new_all_accs();
-        let mut lo = Vec::with_capacity(num_inputs);
-        let mut hi = Vec::with_capacity(num_inputs);
+        let mut lo = vec![F::zero(); num_inputs];
+        let mut hi = vec![F::zero(); num_inputs];
         let mut evals_bufs: Vec<Vec<F>> =
             kernels.iter().map(|(_, ne)| vec![F::zero(); *ne]).collect();
 
         for (i, &w) in weights.iter().enumerate() {
-            lo.clear();
-            hi.clear();
-            for &input in inputs {
+            for (k, &input) in inputs.iter().enumerate() {
                 let (l, h) = pair(input, i);
-                lo.push(l);
-                hi.push(h);
+                lo[k] = l;
+                hi[k] = h;
             }
 
             for k in 0..num_kernels {
@@ -637,8 +633,6 @@ impl ComputeBackend for CpuBackend {
             (0..num_evals).map(|_| F::Accumulator::default()).collect()
         };
 
-        // Pair indexing: LowToHigh reads (buf[2i], buf[2i+1]),
-        // HighToLow reads (buf[i], buf[i+half]).
         let pair = |input: &[F], i: usize| -> (F, F) {
             match order {
                 BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
@@ -657,18 +651,16 @@ impl ComputeBackend for CpuBackend {
                         || {
                             (
                                 new_accs(),
-                                Vec::with_capacity(num_inputs),
-                                Vec::with_capacity(num_inputs),
+                                vec![F::zero(); num_inputs],
+                                vec![F::zero(); num_inputs],
                                 vec![F::zero(); num_evals],
                             )
                         },
                         |(mut acc, mut lo, mut hi, mut evals), i| {
-                            lo.clear();
-                            hi.clear();
-                            for &input in inputs {
+                            for (k, &input) in inputs.iter().enumerate() {
                                 let (l, h) = pair(input, i);
-                                lo.push(l);
-                                hi.push(h);
+                                lo[k] = l;
+                                hi[k] = h;
                             }
 
                             kernel.evaluate(&lo, &hi, &mut evals);
@@ -692,22 +684,107 @@ impl ComputeBackend for CpuBackend {
         }
 
         let mut accs = new_accs();
-        let mut lo = Vec::with_capacity(num_inputs);
-        let mut hi = Vec::with_capacity(num_inputs);
+        let mut lo = vec![F::zero(); num_inputs];
+        let mut hi = vec![F::zero(); num_inputs];
         let mut evals = vec![F::zero(); num_evals];
 
         for (i, &w) in weights.iter().enumerate() {
-            lo.clear();
-            hi.clear();
-            for &input in inputs {
+            for (k, &input) in inputs.iter().enumerate() {
                 let (l, h) = pair(input, i);
-                lo.push(l);
-                hi.push(h);
+                lo[k] = l;
+                hi[k] = h;
             }
 
             kernel.evaluate(&lo, &hi, &mut evals);
             for (a, e) in accs.iter_mut().zip(evals.iter()) {
                 a.fmadd(w, *e);
+            }
+        }
+
+        accs.into_iter().map(FieldAccumulator::reduce).collect()
+    }
+
+    fn pairwise_reduce_unweighted<F: Field>(
+        &self,
+        inputs: &[&Vec<F>],
+        kernel: &Self::CompiledKernel<F>,
+        num_evals: usize,
+        order: BindingOrder,
+    ) -> Vec<F> {
+        let n = inputs[0].len();
+        debug_assert!(n % 2 == 0, "buffer length must be even");
+        let half = n / 2;
+        let num_inputs = inputs.len();
+        let one = F::one();
+
+        let new_accs = || -> Vec<F::Accumulator> {
+            (0..num_evals).map(|_| F::Accumulator::default()).collect()
+        };
+
+        let pair = |input: &[F], i: usize| -> (F, F) {
+            match order {
+                BindingOrder::LowToHigh => (input[2 * i], input[2 * i + 1]),
+                BindingOrder::HighToLow => (input[i], input[i + half]),
+            }
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            if half >= PAR_THRESHOLD {
+                use rayon::prelude::*;
+
+                let accs = (0..half)
+                    .into_par_iter()
+                    .fold(
+                        || {
+                            (
+                                new_accs(),
+                                vec![F::zero(); num_inputs],
+                                vec![F::zero(); num_inputs],
+                                vec![F::zero(); num_evals],
+                            )
+                        },
+                        |(mut acc, mut lo, mut hi, mut evals), i| {
+                            for (k, &input) in inputs.iter().enumerate() {
+                                let (l, h) = pair(input, i);
+                                lo[k] = l;
+                                hi[k] = h;
+                            }
+
+                            kernel.evaluate(&lo, &hi, &mut evals);
+                            for (a, e) in acc.iter_mut().zip(evals.iter()) {
+                                a.fmadd(one, *e);
+                            }
+                            (acc, lo, hi, evals)
+                        },
+                    )
+                    .map(|(acc, _, _, _)| acc)
+                    .reduce(new_accs, |mut a, b| {
+                        for (ai, bi) in a.iter_mut().zip(b) {
+                            ai.merge(bi);
+                        }
+                        a
+                    });
+
+                return accs.into_iter().map(FieldAccumulator::reduce).collect();
+            }
+        }
+
+        let mut accs = new_accs();
+        let mut lo = vec![F::zero(); num_inputs];
+        let mut hi = vec![F::zero(); num_inputs];
+        let mut evals = vec![F::zero(); num_evals];
+
+        for i in 0..half {
+            for (k, &input) in inputs.iter().enumerate() {
+                let (l, h) = pair(input, i);
+                lo[k] = l;
+                hi[k] = h;
+            }
+
+            kernel.evaluate(&lo, &hi, &mut evals);
+            for (a, e) in accs.iter_mut().zip(evals.iter()) {
+                a.fmadd(one, *e);
             }
         }
 
@@ -882,16 +959,15 @@ impl ComputeBackend for CpuBackend {
         }
     }
 
-    fn accumulate_weighted<F: Field>(
-        &self,
-        buf: &mut Vec<F>,
-        scalars: &[F],
-        inputs: &[&Vec<F>],
-    ) {
+    fn accumulate_weighted<F: Field>(&self, buf: &mut Vec<F>, scalars: &[F], inputs: &[&Vec<F>]) {
         debug_assert_eq!(scalars.len(), inputs.len());
         let n = buf.len();
         for &input in inputs {
-            debug_assert_eq!(input.len(), n, "accumulate_weighted: mismatched buffer lengths");
+            debug_assert_eq!(
+                input.len(),
+                n,
+                "accumulate_weighted: mismatched buffer lengths"
+            );
         }
 
         #[cfg(feature = "parallel")]
@@ -2021,7 +2097,7 @@ mod tests {
 
         // Individual
         let mut individual = originals.clone();
-        for buf in individual.iter_mut() {
+        for buf in &mut individual {
             b.scale(buf, scalar);
         }
 
@@ -2044,7 +2120,7 @@ mod tests {
             .collect();
 
         let mut individual = originals.clone();
-        for buf in individual.iter_mut() {
+        for buf in &mut individual {
             b.scale(buf, scalar);
         }
 

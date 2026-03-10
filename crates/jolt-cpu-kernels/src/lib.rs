@@ -35,6 +35,7 @@
 
 mod custom;
 mod product_sum;
+mod specialized;
 pub mod toom_cook;
 
 use jolt_compute::CpuKernel;
@@ -83,6 +84,8 @@ pub fn compile_with_challenges<F: Field>(
             num_inputs_per_product,
             num_products,
         } => product_sum::compile::<F>(*num_inputs_per_product, *num_products),
+        KernelShape::EqProduct => specialized::eq_product::<F>(),
+        KernelShape::HammingBooleanity => specialized::hamming_booleanity::<F>(),
         KernelShape::Custom { expr, num_inputs } => {
             custom::compile_with_challenges::<F>(expr, *num_inputs, desc.degree, challenges)
         }
@@ -247,15 +250,13 @@ mod tests {
 
         let lo = vec![Fr::from_u64(3), Fr::from_u64(5)];
         let hi = vec![Fr::from_u64(7), Fr::from_u64(11)];
-        // Custom: num_evals = degree + 1 = 3
+        // Custom: num_evals = degree = 2, grid {0, 2}
         let result = eval_kernel(&kernel, &lo, &hi, desc.num_evals());
 
         // t=0: 3*5 = 15
         assert_eq!(result[0], Fr::from_u64(15));
-        // t=1: 7*11 = 77
-        assert_eq!(result[1], Fr::from_u64(77));
         // t=2: (3+2*(7-3))*(5+2*(11-5)) = 11*17 = 187
-        assert_eq!(result[2], Fr::from_u64(187));
+        assert_eq!(result[1], Fr::from_u64(187));
     }
 
     #[test]
@@ -276,12 +277,13 @@ mod tests {
 
         let lo = vec![Fr::from_u64(3)];
         let hi = vec![Fr::from_u64(7)];
+        // Custom: num_evals = degree = 2, grid {0, 2}
         let result = eval_kernel(&kernel, &lo, &hi, desc.num_evals());
 
         // t=0: 3^2 - 3 = 6
         assert_eq!(result[0], Fr::from_u64(6));
-        // t=1: 7^2 - 7 = 42
-        assert_eq!(result[1], Fr::from_u64(42));
+        // t=2: h(2) = 3+2*4 = 11, 11^2 - 11 = 110
+        assert_eq!(result[1], Fr::from_u64(110));
     }
 
     #[test]
@@ -300,20 +302,19 @@ mod tests {
             tensor_split: None,
         };
 
+        // Custom degree=1: num_evals = 1, grid {0}
         // Without challenge bindings: defaults to zero
         let kernel_zero: CpuKernel<Fr> = compile(&desc);
         let lo = vec![Fr::from_u64(5)];
         let hi = vec![Fr::from_u64(10)];
         let result = eval_kernel(&kernel_zero, &lo, &hi, desc.num_evals());
         assert_eq!(result[0], Fr::zero());
-        assert_eq!(result[1], Fr::zero());
 
         // With challenge binding: gamma = 7
         let kernel: CpuKernel<Fr> = compile_with_challenges(&desc, &[Fr::from_u64(7)]);
         let result = eval_kernel(&kernel, &lo, &hi, desc.num_evals());
-        // t=0: 7*5 = 35, t=1: 7*10 = 70
+        // t=0: 7*5 = 35
         assert_eq!(result[0], Fr::from_u64(35));
-        assert_eq!(result[1], Fr::from_u64(70));
     }
 
     #[test]
@@ -360,8 +361,8 @@ mod tests {
             degree: 2,
             tensor_split: None,
         };
-        // Custom: num_evals = degree + 1 = 3
-        assert_eq!(custom_desc.num_evals(), 3);
+        // Custom: num_evals = degree = 2
+        assert_eq!(custom_desc.num_evals(), 2);
     }
 
     #[test]

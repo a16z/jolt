@@ -1,7 +1,7 @@
 //! End-to-end pipeline tests for jolt-verifier.
 //!
 //! Tests the full S1→S2→S8 verification pipeline using uniform Spartan
-//! with per-cycle constraints and a single claim reduction sumcheck stage.
+//! with per-cycle constraints and config-driven stage descriptors.
 
 use jolt_field::{Field, Fr};
 use jolt_openings::mock::{MockCommitment, MockCommitmentScheme};
@@ -9,26 +9,33 @@ use jolt_openings::{CommitmentScheme, ProverClaim, VerifierClaim};
 use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_spartan::{UniformSpartanKey, UniformSpartanProver};
 use jolt_sumcheck::{BatchedSumcheckProver, SumcheckClaim};
-use jolt_transcript::{Blake2bTranscript, Transcript};
-use jolt_verifier::proof::{BatchOpeningProofs, SumcheckStageProof};
-use jolt_verifier::{
-    verify, verify_openings, verify_spartan, JoltError, JoltProof, JoltVerifyingKey, VerifierStage,
-};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_verifier::config::ProverConfig;
+use jolt_verifier::proof::SumcheckStageProof;
+use jolt_verifier::stage::StageDescriptor;
+use jolt_verifier::{verify, verify_openings, verify_spartan, JoltError, JoltProof, JoltVerifyingKey};
 use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 type MockPCS = MockCommitmentScheme<Fr>;
-type C = MockCommitment<Fr>;
 
 fn challenge_fn(c: u128) -> Fr {
     Fr::from_u128(c)
 }
 
-/// Build a uniform Spartan key for a simple x*x=y circuit (1 constraint, 3 vars per cycle).
+fn test_prover_config() -> ProverConfig {
+    use jolt_verifier::config::{OneHotConfig, ReadWriteConfig};
+    ProverConfig {
+        trace_length: 2,
+        ram_k: 16,
+        one_hot_config: OneHotConfig::new(1),
+        rw_config: ReadWriteConfig::new(1, 4),
+    }
+}
+
 fn test_uniform_key(num_cycles: usize) -> UniformSpartanKey<Fr> {
     let one = Fr::from_u64(1);
-    // Per-cycle: A[0] = w[1], B[0] = w[1], C[0] = w[2]  → x*x = y
     UniformSpartanKey::new(
         num_cycles,
         1,
@@ -55,70 +62,15 @@ fn flatten_witnesses(key: &UniformSpartanKey<Fr>, cycle_witnesses: &[Vec<Fr>]) -
     flat
 }
 
+/// Commit witness and append to transcript. Returns the commitment.
 fn commit_and_append<PCS: CommitmentScheme<Field = Fr>>(
     flat: &[Fr],
     setup: &PCS::ProverSetup,
     transcript: &mut Blake2bTranscript,
-) {
+) -> PCS::Output {
     let (commitment, _) = PCS::commit(flat, setup);
     transcript.append_bytes(format!("{commitment:?}").as_bytes());
-}
-
-/// A trivial verifier stage for testing: `Σ_x eq(r, x) · Σ_i c_i · p_i(x)`.
-struct TestClaimReductionVerifier {
-    eq_point: Vec<Fr>,
-    coefficients: Vec<Fr>,
-    eval_to_commitment: Vec<usize>,
-    claimed_sum: Fr,
-    num_vars: usize,
-}
-
-impl<Cm: Clone, T: Transcript> VerifierStage<Fr, Cm, T> for TestClaimReductionVerifier {
-    fn build_claims(
-        &mut self,
-        _prior_claims: &[VerifierClaim<Fr, Cm>],
-        _transcript: &mut T,
-    ) -> Vec<SumcheckClaim<Fr>> {
-        vec![SumcheckClaim {
-            num_vars: self.num_vars,
-            degree: 2,
-            claimed_sum: self.claimed_sum,
-        }]
-    }
-
-    fn check_and_extract(
-        &mut self,
-        final_eval: Fr,
-        challenges: &[Fr],
-        evaluations: &[Fr],
-        commitments: &[Cm],
-    ) -> Result<Vec<VerifierClaim<Fr, Cm>>, JoltError> {
-        let eq_eval = EqPolynomial::new(self.eq_point.clone()).evaluate(challenges);
-        let weighted_sum: Fr = self
-            .coefficients
-            .iter()
-            .zip(evaluations.iter())
-            .map(|(&c, &e)| c * e)
-            .sum();
-        let expected = eq_eval * weighted_sum;
-
-        if expected != final_eval {
-            return Err(JoltError::EvaluationMismatch {
-                stage: 2,
-                reason: format!("expected {expected:?}, got {final_eval:?}"),
-            });
-        }
-
-        Ok(evaluations
-            .iter()
-            .enumerate()
-            .map(|(i, &eval)| VerifierClaim {
-                commitment: commitments[self.eval_to_commitment[i]].clone(),
-                point: challenges.to_vec(),
-                eval,
-            })
-            .collect())
-    }
+    commitment
 }
 
 use jolt_sumcheck::prover::SumcheckCompute;
@@ -162,13 +114,13 @@ fn verify_spartan_round_trip() {
     let flat = flatten_witnesses(&key, &witnesses);
 
     let mut pt = Blake2bTranscript::new(b"verify-spartan-rt");
-    commit_and_append::<MockPCS>(&flat, &(), &mut pt);
+    let _ = commit_and_append::<MockPCS>(&flat, &(), &mut pt);
     let (proof, prover_r_x, prover_r_y) =
         UniformSpartanProver::prove_dense_with_challenges(&key, &flat, &mut pt)
             .expect("proving should succeed");
 
     let mut vt = Blake2bTranscript::new(b"verify-spartan-rt");
-    commit_and_append::<MockPCS>(&flat, &(), &mut vt);
+    let _ = commit_and_append::<MockPCS>(&flat, &(), &mut vt);
     let (verifier_r_x, verifier_r_y) =
         verify_spartan(&key, &proof, &mut vt).expect("verification should succeed");
 
@@ -216,10 +168,8 @@ fn verify_openings_round_trip() {
             MockPCS::open(&poly, &claim.point, claim.eval, &(), None, &mut pt)
         })
         .collect();
-    let opening_proofs = BatchOpeningProofs { proofs };
-
     let mut vt = Blake2bTranscript::new(b"verify-openings-rt");
-    verify_openings::<MockPCS, _>(verifier_claims, &opening_proofs, &(), &mut vt, challenge_fn)
+    verify_openings::<MockPCS, _>(verifier_claims, &proofs, &(), &mut vt, challenge_fn)
         .expect("opening verification should succeed");
 }
 
@@ -230,17 +180,18 @@ fn verify_rejects_wrong_stage_count() {
     let flat = flatten_witnesses(&key, &witnesses);
 
     let mut pt = Blake2bTranscript::new(b"stage-count");
-    commit_and_append::<MockPCS>(&flat, &(), &mut pt);
+    let witness_commitment = commit_and_append::<MockPCS>(&flat, &(), &mut pt);
     let (spartan_proof, _, _) =
         UniformSpartanProver::prove_dense_with_challenges(&key, &flat, &mut pt)
             .expect("proving should succeed");
 
     let proof = JoltProof::<Fr, MockPCS> {
+        config: test_prover_config(),
         spartan_proof,
         stage_proofs: vec![],
-        opening_proofs: BatchOpeningProofs { proofs: vec![] },
+        opening_proofs: vec![],
+        witness_commitment,
         commitments: vec![],
-        trace_length: 2,
     };
 
     let vk = JoltVerifyingKey {
@@ -248,20 +199,22 @@ fn verify_rejects_wrong_stage_count() {
         pcs_setup: (),
     };
 
-    let dummy_stage = TestClaimReductionVerifier {
-        eq_point: vec![],
-        coefficients: vec![],
-        eval_to_commitment: vec![],
-        claimed_sum: Fr::zero(),
-        num_vars: 0,
-    };
-
-    let mut stages: Vec<Box<dyn VerifierStage<Fr, C, Blake2bTranscript>>> =
-        vec![Box::new(dummy_stage)];
-
+    // Verify builds one descriptor but proof has 0 stage proofs → mismatch.
     let mut vt = Blake2bTranscript::new(b"stage-count");
-    commit_and_append::<MockPCS>(&flat, &(), &mut vt);
-    let result = verify::<MockPCS, _>(&proof, &vk, &mut stages, &mut vt, challenge_fn);
+    let result = verify::<MockPCS, _>(
+        &proof,
+        &vk,
+        |_r_x, _r_y, _t| {
+            vec![StageDescriptor::claim_reduction(
+                vec![],
+                vec![],
+                Fr::zero(),
+                vec![],
+            )]
+        },
+        &mut vt,
+        challenge_fn,
+    );
     assert!(
         matches!(result, Err(JoltError::InvalidProof(_))),
         "should reject stage count mismatch, got: {result:?}"
@@ -279,7 +232,6 @@ fn verify_rejects_bad_evaluation() {
     let num_vars = 3;
     let n = 1usize << num_vars;
     let eq_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-    let coefficients = vec![Fr::from_u64(1)];
     let poly_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
     let commitment = MockPCS::commit(&poly_table, &()).0;
 
@@ -291,7 +243,7 @@ fn verify_rejects_bad_evaluation() {
         .sum();
 
     let mut pt = Blake2bTranscript::new(b"bad-eval");
-    commit_and_append::<MockPCS>(&flat, &(), &mut pt);
+    let witness_commitment = commit_and_append::<MockPCS>(&flat, &(), &mut pt);
     let (spartan_proof, _, _) =
         UniformSpartanProver::prove_dense_with_challenges(&key, &flat, &mut pt)
             .expect("proving should succeed");
@@ -315,11 +267,12 @@ fn verify_rejects_bad_evaluation() {
     };
 
     let proof = JoltProof::<Fr, MockPCS> {
+        config: test_prover_config(),
         spartan_proof,
         stage_proofs: vec![stage_proof],
-        opening_proofs: BatchOpeningProofs { proofs: vec![] },
+        opening_proofs: vec![],
+        witness_commitment,
         commitments: vec![commitment],
-        trace_length: 2,
     };
 
     let vk = JoltVerifyingKey {
@@ -327,20 +280,21 @@ fn verify_rejects_bad_evaluation() {
         pcs_setup: (),
     };
 
-    let verifier_stage = TestClaimReductionVerifier {
-        eq_point,
-        coefficients,
-        eval_to_commitment: vec![0],
-        claimed_sum,
-        num_vars,
-    };
-
-    let mut stages: Vec<Box<dyn VerifierStage<Fr, C, Blake2bTranscript>>> =
-        vec![Box::new(verifier_stage)];
-
     let mut vt = Blake2bTranscript::new(b"bad-eval");
-    commit_and_append::<MockPCS>(&flat, &(), &mut vt);
-    let result = verify::<MockPCS, _>(&proof, &vk, &mut stages, &mut vt, challenge_fn);
+    let result = verify::<MockPCS, _>(
+        &proof,
+        &vk,
+        |_r_x, _r_y, _t| {
+            vec![StageDescriptor::claim_reduction(
+                eq_point,
+                vec![Fr::from_u64(1)],
+                claimed_sum,
+                vec![0],
+            )]
+        },
+        &mut vt,
+        challenge_fn,
+    );
     assert!(
         result.is_err(),
         "tampered evaluation should be rejected, got: {result:?}"
@@ -396,12 +350,10 @@ fn sumcheck_eq_g_final_eval_matches() {
 fn full_pipeline_spartan_plus_one_stage() {
     let mut rng = ChaCha20Rng::seed_from_u64(99);
 
-    // S1: Uniform Spartan — x*x=y per cycle
     let key = test_uniform_key(2);
     let witnesses = vec![make_cycle_witness(3), make_cycle_witness(5)];
     let flat = flatten_witnesses(&key, &witnesses);
 
-    // S2: Claim reduction — 2 random polynomials
     let num_vars = 3;
     let num_polys = 2;
     let n = 1usize << num_vars;
@@ -412,7 +364,7 @@ fn full_pipeline_spartan_plus_one_stage() {
         .map(|_| (0..n).map(|_| Fr::random(&mut rng)).collect())
         .collect();
 
-    let commitments: Vec<C> = poly_tables
+    let commitments: Vec<MockCommitment<Fr>> = poly_tables
         .iter()
         .map(|table| MockPCS::commit(table, &()).0)
         .collect();
@@ -430,17 +382,13 @@ fn full_pipeline_spartan_plus_one_stage() {
         .map(|(&e, &g)| e * g)
         .sum();
 
-    // ── Prover side ──
-
     let mut pt = Blake2bTranscript::new(b"full-pipeline");
 
-    // S1: Uniform Spartan (commit + append first)
-    commit_and_append::<MockPCS>(&flat, &(), &mut pt);
+    let witness_commitment = commit_and_append::<MockPCS>(&flat, &(), &mut pt);
     let (spartan_proof, _prover_r_x, _prover_r_y) =
         UniformSpartanProver::prove_dense_with_challenges(&key, &flat, &mut pt)
             .expect("spartan proving should succeed");
 
-    // S2: Sumcheck
     let claim = SumcheckClaim {
         num_vars,
         degree: 2,
@@ -453,9 +401,9 @@ fn full_pipeline_spartan_plus_one_stage() {
     let sumcheck_proof =
         BatchedSumcheckProver::prove(&[claim.clone()], &mut sc_witnesses, &mut pt, challenge_fn);
 
-    // Extract challenges by replaying verifier transcript up to this point
+    // Replay verifier transcript to extract challenges
     let mut vt_replay = Blake2bTranscript::new(b"full-pipeline");
-    commit_and_append::<MockPCS>(&flat, &(), &mut vt_replay);
+    let _ = commit_and_append::<MockPCS>(&flat, &(), &mut vt_replay);
     let _ = verify_spartan(&key, &spartan_proof, &mut vt_replay).unwrap();
     let (_, s2_challenges) = jolt_sumcheck::BatchedSumcheckVerifier::verify(
         &[claim],
@@ -470,13 +418,18 @@ fn full_pipeline_spartan_plus_one_stage() {
         .map(|table| Polynomial::new(table.clone()).evaluate(&s2_challenges))
         .collect();
 
+    // Fiat-Shamir: flush opening claim evals to transcript (matches verifier).
+    for &eval in &evaluations {
+        eval.append_to_transcript(&mut pt);
+    }
+
     let stage_proof = SumcheckStageProof {
         sumcheck_proof,
         evaluations: evaluations.clone(),
     };
 
-    // S8: Opening proofs
-    let prover_claims: Vec<ProverClaim<Fr>> = poly_tables
+    // Opening claims: stage polys + witness
+    let mut prover_claims: Vec<ProverClaim<Fr>> = poly_tables
         .iter()
         .zip(evaluations.iter())
         .map(|(table, &eval)| ProverClaim {
@@ -485,6 +438,15 @@ fn full_pipeline_spartan_plus_one_stage() {
             eval,
         })
         .collect();
+
+    // Witness opening claim — must be last to match verifier ordering.
+    let witness_eval = spartan_proof.witness_eval;
+    let spartan_r_y = _prover_r_y;
+    prover_claims.push(ProverClaim {
+        evaluations: flat.clone(),
+        point: spartan_r_y.clone(),
+        eval: witness_eval,
+    });
 
     use jolt_openings::{OpeningReduction, RlcReduction};
     let (reduced, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
@@ -499,14 +461,13 @@ fn full_pipeline_spartan_plus_one_stage() {
             MockPCS::open(&poly, &claim.point, claim.eval, &(), None, &mut pt)
         })
         .collect();
-    let opening_proofs = BatchOpeningProofs { proofs: pcs_proofs };
-
     let proof = JoltProof {
+        config: test_prover_config(),
         spartan_proof,
         stage_proofs: vec![stage_proof],
-        opening_proofs,
+        opening_proofs: pcs_proofs,
+        witness_commitment,
         commitments: commitments.clone(),
-        trace_length: 2,
     };
 
     let vk = JoltVerifyingKey {
@@ -514,23 +475,22 @@ fn full_pipeline_spartan_plus_one_stage() {
         pcs_setup: (),
     };
 
-    let verifier_stage = TestClaimReductionVerifier {
-        eq_point,
-        coefficients,
-        eval_to_commitment: (0..num_polys).collect(),
-        claimed_sum,
-        num_vars,
-    };
-
-    let mut stages: Vec<Box<dyn VerifierStage<Fr, C, Blake2bTranscript>>> =
-        vec![Box::new(verifier_stage)];
-
-    // ── Verifier side ──
-
     let mut vt = Blake2bTranscript::new(b"full-pipeline");
-    commit_and_append::<MockPCS>(&flat, &(), &mut vt);
-    let (_r_x, r_y) = verify::<MockPCS, _>(&proof, &vk, &mut stages, &mut vt, challenge_fn)
-        .expect("full pipeline verification should succeed");
+    let (_r_x, r_y) = verify::<MockPCS, _>(
+        &proof,
+        &vk,
+        |_r_x, _r_y, _t| {
+            vec![StageDescriptor::claim_reduction(
+                eq_point,
+                coefficients,
+                claimed_sum,
+                (0..num_polys).collect(),
+            )]
+        },
+        &mut vt,
+        challenge_fn,
+    )
+    .expect("full pipeline verification should succeed");
 
     assert!(!r_y.is_empty());
 }
@@ -539,8 +499,6 @@ mod dory {
     use super::*;
     use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_openings::{OpeningReduction, RlcReduction};
-
-    type DC = DoryCommitment;
 
     #[test]
     fn dory_verify_openings_round_trip() {
@@ -592,12 +550,10 @@ mod dory {
                 )
             })
             .collect();
-        let opening_proofs = BatchOpeningProofs { proofs };
-
         let mut vt = Blake2bTranscript::new(b"dory-openings-rt");
         verify_openings::<DoryScheme, _>(
             verifier_claims,
-            &opening_proofs,
+            &proofs,
             &verifier_setup,
             &mut vt,
             challenge_fn,
@@ -616,19 +572,17 @@ mod dory {
         let prover_setup = DoryScheme::setup_prover(num_vars);
         let verifier_setup = DoryScheme::setup_verifier(num_vars);
 
-        // S1: Uniform Spartan — x*x=y per cycle
         let key = test_uniform_key(2);
         let witnesses = vec![make_cycle_witness(3), make_cycle_witness(5)];
         let flat = flatten_witnesses(&key, &witnesses);
 
-        // S2: Claim reduction — 2 random polynomials
         let eq_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let coefficients: Vec<Fr> = (0..num_polys).map(|_| Fr::random(&mut rng)).collect();
         let poly_tables: Vec<Vec<Fr>> = (0..num_polys)
             .map(|_| (0..n).map(|_| Fr::random(&mut rng)).collect())
             .collect();
 
-        let commitments: Vec<DC> = poly_tables
+        let commitments: Vec<DoryCommitment> = poly_tables
             .iter()
             .map(|table| DoryScheme::commit(table, &prover_setup).0)
             .collect();
@@ -646,13 +600,10 @@ mod dory {
             .map(|(&e, &g)| e * g)
             .sum();
 
-        // ── Prover side ──
-
         let mut pt = Blake2bTranscript::new(b"dory-full-pipeline");
 
-        // S1: commit + Spartan PIOP
-        commit_and_append::<DoryScheme>(&flat, &prover_setup, &mut pt);
-        let (spartan_proof, _prover_r_x, _prover_r_y) =
+        let witness_commitment = commit_and_append::<DoryScheme>(&flat, &prover_setup, &mut pt);
+        let (spartan_proof, _prover_r_x, prover_r_y) =
             UniformSpartanProver::prove_dense_with_challenges(&key, &flat, &mut pt)
                 .expect("spartan proving should succeed");
 
@@ -673,7 +624,7 @@ mod dory {
         );
 
         let mut vt_replay = Blake2bTranscript::new(b"dory-full-pipeline");
-        commit_and_append::<DoryScheme>(&flat, &prover_setup, &mut vt_replay);
+        let _ = commit_and_append::<DoryScheme>(&flat, &prover_setup, &mut vt_replay);
         let _ = verify_spartan(&key, &spartan_proof, &mut vt_replay).unwrap();
         let (_, s2_challenges) = jolt_sumcheck::BatchedSumcheckVerifier::verify(
             &[claim],
@@ -688,12 +639,17 @@ mod dory {
             .map(|table| Polynomial::new(table.clone()).evaluate(&s2_challenges))
             .collect();
 
+        // Fiat-Shamir: flush opening claim evals to transcript (matches verifier).
+        for &eval in &evaluations {
+            eval.append_to_transcript(&mut pt);
+        }
+
         let stage_proof = SumcheckStageProof {
             sumcheck_proof,
             evaluations: evaluations.clone(),
         };
 
-        let prover_claims: Vec<ProverClaim<Fr>> = poly_tables
+        let mut prover_claims: Vec<ProverClaim<Fr>> = poly_tables
             .iter()
             .zip(evaluations.iter())
             .map(|(table, &eval)| ProverClaim {
@@ -702,6 +658,13 @@ mod dory {
                 eval,
             })
             .collect();
+
+        // Witness opening claim — last.
+        prover_claims.push(ProverClaim {
+            evaluations: flat.clone(),
+            point: prover_r_y,
+            eval: spartan_proof.witness_eval,
+        });
 
         let (reduced, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
             prover_claims,
@@ -722,14 +685,13 @@ mod dory {
                 )
             })
             .collect();
-        let opening_proofs = BatchOpeningProofs { proofs: pcs_proofs };
-
         let proof = JoltProof {
+            config: test_prover_config(),
             spartan_proof,
             stage_proofs: vec![stage_proof],
-            opening_proofs,
+            opening_proofs: pcs_proofs,
+            witness_commitment,
             commitments: commitments.clone(),
-            trace_length: 2,
         };
 
         let vk = JoltVerifyingKey {
@@ -737,23 +699,22 @@ mod dory {
             pcs_setup: verifier_setup,
         };
 
-        let verifier_stage = TestClaimReductionVerifier {
-            eq_point,
-            coefficients,
-            eval_to_commitment: (0..num_polys).collect(),
-            claimed_sum,
-            num_vars,
-        };
-
-        let mut stages: Vec<Box<dyn VerifierStage<Fr, DC, Blake2bTranscript>>> =
-            vec![Box::new(verifier_stage)];
-
-        // ── Verifier side ──
-
         let mut vt = Blake2bTranscript::new(b"dory-full-pipeline");
-        commit_and_append::<DoryScheme>(&flat, &prover_setup, &mut vt);
-        let (_r_x, r_y) = verify::<DoryScheme, _>(&proof, &vk, &mut stages, &mut vt, challenge_fn)
-            .expect("Dory full pipeline verification should succeed");
+        let (_r_x, r_y) = verify::<DoryScheme, _>(
+            &proof,
+            &vk,
+            |_r_x, _r_y, _t| {
+                vec![StageDescriptor::claim_reduction(
+                    eq_point,
+                    coefficients,
+                    claimed_sum,
+                    (0..num_polys).collect(),
+                )]
+            },
+            &mut vt,
+            challenge_fn,
+        )
+        .expect("Dory full pipeline verification should succeed");
 
         assert!(!r_y.is_empty());
     }

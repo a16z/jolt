@@ -45,7 +45,6 @@ impl<F: Field> CompressedPoly<F> {
         &self.coeffs_except_linear_term
     }
 
-    /// Whether the stored coefficient vector is empty.
     pub fn is_empty(&self) -> bool {
         self.coeffs_except_linear_term.is_empty()
     }
@@ -71,7 +70,6 @@ impl<F: Field> CompressedPoly<F> {
     pub fn evaluate_with_hint(&self, hint: F, point: F) -> F {
         let linear_term = self.recover_linear_term(hint);
 
-        // Evaluate: c0 + c1*x + c2*x^2 + c3*x^3 + ...
         let mut x_pow = point;
         let mut sum = self.coeffs_except_linear_term[0] + point * linear_term;
         for &c in &self.coeffs_except_linear_term[1..] {

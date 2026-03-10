@@ -14,7 +14,7 @@ use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
-use crate::claims::ram;
+use jolt_ir::zkvm::claims::ram;
 use crate::evaluators::catalog::{formula_descriptor, Term};
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
@@ -53,6 +53,10 @@ impl<F: Field> RamRwCheckingStage<F> {
 }
 
 impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
+    fn name(&self) -> &'static str {
+        "S4_ram_rw_checking"
+    }
+
     fn build(&mut self, _prior_claims: &[ProverClaim<F>], _transcript: &mut T) -> StageBatch<F> {
         let ra = self.ra.as_ref().unwrap();
         let val = self.val.as_ref().unwrap();
@@ -111,14 +115,17 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
             self.inc.take().unwrap(),
         ];
 
+        // LowToHigh binding → reverse for MSB-first evaluation.
+        let eval_point: Vec<F> = challenges.iter().rev().copied().collect();
+
         tables
             .into_iter()
             .map(|evals| {
                 let poly = Polynomial::new(evals.clone());
-                let eval = poly.evaluate(challenges);
+                let eval = poly.evaluate(&eval_point);
                 ProverClaim {
                     evaluations: evals,
-                    point: challenges.to_vec(),
+                    point: eval_point.clone(),
                     eval,
                 }
             })
@@ -190,9 +197,11 @@ mod tests {
             );
         assert_eq!(prover_claims.len(), 3); // ra, val, inc
 
+        let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();
         for pc in &prover_claims {
             let poly = Polynomial::new(pc.evaluations.clone());
-            assert_eq!(poly.evaluate(&challenges), pc.eval);
+            assert_eq!(poly.evaluate(&eval_point), pc.eval);
+            assert_eq!(pc.point, eval_point);
         }
     }
 }

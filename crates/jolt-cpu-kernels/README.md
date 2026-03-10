@@ -10,13 +10,17 @@ This crate compiles `jolt-ir` kernel descriptors into `jolt-compute` CPU kernels
 
 ### Compilation Strategies
 
-- **`ProductSum` D=4,8,16** — Hand-optimized closures with fully unrolled product evaluation. These cover ~80% of prover time (instruction RA sumchecks and claim reductions).
+- **`ProductSum` D=4,8,16,32** — Hand-optimized closures with fully unrolled product evaluation. These cover ~80% of prover time (instruction RA sumchecks and claim reductions).
 - **`ProductSum` generic** — Loop-based fallback for other D values.
+- **`EqProduct`** — Hand-coded kernel for `eq * g` (degree 2, 2 inputs).
+- **`HammingBooleanity`** — Hand-coded kernel for `eq * h * (h-1)` (degree 3, 2 inputs).
 - **`Custom`** — The `Expr` is walked once at compile time to produce a stack-machine closure that evaluates the expression at each grid point.
 
 ## Public API
 
 - **`compile<F>(desc) -> CpuKernel<F>`** — Compiles a `KernelDescriptor` into a CPU kernel. Dispatches to the appropriate strategy based on the descriptor's shape and degree.
+- **`compile_with_challenges<F>(desc, challenges) -> CpuKernel<F>`** — Like `compile`, but bakes Fiat-Shamir-derived challenge values into `Custom` expression kernels.
+- **`pub mod toom_cook`** — Re-exported Toom-Cook evaluation functions (`eval_prod_4`, `eval_prod_8`, etc.) used by both this crate and `jolt-core`.
 
 ## Dependency Position
 

@@ -1,10 +1,7 @@
-//! Error types for Jolt proof verification.
-
 use jolt_openings::OpeningsError;
 use jolt_spartan::SpartanError;
 use jolt_sumcheck::SumcheckError;
 
-/// Errors that can occur during Jolt proof verification.
 #[derive(Debug, thiserror::Error)]
 pub enum JoltError {
     #[error("spartan error: {0}")]

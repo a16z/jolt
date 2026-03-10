@@ -29,7 +29,8 @@
 //! | 3 | 2+1 split | 4 | 6 |
 //! | 4 | 2×2 Toom-Cook | 8 | 12 |
 //! | 5 | 2×2+1 | 13 | 20 |
-//! | 6–7 | Naive loop | D(D-1) | — |
+//! | 6 | 4+2 split | ~20 | 30 |
+//! | 7 | 4+3 split | ~28 | 42 |
 //! | 8 | 4×4 Toom-Cook | ~24 | 56 |
 //! | 16 | 8×8 + ex8 expansion | ~64 | 240 |
 //! | 32 | 16×16 + ex16 expansion | ~160 | 992 |
@@ -37,8 +38,6 @@
 use core::{mem::MaybeUninit, ptr};
 
 use jolt_field::Field;
-
-// ─── Extrapolation helpers ──────────────────────────────────────────
 
 #[inline(always)]
 fn dbl<F: Field>(x: F) -> F {
@@ -139,8 +138,6 @@ fn ex16<F: Field>(f: &[F; 16], f_inf16_fact: F) -> F {
         - f[0]
 }
 
-// ─── Internal building blocks ───────────────────────────────────────
-
 /// Evaluate the product of 2 linear polynomials at points {1, 2, ∞}.
 ///
 /// Returns `(P(1), P(2), P(∞))`.
@@ -207,8 +204,6 @@ fn eval_linear_prod_8_internal<F: Field>(p: [(F, F); 8]) -> [F; 9] {
         a_inf * b_inf,
     ]
 }
-
-// ─── Expansion helpers ──────────────────────────────────────────────
 
 /// Expand 9 evaluations ([P(1)..P(8), P(∞)]) to 16 + P(∞) via degree-8 extrapolation.
 #[inline]
@@ -299,8 +294,6 @@ fn expand16_to_u32<F: Field>(base16: &[F; 16], inf: F) -> [F; 32] {
     // SAFETY: All 32 slots written (0..16 from copy, 16..31 from loop, 31 pre-written).
     unsafe { f_mu.assume_init() }
 }
-
-// ─── Public evaluation kernels ──────────────────────────────────────
 
 /// Evaluate the product of $D$ linear polynomials on the Toom-Cook grid.
 ///
@@ -425,66 +418,69 @@ pub fn eval_prod_5_assign<F: Field>(p: &[(F, F); 5], outputs: &mut [F]) {
 
 /// D=6: product of 6 linear polynomials at `{1, 2, 3, 4, 5, ∞}`.
 ///
-/// Uses naive per-grid-point evaluation (O(D²) = 36 muls, acceptable for small D).
+/// 4+2 balanced split: A = product of first 4 (degree 4), B = product of
+/// last 2 (degree 2). Evaluate A at `{1..5, ∞}` via `eval_linear_prod_4_internal`
+/// \+ `ex4`, B at `{1..5, ∞}` via `eval_linear_prod_2_internal` + `ex2`,
+/// then pointwise multiply. \~20 field multiplications vs 30 naive.
 pub fn eval_prod_6_assign<F: Field>(p: &[(F, F); 6], outputs: &mut [F]) {
-    let mut cur_vals_pinfs: [(F, F); 6] = [(F::zero(), F::zero()); 6];
-    for (i, (p0, p1)) in p.iter().copied().enumerate() {
-        cur_vals_pinfs[i] = (p1, p1 - p0);
-    }
+    // SAFETY: `p[0..4]` is a valid 4-element subslice.
+    let (a1, a2, a3, a4, a_inf) =
+        eval_linear_prod_4_internal(unsafe { *p[0..4].as_ptr().cast::<[(F, F); 4]>() });
+    let a_inf6 = a_inf.mul_u64(6);
+    let a5 = ex4(&[a1, a2, a3, a4], &a_inf6);
 
-    for output in &mut outputs[..5] {
-        let mut iter = cur_vals_pinfs.iter();
-        let (first_val, _) = iter.next().expect("d > 0");
-        let mut acc = *first_val;
-        for (cur_val, _) in iter {
-            acc *= *cur_val;
-        }
-        *output = acc;
+    let (b1, b2, b_inf) = eval_linear_prod_2_internal(p[4], p[5]);
+    let b3 = ex2(&[b1, b2], &b_inf);
+    let b4 = ex2(&[b2, b3], &b_inf);
+    let b5 = ex2(&[b3, b4], &b_inf);
 
-        for (cur_val, pinf) in &mut cur_vals_pinfs {
-            *cur_val += *pinf;
-        }
-    }
-
-    let mut iter = cur_vals_pinfs.iter();
-    let (_, first_pinf) = iter.next().expect("d > 0");
-    let mut acc_inf = *first_pinf;
-    for (_, pinf) in iter {
-        acc_inf *= *pinf;
-    }
-    outputs[5] = acc_inf;
+    outputs[0] = a1 * b1;
+    outputs[1] = a2 * b2;
+    outputs[2] = a3 * b3;
+    outputs[3] = a4 * b4;
+    outputs[4] = a5 * b5;
+    outputs[5] = a_inf * b_inf;
 }
 
 /// D=7: product of 7 linear polynomials at `{1, 2, 3, 4, 5, 6, ∞}`.
 ///
-/// Naive per-grid-point evaluation (O(D²) = 49 muls).
+/// 4+3 balanced split: A = product of first 4 (degree 4), B = product of
+/// last 3 (degree 3). Evaluate A at `{1..6, ∞}` via `eval_linear_prod_4_internal`
+/// \+ `ex4_2`, B at `{1..6, ∞}` via 2+1 sub-split with `ex2` extrapolation,
+/// then pointwise multiply. \~28 field multiplications vs 42 naive.
 pub fn eval_prod_7_assign<F: Field>(p: &[(F, F); 7], outputs: &mut [F]) {
-    let mut cur_vals_pinfs: [(F, F); 7] = [(F::zero(), F::zero()); 7];
-    for (i, (p0, p1)) in p.iter().copied().enumerate() {
-        cur_vals_pinfs[i] = (p1, p1 - p0);
-    }
+    // SAFETY: `p[0..4]` is a valid 4-element subslice.
+    let (a1, a2, a3, a4, a_inf) =
+        eval_linear_prod_4_internal(unsafe { *p[0..4].as_ptr().cast::<[(F, F); 4]>() });
+    let a_inf6 = a_inf.mul_u64(6);
+    let (a5, a6) = ex4_2(&[a1, a2, a3, a4], &a_inf6);
 
-    for output in &mut outputs[..6] {
-        let mut iter = cur_vals_pinfs.iter();
-        let (first_val, _) = iter.next().expect("d > 0");
-        let mut acc = *first_val;
-        for (cur_val, _) in iter {
-            acc *= *cur_val;
-        }
-        *output = acc;
+    // B = product of last 3 linears, evaluated at {1..6, ∞}.
+    // Sub-split: R = product of p[4], p[5] (degree 2), then multiply by p[6].
+    let (r1, r2, r_inf) = eval_linear_prod_2_internal(p[4], p[5]);
+    let r3 = ex2(&[r1, r2], &r_inf);
+    let r4 = ex2(&[r2, r3], &r_inf);
+    let r5 = ex2(&[r3, r4], &r_inf);
+    let r6 = ex2(&[r4, r5], &r_inf);
 
-        for (cur_val, pinf) in &mut cur_vals_pinfs {
-            *cur_val += *pinf;
-        }
-    }
+    let (l0, l1) = p[6];
+    let l_delta = l1 - l0;
+    let l_inf = l_delta;
+    // l(t) = l0 + t * l_delta, but l(1) = l1
+    let mut l_val = l1;
 
-    let mut iter = cur_vals_pinfs.iter();
-    let (_, first_pinf) = iter.next().expect("d > 0");
-    let mut acc_inf = *first_pinf;
-    for (_, pinf) in iter {
-        acc_inf *= *pinf;
-    }
-    outputs[6] = acc_inf;
+    outputs[0] = r1 * (l_val) * a1;
+    l_val += l_delta;
+    outputs[1] = r2 * (l_val) * a2;
+    l_val += l_delta;
+    outputs[2] = r3 * (l_val) * a3;
+    l_val += l_delta;
+    outputs[3] = r4 * (l_val) * a4;
+    l_val += l_delta;
+    outputs[4] = r5 * (l_val) * a5;
+    l_val += l_delta;
+    outputs[5] = r6 * (l_val) * a6;
+    outputs[6] = r_inf * l_inf * a_inf;
 }
 
 /// D=8: product of 8 linear polynomials at `{1, 2, ..., 7, ∞}`.
@@ -848,10 +844,7 @@ mod tests {
         // P(t) = (1+t)^8
         assert_eq!(evals[0], Fr::from_u64(2u64.pow(8))); // P(1) = 256
         assert_eq!(evals[1], Fr::from_u64(3u64.pow(8))); // P(2) = 6561
-        assert_eq!(evals[6], Fr::from_u64(8u64.pow(8) - 1 + 1)); // P(7) = 8^8 (wait, wrong)
-
-        // Actually P(7) = (1+7)^8 = 8^8 = 16777216
-        // But let's check P(∞) = 1^8 = 1
+        assert_eq!(evals[6], Fr::from_u64(8u64.pow(8))); // P(7) = 8^8 = 16777216
         assert_eq!(evals[7], Fr::one());
     }
 

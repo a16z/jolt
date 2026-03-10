@@ -97,44 +97,51 @@ impl UniformSpartanProver {
             witness.len(),
         );
 
-        let mut az = vec![F::zero(); total_rows_padded];
-        let mut bz = vec![F::zero(); total_rows_padded];
-        let mut cz = vec![F::zero(); total_rows_padded];
+        let (az, bz, cz) = {
+            let _span = tracing::info_span!("materialize_Az_Bz_Cz").entered();
+            let mut az = vec![F::zero(); total_rows_padded];
+            let mut bz = vec![F::zero(); total_rows_padded];
+            let mut cz = vec![F::zero(); total_rows_padded];
 
-        for c in 0..key.num_cycles {
-            let cycle_base = c * key.num_vars_padded;
-            for (k, (a_row, (b_row, c_row))) in key
-                .a_sparse
-                .iter()
-                .zip(key.b_sparse.iter().zip(key.c_sparse.iter()))
-                .enumerate()
-            {
-                let row = c * key.num_constraints_padded + k;
+            for c in 0..key.num_cycles {
+                let cycle_base = c * key.num_vars_padded;
+                for (k, (a_row, (b_row, c_row))) in key
+                    .a_sparse
+                    .iter()
+                    .zip(key.b_sparse.iter().zip(key.c_sparse.iter()))
+                    .enumerate()
+                {
+                    let row = c * key.num_constraints_padded + k;
 
-                let mut a_val = F::zero();
-                for &(j, coeff) in a_row {
-                    a_val += coeff * witness[cycle_base + j];
+                    let mut a_val = F::zero();
+                    for &(j, coeff) in a_row {
+                        a_val += coeff * witness[cycle_base + j];
+                    }
+
+                    let mut b_val = F::zero();
+                    for &(j, coeff) in b_row {
+                        b_val += coeff * witness[cycle_base + j];
+                    }
+
+                    let mut c_val = F::zero();
+                    for &(j, coeff) in c_row {
+                        c_val += coeff * witness[cycle_base + j];
+                    }
+
+                    az[row] = a_val;
+                    bz[row] = b_val;
+                    cz[row] = c_val;
                 }
-
-                let mut b_val = F::zero();
-                for &(j, coeff) in b_row {
-                    b_val += coeff * witness[cycle_base + j];
-                }
-
-                let mut c_val = F::zero();
-                for &(j, coeff) in c_row {
-                    c_val += coeff * witness[cycle_base + j];
-                }
-
-                az[row] = a_val;
-                bz[row] = b_val;
-                cz[row] = c_val;
             }
-        }
+            (az, bz, cz)
+        };
 
-        for i in 0..total_rows {
-            if az[i] * bz[i] != cz[i] {
-                return Err(SpartanError::ConstraintViolation(i));
+        {
+            let _span = tracing::info_span!("constraint_check").entered();
+            for i in 0..total_rows {
+                if az[i] * bz[i] != cz[i] {
+                    return Err(SpartanError::ConstraintViolation(i));
+                }
             }
         }
 
@@ -164,13 +171,16 @@ impl UniformSpartanProver {
         };
 
         let handler = TrackingHandler::new(num_row_vars);
-        let (outer_sumcheck_proof, r_x) = SumcheckProver::prove_with_handler(
-            &outer_claim,
-            &mut outer_witness,
-            transcript,
-            |c: u128| F::from_u128(c),
-            handler,
-        );
+        let (outer_sumcheck_proof, r_x) = {
+            let _span = tracing::info_span!("outer_sumcheck", num_vars = num_row_vars).entered();
+            SumcheckProver::prove_with_handler(
+                &outer_claim,
+                &mut outer_witness,
+                transcript,
+                |c: u128| F::from_u128(c),
+                handler,
+            )
+        };
 
         let az_eval = outer_witness.az.evaluations()[0];
         let bz_eval = outer_witness.bz.evaluations()[0];
@@ -185,8 +195,10 @@ impl UniformSpartanProver {
         let rho_c = F::from_u128(transcript.challenge());
 
         let num_col_vars = log2_padded(total_cols_padded);
-        let combined_row =
-            combined_partial_evaluate_uniform(key, &r_x, rho_a, rho_b, rho_c, total_cols_padded);
+        let combined_row = {
+            let _span = tracing::info_span!("combined_partial_evaluate").entered();
+            combined_partial_evaluate_uniform(key, &r_x, rho_a, rho_b, rho_c, total_cols_padded)
+        };
 
         let inner_claim = SumcheckClaim {
             num_vars: num_col_vars,
@@ -200,13 +212,16 @@ impl UniformSpartanProver {
         };
 
         let inner_handler = TrackingHandler::new(num_col_vars);
-        let (inner_sumcheck_proof, r_y) = SumcheckProver::prove_with_handler(
-            &inner_claim,
-            &mut inner_witness,
-            transcript,
-            |c: u128| F::from_u128(c),
-            inner_handler,
-        );
+        let (inner_sumcheck_proof, r_y) = {
+            let _span = tracing::info_span!("inner_sumcheck", num_vars = num_col_vars).entered();
+            SumcheckProver::prove_with_handler(
+                &inner_claim,
+                &mut inner_witness,
+                transcript,
+                |c: u128| F::from_u128(c),
+                inner_handler,
+            )
+        };
 
         let witness_eval = witness_poly.evaluate(&r_y);
 

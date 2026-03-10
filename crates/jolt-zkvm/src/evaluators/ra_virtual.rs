@@ -31,6 +31,10 @@ pub struct RaVirtualCompute<F: WithChallenge> {
 }
 
 impl<F: WithChallenge> SumcheckCompute<F> for RaVirtualCompute<F> {
+    fn set_claim(&mut self, claim: F) {
+        self.claim = claim;
+    }
+
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         if self.n_products == 1 {
             compute_mles_product_sum(&self.mles, self.claim, &self.eq_poly)
@@ -46,9 +50,6 @@ impl<F: WithChallenge> SumcheckCompute<F> for RaVirtualCompute<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        let round_poly = self.round_polynomial();
-        self.claim = round_poly.evaluate(challenge);
-
         self.eq_poly.bind_f(challenge);
         for mle in &mut self.mles {
             mle.bind_f(challenge, self.binding_order);
