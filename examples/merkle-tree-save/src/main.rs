@@ -37,12 +37,11 @@ pub fn main() {
     let leaf3 = [7u8; 32];
     let leaf4 = [8u8; 32];
 
-    let (trusted_advice_commitment, trusted_advice_hint) =
-        guest::commit_trusted_advice_merkle_tree(
-            TrustedAdvice::new(leaf2),
-            TrustedAdvice::new(leaf3),
-            &prover_preprocessing,
-        );
+    let (trusted_advice_commitment, trusted_advice_hint) = guest::commit_trusted_advice_merkle_tree(
+        TrustedAdvice::new(leaf2),
+        TrustedAdvice::new(leaf3),
+        &prover_preprocessing,
+    );
 
     let prove_merkle_tree = guest::build_prover_merkle_tree(program, prover_preprocessing.clone());
     let verify_merkle_tree = guest::build_verifier_merkle_tree(verifier_preprocessing);

@@ -39,11 +39,10 @@
 //! - Stage 6: CycleVariables phase (bind cycle-derived coordinates)
 //! - Stage 7: AddressVariables phase (bind address-derived coordinates)
 
-
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 #[cfg(not(feature = "zk"))]
-use crate::poly::opening_proof::BIG_ENDIAN;
+use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheckProof, SumcheckInstanceProof};
 use crate::zkvm::claim_reductions::{
     AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier, ReductionPhase,
@@ -67,8 +66,7 @@ use crate::zkvm::{
         compute_min_ram_K, hamming_booleanity::HammingBooleanitySumcheckVerifier,
         output_check::OutputSumcheckVerifier, ra_virtual::RamRaVirtualSumcheckVerifier,
         raf_evaluation::RafEvaluationSumcheckVerifier as RamRafEvaluationSumcheckVerifier,
-        read_write_checking::RamReadWriteCheckingVerifier,
-        val_check::RamValCheckSumcheckVerifier,
+        read_write_checking::RamReadWriteCheckingVerifier, val_check::RamValCheckSumcheckVerifier,
         verifier_accumulate_advice,
     },
     registers::{
@@ -85,9 +83,7 @@ use crate::zkvm::{
 };
 use crate::{
     field::JoltField,
-    poly::opening_proof::{
-        OpeningAccumulator, OpeningPoint, VerifierOpeningAccumulator,
-    },
+    poly::opening_proof::{OpeningAccumulator, VerifierOpeningAccumulator},
     pprof_scope,
     subprotocols::{
         booleanity::{BooleanitySumcheckParams, BooleanitySumcheckVerifier},

@@ -719,7 +719,7 @@ pub fn generate_circuit_from_bundle_with_stats(
             // CSE bindings reference each other by name (cse_K_N). We rewrite them
             // to use a slice (cse[N]) so sub-functions can share intermediate values.
             let num_bindings = binding_lines.len();
-            let num_parts = (num_bindings + MAX_BINDING_LINES - 1) / MAX_BINDING_LINES;
+            let num_parts = num_bindings.div_ceil(MAX_BINDING_LINES);
 
             // Emit sub-functions for binding batches
             for part in 0..num_parts {
@@ -742,10 +742,7 @@ pub fn generate_circuit_from_bundle_with_stats(
             }
 
             // Emit the main constraint function that calls sub-functions
-            output.push_str(&format!(
-                "// {func_name} verifies: {}\n",
-                pc.name
-            ));
+            output.push_str(&format!("// {func_name} verifies: {}\n", pc.name));
             output.push_str(&format!(
                 "func (circuit *{circuit_name}) {func_name}(api frontend.API) {{\n"
             ));
@@ -754,9 +751,7 @@ pub fn generate_circuit_from_bundle_with_stats(
             ));
 
             for part in 0..num_parts {
-                output.push_str(&format!(
-                    "\tcircuit.{func_name}Bindings{part}(api, cse)\n"
-                ));
+                output.push_str(&format!("\tcircuit.{func_name}Bindings{part}(api, cse)\n"));
             }
 
             // Rewrite the final expression to use cse[N] references
@@ -764,10 +759,7 @@ pub fn generate_circuit_from_bundle_with_stats(
             output.push_str(&format!("\t{var_name} := {rewritten_expr}\n"));
         } else {
             // Small constraint: emit as a single function with named CSE variables
-            output.push_str(&format!(
-                "// {func_name} verifies: {}\n",
-                pc.name
-            ));
+            output.push_str(&format!("// {func_name} verifies: {}\n", pc.name));
             output.push_str(&format!(
                 "func (circuit *{circuit_name}) {func_name}(api frontend.API) {{\n"
             ));
@@ -796,9 +788,7 @@ pub fn generate_circuit_from_bundle_with_stats(
                 } else {
                     other_expr.clone()
                 };
-                output.push_str(&format!(
-                    "\tapi.AssertIsEqual({var_name}, {rewritten})\n"
-                ));
+                output.push_str(&format!("\tapi.AssertIsEqual({var_name}, {rewritten})\n"));
             }
         }
 
