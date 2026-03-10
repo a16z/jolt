@@ -24,8 +24,13 @@ pub fn preprocess(
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    let shared_preprocessing =
-        JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init, max_trace_length, e_entry);
+    let shared_preprocessing = JoltSharedPreprocessing::new(
+        bytecode,
+        memory_layout,
+        memory_init,
+        max_trace_length,
+        e_entry,
+    );
     JoltProverPreprocessing::new(shared_preprocessing)
 }
 

@@ -3298,8 +3298,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u8).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (lazy_trace, trace, final_memory_state, program_io) =
-            program.trace(&inputs, &[], &[]);
+        let (lazy_trace, trace, final_memory_state, program_io) = program.trace(&inputs, &[], &[]);
 
         let shared = JoltSharedPreprocessing::new(
             bytecode.clone(),
@@ -3329,22 +3328,20 @@ mod tests {
         tampered_shared.bytecode = Arc::new(tampered_bytecode);
         let tampered_entry_index = tampered_shared.bytecode.entry_bytecode_index();
         assert_ne!(
-            original_entry_index,
-            tampered_entry_index,
+            original_entry_index, tampered_entry_index,
             "tamper did not change entry_bytecode_index — test scenario is invalid"
         );
         let tampered_prover_preprocessing = JoltProverPreprocessing::new(tampered_shared);
-        let verifier_preprocessing = JoltVerifierPreprocessing::from(&tampered_prover_preprocessing);
+        let verifier_preprocessing =
+            JoltVerifierPreprocessing::from(&tampered_prover_preprocessing);
         let verifier =
-            RV64IMACVerifier::new(&verifier_preprocessing, proof, program_io, None, None)
-                .unwrap();
+            RV64IMACVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
         assert!(
             verifier.verify().is_err(),
             "verifier accepted proof: prover used entry_bytecode_index {original_entry_index}, \
              verifier expected {tampered_entry_index} — entry constraint not enforced"
         );
     }
-
 
     #[cfg(feature = "zk")]
     #[test]

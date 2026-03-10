@@ -522,78 +522,73 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             let in_n_vars = in_len.log_2();
 
             // Evaluations on [1, ..., degree - 2, inf] (for each stage + entry term).
-            let (mut evals_per_stage, mut entry_evals_raw): ([Vec<F>; N_STAGES], Vec<F>) =
-                (0..out_len)
-                    .into_par_iter()
-                    .map(|j_hi| {
-                        let mut ra_eval_pairs = vec![(F::zero(), F::zero()); self.ra.len()];
-                        let mut ra_prod_evals = vec![F::zero(); degree - 1];
-                        let mut evals_per_stage: [_; N_STAGES] =
-                            array::from_fn(|_| vec![F::UnreducedProductAccum::zero(); degree - 1]);
-                        let mut entry_accum =
-                            vec![F::UnreducedProductAccum::zero(); degree - 1];
+            let (mut evals_per_stage, mut entry_evals_raw): ([Vec<F>; N_STAGES], Vec<F>) = (0
+                ..out_len)
+                .into_par_iter()
+                .map(|j_hi| {
+                    let mut ra_eval_pairs = vec![(F::zero(), F::zero()); self.ra.len()];
+                    let mut ra_prod_evals = vec![F::zero(); degree - 1];
+                    let mut evals_per_stage: [_; N_STAGES] =
+                        array::from_fn(|_| vec![F::UnreducedProductAccum::zero(); degree - 1]);
+                    let mut entry_accum = vec![F::UnreducedProductAccum::zero(); degree - 1];
 
-                        for j_lo in 0..in_len {
-                            let j = j_lo + (j_hi << in_n_vars);
+                    for j_lo in 0..in_len {
+                        let j = j_lo + (j_hi << in_n_vars);
 
-                            for (i, ra_i) in self.ra.iter().enumerate() {
-                                let ra_i_eval_at_j_0 = ra_i.get_bound_coeff(j * 2);
-                                let ra_i_eval_at_j_1 = ra_i.get_bound_coeff(j * 2 + 1);
-                                ra_eval_pairs[i] = (ra_i_eval_at_j_0, ra_i_eval_at_j_1);
-                            }
-                            eval_linear_prod_assign(&ra_eval_pairs, &mut ra_prod_evals);
+                        for (i, ra_i) in self.ra.iter().enumerate() {
+                            let ra_i_eval_at_j_0 = ra_i.get_bound_coeff(j * 2);
+                            let ra_i_eval_at_j_1 = ra_i.get_bound_coeff(j * 2 + 1);
+                            ra_eval_pairs[i] = (ra_i_eval_at_j_0, ra_i_eval_at_j_1);
+                        }
+                        eval_linear_prod_assign(&ra_eval_pairs, &mut ra_prod_evals);
 
-                            for stage in 0..N_STAGES {
-                                let eq_in_eval =
-                                    self.gruen_eq_polys[stage].E_in_current()[j_lo];
-                                for i in 0..degree - 1 {
-                                    evals_per_stage[stage][i] +=
-                                        eq_in_eval.mul_to_product_accum(ra_prod_evals[i]);
-                                }
-                            }
-
-                            let eq_in_entry = self.gruen_eq_entry.E_in_current()[j_lo];
+                        for stage in 0..N_STAGES {
+                            let eq_in_eval = self.gruen_eq_polys[stage].E_in_current()[j_lo];
                             for i in 0..degree - 1 {
-                                entry_accum[i] +=
-                                    eq_in_entry.mul_to_product_accum(ra_prod_evals[i]);
+                                evals_per_stage[stage][i] +=
+                                    eq_in_eval.mul_to_product_accum(ra_prod_evals[i]);
                             }
                         }
 
-                        let stage_evals = array::from_fn(|stage| {
-                            let eq_out_eval =
-                                self.gruen_eq_polys[stage].E_out_current()[j_hi];
-                            evals_per_stage[stage]
-                                .iter()
-                                .map(|v| eq_out_eval * F::reduce_product_accum(*v))
+                        let eq_in_entry = self.gruen_eq_entry.E_in_current()[j_lo];
+                        for i in 0..degree - 1 {
+                            entry_accum[i] += eq_in_entry.mul_to_product_accum(ra_prod_evals[i]);
+                        }
+                    }
+
+                    let stage_evals = array::from_fn(|stage| {
+                        let eq_out_eval = self.gruen_eq_polys[stage].E_out_current()[j_hi];
+                        evals_per_stage[stage]
+                            .iter()
+                            .map(|v| eq_out_eval * F::reduce_product_accum(*v))
+                            .collect()
+                    });
+                    let eq_out_entry = self.gruen_eq_entry.E_out_current()[j_hi];
+                    let entry_evals: Vec<F> = entry_accum
+                        .iter()
+                        .map(|v| eq_out_entry * F::reduce_product_accum(*v))
+                        .collect();
+
+                    (stage_evals, entry_evals)
+                })
+                .reduce(
+                    || {
+                        (
+                            array::from_fn(|_| vec![F::zero(); degree - 1]),
+                            vec![F::zero(); degree - 1],
+                        )
+                    },
+                    |(a_stages, a_entry), (b_stages, b_entry)| {
+                        let stages = array::from_fn(|i| {
+                            zip_eq(&a_stages[i], &b_stages[i])
+                                .map(|(a, b)| *a + *b)
                                 .collect()
                         });
-                        let eq_out_entry = self.gruen_eq_entry.E_out_current()[j_hi];
-                        let entry_evals: Vec<F> = entry_accum
-                            .iter()
-                            .map(|v| eq_out_entry * F::reduce_product_accum(*v))
-                            .collect();
-
-                        (stage_evals, entry_evals)
-                    })
-                    .reduce(
-                        || {
-                            (
-                                array::from_fn(|_| vec![F::zero(); degree - 1]),
-                                vec![F::zero(); degree - 1],
-                            )
-                        },
-                        |(a_stages, a_entry), (b_stages, b_entry)| {
-                            let stages = array::from_fn(|i| {
-                                zip_eq(&a_stages[i], &b_stages[i])
-                                    .map(|(a, b)| *a + *b)
-                                    .collect()
-                            });
-                            let entry: Vec<F> = zip_eq(&a_entry, &b_entry)
-                                .map(|(a, b)| *a + *b)
-                                .collect();
-                            (stages, entry)
-                        },
-                    );
+                        let entry: Vec<F> =
+                            zip_eq(&a_entry, &b_entry).map(|(a, b)| *a + *b).collect();
+                        (stages, entry)
+                    },
+                );
 
             // Multiply by bound values.
             let bound_val_evals = self.bound_val_evals.as_ref().unwrap();
@@ -614,9 +609,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 round_polys[stage] = round_poly;
             }
 
-            let entry_round_poly =
-                self.gruen_eq_entry
-                    .gruen_poly_from_evals(&entry_evals_raw, self.prev_entry_claim);
+            let entry_round_poly = self
+                .gruen_eq_entry
+                .gruen_poly_from_evals(&entry_evals_raw, self.prev_entry_claim);
             agg_round_poly += &(&entry_round_poly * self.params.entry_gamma);
             self.prev_entry_poly = Some(entry_round_poly);
 

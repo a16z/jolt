@@ -31,7 +31,13 @@ fn preprocess_shared(guest: &Program, max_trace_length: usize) -> JoltSharedPrep
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init, max_trace_length, e_entry)
+    JoltSharedPreprocessing::new(
+        bytecode,
+        memory_layout,
+        memory_init,
+        max_trace_length,
+        e_entry,
+    )
 }
 
 pub fn verify<
