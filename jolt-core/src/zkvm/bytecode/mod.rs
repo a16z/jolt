@@ -12,11 +12,15 @@ pub struct BytecodePreprocessing {
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
     pub pc_map: BytecodePCMapper,
+    /// ELF entry point address. Used to constrain the first executed PC
+    /// via the BytecodeReadRaf sumcheck (Stage 6), which adds a term forcing
+    /// `ra(entry_bytecode_index, 0) = 1`.
+    pub entry_address: u64,
 }
 
 impl BytecodePreprocessing {
     #[tracing::instrument(skip_all, name = "BytecodePreprocessing::preprocess")]
-    pub fn preprocess(mut bytecode: Vec<Instruction>) -> Self {
+    pub fn preprocess(mut bytecode: Vec<Instruction>, entry_address: u64) -> Self {
         // Bytecode: Prepend a single no-op instruction
         bytecode.insert(0, Instruction::NoOp);
         let pc_map = BytecodePCMapper::new(&bytecode);
@@ -30,7 +34,13 @@ impl BytecodePreprocessing {
             code_size,
             bytecode,
             pc_map,
+            entry_address,
         }
+    }
+
+    /// Returns the bytecode table index for the ELF entry point.
+    pub fn entry_bytecode_index(&self) -> usize {
+        self.pc_map.get_pc(self.entry_address as usize, 0)
     }
 
     pub fn get_pc(&self, cycle: &Cycle) -> usize {

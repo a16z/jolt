@@ -464,7 +464,7 @@ impl MacroBuilder {
             {
                 #imports
 
-                let (bytecode, memory_init, program_size) = program.decode();
+                let (bytecode, memory_init, program_size, e_entry) = program.decode();
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
@@ -481,6 +481,7 @@ impl MacroBuilder {
                     memory_layout,
                     memory_init,
                     #max_trace_length,
+                    e_entry,
                 );
 
                 preprocessing
@@ -702,7 +703,7 @@ impl MacroBuilder {
                     use jolt::guest::program::{trace as guest_trace, decode as guest_decode};
 
                     // Decode compute_advice ELF to get its program size
-                    let (_, _, compute_advice_program_size) = guest_decode(&compute_advice_elf_contents);
+                    let (_, _, compute_advice_program_size, _) = guest_decode(&compute_advice_elf_contents);
 
                     let memory_config = MemoryConfig {
                         max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
@@ -850,10 +851,8 @@ impl MacroBuilder {
         let panic_fn = self.make_panic(memory_layout.panic);
         let declare_alloc = self.make_allocator();
 
-        // Boot code (_start) is provided by jolt-sdk's boot modules:
-        // - std mode: guest_std_boot.rs (_start -> kernel_main -> __libc_start_main -> main)
-        // - no-std mode: guest_no_std_boot.rs (_start -> boot_main -> __platform_bootstrap -> main)
-        // Both use ZeroOS jolt-platform for heap initialization.
+        // Boot code (_start) is provided by jolt-sdk's boot modules via ZeroOS.
+        // Both std and no-std modes go through __platform_bootstrap before main().
         let custom_start = quote! {};
 
         quote! {

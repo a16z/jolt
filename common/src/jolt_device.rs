@@ -207,7 +207,7 @@ pub struct MemoryLayout {
     pub panic: u64,
     pub termination: u64,
     /// End of the memory region containing inputs, outputs, the panic bit,
-    /// and the termination bit
+    /// and the termination bit.
     pub io_end: u64,
 }
 

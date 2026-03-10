@@ -37,7 +37,7 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
     program.set_max_input_size(attributes.max_input_size);
     program.set_max_output_size(attributes.max_output_size);
 
-    let (bytecode, memory_init, program_size) = program.decode();
+    let (bytecode, memory_init, program_size, e_entry) = program.decode();
 
     let memory_config = MemoryConfig {
         max_input_size: attributes.max_input_size,
@@ -55,6 +55,7 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
         memory_layout,
         memory_init,
         attributes.max_trace_length as usize,
+        e_entry,
     );
 
     let prover_preprocessing =
