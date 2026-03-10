@@ -349,7 +349,11 @@ mod tests {
 
         let (point, retrieved_claim) = accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
-        assert_eq!(retrieved_claim.root(), claim.root(), "Claim must survive append");
+        assert_eq!(
+            retrieved_claim.root(),
+            claim.root(),
+            "Claim must survive append"
+        );
         assert_eq!(point.r.len(), 2);
         assert_eq!(point.r[0].root(), point_values[0].root());
         assert_eq!(point.r[1].root(), point_values[1].root());
@@ -493,10 +497,7 @@ mod tests {
                 OpeningId::committed(CommittedPolynomial::RdInc, SumcheckId::SpartanOuter),
                 claim_b,
             ),
-            (
-                OpeningId::TrustedAdvice(SumcheckId::SpartanOuter),
-                claim_c,
-            ),
+            (OpeningId::TrustedAdvice(SumcheckId::SpartanOuter), claim_c),
         ];
 
         let mut accumulator = AstOpeningAccumulator::new_with_claims(claims, 10);
@@ -559,7 +560,10 @@ mod tests {
         let taken = accumulator.take_pending_claims();
         assert_eq!(taken.len(), 1);
         assert_eq!(taken[0].root(), claim_a.root());
-        assert!(accumulator.pending_claims.is_empty(), "Must be empty after take");
+        assert!(
+            accumulator.pending_claims.is_empty(),
+            "Must be empty after take"
+        );
 
         // Append second claim after the take
         accumulator.append_dense(
