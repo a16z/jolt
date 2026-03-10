@@ -686,9 +686,16 @@ pub fn generate_circuit_from_bundle_with_stats(
         if pc.is_const && matches!(&pc.assertion, ConstraintAssertion::EqualZero) {
             let val = pc.const_val.unwrap_or([0, 0, 0, 0]);
             if val == [0, 0, 0, 0] {
+                // Constant equals zero - statically satisfied, skip entirely
+                output.push_str(&format!(
+                    "// {} = 0 (statically verified, skipped)\n\n",
+                    pc.name
+                ));
                 stats.constant_skipped += 1;
                 continue;
             } else {
+                // Constant != 0 - static failure, emit warning comment but still generate constraint
+                output.push_str(&format!("// {} STATIC FAILURE: constant != 0\n", pc.name));
                 stats.constant_failed += 1;
                 stats.failed_names.push(pc.name.clone());
             }

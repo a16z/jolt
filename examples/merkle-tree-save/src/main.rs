@@ -1,3 +1,9 @@
+// This is a variant of examples/merkle-tree that adds:
+// 1. `--save` flag to serialize proof artifacts to /tmp/ for the transpiler pipeline
+// 2. Transcript feature flags (transcript-poseidon, etc.) in Cargo.toml
+//
+// The upstream merkle-tree example is left unmodified. This crate reuses its guest.
+
 use jolt_sdk::{serialize_and_print_size, TrustedAdvice, UntrustedAdvice};
 use std::time::Instant;
 use tracing::info;

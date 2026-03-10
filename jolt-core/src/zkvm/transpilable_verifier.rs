@@ -170,7 +170,7 @@ impl<F: JoltField> GenericRamValCheckVerifier<F> {
                     .get_advice_opening(AdviceKind::Trusted, *sid)
                     .map(|(_, eval)| eval)
                     .unwrap_or(F::zero()),
-                _ => F::zero(),
+                OpeningId::Polynomial(..) => unreachable!("advice contributions should only contain advice OpeningIds"),
             };
             init_eval -= *neg_selector * advice_eval;
         }
