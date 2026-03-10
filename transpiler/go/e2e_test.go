@@ -120,8 +120,8 @@ func TestEndToEndMerkleTree(t *testing.T) {
 
 	// Step 0: Build Rust binaries
 	t.Log("--- Step 0: Building Rust binaries ---")
-	runCommand(t, "build-merkle-tree", root,
-		"cargo", "build", "-p", "merkle-tree", "--release",
+	runCommand(t, "build-merkle-tree-save", root,
+		"cargo", "build", "-p", "merkle-tree-save", "--release",
 		"--features", "transcript-poseidon",
 	)
 	runCommand(t, "build-transpiler", root,
@@ -134,7 +134,7 @@ func TestEndToEndMerkleTree(t *testing.T) {
 
 	// Step 1: Generate merkle-tree proof with advice
 	t.Log("--- Step 1: Merkle-Tree Proof (with TrustedAdvice) ---")
-	merkleBin := filepath.Join(root, "target", "release", "merkle-tree")
+	merkleBin := filepath.Join(root, "target", "release", "merkle-tree-save")
 	merkleTime := runCommand(t, "merkle-tree", root,
 		merkleBin, "--save",
 	)
