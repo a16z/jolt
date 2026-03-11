@@ -4,7 +4,7 @@
 //! values. Virtual instruction sequences share the same unexpanded PC but get
 //! consecutive expanded PCs.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use tracer::instruction::{Cycle, NormalizedInstruction};
 
@@ -14,7 +14,7 @@ use tracer::instruction::{Cycle, NormalizedInstruction};
 /// expanded PC. Virtual instruction sequences share the same `address` but
 /// differ in `virtual_sequence_remaining`, giving each step its own expanded PC.
 pub struct BytecodePreprocessing {
-    pc_map: HashMap<(usize, Option<u16>), u64>,
+    pc_map: BTreeMap<(usize, Option<u16>), u64>,
 }
 
 impl BytecodePreprocessing {
@@ -23,7 +23,7 @@ impl BytecodePreprocessing {
     /// Assigns sequential expanded PCs (0, 1, 2, ...) to each unique
     /// `(address, virtual_sequence_remaining)` pair seen in the trace.
     pub fn new(trace: &[Cycle]) -> Self {
-        let mut pc_map = HashMap::new();
+        let mut pc_map = BTreeMap::new();
         let mut next_pc = 0u64;
 
         for cycle in trace {

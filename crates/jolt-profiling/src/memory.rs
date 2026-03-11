@@ -7,14 +7,14 @@
 
 use memory_stats::memory_stats;
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     sync::{LazyLock, Mutex},
 };
 
-static MEMORY_USAGE_MAP: LazyLock<Mutex<HashMap<&'static str, f64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static MEMORY_DELTA_MAP: LazyLock<Mutex<HashMap<&'static str, f64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static MEMORY_USAGE_MAP: LazyLock<Mutex<BTreeMap<&'static str, f64>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+static MEMORY_DELTA_MAP: LazyLock<Mutex<BTreeMap<&'static str, f64>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 /// Records the current physical memory usage at the start of a labeled span.
 ///

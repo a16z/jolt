@@ -3,7 +3,7 @@
 //! Emits gnark `frontend.API` calls from an [`AstBundle`](crate::bundle::AstBundle).
 //! Each operation becomes a Go assignment with a CSE variable name.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::ast_emitter::AstEmitter;
 use crate::scalar_ops;
@@ -15,7 +15,7 @@ use crate::scalar_ops;
 /// struct fields.
 pub struct GnarkAstEmitter {
     /// Custom names for variables by index.
-    var_names: HashMap<u32, String>,
+    var_names: BTreeMap<u32, String>,
     /// CSE variable prefix.
     cse_prefix: String,
     /// Accumulated Go assignment lines.
@@ -29,7 +29,7 @@ pub struct GnarkAstEmitter {
 impl GnarkAstEmitter {
     pub fn new() -> Self {
         Self {
-            var_names: HashMap::new(),
+            var_names: BTreeMap::new(),
             cse_prefix: "v".into(),
             lines: Vec::new(),
             assertions: Vec::new(),

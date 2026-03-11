@@ -97,14 +97,14 @@ pub enum CollectedPoly<F: Field> {
 /// dense vs one-hot representation.
 #[cfg(any(test, feature = "test-utils"))]
 pub struct CollectingSink<F: Field> {
-    polys: std::collections::HashMap<u64, CollectedPoly<F>>,
+    polys: std::collections::BTreeMap<u64, CollectedPoly<F>>,
 }
 
 #[cfg(any(test, feature = "test-utils"))]
 impl<F: Field> CollectingSink<F> {
     pub fn new() -> Self {
         Self {
-            polys: std::collections::HashMap::new(),
+            polys: std::collections::BTreeMap::new(),
         }
     }
 
@@ -129,7 +129,7 @@ impl<F: Field> CollectingSink<F> {
     }
 
     /// Consumes the sink and returns all collected polynomial data.
-    pub fn into_polys(self) -> std::collections::HashMap<u64, CollectedPoly<F>> {
+    pub fn into_polys(self) -> std::collections::BTreeMap<u64, CollectedPoly<F>> {
         self.polys
     }
 }

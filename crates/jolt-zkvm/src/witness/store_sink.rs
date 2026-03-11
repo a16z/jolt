@@ -2,22 +2,23 @@
 //!
 //! [`StoreSink`] receives chunks from [`jolt_witness::WitnessBuilder`] and
 //! materializes them as dense field-element vectors in the [`WitnessStore`].
-//! One-hot chunks are expanded into full evaluation tables.
+//! One-hot chunks are expanded into full evaluation tables AND stored as
+//! [`OneHotPolynomial`] for sparse PCS commit (generator lookup instead of MSM).
 
 use jolt_field::Field;
+use jolt_poly::OneHotPolynomial;
 use jolt_witness::{ChunkData, PolynomialKind, WitnessSink};
 
 use crate::witness::store::WitnessStore;
 
 /// A [`WitnessSink`] that collects polynomial evaluation tables into a [`WitnessStore`].
 ///
-/// Dense polynomial chunks are appended directly. One-hot chunks are expanded
-/// into dense evaluation tables where each entry is `1` at the hot index and
-/// `0` elsewhere (stored as a single field element per cycle, not the full
-/// one-hot vector).
+/// Dense polynomial chunks are appended directly. One-hot chunks are both:
+/// - Expanded into dense evaluation tables (for sumcheck stage access)
+/// - Stored as [`OneHotPolynomial`] (for sparse PCS commit via generator lookup)
 pub struct StoreSink<'a, F: Field> {
     store: &'a mut WitnessStore<F>,
-    pending: std::collections::HashMap<u64, PendingPoly<F>>,
+    pending: std::collections::BTreeMap<u64, PendingPoly<F>>,
 }
 
 enum PendingPoly<F: Field> {
@@ -29,7 +30,7 @@ impl<'a, F: Field> StoreSink<'a, F> {
     pub fn new(store: &'a mut WitnessStore<F>) -> Self {
         Self {
             store,
-            pending: std::collections::HashMap::new(),
+            pending: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -59,11 +60,17 @@ impl<F: Field> WitnessSink<F> for StoreSink<'_, F> {
 
     fn on_polynomial_end(&mut self, poly_id: u64) {
         if let Some(pending) = self.pending.remove(&poly_id) {
-            let table = match pending {
-                PendingPoly::Dense(v) => v,
-                PendingPoly::OneHot { k, indices } => expand_one_hot::<F>(k, &indices),
-            };
-            let _ = self.store.insert(poly_id, table);
+            match pending {
+                PendingPoly::Dense(v) => {
+                    let _ = self.store.insert(poly_id, v);
+                }
+                PendingPoly::OneHot { k, indices } => {
+                    let dense = expand_one_hot::<F>(k, &indices);
+                    let _ = self.store.insert(poly_id, dense);
+                    self.store
+                        .insert_one_hot(poly_id, OneHotPolynomial::new(k, indices));
+                }
+            }
         }
     }
 
@@ -108,6 +115,7 @@ mod tests {
         }
         assert_eq!(store.get(100).len(), 3);
         assert_eq!(store.get(100)[0], Fr::from_u64(1));
+        assert!(store.get_one_hot(100).is_none(), "dense poly should not have one-hot repr");
     }
 
     #[test]
@@ -120,7 +128,7 @@ mod tests {
             sink.on_polynomial_end(200);
             sink.finish();
         }
-        // 2 cycles × 4 positions = 8 elements
+        // Dense expansion: 2 cycles × 4 positions = 8 elements
         let table = store.get(200);
         assert_eq!(table.len(), 8);
         // Cycle 0: index 1 → position 1 is hot
@@ -129,6 +137,10 @@ mod tests {
         // Cycle 1: index 3 → position 4+3=7 is hot
         assert_eq!(table[7], Fr::one());
         assert_eq!(table[4], Fr::zero());
+
+        // Sparse representation also stored
+        let oh = store.get_one_hot(200).expect("one-hot representation must be stored");
+        assert!(jolt_poly::MultilinearPoly::<Fr>::is_sparse(oh));
     }
 
     #[test]

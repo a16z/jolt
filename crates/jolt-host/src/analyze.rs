@@ -1,6 +1,6 @@
 //! Program trace analysis.
 
-use std::{collections::HashMap, fs::File, io, path::PathBuf};
+use std::{collections::BTreeMap, fs::File, io, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tracer::{
@@ -23,7 +23,7 @@ impl ProgramSummary {
 
     /// Count instructions by type, sorted descending by frequency.
     pub fn analyze(&self) -> Vec<(&'static str, usize)> {
-        let mut counts = HashMap::<&'static str, usize>::new();
+        let mut counts = BTreeMap::<&'static str, usize>::new();
         for cycle in &self.trace {
             let instruction_name: &'static str = cycle.into();
             *counts.entry(instruction_name).or_insert(0) += 1;

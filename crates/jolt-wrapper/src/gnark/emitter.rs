@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use jolt_ir::{CircuitEmitter, Var};
 
@@ -26,8 +26,8 @@ use jolt_ir::{CircuitEmitter, Var};
 ///
 /// [`finish`]: GnarkEmitter::finish
 pub struct GnarkEmitter {
-    opening_names: HashMap<u32, String>,
-    challenge_names: HashMap<u32, String>,
+    opening_names: BTreeMap<u32, String>,
+    challenge_names: BTreeMap<u32, String>,
     cse_prefix: String,
     lines: Vec<String>,
     next_var: usize,
@@ -36,8 +36,8 @@ pub struct GnarkEmitter {
 impl GnarkEmitter {
     pub fn new() -> Self {
         Self {
-            opening_names: HashMap::new(),
-            challenge_names: HashMap::new(),
+            opening_names: BTreeMap::new(),
+            challenge_names: BTreeMap::new(),
             cse_prefix: "cse".into(),
             lines: Vec::new(),
             next_var: 0,

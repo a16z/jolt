@@ -4,7 +4,7 @@
 /// verifier challenges (Fiat-Shamir derived). The `u32` index is scoped to a
 /// single `ClaimDefinition` — downstream code maps it to concrete polynomial
 /// or challenge identifiers via binding metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Var {
     Opening(u32),
     Challenge(u32),
@@ -30,7 +30,7 @@ pub enum Var {
 /// `i128`, model it as a `Var::Challenge` with `ChallengeSource::Derived`.
 ///
 /// No `Div` or `Inv` variants — claim expressions never require division.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ExprNode {
     Constant(i128),
     Var(Var),
@@ -41,7 +41,7 @@ pub enum ExprNode {
 }
 
 /// Stable index into an `ExprArena`. Small, `Copy`, hashable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ExprId(pub(crate) u32);
 
 impl ExprId {

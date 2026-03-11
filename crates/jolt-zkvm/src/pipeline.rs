@@ -74,6 +74,9 @@ macro_rules! stage_span {
             "S7_hamming_reduction" => {
                 tracing::info_span!("S7_hamming_reduction", claims = $claims, rounds = $rounds)
             }
+            "S2_product_virtual" => {
+                tracing::info_span!("S2_product_virtual", claims = $claims, rounds = $rounds)
+            }
             other => tracing::info_span!("stage", name = other, claims = $claims, rounds = $rounds),
         }
     };

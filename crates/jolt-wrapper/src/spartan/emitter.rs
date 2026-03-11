@@ -1,6 +1,6 @@
 //! [`SpartanAstEmitter`]: converts AST nodes into R1CS constraints.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use jolt_field::Field;
 use jolt_ir::{LcTerm, LinearCombination, R1csConstraint, R1csVar};
@@ -67,7 +67,7 @@ impl<F: Field> SpartanCircuit<F> {
         let mut witness = vec![F::zero(); self.num_variables as usize];
         witness[0] = F::one();
 
-        let index_map: HashMap<u32, usize> = self
+        let index_map: BTreeMap<u32, usize> = self
             .inputs
             .iter()
             .map(|m| (m.bundle_index, m.var.index()))

@@ -323,7 +323,7 @@ mod tests {
         let g: Vec<Fr> = (0..5)
             .scan(Fr::from_u64(1), |acc, _| {
                 let v = *acc;
-                *acc = *acc * gamma;
+                *acc *= gamma;
                 Some(v)
             })
             .collect();

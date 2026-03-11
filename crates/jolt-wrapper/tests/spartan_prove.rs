@@ -2,7 +2,6 @@
 //! SpartanCircuit → SimpleR1CS → SpartanKey → prove → verify.
 
 use jolt_field::{Field, Fr};
-use jolt_openings::mock::MockCommitmentScheme;
 use jolt_openings::CommitmentScheme;
 use jolt_spartan::{
     FirstRoundStrategy, SimpleR1CS, SpartanError, SpartanKey, SpartanProver, SpartanVerifier,
@@ -12,8 +11,6 @@ use jolt_wrapper::arena::ArenaSession;
 use jolt_wrapper::bundle::VarAllocator;
 use jolt_wrapper::spartan::SpartanAstEmitter;
 use jolt_wrapper::symbolic::SymbolicField;
-
-type MockPCS = MockCommitmentScheme<Fr>;
 
 /// Converts a `SpartanCircuit<Fr>` into a `SimpleR1CS<Fr>` and runs
 /// `SpartanProver::prove` → `SpartanVerifier::verify`.
@@ -33,18 +30,17 @@ fn prove_and_verify(
     let key = SpartanKey::from_r1cs(&r1cs);
 
     let mut prover_transcript = Blake2bTranscript::new(label);
-    let proof = SpartanProver::prove::<MockPCS, _>(
+    let proof = SpartanProver::prove(
         &r1cs,
         &key,
         witness,
-        &(),
         &mut prover_transcript,
         FirstRoundStrategy::Standard,
     )
     .expect("proving should succeed");
 
     let mut verifier_transcript = Blake2bTranscript::new(label);
-    SpartanVerifier::verify::<MockPCS, _>(&key, &proof, &(), &mut verifier_transcript)
+    SpartanVerifier::verify(&key, &proof, &mut verifier_transcript)
         .expect("verification should succeed");
 }
 
@@ -66,11 +62,10 @@ fn prove_should_fail(
     let key = SpartanKey::from_r1cs(&r1cs);
 
     let mut transcript = Blake2bTranscript::new(label);
-    let result = SpartanProver::prove::<MockPCS, _>(
+    let result = SpartanProver::prove(
         &r1cs,
         &key,
         witness,
-        &(),
         &mut transcript,
         FirstRoundStrategy::Standard,
     );
@@ -395,22 +390,18 @@ mod hyperkzg {
         );
         let key = SpartanKey::from_r1cs(&r1cs);
 
-        // SRS must cover the padded witness length
-        let (pk, vk) = make_setup(key.num_variables_padded);
-
         let mut prover_transcript = Blake2bTranscript::new(label);
-        let proof = SpartanProver::prove::<KzgPCS, _>(
+        let proof = SpartanProver::prove(
             &r1cs,
             &key,
             witness,
-            &pk,
             &mut prover_transcript,
             FirstRoundStrategy::Standard,
         )
         .expect("proving should succeed");
 
         let mut verifier_transcript = Blake2bTranscript::new(label);
-        SpartanVerifier::verify::<KzgPCS, _>(&key, &proof, &vk, &mut verifier_transcript)
+        SpartanVerifier::verify(&key, &proof, &mut verifier_transcript)
             .expect("verification should succeed");
     }
 
@@ -428,14 +419,12 @@ mod hyperkzg {
             c,
         );
         let key = SpartanKey::from_r1cs(&r1cs);
-        let (pk, _vk) = make_setup(key.num_variables_padded);
 
         let mut transcript = Blake2bTranscript::new(label);
-        let result = SpartanProver::prove::<KzgPCS, _>(
+        let result = SpartanProver::prove(
             &r1cs,
             &key,
             witness,
-            &pk,
             &mut transcript,
             FirstRoundStrategy::Standard,
         );

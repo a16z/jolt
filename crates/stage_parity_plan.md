@@ -366,7 +366,7 @@ Then existing `RlcReduction` combines all claims at the single unified point →
 Dory proof.
 
 Supporting infrastructure:
-- `ZeroPaddedSource` in jolt-poly: wraps EvaluationSource, returns zeros beyond
+- `ZeroPaddedSource` in jolt-poly: wraps `MultilinearPoly`, returns zeros beyond
   original length (for Dory streaming without materialization)
 - Fix `combine_hints` in jolt-dory: auto-pad shorter hints with G1::identity()
 

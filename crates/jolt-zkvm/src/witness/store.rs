@@ -4,10 +4,16 @@
 //! generation. Stages borrow data via [`get()`](WitnessStore::get) and
 //! consume it via [`take()`](WitnessStore::take) when constructing opening
 //! claims for stage 8.
+//!
+//! One-hot polynomials are stored in both dense form (for sumcheck stages)
+//! and sparse [`OneHotPolynomial`] form (for PCS commit via generator lookup
+//! instead of full MSM). The commit path checks [`get_one_hot()`](WitnessStore::get_one_hot)
+//! to select the fast sparse commit when available.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use jolt_field::Field;
+use jolt_poly::OneHotPolynomial;
 
 /// Opaque polynomial identity tag.
 ///
@@ -23,6 +29,14 @@ pub type PolynomialTag = u64;
 /// sumcheck witness construction and move data out via [`take()`](Self::take)
 /// when building [`ProverClaim`](jolt_openings::ProverClaim)s.
 ///
+/// One-hot polynomials (RA witnesses) are stored in two forms:
+/// - Dense `Vec<F>` in `tables` — for sumcheck stage access via `get()`
+/// - Sparse [`OneHotPolynomial`] in `one_hot` — for PCS commit via `get_one_hot()`
+///
+/// The sparse form enables O(T) generator-lookup commits instead of
+/// O(T × K × 254) full MSM. The commit path should prefer `get_one_hot()`
+/// when available, falling back to the dense table otherwise.
+///
 /// # Lifecycle
 ///
 /// 1. Witness generation produces `WitnessStore<F>` + streaming commitment outputs.
@@ -32,22 +46,36 @@ pub type PolynomialTag = u64;
 ///    `ProverClaim.evaluations`. After all stages complete, the store is empty.
 /// 4. Stage 8 consumes `ProverClaim.evaluations` for `RlcReduction` + `PCS::open`.
 pub struct WitnessStore<F: Field> {
-    tables: HashMap<PolynomialTag, Vec<F>>,
+    tables: BTreeMap<PolynomialTag, Vec<F>>,
+    one_hot: BTreeMap<PolynomialTag, OneHotPolynomial>,
 }
 
 impl<F: Field> WitnessStore<F> {
     pub fn new() -> Self {
         Self {
-            tables: HashMap::new(),
+            tables: BTreeMap::new(),
+            one_hot: BTreeMap::new(),
         }
     }
 
-    pub fn from_tables(tables: HashMap<PolynomialTag, Vec<F>>) -> Self {
-        Self { tables }
+    pub fn from_tables(tables: BTreeMap<PolynomialTag, Vec<F>>) -> Self {
+        Self {
+            tables,
+            one_hot: BTreeMap::new(),
+        }
     }
 
     pub fn insert(&mut self, tag: PolynomialTag, evaluations: Vec<F>) -> Option<Vec<F>> {
         self.tables.insert(tag, evaluations)
+    }
+
+    /// Stores a one-hot polynomial's sparse representation alongside its dense table.
+    ///
+    /// The dense table must already be inserted via [`insert()`](Self::insert).
+    /// The sparse representation is used by the PCS commit path for
+    /// generator-lookup instead of full MSM.
+    pub fn insert_one_hot(&mut self, tag: PolynomialTag, poly: OneHotPolynomial) {
+        let _ = self.one_hot.insert(tag, poly);
     }
 
     /// Borrows the evaluation table for `tag`.
@@ -65,15 +93,31 @@ impl<F: Field> WitnessStore<F> {
         self.tables.get(&tag).map(Vec::as_slice)
     }
 
+    /// Returns the sparse one-hot representation if this polynomial was one-hot.
+    ///
+    /// The commit path should prefer this over `get()` when available:
+    /// ```ignore
+    /// let (commitment, hint) = if let Some(oh) = store.get_one_hot(tag) {
+    ///     PCS::commit(oh, setup)  // sparse: O(T) generator lookups
+    /// } else {
+    ///     PCS::commit(store.get(tag), setup)  // dense: O(T×K×254) MSM
+    /// };
+    /// ```
+    pub fn get_one_hot(&self, tag: PolynomialTag) -> Option<&OneHotPolynomial> {
+        self.one_hot.get(&tag)
+    }
+
     /// Moves the evaluation table out of the store.
     ///
     /// After this call, `get(tag)` will panic. Used by `extract_claims()`
     /// to transfer ownership into [`ProverClaim`](jolt_openings::ProverClaim)s.
+    /// Also removes the one-hot representation if present.
     ///
     /// # Panics
     ///
     /// Panics if no table exists for `tag`.
     pub fn take(&mut self, tag: PolynomialTag) -> Vec<F> {
+        let _ = self.one_hot.remove(&tag);
         self.tables
             .remove(&tag)
             .unwrap_or_else(|| panic!("polynomial tag {tag} not found in witness store"))
@@ -137,7 +181,7 @@ mod tests {
 
     #[test]
     fn from_tables_constructor() {
-        let mut tables = HashMap::new();
+        let mut tables = BTreeMap::new();
         let _ = tables.insert(100u64, vec![Fr::from_u64(1)]);
         let _ = tables.insert(200u64, vec![Fr::from_u64(2)]);
         let store = WitnessStore::from_tables(tables);

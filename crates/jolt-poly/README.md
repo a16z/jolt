@@ -25,11 +25,15 @@ This crate provides multilinear and univariate polynomial representations used t
 - **`EqPolynomial<F>`** -- Equality polynomial `eq(x, r)`. Materializes all `2^n` evaluations via bottom-up doubling.
 - **`IdentityPolynomial`** -- Maps hypercube points to their integer index.
 
+### Streaming and Sparse Access
+
+- **`MultilinearPoly<F>`** -- Core trait for multilinear polynomial access: evaluation, row iteration, fold, sparsity hints.
+- **`RlcSource`** -- Lazy random linear combination of multiple `MultilinearPoly` sources.
+- **`OneHotPolynomial`** -- Sparse polynomial where each row has at most one nonzero entry (value 1). Enables O(T) PCS commit via generator lookup.
+
 ### Binding and Evaluation
 
 - **`BindingOrder`** -- Controls the order in which variables are bound during sumcheck (MSB-first vs LSB-first).
-- **`EvaluationSource`** -- Abstraction over polynomial evaluation data sources.
-- **`RlcSource`** -- Source for random linear combination evaluation.
 
 ## Feature Flags
 

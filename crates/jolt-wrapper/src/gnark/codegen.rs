@@ -4,7 +4,7 @@
 //! multiple constraints, then emits Go code with per-constraint CSE variable
 //! namespacing.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::bundle::{AstBundle, SerializedEdge, SerializedNode};
 
@@ -13,7 +13,7 @@ use super::ast_emitter::GnarkAstEmitter;
 /// Two-phase codegen: first pass counts node uses for CSE, second pass emits.
 pub struct MemoizedCodeGen {
     /// How many times each node is referenced (for CSE decisions).
-    ref_counts: HashMap<u32, usize>,
+    ref_counts: BTreeMap<u32, usize>,
     /// CSE variable prefix.
     cse_prefix: String,
 }
@@ -21,7 +21,7 @@ pub struct MemoizedCodeGen {
 impl MemoizedCodeGen {
     pub fn new() -> Self {
         Self {
-            ref_counts: HashMap::new(),
+            ref_counts: BTreeMap::new(),
             cse_prefix: "v".into(),
         }
     }
@@ -31,7 +31,7 @@ impl MemoizedCodeGen {
         self
     }
 
-    pub fn ref_counts(&self) -> &HashMap<u32, usize> {
+    pub fn ref_counts(&self) -> &BTreeMap<u32, usize> {
         &self.ref_counts
     }
 
