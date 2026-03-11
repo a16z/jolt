@@ -56,4 +56,4 @@ Cargo.toml @moodlezoup @markosg04 @0xAndoroid
 Cargo.lock @moodlezoup @markosg04 @0xAndoroid
 
 # CI/CD workflows
-.github/workflows/ @a16z/jolt-maintainers
+.github/workflows/ @moodlezoup @0xAndoroid @markosg04 @sagar-a16z
