@@ -23,14 +23,16 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_amo::FormatAMO, Cycle, Instruction, RISCVInstruction, RISCVTrace};
+use super::{
+    format::format_amo::FormatAMO, Cycle, Instruction, RAMWrite, RISCVInstruction, RISCVTrace,
+};
 
 declare_riscv_instr!(
     name   = AMOSWAPW,
     mask   = 0xf800707f,
     match  = 0x0800202f,
     format = FormatAMO,
-    ram    = (),
+    ram    = RAMWrite,
     side_effects = true
 );
 

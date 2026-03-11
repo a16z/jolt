@@ -1,4 +1,6 @@
+#[cfg(feature = "std")]
 use allocative::Allocative;
+#[cfg(feature = "std")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -18,16 +20,10 @@ use crate::constants::{
 /// all reads from the reserved memory address space for program inputs and all writes
 /// to the reserved memory address space for program outputs.
 /// The inputs and outputs are part of the public inputs to the proof.
-#[derive(
-    Allocative,
-    Default,
-    Debug,
-    Clone,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    CanonicalSerialize,
-    CanonicalDeserialize,
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "std",
+    derive(Allocative, CanonicalSerialize, CanonicalDeserialize)
 )]
 pub struct JoltDevice {
     pub inputs: Vec<u8>,
@@ -184,15 +180,10 @@ impl Default for MemoryConfig {
     }
 }
 
-#[derive(
-    Allocative,
-    Default,
-    Clone,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    CanonicalSerialize,
-    CanonicalDeserialize,
+#[derive(Default, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "std",
+    derive(Allocative, CanonicalSerialize, CanonicalDeserialize)
 )]
 pub struct MemoryLayout {
     /// The total size of the elf's sections, including the .text, .data, .rodata, and .bss sections.
