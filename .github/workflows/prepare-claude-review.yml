@@ -9,13 +9,22 @@ permissions:
 
 jobs:
   prepare:
-    # Trusted authors: auto-trigger on any PR event
-    # External/first-time contributors: require 'claude-review-approved' label from a CODEOWNER
+    # Non-label events: trusted authors auto-trigger
+    # Label events: only fire when 'claude-review-approved' is the label being added
+    # This prevents unrelated label changes from triggering expensive scans
     if: |
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'OWNER' ||
-      contains(github.event.pull_request.labels.*.name, 'claude-review-approved')
+      (
+        github.event.action != 'labeled' &&
+        (
+          github.event.pull_request.author_association == 'MEMBER' ||
+          github.event.pull_request.author_association == 'COLLABORATOR' ||
+          github.event.pull_request.author_association == 'OWNER' ||
+          contains(github.event.pull_request.labels.*.name, 'claude-review-approved')
+        )
+      ) || (
+        github.event.action == 'labeled' &&
+        github.event.label.name == 'claude-review-approved'
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Save PR metadata
