@@ -10,13 +10,16 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use std::sync::Once;
-use syn::{parse_macro_input, AttributeArgs, Ident, ItemFn, PatType, ReturnType, Type};
+use syn::{
+    parse_macro_input, punctuated::Punctuated, token::Comma, Ident, ItemFn, Meta, PatType,
+    ReturnType, Token, Type,
+};
 
 static WASM_IMPORTS_INIT: Once = Once::new();
 
 #[proc_macro_attribute]
 pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let attr = parse_macro_input!(attr as AttributeArgs);
+    let attr = parse_macro_input!(attr with Punctuated::<Meta, Token![,]>::parse_terminated);
     let func = parse_macro_input!(item as ItemFn);
     let mut builder = MacroBuilder::new(attr, func);
 
@@ -37,7 +40,7 @@ pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 struct MacroBuilder {
-    attr: AttributeArgs,
+    attr: Punctuated<Meta, Comma>,
     func: ItemFn,
     std: bool,
     pub_func_args: Vec<(Ident, Box<Type>)>,
@@ -46,7 +49,7 @@ struct MacroBuilder {
 }
 
 impl MacroBuilder {
-    fn new(attr: AttributeArgs, func: ItemFn) -> Self {
+    fn new(attr: Punctuated<Meta, Comma>, func: ItemFn) -> Self {
         let (pub_func_args, trusted_func_args, untrusted_func_args) = Self::get_func_args(&func);
         #[cfg(feature = "guest-std")]
         let std = true;

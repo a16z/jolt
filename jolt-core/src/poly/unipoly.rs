@@ -8,7 +8,6 @@ use crate::utils::gaussian_elimination::gaussian_elimination;
 use allocative::Allocative;
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
-use rayon::prelude::*;
 
 use super::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::small_scalar::SmallScalar;
@@ -34,18 +33,64 @@ impl<F: JoltField> UniPoly<F> {
 
     /// Interpolate a polynomial from its evaluations at the points 0, 1, 2, ..., n-1.
     pub fn from_evals(evals: &[F]) -> Self {
-        UniPoly {
-            coeffs: Self::vandermonde_interpolation(evals),
+        match evals.len() {
+            3 => Self::from_evals_degree2(evals[0], evals[1], evals[2]),
+            4 => Self::from_evals_degree3(evals[0], evals[1], evals[2], evals[3]),
+            _ => UniPoly {
+                coeffs: Self::vandermonde_interpolation(evals),
+            },
         }
     }
 
     /// Interpolate a polynomial `p(x)` from its evaluations at even points `0, 2, 3, ..., n-1`
     /// and a hint `p(0) + p(1)`.
     pub fn from_evals_and_hint(hint: F, evals: &[F]) -> Self {
-        let mut evals = evals.to_vec();
-        let eval_at_1 = hint - evals[0];
-        evals.insert(1, eval_at_1);
-        Self::from_evals(&evals)
+        match evals.len() {
+            2 => {
+                let e0 = evals[0];
+                let e1 = hint - e0;
+                let e2 = evals[1];
+                Self::from_evals_degree2(e0, e1, e2)
+            }
+            3 => {
+                let e0 = evals[0];
+                let e1 = hint - e0;
+                let e2 = evals[1];
+                let e3 = evals[2];
+                Self::from_evals_degree3(e0, e1, e2, e3)
+            }
+            _ => {
+                let mut full_evals = Vec::with_capacity(evals.len() + 1);
+                full_evals.push(evals[0]);
+                full_evals.push(hint - evals[0]);
+                full_evals.extend_from_slice(&evals[1..]);
+                Self::from_evals(&full_evals)
+            }
+        }
+    }
+
+    /// Direct interpolation for degree 2 polynomial from evals at 0, 1, 2.
+    fn from_evals_degree2(e0: F, e1: F, e2: F) -> Self {
+        let two_inv = F::from_u64(2).inverse().unwrap();
+        let c0 = e0;
+        let c2 = (e0 - e1 - e1 + e2) * two_inv;
+        let c1 = e1 - e0 - c2;
+        UniPoly {
+            coeffs: vec![c0, c1, c2],
+        }
+    }
+
+    /// Direct interpolation for degree 3 polynomial from evals at 0, 1, 2, 3.
+    fn from_evals_degree3(e0: F, e1: F, e2: F, e3: F) -> Self {
+        let two_inv = F::from_u64(2).inverse().unwrap();
+        let six_inv = F::from_u64(6).inverse().unwrap();
+        let c0 = e0;
+        let c3 = (e3 - e0 + (e1 - e2) * F::from_u64(3)) * six_inv;
+        let c2 = (e0 - e1 - e1 + e2) * two_inv - c3 - c3 - c3;
+        let c1 = e1 - e0 - c2 - c3;
+        UniPoly {
+            coeffs: vec![c0, c1, c2, c3],
+        }
     }
 
     /// Interpolates a polynomial from its evaluations on `[0, 1, ..., degree - 1, inf]`.
@@ -252,7 +297,9 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     pub fn compress(&self) -> CompressedUniPoly<F> {
-        let coeffs_except_linear_term = [&self.coeffs[..1], &self.coeffs[2..]].concat();
+        let mut coeffs_except_linear_term = Vec::with_capacity(self.coeffs.len() - 1);
+        coeffs_except_linear_term.push(self.coeffs[0]);
+        coeffs_except_linear_term.extend_from_slice(&self.coeffs[2..]);
         debug_assert_eq!(coeffs_except_linear_term.len() + 1, self.coeffs.len());
         CompressedUniPoly {
             coeffs_except_linear_term,
@@ -268,7 +315,9 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     pub fn shift_coefficients(&mut self, rhs: &F) {
-        self.coeffs.par_iter_mut().for_each(|c| *c += *rhs);
+        for c in &mut self.coeffs {
+            *c += *rhs;
+        }
     }
 
     /// This function computes a cubic polynomial s(X), given the following conditions:
@@ -382,18 +431,22 @@ impl<F: JoltField> Sub for UniPoly<F> {
 impl<F: JoltField> Mul<F> for UniPoly<F> {
     type Output = Self;
 
-    fn mul(self, rhs: F) -> Self {
-        let iter = self.coeffs.into_par_iter();
-        Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
+    fn mul(mut self, rhs: F) -> Self {
+        for c in &mut self.coeffs {
+            *c *= rhs;
+        }
+        self
     }
 }
 
 impl<F: JoltField> Mul<&F> for UniPoly<F> {
     type Output = Self;
 
-    fn mul(self, rhs: &F) -> Self {
-        let iter = self.coeffs.into_par_iter();
-        Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
+    fn mul(mut self, rhs: &F) -> Self {
+        for c in &mut self.coeffs {
+            *c *= *rhs;
+        }
+        self
     }
 }
 
@@ -421,15 +474,13 @@ impl<F: JoltField> IndexMut<usize> for UniPoly<F> {
 
 impl<F: JoltField> MulAssign<&F> for UniPoly<F> {
     fn mul_assign(&mut self, rhs: &F) {
-        self.coeffs.par_iter_mut().for_each(|c| *c *= *rhs);
+        for c in &mut self.coeffs {
+            *c *= *rhs;
+        }
     }
 }
 
 impl<F: JoltField> CompressedUniPoly<F> {
-    pub fn get_compressed_coeffs(&self) -> &[F] {
-        &self.coeffs_except_linear_term
-    }
-
     // we require eval(0) + eval(1) = hint, so we can solve for the linear term as:
     // linear_term = hint - 2 * constant_term - deg2 term - deg3 term
     pub fn decompress(&self, hint: &F) -> UniPoly<F> {

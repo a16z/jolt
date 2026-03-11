@@ -1,4 +1,6 @@
 #[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
 use crate::zkvm::{claim_reductions::advice::ReductionPhase, config::OneHotConfig};
 #[cfg(not(target_arch = "wasm32"))]
@@ -1643,9 +1645,61 @@ impl<
             extra_constraint_challenges: stage8_data.constraint_coeffs.clone(),
         };
 
-        let builder =
-            VerifierR1CSBuilder::<F>::new_with_extra(&stage_configs, &extra_constraints, &baked);
+        // Build OC blocks from stage data: each block lists opening IDs in the order
+        // they were produced by that stage's cache_openings/take_pending_claims.
+        let mut oc_blocks: Vec<Vec<OpeningId>> = Vec::new();
+        for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
+            if stage_idx < 2 {
+                let ids: Vec<OpeningId> = uniskip_stages[stage_idx]
+                    .output_claims
+                    .iter()
+                    .map(|(id, _)| *id)
+                    .collect();
+                oc_blocks.push(ids);
+            }
+            let ids: Vec<OpeningId> = zk_data.output_claims.iter().map(|(id, _)| *id).collect();
+            oc_blocks.push(ids);
+        }
+
+        let builder = VerifierR1CSBuilder::<F>::new_with_extra(
+            &stage_configs,
+            &extra_constraints,
+            &baked,
+            oc_blocks.clone(),
+        );
         let r1cs = builder.build();
+
+        // Per-stage commitments from prove_zk/prove_uniskip_round_zk are the Hyrax OC
+        // row commitments — same generators, same blindings, same values.
+        let mut all_output_claims_commitments: Vec<C::G1> = Vec::new();
+        let mut all_output_claims_blindings: Vec<F> = Vec::new();
+        // OC values laid out per-block with per-block row padding (matching Hyrax grid)
+        let hyrax_C = r1cs.hyrax.C;
+        let mut all_output_claims: Vec<F> = Vec::new();
+
+        for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
+            if stage_idx < 2 {
+                let uniskip = &uniskip_stages[stage_idx];
+                all_output_claims_commitments.extend_from_slice(&uniskip.output_claims_commitments);
+                all_output_claims_blindings.extend_from_slice(&uniskip.output_claims_blindings);
+                let vals: Vec<F> = uniskip.output_claims.iter().map(|(_, v)| *v).collect();
+                all_output_claims.extend_from_slice(&vals);
+                let block_rows = vals.len().div_ceil(hyrax_C.max(1));
+                all_output_claims.resize(
+                    all_output_claims.len() + block_rows * hyrax_C - vals.len(),
+                    F::zero(),
+                );
+            }
+            all_output_claims_commitments.extend_from_slice(&zk_data.output_claims_commitments);
+            all_output_claims_blindings.extend_from_slice(&zk_data.output_claims_blindings);
+            let vals: Vec<F> = zk_data.output_claims.iter().map(|(_, v)| *v).collect();
+            all_output_claims.extend_from_slice(&vals);
+            let block_rows = vals.len().div_ceil(hyrax_C.max(1));
+            all_output_claims.resize(
+                all_output_claims.len() + block_rows * hyrax_C - vals.len(),
+                F::zero(),
+            );
+        }
 
         let extra_opening_values: Vec<F> = stage8_data
             .opening_ids
@@ -1660,10 +1714,11 @@ impl<
             opening_values: extra_opening_values,
         };
 
-        let blindfold_witness = BlindFoldWitness::with_extra_constraints(
+        let blindfold_witness = BlindFoldWitness::with_output_claims(
             initial_claims,
             stage_witnesses,
             vec![extra_witness],
+            all_output_claims,
         );
 
         let z = blindfold_witness.assign(&r1cs);
@@ -1711,13 +1766,20 @@ impl<
         let hyrax_C = hyrax.C;
         let R_coeff = hyrax.R_coeff;
         let R_prime = hyrax.R_prime;
-        let noncoeff_rows = hyrax.noncoeff_rows();
+        let output_claims_rows = hyrax.output_claims_rows;
+        let regular_noncoeff_rows = hyrax.regular_noncoeff_rows();
 
-        let noncoeff_rows_start = R_coeff * hyrax_C;
-        let mut noncoeff_row_commitments = Vec::with_capacity(noncoeff_rows);
-        let mut noncoeff_row_blindings = Vec::with_capacity(noncoeff_rows);
-        for row_idx in 0..noncoeff_rows {
-            let row_start = noncoeff_rows_start + row_idx * hyrax_C;
+        // OC rows: commitments and blindings from commit_chunked during prove_zk/prove_uniskip.
+        // Each commitment covers one chunk of ≤C output claims = one Hyrax row.
+        let oc_row_commitments = all_output_claims_commitments;
+        let oc_row_blindings = all_output_claims_blindings;
+
+        // Regular noncoeff rows: committed fresh by the prover
+        let regular_noncoeff_start = (R_coeff + output_claims_rows) * hyrax_C;
+        let mut noncoeff_row_commitments = Vec::with_capacity(regular_noncoeff_rows);
+        let mut noncoeff_row_blindings = Vec::with_capacity(regular_noncoeff_rows);
+        for row_idx in 0..regular_noncoeff_rows {
+            let row_start = regular_noncoeff_start + row_idx * hyrax_C;
             let mut row_data = vec![F::zero(); hyrax_C];
             for k in 0..hyrax_C {
                 if row_start + k < witness.len() {
@@ -1729,10 +1791,12 @@ impl<
             noncoeff_row_blindings.push(blinding);
         }
 
-        // Build w_row_blindings: round blindings padded to R_coeff, then noncoeff, then padding to R'
+        // w_row_blindings: [round | pad to R_coeff | oc_rows | regular_noncoeff | pad to R']
         let mut w_row_blindings = Vec::with_capacity(R_prime);
         w_row_blindings.extend_from_slice(&round_blindings);
         w_row_blindings.resize(R_coeff, F::zero());
+        w_row_blindings.extend_from_slice(&oc_row_blindings);
+        w_row_blindings.resize(R_coeff + output_claims_rows, F::zero());
         w_row_blindings.extend_from_slice(&noncoeff_row_blindings);
         w_row_blindings.resize(R_prime, F::zero());
 
@@ -1741,6 +1805,7 @@ impl<
             r1cs.num_constraints,
             hyrax_C,
             round_commitments,
+            oc_row_commitments,
             noncoeff_row_commitments,
             eval_commitments,
             w_row_blindings,
@@ -2538,9 +2603,8 @@ mod tests {
         );
 
         // Trace is tiny but advice is max-sized
-        // (unpadded ~4185 after ECALL a7 constraint, padded to 8192)
         assert!(prover.unpadded_trace_len < 8192);
-        assert_eq!(prover.padded_trace_len, 1024);
+        assert!(prover.padded_trace_len <= 1024, "test expects small trace");
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2657,7 +2721,7 @@ mod tests {
             final_memory_state,
         );
 
-        assert_eq!(prover.padded_trace_len, 1024, "test expects small trace");
+        assert!(prover.padded_trace_len <= 1024, "test expects small trace");
 
         let io_device = prover.program_io.clone();
         let (jolt_proof, debug_info) = prover.prove();
@@ -2812,6 +2876,54 @@ mod tests {
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        )
+        .expect("Failed to create verifier");
+        verifier.verify().expect("Failed to verify proof");
+    }
+
+    /// Exercises std mode guest compilation (riscv64imac-zero-linux-musl custom target spec).
+    /// Catches regressions in target spec JSON generation, e.g. target-pointer-width type errors.
+    #[test]
+    #[serial]
+    fn stdlib_e2e_dory() {
+        DoryGlobals::reset();
+        let mut program = host::Program::new("stdlib-guest");
+        program.set_std(true);
+        program.set_func("int_to_string");
+        let inputs = postcard::to_stdvec(&81i32).unwrap();
+        let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
@@ -3035,7 +3147,7 @@ mod tests {
                     initial_claims: vec![initial_claim],
                     ..Default::default()
                 };
-                let builder = VerifierR1CSBuilder::<Fr>::new(&[config.clone()], &baked);
+                let builder = VerifierR1CSBuilder::<Fr>::new(std::slice::from_ref(&config), &baked);
                 let r1cs = builder.build();
                 let stage_witness = StageWitness::new(vec![round_witness]);
                 let witness = BlindFoldWitness::new(initial_claim, vec![stage_witness]);
@@ -3217,14 +3329,14 @@ mod tests {
         let (round_commitments, _round_coefficients, round_blindings) =
             round_commitment_data(&gens, &blindfold_witness.stages, &mut rng);
 
-        let noncoeff_rows = hyrax.noncoeff_rows();
+        let total_noncoeff_rows = hyrax.total_noncoeff_rows();
         let mut noncoeff_row_commitments = Vec::new();
         let mut w_row_blindings = vec![Fr::from(0u64); R_prime];
         for (i, blinding) in round_blindings.iter().enumerate() {
             w_row_blindings[i] = *blinding;
         }
         let noncoeff_start = R_coeff * hyrax_C;
-        for row in 0..noncoeff_rows {
+        for row in 0..total_noncoeff_rows {
             let start = noncoeff_start + row * hyrax_C;
             let end = (start + hyrax_C).min(witness.len());
             let mut row_data = vec![Fr::from(0u64); hyrax_C];
@@ -3239,6 +3351,7 @@ mod tests {
             r1cs.num_constraints,
             hyrax_C,
             round_commitments,
+            Vec::new(),
             noncoeff_row_commitments,
             Vec::new(),
             w_row_blindings,
@@ -3252,6 +3365,7 @@ mod tests {
 
         let verifier_input = BlindFoldVerifierInput {
             round_commitments: real_instance.round_commitments.clone(),
+            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 

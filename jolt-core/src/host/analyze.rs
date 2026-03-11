@@ -41,7 +41,7 @@ impl ProgramSummary {
 
     pub fn write_to_file(self, path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let mut file = File::create(path)?;
-        let data = bincode::serialize(&self)?;
+        let data = bincode::serde::encode_to_vec(&self, bincode::config::standard())?;
         io::Write::write_all(&mut file, &data)?;
         Ok(())
     }

@@ -284,7 +284,10 @@ impl Blake3SequenceBuilder {
         vr_start: usize,
         count: usize,
     ) {
-        debug_assert!(count % 2 == 0, "count must be even for paired loading");
+        debug_assert!(
+            count.is_multiple_of(2),
+            "count must be even for paired loading"
+        );
         for i in 0..count / 2 {
             self.load_paired_u32(
                 base_register,
@@ -477,7 +480,10 @@ impl Blake3Keyed64SequenceBuilder {
         vr_start: usize,
         count: usize,
     ) {
-        debug_assert!(count % 2 == 0, "count must be even for paired loading");
+        debug_assert!(
+            count.is_multiple_of(2),
+            "count must be even for paired loading"
+        );
         for i in 0..count / 2 {
             self.load_paired_u32(
                 base_register,

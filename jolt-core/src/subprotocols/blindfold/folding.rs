@@ -81,9 +81,21 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     let mut round_commitments: Vec<C::G1> = Vec::new();
     let mut eval_commitments: Vec<C::G1> = Vec::new();
 
-    let mut noncoeff_idx = R_coeff * hyrax_C;
+    let oc_rows = hyrax.output_claims_rows;
+    let oc_opening_ids: std::collections::HashSet<_> =
+        r1cs.output_claims_opening_ids.iter().copied().collect();
+
+    // OC region: fill with random values
+    let oc_start = R_coeff * hyrax_C;
+    for i in 0..r1cs.output_claims_opening_ids.len() {
+        W[oc_start + i] = F::random(rng);
+    }
+
+    // Regular noncoeff starts after OC region
+    let mut noncoeff_idx = (R_coeff + oc_rows) * hyrax_C;
 
     let layout = compute_witness_layout(&r1cs.stage_configs, &r1cs.extra_constraints);
+    let mut seen_openings = std::collections::HashSet::new();
 
     for step in &layout {
         match step {
@@ -93,11 +105,18 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                 noncoeff_idx += 1;
             }
             LayoutStep::ConstraintVars {
-                new_opening_count,
+                constraint,
                 aux_var_count,
                 ..
             } => {
-                for _ in 0..(*new_opening_count + *aux_var_count) {
+                // Only allocate noncoeff vars for openings NOT in the OC region
+                for id in &constraint.required_openings {
+                    if seen_openings.insert(*id) && !oc_opening_ids.contains(id) {
+                        W[noncoeff_idx] = F::random(rng);
+                        noncoeff_idx += 1;
+                    }
+                }
+                for _ in 0..*aux_var_count {
                     W[noncoeff_idx] = F::random(rng);
                     noncoeff_idx += 1;
                 }
@@ -136,13 +155,15 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                 }
             }
             LayoutStep::ExtraConstraintVars {
-                new_opening_count,
+                constraint,
                 aux_var_count,
                 ..
             } => {
-                for _ in 0..*new_opening_count {
-                    W[noncoeff_idx] = F::random(rng);
-                    noncoeff_idx += 1;
+                for id in &constraint.required_openings {
+                    if seen_openings.insert(*id) && !oc_opening_ids.contains(id) {
+                        W[noncoeff_idx] = F::random(rng);
+                        noncoeff_idx += 1;
+                    }
                 }
 
                 let output_value = F::random(rng);
@@ -165,15 +186,24 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         }
     }
 
-    // Commit non-coeff rows
-    let noncoeff_rows = hyrax.noncoeff_rows();
-    let mut noncoeff_row_commitments = Vec::with_capacity(noncoeff_rows);
-    for row in 0..noncoeff_rows {
+    let mut oc_row_commitments = Vec::with_capacity(oc_rows);
+    for row in 0..oc_rows {
         let start = R_coeff * hyrax_C + row * hyrax_C;
         let end = (start + hyrax_C).min(W.len());
         let row_blinding = F::random(rng);
-        noncoeff_row_commitments.push(gens.commit(&W[start..end], &row_blinding));
+        oc_row_commitments.push(gens.commit(&W[start..end], &row_blinding));
         w_row_blindings[R_coeff + row] = row_blinding;
+    }
+
+    // Commit regular non-coeff rows
+    let regular_noncoeff_rows = hyrax.regular_noncoeff_rows();
+    let mut noncoeff_row_commitments = Vec::with_capacity(regular_noncoeff_rows);
+    for row in 0..regular_noncoeff_rows {
+        let start = (R_coeff + oc_rows) * hyrax_C + row * hyrax_C;
+        let end = (start + hyrax_C).min(W.len());
+        let row_blinding = F::random(rng);
+        noncoeff_row_commitments.push(gens.commit(&W[start..end], &row_blinding));
+        w_row_blindings[R_coeff + oc_rows + row] = row_blinding;
     }
 
     let u = loop {
@@ -219,6 +249,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     let instance = RelaxedR1CSInstance {
         u,
         round_commitments,
+        output_claims_row_commitments: oc_row_commitments,
         noncoeff_row_commitments,
         e_row_commitments,
         eval_commitments,

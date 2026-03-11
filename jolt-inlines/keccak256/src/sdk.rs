@@ -144,7 +144,7 @@ impl Keccak256 {
         let mut offset = 0;
 
         // Check alignment once, then use branch-free loop
-        let is_aligned = input.as_ptr() as usize % 8 == 0;
+        let is_aligned = (input.as_ptr() as usize).is_multiple_of(8);
 
         if is_aligned {
             // Aligned fast path - no per-block branch
