@@ -46,11 +46,13 @@ struct MacroBuilder {
     pub_func_args: Vec<(Ident, Box<Type>)>,
     trusted_func_args: Vec<(Ident, Box<Type>)>,
     untrusted_func_args: Vec<(Ident, Box<Type>)>,
+    has_private_input: bool,
 }
 
 impl MacroBuilder {
     fn new(attr: Punctuated<Meta, Comma>, func: ItemFn) -> Self {
         let (pub_func_args, trusted_func_args, untrusted_func_args) = Self::get_func_args(&func);
+        let has_private_input = Self::any_arg_is_private_input(&func);
         #[cfg(feature = "guest-std")]
         let std = true;
         #[cfg(not(feature = "guest-std"))]
@@ -63,6 +65,7 @@ impl MacroBuilder {
             pub_func_args,
             trusted_func_args,
             untrusted_func_args,
+            has_private_input,
         }
     }
 
@@ -96,7 +99,10 @@ impl MacroBuilder {
             self.make_main_func()
         };
 
+        let require_zk = self.make_require_zk_check();
+
         quote! {
+            #require_zk
             #memory_config_fn
             #build_prover_fn
             #build_verifier_fn
@@ -909,6 +915,21 @@ impl MacroBuilder {
         quote! {}
     }
 
+    fn make_require_zk_check(&self) -> TokenStream2 {
+        if !self.has_private_input {
+            return quote! {};
+        }
+        let fn_name = self.get_func_name();
+        let msg = format!(
+            "Guest function `{fn_name}` uses `PrivateInput` which requires the `zk` feature. \
+             Enable `features = [\"host\", \"zk\"]` on `jolt-sdk` in the host Cargo.toml."
+        );
+        quote! {
+            #[cfg(all(not(feature = "guest"), not(target_arch = "wasm32")))]
+            const _: () = assert!(jolt::_ZK_FEATURE_ENABLED, #msg);
+        }
+    }
+
     fn make_imports(&self) -> TokenStream2 {
         quote! {
             #[cfg(not(feature = "guest"))]
@@ -1119,6 +1140,25 @@ impl MacroBuilder {
             }
         }
         false
+    }
+
+    fn is_private_input_type(ty: &Type) -> bool {
+        if let Type::Path(type_path) = ty {
+            if let Some(last_segment) = type_path.path.segments.last() {
+                return last_segment.ident == "PrivateInput";
+            }
+        }
+        false
+    }
+
+    fn any_arg_is_private_input(func: &ItemFn) -> bool {
+        func.sig.inputs.iter().any(|arg| {
+            if let syn::FnArg::Typed(PatType { ty, .. }) = arg {
+                Self::is_private_input_type(ty)
+            } else {
+                false
+            }
+        })
     }
 
     fn get_func_name(&self) -> &Ident {

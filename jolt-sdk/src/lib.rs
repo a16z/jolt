@@ -88,10 +88,25 @@ impl<T> core::ops::Deref for UntrustedAdvice<T> {
     }
 }
 
-#[cfg(feature = "zk")]
+impl<T: Clone> Clone for UntrustedAdvice<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+        }
+    }
+}
+
+impl<T: Copy> Copy for UntrustedAdvice<T> {}
+
 /// Alias for `UntrustedAdvice<T>` — marks a guest function parameter as private
 /// (committed by the prover, cryptographically hidden from the verifier via BlindFold).
+///
+/// Using `PrivateInput<T>` in a guest function requires the `zk` feature on `jolt-sdk`
+/// in the host crate. The `#[jolt::provable]` macro enforces this at compile time.
 pub type PrivateInput<T> = UntrustedAdvice<T>;
+
+#[doc(hidden)]
+pub const _ZK_FEATURE_ENABLED: bool = cfg!(feature = "zk");
 
 // This is a dummy _HEAP_PTR to keep the compiler happy.
 // It should never be used when compiled as a guest or with

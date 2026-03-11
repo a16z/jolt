@@ -40,7 +40,7 @@ enum JoltCommand {
         /// Whether to generate WASM compatible files
         #[arg(short, long)]
         wasm: bool,
-        /// Generate project with zero-knowledge (PrivateInput) support
+        /// Generate project with zero-knowledge (PrivateInput + BlindFold) support
         #[arg(long)]
         zk: bool,
     },
@@ -659,7 +659,7 @@ edition = "2021"
 guest = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", features = ["zk"] }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
 "#;
 
 const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]
