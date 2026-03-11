@@ -110,7 +110,7 @@ use dory::backends::arkworks::ArkG1;
 use std::ops::MulAssign;
 
 macro_rules! impl_group_ops {
-    ($Name:ident, $Inner:ty) => {
+    ($Name:ident, $Inner:ty, $Field:ty) => {
         impl Add for $Name {
             type Output = Self;
             fn add(self, rhs: Self) -> Self {
@@ -151,9 +151,9 @@ macro_rules! impl_group_ops {
                 self.0 -= rhs.0;
             }
         }
-        impl Mul<Fr> for $Name {
+        impl Mul<$Field> for $Name {
             type Output = Self;
-            fn mul(mut self, rhs: Fr) -> Self {
+            fn mul(mut self, rhs: $Field) -> Self {
                 self.0.mul_assign(rhs);
                 self
             }
@@ -162,9 +162,9 @@ macro_rules! impl_group_ops {
 }
 
 macro_rules! impl_group_element {
-    ($Name:ident, $Proj:ty) => {
+    ($Name:ident, $Proj:ty, $Field:ty) => {
         impl JoltGroupElement for $Name {
-            type Scalar = Fr;
+            type Scalar = $Field;
 
             fn zero() -> Self {
                 $Name(<$Proj>::zero())
@@ -175,7 +175,7 @@ macro_rules! impl_group_element {
             fn double(&self) -> Self {
                 $Name(AdditiveGroup::double(&self.0))
             }
-            fn scalar_mul(&self, scalar: &Fr) -> Self {
+            fn scalar_mul(&self, scalar: &$Field) -> Self {
                 let mut result = self.0;
                 result.mul_assign(*scalar);
                 $Name(result)
@@ -186,8 +186,8 @@ macro_rules! impl_group_element {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Bn254G1(pub G1Projective);
-impl_group_ops!(Bn254G1, G1Projective);
-impl_group_element!(Bn254G1, G1Projective);
+impl_group_ops!(Bn254G1, G1Projective, Fr);
+impl_group_element!(Bn254G1, G1Projective, Fr);
 
 impl From<ArkG1> for Bn254G1 {
     fn from(value: ArkG1) -> Self {
@@ -203,8 +203,8 @@ impl From<G1Projective> for Bn254G1 {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Bn254G2(pub G2Projective);
-impl_group_ops!(Bn254G2, G2Projective);
-impl_group_element!(Bn254G2, G2Projective);
+impl_group_ops!(Bn254G2, G2Projective, Fr);
+impl_group_element!(Bn254G2, G2Projective, Fr);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Bn254GT(pub Fq12);
