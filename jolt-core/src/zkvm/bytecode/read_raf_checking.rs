@@ -310,13 +310,21 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
             .map(|r_cycle| GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh));
 
         let pc_0 = bytecode_preprocessing.get_pc(&trace[0]);
-        assert!(pc_0 < params.K, "pc_0 ({pc_0}) out of bounds for K ({})", params.K);
+        assert!(
+            pc_0 < params.K,
+            "pc_0 ({pc_0}) out of bounds for K ({})",
+            params.K
+        );
         let mut f_entry_trace_vec: Vec<F> = vec![F::zero(); params.K];
         f_entry_trace_vec[pc_0] = F::one();
         let f_entry_trace = MultilinearPolynomial::from(f_entry_trace_vec);
 
         let entry_bytecode_index = params.entry_bytecode_index;
-        assert!(entry_bytecode_index < params.K, "entry_bytecode_index ({entry_bytecode_index}) out of bounds for K ({})", params.K);
+        assert!(
+            entry_bytecode_index < params.K,
+            "entry_bytecode_index ({entry_bytecode_index}) out of bounds for K ({})",
+            params.K
+        );
         let mut f_entry_expected_vec: Vec<F> = vec![F::zero(); params.K];
         f_entry_expected_vec[entry_bytecode_index] = F::one();
         let f_entry_expected = MultilinearPolynomial::from(f_entry_expected_vec);
@@ -639,8 +647,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             self.F
                 .iter_mut()
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
-            self.f_entry_trace.bind_parallel(r_j, BindingOrder::LowToHigh);
-            self.f_entry_expected.bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.f_entry_trace
+                .bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.f_entry_expected
+                .bind_parallel(r_j, BindingOrder::LowToHigh);
             self.r_address_prime.push(r_j);
             if round == self.params.log_K - 1 {
                 self.init_log_t_rounds();

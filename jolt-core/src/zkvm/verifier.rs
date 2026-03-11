@@ -345,6 +345,7 @@ impl<
             &self.program_io,
             self.proof.ram_K,
             self.proof.trace_length,
+            self.preprocessing.shared.bytecode.entry_address,
             &mut self.transcript,
         );
 

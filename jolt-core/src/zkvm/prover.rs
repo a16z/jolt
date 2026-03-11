@@ -494,6 +494,7 @@ impl<
             &self.program_io,
             self.one_hot_params.ram_k,
             self.trace.len(),
+            self.preprocessing.shared.bytecode.entry_address,
             &mut self.transcript,
         );
 
