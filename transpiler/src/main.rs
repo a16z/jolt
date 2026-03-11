@@ -183,9 +183,9 @@ fn main() {
     // by the host before proving (not included in JoltProof).
     // The commitment file contains Option<ArkGT> (the return type of commit_trusted_advice_*).
     let symbolic_trusted_advice = if let Some(ref path) = args.trusted_advice {
-        println!("\nLoading trusted advice commitment from: {:?}", path);
+        println!("\nLoading trusted advice commitment from: {path:?}");
         let advice_bytes = std::fs::read(path)
-            .unwrap_or_else(|e| panic!("Failed to read trusted advice file {:?}: {}", path, e));
+            .unwrap_or_else(|e| panic!("Failed to read trusted advice file {path:?}: {e}"));
         let real_commitment: Option<ArkGT> =
             CanonicalDeserialize::deserialize_compressed(&advice_bytes[..])
                 .expect("Failed to deserialize trusted advice commitment");

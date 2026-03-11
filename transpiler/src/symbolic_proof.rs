@@ -32,23 +32,36 @@
 //!
 //! This must match exactly how the Poseidon transcript hashes commitments.
 
-use crate::symbolic_traits::ast_commitment_scheme::{AstCommitmentScheme, AstProof};
+use crate::symbolic_traits::ast_commitment_scheme::AstCommitmentScheme;
+#[cfg(not(feature = "zk"))]
+use crate::symbolic_traits::ast_commitment_scheme::AstProof;
 use crate::symbolic_traits::ast_curve::AstCurve;
 use crate::symbolic_traits::opening_accumulator::AstOpeningAccumulator;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
-use jolt_core::curve::{Bn254Curve, JoltCurve};
+#[cfg(not(feature = "zk"))]
+use jolt_core::curve::Bn254Curve;
+#[cfg(not(feature = "zk"))]
+use jolt_core::curve::JoltCurve;
+#[cfg(not(feature = "zk"))]
 use jolt_core::poly::opening_proof::OpeningPoint;
+#[cfg(not(feature = "zk"))]
 use jolt_core::poly::unipoly::CompressedUniPoly;
+#[cfg(not(feature = "zk"))]
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
+#[cfg(not(feature = "zk"))]
 use jolt_core::subprotocols::univariate_skip::{
     UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant,
 };
 use jolt_core::transcripts::Transcript;
-use jolt_core::zkvm::proof_serialization::{Claims, JoltProof};
+#[cfg(not(feature = "zk"))]
+use jolt_core::zkvm::proof_serialization::Claims;
+use jolt_core::zkvm::proof_serialization::JoltProof;
 use jolt_core::zkvm::RV64IMACProof;
+#[cfg(not(feature = "zk"))]
 use std::collections::BTreeMap;
 use zklean_extractor::mle_ast::{MleAst, TargetField};
+#[cfg(not(feature = "zk"))]
 use zklean_extractor::AstCommitment;
 
 /// Tracks variable index allocation and witness values during symbolization.
@@ -260,130 +273,144 @@ pub fn symbolize_proof<OutputTranscript: Transcript>(
     AstOpeningAccumulator,
     VarAllocator,
 ) {
-    let mut alloc = VarAllocator::new();
-
-    // === Symbolize commitments (with witness values) ===
-    let commitments: Vec<AstCommitment> = real_proof
-        .commitments
-        .iter()
-        .enumerate()
-        .map(|(c, commitment)| {
-            let chunks = alloc.alloc_commitment(commitment, &format!("commitment_{c}"));
-            AstCommitment::new(chunks)
-        })
-        .collect();
-
-    // === Symbolize opening claims (with witness values) ===
-    let mut symbolic_claims = BTreeMap::new();
-    for (key, (_point, claim)) in &real_proof.opening_claims.0 {
-        let symbolic_claim = alloc.alloc_with_value(&format!("claim_{key:?}"), claim);
-        symbolic_claims.insert(*key, (OpeningPoint::default(), symbolic_claim));
+    // The transpiler doesn't support zk mode (JoltProof fields differ).
+    // Panic early so clippy is happy with both feature sets.
+    #[cfg(feature = "zk")]
+    {
+        let _ = real_proof;
+        unimplemented!("Transpiler does not support zk mode");
     }
 
-    // === Symbolize stage 1 uni-skip proof ===
-    let stage1_uni_skip = symbolize_uni_skip_variant::<Bn254Curve, _, OutputTranscript>(
-        &real_proof.stage1_uni_skip_first_round_proof,
-        &mut alloc,
-        "stage1_uni_skip",
-    );
+    #[cfg(not(feature = "zk"))]
+    {
+        let mut alloc = VarAllocator::new();
 
-    // === Symbolize stage 1 sumcheck proof ===
-    let stage1_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-        &real_proof.stage1_sumcheck_proof,
-        &mut alloc,
-        "stage1_sumcheck",
-    );
-
-    // === Symbolize stage 2 uni-skip proof ===
-    let stage2_uni_skip = symbolize_uni_skip_variant::<Bn254Curve, _, OutputTranscript>(
-        &real_proof.stage2_uni_skip_first_round_proof,
-        &mut alloc,
-        "stage2_uni_skip",
-    );
-
-    // === Symbolize stage 2 sumcheck proof ===
-    let stage2_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-        &real_proof.stage2_sumcheck_proof,
-        &mut alloc,
-        "stage2_sumcheck",
-    );
-
-    // === Symbolize stage 3 sumcheck proof ===
-    let stage3_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-        &real_proof.stage3_sumcheck_proof,
-        &mut alloc,
-        "stage3_sumcheck",
-    );
-
-    // === Symbolize stage 4 sumcheck proof ===
-    let stage4_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-        &real_proof.stage4_sumcheck_proof,
-        &mut alloc,
-        "stage4_sumcheck",
-    );
-
-    // === Symbolize stage 5 sumcheck proof ===
-    let stage5_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-        &real_proof.stage5_sumcheck_proof,
-        &mut alloc,
-        "stage5_sumcheck",
-    );
-
-    // === Symbolize stage 6 sumcheck proof ===
-    let stage6_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-        &real_proof.stage6_sumcheck_proof,
-        &mut alloc,
-        "stage6_sumcheck",
-    );
-
-    // === Symbolize stage 7 sumcheck proof ===
-    let stage7_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-        &real_proof.stage7_sumcheck_proof,
-        &mut alloc,
-        "stage7_sumcheck",
-    );
-
-    // === Symbolize advice commitment (if present, with witness values) ===
-    let untrusted_advice_commitment =
-        real_proof
-            .untrusted_advice_commitment
-            .as_ref()
-            .map(|commitment| {
-                let chunks = alloc.alloc_commitment(commitment, "untrusted_advice_commitment");
+        // === Symbolize commitments (with witness values) ===
+        let commitments: Vec<AstCommitment> = real_proof
+            .commitments
+            .iter()
+            .enumerate()
+            .map(|(c, commitment)| {
+                let chunks = alloc.alloc_commitment(commitment, &format!("commitment_{c}"));
                 AstCommitment::new(chunks)
-            });
+            })
+            .collect();
 
-    // Build the symbolic proof
-    let symbolic_proof = JoltProof {
-        opening_claims: Claims(symbolic_claims),
-        commitments,
-        stage1_uni_skip_first_round_proof: stage1_uni_skip,
-        stage1_sumcheck_proof: stage1_sumcheck,
-        stage2_uni_skip_first_round_proof: stage2_uni_skip,
-        stage2_sumcheck_proof: stage2_sumcheck,
-        stage3_sumcheck_proof: stage3_sumcheck,
-        stage4_sumcheck_proof: stage4_sumcheck,
-        stage5_sumcheck_proof: stage5_sumcheck,
-        stage6_sumcheck_proof: stage6_sumcheck,
-        stage7_sumcheck_proof: stage7_sumcheck,
-        joint_opening_proof: AstProof::default(),
-        untrusted_advice_commitment,
-        trace_length: real_proof.trace_length,
-        ram_K: real_proof.ram_K,
-        rw_config: real_proof.rw_config.clone(),
-        one_hot_config: real_proof.one_hot_config.clone(),
-        dory_layout: real_proof.dory_layout,
-    };
+        // === Symbolize opening claims (with witness values) ===
+        let symbolic_claims = {
+            let mut claims = BTreeMap::new();
+            for (key, (_point, claim)) in &real_proof.opening_claims.0 {
+                let symbolic_claim = alloc.alloc_with_value(&format!("claim_{key:?}"), claim);
+                claims.insert(*key, (OpeningPoint::default(), symbolic_claim));
+            }
+            claims
+        };
 
-    // Build the opening accumulator with the symbolic claims we created
-    #[allow(non_snake_case)] // Match VerifierOpeningAccumulator naming
-    let log_T = (real_proof.trace_length as f64).log2().ceil() as usize;
-    let mut accumulator = AstOpeningAccumulator::new(log_T);
-    for (key, (_, claim)) in &symbolic_proof.opening_claims.0 {
-        accumulator.openings.insert(*key, (vec![], *claim));
+        // === Symbolize stage 1 uni-skip proof ===
+        let stage1_uni_skip = symbolize_uni_skip_variant::<Bn254Curve, _, OutputTranscript>(
+            &real_proof.stage1_uni_skip_first_round_proof,
+            &mut alloc,
+            "stage1_uni_skip",
+        );
+
+        // === Symbolize stage 1 sumcheck proof ===
+        let stage1_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
+            &real_proof.stage1_sumcheck_proof,
+            &mut alloc,
+            "stage1_sumcheck",
+        );
+
+        // === Symbolize stage 2 uni-skip proof ===
+        let stage2_uni_skip = symbolize_uni_skip_variant::<Bn254Curve, _, OutputTranscript>(
+            &real_proof.stage2_uni_skip_first_round_proof,
+            &mut alloc,
+            "stage2_uni_skip",
+        );
+
+        // === Symbolize stage 2 sumcheck proof ===
+        let stage2_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
+            &real_proof.stage2_sumcheck_proof,
+            &mut alloc,
+            "stage2_sumcheck",
+        );
+
+        // === Symbolize stage 3 sumcheck proof ===
+        let stage3_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
+            &real_proof.stage3_sumcheck_proof,
+            &mut alloc,
+            "stage3_sumcheck",
+        );
+
+        // === Symbolize stage 4 sumcheck proof ===
+        let stage4_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
+            &real_proof.stage4_sumcheck_proof,
+            &mut alloc,
+            "stage4_sumcheck",
+        );
+
+        // === Symbolize stage 5 sumcheck proof ===
+        let stage5_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
+            &real_proof.stage5_sumcheck_proof,
+            &mut alloc,
+            "stage5_sumcheck",
+        );
+
+        // === Symbolize stage 6 sumcheck proof ===
+        let stage6_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
+            &real_proof.stage6_sumcheck_proof,
+            &mut alloc,
+            "stage6_sumcheck",
+        );
+
+        // === Symbolize stage 7 sumcheck proof ===
+        let stage7_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
+            &real_proof.stage7_sumcheck_proof,
+            &mut alloc,
+            "stage7_sumcheck",
+        );
+
+        // === Symbolize advice commitment (if present, with witness values) ===
+        let untrusted_advice_commitment =
+            real_proof
+                .untrusted_advice_commitment
+                .as_ref()
+                .map(|commitment| {
+                    let chunks = alloc.alloc_commitment(commitment, "untrusted_advice_commitment");
+                    AstCommitment::new(chunks)
+                });
+
+        // Build the symbolic proof
+        let symbolic_proof = JoltProof {
+            opening_claims: Claims(symbolic_claims),
+            commitments,
+            stage1_uni_skip_first_round_proof: stage1_uni_skip,
+            stage1_sumcheck_proof: stage1_sumcheck,
+            stage2_uni_skip_first_round_proof: stage2_uni_skip,
+            stage2_sumcheck_proof: stage2_sumcheck,
+            stage3_sumcheck_proof: stage3_sumcheck,
+            stage4_sumcheck_proof: stage4_sumcheck,
+            stage5_sumcheck_proof: stage5_sumcheck,
+            stage6_sumcheck_proof: stage6_sumcheck,
+            stage7_sumcheck_proof: stage7_sumcheck,
+            joint_opening_proof: AstProof::default(),
+            untrusted_advice_commitment,
+            trace_length: real_proof.trace_length,
+            ram_K: real_proof.ram_K,
+            rw_config: real_proof.rw_config.clone(),
+            one_hot_config: real_proof.one_hot_config.clone(),
+            dory_layout: real_proof.dory_layout,
+        };
+
+        // Build the opening accumulator with the symbolic claims we created
+        #[allow(non_snake_case)] // Match VerifierOpeningAccumulator naming
+        let log_T = (real_proof.trace_length as f64).log2().ceil() as usize;
+        let mut accumulator = AstOpeningAccumulator::new(log_T);
+        for (key, (_, claim)) in &symbolic_proof.opening_claims.0 {
+            accumulator.openings.insert(*key, (vec![], *claim));
+        }
+
+        (symbolic_proof, accumulator, alloc)
     }
-
-    (symbolic_proof, accumulator, alloc)
 }
 
 // =============================================================================

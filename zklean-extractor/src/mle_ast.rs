@@ -1878,6 +1878,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::op_ref)]
     fn test_arithmetic_optimizations() {
         let a = MleAst::from_u64(5);
         let zero = MleAst::zero();

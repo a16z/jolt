@@ -13,9 +13,11 @@
 pub mod constants;
 pub mod instruction;
 pub mod lean_tests;
+pub mod lookup_table_flags;
 pub mod lookups;
 pub mod modules;
 pub mod r1cs;
+pub mod sumchecks;
 pub mod util;
 
 // Transpilation modules
