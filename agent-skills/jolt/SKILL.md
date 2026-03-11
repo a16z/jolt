@@ -76,7 +76,7 @@ Include `"thread"` for rayon/parallel, `"stdout"` for `println!`. No `cfg_attr` 
 **Prover-only inputs** — two options depending on whether you need cryptographic privacy:
 
 - `jolt::UntrustedAdvice<T>` — prover-only; excluded from the verifier API but values may be recoverable from the proof
-- `jolt::PrivateInput<T>` — same underlying type, but signals that `zk` is enabled and values are cryptographically hidden via BlindFold
+- `jolt::PrivateInput<T>` — same underlying type, signals that values should be cryptographically hidden via BlindFold (requires `zk` on the host, not the guest)
 
 ```rust
 #[jolt::provable]
@@ -87,7 +87,7 @@ fn my_fn(public: u64, secret: jolt::UntrustedAdvice<[u8; 32]>) -> bool {
 ```
 Host prove call: `prove(..., UntrustedAdvice::new(val))`. The generated verifier signature omits the advice entirely. Add `use jolt_sdk::UntrustedAdvice;` to the host.
 
-For `PrivateInput<T>`, enable `zk` on both guest and host (see Step 7).
+For `PrivateInput<T>`, enable `zk` on the host only (see Step 7). The macro enforces this at compile time.
 
 `TrustedAdvice<T>` is the alternative for data committed by a third party — it requires a `commit_trusted_advice_<fn>(...)` host call and the commitment is passed to the verifier.
 
