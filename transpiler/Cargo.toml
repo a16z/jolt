@@ -9,8 +9,6 @@ ark-std.workspace = true
 ark-bn254.workspace = true
 ark-serialize.workspace = true
 ark-ff.workspace = true
-ark-ec.workspace = true
-serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 
@@ -28,6 +26,7 @@ default = []
 transcript-poseidon = ["jolt-core/transcript-poseidon"]
 transcript-keccak = ["jolt-core/transcript-keccak"]
 transcript-blake2b = ["jolt-core/transcript-blake2b"]
+zk = ["jolt-core/zk"]
 
 [[bin]]
 name = "transpiler"
