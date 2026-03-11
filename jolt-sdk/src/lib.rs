@@ -88,6 +88,16 @@ impl<T> core::ops::Deref for UntrustedAdvice<T> {
     }
 }
 
+impl<T: Clone> Clone for UntrustedAdvice<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+        }
+    }
+}
+
+impl<T: Copy> Copy for UntrustedAdvice<T> {}
+
 /// Alias for `UntrustedAdvice<T>` — marks a guest function parameter as private
 /// (committed by the prover, cryptographically hidden from the verifier via BlindFold).
 ///
