@@ -1,0 +1,59 @@
+# Default owner for everything
+* @moodlezoup
+
+# Core proving system
+jolt-core/ @moodlezoup @0xAndoroid @markosg04
+
+# Dory commitment scheme
+jolt-core/src/poly/commitment/dory/ @markosg04
+
+# BlindFold zero-knowledge protocol
+jolt-core/src/subprotocols/blindfold/ @0xAndoroid
+
+# Host (ELF compilation, program analysis)
+jolt-core/src/host/ @moodlezoup @sagar-a16z
+
+# Tracer (RISC-V emulator)
+tracer/ @moodlezoup @sagar-a16z
+tracer/src/instruction/ @moodlezoup
+
+# SDK
+jolt-sdk/ @moodlezoup @sagar-a16z
+
+# Inlines (optimized cryptographic primitives)
+jolt-inlines/ @0xAndoroid
+
+# Common types and constants
+common/ @moodlezoup @sagar-a16z
+
+# Documentation
+book/ @moodlezoup
+README.md @moodlezoup @markosg04 @0xAndoroid
+
+# Examples and integration tests
+examples/ @sagar-a16z @0xAndoroid @moodlezoup
+
+# Formal verification
+z3-verifier/ @moodlezoup
+zklean-extractor/ @moodlezoup
+
+# Platform support
+jolt-platform/ @sagar-a16z @0xAndoroid
+
+# Scripts and tooling
+scripts/ @0xAndoroid
+
+# AI
+.claude/ @moodlezoup @markosg04 @0xAndoroid
+agent-skills/ @moodlezoup @markosg04 @0xAndoroid
+CLAUDE.md @moodlezoup @markosg04 @0xAndoroid
+
+# Binary
+src/ @sagar-a16z
+
+# Cargo
+Cargo.toml @moodlezoup @markosg04 @0xAndoroid
+Cargo.lock @moodlezoup @markosg04 @0xAndoroid
+
+# CI/CD workflows
+.github/workflows/ @a16z/jolt-maintainers

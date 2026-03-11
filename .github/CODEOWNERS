@@ -1,2 +1,0 @@
-# Protect CI/CD workflow definitions — changes require maintainer review
-.github/workflows/ @a16z/jolt-maintainers

@@ -69,7 +69,7 @@ jobs:
           plugins: "code-review@claude-code-plugins"
           prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ steps.pr.outputs.number }}"
 
-  # PATH B: Manual trigger via CODEOWNER thumbs-up comment on a PR
+  # PATH B: Manual trigger via /claude-review comment on a PR
   claude-review-manual:
     if: |
       github.event_name == 'issue_comment' &&
@@ -79,7 +79,7 @@ jobs:
         github.event.comment.author_association == 'COLLABORATOR' ||
         github.event.comment.author_association == 'OWNER'
       ) &&
-      contains(github.event.comment.body, '👍')
+      contains(github.event.comment.body, '/claude-review')
     runs-on: ubuntu-latest
     permissions:
       contents: read
