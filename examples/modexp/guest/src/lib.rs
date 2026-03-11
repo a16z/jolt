@@ -1,5 +1,7 @@
-#[jolt::provable(heap_size = 65536, max_trace_length = 4194304)]
-fn modexp(base: Vec<u8>, exp: Vec<u8>, modulus: Vec<u8>, num_iters: u32) -> Vec<u8> {
+#![cfg_attr(feature = "guest", no_std)]
+
+#[jolt::provable(heap_size = 65536, max_trace_length = 67108864)]
+fn modexp(base: [u8; 32], exp: [u8; 32], modulus: [u8; 32], num_iters: u32) -> [u8; 32] {
     use num_bigint::BigUint;
 
     let exp = BigUint::from_bytes_be(&exp);
@@ -10,5 +12,9 @@ fn modexp(base: Vec<u8>, exp: Vec<u8>, modulus: Vec<u8>, num_iters: u32) -> Vec<
         result = result.modpow(&exp, &modulus);
     }
 
-    result.to_bytes_be()
+    let bytes = result.to_bytes_be();
+    let mut out = [0u8; 32];
+    let start = 32 - bytes.len();
+    out[start..].copy_from_slice(&bytes);
+    out
 }

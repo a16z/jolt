@@ -12,7 +12,7 @@ const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
-const CYCLES_PER_MODEXP_256: f64 = 50000.0;
+const CYCLES_PER_MODEXP_256: f64 = 883_493.0;
 const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
 
 /// Calculate number of operations to target a specific cycle count
@@ -81,16 +81,18 @@ fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 }
 
 fn modexp() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    let mut inputs = vec![];
-    let base = vec![0xABu8; 32];
-    let exp = vec![0xCDu8; 32];
-    let mut modulus = vec![0xEFu8; 32];
-    modulus[31] |= 0x01; // Ensure odd
+    let base = [0xABu8; 32];
+    let exp = [0xCDu8; 32];
+    let mut modulus = [0xEFu8; 32];
+    modulus[31] |= 0x01;
     let iters = 10u32;
-    inputs.append(&mut postcard::to_stdvec(&base).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&exp).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&modulus).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&iters).unwrap());
+    let inputs = [
+        postcard::to_stdvec(&base).unwrap(),
+        postcard::to_stdvec(&exp).unwrap(),
+        postcard::to_stdvec(&modulus).unwrap(),
+        postcard::to_stdvec(&iters).unwrap(),
+    ]
+    .concat();
     prove_example("modexp-guest", inputs)
 }
 
@@ -150,9 +152,9 @@ pub fn master_benchmark(
             }),
             BenchType::Modexp => ("modexp", |target| {
                 let iterations = scale_to_target_ops(target, CYCLES_PER_MODEXP_256);
-                let base = vec![0xABu8; 32];
-                let exp = vec![0xCDu8; 32];
-                let mut modulus = vec![0xEFu8; 32];
+                let base = [0xABu8; 32];
+                let exp = [0xCDu8; 32];
+                let mut modulus = [0xEFu8; 32];
                 modulus[31] |= 0x01;
                 [
                     postcard::to_stdvec(&base).unwrap(),

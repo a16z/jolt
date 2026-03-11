@@ -3309,7 +3309,6 @@ version = "0.1.0"
 dependencies = [
  "jolt-sdk",
  "modexp-guest",
- "num-bigint",
  "rand 0.8.5",
  "tracing",
  "tracing-subscriber",
@@ -3321,7 +3320,6 @@ version = "0.1.0"
 dependencies = [
  "jolt-sdk",
  "num-bigint",
- "num-traits",
 ]
 
 [[package]]

@@ -7,6 +7,5 @@ edition = "2021"
 jolt-sdk = { workspace = true, features = ["host"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
-num-bigint.workspace = true
 rand.workspace = true
 guest = { package = "modexp-guest", path = "./guest" }
