@@ -133,14 +133,14 @@ pub struct BytecodeReadRafSumcheckProver<F: JoltField> {
     prev_round_polys: Option<[UniPoly<F>; N_STAGES]>,
     /// Final sumcheck claims of stage Val polynomials (with RAF Int folded where applicable).
     bound_val_evals: Option<[F; N_STAGES]>,
-    /// f_entry_pre[k] = Ra(k, 0): one-hot at PC of cycle 0 (from trace).
-    f_entry_pre: MultilinearPolynomial<F>,
-    /// f_entry[k] = C(k): one-hot at entry_bytecode_index (from preprocessing).
-    /// Product f_entry_pre * f_entry = Ra(k,0) * C(k); sums to 1 iff PC[0] = entry_bytecode_index.
-    f_entry: MultilinearPolynomial<F>,
+    /// f_entry_trace[k] = Ra(k, 0): one-hot at PC of cycle 0 (from trace).
+    f_entry_trace: MultilinearPolynomial<F>,
+    /// f_entry_expected[k] = C(k): one-hot at entry_bytecode_index (from preprocessing).
+    /// Product f_entry_trace * f_entry_expected = Ra(k,0) * C(k); sums to 1 iff PC[0] = entry_bytecode_index.
+    f_entry_expected: MultilinearPolynomial<F>,
     /// eq_zero(j) indicator (r_cycle = all zeros), used in the cycle phase.
     gruen_eq_entry: GruenSplitEqPolynomial<F>,
-    /// f_entry bound at r_addr after the address phase (cached for output claim).
+    /// f_entry_expected bound at r_addr after the address phase (cached for output claim).
     bound_f_entry: Option<F>,
     /// Running entry claim over remaining free variables.
     prev_entry_claim: F,
@@ -310,18 +310,16 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
             .map(|r_cycle| GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh));
 
         let pc_0 = bytecode_preprocessing.get_pc(&trace[0]);
-        let mut f_entry_pre_vec: Vec<F> = vec![F::zero(); params.K];
-        if pc_0 < params.K {
-            f_entry_pre_vec[pc_0] = F::one();
-        }
-        let f_entry_pre = MultilinearPolynomial::from(f_entry_pre_vec);
+        assert!(pc_0 < params.K, "pc_0 ({pc_0}) out of bounds for K ({})", params.K);
+        let mut f_entry_trace_vec: Vec<F> = vec![F::zero(); params.K];
+        f_entry_trace_vec[pc_0] = F::one();
+        let f_entry_trace = MultilinearPolynomial::from(f_entry_trace_vec);
 
         let entry_bytecode_index = params.entry_bytecode_index;
-        let mut f_entry_vec: Vec<F> = vec![F::zero(); params.K];
-        if entry_bytecode_index < params.K {
-            f_entry_vec[entry_bytecode_index] = F::one();
-        }
-        let f_entry = MultilinearPolynomial::from(f_entry_vec);
+        assert!(entry_bytecode_index < params.K, "entry_bytecode_index ({entry_bytecode_index}) out of bounds for K ({})", params.K);
+        let mut f_entry_expected_vec: Vec<F> = vec![F::zero(); params.K];
+        f_entry_expected_vec[entry_bytecode_index] = F::one();
+        let f_entry_expected = MultilinearPolynomial::from(f_entry_expected_vec);
 
         // eq_zero(j) = ∏(1 - j_i): indicator for cycle j = 0. r_cycle = all zeros.
         let r_cycle_zero = vec![F::Challenge::default(); params.log_T];
@@ -329,11 +327,11 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
 
         Self {
             F,
-            f_entry_pre,
-            f_entry,
+            f_entry_trace,
+            f_entry_expected,
             gruen_eq_entry,
             bound_f_entry: None,
-            // Initial entry claim = Σ_k f_entry_pre[k] * f_entry[k] = 1 for honest prover
+            // Initial entry claim = Σ_k f_entry_trace[k] * f_entry_expected[k] = 1 for honest prover
             // (both one-hots at same index when PC[0] = entry_bytecode_index).
             prev_entry_claim: F::one(),
             prev_entry_poly: None,
@@ -381,7 +379,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
         self.params.bound_val_polys = Some(bound_val_evals);
         self.params.bound_int_poly = Some(int_poly);
 
-        let bound_f_entry = self.f_entry.final_sumcheck_claim();
+        let bound_f_entry = self.f_entry_expected.final_sumcheck_claim();
         self.bound_f_entry = Some(bound_f_entry);
         self.params.bound_f_entry = Some(bound_f_entry);
 
@@ -390,8 +388,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
         r_address.reverse();
 
         self.F = array::from_fn(|_| MultilinearPolynomial::default());
-        self.f_entry_pre = MultilinearPolynomial::default();
-        self.f_entry = MultilinearPolynomial::default();
+        self.f_entry_trace = MultilinearPolynomial::default();
+        self.f_entry_expected = MultilinearPolynomial::default();
         self.params.val_polys = array::from_fn(|_| MultilinearPolynomial::default());
         self.params.int_poly = IdentityPolynomial::new(0);
 
@@ -480,8 +478,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                         [ra_at_0 * val_at_0, ra_at_2 * val_at_2]
                     });
 
-                    let pre = self.f_entry_pre.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
-                    let c = self.f_entry.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                    let pre = self.f_entry_trace.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                    let c = self.f_entry_expected.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                     let entry_result: [F; DEGREE] = array::from_fn(|j| pre[j] * c[j]);
 
                     (stage_result, entry_result)
@@ -641,8 +639,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             self.F
                 .iter_mut()
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
-            self.f_entry_pre.bind_parallel(r_j, BindingOrder::LowToHigh);
-            self.f_entry.bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.f_entry_trace.bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.f_entry_expected.bind_parallel(r_j, BindingOrder::LowToHigh);
             self.r_address_prime.push(r_j);
             if round == self.params.log_K - 1 {
                 self.init_log_t_rounds();
