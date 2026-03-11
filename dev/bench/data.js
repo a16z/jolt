@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773266472902,
+  "lastUpdate": 1773268494773,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -63802,6 +63802,234 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 825968,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "58c9f645f9b8eb494d63a501ecd941a99334f7f4",
+          "message": "perf(blindfold): optimize EC operations, parallelize folding and row commits (#1333)\n\n* perf(blindfold): optimize EC operations, parallelize folding and row commits\n\nReplace serialize/deserialize roundtrip in curve scalar conversions with\ndirect JoltField::to_ark_bigint(). Pre-convert Pedersen generators to\naffine and fold blinding into a single MSM call. Parallelize Nova fold\noperations and Hyrax row commits. Use g1_msm for verifier combined\ncommitment checks.\n\nMeasured on sha2 e2e (small trace):\n- BlindFold fold: 49ms → 5ms (10x)\n- BlindFold verify: 52ms → 11ms (4.7x)\n- BlindFold prove: 350ms → 305ms (13%)\n- Total verify: 170ms → 129ms (24%)\n\n* fix(blindfold): reconstruct PedersenGenerators via new() on truncation, deduplicate g1_msm\n\nProver's pedersen_generators() used truncate() on message_generators,\nleaving affine_bases stale — commit() would index the wrong base for\nblinding. Reconstruct via PedersenGenerators::new() to match verifier.\n\nAlso delegate g1_msm to g1_affine_msm to eliminate duplicated\nscalar-to-bigint logic.\n\n* refactor(curve): add ScalarField to JoltCurve/JoltGroupElement, remove to_ark_bigint\n\nAdd `type F: JoltField` to `JoltCurve` and `type Scalar: JoltField` to\n`JoltGroupElement`, binding curve operations to a concrete scalar field.\n\nThis lets the Bn254 MSM implementations use arkworks `VariableBaseMSM::msm`\ndirectly (which handles Montgomery↔standard conversion internally) instead\nof requiring the manual `to_ark_bigint()` method on JoltField.\n\nRemoves `to_ark_bigint` from JoltField and all implementations, eliminating\narkworks-specific methods from the generic field trait.\n\n* refactor(curve): parameterize impl_group_ops/impl_group_element macros with $Field\n\nReplace hardcoded Fr with a $Field:ty macro argument.",
+          "timestamp": "2026-03-11T17:42:10-04:00",
+          "tree_id": "98fb8d3d6172d9d30be1da62c7a5a6221bc976f4",
+          "url": "https://github.com/a16z/jolt/commit/58c9f645f9b8eb494d63a501ecd941a99334f7f4"
+        },
+        "date": 1773268493167,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9775,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 831984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3447,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 444980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 448664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 447056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7189,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 447136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.592,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 446720,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8025,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 442908,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.3634,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 827600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5683,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 444792,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4738,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 449108,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.74,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 447260,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.0616,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1010772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.4388,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 598004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 83.7333,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2112892,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4952,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 445124,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5156,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 445240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.5281,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 832520,
             "unit": "KB",
             "extra": ""
           }
