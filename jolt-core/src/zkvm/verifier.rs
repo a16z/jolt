@@ -345,6 +345,7 @@ impl<
             &self.program_io,
             self.proof.ram_K,
             self.proof.trace_length,
+            self.preprocessing.shared.bytecode.entry_address,
             &mut self.transcript,
         );
 
@@ -1672,8 +1673,9 @@ impl JoltSharedPreprocessing {
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_padded_trace_length: usize,
+        entry_address: u64,
     ) -> JoltSharedPreprocessing {
-        let bytecode = Arc::new(BytecodePreprocessing::preprocess(bytecode));
+        let bytecode = Arc::new(BytecodePreprocessing::preprocess(bytecode, entry_address));
         let ram = RAMPreprocessing::preprocess(memory_init);
         Self {
             bytecode,

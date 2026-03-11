@@ -65,7 +65,7 @@ const N_STAGES: usize = 5;
 /// of degree `d + 1` (cubic only when `d = 2`).
 ///
 /// Challenge notation:
-/// - γ: the stage-folding scalar with powers `params.gamma_powers = transcript.challenge_scalar_powers(7)`.
+/// - γ: the stage-folding scalar with powers `params.gamma_powers = transcript.challenge_scalar_powers(8)` (7 stage-folding terms plus `γ_entry` at index 7 for the entry-point constraint).
 /// - β_s: per-stage scalars used *within* Val_s encodings (`stage{s}_gammas = transcript.challenge_scalar_powers(...)`),
 ///   sampled separately for each stage.
 ///
@@ -133,6 +133,18 @@ pub struct BytecodeReadRafSumcheckProver<F: JoltField> {
     prev_round_polys: Option<[UniPoly<F>; N_STAGES]>,
     /// Final sumcheck claims of stage Val polynomials (with RAF Int folded where applicable).
     bound_val_evals: Option<[F; N_STAGES]>,
+    /// f_entry_trace[k] = Ra(k, 0): one-hot at PC of cycle 0 (from trace).
+    f_entry_trace: MultilinearPolynomial<F>,
+    /// f_entry_expected[k] = C(k): one-hot at entry_bytecode_index (from preprocessing).
+    /// Product f_entry_trace * f_entry_expected = Ra(k,0) * C(k); sums to 1 iff PC[0] = entry_bytecode_index.
+    f_entry_expected: MultilinearPolynomial<F>,
+    /// eq_zero(j) indicator (r_cycle = all zeros), used in the cycle phase.
+    gruen_eq_entry: GruenSplitEqPolynomial<F>,
+    /// f_entry_expected bound at r_addr after the address phase (cached for output claim).
+    bound_f_entry: Option<F>,
+    /// Running entry claim over remaining free variables.
+    prev_entry_claim: F,
+    prev_entry_poly: Option<UniPoly<F>>,
     /// Trace for computing PCs on the fly in init_log_t_rounds.
     #[allocative(skip)]
     trace: Arc<Vec<Cycle>>,
@@ -297,8 +309,40 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
             .each_ref()
             .map(|r_cycle| GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh));
 
+        let pc_0 = bytecode_preprocessing.get_pc(&trace[0]);
+        assert!(
+            pc_0 < params.K,
+            "pc_0 ({pc_0}) out of bounds for K ({})",
+            params.K
+        );
+        let mut f_entry_trace_vec: Vec<F> = vec![F::zero(); params.K];
+        f_entry_trace_vec[pc_0] = F::one();
+        let f_entry_trace = MultilinearPolynomial::from(f_entry_trace_vec);
+
+        let entry_bytecode_index = params.entry_bytecode_index;
+        assert!(
+            entry_bytecode_index < params.K,
+            "entry_bytecode_index ({entry_bytecode_index}) out of bounds for K ({})",
+            params.K
+        );
+        let mut f_entry_expected_vec: Vec<F> = vec![F::zero(); params.K];
+        f_entry_expected_vec[entry_bytecode_index] = F::one();
+        let f_entry_expected = MultilinearPolynomial::from(f_entry_expected_vec);
+
+        // eq_zero(j) = ∏(1 - j_i): indicator for cycle j = 0. r_cycle = all zeros.
+        let r_cycle_zero = vec![F::Challenge::default(); params.log_T];
+        let gruen_eq_entry = GruenSplitEqPolynomial::new(&r_cycle_zero, BindingOrder::LowToHigh);
+
         Self {
             F,
+            f_entry_trace,
+            f_entry_expected,
+            gruen_eq_entry,
+            bound_f_entry: None,
+            // Initial entry claim = Σ_k f_entry_trace[k] * f_entry_expected[k] = 1 for honest prover
+            // (both one-hots at same index when PC[0] = entry_bytecode_index).
+            prev_entry_claim: F::one(),
+            prev_entry_poly: None,
             ra: Vec::with_capacity(params.d),
             r_address_prime: Vec::with_capacity(params.log_K),
             gruen_eq_polys,
@@ -343,16 +387,18 @@ impl<F: JoltField> BytecodeReadRafSumcheckProver<F> {
         self.params.bound_val_polys = Some(bound_val_evals);
         self.params.bound_int_poly = Some(int_poly);
 
+        let bound_f_entry = self.f_entry_expected.final_sumcheck_claim();
+        self.bound_f_entry = Some(bound_f_entry);
+        self.params.bound_f_entry = Some(bound_f_entry);
+
         // Reverse r_address_prime to get the correct order (it was built low-to-high)
         let mut r_address = std::mem::take(&mut self.r_address_prime);
         r_address.reverse();
 
-        // Drop log_K phase data that's no longer needed (val_polys reduced to bound_val_evals)
-        // F polynomials are fully bound and can be dropped
         self.F = array::from_fn(|_| MultilinearPolynomial::default());
-        // val_polys are reduced to scalars in bound_val_evals
+        self.f_entry_trace = MultilinearPolynomial::default();
+        self.f_entry_expected = MultilinearPolynomial::default();
         self.params.val_polys = array::from_fn(|_| MultilinearPolynomial::default());
-        // int_poly is reduced to a scalar
         self.params.int_poly = IdentityPolynomial::new(0);
 
         let r_address_chunks = self
@@ -394,8 +440,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         if round < self.params.log_K {
             const DEGREE: usize = 2;
 
-            // Evaluation at [0, 2] for each stage.
-            let eval_per_stage: [[F; DEGREE]; N_STAGES] = (0..self.params.val_polys[0].len() / 2)
+            // Evaluation at [0, 2] for each stage plus the entry term.
+            let (eval_per_stage, entry_evals): ([[F; DEGREE]; N_STAGES], [F; DEGREE]) =
+                (0..self.params.val_polys[0].len() / 2)
                 .into_par_iter()
                 .map(|i| {
                     let ra_evals = self.F.each_ref().map(|poly| {
@@ -433,15 +480,24 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                             })
                         });
 
-                    array::from_fn(|stage| {
+                    let stage_result = array::from_fn(|stage| {
                         let [ra_at_0, ra_at_2] = ra_evals[stage];
                         let [val_at_0, val_at_2] = val_evals.next().unwrap();
                         [ra_at_0 * val_at_0, ra_at_2 * val_at_2]
-                    })
+                    });
+
+                    let pre = self.f_entry_trace.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                    let c = self.f_entry_expected.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
+                    let entry_result: [F; DEGREE] = array::from_fn(|j| pre[j] * c[j]);
+
+                    (stage_result, entry_result)
                 })
                 .reduce(
-                    || [[F::zero(); DEGREE]; N_STAGES],
-                    |a, b| array::from_fn(|i| array::from_fn(|j| a[i][j] + b[i][j])),
+                    || ([[F::zero(); DEGREE]; N_STAGES], [F::zero(); DEGREE]),
+                    |(a_stages, a_entry), (b_stages, b_entry)| (
+                        array::from_fn(|i| array::from_fn(|j| a_stages[i][j] + b_stages[i][j])),
+                        array::from_fn(|j| a_entry[j] + b_entry[j]),
+                    ),
                 );
 
             let mut round_polys: [_; N_STAGES] = array::from_fn(|_| UniPoly::zero());
@@ -455,6 +511,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 round_polys[stage] = round_poly;
             }
 
+            let [entry_at_0, entry_at_2] = entry_evals;
+            let entry_at_1 = self.prev_entry_claim - entry_at_0;
+            let entry_round_poly = UniPoly::from_evals(&[entry_at_0, entry_at_1, entry_at_2]);
+            agg_round_poly += &(&entry_round_poly * self.params.entry_gamma);
+            self.prev_entry_poly = Some(entry_round_poly);
+
             self.prev_round_polys = Some(round_polys);
 
             agg_round_poly
@@ -465,14 +527,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             let in_len = self.gruen_eq_polys[0].E_in_current().len();
             let in_n_vars = in_len.log_2();
 
-            // Evaluations on [1, ..., degree - 2, inf] (for each stage).
-            let mut evals_per_stage: [Vec<F>; N_STAGES] = (0..out_len)
+            // Evaluations on [1, ..., degree - 2, inf] (for each stage + entry term).
+            let (mut evals_per_stage, mut entry_evals_raw): ([Vec<F>; N_STAGES], Vec<F>) = (0
+                ..out_len)
                 .into_par_iter()
                 .map(|j_hi| {
                     let mut ra_eval_pairs = vec![(F::zero(), F::zero()); self.ra.len()];
                     let mut ra_prod_evals = vec![F::zero(); degree - 1];
                     let mut evals_per_stage: [_; N_STAGES] =
                         array::from_fn(|_| vec![F::UnreducedProductAccum::zero(); degree - 1]);
+                    let mut entry_accum = vec![F::UnreducedProductAccum::zero(); degree - 1];
 
                     for j_lo in 0..in_len {
                         let j = j_lo + (j_hi << in_n_vars);
@@ -482,7 +546,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                             let ra_i_eval_at_j_1 = ra_i.get_bound_coeff(j * 2 + 1);
                             ra_eval_pairs[i] = (ra_i_eval_at_j_0, ra_i_eval_at_j_1);
                         }
-                        // Eval prod_i ra_i(x).
                         eval_linear_prod_assign(&ra_eval_pairs, &mut ra_prod_evals);
 
                         for stage in 0..N_STAGES {
@@ -492,25 +555,54 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                                     eq_in_eval.mul_to_product_accum(ra_prod_evals[i]);
                             }
                         }
+
+                        let eq_in_entry = self.gruen_eq_entry.E_in_current()[j_lo];
+                        for i in 0..degree - 1 {
+                            entry_accum[i] += eq_in_entry.mul_to_product_accum(ra_prod_evals[i]);
+                        }
                     }
 
-                    array::from_fn(|stage| {
+                    let stage_evals = array::from_fn(|stage| {
                         let eq_out_eval = self.gruen_eq_polys[stage].E_out_current()[j_hi];
                         evals_per_stage[stage]
                             .iter()
                             .map(|v| eq_out_eval * F::reduce_product_accum(*v))
                             .collect()
-                    })
+                    });
+                    let eq_out_entry = self.gruen_eq_entry.E_out_current()[j_hi];
+                    let entry_evals: Vec<F> = entry_accum
+                        .iter()
+                        .map(|v| eq_out_entry * F::reduce_product_accum(*v))
+                        .collect();
+
+                    (stage_evals, entry_evals)
                 })
                 .reduce(
-                    || array::from_fn(|_| vec![F::zero(); degree - 1]),
-                    |a, b| array::from_fn(|i| zip_eq(&a[i], &b[i]).map(|(a, b)| *a + *b).collect()),
+                    || {
+                        (
+                            array::from_fn(|_| vec![F::zero(); degree - 1]),
+                            vec![F::zero(); degree - 1],
+                        )
+                    },
+                    |(a_stages, a_entry), (b_stages, b_entry)| {
+                        let stages = array::from_fn(|i| {
+                            zip_eq(&a_stages[i], &b_stages[i])
+                                .map(|(a, b)| *a + *b)
+                                .collect()
+                        });
+                        let entry: Vec<F> =
+                            zip_eq(&a_entry, &b_entry).map(|(a, b)| *a + *b).collect();
+                        (stages, entry)
+                    },
                 );
+
             // Multiply by bound values.
             let bound_val_evals = self.bound_val_evals.as_ref().unwrap();
             for (stage, evals) in evals_per_stage.iter_mut().enumerate() {
                 evals.iter_mut().for_each(|v| *v *= bound_val_evals[stage]);
             }
+            let bound_f_entry = self.bound_f_entry.unwrap();
+            entry_evals_raw.iter_mut().for_each(|v| *v *= bound_f_entry);
 
             let mut round_polys: [_; N_STAGES] = array::from_fn(|_| UniPoly::zero());
             let mut agg_round_poly = UniPoly::zero();
@@ -523,6 +615,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 round_polys[stage] = round_poly;
             }
 
+            let entry_round_poly = self
+                .gruen_eq_entry
+                .gruen_poly_from_evals(&entry_evals_raw, self.prev_entry_claim);
+            agg_round_poly += &(&entry_round_poly * self.params.entry_gamma);
+            self.prev_entry_poly = Some(entry_round_poly);
+
             self.prev_round_polys = Some(round_polys);
 
             agg_round_poly
@@ -533,6 +631,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         if let Some(prev_round_polys) = self.prev_round_polys.take() {
             self.prev_round_claims = prev_round_polys.map(|poly| poly.evaluate(&r_j));
+        }
+        if let Some(entry_poly) = self.prev_entry_poly.take() {
+            self.prev_entry_claim = entry_poly.evaluate(&r_j);
         }
 
         if round < self.params.log_K {
@@ -546,6 +647,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             self.F
                 .iter_mut()
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            self.f_entry_trace
+                .bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.f_entry_expected
+                .bind_parallel(r_j, BindingOrder::LowToHigh);
             self.r_address_prime.push(r_j);
             if round == self.params.log_K - 1 {
                 self.init_log_t_rounds();
@@ -557,6 +662,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             self.gruen_eq_polys
                 .iter_mut()
                 .for_each(|poly| poly.bind(r_j));
+            self.gruen_eq_entry.bind(r_j);
         }
     }
 
@@ -672,7 +778,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
             })
             .sum::<F>();
 
-        ra_claims.fold(val, |running, ra_claim| running * ra_claim)
+        // Entry constraint: γ_entry · eq(r_addr, entry_bits) · eq_zero(r_cycle).
+        // r_address_prime.r is MSB-first (after normalize_opening_point reversal),
+        // so entry_bits must also be MSB-first: entry_bits[j] = (e >> (log_K-1-j)) & 1.
+        let entry_f_at_r_addr = {
+            let log_k = self.params.log_K;
+            let e = self.params.entry_bytecode_index;
+            let entry_bits: Vec<F> = (0..log_k)
+                .map(|i| F::from_u64(((e >> (log_k - 1 - i)) & 1) as u64))
+                .collect();
+            EqPolynomial::<F>::mle(&entry_bits, &r_address_prime.r)
+        };
+        // eq_zero(r_cycle) = ∏_i (1 - r_cycle_prime.r[i])
+        let zeros: Vec<F::Challenge> = vec![F::Challenge::default(); r_cycle_prime.r.len()];
+        let eq_zero_at_r_cycle = EqPolynomial::<F>::mle(&zeros, &r_cycle_prime.r);
+        let entry_contrib = self.params.entry_gamma * entry_f_at_r_addr * eq_zero_at_r_cycle;
+
+        ra_claims.fold(val + entry_contrib, |running, ra_claim| running * ra_claim)
     }
 
     fn cache_openings(
@@ -733,6 +855,12 @@ pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
     /// Bound values after log_K rounds (set by prover for output_constraint_challenge_values)
     pub bound_int_poly: Option<F>,
     pub bound_val_polys: Option<[F; N_STAGES]>,
+    /// γ_entry = gamma_powers[7]. Weights the entry-point constraint term.
+    pub entry_gamma: F,
+    /// Bytecode table index of the ELF entry point.
+    pub entry_bytecode_index: usize,
+    /// Prover-cached f_entry(r_addr) after address phase (None in verifier params).
+    pub bound_f_entry: Option<F>,
 }
 
 impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
@@ -744,7 +872,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let gamma_powers = transcript.challenge_scalar_powers(7);
+        let gamma_powers = transcript.challenge_scalar_powers(8);
 
         let bytecode = &bytecode_preprocessing.bytecode;
 
@@ -802,7 +930,12 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
         let (_, raf_shift_claim) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
-        let input_claim = [
+        let entry_gamma = gamma_powers[7];
+        let entry_bytecode_index = bytecode_preprocessing.entry_bytecode_index();
+        // Both prover and verifier add entry_gamma unconditionally.
+        // The security comes from the sumcheck: if ra(entry_index, 0) != 1, the sum
+        // won't match input_claim and the sumcheck fails.
+        let input_claim: F = [
             rv_claim_1,
             rv_claim_2,
             rv_claim_3,
@@ -814,7 +947,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         .iter()
         .zip(&gamma_powers)
         .map(|(claim, g)| *claim * g)
-        .sum();
+        .sum::<F>()
+            + entry_gamma;
 
         let (r_cycle_1, _) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
@@ -846,6 +980,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
         Self {
             gamma_powers,
+            entry_gamma,
+            entry_bytecode_index,
             stage1_gammas,
             stage2_gammas,
             stage3_gammas,
@@ -865,6 +1001,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             r_cycles,
             bound_int_poly: None,
             bound_val_polys: None,
+            bound_f_entry: None,
         }
     }
 
@@ -1488,6 +1625,13 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
                 SumcheckId::SpartanShift,
             ))],
         ));
+        challenge_idx += 1;
+
+        // Entry constraint: +γ_entry (constant term, no polynomial factors).
+        terms.push(ProductTerm::scaled(
+            ValueSource::Challenge(challenge_idx),
+            vec![],
+        ));
 
         InputClaimConstraint::sum_of_products(terms)
     }
@@ -1536,6 +1680,9 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
         // raf_shift_claim: gamma_powers[6]
         challenges.push(self.gamma_powers[6]);
+
+        // entry constraint
+        challenges.push(self.entry_gamma);
 
         challenges
     }
@@ -1593,6 +1740,23 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
                 .sum()
         };
 
-        vec![val]
+        // r_address_prime.r is MSB-first (after normalize_opening_point reversal),
+        // so entry_bits must also be MSB-first: entry_bits[j] = (e >> (log_K-1-j)) & 1.
+        let f_entry_at_r_addr = if let Some(v) = self.bound_f_entry {
+            v
+        } else {
+            let log_k = self.log_K;
+            let e = self.entry_bytecode_index;
+            let entry_bits: Vec<F> = (0..log_k)
+                .map(|i| F::from_u64(((e >> (log_k - 1 - i)) & 1) as u64))
+                .collect();
+            EqPolynomial::<F>::mle(&entry_bits, &r_address_prime.r)
+        };
+        // eq_zero(r_cycle) = ∏_i (1 - r_cycle_prime.r[i])
+        let zeros: Vec<F::Challenge> = vec![F::Challenge::default(); r_cycle_prime.r.len()];
+        let eq_zero_at_r_cycle = EqPolynomial::<F>::mle(&zeros, &r_cycle_prime.r);
+        let entry_contrib = self.entry_gamma * f_entry_at_r_addr * eq_zero_at_r_cycle;
+
+        vec![val + entry_contrib]
     }
 }

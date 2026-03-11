@@ -494,6 +494,7 @@ impl<
             &self.program_io,
             self.one_hot_params.ram_k,
             self.trace.len(),
+            self.preprocessing.shared.bytecode.entry_address,
             &mut self.transcript,
         );
 
@@ -2206,6 +2207,8 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>> Serializable
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use ark_bn254::Fr;
     use serial_test::serial;
 
@@ -2289,13 +2292,14 @@ mod tests {
         DoryGlobals::reset();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
         let shared_preprocessing = JoltSharedPreprocessing::new(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
@@ -2332,7 +2336,7 @@ mod tests {
         DoryGlobals::reset();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&5u32).unwrap();
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
@@ -2340,6 +2344,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             8192,
+            e_entry,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
@@ -2390,7 +2395,7 @@ mod tests {
         // when the jolt-inlines-keccak256 crate is linked (see lib.rs)
 
         let mut program = host::Program::new("sha3-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
@@ -2399,6 +2404,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
@@ -2450,7 +2456,7 @@ mod tests {
         // SHA2 inlines are automatically registered via #[ctor::ctor]
         // when the jolt-inlines-sha2 crate is linked (see lib.rs)
         let mut program = host::Program::new("sha2-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
@@ -2459,6 +2465,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
@@ -2508,7 +2515,7 @@ mod tests {
         // - Trusted: commit in preprocessing-only context, reduce in Stage 6, batch in Stage 8
         // - Untrusted: commit at prove time, reduce in Stage 6, batch in Stage 8
         let mut program = host::Program::new("sha2-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
         let untrusted_advice = postcard::to_stdvec(&[9u8; 32]).unwrap();
@@ -2520,6 +2527,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
@@ -2573,7 +2581,7 @@ mod tests {
         let trusted_advice = vec![7u8; 4096];
         let untrusted_advice = vec![9u8; 4096];
 
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (lazy_trace, trace, final_memory_state, io_device) =
             program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
@@ -2582,6 +2590,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             4096,
+            e_entry,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         tracing::info!(
@@ -2628,7 +2637,7 @@ mod tests {
         DoryGlobals::reset();
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
         let mut program = host::Program::new("merkle-tree-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
 
         // Merkle tree with 4 leaves: input=leaf1, trusted=[leaf2, leaf3], untrusted=leaf4
         let inputs = postcard::to_stdvec(&[5u8; 32].as_slice()).unwrap();
@@ -2642,6 +2651,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
@@ -2697,7 +2707,7 @@ mod tests {
         let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
         let untrusted_advice = postcard::to_stdvec(&[9u8; 32]).unwrap();
 
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (lazy_trace, trace, final_memory_state, io_device) =
             program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
@@ -2706,6 +2716,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let (trusted_commitment, trusted_hint) =
@@ -2787,7 +2798,7 @@ mod tests {
     fn memory_ops_e2e_dory() {
         DoryGlobals::reset();
         let mut program = host::Program::new("memory-ops-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (_, _, _, io_device) = program.trace(&[], &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
@@ -2795,6 +2806,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
@@ -2830,7 +2842,7 @@ mod tests {
     fn btreemap_e2e_dory() {
         DoryGlobals::reset();
         let mut program = host::Program::new("btreemap-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&50u32).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
@@ -2839,6 +2851,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
@@ -2874,7 +2887,7 @@ mod tests {
     fn muldiv_e2e_dory() {
         DoryGlobals::reset();
         let mut program = host::Program::new("muldiv-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
@@ -2883,6 +2896,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
@@ -2923,7 +2937,7 @@ mod tests {
         program.set_std(true);
         program.set_func("int_to_string");
         let inputs = postcard::to_stdvec(&81i32).unwrap();
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
@@ -2931,6 +2945,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
@@ -3073,7 +3088,7 @@ mod tests {
 
         // Run muldiv prover to get a real proof
         let mut program = host::Program::new("muldiv-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
@@ -3082,6 +3097,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
         let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents_opt = program.get_elf_contents();
@@ -3192,7 +3208,7 @@ mod tests {
     #[should_panic]
     fn truncated_trace() {
         let mut program = host::Program::new("fibonacci-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&9u8).unwrap();
         let (lazy_trace, mut trace, final_memory_state, mut program_io) =
             program.trace(&inputs, &[], &[]);
@@ -3204,6 +3220,7 @@ mod tests {
             program_io.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
@@ -3232,7 +3249,7 @@ mod tests {
     fn malicious_trace() {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&1u8).unwrap();
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (lazy_trace, trace, final_memory_state, mut program_io) =
             program.trace(&inputs, &[], &[]);
 
@@ -3242,6 +3259,7 @@ mod tests {
             program_io.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
 
@@ -3266,6 +3284,64 @@ mod tests {
         let verifier =
             JoltVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
         verifier.verify().unwrap();
+    }
+
+    /// Security property: the verifier must reject a proof when the verifier's preprocessing
+    /// has a different entry_address than the one used to generate the proof.
+    ///
+    /// Mechanism: the verifier computes entry_bytecode_index from its (wrong) entry_address,
+    /// expects a different input_claim adjustment (entry_gamma * wrong_C vs entry_gamma * 1),
+    /// so the BytecodeReadRaf sumcheck transcript diverges and verification fails.
+    #[test]
+    #[serial]
+    fn initial_pc_is_constrained_to_entry_point() {
+        DoryGlobals::reset();
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&9u8).unwrap();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (lazy_trace, trace, final_memory_state, program_io) = program.trace(&inputs, &[], &[]);
+
+        let shared = JoltSharedPreprocessing::new(
+            bytecode.clone(),
+            program_io.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+            e_entry,
+        );
+        let prover_preprocessing = JoltProverPreprocessing::new(shared.clone());
+        let prover = RV64IMACProver::gen_from_trace(
+            &prover_preprocessing,
+            lazy_trace,
+            trace,
+            program_io.clone(),
+            None,
+            None,
+            final_memory_state,
+        );
+        let (proof, _) = prover.prove();
+
+        let original_entry_index = shared.bytecode.entry_bytecode_index();
+        // Tamper: give verifier a wrong entry_address so it computes a different
+        // entry_bytecode_index and thus a different input_claim expectation.
+        let mut tampered_shared = shared.clone();
+        let mut tampered_bytecode = (*tampered_shared.bytecode).clone();
+        tampered_bytecode.entry_address = e_entry.wrapping_add(4);
+        tampered_shared.bytecode = Arc::new(tampered_bytecode);
+        let tampered_entry_index = tampered_shared.bytecode.entry_bytecode_index();
+        assert_ne!(
+            original_entry_index, tampered_entry_index,
+            "tamper did not change entry_bytecode_index — test scenario is invalid"
+        );
+        let tampered_prover_preprocessing = JoltProverPreprocessing::new(tampered_shared);
+        let verifier_preprocessing =
+            JoltVerifierPreprocessing::from(&tampered_prover_preprocessing);
+        let verifier =
+            RV64IMACVerifier::new(&verifier_preprocessing, proof, program_io, None, None).unwrap();
+        assert!(
+            verifier.verify().is_err(),
+            "verifier accepted proof: prover used entry_bytecode_index {original_entry_index}, \
+             verifier expected {tampered_entry_index} — entry constraint not enforced"
+        );
     }
 
     #[cfg(feature = "zk")]
@@ -3395,7 +3471,7 @@ mod tests {
 
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&50u32).unwrap();
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let shared_preprocessing = JoltSharedPreprocessing::new(
@@ -3403,6 +3479,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
@@ -3436,7 +3513,7 @@ mod tests {
 
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
         let mut program = host::Program::new("merkle-tree-guest");
-        let (bytecode, init_memory_state, _) = program.decode();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
 
         // Merkle tree with 4 leaves: input=leaf1, trusted=[leaf2, leaf3], untrusted=leaf4
         let inputs = postcard::to_stdvec(&[5u8; 32].as_slice()).unwrap();
@@ -3450,6 +3527,7 @@ mod tests {
             io_device.memory_layout.clone(),
             init_memory_state,
             1 << 16,
+            e_entry,
         );
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents = program.get_elf_contents().expect("elf contents is None");

@@ -48,7 +48,7 @@ impl Program {
     }
 
     /// Decode the ELF file into instructions and memory initialization
-    pub fn decode(&self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
+    pub fn decode(&self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
         decode(&self.elf_contents)
     }
 
@@ -90,8 +90,8 @@ impl Program {
     }
 }
 
-pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
-    let (mut instructions, raw_bytes, program_end, xlen) = tracer::decode(elf);
+pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
+    let (mut instructions, raw_bytes, program_end, e_entry, xlen) = tracer::decode(elf);
     let program_size = program_end - RAM_START_ADDRESS;
     let allocator = VirtualRegisterAllocator::default();
 
@@ -101,7 +101,7 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
         .flat_map(|instr| instr.inline_sequence(&allocator, xlen))
         .collect();
 
-    (instructions, raw_bytes, program_size)
+    (instructions, raw_bytes, program_size, e_entry)
 }
 
 pub fn trace(

@@ -58,7 +58,7 @@ Additionally, bytecode $\widetilde{\textsf{raf}}$ claims for the program counter
 The overall sumcheck proves the following identity:
 
 $$
-\sum_{s=1}^{5} \gamma^{s-1} \cdot \widetilde{\textsf{rv}}_s(r_s) + \gamma^5 \cdot \widetilde{\textsf{raf}}_1(r_1) + \gamma^6 \cdot \widetilde{\textsf{raf}}_3(r_3) = \sum_{j, k} \widetilde{\textsf{ra}}(k, j) \cdot \left[\sum_{s=1}^{5} \gamma^{s-1} \cdot \widetilde{\textsf{eq}}_s(r_s, j) \cdot \widetilde{\textsf{Val}}_s(k) + \gamma^5 \cdot \widetilde{\textsf{eq}}_1(r_1, j) \cdot \widetilde{\textsf{Int}}(k) + \gamma^6 \cdot \widetilde{\textsf{eq}}_3(r_3, j) \cdot \widetilde{\textsf{Int}}(k)\right]
+\sum_{s=1}^{5} \gamma^{s-1} \cdot \widetilde{\textsf{rv}}_s(r_s) + \gamma^5 \cdot \widetilde{\textsf{raf}}_1(r_1) + \gamma^6 \cdot \widetilde{\textsf{raf}}_3(r_3) + \gamma^7 = \sum_{j, k} \widetilde{\textsf{ra}}(k, j) \cdot \left[\sum_{s=1}^{5} \gamma^{s-1} \cdot \widetilde{\textsf{eq}}_s(r_s, j) \cdot \widetilde{\textsf{Val}}_s(k) + \gamma^5 \cdot \widetilde{\textsf{eq}}_1(r_1, j) \cdot \widetilde{\textsf{Int}}(k) + \gamma^6 \cdot \widetilde{\textsf{eq}}_3(r_3, j) \cdot \widetilde{\textsf{Int}}(k) + \gamma^7 \cdot \widetilde{\textsf{eq}}_0(j) \cdot \widetilde{C}_{k^*}(k)\right]
 $$
 
 where:
@@ -67,10 +67,16 @@ where:
 - $\widetilde{\textsf{ra}}(k, j)$ is the read access polynomial indicating cycle $j$ accesses bytecode row $k$
 - $\widetilde{\textsf{Val}}_s(k)$ is the stage-specific value polynomial encoding instruction data
 - $\widetilde{\textsf{Int}}(k)$ is the identity polynomial that converts a bytecode index from binary form $k \in \{0, 1\}^K$ to the corresponding field element $\widetilde{\textsf{Int}}(k) \in \mathbb{F}$ (used for $\widetilde{\textsf{raf}}$ claims)
+- $\widetilde{\textsf{eq}}_0(j) = \prod_i (1 - j_i)$ is the multilinear indicator for $j = 0$
+- $\widetilde{C}_{k^*}(k)$ is the multilinear indicator for $k = k^*$, where $k^*$ is the bytecode index of the ELF entry point
 - $\gamma$ is the stage-folding challenge
 - $\beta_s$ challenges are used within each $\widetilde{\textsf{Val}}_s(k)$ to combine multiple sub-claims
 
 Note that the $\widetilde{\textsf{raf}}$ claims treat the *expanded* program counter as $\widetilde{\textsf{ra}}$, not `UnexpandedPC`.
+
+### Entry-point constraint
+
+The $\gamma^7$ term enforces that execution begins at the ELF entry point. Both prover and verifier add $\gamma^7$ unconditionally to the left-hand side. An honest trace satisfies $\widetilde{\textsf{ra}}(k^*, 0) = 1$, so the new right-hand side term also sums to $\gamma^7$. If the committed trace starts at any other instruction, the sumcheck fails. No additional opening proof is required — the term reduces to the same $(r_\text{addr}, r_\text{cycle})$ opening point as the rest of the sumcheck.
 
 ### Stage $\widetilde{\textsf{Val}}$ Polynomials
 
