@@ -518,7 +518,7 @@ fn tampered_witness_commitment_rejected() {
     .expect("prove should succeed");
 
     // Tamper the real witness commitment
-    proof.real_w_commitment = MockPCS::commit(&[Fr::from_u64(999)], &()).0;
+    proof.real_w_commitment = MockPCS::commit([Fr::from_u64(999)].as_slice(), &()).0;
 
     let baked = BakedPublicInputs {
         challenges: challenges.clone(),
@@ -570,7 +570,7 @@ fn tampered_error_commitment_rejected() {
     .expect("prove should succeed");
 
     // Tamper the real error commitment
-    proof.real_e_commitment = MockPCS::commit(&[Fr::from_u64(888)], &()).0;
+    proof.real_e_commitment = MockPCS::commit([Fr::from_u64(888)].as_slice(), &()).0;
 
     let baked = BakedPublicInputs {
         challenges: challenges.clone(),

@@ -10,21 +10,18 @@ workspace = true
 
 [dependencies]
 jolt-field = { path = "../jolt-field", default-features = false }
-tracing.workspace = true
-rayon = { workspace = true, optional = true }
+jolt-ir = { path = "../jolt-ir" }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-cpu = { path = "../jolt-cpu" }
+jolt-ir = { path = "../jolt-ir" }
 jolt-poly = { path = "../jolt-poly" }
 rand = { workspace = true }
 rand_core = { workspace = true }
 rand_chacha = { workspace = true }
 num-traits = { workspace = true }
 criterion = { workspace = true }
-
-[features]
-default = ["parallel"]
-parallel = ["rayon"]
 
 [[bench]]
 name = "primitives"

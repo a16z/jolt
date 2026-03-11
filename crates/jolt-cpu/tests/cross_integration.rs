@@ -1,10 +1,10 @@
-//! Cross-integration tests for jolt-cpu-kernels with jolt-compute and jolt-ir.
+//! Cross-integration tests for jolt-cpu with jolt-compute and jolt-ir.
 //!
 //! Compiles kernel descriptors from IR, then executes them through the
 //! CpuBackend pairwise_reduce pipeline and verifies correctness.
 
-use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend, CpuKernel};
-use jolt_cpu_kernels::{compile, compile_with_challenges};
+use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_cpu::{compile, compile_with_challenges, CpuBackend, CpuKernel};
 use jolt_field::{Field, Fr};
 use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
 use num_traits::{One, Zero};

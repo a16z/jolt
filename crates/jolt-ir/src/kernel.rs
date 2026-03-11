@@ -206,8 +206,8 @@ impl KernelDescriptor {
                 num_inputs_per_product,
                 ..
             } => *num_inputs_per_product,
-            KernelShape::EqProduct => 2,              // {0, 2}
-            KernelShape::HammingBooleanity => 3,      // {0, 2, 3}
+            KernelShape::EqProduct => 2,         // {0, 2}
+            KernelShape::HammingBooleanity => 3, // {0, 2, 3}
             KernelShape::Custom { .. } => self.degree,
         }
     }

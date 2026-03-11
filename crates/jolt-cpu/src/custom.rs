@@ -5,7 +5,7 @@
 //! time. At evaluation time, the kernel executes these ops once per grid
 //! point — no allocations, no tree traversal.
 
-use jolt_compute::CpuKernel;
+use crate::CpuKernel;
 use jolt_field::Field;
 use jolt_ir::{Expr, ExprNode, Var};
 
@@ -197,7 +197,7 @@ mod tests {
         // Grid: {0, 2} — slot 0→t=0, slot 1→t=2
         let result = eval_kernel(&kernel, &[Fr::from_u64(3)], &[Fr::from_u64(7)], 2);
 
-        assert_eq!(result[0], Fr::from_u64(3));  // t=0: lo=3
+        assert_eq!(result[0], Fr::from_u64(3)); // t=0: lo=3
         assert_eq!(result[1], Fr::from_u64(11)); // t=2: 3+2*4=11
     }
 
@@ -242,7 +242,7 @@ mod tests {
         // Grid: {0, 2} — slot 0→t=0, slot 1→t=2
         let result = eval_kernel(&kernel, &lo, &hi, 2);
 
-        assert_eq!(result[0], Fr::from_u64(7));  // t=0: 10-3=7
+        assert_eq!(result[0], Fr::from_u64(7)); // t=0: 10-3=7
         assert_eq!(result[1], Fr::from_u64(19)); // t=2: 30-11=19
     }
 
@@ -261,7 +261,7 @@ mod tests {
         // Grid: {0, 2, 3} — slot 0→t=0, slot 1→t=2, slot 2→t=3
         let result = eval_kernel(&kernel, &lo, &hi, 3);
 
-        assert_eq!(result[0], Fr::from_u64(9));  // t=0: (2+1)*(5-2)=9
+        assert_eq!(result[0], Fr::from_u64(9)); // t=0: (2+1)*(5-2)=9
         assert_eq!(result[1], Fr::from_u64(49)); // t=2: (6+1)*(13-6)=49
         assert_eq!(result[2], Fr::from_u64(81)); // t=3: (8+1)*(17-8)=81
     }
@@ -277,7 +277,7 @@ mod tests {
         // Grid: {0, 2} — slot 0→t=0, slot 1→t=2
         let result = eval_kernel(&kernel, &[Fr::from_u64(5)], &[Fr::from_u64(10)], 2);
 
-        assert_eq!(result[0], Fr::from_u64(35));  // t=0: 7*5=35
+        assert_eq!(result[0], Fr::from_u64(35)); // t=0: 7*5=35
         assert_eq!(result[1], Fr::from_u64(105)); // t=2: 7*(5+2*5)=105
     }
 
@@ -311,8 +311,8 @@ mod tests {
         // Grid: {0, 2} — slot 0→t=0, slot 1→t=2
         let result = eval_kernel(&kernel, &[Fr::from_u64(3)], &[Fr::from_u64(7)], 2);
 
-        assert_eq!(result[0], Fr::from_u64(66));   // t=0: 11*(9-3)=66
-        assert_eq!(result[1], Fr::from_u64(1210));  // t=2: h=3+2*4=11, 11*(121-11)=1210
+        assert_eq!(result[0], Fr::from_u64(66)); // t=0: 11*(9-3)=66
+        assert_eq!(result[1], Fr::from_u64(1210)); // t=2: h=3+2*4=11, 11*(121-11)=1210
     }
 
     #[test]

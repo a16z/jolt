@@ -1,6 +1,7 @@
 //! Core trait definitions for compute backends.
 
 use jolt_field::Field;
+use jolt_ir::KernelDescriptor;
 
 /// Marker trait for types that can be stored in device buffers.
 ///
@@ -43,14 +44,12 @@ pub enum BindingOrder {
 ///   memory allocation.
 ///
 /// - [`CompiledKernel`](Self::CompiledKernel) — opaque compiled kernel for
-///   [`pairwise_reduce`](Self::pairwise_reduce). Each backend compiles from
-///   `jolt-ir::KernelDescriptor` via an inherent `compile` method on its
-///   concrete type — **not** through this trait (avoids coupling `jolt-compute`
-///   to `jolt-ir`).
+///   [`pairwise_reduce`](Self::pairwise_reduce). Compiled from a
+///   [`KernelDescriptor`] via [`compile_kernel`](Self::compile_kernel).
 ///
 /// # Zero Cost for CPU
 ///
-/// [`CpuBackend`](crate::CpuBackend) implements this trait with
+/// `CpuBackend` (in the `jolt-cpu` crate) implements this trait with
 /// `Buffer<T> = Vec<T>`. After monomorphization, every trait method call
 /// compiles to a direct function call with no indirection — identical
 /// codegen to hand-written Rayon code.
@@ -73,12 +72,24 @@ pub trait ComputeBackend: Send + Sync + 'static {
     ///
     /// Parameterized by the field type so that each kernel is compiled for
     /// a specific field's arithmetic. For CPU: `CpuKernel<F>` wrapping a
-    /// closure. For Metal: `MTLComputePipelineState`. For CUDA: compiled
-    /// PTX module.
-    ///
-    /// Compiled from a `jolt-ir::KernelDescriptor` by each backend's
-    /// inherent `compile` method at setup time.
+    /// closure. For Metal: `MetalKernel<F>` wrapping pipeline states.
     type CompiledKernel<F: Field>: Send + Sync;
+
+    /// Compile a [`KernelDescriptor`] into a backend-specific kernel.
+    fn compile_kernel<F: Field>(&self, desc: &KernelDescriptor) -> Self::CompiledKernel<F> {
+        self.compile_kernel_with_challenges(desc, &[])
+    }
+
+    /// Compile a [`KernelDescriptor`] with baked challenge values.
+    ///
+    /// For `Custom` expression kernels, `challenges[i]` is substituted for
+    /// `Var::Challenge(i)`. For `ProductSum` descriptors, challenges are
+    /// ignored.
+    fn compile_kernel_with_challenges<F: Field>(
+        &self,
+        desc: &KernelDescriptor,
+        challenges: &[F],
+    ) -> Self::CompiledKernel<F>;
 
     /// Upload host data to a device buffer.
     fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T>;

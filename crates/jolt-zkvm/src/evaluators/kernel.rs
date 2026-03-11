@@ -142,7 +142,7 @@ fn toom_cook_reconstruct<F: Field>(raw_evals: &[F], state: &ToomCookState<F>) ->
 /// `round_polynomial()` to [`pairwise_reduce`](ComputeBackend::pairwise_reduce)
 /// and `bind()` to [`interpolate_pairs_batch`](ComputeBackend::interpolate_pairs_batch).
 ///
-/// After monomorphization over [`CpuBackend`](jolt_compute::CpuBackend), this
+/// After monomorphization over [`CpuBackend`](jolt_cpu::CpuBackend), this
 /// compiles to the same code as a hand-written evaluator — the `ComputeBackend`
 /// trait calls become direct function calls with no indirection.
 pub struct KernelEvaluator<F: Field, B: ComputeBackend> {
@@ -417,7 +417,7 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
 mod tests {
     use super::*;
     use crate::evaluators::catalog;
-    use jolt_compute::CpuBackend;
+    use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
     use jolt_sumcheck::{SumcheckClaim, SumcheckProver, SumcheckVerifier};
@@ -455,7 +455,7 @@ mod tests {
         };
 
         let desc = catalog::eq_product();
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -504,7 +504,7 @@ mod tests {
         };
 
         let desc = catalog::hamming_booleanity();
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -553,7 +553,7 @@ mod tests {
         };
 
         let desc = catalog::hamming_booleanity();
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -618,7 +618,7 @@ mod tests {
             degree: 3,
             tensor_split: None,
         };
-        let kernel = jolt_cpu_kernels::compile_with_challenges::<Fr>(&desc, &[c0, c1]);
+        let kernel = jolt_cpu::compile_with_challenges::<Fr>(&desc, &[c0, c1]);
 
         let inputs = vec![
             backend.upload(&eq_table),
@@ -665,7 +665,7 @@ mod tests {
         let g_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
         let desc = catalog::eq_product();
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut kw = KernelEvaluator::with_unit_weights(
             inputs,
@@ -697,7 +697,7 @@ mod tests {
         let g_table: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
         let desc = catalog::eq_product();
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut kw = KernelEvaluator::with_unit_weights(
             inputs,
@@ -739,7 +739,7 @@ mod tests {
             .sum();
 
         let desc = catalog::product_sum(d, 1);
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs: Vec<_> = polys.iter().map(|p| backend.upload(p)).collect();
         let mut witness = KernelEvaluator::with_toom_cook_eq(
             inputs,
@@ -827,7 +827,7 @@ mod tests {
         }
 
         let desc = catalog::product_sum(d, n_virtual);
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs: Vec<_> = scaled_polys.iter().map(|p| backend.upload(p)).collect();
         let mut witness = KernelEvaluator::with_toom_cook_eq(
             inputs,
@@ -888,7 +888,7 @@ mod tests {
             .sum();
 
         let desc = catalog::product_sum(d, 1);
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs: Vec<_> = polys.iter().map(|p| backend.upload(p)).collect();
         let mut witness = KernelEvaluator::with_toom_cook_eq(
             inputs,

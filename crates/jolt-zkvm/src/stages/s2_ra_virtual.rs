@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::{ComputeBackend, CpuBackend};
+use jolt_compute::ComputeBackend;
 use jolt_field::WithChallenge;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -21,17 +21,17 @@ use jolt_poly::Polynomial;
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
-use jolt_ir::zkvm::claims::instruction;
 use crate::evaluators::catalog;
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
+use jolt_ir::zkvm::claims::instruction;
 
 /// RA virtual sumcheck prover stage.
 ///
 /// Constructs a single sumcheck instance from committed RA chunk polynomials
 /// and a split-eq evaluator. After sumcheck completes, extracts opening claims
 /// for each committed RA chunk polynomial at the challenge point.
-pub struct RaVirtualStage<F: WithChallenge> {
+pub struct RaVirtualStage<F: WithChallenge, B: ComputeBackend> {
     /// RA chunk polynomial evaluation tables (consumed by build).
     ra_tables: Option<Vec<Vec<F>>>,
     /// Lookup indices shared across RA polynomials.
@@ -48,9 +48,11 @@ pub struct RaVirtualStage<F: WithChallenge> {
     num_vars: usize,
     /// Claimed sum for the sumcheck instance.
     claimed_sum: F,
+    /// Compute backend for kernel compilation and buffer management.
+    backend: Arc<B>,
 }
 
-impl<F: WithChallenge> RaVirtualStage<F> {
+impl<F: WithChallenge, B: ComputeBackend> RaVirtualStage<F, B> {
     /// Creates a new RA virtual sumcheck stage.
     ///
     /// # Arguments
@@ -63,6 +65,7 @@ impl<F: WithChallenge> RaVirtualStage<F> {
     /// * `n_virtual` — number of virtual RA polynomials
     /// * `n_committed_per_virtual` — chunks per virtual polynomial
     /// * `claimed_sum` — expected sum `g(0) + g(1) + ... = claimed_sum`
+    /// * `backend` — compute backend for kernel compilation and buffer uploads
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         ra_tables: Vec<Vec<F>>,
@@ -72,6 +75,7 @@ impl<F: WithChallenge> RaVirtualStage<F> {
         n_virtual: usize,
         n_committed_per_virtual: usize,
         claimed_sum: F,
+        backend: Arc<B>,
     ) -> Self {
         let num_vars = eq_point.len();
         let total_chunks = n_virtual * n_committed_per_virtual;
@@ -88,11 +92,14 @@ impl<F: WithChallenge> RaVirtualStage<F> {
             n_committed_per_virtual,
             num_vars,
             claimed_sum,
+            backend,
         }
     }
 }
 
-impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for RaVirtualStage<F> {
+impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T>
+    for RaVirtualStage<F, B>
+{
     fn name(&self) -> &'static str {
         "S2_ra_virtual"
     }
@@ -132,9 +139,9 @@ impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for RaVirtualStage<F> {
         let degree = d + 1;
 
         let desc = catalog::product_sum(d, self.n_virtual);
-        let kernel = jolt_cpu_kernels::compile::<F>(&desc);
+        let kernel = self.backend.compile_kernel::<F>(&desc);
 
-        let backend = Arc::new(CpuBackend);
+        let backend = Arc::clone(&self.backend);
         let inputs: Vec<_> = dense_polys.iter().map(|p| backend.upload(p)).collect();
         let witness = KernelEvaluator::with_toom_cook_eq(
             inputs,
@@ -189,6 +196,7 @@ impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for RaVirtualStage<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr, WithChallenge};
     use jolt_poly::{EqPolynomial, UnivariatePoly};
     use jolt_sumcheck::{BatchedSumcheckProver, BatchedSumcheckVerifier, ClearRoundHandler};
@@ -198,6 +206,10 @@ mod tests {
     use rand_core::{RngCore, SeedableRng};
 
     type Challenge = <Fr as WithChallenge>::Challenge;
+
+    fn cpu() -> Arc<CpuBackend> {
+        Arc::new(CpuBackend)
+    }
 
     fn random_eq_point(num_vars: usize, rng: &mut ChaCha20Rng) -> Vec<Challenge> {
         (0..num_vars)
@@ -275,6 +287,7 @@ mod tests {
             n_virtual,
             m,
             claimed_sum,
+            cpu(),
         );
 
         let mut transcript = Blake2bTranscript::new(b"s2-test");
@@ -332,6 +345,7 @@ mod tests {
             n_virtual,
             m,
             claimed_sum,
+            cpu(),
         );
 
         let mut transcript = Blake2bTranscript::new(b"s2-extract");
@@ -376,11 +390,12 @@ mod tests {
             )
         };
 
-        let claims = <RaVirtualStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-            &mut stage,
-            &challenges,
-            Fr::zero(),
-        );
+        let claims =
+            <RaVirtualStage<Fr, CpuBackend> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
+                &mut stage,
+                &challenges,
+                Fr::zero(),
+            );
         assert_eq!(claims.len(), total);
 
         let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();
@@ -415,10 +430,11 @@ mod tests {
             n_virtual,
             m,
             claimed_sum,
+            cpu(),
         );
 
         let defs =
-            <RaVirtualStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(&stage);
+            <RaVirtualStage<Fr, CpuBackend> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(&stage);
         assert_eq!(defs.len(), 1);
 
         let def = &defs[0];

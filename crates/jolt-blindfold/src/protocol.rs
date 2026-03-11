@@ -532,7 +532,7 @@ mod tests {
         .expect("BlindFold prove should succeed");
 
         // Tamper cross-term commitment
-        proof.cross_term_commitment = MockPCS::commit(&[Fr::from_u64(999)], &()).0;
+        proof.cross_term_commitment = MockPCS::commit([Fr::from_u64(999)].as_slice(), &()).0;
 
         let baked = BakedPublicInputs {
             challenges: challenges.clone(),

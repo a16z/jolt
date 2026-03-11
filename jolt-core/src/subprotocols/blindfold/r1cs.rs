@@ -293,6 +293,9 @@ pub struct VerifierR1CS<F: JoltField> {
     pub extra_blinding_vars: Vec<Variable>,
     /// Hyrax grid layout parameters
     pub hyrax: HyraxParams,
+    /// Opening IDs placed in the output claims region, in layout-traversal order.
+    /// Empty when output claims binding is disabled.
+    pub output_claims_opening_ids: Vec<OpeningId>,
 }
 
 impl<F: JoltField> VerifierR1CS<F> {
@@ -323,6 +326,11 @@ pub struct VerifierR1CSBuilder<F: JoltField> {
     extra_output_vars: Vec<Variable>,
     extra_blinding_vars: Vec<Variable>,
     baked: BakedPublicInputs<F>,
+    /// Per-stage OC blocks: each block lists the opening IDs in the order they
+    /// were produced by that stage's `cache_openings`. Each block occupies
+    /// `ceil(len/C)` complete Hyrax rows. The per-stage Pedersen commitments
+    /// map 1:1 to these rows.
+    oc_blocks: Vec<Vec<OpeningId>>,
 }
 
 struct RoundVariables {
@@ -331,16 +339,16 @@ struct RoundVariables {
 }
 
 impl<F: JoltField> VerifierR1CSBuilder<F> {
-    /// Create a new builder for the given stage configurations with baked public inputs
+    #[cfg(test)]
     pub fn new(stage_configs: &[StageConfig], baked: &BakedPublicInputs<F>) -> Self {
-        Self::new_with_extra(stage_configs, &[], baked)
+        Self::new_with_extra(stage_configs, &[], baked, Vec::new())
     }
 
-    /// Create a new builder with extra constraints and baked public inputs.
     pub fn new_with_extra(
         stage_configs: &[StageConfig],
         extra_constraints: &[OutputClaimConstraint],
         baked: &BakedPublicInputs<F>,
+        oc_blocks: Vec<Vec<OpeningId>>,
     ) -> Self {
         Self {
             constraints: Vec::new(),
@@ -350,6 +358,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             extra_output_vars: Vec::new(),
             extra_blinding_vars: Vec::new(),
             baked: baked.clone(),
+            oc_blocks,
         }
     }
 
@@ -445,21 +454,44 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         let witness_start = self.next_var;
         self.next_var = witness_start + hyrax_R_coeff * hyrax_C;
 
+        let stage_configs = self.stage_configs.clone();
+        let extra_constraints = self.extra_constraints.clone();
+        let baked = self.baked.clone();
+        let layout = compute_witness_layout(&stage_configs, &extra_constraints);
+
+        // Pre-allocate opening variables in the dedicated output claims region.
+        // Each OC block occupies ceil(len/C) full Hyrax rows, matching per-stage
+        // commit_chunked output so that per-stage Pedersen commitments can serve
+        // directly as Hyrax row commitments.
+        let mut global_opening_vars: HashMap<OpeningId, Variable> = HashMap::new();
+        let mut output_claims_opening_ids: Vec<OpeningId> = Vec::new();
+
+        let oc_region_start = self.next_var;
+        let mut oc_block_offset = 0;
+        for block in &self.oc_blocks {
+            for (pos_in_block, id) in block.iter().enumerate() {
+                if !global_opening_vars.contains_key(id) {
+                    let var = Variable::new(oc_region_start + oc_block_offset + pos_in_block);
+                    global_opening_vars.insert(*id, var);
+                    output_claims_opening_ids.push(*id);
+                }
+            }
+            let block_rows = block.len().div_ceil(hyrax_C.max(1));
+            oc_block_offset += block_rows * hyrax_C;
+        }
+        let output_claims_rows = oc_block_offset / hyrax_C.max(1);
+        if !self.oc_blocks.is_empty() {
+            self.next_var = oc_region_start + oc_block_offset;
+        }
+
         let mut challenge_idx = 0usize;
         let mut batching_coeff_idx = 0usize;
         let mut output_challenge_idx = 0usize;
         let mut input_challenge_idx = 0usize;
         let mut extra_challenge_idx = 0usize;
 
-        let mut global_opening_vars: HashMap<OpeningId, Variable> = HashMap::new();
         let mut current_claim = LinearCombination::<F>::new();
         let mut pending_coeffs: Option<Vec<Variable>> = None;
-
-        let stage_configs = self.stage_configs.clone();
-        let extra_constraints = self.extra_constraints.clone();
-        let baked = self.baked.clone();
-
-        let layout = compute_witness_layout(&stage_configs, &extra_constraints);
 
         for step in &layout {
             match step {
@@ -594,8 +626,10 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         }
 
         let num_constraints = self.constraints.len();
-        let noncoeff_count = self.next_var - (witness_start + hyrax_R_coeff * hyrax_C);
-        let hyrax = compute_hyrax_params(&self.stage_configs, noncoeff_count);
+        let noncoeff_region_start =
+            witness_start + hyrax_R_coeff * hyrax_C + output_claims_rows * hyrax_C;
+        let noncoeff_count = self.next_var - noncoeff_region_start;
+        let hyrax = compute_hyrax_params(&self.stage_configs, noncoeff_count, output_claims_rows);
         let num_vars = witness_start + hyrax.R_prime * hyrax.C;
 
         let mut a = SparseR1CSMatrix::new(num_constraints, num_vars);
@@ -625,6 +659,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             extra_output_vars: self.extra_output_vars,
             extra_blinding_vars: self.extra_blinding_vars,
             hyrax,
+            output_claims_opening_ids,
         }
     }
 
@@ -902,8 +937,8 @@ mod tests {
         let stage = StageWitness::with_final_output(vec![round], fout_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
-        let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
-        let builder = VerifierR1CSBuilder::<F>::new(&[config], &baked);
+        let baked = BakedPublicInputs::from_witness(&witness, std::slice::from_ref(&config));
+        let builder = VerifierR1CSBuilder::<F>::new(std::slice::from_ref(&config), &baked);
         let r1cs = builder.build();
 
         // 2 round constraints + 1 final output = 3
@@ -946,8 +981,8 @@ mod tests {
         let stage = StageWitness::with_final_output(vec![round], fout_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
-        let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
-        let builder = VerifierR1CSBuilder::<F>::new(&[config], &baked);
+        let baked = BakedPublicInputs::from_witness(&witness, std::slice::from_ref(&config));
+        let builder = VerifierR1CSBuilder::<F>::new(std::slice::from_ref(&config), &baked);
         let r1cs = builder.build();
 
         // 2 round constraints + 1 final output = 3 (single constraint for all evals!)
@@ -984,8 +1019,8 @@ mod tests {
         let stage = StageWitness::with_final_output(vec![round], fout_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
-        let baked = BakedPublicInputs::from_witness(&witness, &[config.clone()]);
-        let builder = VerifierR1CSBuilder::<F>::new(&[config], &baked);
+        let baked = BakedPublicInputs::from_witness(&witness, std::slice::from_ref(&config));
+        let builder = VerifierR1CSBuilder::<F>::new(std::slice::from_ref(&config), &baked);
         let r1cs = builder.build();
 
         let z = witness.assign(&r1cs);

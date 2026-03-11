@@ -1,19 +1,16 @@
 //! Backend-agnostic compute device abstraction for the Jolt zkVM.
 //!
 //! This crate defines the [`ComputeBackend`] trait — a protocol-agnostic
-//! interface over typed buffer management and parallel primitives (pairwise
-//! interpolation, composition-reduce, product tables). All methods are named
-//! for what they compute, not what protocol uses them.
+//! interface over typed buffer management, kernel compilation, and parallel
+//! primitives (pairwise interpolation, composition-reduce, product tables).
+//! All methods are named for what they compute, not what protocol uses them.
 //!
-//! The [`CpuBackend`] implementation uses `Vec<T>` buffers with Rayon
-//! parallelism. After monomorphization every trait method compiles to a
-//! direct function call — identical codegen to hand-written Rayon code.
+//! Concrete backends live in separate crates:
+//! - `jolt-cpu` — CPU backend with Rayon parallelism
+//! - `jolt-metal` — Apple Metal GPU backend
 //!
-//! GPU backends (Metal, CUDA, WebGPU) live in separate crates and implement
-//! the same trait with device memory buffers and compiled shader kernels.
+//! GPU backends (CUDA, WebGPU) will follow the same pattern.
 
-mod cpu;
 mod traits;
 
-pub use cpu::{CpuBackend, CpuKernel};
 pub use traits::{BindingOrder, ComputeBackend, Scalar};

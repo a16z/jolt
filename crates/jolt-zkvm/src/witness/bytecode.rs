@@ -46,6 +46,10 @@ impl BytecodePreprocessing {
     /// Panics if the cycle's `(address, virtual_sequence_remaining)` was not
     /// seen during preprocessing.
     pub fn get_pc(&self, cycle: &Cycle) -> u64 {
+        // NoOp (padding) cycles map to PC 0, matching jolt-core's convention
+        if matches!(cycle, Cycle::NoOp) {
+            return 0;
+        }
         let norm = Self::normalize_cycle(cycle);
         let key = (norm.address, norm.virtual_sequence_remaining);
         *self

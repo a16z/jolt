@@ -108,7 +108,7 @@ Status as of 2026-03-09. Branch: `refactor/crates`.
 
 **jolt-core source:** `zkvm/witness.rs` — `CommittedPolynomial` enum, `generate_witness()`
 
-**What exists:** `WitnessStore<F>` (flat HashMap keyed by PolynomialTag)
+**What exists:** `WitnessStore<F>` (flat BTreeMap keyed by PolynomialTag)
 
 **What's missing:**
 - `CommittedPolynomial` enum (RdInc, RamInc, InstructionRa, BytecodeRa, RamRa, TrustedAdvice, UntrustedAdvice)

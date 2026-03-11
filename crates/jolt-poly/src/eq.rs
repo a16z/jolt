@@ -63,14 +63,17 @@ impl<F: Field> EqPolynomial<F> {
             {
                 if prev_len >= PAR_THRESHOLD {
                     use rayon::prelude::*;
-                    let (left, right) = table.split_at_mut(prev_len);
-                    left.par_iter_mut()
-                        .zip(right.par_iter_mut())
-                        .for_each(|(lo, hi)| {
-                            let base = *lo;
-                            *hi = base * r_i;
-                            *lo = base * one_minus_r_i;
-                        });
+                    // Snapshot the previous layer so we can scatter into interleaved positions.
+                    let prev: Vec<F> = table[..prev_len].to_vec();
+                    prev.par_iter().enumerate().for_each(|(j, &base)| {
+                        let ptr = table.as_ptr().cast_mut();
+                        // SAFETY: each j maps to disjoint indices 2*j and 2*j+1,
+                        // and 2*j+1 < 2*prev_len = table.len().
+                        unsafe {
+                            ptr.add(2 * j).write(base * one_minus_r_i);
+                            ptr.add(2 * j + 1).write(base * r_i);
+                        }
+                    });
                 } else {
                     for j in (0..prev_len).rev() {
                         let base = table[j];
@@ -543,6 +546,24 @@ mod tests {
             .fold(Fr::one(), |acc, &r_i| acc * (Fr::one() - r_i));
         let result = EqPolynomial::<Fr>::zero_selector(&r);
         assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn parallel_evaluations_pointwise_correctness() {
+        // Verifies that the parallel path in evaluations() produces the correct
+        // entry at every index — catches layout mismatches (blocked vs interleaved).
+        let mut rng = ChaCha20Rng::seed_from_u64(500);
+        let n = 12; // 4096 entries, well above PAR_THRESHOLD=1024
+        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let eq = EqPolynomial::new(point);
+        let table = eq.evaluations();
+        assert_eq!(table.len(), 1 << n);
+
+        for (idx, &entry) in table.iter().enumerate() {
+            let bits = index_to_bits(idx, n);
+            let expected = eq.evaluate(&bits);
+            assert_eq!(entry, expected, "mismatch at index {idx}");
+        }
     }
 
     #[test]

@@ -9,7 +9,7 @@ use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand_core::CryptoRngCore;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PedersenGenerators<C: JoltCurve> {
     pub message_generators: Vec<C::G1>,
     pub blinding_generator: C::G1,
@@ -43,6 +43,21 @@ impl<C: JoltCurve> PedersenGenerators<C> {
 
         let blinding_commitment = self.blinding_generator.scalar_mul(blinding);
         msg_commitment + blinding_commitment
+    }
+
+    pub fn commit_chunked<F: JoltField, R: CryptoRngCore>(
+        &self,
+        values: &[F],
+        rng: &mut R,
+    ) -> Vec<(C::G1, F)> {
+        values
+            .chunks(self.message_generators.len())
+            .map(|chunk| {
+                let blinding = F::random(rng);
+                let commitment = self.commit(chunk, &blinding);
+                (commitment, blinding)
+            })
+            .collect()
     }
 
     pub fn verify<F: JoltField>(&self, commitment: &C::G1, coeffs: &[F], blinding: &F) -> bool {

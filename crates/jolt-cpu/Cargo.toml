@@ -1,9 +1,9 @@
 [package]
-name = "jolt-cpu-kernels"
+name = "jolt-cpu"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "CPU kernel compiler: compiles jolt-ir descriptors into jolt-compute CpuKernels"
+description = "CPU compute backend and kernel compiler for the Jolt zkVM"
 
 [lints]
 workspace = true
@@ -12,6 +12,8 @@ workspace = true
 jolt-field = { path = "../jolt-field", default-features = false }
 jolt-ir = { path = "../jolt-ir" }
 jolt-compute = { path = "../jolt-compute" }
+tracing.workspace = true
+rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
@@ -24,6 +26,10 @@ rand_chacha = { workspace = true }
 num-traits = { workspace = true }
 criterion = { workspace = true }
 rayon = { workspace = true }
+
+[features]
+default = ["parallel"]
+parallel = ["rayon"]
 
 [[bench]]
 name = "compiled_kernels"

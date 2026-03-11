@@ -10,9 +10,9 @@ use jolt_transcript::Transcript;
 use crate::pipeline::prove_stages;
 use crate::preprocessing::interleave_witnesses;
 use crate::proof::{JoltProof, JoltProvingKey};
-use jolt_verifier::ProverConfig;
 use crate::stage::ProverStage;
 use crate::stages::s1_spartan::UniformSpartanStage;
+use jolt_verifier::ProverConfig;
 
 /// Errors that can occur during the full proving pipeline.
 #[derive(Debug)]
@@ -70,7 +70,11 @@ pub fn prove<PCS, T>(
     key: &JoltProvingKey<PCS::Field, PCS>,
     cycle_witnesses: &[Vec<PCS::Field>],
     poly_commitments: Vec<PCS::Output>,
-    build_stages: impl FnOnce(&[PCS::Field], &[PCS::Field], &mut T) -> Vec<Box<dyn ProverStage<PCS::Field, T>>>,
+    build_stages: impl FnOnce(
+        &[PCS::Field],
+        &[PCS::Field],
+        &mut T,
+    ) -> Vec<Box<dyn ProverStage<PCS::Field, T>>>,
     transcript: &mut T,
     challenge_fn: impl Fn(T::Challenge) -> PCS::Field + Copy,
 ) -> Result<JoltProof<PCS::Field, PCS>, ProveError>

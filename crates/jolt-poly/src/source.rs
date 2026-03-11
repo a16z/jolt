@@ -157,10 +157,7 @@ impl<F: Field> MultilinearPoly<F> for [F] {
 
     fn evaluate(&self, point: &[F]) -> F {
         let eq_evals = crate::EqPolynomial::new(point.to_vec()).evaluations();
-        self.iter()
-            .zip(eq_evals.iter())
-            .map(|(&f, &e)| f * e)
-            .sum()
+        self.iter().zip(eq_evals.iter()).map(|(&f, &e)| f * e).sum()
     }
 
     fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {

@@ -131,9 +131,12 @@ impl SpartanProver {
         let (outer_sumcheck_proof, r_x) = {
             let _span = tracing::info_span!("outer_sumcheck", num_vars = num_sc_vars).entered();
             match strategy {
-                FirstRoundStrategy::UnivariateSkip if num_sc_vars > 0 => {
-                    prove_outer_uniskip(&outer_claim, &mut outer_witness, transcript, tau_1.unwrap())
-                }
+                FirstRoundStrategy::UnivariateSkip if num_sc_vars > 0 => prove_outer_uniskip(
+                    &outer_claim,
+                    &mut outer_witness,
+                    transcript,
+                    tau_1.unwrap(),
+                ),
                 _ => {
                     let handler = TrackingHandler::new(num_sc_vars);
                     SumcheckProver::prove_with_handler(
@@ -188,7 +191,8 @@ impl SpartanProver {
 
         let inner_handler = TrackingHandler::new(num_witness_vars);
         let (inner_sumcheck_proof, r_y) = {
-            let _span = tracing::info_span!("inner_sumcheck", num_vars = num_witness_vars).entered();
+            let _span =
+                tracing::info_span!("inner_sumcheck", num_vars = num_witness_vars).entered();
             SumcheckProver::prove_with_handler(
                 &inner_claim,
                 &mut inner_witness,

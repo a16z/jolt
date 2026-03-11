@@ -470,7 +470,7 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
 
         let poly_len = left.chunk_len.pow2();
         let suffix_len = left.suffix_len();
-        debug_assert!(suffix_len % 2 == 0);
+        debug_assert!(suffix_len.is_multiple_of(2));
 
         // Constants for this phase:
         // - Operand path: ShiftHalfSuffixPolynomial(b) = 2^{|b|/2}

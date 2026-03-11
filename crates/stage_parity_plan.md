@@ -398,6 +398,124 @@ Each step is independently testable: synthetic witness → prove → verify.
 
 ---
 
+## Progress Tracking
+
+### Infrastructure (Prerequisites)
+
+| Component | Crate | Status |
+|---|---|---|
+| `EqPlusOnePolynomial` + `EqPlusOnePrefixSuffix` | jolt-poly | ✅ Done (7 tests) |
+| `PrefixSuffixEvaluator` + `PrefixSuffixTransition` | jolt-sumcheck | ✅ Done (5 tests, HighToLow binding) |
+| `SplitEqEvaluator` (LowToHigh + HighToLow) | jolt-sumcheck | ✅ Done (existed) |
+| `KernelEvaluator` (standard + Toom-Cook) | jolt-zkvm | ✅ Done (existed) |
+| `catalog::eq_product`, `formula_descriptor`, etc. | jolt-zkvm | ✅ Done (existed) |
+
+### Missing Instance Implementation
+
+| # | Instance | Old Stage | Plan Step | Status | Notes |
+|---|---|---|---|---|---|
+| 1 | ProductVirtualUniSkip | S1 | Step 1c | ⬜ Not started | Optional perf optimization, defer |
+| 2 | ProductVirtualRemainder | S2 | Step 1a | ⬜ Not started | Needs uni-skip infra |
+| 3 | **ShiftSumcheck** | S3 | Step 2a | 🔄 **IN PROGRESS** | Uses PrefixSuffixEvaluator + EqPlusOne |
+| 4 | **InstructionInput** | S3 | Step 2b | ⬜ Not started | Uses SplitEqEvaluator, deg 3 |
+| 5 | InstructionReadRaf | S5 | Step 4a | ⬜ Not started | Uses PrefixSuffixEvaluator, complex |
+| 6 | RegistersValEvaluation | S5 | Step 4c | ⬜ Not started | LT poly, deg 3 |
+| 7 | BytecodeReadRaf | S6 | Step 5a | ⬜ Not started | 5-stage decomposition |
+| 8 | Booleanity (all RA) | S6 | Step 5b | ⬜ Not started | Extend current S6 |
+| 9 | RamRaVirtual | S6 | Step 5d | ⬜ Not started | Same pattern as InstrRaVirtual |
+
+### Structural Work
+
+| Task | Status | Notes |
+|---|---|---|
+| Stage regrouping (match old pipeline order) | ⬜ | Step 1b: move existing instances into correct stage groups |
+| Claim chaining (prior_claims wiring) | ⬜ | Each stage consumes prior stage's opening claims |
+| PointNormalizationReduction | ⬜ | Step 7: Lagrange normalization to unified point |
+| ZeroPaddedSource | ⬜ | Step 7: padding for dimension mismatches |
+| Streaming RLC (performance) | ⬜ | Step 8: RlcSource instead of eager materialization |
+
+---
+
+## Detailed Execution Plan: Step 2a — ShiftSumcheck
+
+### What the ShiftSumcheck proves
+
+Identity (degree 2, log_T rounds):
+```
+Σ_j EqPlusOne(r_outer, j) · (c0·UnexpandedPC(j) + c1·PC(j) + c2·IsVirtual(j) + c3·IsFirstInSeq(j))
+  + c4 · EqPlusOne(r_product, j) · (1 − IsNoop(j))
+= input_claim
+```
+
+Where `c_k = γ^k` batching coefficients, `r_outer`/`r_product` are challenge points
+from prior Spartan stages, and `input_claim` is reconstructed from prior opening claims.
+
+### Prefix-suffix decomposition
+
+EqPlusOne(r, y) decomposes into 2 rank-1 terms (from `EqPlusOnePrefixSuffix`):
+```
+eq+1(r, y) = P_0(y_prefix) · S_0(y_suffix) + P_1(y_prefix) · S_1(y_suffix)
+```
+
+Two independent eq+1 points (r_outer, r_product) → **4 prefix-suffix pairs** total:
+```
+pair 0: P = eq+1_prefix_0(r_outer),   Q = fold(S_0(r_outer),   v_witness)
+pair 1: P = eq+1_prefix_1(r_outer),   Q = fold(S_1(r_outer),   v_witness)
+pair 2: P = eq+1_prefix_0(r_product), Q = fold(S_0(r_product), noop_witness) · γ^4
+pair 3: P = eq+1_prefix_1(r_product), Q = fold(S_1(r_product), noop_witness) · γ^4
+```
+
+Where:
+- `v_witness(j) = c0·UnexpandedPC(j) + c1·PC(j) + c2·IsVirtual(j) + c3·IsFirstInSeq(j)`
+- `noop_witness(j) = 1 − IsNoop(j)`
+
+### Phase 2 materialization
+
+At transition, `PrefixSuffixTransition` provides `prefix_evals` (4 scalars) and
+`challenges` (log_T/2 values). Phase 2 materializes suffix-domain tables:
+
+```
+eq_combined_outer[s]  = pe[0]·S_0_outer[s]  + pe[1]·S_1_outer[s]
+eq_combined_product[s] = pe[2]·S_0_product[s] + pe[3]·S_1_product[s]
+```
+
+5 witness polys over suffix domain:
+```
+poly_k[s] = Σ_{prefix} eq(challenges, prefix) · raw_poly_k(prefix * suffix_size + s)
+```
+
+Phase 2 round polynomial (degree 2):
+```
+s(X) = Σ_s [ eq_combined_outer(X,s) · (c0·unexpanded_pc(X,s) + c1·pc(X,s) + ...)
+           + c4 · eq_combined_product(X,s) · (1 − is_noop(X,s)) ]
+```
+
+### Opening claims produced
+
+5 claims at the final sumcheck challenge point `r`:
+1. UnexpandedPC(r)
+2. PC(r)
+3. IsVirtual(r)
+4. IsFirstInSequence(r)
+5. IsNoop(r)
+
+### Implementation plan
+
+1. Create `crates/jolt-zkvm/src/stages/s3_shift.rs`
+2. Implement `ShiftSumcheckStage` as `ProverStage<F, T>`
+3. Phase 1: construct 4 pairs from `EqPlusOnePrefixSuffix`, fold witness into Q tables
+4. Phase 2 builder: materialize suffix-domain tables, return a custom `SumcheckCompute`
+   or `KernelEvaluator` with eq_product kernel
+5. Unit test: synthetic 5-poly witness → prove → verify → oracle check
+6. Wire into stage pipeline
+
+### Files to create/modify
+
+- **NEW**: `crates/jolt-zkvm/src/stages/s3_shift.rs`
+- **MODIFY**: `crates/jolt-zkvm/src/stages/mod.rs` (add module)
+
+---
+
 ## Fiat-Shamir Fixes (Already Done)
 
 | Fix | File | Status |

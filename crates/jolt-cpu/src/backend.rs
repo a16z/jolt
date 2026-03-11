@@ -2,7 +2,7 @@
 
 use jolt_field::{Field, FieldAccumulator};
 
-use crate::traits::{BindingOrder, ComputeBackend, Scalar};
+use jolt_compute::{BindingOrder, ComputeBackend, Scalar};
 
 /// Parallelism threshold: buffers smaller than this use sequential loops.
 ///
@@ -27,8 +27,8 @@ type EvalFn<F> = dyn Fn(&[F], &[F], &mut [F]) + Send + Sync;
 /// kernels: grid `{1, ..., D-1, ∞}`, D slots. For standard-grid kernels:
 /// grid `{0, 1, ..., degree}`, `degree + 1` slots.
 ///
-/// Constructed by a `compile` method on `CpuBackend` (not through the
-/// `ComputeBackend` trait, to avoid coupling `jolt-compute` to `jolt-ir`).
+/// Constructed via [`CpuBackend::compile_kernel`] or the free functions
+/// [`compile`](crate::compile) / [`compile_with_challenges`](crate::compile_with_challenges).
 pub struct CpuKernel<F: Field> {
     eval_fn: Box<EvalFn<F>>,
 }
@@ -57,6 +57,14 @@ pub struct CpuBackend;
 impl ComputeBackend for CpuBackend {
     type Buffer<T: Scalar> = Vec<T>;
     type CompiledKernel<F: Field> = CpuKernel<F>;
+
+    fn compile_kernel_with_challenges<F: Field>(
+        &self,
+        desc: &jolt_ir::KernelDescriptor,
+        challenges: &[F],
+    ) -> CpuKernel<F> {
+        crate::compile_with_challenges(desc, challenges)
+    }
 
     #[inline]
     fn upload<T: Scalar>(&self, data: &[T]) -> Vec<T> {

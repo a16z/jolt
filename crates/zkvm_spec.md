@@ -246,7 +246,7 @@ In jolt-core, all witness polynomials live in the scope of one giant prover meth
 /// for opening proofs. Stages borrow slices via `get()`.
 pub struct WitnessStore<F: Field> {
     /// Keyed by polynomial tag (e.g., "rd_inc", "ram_ra", "bytecode_ra").
-    tables: HashMap<PolynomialTag, Vec<F>>,
+    tables: BTreeMap<PolynomialTag, Vec<F>>,
 }
 
 impl<F: Field> WitnessStore<F> {

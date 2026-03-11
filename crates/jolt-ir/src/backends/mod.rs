@@ -7,3 +7,6 @@ pub mod circuit;
 pub mod evaluate;
 pub mod lean;
 pub mod r1cs;
+
+#[cfg(feature = "z3")]
+pub mod z3;

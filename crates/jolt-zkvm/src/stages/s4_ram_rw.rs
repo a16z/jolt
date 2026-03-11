@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::{ComputeBackend, CpuBackend};
+use jolt_compute::ComputeBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -14,17 +14,17 @@ use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
-use jolt_ir::zkvm::claims::ram;
 use crate::evaluators::catalog::{formula_descriptor, Term};
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
+use jolt_ir::zkvm::claims::ram;
 
 /// RAM read-write checking prover stage.
 ///
 /// Formula: `eq · (c0·ra·val + c1·ra·inc)` where:
 /// - `c0 = eq_eval · (1+γ)`
 /// - `c1 = eq_eval · γ`
-pub struct RamRwCheckingStage<F: Field> {
+pub struct RamRwCheckingStage<F: Field, B: ComputeBackend> {
     ra: Option<Vec<F>>,
     val: Option<Vec<F>>,
     inc: Option<Vec<F>>,
@@ -32,10 +32,18 @@ pub struct RamRwCheckingStage<F: Field> {
     /// Challenge coefficients: [c0, c1].
     challenges: [F; 2],
     num_vars: usize,
+    backend: Arc<B>,
 }
 
-impl<F: Field> RamRwCheckingStage<F> {
-    pub fn new(ra: Vec<F>, val: Vec<F>, inc: Vec<F>, eq_point: Vec<F>, challenges: [F; 2]) -> Self {
+impl<F: Field, B: ComputeBackend> RamRwCheckingStage<F, B> {
+    pub fn new(
+        ra: Vec<F>,
+        val: Vec<F>,
+        inc: Vec<F>,
+        eq_point: Vec<F>,
+        challenges: [F; 2],
+        backend: Arc<B>,
+    ) -> Self {
         let num_vars = eq_point.len();
         let expected = 1usize << num_vars;
         assert_eq!(ra.len(), expected);
@@ -48,11 +56,12 @@ impl<F: Field> RamRwCheckingStage<F> {
             eq_point,
             challenges,
             num_vars,
+            backend,
         }
     }
 }
 
-impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F, B> {
     fn name(&self) -> &'static str {
         "S4_ram_rw_checking"
     }
@@ -90,9 +99,11 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
 
         let degree = 3;
 
-        let backend = Arc::new(CpuBackend);
         let (desc, challenges) = formula_descriptor(&terms, poly_tables.len(), degree);
-        let kernel = jolt_cpu_kernels::compile_with_challenges::<F>(&desc, &challenges);
+        let kernel = self
+            .backend
+            .compile_kernel_with_challenges::<F>(&desc, &challenges);
+        let backend = Arc::clone(&self.backend);
         let mut inputs = Vec::with_capacity(1 + poly_tables.len());
         inputs.push(backend.upload(&eq_table));
         inputs.extend(poly_tables.iter().map(|t| backend.upload(t)));
@@ -140,12 +151,17 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_sumcheck::{BatchedSumcheckProver, BatchedSumcheckVerifier};
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use num_traits::One;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    fn cpu() -> Arc<CpuBackend> {
+        Arc::new(CpuBackend)
+    }
 
     #[test]
     fn prove_verify_round_trip() {
@@ -163,8 +179,8 @@ mod tests {
         let c0 = eq_eval * (Fr::one() + gamma);
         let c1 = eq_eval * gamma;
 
-        let mut stage: RamRwCheckingStage<Fr> =
-            RamRwCheckingStage::new(ra, val, inc, eq_point, [c0, c1]);
+        let mut stage: RamRwCheckingStage<Fr, CpuBackend> =
+            RamRwCheckingStage::new(ra, val, inc, eq_point, [c0, c1], cpu());
 
         let mut pt = Blake2bTranscript::new(b"ram_rw");
         let mut batch = stage.build(&[], &mut pt);
@@ -189,12 +205,10 @@ mod tests {
         )
         .expect("verification should succeed");
 
-        let prover_claims =
-            <RamRwCheckingStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-                &mut stage,
-                &challenges,
-                final_eval,
-            );
+        let prover_claims = <RamRwCheckingStage<Fr, CpuBackend> as ProverStage<
+            Fr,
+            Blake2bTranscript,
+        >>::extract_claims(&mut stage, &challenges, final_eval);
         assert_eq!(prover_claims.len(), 3); // ra, val, inc
 
         let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();

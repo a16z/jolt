@@ -9,6 +9,7 @@ use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitm
 #[cfg(feature = "zk")]
 use crate::poly::commitment::dory::bind_opening_inputs_zk;
 use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals};
+use crate::poly::commitment::pedersen::PedersenGenerators;
 #[cfg(feature = "zk")]
 use crate::poly::lagrange_poly::LagrangeHelper;
 #[cfg(feature = "zk")]
@@ -98,6 +99,7 @@ struct StageVerifyResult<F: JoltField> {
     input_constraint_challenge_values: Vec<F>,
     uniskip_input_constraint: Option<InputClaimConstraint>,
     uniskip_input_constraint_challenge_values: Vec<F>,
+    oc_block_ids: Vec<Vec<OpeningId>>,
 }
 
 #[cfg(not(feature = "zk"))]
@@ -114,6 +116,7 @@ impl<F: JoltField> StageVerifyResult<F> {
         output_constraint_challenge_values: Vec<F>,
         batched_input_constraint: InputClaimConstraint,
         input_constraint_challenge_values: Vec<F>,
+        oc_block_ids: Vec<Vec<OpeningId>>,
     ) -> Self {
         Self {
             challenges,
@@ -123,9 +126,11 @@ impl<F: JoltField> StageVerifyResult<F> {
             input_constraint_challenge_values,
             uniskip_input_constraint: None,
             uniskip_input_constraint_challenge_values: Vec::new(),
+            oc_block_ids,
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn with_uniskip(
         challenges: Vec<F::Challenge>,
         batched_output_constraint: Option<OutputClaimConstraint>,
@@ -134,6 +139,7 @@ impl<F: JoltField> StageVerifyResult<F> {
         input_constraint_challenge_values: Vec<F>,
         uniskip_input_constraint: InputClaimConstraint,
         uniskip_input_constraint_challenge_values: Vec<F>,
+        oc_block_ids: Vec<Vec<OpeningId>>,
     ) -> Self {
         Self {
             challenges,
@@ -143,6 +149,7 @@ impl<F: JoltField> StageVerifyResult<F> {
             input_constraint_challenge_values,
             uniskip_input_constraint: Some(uniskip_input_constraint),
             uniskip_input_constraint_challenge_values,
+            oc_block_ids,
         }
     }
 }
@@ -199,7 +206,7 @@ pub struct JoltVerifier<
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub program_io: JoltDevice,
     pub proof: JoltProof<F, C, PCS, ProofTranscript>,
-    pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+    pub preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
     pub transcript: ProofTranscript,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
@@ -226,11 +233,9 @@ impl<
         PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>,
         ProofTranscript: Transcript,
     > JoltVerifier<'a, F, C, PCS, ProofTranscript>
-where
-    C::G1: From<crate::curve::Bn254G1>,
 {
     pub fn new(
-        preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+        preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
         proof: JoltProof<F, C, PCS, ProofTranscript>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
@@ -442,6 +447,15 @@ where
                     stage7_result.output_constraint_challenge_values.clone(),
                 ];
 
+                let mut oc_blocks: Vec<Vec<OpeningId>> = Vec::new();
+                oc_blocks.extend(stage1_result.oc_block_ids);
+                oc_blocks.extend(stage2_result.oc_block_ids);
+                oc_blocks.extend(stage3_result.oc_block_ids);
+                oc_blocks.extend(stage4_result.oc_block_ids);
+                oc_blocks.extend(stage5_result.oc_block_ids);
+                oc_blocks.extend(stage6_result.oc_block_ids);
+                oc_blocks.extend(stage7_result.oc_block_ids);
+
                 self.verify_blindfold(
                     &sumcheck_challenges,
                     uniskip_challenges,
@@ -454,6 +468,7 @@ where
                     &stage1_result.input_constraint_challenge_values,
                     &stage2_result.input_constraint_challenge_values,
                     &stage8_data,
+                    oc_blocks,
                 )?;
             }
             #[cfg(not(feature = "zk"))]
@@ -471,6 +486,10 @@ where
             &mut self.opening_accumulator,
             &mut self.transcript,
         )?;
+
+        // Drain uniskip OC block IDs (pending_claims were drained inside verify_transcript)
+        #[cfg(feature = "zk")]
+        let uniskip_oc_ids = self.opening_accumulator.take_pending_claim_ids();
 
         let spartan_outer_remaining = OuterRemainingSumcheckVerifier::new(
             self.spartan_key,
@@ -491,6 +510,8 @@ where
 
         #[cfg(feature = "zk")]
         {
+            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
+
             let batched_output_constraint = batch_output_constraints(&instances);
             let batched_input_constraint = batch_input_constraints(&instances);
 
@@ -535,6 +556,7 @@ where
                 input_constraint_challenge_values,
                 uniskip_input_constraint,
                 uniskip_input_constraint_challenge_values,
+                vec![uniskip_oc_ids, regular_oc_ids],
             );
 
             Ok((stage_result, uni_skip_challenge))
@@ -555,6 +577,9 @@ where
             &mut self.opening_accumulator,
             &mut self.transcript,
         )?;
+
+        #[cfg(feature = "zk")]
+        let uniskip_oc_ids = self.opening_accumulator.take_pending_claim_ids();
 
         let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
             &self.opening_accumulator,
@@ -609,6 +634,8 @@ where
 
         #[cfg(feature = "zk")]
         {
+            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
+
             let batched_output_constraint = batch_output_constraints(&instances);
             let batched_input_constraint = batch_input_constraints(&instances);
 
@@ -644,6 +671,7 @@ where
                 input_constraint_challenge_values,
                 uniskip_input_constraint,
                 uniskip_input_constraint_challenge_values,
+                vec![uniskip_oc_ids, regular_oc_ids],
             );
 
             Ok((stage_result, uni_skip_challenge))
@@ -687,6 +715,7 @@ where
 
         #[cfg(feature = "zk")]
         {
+            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
             let batched_output_constraint = batch_output_constraints(&instances);
             let batched_input_constraint = batch_input_constraints(&instances);
             let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
@@ -714,6 +743,7 @@ where
                 output_constraint_challenge_values,
                 batched_input_constraint,
                 input_constraint_challenge_values,
+                vec![regular_oc_ids],
             ))
         }
         #[cfg(not(feature = "zk"))]
@@ -768,6 +798,7 @@ where
 
         #[cfg(feature = "zk")]
         {
+            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
             let batched_output_constraint = batch_output_constraints(&instances);
             let batched_input_constraint = batch_input_constraints(&instances);
             let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
@@ -795,6 +826,7 @@ where
                 output_constraint_challenge_values,
                 batched_input_constraint,
                 input_constraint_challenge_values,
+                vec![regular_oc_ids],
             ))
         }
         #[cfg(not(feature = "zk"))]
@@ -837,6 +869,7 @@ where
 
         #[cfg(feature = "zk")]
         {
+            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
             let batched_output_constraint = batch_output_constraints(&instances);
             let batched_input_constraint = batch_input_constraints(&instances);
             let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
@@ -864,6 +897,7 @@ where
                 output_constraint_challenge_values,
                 batched_input_constraint,
                 input_constraint_challenge_values,
+                vec![regular_oc_ids],
             ))
         }
         #[cfg(not(feature = "zk"))]
@@ -952,6 +986,7 @@ where
 
         #[cfg(feature = "zk")]
         {
+            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
             let batched_output_constraint = batch_output_constraints(&instances);
             let batched_input_constraint = batch_input_constraints(&instances);
             let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
@@ -979,6 +1014,7 @@ where
                 output_constraint_challenge_values,
                 batched_input_constraint,
                 input_constraint_challenge_values,
+                vec![regular_oc_ids],
             ))
         }
         #[cfg(not(feature = "zk"))]
@@ -1003,6 +1039,7 @@ where
         stage1_batched_input_values: &[F],
         stage2_batched_input_values: &[F],
         stage8_data: &Stage8VerifyData<F>,
+        oc_blocks: Vec<Vec<OpeningId>>,
     ) -> Result<(), ProofVerifyError> {
         // Build stage configurations including uni-skip rounds.
         // Uni-skip rounds are the first round of stages 1 and 2 (indices 0 and 1).
@@ -1178,13 +1215,9 @@ where
             extra_constraint_challenges: stage8_data.constraint_coeffs.clone(),
         };
 
-        let builder =
-            VerifierR1CSBuilder::new_with_extra(&stage_configs, &extra_constraints, &baked);
-        let r1cs = builder.build();
-
         let mut round_commitments: Vec<C::G1> = Vec::new();
+        let mut oc_row_commitments: Vec<C::G1> = Vec::new();
         for (stage_idx, proof) in stage_proofs.iter().enumerate() {
-            // For stages 0-1, include uni-skip commitment first
             if stage_idx < 2 {
                 let uniskip_proof = if stage_idx == 0 {
                     &self.proof.stage1_uni_skip_first_round_proof
@@ -1193,13 +1226,22 @@ where
                 };
                 if let UniSkipFirstRoundProofVariant::Zk(zk_uniskip) = uniskip_proof {
                     round_commitments.push(zk_uniskip.commitment);
+                    oc_row_commitments.extend_from_slice(&zk_uniskip.output_claims_commitments);
                 }
             }
-            // Add regular sumcheck round commitments
             if let SumcheckInstanceProof::Zk(zk_proof) = proof {
                 round_commitments.extend(zk_proof.round_commitments.iter().cloned());
+                oc_row_commitments.extend_from_slice(&zk_proof.output_claims_commitments);
             }
         }
+
+        let builder = VerifierR1CSBuilder::new_with_extra(
+            &stage_configs,
+            &extra_constraints,
+            &baked,
+            oc_blocks,
+        );
+        let r1cs = builder.build();
 
         let eval_commitment = PCS::eval_commitment(&self.proof.joint_opening_proof)
             .ok_or(ProofVerifyError::InvalidOpeningProof)?;
@@ -1207,13 +1249,14 @@ where
 
         let verifier_input = BlindFoldVerifierInput {
             round_commitments,
+            output_claims_row_commitments: oc_row_commitments,
             eval_commitments,
         };
 
         let pedersen_generator_count = pedersen_generator_count_for_r1cs(&r1cs);
         let pedersen_generators = self
             .preprocessing
-            .pedersen_generators::<C>(pedersen_generator_count);
+            .pedersen_generators(pedersen_generator_count);
         let eval_commitment_gens =
             PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
         let verifier =
@@ -1278,6 +1321,7 @@ where
 
         #[cfg(feature = "zk")]
         {
+            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
             let batched_output_constraint = batch_output_constraints(&instances);
             let batched_input_constraint = batch_input_constraints(&instances);
             let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
@@ -1305,6 +1349,7 @@ where
                 output_constraint_challenge_values,
                 batched_input_constraint,
                 input_constraint_challenge_values,
+                vec![regular_oc_ids],
             ))
         }
         #[cfg(not(feature = "zk"))]
@@ -1639,30 +1684,47 @@ impl JoltSharedPreprocessing {
     }
 }
 
+/// Serializable wrapper around [`PedersenGenerators`] for ZK setup transfer.
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct BlindfoldSetup<C: JoltCurve>(pub PedersenGenerators<C>);
+
+impl<C: JoltCurve> std::ops::Deref for BlindfoldSetup<C> {
+    type Target = PedersenGenerators<C>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<C: JoltCurve> From<BlindfoldSetup<C>> for PedersenGenerators<C> {
+    fn from(setup: BlindfoldSetup<C>) -> Self {
+        setup.0
+    }
+}
+
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltVerifierPreprocessing<F, PCS>
+pub struct JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
-    #[cfg(feature = "zk")]
-    pub zk_generator_g1s: Vec<crate::curve::Bn254G1>,
-    #[cfg(feature = "zk")]
-    pub zk_generator_h1: crate::curve::Bn254G1,
+    pub blindfold_setup: Option<BlindfoldSetup<C>>,
 }
 
-impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
+impl<F, C, PCS> Serializable for JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
 {
 }
 
-impl<F, PCS> JoltVerifierPreprocessing<F, PCS>
+impl<F, C, PCS> JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
 {
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
@@ -1683,66 +1745,52 @@ where
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltVerifierPreprocessing<F, PCS> {
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>>
+    JoltVerifierPreprocessing<F, C, PCS>
+{
     #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new")]
     pub fn new(
         shared: JoltSharedPreprocessing,
         generators: PCS::VerifierSetup,
-    ) -> JoltVerifierPreprocessing<F, PCS> {
+        blindfold_setup: Option<BlindfoldSetup<C>>,
+    ) -> Self {
         Self {
             generators,
             shared,
-            #[cfg(feature = "zk")]
-            zk_generator_g1s: Vec::new(),
-            #[cfg(feature = "zk")]
-            zk_generator_h1: Default::default(),
+            blindfold_setup,
         }
     }
 
     #[cfg(feature = "zk")]
-    pub fn pedersen_generators<C: JoltCurve>(
-        &self,
-        count: usize,
-    ) -> crate::poly::commitment::pedersen::PedersenGenerators<C>
-    where
-        C::G1: From<crate::curve::Bn254G1>,
-    {
+    pub fn pedersen_generators(&self, count: usize) -> PedersenGenerators<C> {
+        let gens = &self
+            .blindfold_setup
+            .as_ref()
+            .expect("BlindfoldSetup required for ZK mode")
+            .0;
         assert!(
-            count <= self.zk_generator_g1s.len(),
-            "Requested {count} Pedersen generators but verifier preprocessing only has {}",
-            self.zk_generator_g1s.len()
+            count <= gens.message_generators.len(),
+            "Requested {count} Pedersen generators but BlindfoldSetup only has {}",
+            gens.message_generators.len()
         );
-        let message_generators = self.zk_generator_g1s[..count]
-            .iter()
-            .map(|g| C::G1::from(*g))
-            .collect();
-        let blinding_generator = C::G1::from(self.zk_generator_h1);
-        crate::poly::commitment::pedersen::PedersenGenerators::new(
-            message_generators,
-            blinding_generator,
+        PedersenGenerators::new(
+            gens.message_generators[..count].to_vec(),
+            gens.blinding_generator,
         )
     }
 }
 
 #[cfg(feature = "prover")]
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> From<&JoltProverPreprocessing<F, PCS>>
-    for JoltVerifierPreprocessing<F, PCS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>>
+    From<&JoltProverPreprocessing<F, C, PCS>> for JoltVerifierPreprocessing<F, C, PCS>
 {
-    fn from(prover_preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
+    fn from(prover_preprocessing: &JoltProverPreprocessing<F, C, PCS>) -> Self {
+        let shared = prover_preprocessing.shared.clone();
         let generators = PCS::setup_verifier(&prover_preprocessing.generators);
+        #[cfg(not(feature = "zk"))]
+        let blindfold_setup = None;
         #[cfg(feature = "zk")]
-        let (zk_generator_g1s, zk_generator_h1) = {
-            const MAX_ZK_PEDERSEN_GENERATORS: usize = 128;
-            PCS::zk_generators_raw(&prover_preprocessing.generators, MAX_ZK_PEDERSEN_GENERATORS)
-                .unwrap_or_else(|| (Vec::new(), Default::default()))
-        };
-        Self {
-            generators,
-            shared: prover_preprocessing.shared.clone(),
-            #[cfg(feature = "zk")]
-            zk_generator_g1s,
-            #[cfg(feature = "zk")]
-            zk_generator_h1,
-        }
+        let blindfold_setup = Some(prover_preprocessing.blindfold_setup());
+        Self::new(shared, generators, blindfold_setup)
     }
 }

@@ -10,7 +10,9 @@
 //! combinations), booleanity checks, product-based checking, etc.
 
 use jolt_field::Field;
-use jolt_ir::{ChallengeBinding, ChallengeSource, ClaimDefinition, Expr, ExprBuilder, OpeningBinding};
+use jolt_ir::{
+    ChallengeBinding, ChallengeSource, ClaimDefinition, Expr, ExprBuilder, OpeningBinding,
+};
 
 /// Describes one sumcheck stage for verification.
 ///
@@ -106,11 +108,7 @@ impl<F: Field> StageDescriptor<F> {
     /// Descriptor for booleanity check: `Σ_x eq(r, x) · h(x) · (h(x) − 1)`.
     ///
     /// `claimed_sum` is typically zero (all h values are boolean).
-    pub fn booleanity(
-        eq_point: Vec<F>,
-        claimed_sum: F,
-        commitment_index: usize,
-    ) -> Self {
+    pub fn booleanity(eq_point: Vec<F>, claimed_sum: F, commitment_index: usize) -> Self {
         let num_vars = eq_point.len();
 
         // opening(0) * (opening(0) - 1)
@@ -213,7 +211,9 @@ mod tests {
 
         // Evaluate: 5*10 + 7*20 = 50 + 140 = 190
         let openings = [Fr::from_u64(10), Fr::from_u64(20)];
-        let result: Fr = desc.output_expr.evaluate(&openings, &desc.output_challenges);
+        let result: Fr = desc
+            .output_expr
+            .evaluate(&openings, &desc.output_challenges);
         assert_eq!(result, Fr::from_u64(190));
     }
 

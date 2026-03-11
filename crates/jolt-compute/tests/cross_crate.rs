@@ -3,7 +3,8 @@
 //! Verifies that CpuBackend primitives agree with the canonical implementations
 //! in jolt-poly (Polynomial::bind, EqPolynomial::evaluations).
 
-use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend, CpuKernel};
+use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_cpu::{CpuBackend, CpuKernel};
 use jolt_field::{Field, Fr};
 use jolt_poly::{EqPolynomial, Polynomial};
 use rand_chacha::ChaCha20Rng;

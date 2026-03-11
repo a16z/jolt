@@ -18,6 +18,7 @@
 
 use std::time::Instant;
 
+use jolt_cpu::CpuBackend;
 use jolt_dory::DoryScheme;
 use jolt_field::{Field, Fr};
 use jolt_openings::AdditivelyHomomorphic;
@@ -35,6 +36,11 @@ use jolt_zkvm::stages::s6_booleanity::HammingBooleanityStage;
 use jolt_zkvm::stages::s7_hamming_reduction::HammingReductionStage;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+use std::sync::Arc;
+
+fn cpu() -> Arc<CpuBackend> {
+    Arc::new(CpuBackend)
+}
 
 fn challenge_fn(c: u128) -> Fr {
     Fr::from_u128(c)
@@ -152,12 +158,15 @@ impl SyntheticStageData {
         let mut stages: Vec<Box<dyn ProverStage<Fr, Blake2bTranscript>>> = Vec::new();
 
         // S3: Claim reduction
+        let backend = cpu();
+
         stages.push(Box::new(ClaimReductionStage::increment(
             self.poly_a.clone(),
             self.poly_b.clone(),
             eq_point.clone(),
             self.s3_c0,
             self.s3_c1,
+            Arc::clone(&backend),
         )));
 
         // S4: Register read-write checking
@@ -175,6 +184,7 @@ impl SyntheticStageData {
             (self.ram_rw_inc.clone(), self.rd_wa.clone()),
             reg_eq,
             Fr::random(&mut ChaCha20Rng::seed_from_u64(0)),
+            Arc::clone(&backend),
         )));
 
         // S4b: RAM read-write checking
@@ -184,6 +194,7 @@ impl SyntheticStageData {
             self.ram_rw_inc.clone(),
             eq_point.clone(),
             [self.ram_rw_c0, self.ram_rw_c1],
+            Arc::clone(&backend),
         )));
 
         // S5: RAM checking
@@ -194,12 +205,14 @@ impl SyntheticStageData {
             self.ram_ra.clone(),
             eq_point.clone(),
             self.s5_raf_c0,
+            Arc::clone(&backend),
         )));
 
         // S6: Booleanity
         stages.push(Box::new(HammingBooleanityStage::new(
             self.h_evals.clone(),
             eq_point.clone(),
+            Arc::clone(&backend),
         )));
 
         // S7: Hamming reduction
@@ -207,6 +220,7 @@ impl SyntheticStageData {
             self.hamming_polys.clone(),
             self.hamming_coeffs.clone(),
             eq_point,
+            backend,
         )));
 
         stages

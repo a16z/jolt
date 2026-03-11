@@ -416,4 +416,184 @@ mod tests {
         let expected = (rho_a * a + rho_b * b + rho_c * c) * witness_eval;
         assert_eq!(result, expected);
     }
+
+    /// Creates a key with `num_constraints` trivial constraints (guard=1, body=0):
+    /// A[k] = [(0, 1)]  (constant=1)
+    /// B[k] = []         (zero)
+    /// C[k] = []         (zero)
+    ///
+    /// Every constraint is `1 * 0 = 0`, trivially satisfied by any witness
+    /// with `w[0] = 1`. `num_vars` free variables per cycle.
+    fn trivial_key(
+        num_cycles: usize,
+        num_constraints: usize,
+        num_vars: usize,
+    ) -> UniformSpartanKey<Fr> {
+        let one = Fr::from_u64(1);
+        let a_sparse: Vec<Vec<(usize, Fr)>> =
+            (0..num_constraints).map(|_| vec![(0, one)]).collect();
+        let b_sparse: Vec<Vec<(usize, Fr)>> = (0..num_constraints).map(|_| vec![]).collect();
+        let c_sparse: Vec<Vec<(usize, Fr)>> = (0..num_constraints).map(|_| vec![]).collect();
+        UniformSpartanKey::new(
+            num_cycles,
+            num_constraints,
+            num_vars,
+            a_sparse,
+            b_sparse,
+            c_sparse,
+        )
+    }
+
+    /// Direct comparison of dense combined_row polynomial vs key MLE evaluation
+    /// at a single point. No sumcheck involved — pure MLE consistency check.
+    #[test]
+    fn dense_vs_key_mle_consistency() {
+        use crate::uniform_prover;
+        use rand_chacha::ChaCha20Rng;
+        use rand_core::SeedableRng;
+
+        let mut rng = ChaCha20Rng::seed_from_u64(42);
+
+        // Test configurations: (num_cycles, num_constraints, num_vars)
+        let configs = [
+            (2, 3, 5),    // cycle_vars=1, constr_vars=2
+            (4, 3, 5),    // cycle_vars=2, constr_vars=2 (EQUAL)
+            (4, 6, 9),    // cycle_vars=2, constr_vars=3
+            (8, 6, 9),    // cycle_vars=3, constr_vars=3 (EQUAL)
+            (16, 24, 41), // cycle_vars=4, constr_vars=5
+            // Key transition: cycle_vars reaches constraint_vars
+            (32, 24, 41), // cycle_vars=5, constr_vars=5 (EQUAL)
+            // Other equal-vars cases at different sizes
+            (16, 12, 20), // cycle_vars=4, constr_vars=4 (EQUAL)
+            (8, 24, 41),  // cycle_vars=3, constr_vars=5
+            (32, 6, 9),   // cycle_vars=5, constr_vars=3
+            (64, 24, 41), // cycle_vars=6, constr_vars=5
+        ];
+
+        for (num_cycles, num_constraints, num_vars) in configs {
+            let key = trivial_key(num_cycles, num_constraints, num_vars);
+            let total_cols_padded = key.total_cols().next_power_of_two();
+            let num_row_vars = key.num_row_vars();
+            let num_col_vars = key.num_col_vars();
+
+            // Random r_x and r_y
+            let r_x: Vec<Fr> = (0..num_row_vars).map(|_| Fr::random(&mut rng)).collect();
+            let r_y: Vec<Fr> = (0..num_col_vars).map(|_| Fr::random(&mut rng)).collect();
+            let rho_a = Fr::random(&mut rng);
+            let rho_b = Fr::random(&mut rng);
+            let rho_c = Fr::random(&mut rng);
+
+            // Dense evaluation
+            let combined_row = uniform_prover::combined_partial_evaluate_uniform(
+                &key,
+                &r_x,
+                rho_a,
+                rho_b,
+                rho_c,
+                total_cols_padded,
+            );
+            let dense_eval = combined_row.evaluate(&r_y);
+
+            // Key MLE evaluation
+            let (a_eval, b_eval, c_eval) = key.evaluate_matrix_mles(&r_x, &r_y);
+            let key_eval = rho_a * a_eval + rho_b * b_eval + rho_c * c_eval;
+
+            assert_eq!(
+                dense_eval, key_eval,
+                "n={num_cycles}, k={num_constraints}, v={num_vars}: dense vs key MLE mismatch",
+            );
+        }
+    }
+
+    /// Verifies eq table factorization: eq_full[c*K+k] == eq_cycle[c] * eq_sub[k].
+    /// This catches layout bugs in the parallel path of EqPolynomial::evaluations().
+    #[test]
+    fn brute_force_mle_comparison() {
+        use rand_chacha::ChaCha20Rng;
+        use rand_core::SeedableRng;
+
+        let mut rng = ChaCha20Rng::seed_from_u64(42);
+        let key = trivial_key(32, 24, 41);
+        let num_row_vars = key.num_row_vars();
+        let num_col_vars = key.num_col_vars();
+
+        let r_x: Vec<Fr> = (0..num_row_vars).map(|_| Fr::random(&mut rng)).collect();
+        let r_y: Vec<Fr> = (0..num_col_vars).map(|_| Fr::random(&mut rng)).collect();
+
+        let cycle_vars = key.num_cycle_vars();
+        let (r_x_cycle, r_x_constraint) = r_x.split_at(cycle_vars);
+        let (r_y_cycle, r_y_var) = r_y.split_at(cycle_vars);
+
+        // Full eq tables
+        let eq_row = EqPolynomial::new(r_x.clone()).evaluations();
+        let eq_col = EqPolynomial::new(r_y.clone()).evaluations();
+
+        // Sub-tables for factored computation
+        let eq_x_cycle = EqPolynomial::new(r_x_cycle.to_vec()).evaluations();
+        let eq_constr = EqPolynomial::new(r_x_constraint.to_vec()).evaluations();
+        let eq_y_cycle = EqPolynomial::new(r_y_cycle.to_vec()).evaluations();
+        let eq_var = EqPolynomial::new(r_y_var.to_vec()).evaluations();
+
+        // Verify row factorization: eq_row[c*K + k] == eq_x_cycle[c] * eq_constr[k]
+        let k_padded = key.num_constraints_padded;
+        for (c, &eq_xc) in eq_x_cycle.iter().enumerate().take(32) {
+            for (k, &eq_ck) in eq_constr.iter().enumerate().take(24) {
+                let row = c * k_padded + k;
+                assert_eq!(
+                    eq_row[row],
+                    eq_xc * eq_ck,
+                    "row factorization at c={c}, k={k}",
+                );
+            }
+        }
+
+        // Verify col factorization: eq_col[c*V + v] == eq_y_cycle[c] * eq_var[v]
+        let v_padded = key.num_vars_padded;
+        for (c, &eq_yc) in eq_y_cycle.iter().enumerate().take(32) {
+            let col = c * v_padded;
+            assert_eq!(eq_col[col], eq_yc * eq_var[0], "col factorization at c={c}",);
+        }
+
+        // Verify key MLE matches brute-force
+        let (a_local, _, _) = key.evaluate_local_mles(r_x_constraint, r_y_var);
+        let cycle_eq = EqPolynomial::new(r_x_cycle.to_vec()).evaluate(r_y_cycle);
+        let key_a = cycle_eq * a_local;
+
+        let mut brute_a = Fr::zero();
+        for c in 0..32usize {
+            for k in 0..24usize {
+                brute_a += eq_row[c * k_padded + k] * eq_col[c * v_padded];
+            }
+        }
+        assert_eq!(brute_a, key_a, "key MLE disagrees with brute-force");
+    }
+
+    /// Sweeps prove+verify across cycle counts from 1 to 64 with Jolt-like dimensions.
+    /// The n=32 case triggers the parallel eq path (11 column vars → 2048 entries).
+    #[test]
+    fn prove_verify_sweep_24_constraints() {
+        use crate::uniform_prover::UniformSpartanProver;
+        use jolt_transcript::{Blake2bTranscript, Transcript};
+
+        for &n in &[1, 2, 4, 8, 16, 32, 64] {
+            let key = trivial_key(n, 24, 41);
+            let total_cols_padded = key.total_cols().next_power_of_two();
+
+            let mut witness = vec![Fr::zero(); total_cols_padded];
+            for c in 0..n {
+                witness[c * key.num_vars_padded] = Fr::one();
+            }
+
+            let mut pt = Blake2bTranscript::new(b"sweep-test");
+            pt.append(&Fr::from_u64(42));
+            let (proof, _r_x, _r_y) =
+                UniformSpartanProver::prove_dense_with_challenges(&key, &witness, &mut pt)
+                    .unwrap_or_else(|e| panic!("n={n}: prove failed: {e}"));
+
+            let mut vt = Blake2bTranscript::new(b"sweep-test");
+            vt.append(&Fr::from_u64(42));
+            crate::UniformSpartanVerifier::verify(&key, &proof, &mut vt)
+                .unwrap_or_else(|e| panic!("n={n}: verify failed: {e}"));
+        }
+    }
 }

@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn field_serialization_roundtrip() {
-        let val = <Fr as DoryField>::from_u64(123456789);
+        let val = <Fr as DoryField>::from_u64(123_456_789);
         let mut buf = Vec::new();
         DorySerialize::serialize_compressed(&val, &mut buf).unwrap();
         let recovered: Fr = DoryDeserialize::deserialize_compressed(&buf[..]).unwrap();

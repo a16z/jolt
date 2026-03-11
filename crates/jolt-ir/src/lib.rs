@@ -28,6 +28,7 @@ mod kernel;
 mod normalize;
 mod visitor;
 
+pub mod toom_cook;
 pub mod zkvm;
 
 pub use builder::{ExprBuilder, ExprHandle};
@@ -39,3 +40,6 @@ pub use visitor::ExprVisitor;
 
 pub use backends::circuit::CircuitEmitter;
 pub use backends::r1cs::{LcTerm, LinearCombination, R1csConstraint, R1csEmission, R1csVar};
+
+#[cfg(feature = "z3")]
+pub use backends::z3::Z3Emitter;

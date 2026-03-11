@@ -535,19 +535,18 @@ checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 [[package]]
 name = "ark-bn254"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d69eab57e8d2663efa5c63135b2af4f396d66424f88954c21104125ab6b3e6bc"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
  "ark-std 0.5.0",
 ]
 
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43d68f2d516162846c1238e755a7c4d131b892b70cc70c471a8e3ca3ed818fce"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -606,9 +605,9 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a177aba0ed1e0fbb62aa9f6d0502e9b46dad8c2eab04c14258a1212d2557ea70"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
+ "allocative",
  "ark-ff-asm 0.5.0",
  "ark-ff-macros 0.5.0",
  "ark-serialize 0.5.0",
@@ -647,8 +646,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62945a2f7e6de02a31fe400aa489f0e0f5b2502e69f95f853adb82a96c7a6b60"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "quote",
  "syn 2.0.115",
@@ -682,8 +680,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09be120733ee33f7693ceaa202ca41accd5653b779563608f1234f78ae07c4b3"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -707,8 +704,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "579305839da207f02b89cd1679e50e67b4331e2f9294a57693e5051b7703fe27"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -754,8 +750,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f4d068aaf107ebcd7dfb52bc748f8030e0fc930ac8e360146ca54c1203088f7"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ark-serialize-derive",
  "ark-std 0.5.0",
@@ -768,8 +763,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "213888f660fddcca0d257e88e54ac05bca01885f258ccdf695bafd77031bb69d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -910,6 +904,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "bincode"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36eaf5d7b090263e8150820482d5d93cd964a81e4019913c972f4edcc6edb740"
+dependencies = [
+ "bincode_derive",
+ "serde",
+ "unty",
+]
+
+[[package]]
+name = "bincode_derive"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf95709a440f45e986983918d0e8a1f30a9b1df04918fc828670606804ac3c09"
+dependencies = [
+ "virtue",
 ]
 
 [[package]]
@@ -1787,7 +1801,7 @@ dependencies = [
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
- "bincode",
+ "bincode 1.3.3",
  "blake2",
  "digest 0.10.7",
  "dory-derive",
@@ -2512,7 +2526,7 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b1e4910d3a9137442723dfb772c32dc10674c4181ca078d2fd227cd5dce9db0"
 dependencies = [
- "bincode",
+ "bincode 1.3.3",
  "derive_more 2.1.1",
  "iai-callgrind-macros",
  "iai-callgrind-runner",
@@ -2918,14 +2932,14 @@ name = "jolt-compute"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "jolt-cpu",
  "jolt-field",
+ "jolt-ir",
  "jolt-poly",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
- "rayon",
- "tracing",
 ]
 
 [[package]]
@@ -2938,7 +2952,7 @@ dependencies = [
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
- "bincode",
+ "bincode 2.0.1",
  "blake2",
  "chrono",
  "clap",
@@ -2951,10 +2965,9 @@ dependencies = [
  "iai-callgrind",
  "inferno 0.12.4",
  "itertools 0.10.5",
- "jolt-dory",
- "jolt-field",
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
+ "jolt-optimizations",
  "memory-stats",
  "num",
  "num-derive",
@@ -2971,7 +2984,7 @@ dependencies = [
  "sha3",
  "strum 0.27.2",
  "strum_macros 0.26.4",
- "sysinfo 0.37.2",
+ "sysinfo 0.30.13",
  "thiserror 2.0.18",
  "tracer",
  "tracing",
@@ -2980,7 +2993,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-cpu-kernels"
+name = "jolt-cpu"
 version = "0.1.0"
 dependencies = [
  "criterion",
@@ -2995,6 +3008,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
+ "tracing",
 ]
 
 [[package]]
@@ -3006,7 +3020,7 @@ dependencies = [
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
- "bincode",
+ "bincode 1.3.3",
  "criterion",
  "dory-pcs",
  "jolt-field",
@@ -3064,7 +3078,7 @@ dependencies = [
 name = "jolt-host"
 version = "0.1.0"
 dependencies = [
- "bincode",
+ "bincode 1.3.3",
  "common",
  "serde",
  "tracer",
@@ -3192,6 +3206,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "z3",
 ]
 
 [[package]]
@@ -3201,7 +3216,7 @@ dependencies = [
  "block",
  "criterion",
  "jolt-compute",
- "jolt-cpu-kernels",
+ "jolt-cpu",
  "jolt-field",
  "jolt-ir",
  "metal",
@@ -3232,6 +3247,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-optimizations"
+version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "arrayvec",
+ "num-bigint",
+ "num-integer",
+ "num-rational",
+ "num-traits",
+ "rayon",
+]
+
+[[package]]
 name = "jolt-platform"
 version = "0.1.0"
 dependencies = [
@@ -3244,7 +3277,7 @@ dependencies = [
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
- "bincode",
+ "bincode 1.3.3",
  "criterion",
  "jolt-field",
  "num-traits",
@@ -3411,7 +3444,7 @@ name = "jolt-zkvm"
 version = "0.1.0"
 dependencies = [
  "jolt-compute",
- "jolt-cpu-kernels",
+ "jolt-cpu",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
@@ -3427,6 +3460,7 @@ dependencies = [
  "jolt-verifier",
  "jolt-witness",
  "num-traits",
+ "postcard",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
@@ -6416,6 +6450,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
+name = "unty"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
+
+[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6460,6 +6500,12 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "virtue"
+version = "0.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 
 [[package]]
 name = "wait-timeout"
@@ -7092,7 +7138,8 @@ name = "z3-verifier"
 version = "0.0.0"
 dependencies = [
  "common",
- "jolt-core",
+ "jolt-instructions",
+ "jolt-ir",
  "paste",
  "tracer",
  "z3",

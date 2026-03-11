@@ -6,8 +6,8 @@
 //! Cross-checks against a hand-written SumcheckCompute reference implementation
 //! to ensure the compute layer produces identical round polynomials.
 
-use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend};
-use jolt_cpu_kernels::compile;
+use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_cpu::{compile, CpuBackend};
 use jolt_field::{Field, Fr};
 use jolt_ir::{KernelDescriptor, KernelShape};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
@@ -116,7 +116,7 @@ struct ComputeWitness {
     f_buf: Vec<Fr>,
     g_buf: Vec<Fr>,
     eq_buf: Vec<Fr>,
-    kernel: jolt_compute::CpuKernel<Fr>,
+    kernel: jolt_cpu::CpuKernel<Fr>,
 }
 
 impl ComputeWitness {

@@ -6,11 +6,11 @@
 //! Provides specialized kernels for arity `d ∈ {4, 8, 16, 32}` using
 //! stack-allocated product evaluation, with a generic fallback for arbitrary `d`.
 
-use jolt_cpu_kernels::toom_cook::{
+use jolt_field::{FieldAccumulator, WithChallenge};
+use jolt_ir::toom_cook::{
     eval_linear_prod_assign, eval_prod_16_assign, eval_prod_32_assign, eval_prod_4_assign,
     eval_prod_8_assign,
 };
-use jolt_field::{FieldAccumulator, WithChallenge};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::SplitEqEvaluator;
 

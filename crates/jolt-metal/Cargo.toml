@@ -20,7 +20,7 @@ tracing.workspace = true
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 jolt-compute = { path = "../jolt-compute" }
-jolt-cpu-kernels = { path = "../jolt-cpu-kernels" }
+jolt-cpu = { path = "../jolt-cpu" }
 rand = { workspace = true }
 rand_core = { workspace = true }
 rand_chacha = { workspace = true }

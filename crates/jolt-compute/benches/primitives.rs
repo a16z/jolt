@@ -1,7 +1,8 @@
 #![allow(unused_results)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend, CpuKernel};
+use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_cpu::{CpuBackend, CpuKernel};
 use jolt_field::{Field, Fr};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

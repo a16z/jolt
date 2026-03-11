@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::{ComputeBackend, CpuBackend};
+use jolt_compute::ComputeBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -19,10 +19,10 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_sumcheck::prover::SumcheckCompute;
 use jolt_transcript::Transcript;
 
-use jolt_ir::zkvm::claims::{ram, registers};
 use crate::evaluators::catalog::{formula_descriptor, Term};
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
+use jolt_ir::zkvm::claims::{ram, registers};
 
 /// Register read-write checking + RAM value check prover stage.
 ///
@@ -30,7 +30,8 @@ use crate::stage::{ProverStage, StageBatch};
 /// polynomials plus eq). The RAM value check has degree 3 (c0·inc·wa).
 /// Both use [`KernelEvaluator`]
 /// with formula-derived kernels.
-pub struct RwCheckingStage<F: Field> {
+pub struct RwCheckingStage<F: Field, B: ComputeBackend> {
+    backend: Arc<B>,
     // Register RW checking polynomials
     reg_val: Option<Vec<F>>,
     rs1_ra: Option<Vec<F>>,
@@ -51,7 +52,7 @@ pub struct RwCheckingStage<F: Field> {
     num_vars: usize,
 }
 
-impl<F: Field> RwCheckingStage<F> {
+impl<F: Field, B: ComputeBackend> RwCheckingStage<F, B> {
     /// Creates a new stage with all polynomial tables and challenges.
     ///
     /// # Arguments
@@ -70,6 +71,7 @@ impl<F: Field> RwCheckingStage<F> {
         ram_polys: (Vec<F>, Vec<F>),
         ram_eq_point: Vec<F>,
         ram_c0: F,
+        backend: Arc<B>,
     ) -> Self {
         let num_vars = reg_eq_point.len();
         let expected = 1usize << num_vars;
@@ -83,6 +85,7 @@ impl<F: Field> RwCheckingStage<F> {
         assert_eq!(ram_polys.1.len(), expected);
 
         Self {
+            backend,
             reg_val: Some(reg_polys.0),
             rs1_ra: Some(reg_polys.1),
             rs2_ra: Some(reg_polys.2),
@@ -155,9 +158,11 @@ impl<F: Field> RwCheckingStage<F> {
 
         let degree = 3;
 
-        let backend = Arc::new(CpuBackend);
         let (desc, challenges) = formula_descriptor(&terms, poly_tables.len(), degree);
-        let kernel = jolt_cpu_kernels::compile_with_challenges::<F>(&desc, &challenges);
+        let kernel = self
+            .backend
+            .compile_kernel_with_challenges::<F>(&desc, &challenges);
+        let backend = Arc::clone(&self.backend);
         let mut inputs = Vec::with_capacity(1 + poly_tables.len());
         inputs.push(backend.upload(&eq_table));
         inputs.extend(poly_tables.iter().map(|t| backend.upload(t)));
@@ -192,9 +197,11 @@ impl<F: Field> RwCheckingStage<F> {
 
         let degree = 3;
 
-        let backend = Arc::new(CpuBackend);
         let (desc, challenges) = formula_descriptor(&terms, poly_tables.len(), degree);
-        let kernel = jolt_cpu_kernels::compile_with_challenges::<F>(&desc, &challenges);
+        let kernel = self
+            .backend
+            .compile_kernel_with_challenges::<F>(&desc, &challenges);
+        let backend = Arc::clone(&self.backend);
         let mut inputs = Vec::with_capacity(1 + poly_tables.len());
         inputs.push(backend.upload(&eq_table));
         inputs.extend(poly_tables.iter().map(|t| backend.upload(t)));
@@ -210,7 +217,7 @@ impl<F: Field> RwCheckingStage<F> {
     }
 }
 
-impl<F: Field, T: Transcript> ProverStage<F, T> for RwCheckingStage<F> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for RwCheckingStage<F, B> {
     fn name(&self) -> &'static str {
         "S4_rw_checking"
     }
@@ -264,12 +271,17 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RwCheckingStage<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_sumcheck::{BatchedSumcheckProver, BatchedSumcheckVerifier};
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use num_traits::Zero;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    fn cpu() -> Arc<CpuBackend> {
+        Arc::new(CpuBackend)
+    }
 
     fn random_table(n: usize, rng: &mut ChaCha20Rng) -> Vec<Fr> {
         (0..n).map(|_| Fr::random(rng)).collect()
@@ -299,6 +311,7 @@ mod tests {
             (random_table(n, &mut rng), random_table(n, &mut rng)),
             ram_eq,
             lt_plus_gamma,
+            cpu(),
         );
 
         let mut t = Blake2bTranscript::new(b"test_s4");
@@ -322,7 +335,7 @@ mod tests {
         let eq_eval = Fr::random(&mut rng);
         let lt_plus_gamma = Fr::random(&mut rng);
 
-        let mut stage: RwCheckingStage<Fr> = RwCheckingStage::new(
+        let mut stage: RwCheckingStage<Fr, CpuBackend> = RwCheckingStage::new(
             (
                 random_table(n, &mut rng),
                 random_table(n, &mut rng),
@@ -335,6 +348,7 @@ mod tests {
             (random_table(n, &mut rng), random_table(n, &mut rng)),
             ram_eq,
             lt_plus_gamma,
+            cpu(),
         );
 
         let mut pt = Blake2bTranscript::new(b"s4_roundtrip");
@@ -357,12 +371,10 @@ mod tests {
         )
         .expect("verification should succeed");
 
-        let prover_claims =
-            <RwCheckingStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-                &mut stage,
-                &challenges,
-                final_eval,
-            );
+        let prover_claims = <RwCheckingStage<Fr, CpuBackend> as ProverStage<
+            Fr,
+            Blake2bTranscript,
+        >>::extract_claims(&mut stage, &challenges, final_eval);
         // 5 register polys + 2 RAM polys = 7
         assert_eq!(prover_claims.len(), 7);
 
@@ -377,7 +389,7 @@ mod tests {
     #[test]
     fn claim_definitions_match() {
         let n = 8;
-        let stage = RwCheckingStage::<Fr>::new(
+        let stage = RwCheckingStage::<Fr, CpuBackend>::new(
             (
                 vec![Fr::zero(); n],
                 vec![Fr::zero(); n],
@@ -390,10 +402,11 @@ mod tests {
             (vec![Fr::zero(); n], vec![Fr::zero(); n]),
             vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3)],
             Fr::from_u64(7),
+            cpu(),
         );
 
         let defs =
-            <RwCheckingStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(&stage);
+            <RwCheckingStage<Fr, CpuBackend> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(&stage);
         assert_eq!(defs.len(), 2);
     }
 }

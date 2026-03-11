@@ -9,7 +9,10 @@ use jolt_spartan::UniformSpartanKey;
 
 pub use jolt_verifier::proof::{JoltProof, SumcheckStageProof};
 pub use jolt_verifier::{verify, verify_openings, verify_spartan};
-pub use jolt_verifier::{JoltError, JoltVerifyingKey, OneHotConfig, OneHotParams, ProverConfig, ReadWriteConfig, StageDescriptor};
+pub use jolt_verifier::{
+    JoltError, JoltVerifyingKey, OneHotConfig, OneHotParams, ProverConfig, ReadWriteConfig,
+    StageDescriptor,
+};
 
 /// Proving key containing preprocessed circuit data and PCS parameters.
 ///

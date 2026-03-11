@@ -8,8 +8,13 @@ description = "Symbolic expression IR for sumcheck claim formulas in the Jolt zk
 [lints]
 workspace = true
 
+[features]
+default = []
+z3 = ["dep:z3"]
+
 [dependencies]
 jolt-field = { path = "../jolt-field", default-features = false }
+z3 = { version = "0.19.2", optional = true }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }

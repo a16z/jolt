@@ -29,7 +29,6 @@ impl<P: Pairing> SRS<P> {
     ) -> Self
     where
         P::ScalarField: JoltField,
-        P::G1: VariableBaseMSM,
     {
         let beta = P::ScalarField::rand(&mut rng);
         let g1 = P::G1::rand(&mut rng);
@@ -187,7 +186,6 @@ pub struct UnivariateKZG<P: Pairing, G: Group<P> = G1> {
 impl<P: Pairing> UnivariateKZG<P>
 where
     P::ScalarField: JoltField,
-    P::G1: VariableBaseMSM,
 {
     #[tracing::instrument(skip_all, name = "KZG::commit_batch")]
     pub fn commit_batch<U>(
@@ -364,7 +362,7 @@ where
 impl<P: Pairing, G: Group<P>> UnivariateKZG<P, G>
 where
     P::ScalarField: JoltField,
-    G::Curve: CurveGroup<ScalarField = P::ScalarField> + VariableBaseMSM,
+    G::Curve: CurveGroup<ScalarField = P::ScalarField>,
 {
     #[tracing::instrument(skip_all, name = "KZG::open")]
     pub fn generic_open(

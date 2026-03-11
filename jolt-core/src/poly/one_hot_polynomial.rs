@@ -145,10 +145,8 @@ impl<F: JoltField> OneHotPolynomial<F> {
                             indices_per_k[*k as usize].push(col_index);
                         }
                     }
-                    let results = jolt_dory::optimizations::batch_g1_additions_multi(
-                        g1_bases,
-                        &indices_per_k,
-                    );
+                    let results =
+                        jolt_optimizations::batch_g1_additions_multi(g1_bases, &indices_per_k);
                     let mut row_commitments = vec![G::zero(); self.K];
                     for (k, batch_result) in results.into_iter().enumerate() {
                         if !indices_per_k[k].is_empty() {
@@ -194,8 +192,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .par_chunks_mut(chunk_size)
             .zip(row_indices.par_chunks(chunk_size))
             .for_each(|(result_chunk, indices_chunk)| {
-                let results =
-                    jolt_dory::optimizations::batch_g1_additions_multi(g1_bases, indices_chunk);
+                let results = jolt_optimizations::batch_g1_additions_multi(g1_bases, indices_chunk);
                 for (row_result, (indices, batch_result)) in result_chunk
                     .iter_mut()
                     .zip(indices_chunk.iter().zip(results.into_iter()))

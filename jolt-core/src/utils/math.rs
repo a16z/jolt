@@ -1,4 +1,4 @@
-use jolt_field::signed::S64;
+use ark_ff::biginteger::S64;
 
 pub trait Math {
     fn pow2(self) -> usize;

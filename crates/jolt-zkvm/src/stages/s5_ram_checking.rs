@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::{ComputeBackend, CpuBackend};
+use jolt_compute::ComputeBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -20,16 +20,16 @@ use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
-use jolt_ir::zkvm::claims::ram;
 use crate::evaluators::catalog;
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
+use jolt_ir::zkvm::claims::ram;
 
 /// RAM output check + RAF evaluation prover stage.
 ///
 /// Both instances are degree 2 and use the pre-compute-g + `KernelEvaluator`
 /// pattern with the `eq_product` kernel.
-pub struct RamCheckingStage<F: Field> {
+pub struct RamCheckingStage<F: Field, B: ComputeBackend> {
     /// RAM val_final polynomial evaluations.
     val_final: Option<Vec<F>>,
     /// RAM read-address polynomial evaluations.
@@ -43,9 +43,10 @@ pub struct RamCheckingStage<F: Field> {
     /// Challenge for RAF evaluation: c0 = unmap_eval.
     raf_c0: F,
     num_vars: usize,
+    backend: Arc<B>,
 }
 
-impl<F: Field> RamCheckingStage<F> {
+impl<F: Field, B: ComputeBackend> RamCheckingStage<F, B> {
     /// Creates a new stage.
     ///
     /// # Arguments
@@ -56,6 +57,7 @@ impl<F: Field> RamCheckingStage<F> {
     /// * `ram_ra` — RAM read-address evaluation table
     /// * `raf_eq_point` — Eq point for RAF evaluation
     /// * `raf_c0` — `unmap_eval` challenge for RAF formula
+    /// * `backend` — compute backend for kernel compilation and buffer management
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         val_final: Vec<F>,
@@ -64,6 +66,7 @@ impl<F: Field> RamCheckingStage<F> {
         ram_ra: Vec<F>,
         raf_eq_point: Vec<F>,
         raf_c0: F,
+        backend: Arc<B>,
     ) -> Self {
         let num_vars = output_eq_point.len();
         let expected = 1usize << num_vars;
@@ -78,11 +81,12 @@ impl<F: Field> RamCheckingStage<F> {
             raf_eq_point,
             raf_c0,
             num_vars,
+            backend,
         }
     }
 }
 
-impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for RamCheckingStage<F, B> {
     fn name(&self) -> &'static str {
         "S5_ram_checking"
     }
@@ -111,11 +115,11 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
         let raf_eq = EqPolynomial::new(self.raf_eq_point.clone()).evaluations();
         let raf_sum: F = raf_eq.iter().zip(raf_g.iter()).map(|(&e, &g)| e * g).sum();
 
-        let backend = Arc::new(CpuBackend);
         let desc = catalog::eq_product();
 
-        let kernel_output = jolt_cpu_kernels::compile::<F>(&desc);
-        let kernel_raf = jolt_cpu_kernels::compile::<F>(&desc);
+        let kernel_output = self.backend.compile_kernel::<F>(&desc);
+        let kernel_raf = self.backend.compile_kernel::<F>(&desc);
+        let backend = Arc::clone(&self.backend);
         let num_evals = desc.num_evals();
 
         StageBatch {
@@ -177,11 +181,16 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for RamCheckingStage<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_sumcheck::{BatchedSumcheckProver, BatchedSumcheckVerifier};
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    fn cpu() -> Arc<CpuBackend> {
+        Arc::new(CpuBackend)
+    }
 
     #[test]
     fn stage_produces_two_degree_2_claims() {
@@ -198,8 +207,15 @@ mod tests {
         let c1 = Fr::random(&mut rng);
         let raf_c0 = Fr::random(&mut rng);
 
-        let mut stage =
-            RamCheckingStage::new(val_final, output_eq, [c0, c1], ram_ra, raf_eq, raf_c0);
+        let mut stage = RamCheckingStage::new(
+            val_final,
+            output_eq,
+            [c0, c1],
+            ram_ra,
+            raf_eq,
+            raf_c0,
+            cpu(),
+        );
 
         let mut t = Blake2bTranscript::new(b"test_s5");
         let batch = stage.build(&[], &mut t);
@@ -224,8 +240,15 @@ mod tests {
         let c1 = Fr::random(&mut rng);
         let raf_c0 = Fr::random(&mut rng);
 
-        let mut stage: RamCheckingStage<Fr> =
-            RamCheckingStage::new(val_final, output_eq, [c0, c1], ram_ra, raf_eq, raf_c0);
+        let mut stage: RamCheckingStage<Fr, CpuBackend> = RamCheckingStage::new(
+            val_final,
+            output_eq,
+            [c0, c1],
+            ram_ra,
+            raf_eq,
+            raf_c0,
+            cpu(),
+        );
 
         let mut pt = Blake2bTranscript::new(b"s5_roundtrip");
         let mut batch = stage.build(&[], &mut pt);
@@ -247,12 +270,10 @@ mod tests {
         )
         .expect("verification should succeed");
 
-        let prover_claims =
-            <RamCheckingStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-                &mut stage,
-                &challenges,
-                final_eval,
-            );
+        let prover_claims = <RamCheckingStage<Fr, CpuBackend> as ProverStage<
+            Fr,
+            Blake2bTranscript,
+        >>::extract_claims(&mut stage, &challenges, final_eval);
         assert_eq!(prover_claims.len(), 2);
 
         let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();

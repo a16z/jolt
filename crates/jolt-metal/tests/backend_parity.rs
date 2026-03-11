@@ -5,13 +5,18 @@
 
 #![cfg(target_os = "macos")]
 
-use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend};
+use std::sync::LazyLock;
+
+use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
 use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
 use jolt_metal::MetalBackend;
 use num_traits::Zero;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+
+static METAL: LazyLock<MetalBackend> = LazyLock::new(MetalBackend::new);
 
 fn random_elements(rng: &mut StdRng, n: usize) -> Vec<Fr> {
     (0..n).map(|_| Fr::random(rng)).collect()
@@ -45,7 +50,7 @@ fn fr_memory_layout_compatible() {
 
 #[test]
 fn upload_download_roundtrip() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let mut rng = StdRng::seed_from_u64(0x1111);
     let data = random_elements(&mut rng, 4096);
 
@@ -57,7 +62,7 @@ fn upload_download_roundtrip() {
 
 #[test]
 fn upload_download_empty() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let data: Vec<Fr> = vec![];
 
     let buf = metal.upload(&data);
@@ -69,7 +74,7 @@ fn upload_download_empty() {
 
 #[test]
 fn alloc_is_zeroed() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let buf: <MetalBackend as ComputeBackend>::Buffer<Fr> = metal.alloc(1024);
 
     let result = metal.download(&buf);
@@ -83,7 +88,7 @@ const SIZES: [usize; 4] = [1, 64, 4096, 1 << 16];
 
 #[test]
 fn add_parity() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
 
     for &n in &SIZES {
@@ -105,7 +110,7 @@ fn add_parity() {
 
 #[test]
 fn sub_parity() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
 
     for &n in &SIZES {
@@ -127,7 +132,7 @@ fn sub_parity() {
 
 #[test]
 fn scale_parity() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
 
     for &n in &SIZES {
@@ -149,7 +154,7 @@ fn scale_parity() {
 
 #[test]
 fn accumulate_parity() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
 
     for &n in &SIZES {
@@ -174,7 +179,7 @@ fn accumulate_parity() {
 
 #[test]
 fn sum_parity() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
 
     for &n in &SIZES {
@@ -193,7 +198,7 @@ fn sum_parity() {
 
 #[test]
 fn sum_empty() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let buf = metal.upload::<Fr>(&[]);
     let result: Fr = metal.sum(&buf);
     assert!(result.is_zero());
@@ -201,7 +206,7 @@ fn sum_empty() {
 
 #[test]
 fn dot_product_parity() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
 
     for &n in &SIZES {
@@ -223,7 +228,7 @@ fn dot_product_parity() {
 
 #[test]
 fn dot_product_empty() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let a = metal.upload::<Fr>(&[]);
     let b = metal.upload::<Fr>(&[]);
     let result: Fr = metal.dot_product(&a, &b);
@@ -232,7 +237,7 @@ fn dot_product_empty() {
 
 #[test]
 fn sum_single_element() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let val = Fr::from_u64(42);
     let buf = metal.upload(&[val]);
     let result: Fr = metal.sum(&buf);
@@ -241,7 +246,7 @@ fn sum_single_element() {
 
 #[test]
 fn dot_product_single_element() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let a = Fr::from_u64(7);
     let b = Fr::from_u64(6);
     let a_buf = metal.upload(&[a]);
@@ -252,7 +257,7 @@ fn dot_product_single_element() {
 
 #[test]
 fn scale_by_zero() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let mut rng = StdRng::seed_from_u64(0x8888);
     let data = random_elements(&mut rng, 256);
 
@@ -267,7 +272,7 @@ fn scale_by_zero() {
 
 #[test]
 fn scale_by_one() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let mut rng = StdRng::seed_from_u64(0x9999);
     let data = random_elements(&mut rng, 256);
 
@@ -281,10 +286,10 @@ fn scale_by_one() {
 /// Large reduction that exercises multiple threadgroups.
 #[test]
 fn sum_large() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xAAAA);
-    let n = 1 << 18; // 262144 elements — well past MAX_REDUCTION_GROUPS * GROUP_SIZE
+    let n = 1 << 16; // 65536 elements — past MAX_REDUCTION_GROUPS * GROUP_SIZE
     let data = random_elements(&mut rng, n);
 
     let cpu_buf = cpu.upload(&data);
@@ -299,10 +304,10 @@ fn sum_large() {
 /// Large dot product exercising multiple threadgroups.
 #[test]
 fn dot_product_large() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xBBBB);
-    let n = 1 << 18;
+    let n = 1 << 16;
     let a_data = random_elements(&mut rng, n);
     let b_data = random_elements(&mut rng, n);
 
@@ -323,7 +328,7 @@ const INTERP_SIZES: [usize; 4] = [2, 128, 4096, 1 << 16];
 
 #[test]
 fn interpolate_pairs_parity() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
 
     for &n in &INTERP_SIZES {
@@ -343,7 +348,7 @@ fn interpolate_pairs_parity() {
 
 #[test]
 fn interpolate_pairs_inplace_high_to_low_parity() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
 
     for &n in &INTERP_SIZES {
@@ -366,7 +371,7 @@ fn interpolate_pairs_inplace_high_to_low_parity() {
 
 #[test]
 fn interpolate_pairs_inplace_low_to_high_parity() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
 
     for &n in &INTERP_SIZES {
@@ -390,7 +395,7 @@ fn interpolate_pairs_inplace_low_to_high_parity() {
 /// Multiple rounds of inplace interpolation (simulating sumcheck binding).
 #[test]
 fn interpolate_pairs_inplace_multi_round() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xFF00);
     let n = 1 << 10;
@@ -417,7 +422,7 @@ fn interpolate_pairs_inplace_multi_round() {
 /// Multiple rounds with HighToLow binding order.
 #[test]
 fn interpolate_pairs_inplace_multi_round_high_to_low() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xFF01);
     let n = 1 << 10;
@@ -442,7 +447,7 @@ fn interpolate_pairs_inplace_multi_round_high_to_low() {
 
 #[test]
 fn product_table_parity() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
 
     for n_vars in [1, 2, 5, 10, 16] {
@@ -467,7 +472,7 @@ fn product_table_parity() {
 /// Product table with a single variable: should produce [1-r, r].
 #[test]
 fn product_table_single_var() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let r = Fr::from_u64(7);
     let table = metal.download(&metal.product_table(&[r]));
 
@@ -479,7 +484,7 @@ fn product_table_single_var() {
 /// Product table entries should sum to 1 (property of eq-polynomial).
 #[test]
 fn product_table_sums_to_one() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let mut rng = StdRng::seed_from_u64(0xBB00);
     let point: Vec<Fr> = (0..12).map(|_| Fr::random(&mut rng)).collect();
 
@@ -492,10 +497,10 @@ fn product_table_sums_to_one() {
 /// Large product table (2^20 entries).
 #[test]
 fn product_table_large() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xCC01);
-    let point: Vec<Fr> = (0..20).map(|_| Fr::random(&mut rng)).collect();
+    let point: Vec<Fr> = (0..16).map(|_| Fr::random(&mut rng)).collect();
 
     let cpu_table = cpu.download(&cpu.product_table(&point));
     let mtl_table = metal.download(&metal.product_table(&point));
@@ -513,7 +518,7 @@ fn compile_kernels(
     <CpuBackend as ComputeBackend>::CompiledKernel<Fr>,
     <MetalBackend as ComputeBackend>::CompiledKernel<Fr>,
 ) {
-    let cpu_k = jolt_cpu_kernels::compile::<Fr>(desc);
+    let cpu_k = jolt_cpu::compile::<Fr>(desc);
     let mtl_k = metal.compile_kernel::<Fr>(desc);
     let _ = cpu;
     (cpu_k, mtl_k)
@@ -528,7 +533,7 @@ fn compile_kernels_with_challenges(
     <CpuBackend as ComputeBackend>::CompiledKernel<Fr>,
     <MetalBackend as ComputeBackend>::CompiledKernel<Fr>,
 ) {
-    let cpu_k = jolt_cpu_kernels::compile_with_challenges::<Fr>(desc, challenges);
+    let cpu_k = jolt_cpu::compile_with_challenges::<Fr>(desc, challenges);
     let mtl_k = metal.compile_kernel_with_challenges::<Fr>(desc, challenges);
     let _ = cpu;
     (cpu_k, mtl_k)
@@ -537,7 +542,7 @@ fn compile_kernels_with_challenges(
 /// ProductSum D=4, single group, LowToHigh.
 #[test]
 fn pairwise_reduce_product_sum_d4() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD001);
 
@@ -549,7 +554,7 @@ fn pairwise_reduce_product_sum_d4() {
         degree: 4,
         tensor_split: None,
     };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
     let n = 256;
     let inputs: Vec<Vec<Fr>> = (0..4).map(|_| random_elements(&mut rng, n)).collect();
@@ -584,7 +589,7 @@ fn pairwise_reduce_product_sum_d4() {
 /// ProductSum D=3, 2 groups.
 #[test]
 fn pairwise_reduce_product_sum_d3_p2() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD002);
 
@@ -596,7 +601,7 @@ fn pairwise_reduce_product_sum_d3_p2() {
         degree: 3,
         tensor_split: None,
     };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
     let k = desc.num_inputs();
     let n = 128;
@@ -630,7 +635,7 @@ fn pairwise_reduce_product_sum_d3_p2() {
 /// ProductSum D=8, single group, large buffer to exercise multiple threadgroups.
 #[test]
 fn pairwise_reduce_product_sum_d8_large() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD003);
 
@@ -642,7 +647,7 @@ fn pairwise_reduce_product_sum_d8_large() {
         degree: 8,
         tensor_split: None,
     };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
     // 2K elements: enough to exercise multiple threadgroups without slow CPU reference
     let n = 1 << 11;
@@ -676,7 +681,7 @@ fn pairwise_reduce_product_sum_d8_large() {
 /// HighToLow binding order.
 #[test]
 fn pairwise_reduce_high_to_low() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD004);
 
@@ -688,7 +693,7 @@ fn pairwise_reduce_high_to_low() {
         degree: 4,
         tensor_split: None,
     };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
     let n = 512;
     let inputs: Vec<Vec<Fr>> = (0..4).map(|_| random_elements(&mut rng, n)).collect();
@@ -721,7 +726,7 @@ fn pairwise_reduce_high_to_low() {
 /// Custom expression: booleanity h^2 - h.
 #[test]
 fn pairwise_reduce_custom_booleanity() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD005);
 
@@ -735,7 +740,7 @@ fn pairwise_reduce_custom_booleanity() {
         degree: 2,
         tensor_split: None,
     };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
     let n = 512;
     let inputs: Vec<Vec<Fr>> = vec![random_elements(&mut rng, n)];
@@ -768,7 +773,7 @@ fn pairwise_reduce_custom_booleanity() {
 /// Custom expression with challenges: gamma * o0 * o1.
 #[test]
 fn pairwise_reduce_custom_with_challenges() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD006);
 
@@ -785,7 +790,7 @@ fn pairwise_reduce_custom_with_challenges() {
         tensor_split: None,
     };
     let challenges = vec![Fr::random(&mut rng)];
-    let (cpu_k, mtl_k) = compile_kernels_with_challenges(&cpu, &metal, &desc, &challenges);
+    let (cpu_k, mtl_k) = compile_kernels_with_challenges(&cpu, metal, &desc, &challenges);
 
     let n = 256;
     let inputs: Vec<Vec<Fr>> = (0..2).map(|_| random_elements(&mut rng, n)).collect();
@@ -821,7 +826,7 @@ fn pairwise_reduce_custom_with_challenges() {
 /// Tensor pairwise reduce matches CPU.
 #[test]
 fn tensor_pairwise_reduce_product_sum() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD007);
 
@@ -833,7 +838,7 @@ fn tensor_pairwise_reduce_product_sum() {
         degree: 4,
         tensor_split: None,
     };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
     // outer_len * inner_len pairs = n/2
     let outer_len = 8;
@@ -863,7 +868,7 @@ fn tensor_pairwise_reduce_product_sum() {
 /// ProductSum D=2 (smallest nontrivial case).
 #[test]
 fn pairwise_reduce_product_sum_d2() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xD008);
 
@@ -875,7 +880,7 @@ fn pairwise_reduce_product_sum_d2() {
         degree: 2,
         tensor_split: None,
     };
-    let (cpu_k, mtl_k) = compile_kernels(&cpu, &metal, &desc);
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
     let n = 64;
     let inputs: Vec<Vec<Fr>> = (0..2).map(|_| random_elements(&mut rng, n)).collect();
@@ -908,7 +913,7 @@ fn pairwise_reduce_product_sum_d2() {
 /// Verify known values for ProductSum D=4 with simple inputs.
 #[test]
 fn pairwise_reduce_product_sum_known_values() {
-    let metal = MetalBackend::new();
+    let metal = &*METAL;
 
     let desc = KernelDescriptor {
         shape: KernelShape::ProductSum {

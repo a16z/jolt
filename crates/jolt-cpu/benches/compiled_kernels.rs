@@ -1,7 +1,7 @@
 #![allow(unused_results)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_cpu_kernels::compile;
+use jolt_cpu::compile;
 use jolt_field::{Field, Fr};
 use jolt_ir::{KernelDescriptor, KernelShape};
 use num_traits::Zero;

@@ -7,8 +7,8 @@
 //! (`mles_product_sum.rs`).
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend};
-use jolt_cpu_kernels::{compile, toom_cook};
+use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_cpu::{compile, toom_cook, CpuBackend};
 use jolt_field::{Field, FieldAccumulator, Fr};
 use jolt_ir::{KernelDescriptor, KernelShape};
 use num_traits::Zero;

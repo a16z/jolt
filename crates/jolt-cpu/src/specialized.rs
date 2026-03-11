@@ -7,7 +7,7 @@
 //! - [`hamming_booleanity`]: `opening(0) * opening(1) * (opening(1) - 1)` —
 //!   degree 3, 4 evaluations
 
-use jolt_compute::CpuKernel;
+use crate::CpuKernel;
 use jolt_field::Field;
 
 /// Hand-coded `eq · g` kernel on grid `{0, 2}` (skipping `t=1`).
@@ -113,7 +113,7 @@ mod tests {
         // h=0 → h*(h-1)=0, h=1 → h*(h-1)=0, h=2 → h*(h-1)=2
         let lo = vec![Fr::from_u64(1), Fr::from_u64(0)]; // eq(0)=1, h(0)=0
         let hi = vec![Fr::from_u64(1), Fr::from_u64(1)]; // eq(1)=1, h(1)=1
-        // Grid: {0, 2, 3} — 3 evals, t=1 derived from claim
+                                                         // Grid: {0, 2, 3} — 3 evals, t=1 derived from claim
         let result = eval_kernel(&kernel, &lo, &hi, 3);
 
         let one = Fr::one();

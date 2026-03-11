@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::{ComputeBackend, CpuBackend};
+use jolt_compute::ComputeBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -14,25 +14,26 @@ use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
-use jolt_ir::zkvm::claims::ram;
 use crate::evaluators::catalog;
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
+use jolt_ir::zkvm::claims::ram;
 
 /// Hamming booleanity prover stage.
 ///
 /// Constructed with the Hamming weight polynomial evaluations (moved from
 /// [`WitnessStore`](crate::witness::WitnessStore)) and the random point `r`
 /// for the equality polynomial.
-pub struct HammingBooleanityStage<F: Field> {
+pub struct HammingBooleanityStage<F: Field, B: ComputeBackend> {
     /// Original evaluation table — preserved for `extract_claims()`.
     h_evals: Option<Vec<F>>,
     /// Random evaluation point for the eq polynomial.
     eq_point: Vec<F>,
     num_vars: usize,
+    backend: Arc<B>,
 }
 
-impl<F: Field> HammingBooleanityStage<F> {
+impl<F: Field, B: ComputeBackend> HammingBooleanityStage<F, B> {
     /// Creates a new stage from the Hamming weight evaluations and eq point.
     ///
     /// `h_evals` should be moved out of the [`WitnessStore`](crate::witness::WitnessStore)
@@ -41,7 +42,7 @@ impl<F: Field> HammingBooleanityStage<F> {
     /// # Panics
     ///
     /// Panics if `h_evals.len() != 2^eq_point.len()`.
-    pub fn new(h_evals: Vec<F>, eq_point: Vec<F>) -> Self {
+    pub fn new(h_evals: Vec<F>, eq_point: Vec<F>, backend: Arc<B>) -> Self {
         let num_vars = eq_point.len();
         assert_eq!(
             h_evals.len(),
@@ -54,11 +55,14 @@ impl<F: Field> HammingBooleanityStage<F> {
             h_evals: Some(h_evals),
             eq_point,
             num_vars,
+            backend,
         }
     }
 }
 
-impl<F: Field, T: Transcript> ProverStage<F, T> for HammingBooleanityStage<F> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T>
+    for HammingBooleanityStage<F, B>
+{
     fn name(&self) -> &'static str {
         "S6_booleanity"
     }
@@ -77,9 +81,9 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingBooleanityStage<F> {
             claimed_sum: F::zero(),
         };
 
-        let backend = Arc::new(CpuBackend);
         let desc = catalog::hamming_booleanity();
-        let kernel = jolt_cpu_kernels::compile::<F>(&desc);
+        let kernel = self.backend.compile_kernel::<F>(&desc);
+        let backend = Arc::clone(&self.backend);
         let inputs = vec![backend.upload(&eq_table), backend.upload(h_evals)];
         let witness = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
@@ -113,12 +117,17 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingBooleanityStage<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_sumcheck::{BatchedSumcheckProver, BatchedSumcheckVerifier};
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use num_traits::Zero;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    fn cpu() -> Arc<CpuBackend> {
+        Arc::new(CpuBackend)
+    }
 
     #[test]
     fn stage_build_produces_valid_sumcheck() {
@@ -129,7 +138,7 @@ mod tests {
         // Boolean h
         let h_evals: Vec<Fr> = (0..(1 << num_vars)).map(|i| Fr::from_u64(i % 2)).collect();
 
-        let mut stage = HammingBooleanityStage::new(h_evals, eq_point);
+        let mut stage = HammingBooleanityStage::new(h_evals, eq_point, cpu());
 
         let mut transcript = Blake2bTranscript::new(b"test_stage");
         let batch = stage.build(&[], &mut transcript);
@@ -149,7 +158,8 @@ mod tests {
 
         let h_evals: Vec<Fr> = (0..(1 << num_vars)).map(|i| Fr::from_u64(i % 2)).collect();
 
-        let mut stage: HammingBooleanityStage<Fr> = HammingBooleanityStage::new(h_evals, eq_point);
+        let mut stage: HammingBooleanityStage<Fr, CpuBackend> =
+            HammingBooleanityStage::new(h_evals, eq_point, cpu());
 
         let mut prover_transcript = Blake2bTranscript::new(b"stage_roundtrip");
         let mut batch = stage.build(&[], &mut prover_transcript);
@@ -173,12 +183,10 @@ mod tests {
         )
         .expect("verification should succeed");
 
-        let prover_claims =
-            <HammingBooleanityStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-                &mut stage,
-                &challenges,
-                final_eval,
-            );
+        let prover_claims = <HammingBooleanityStage<Fr, CpuBackend> as ProverStage<
+            Fr,
+            Blake2bTranscript,
+        >>::extract_claims(&mut stage, &challenges, final_eval);
         assert_eq!(prover_claims.len(), 1);
 
         let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();
@@ -190,12 +198,13 @@ mod tests {
 
     #[test]
     fn claim_definitions_returns_hamming_booleanity() {
-        let stage = HammingBooleanityStage::<Fr>::new(
+        let stage = HammingBooleanityStage::new(
             vec![Fr::zero(); 4],
             vec![Fr::from_u64(1), Fr::from_u64(2)],
+            cpu(),
         );
         let defs =
-            <HammingBooleanityStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(
+            <HammingBooleanityStage<Fr, CpuBackend> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(
                 &stage,
             );
         assert_eq!(defs.len(), 1);

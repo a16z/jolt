@@ -1,10 +1,9 @@
 use crate::field::JoltField;
-use crate::msm::typed_msm;
 use crate::msm::VariableBaseMSM;
 use crate::utils::errors::ProofVerifyError;
 use allocative::Allocative;
+use ark_ff::biginteger::{S128, S64};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use jolt_field::signed::{S128, S64};
 
 /// A trait for small scalars ({u/i}{8/16/32/64/128})
 pub trait SmallScalar:
@@ -68,7 +67,9 @@ impl SmallScalar for bool {
         if bases.len() != scalars.len() {
             return Err(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()));
         }
-        Ok(typed_msm::msm_binary::<G>(bases, scalars, false))
+        Ok(ark_ec::scalar_mul::variable_base::msm_binary::<G>(
+            bases, scalars, false,
+        ))
     }
 }
 

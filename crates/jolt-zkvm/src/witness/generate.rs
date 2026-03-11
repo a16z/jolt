@@ -50,10 +50,20 @@ pub fn generate_witnesses<F: Field>(trace: &[Cycle]) -> WitnessOutput<F> {
 
     let bytecode = BytecodePreprocessing::new(trace);
 
-    let cycle_witnesses = trace_to_witnesses(trace, &bytecode);
+    // Pad trace to next power of two with NoOp cycles BEFORE generating witnesses.
+    // This matches jolt-core's approach: the last real cycle sees next_cycle = Some(NoOp),
+    // so next_is_noop = true and PC update constraints are satisfied via DoNotUpdateUnexpPC.
+    let padded_len = trace.len().next_power_of_two();
+    let padded_trace: Vec<Cycle> = trace
+        .iter()
+        .copied()
+        .chain(std::iter::repeat_n(Cycle::NoOp, padded_len - trace.len()))
+        .collect();
 
-    let cycle_data = trace_to_cycle_data(trace, &bytecode);
-    let padded_len = cycle_data.len(); // already padded to power-of-two
+    let cycle_witnesses = trace_to_witnesses(&padded_trace, &bytecode);
+
+    let cycle_data = trace_to_cycle_data(&padded_trace, &bytecode);
+    debug_assert_eq!(cycle_data.len(), padded_len);
 
     // Derive configuration from trace parameters
     let log_t = padded_len.trailing_zeros() as usize;
@@ -143,10 +153,7 @@ mod tests {
 
     #[test]
     fn generates_r1cs_witnesses() {
-        let trace = vec![
-            make_add_cycle(0x1000, 3, 4),
-            make_add_cycle(0x1004, 10, 20),
-        ];
+        let trace = vec![make_add_cycle(0x1000, 3, 4), make_add_cycle(0x1004, 10, 20)];
         let output = generate_witnesses::<Fr>(&trace);
 
         // Two actual cycles (padded to power of two by trace_to_witnesses...
@@ -160,10 +167,7 @@ mod tests {
 
     #[test]
     fn generates_committed_polynomials() {
-        let trace = vec![
-            make_add_cycle(0x1000, 3, 4),
-            make_add_cycle(0x1004, 10, 20),
-        ];
+        let trace = vec![make_add_cycle(0x1000, 3, 4), make_add_cycle(0x1004, 10, 20)];
         let output = generate_witnesses::<Fr>(&trace);
 
         // RD_INC and RAM_INC (dense) should always be present
@@ -197,10 +201,7 @@ mod tests {
 
     #[test]
     fn bytecode_preprocessing_available() {
-        let trace = vec![
-            make_add_cycle(0x1000, 1, 2),
-            make_add_cycle(0x1004, 3, 4),
-        ];
+        let trace = vec![make_add_cycle(0x1000, 1, 2), make_add_cycle(0x1004, 3, 4)];
         let output = generate_witnesses::<Fr>(&trace);
 
         assert_eq!(output.bytecode.code_size(), 2);

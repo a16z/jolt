@@ -196,7 +196,11 @@ where
 pub fn verify<PCS, T>(
     proof: &JoltProof<PCS::Field, PCS>,
     vk: &JoltVerifyingKey<PCS::Field, PCS>,
-    build_descriptors: impl FnOnce(&[PCS::Field], &[PCS::Field], &mut T) -> Vec<StageDescriptor<PCS::Field>>,
+    build_descriptors: impl FnOnce(
+        &[PCS::Field],
+        &[PCS::Field],
+        &mut T,
+    ) -> Vec<StageDescriptor<PCS::Field>>,
     transcript: &mut T,
     challenge_fn: impl Fn(T::Challenge) -> PCS::Field + Copy,
 ) -> Result<(Vec<PCS::Field>, Vec<PCS::Field>), JoltError>

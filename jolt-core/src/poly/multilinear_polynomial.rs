@@ -4,8 +4,8 @@ use crate::{
     utils::{compute_dotproduct, small_scalar::SmallScalar},
 };
 use allocative::Allocative;
+use ark_ff::biginteger::S128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
-use jolt_field::signed::S128;
 use rayon::prelude::*;
 use strum_macros::EnumIter;
 

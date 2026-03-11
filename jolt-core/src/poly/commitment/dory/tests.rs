@@ -8,9 +8,9 @@ mod tests {
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
     use crate::transcripts::{Blake2bTranscript, Transcript};
+    use ark_ff::biginteger::S128;
     use ark_std::rand::{thread_rng, Rng};
     use ark_std::{UniformRand, Zero};
-    use jolt_field::signed::S128;
     use serial_test::serial;
     type Fr = ark_bn254::Fr;
 

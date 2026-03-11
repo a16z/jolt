@@ -248,7 +248,7 @@ impl UniformSpartanProver {
 ///
 /// We materialize this as a dense polynomial over all `total_cols_padded`
 /// column indices.
-fn combined_partial_evaluate_uniform<F: Field>(
+pub(crate) fn combined_partial_evaluate_uniform<F: Field>(
     key: &UniformSpartanKey<F>,
     r_x: &[F],
     rho_a: F,

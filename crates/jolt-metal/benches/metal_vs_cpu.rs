@@ -8,7 +8,8 @@
 #![allow(unused_results)]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_compute::{BindingOrder, ComputeBackend, CpuBackend};
+use jolt_compute::{BindingOrder, ComputeBackend};
+use jolt_cpu::CpuBackend;
 use jolt_field::Field;
 use jolt_field::Fr;
 use jolt_ir::{KernelDescriptor, KernelShape};
@@ -207,7 +208,7 @@ fn bench_kernel_compile(c: &mut Criterion) {
         });
 
         group.bench_with_input(BenchmarkId::new("cpu_product_sum", d), &d, |bench, _| {
-            bench.iter(|| jolt_cpu_kernels::compile::<Fr>(&desc));
+            bench.iter(|| jolt_cpu::compile::<Fr>(&desc));
         });
     }
     group.finish();
@@ -229,7 +230,7 @@ fn bench_pairwise_reduce(c: &mut Criterion) {
             tensor_split: None,
         };
 
-        let cpu_k = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let cpu_k = jolt_cpu::compile::<Fr>(&desc);
         let mtl_k = metal.compile_kernel::<Fr>(&desc);
 
         for &n in &[1 << 14, 1 << 18, 1 << 24] {
@@ -402,7 +403,7 @@ fn bench_pairwise_reduce_unweighted(c: &mut Criterion) {
             tensor_split: None,
         };
 
-        let cpu_k = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let cpu_k = jolt_cpu::compile::<Fr>(&desc);
         let mtl_k = metal.compile_kernel::<Fr>(&desc);
 
         for &n in &[1 << 14, 1 << 18, 1 << 24] {
@@ -596,7 +597,7 @@ fn bench_sumcheck_round(c: &mut Criterion) {
         );
 
         // CPU: reduce + batch bind
-        let cpu_k = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let cpu_k = jolt_cpu::compile::<Fr>(&desc);
         group.bench_with_input(
             BenchmarkId::new(format!("cpu/{label}"), log_n),
             &log_n,

@@ -390,7 +390,7 @@ impl DoryGlobals {
         let total_size = K * T;
         let total_vars = total_size.log_2();
 
-        let (num_columns, num_rows) = if total_vars % 2 == 0 {
+        let (num_columns, num_rows) = if total_vars.is_multiple_of(2) {
             // Even total vars: square matrix
             let side = 1 << (total_vars / 2);
             (side, side)

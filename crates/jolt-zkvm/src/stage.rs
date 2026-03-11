@@ -114,10 +114,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for CompositeStage<F, T> {
         }
 
         let max_nv = all_claims.iter().map(|c| c.num_vars).max().unwrap_or(0);
-        self.sub_stage_layout = sub_max_vars
-            .iter()
-            .map(|&nv| (max_nv - nv, nv))
-            .collect();
+        self.sub_stage_layout = sub_max_vars.iter().map(|&nv| (max_nv - nv, nv)).collect();
 
         StageBatch {
             claims: all_claims,
@@ -161,8 +158,14 @@ mod tests {
     use crate::stages::s4_ram_rw::RamRwCheckingStage;
     use crate::stages::s5_ram_checking::RamCheckingStage;
     use crate::stages::s6_booleanity::HammingBooleanityStage;
+    use jolt_cpu::CpuBackend;
     use num_traits::One;
     use rand_core::RngCore;
+    use std::sync::Arc;
+
+    fn cpu() -> Arc<CpuBackend> {
+        Arc::new(CpuBackend)
+    }
 
     #[test]
     fn composite_same_num_vars() {
@@ -175,8 +178,9 @@ mod tests {
 
         // Sub-stage 1: booleanity check (degree 3)
         let h_evals: Vec<Fr> = (0..n).map(|i| Fr::from_u64(i as u64 % 2)).collect();
-        let booleanity: Box<dyn ProverStage<Fr, Blake2bTranscript>> =
-            Box::new(HammingBooleanityStage::new(h_evals.clone(), eq_point.clone()));
+        let booleanity: Box<dyn ProverStage<Fr, Blake2bTranscript>> = Box::new(
+            HammingBooleanityStage::new(h_evals.clone(), eq_point.clone(), cpu()),
+        );
 
         // Sub-stage 2: claim reduction (degree 2)
         let p0: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
@@ -188,12 +192,10 @@ mod tests {
                 (0..n).map(|_| Fr::random(&mut rng)).collect(),
                 eq_point.clone(),
                 gamma,
+                cpu(),
             ));
 
-        let mut composite = CompositeStage::new(
-            "S2_composite_test",
-            vec![booleanity, reduction],
-        );
+        let mut composite = CompositeStage::new("S2_composite_test", vec![booleanity, reduction]);
 
         let mut pt = Blake2bTranscript::new(b"composite_test");
         let mut batch = composite.build(&[], &mut pt);
@@ -248,7 +250,7 @@ mod tests {
         let eq1: Vec<Fr> = (0..nv1).map(|_| Fr::random(&mut rng)).collect();
         let h1: Vec<Fr> = (0..n1).map(|i| Fr::from_u64(i as u64 % 2)).collect();
         let stage1: Box<dyn ProverStage<Fr, Blake2bTranscript>> =
-            Box::new(HammingBooleanityStage::new(h1.clone(), eq1));
+            Box::new(HammingBooleanityStage::new(h1.clone(), eq1, cpu()));
 
         // Sub-stage 2: booleanity with 5 vars (degree 3) — longer
         let nv2 = 5;
@@ -256,12 +258,9 @@ mod tests {
         let eq2: Vec<Fr> = (0..nv2).map(|_| Fr::random(&mut rng)).collect();
         let h2: Vec<Fr> = (0..n2).map(|i| Fr::from_u64(i as u64 % 2)).collect();
         let stage2: Box<dyn ProverStage<Fr, Blake2bTranscript>> =
-            Box::new(HammingBooleanityStage::new(h2.clone(), eq2));
+            Box::new(HammingBooleanityStage::new(h2.clone(), eq2, cpu()));
 
-        let mut composite = CompositeStage::new(
-            "S2_mixed_vars_test",
-            vec![stage1, stage2],
-        );
+        let mut composite = CompositeStage::new("S2_mixed_vars_test", vec![stage1, stage2]);
 
         let mut pt = Blake2bTranscript::new(b"mixed_vars");
         let mut batch = composite.build(&[], &mut pt);
@@ -315,9 +314,8 @@ mod tests {
         let n = 1usize << num_vars;
         let mut rng = ChaCha20Rng::seed_from_u64(999);
 
-        let random_poly = |rng: &mut ChaCha20Rng| -> Vec<Fr> {
-            (0..n).map(|_| Fr::random(rng)).collect()
-        };
+        let random_poly =
+            |rng: &mut ChaCha20Rng| -> Vec<Fr> { (0..n).map(|_| Fr::random(rng)).collect() };
         let random_bool_poly = |rng: &mut ChaCha20Rng| -> Vec<Fr> {
             (0..n).map(|_| Fr::from_u64(rng.next_u64() % 2)).collect()
         };
@@ -339,12 +337,16 @@ mod tests {
         let g_pv: Vec<Fr> = {
             let mut g = Fr::one();
             (0..NUM_CONSTRAINTS)
-                .map(|_| { let v = g; g *= gamma_pv; v })
+                .map(|_| {
+                    let v = g;
+                    g *= gamma_pv;
+                    v
+                })
                 .collect()
         };
         let pv_sum = brute_force_product_virtual_sum(&factor_polys, &eq_point, &g_pv);
         let pv_stage: Box<dyn ProverStage<Fr, Blake2bTranscript>> = Box::new(
-            ProductVirtualStage::new(factor_polys, eq_point.clone(), g_pv, pv_sum),
+            ProductVirtualStage::new(factor_polys, eq_point.clone(), g_pv, pv_sum, cpu()),
         );
 
         // --- RamRW (degree 3, 3 polys: ra, val, inc) ---
@@ -354,7 +356,7 @@ mod tests {
         let c0 = Fr::random(&mut rng);
         let c1 = Fr::random(&mut rng);
         let rw_stage: Box<dyn ProverStage<Fr, Blake2bTranscript>> = Box::new(
-            RamRwCheckingStage::new(ra, val, inc, eq_point.clone(), [c0, c1]),
+            RamRwCheckingStage::new(ra, val, inc, eq_point.clone(), [c0, c1], cpu()),
         );
 
         // --- RamChecking (2× degree 2) ---
@@ -363,21 +365,18 @@ mod tests {
         let oc0 = Fr::random(&mut rng);
         let oc1 = Fr::random(&mut rng);
         let raf_c0 = Fr::random(&mut rng);
-        let rc_stage: Box<dyn ProverStage<Fr, Blake2bTranscript>> = Box::new(
-            RamCheckingStage::new(
+        let rc_stage: Box<dyn ProverStage<Fr, Blake2bTranscript>> =
+            Box::new(RamCheckingStage::new(
                 val_final,
                 eq_point.clone(),
                 [oc0, oc1],
                 ram_ra,
                 eq_point.clone(),
                 raf_c0,
-            ),
-        );
+                cpu(),
+            ));
 
-        let mut composite = CompositeStage::new(
-            "S2_composite",
-            vec![pv_stage, rw_stage, rc_stage],
-        );
+        let mut composite = CompositeStage::new("S2_composite", vec![pv_stage, rw_stage, rc_stage]);
 
         let mut pt = Blake2bTranscript::new(b"s2_batch");
         let mut batch = composite.build(&[], &mut pt);
@@ -414,11 +413,7 @@ mod tests {
         let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();
         for claim in &all_claims {
             let poly = Polynomial::new(claim.evaluations.clone());
-            assert_eq!(
-                poly.evaluate(&eval_point),
-                claim.eval,
-                "eval mismatch"
-            );
+            assert_eq!(poly.evaluate(&eval_point), claim.eval, "eval mismatch");
         }
     }
 }

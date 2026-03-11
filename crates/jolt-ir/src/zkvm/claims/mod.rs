@@ -28,6 +28,7 @@
 //! are computed directly in stage code without a ClaimDefinition.
 
 pub mod instruction;
+pub mod r1cs;
 pub mod ram;
 pub mod reductions;
 pub mod registers;

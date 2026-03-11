@@ -204,7 +204,8 @@ impl Expr {
     /// Use `visit_cached` for correct traversal of the result.
     pub fn eliminate_common_subexpressions(&self) -> Expr {
         let mut out = ExprArena::new();
-        let mut map: std::collections::BTreeMap<ExprNode, ExprId> = std::collections::BTreeMap::new();
+        let mut map: std::collections::BTreeMap<ExprNode, ExprId> =
+            std::collections::BTreeMap::new();
         let root = self.cse_node(self.root, &mut out, &mut map);
         Expr { arena: out, root }
     }

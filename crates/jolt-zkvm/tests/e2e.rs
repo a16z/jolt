@@ -5,6 +5,9 @@
 //! 2. Full `prove()` pipeline with uniform Spartan + sumcheck stages + openings
 //! 3. Multiple stage configurations and error cases
 
+use std::sync::Arc;
+
+use jolt_cpu::CpuBackend;
 use jolt_field::{Field, Fr};
 use jolt_openings::mock::{MockCommitment, MockCommitmentScheme};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
@@ -18,6 +21,10 @@ use jolt_zkvm::stage::ProverStage;
 use jolt_zkvm::stages::s1_spartan::UniformSpartanStage;
 use jolt_zkvm::stages::s3_claim_reductions::ClaimReductionStage;
 use rand_chacha::ChaCha20Rng;
+
+fn cpu() -> Arc<CpuBackend> {
+    Arc::new(CpuBackend)
+}
 use rand_core::SeedableRng;
 
 type MockPCS = MockCommitmentScheme<Fr>;
@@ -141,13 +148,17 @@ fn build_reduction_data(num_vars: usize, rng: &mut ChaCha20Rng) -> SyntheticRedu
     }
 }
 
-fn build_prover_stage(data: &SyntheticReduction, r_y: Vec<Fr>) -> ClaimReductionStage<Fr> {
+fn build_prover_stage(
+    data: &SyntheticReduction,
+    r_y: Vec<Fr>,
+) -> ClaimReductionStage<Fr, CpuBackend> {
     ClaimReductionStage::increment(
         data.poly_a.clone(),
         data.poly_b.clone(),
         r_y,
         data.c0,
         data.c1,
+        cpu(),
     )
 }
 
@@ -218,9 +229,7 @@ fn run_e2e<PCS: AdditivelyHomomorphic<Field = Fr>>(
     let (v_r_x, v_r_y) = jolt_verifier::verify::<PCS, Blake2bTranscript>(
         &proof,
         &vk,
-        |_r_x, r_y, _t| {
-            vec![build_verifier_descriptor(&reduction_data, r_y, 0)]
-        },
+        |_r_x, r_y, _t| vec![build_verifier_descriptor(&reduction_data, r_y, 0)],
         &mut vt,
         challenge_fn,
     )
@@ -470,9 +479,7 @@ fn e2e_tampered_proof_rejected() {
     let result = jolt_verifier::verify::<MockPCS, Blake2bTranscript>(
         &proof,
         &vk,
-        |_r_x, r_y, _t| {
-            vec![build_verifier_descriptor(&reduction_data, r_y, 0)]
-        },
+        |_r_x, r_y, _t| vec![build_verifier_descriptor(&reduction_data, r_y, 0)],
         &mut vt,
         challenge_fn,
     );
@@ -613,7 +620,8 @@ fn claim_reduction_prove_verify_standalone() {
         .map(|j| eq_table[j] * (c0 * poly_a[j] + c1 * poly_b[j]))
         .sum();
 
-    let prover_stage = ClaimReductionStage::increment(poly_a, poly_b, eq_point.clone(), c0, c1);
+    let prover_stage =
+        ClaimReductionStage::increment(poly_a, poly_b, eq_point.clone(), c0, c1, cpu());
     let mut prover_stages: Vec<Box<dyn ProverStage<Fr, Blake2bTranscript>>> =
         vec![Box::new(prover_stage)];
 
@@ -653,10 +661,7 @@ fn claim_reduction_prove_verify_standalone() {
         .evaluate(&stage_proof.evaluations, &desc.output_challenges);
     let expected = eq_eval * g_eval;
 
-    assert_eq!(
-        expected, final_eval,
-        "eq * g should match final_eval"
-    );
+    assert_eq!(expected, final_eval, "eq * g should match final_eval");
     assert_eq!(stage_proof.evaluations.len(), 2);
 }
 
@@ -770,9 +775,7 @@ mod trace_based {
         let _ = jolt_verifier::verify::<MockPCS, Blake2bTranscript>(
             &proof,
             &vk,
-            |_r_x, r_y, _t| {
-                vec![build_verifier_descriptor(&reduction_data, r_y, 0)]
-            },
+            |_r_x, r_y, _t| vec![build_verifier_descriptor(&reduction_data, r_y, 0)],
             &mut vt,
             challenge_fn,
         )
@@ -856,5 +859,264 @@ mod dory {
                 (prover_setup, verifier_setup)
             },
         );
+    }
+}
+
+mod real_program {
+    use super::*;
+    use jolt_host::Program;
+    use jolt_zkvm::witness::generate_witnesses;
+
+    /// Runs trace → generate_witnesses → prove → verify for a real guest program.
+    fn run_real_program_e2e(guest_name: &str, inputs: &[u8], label: &'static [u8]) {
+        let mut program = Program::new(guest_name);
+
+        let (_, trace, _, _io_device) = program.trace(inputs, &[], &[]);
+
+        // generate_witnesses pads the trace to power-of-two with Cycle::NoOp internally
+        let output = generate_witnesses::<Fr>(&trace);
+
+        let mut rng = ChaCha20Rng::seed_from_u64(42);
+        let config = JoltConfig {
+            num_cycles: output.cycle_witnesses.len(),
+        };
+        let key = preprocess::<Fr, MockPCS>(&config, |_| ((), ()));
+
+        let num_col_vars = key.spartan_key.num_col_vars();
+        let reduction_data = build_reduction_data(num_col_vars, &mut rng);
+
+        let (com_a, ()) = MockPCS::commit(&reduction_data.poly_a, &());
+        let (com_b, ()) = MockPCS::commit(&reduction_data.poly_b, &());
+
+        let mut pt = Blake2bTranscript::new(label);
+
+        let proof = prove::<MockPCS, Blake2bTranscript>(
+            &key,
+            &output.cycle_witnesses,
+            vec![com_a, com_b],
+            |_r_x, r_y, _t| {
+                let stage = build_prover_stage(&reduction_data, r_y.to_vec());
+                vec![Box::new(stage)]
+            },
+            &mut pt,
+            challenge_fn,
+        )
+        .expect("proving should succeed");
+
+        assert_eq!(proof.stage_proofs.len(), 1);
+
+        let vk = jolt_verifier::JoltVerifyingKey {
+            spartan_key: key.spartan_key.clone(),
+            pcs_setup: (),
+        };
+
+        let mut vt = Blake2bTranscript::new(label);
+
+        let _ = jolt_verifier::verify::<MockPCS, Blake2bTranscript>(
+            &proof,
+            &vk,
+            |_r_x, r_y, _t| vec![build_verifier_descriptor(&reduction_data, r_y, 0)],
+            &mut vt,
+            challenge_fn,
+        )
+        .expect("verification should succeed");
+    }
+
+    /// Debug test: just Spartan prove/verify (no stages) on real trace.
+    #[test]
+    fn muldiv_spartan_only() {
+        use jolt_spartan::{UniformSpartanProver, UniformSpartanVerifier};
+        use jolt_transcript::Transcript;
+
+        let inputs = postcard::to_stdvec(&(9u32, 5u32, 3u32)).unwrap();
+        let mut program = Program::new("muldiv-guest");
+        let (_, trace, _, _) = program.trace(&inputs, &[], &[]);
+        let output = generate_witnesses::<Fr>(&trace);
+
+        eprintln!("num_cycles = {}", output.cycle_witnesses.len());
+        let key = r1cs::build_jolt_spartan_key::<Fr>(output.cycle_witnesses.len());
+
+        let total_cols_padded = key.total_cols().next_power_of_two();
+        let mut flat = vec![Fr::from_u64(0); total_cols_padded];
+        for (c, w) in output.cycle_witnesses.iter().enumerate() {
+            let base = c * key.num_vars_padded;
+            for (v, &val) in w.iter().enumerate().take(key.num_vars) {
+                flat[base + v] = val;
+            }
+        }
+
+        let (commitment, ()) = MockPCS::commit(&flat, &());
+
+        let mut pt = Blake2bTranscript::new(b"spartan-only");
+        pt.append_bytes(format!("{commitment:?}").as_bytes());
+        let proof = UniformSpartanProver::prove_dense(&key, &flat, &mut pt)
+            .expect("proving should succeed");
+
+        let mut vt = Blake2bTranscript::new(b"spartan-only");
+        vt.append_bytes(format!("{commitment:?}").as_bytes());
+        UniformSpartanVerifier::verify(&key, &proof, &mut vt).expect("verification should succeed");
+    }
+
+    /// Bisect: find the cycle count where Spartan starts failing.
+    #[test]
+    fn nop_spartan_size_bisect() {
+        use jolt_spartan::{UniformSpartanProver, UniformSpartanVerifier};
+        use jolt_transcript::Transcript;
+        use jolt_zkvm::witness::bytecode::BytecodePreprocessing;
+        use jolt_zkvm::witness::r1cs_inputs;
+
+        for &n in &[2, 4, 8, 16, 32, 64, 128, 256, 512] {
+            let trace: Vec<tracer::instruction::Cycle> = vec![tracer::instruction::Cycle::NoOp; n];
+            let bytecode = BytecodePreprocessing::new(&trace);
+            let witnesses: Vec<Vec<Fr>> = trace
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let next = trace.get(i + 1);
+                    r1cs_inputs::cycle_to_witness(c, next, &bytecode)
+                })
+                .collect();
+
+            let key = r1cs::build_jolt_spartan_key::<Fr>(n);
+            let total_cols_padded = key.total_cols().next_power_of_two();
+            let mut flat = vec![Fr::from_u64(0); total_cols_padded];
+            for (c, w) in witnesses.iter().enumerate() {
+                let base = c * key.num_vars_padded;
+                for (v, &val) in w.iter().enumerate().take(key.num_vars) {
+                    flat[base + v] = val;
+                }
+            }
+
+            let (commitment, ()) = MockPCS::commit(&flat, &());
+
+            let mut pt = Blake2bTranscript::new(b"nop-bisect");
+            pt.append_bytes(format!("{commitment:?}").as_bytes());
+            let proof = UniformSpartanProver::prove_dense(&key, &flat, &mut pt)
+                .expect("proving should succeed");
+
+            let mut vt = Blake2bTranscript::new(b"nop-bisect");
+            vt.append_bytes(format!("{commitment:?}").as_bytes());
+            let result = UniformSpartanVerifier::verify(&key, &proof, &mut vt);
+            eprintln!("n={n}: {}", if result.is_ok() { "PASS" } else { "FAIL" });
+        }
+    }
+
+    /// Debug test: checks every cycle's witness against all 24 R1CS constraints.
+    #[test]
+    fn muldiv_r1cs_satisfaction() {
+        let inputs = postcard::to_stdvec(&(9u32, 5u32, 3u32)).unwrap();
+        let mut program = Program::new("muldiv-guest");
+        let (_, trace, _, _) = program.trace(&inputs, &[], &[]);
+        let output = generate_witnesses::<Fr>(&trace);
+
+        let key = r1cs::build_jolt_spartan_key::<Fr>(output.cycle_witnesses.len());
+        let mut violations = Vec::new();
+
+        for (cycle_idx, w) in output.cycle_witnesses.iter().enumerate() {
+            for k in 0..r1cs::NUM_CONSTRAINTS_PER_CYCLE {
+                let a_val: Fr = key.a_sparse[k]
+                    .iter()
+                    .map(|&(idx, coeff)| coeff * w[idx])
+                    .sum();
+                let b_val: Fr = key.b_sparse[k]
+                    .iter()
+                    .map(|&(idx, coeff)| coeff * w[idx])
+                    .sum();
+                let c_val: Fr = key.c_sparse[k]
+                    .iter()
+                    .map(|&(idx, coeff)| coeff * w[idx])
+                    .sum();
+                if a_val * b_val != c_val {
+                    violations.push((cycle_idx, k));
+                }
+            }
+        }
+
+        if !violations.is_empty() {
+            let total = output.cycle_witnesses.len();
+            // Show first 20 violations
+            for &(c, k) in violations.iter().take(20) {
+                let w = &output.cycle_witnesses[c];
+                eprintln!(
+                    "cycle {c}/{total} constraint {k}: flags=[add={}, sub={}, mul={}, load={}, store={}, jump={}, doNotUpdate={}, isNoop(next)={}] unexpPC={:?} nextUnexpPC={:?}",
+                    w[r1cs::V_FLAG_ADD_OPERANDS],
+                    w[r1cs::V_FLAG_SUBTRACT_OPERANDS],
+                    w[r1cs::V_FLAG_MULTIPLY_OPERANDS],
+                    w[r1cs::V_FLAG_LOAD],
+                    w[r1cs::V_FLAG_STORE],
+                    w[r1cs::V_FLAG_JUMP],
+                    w[r1cs::V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC],
+                    w[r1cs::V_NEXT_IS_NOOP],
+                    w[r1cs::V_UNEXPANDED_PC],
+                    w[r1cs::V_NEXT_UNEXPANDED_PC],
+                );
+            }
+            panic!(
+                "{} R1CS violations in {} cycles (first: cycle {} constraint {})",
+                violations.len(),
+                total,
+                violations[0].0,
+                violations[0].1
+            );
+        }
+    }
+
+    /// Compiles the muldiv guest via `jolt` CLI, traces execution with real inputs,
+    /// runs generate_witnesses → prove → verify through the Spartan pipeline.
+    ///
+    /// This is the primary real-program correctness check: it exercises the full
+    /// path from RISC-V ELF → tracer → witness gen → R1CS → Spartan prove/verify.
+    #[test]
+    fn muldiv_trace_spartan() {
+        let inputs = postcard::to_stdvec(&(9u32, 5u32, 3u32)).unwrap();
+        run_real_program_e2e("muldiv-guest", &inputs, b"jolt-muldiv");
+    }
+
+    /// Fibonacci guest: exercises longer traces with loop-heavy execution.
+    #[test]
+    fn fibonacci_trace_spartan() {
+        let inputs = postcard::to_stdvec(&10u32).unwrap();
+        run_real_program_e2e("fibonacci-guest", &inputs, b"jolt-fib");
+    }
+}
+
+/// Host-layer E2E tests using [`prove_trace`] + [`verify_proof`].
+///
+/// These exercise the unified pipeline: trace → witness gen → preprocess →
+/// commit real polynomials → prove (with real S3 increment reduction) → verify.
+mod host_pipeline {
+    use jolt_host::Program;
+    use jolt_openings::mock::MockCommitmentScheme;
+    use jolt_field::Fr;
+    use jolt_zkvm::host::{prove_trace, verify_proof};
+
+    type MockPCS = MockCommitmentScheme<Fr>;
+
+    /// Full pipeline: muldiv trace → prove_trace → verify_proof with MockPCS.
+    #[test]
+    fn muldiv_host_pipeline() {
+        let inputs = postcard::to_stdvec(&(9u32, 5u32, 3u32)).unwrap();
+        let mut program = Program::new("muldiv-guest");
+        let (_, trace, _, _) = program.trace(&inputs, &[], &[]);
+
+        let output = prove_trace::<MockPCS>(&trace, |_| ((), ()))
+            .expect("prove_trace should succeed");
+
+        verify_proof::<MockPCS>(&output)
+            .expect("verify_proof should succeed");
+    }
+
+    /// Full pipeline: fibonacci trace → prove_trace → verify_proof with MockPCS.
+    #[test]
+    fn fibonacci_host_pipeline() {
+        let inputs = postcard::to_stdvec(&10u32).unwrap();
+        let mut program = Program::new("fibonacci-guest");
+        let (_, trace, _, _) = program.trace(&inputs, &[], &[]);
+
+        let output = prove_trace::<MockPCS>(&trace, |_| ((), ()))
+            .expect("prove_trace should succeed");
+
+        verify_proof::<MockPCS>(&output)
+            .expect("verify_proof should succeed");
     }
 }

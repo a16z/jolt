@@ -13,7 +13,9 @@ use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use jolt_verifier::config::ProverConfig;
 use jolt_verifier::proof::SumcheckStageProof;
 use jolt_verifier::stage::StageDescriptor;
-use jolt_verifier::{verify, verify_openings, verify_spartan, JoltError, JoltProof, JoltVerifyingKey};
+use jolt_verifier::{
+    verify, verify_openings, verify_spartan, JoltError, JoltProof, JoltVerifyingKey,
+};
 use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

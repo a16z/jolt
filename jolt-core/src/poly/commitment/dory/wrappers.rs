@@ -167,7 +167,7 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
                 vmp_row_major!(&poly.coeffs, |s: &i128, l: Fr| s.field_mul(l))
             }
             MultilinearPolynomial::S128Scalars(poly) => {
-                vmp_row_major!(&poly.coeffs, |s: &jolt_field::signed::S128, l: Fr| s
+                vmp_row_major!(&poly.coeffs, |s: &ark_ff::biginteger::S128, l: Fr| s
                     .field_mul(l))
             }
             MultilinearPolynomial::OneHot(poly) => {

@@ -12,7 +12,7 @@
 //! Toom-Cook implementations from [`crate::toom_cook`].
 
 use crate::toom_cook;
-use jolt_compute::CpuKernel;
+use crate::CpuKernel;
 use jolt_field::Field;
 
 /// Compile a ProductSum kernel with the given parameters.

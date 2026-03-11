@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::{ComputeBackend, CpuBackend};
+use jolt_compute::ComputeBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -19,10 +19,10 @@ use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_transcript::Transcript;
 
-use jolt_ir::zkvm::claims::reductions;
 use crate::evaluators::catalog;
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
+use jolt_ir::zkvm::claims::reductions;
 
 /// Hamming weight claim reduction prover stage.
 ///
@@ -32,7 +32,7 @@ use crate::stage::{ProverStage, StageBatch};
 ///
 /// Coefficients are provided at construction time (derived externally from
 /// γ-powers and eq evaluations at the prior sumcheck challenge point).
-pub struct HammingReductionStage<F: Field> {
+pub struct HammingReductionStage<F: Field, B: ComputeBackend> {
     /// Evaluation tables for each Hamming weight polynomial type.
     poly_tables: Option<Vec<Vec<F>>>,
     /// Pre-computed scalar coefficients for the linear combination.
@@ -40,9 +40,10 @@ pub struct HammingReductionStage<F: Field> {
     /// Eq evaluation point.
     eq_point: Vec<F>,
     num_vars: usize,
+    backend: Arc<B>,
 }
 
-impl<F: Field> HammingReductionStage<F> {
+impl<F: Field, B: ComputeBackend> HammingReductionStage<F, B> {
     /// Creates a new stage from Hamming weight polynomial tables.
     ///
     /// `coefficients[i]` is the scalar weight for `poly_tables[i]`,
@@ -52,7 +53,12 @@ impl<F: Field> HammingReductionStage<F> {
     ///
     /// Panics if `poly_tables` and `coefficients` differ in length,
     /// or if any table has length != 2^eq_point.len().
-    pub fn new(poly_tables: Vec<Vec<F>>, coefficients: Vec<F>, eq_point: Vec<F>) -> Self {
+    pub fn new(
+        poly_tables: Vec<Vec<F>>,
+        coefficients: Vec<F>,
+        eq_point: Vec<F>,
+        backend: Arc<B>,
+    ) -> Self {
         let num_vars = eq_point.len();
         let expected = 1usize << num_vars;
         assert_eq!(
@@ -73,11 +79,12 @@ impl<F: Field> HammingReductionStage<F> {
             coefficients,
             eq_point,
             num_vars,
+            backend,
         }
     }
 }
 
-impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for HammingReductionStage<F, B> {
     fn name(&self) -> &'static str {
         "S7_hamming_reduction"
     }
@@ -111,9 +118,9 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
             claimed_sum,
         };
 
-        let backend = Arc::new(CpuBackend);
         let desc = catalog::eq_product();
-        let kernel = jolt_cpu_kernels::compile::<F>(&desc);
+        let kernel = self.backend.compile_kernel::<F>(&desc);
+        let backend = Arc::clone(&self.backend);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let witness = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
@@ -155,12 +162,17 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for HammingReductionStage<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_sumcheck::{BatchedSumcheckProver, BatchedSumcheckVerifier};
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    fn cpu() -> Arc<CpuBackend> {
+        Arc::new(CpuBackend)
+    }
 
     #[test]
     fn stage_build_produces_degree_2_claim() {
@@ -175,7 +187,7 @@ mod tests {
             .collect();
 
         let coefficients = vec![Fr::one(), gamma, gamma * gamma];
-        let mut stage = HammingReductionStage::new(polys, coefficients, eq_point);
+        let mut stage = HammingReductionStage::new(polys, coefficients, eq_point, cpu());
         let mut transcript = Blake2bTranscript::new(b"test_s7");
         let batch = stage.build(&[], &mut transcript);
 
@@ -197,8 +209,8 @@ mod tests {
             .collect();
 
         let coefficients = vec![Fr::one(), gamma, gamma * gamma];
-        let mut stage: HammingReductionStage<Fr> =
-            HammingReductionStage::new(polys, coefficients, eq_point);
+        let mut stage: HammingReductionStage<Fr, CpuBackend> =
+            HammingReductionStage::new(polys, coefficients, eq_point, cpu());
 
         let mut prover_transcript = Blake2bTranscript::new(b"s7_roundtrip");
         let mut batch = stage.build(&[], &mut prover_transcript);
@@ -221,12 +233,10 @@ mod tests {
         )
         .expect("verification should succeed");
 
-        let prover_claims =
-            <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-                &mut stage,
-                &challenges,
-                final_eval,
-            );
+        let prover_claims = <HammingReductionStage<Fr, CpuBackend> as ProverStage<
+            Fr,
+            Blake2bTranscript,
+        >>::extract_claims(&mut stage, &challenges, final_eval);
         assert_eq!(prover_claims.len(), 3);
 
         let eval_point: Vec<Fr> = challenges.iter().rev().copied().collect();
@@ -243,27 +253,24 @@ mod tests {
         let coefficients = vec![Fr::from_u64(1), Fr::from_u64(2)];
         let eq_point = vec![Fr::from_u64(3), Fr::from_u64(5)];
 
-        let mut stage = HammingReductionStage::new(polys, coefficients, eq_point);
+        let mut stage = HammingReductionStage::new(polys, coefficients, eq_point, cpu());
         let mut t = Blake2bTranscript::new(b"test");
         let _ = stage.build(&[], &mut t);
 
         let challenges = vec![Fr::from_u64(7), Fr::from_u64(11)];
-        let _claims =
-            <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-                &mut stage,
-                &challenges,
-                Fr::zero(),
-            );
+        let _claims = <HammingReductionStage<Fr, CpuBackend> as ProverStage<
+            Fr,
+            Blake2bTranscript,
+        >>::extract_claims(&mut stage, &challenges, Fr::zero());
         assert_eq!(_claims.len(), 2);
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ =
-                <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-                    &mut stage,
-                    &challenges,
-                    Fr::zero(),
-                );
-        }));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = <HammingReductionStage<Fr, CpuBackend> as ProverStage<
+                    Fr,
+                    Blake2bTranscript,
+                >>::extract_claims(&mut stage, &challenges, Fr::zero());
+            }));
         assert!(result.is_err());
     }
 
@@ -276,10 +283,10 @@ mod tests {
         ];
         let coefficients = vec![Fr::from_u64(1); 3];
         let eq_point: Vec<Fr> = (0..3).map(|i| Fr::from_u64(i + 1)).collect();
-        let stage = HammingReductionStage::new(polys, coefficients, eq_point);
+        let stage = HammingReductionStage::new(polys, coefficients, eq_point, cpu());
 
         let defs =
-            <HammingReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(
+            <HammingReductionStage<Fr, CpuBackend> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(
                 &stage,
             );
         assert_eq!(defs.len(), 1);

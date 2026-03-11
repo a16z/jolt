@@ -34,9 +34,9 @@ A new crate with a single primary type:
 /// - Arithmetic → `api.Add(l, r)`, `api.Sub(l, r)`, `api.Mul(l, r)`, `api.Neg(x)`
 pub struct GnarkEmitter {
     /// Maps opening indices to Go field names (e.g., 0 → "circuit.Stage1_H")
-    pub opening_names: HashMap<u32, String>,
+    pub opening_names: BTreeMap<u32, String>,
     /// Maps challenge indices to Go field names
-    pub challenge_names: HashMap<u32, String>,
+    pub challenge_names: BTreeMap<u32, String>,
     /// CSE let-binding prefix (e.g., "cse_0" for constraint 0)
     pub cse_prefix: String,
 }

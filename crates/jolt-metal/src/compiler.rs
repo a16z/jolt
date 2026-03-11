@@ -109,7 +109,7 @@ pub fn compile_with_challenges<F: Field>(
     float a2 = hi[0] + hi[0] - lo[0];
     float b2 = hi[1] + hi[1] - lo[1];
     result[1] = a2 * b2;"
-            .to_string();
+                .to_string();
             (body.clone(), body, false)
         }
         KernelShape::HammingBooleanity => {
@@ -140,7 +140,12 @@ pub fn compile_with_challenges<F: Field>(
         KernelVariant::Tensor,
     ] {
         msl.push_str(&generate_reduce_kernel(
-            num_inputs, num_evals, &eval_body_weighted, variant, weight_folded, true,
+            num_inputs,
+            num_evals,
+            &eval_body_weighted,
+            variant,
+            weight_folded,
+            true,
         ));
         msl.push('\n');
     }
@@ -148,7 +153,12 @@ pub fn compile_with_challenges<F: Field>(
     // Generate 2 unweighted variants (L2H, H2L) — use unfolded body
     for variant in [KernelVariant::LowToHigh, KernelVariant::HighToLow] {
         msl.push_str(&generate_reduce_kernel(
-            num_inputs, num_evals, &eval_body_unweighted, variant, false, false,
+            num_inputs,
+            num_evals,
+            &eval_body_unweighted,
+            variant,
+            false,
+            false,
         ));
         msl.push('\n');
     }
@@ -264,19 +274,13 @@ fn generate_reduce_kernel(
             );
             next_buf += 1;
         } else {
-            let _ = writeln!(
-                s,
-                "    device const Fr* weights [[buffer({next_buf})]],",
-            );
+            let _ = writeln!(s, "    device const Fr* weights [[buffer({next_buf})]],",);
             next_buf += 1;
         }
     }
     let _ = writeln!(s, "    device Fr* partials [[buffer({next_buf})]],");
     next_buf += 1;
-    let _ = writeln!(
-        s,
-        "    device const uint* params [[buffer({next_buf})]],",
-    );
+    let _ = writeln!(s, "    device const uint* params [[buffer({next_buf})]],",);
     let _ = writeln!(s, "    uint gid [[threadgroup_position_in_grid]],");
     let _ = writeln!(s, "    uint lid [[thread_position_in_threadgroup]],");
     let _ = writeln!(s, "    uint num_groups [[threadgroups_per_grid]],");
@@ -346,28 +350,19 @@ fn generate_reduce_kernel(
     match strategy {
         AccumulationStrategy::WeightedFmadd => {
             for d in 0..num_evals {
-                let _ = writeln!(
-                    s,
-                    "        acc_fmadd(wide_acc[{d}], w, evals[{d}]);"
-                );
+                let _ = writeln!(s, "        acc_fmadd(wide_acc[{d}], w, evals[{d}]);");
             }
         }
         AccumulationStrategy::DirectAdd => {
             if weight_folded && weighted {
                 // Weight already folded into eval body — evals are weighted.
                 for d in 0..num_evals {
-                    let _ = writeln!(
-                        s,
-                        "        acc_add_fr(wide_acc[{d}], evals[{d}]);"
-                    );
+                    let _ = writeln!(s, "        acc_add_fr(wide_acc[{d}], evals[{d}]);");
                 }
             } else {
                 // Unweighted — evals are raw.
                 for d in 0..num_evals {
-                    let _ = writeln!(
-                        s,
-                        "        acc_add_fr(wide_acc[{d}], evals[{d}]);"
-                    );
+                    let _ = writeln!(s, "        acc_add_fr(wide_acc[{d}], evals[{d}]);");
                 }
             }
         }
@@ -380,10 +375,7 @@ fn generate_reduce_kernel(
     let needs_to_mont = matches!(strategy, AccumulationStrategy::DirectAdd);
     if needs_to_mont {
         for d in 0..num_evals {
-            let _ = writeln!(
-                s,
-                "    acc[{d}] = fr_to_mont(acc_reduce(wide_acc[{d}]));"
-            );
+            let _ = writeln!(s, "    acc[{d}] = fr_to_mont(acc_reduce(wide_acc[{d}]));");
         }
     } else {
         for d in 0..num_evals {
@@ -545,350 +537,6 @@ fn emit_product_sum(s: &mut String, d: usize, p: usize, arr: &str, eval_idx: usi
         let _ = writeln!(s, "            sum = fr_add(sum, prod); }}");
     }
     let _ = writeln!(s, "          evals[{eval_idx}] = sum; }}");
-}
-
-/// Multi-pass reduce kernel for ProductSum shape (UNUSED — kept for reference).
-///
-/// Processes one eval point per pass to reduce register pressure from D×WideAcc
-/// to 1×WideAcc. Benchmarked ~20% slower than single-pass due to D× extra memory
-/// reads outweighing any occupancy improvement. The single-pass kernel is
-/// memory-latency-bound, not register-spill-limited.
-#[allow(dead_code)]
-/// Each pass traverses the input buffers, computing one grid-point evaluation
-/// and accumulating into a single WideAcc. This trades D× memory reads for
-/// dramatically reduced register pressure, improving GPU occupancy.
-///
-/// Register pressure comparison (D=4, K=4):
-/// - Single-pass: 4 WideAcc (72) + cur/diff (64) + temps (16) = ~152 registers
-/// - Multi-pass:  1 WideAcc (18) + per-pair temps (~40) = ~58 registers
-fn generate_reduce_kernel_multipass(
-    num_inputs: usize,
-    num_evals: usize,
-    num_inputs_per_product: usize,
-    num_products: usize,
-    variant: KernelVariant,
-    weight_folded: bool,
-    weighted: bool,
-) -> String {
-    let d = num_inputs_per_product;
-    let p = num_products;
-    let _k = d * p; // total input count
-    let gs = REDUCE_GROUP_SIZE;
-    let num_simdgroups = gs / SIMD_SIZE;
-    let fname = variant.function_name(weighted);
-    let is_tensor = matches!(variant, KernelVariant::Tensor);
-
-    let strategy = if !weighted || weight_folded {
-        AccumulationStrategy::DirectAdd
-    } else {
-        AccumulationStrategy::WeightedFmadd
-    };
-
-    let mut s = String::with_capacity(16384);
-
-    // Kernel signature (identical to single-pass)
-    let _ = writeln!(s, "kernel void {fname}(");
-    for idx in 0..num_inputs {
-        let _ = writeln!(s, "    device const Fr* input_{idx} [[buffer({idx})]],");
-    }
-
-    let mut next_buf = num_inputs;
-    if weighted {
-        if is_tensor {
-            let _ = writeln!(
-                s,
-                "    device const Fr* outer_weights [[buffer({next_buf})]],",
-            );
-            next_buf += 1;
-            let _ = writeln!(
-                s,
-                "    device const Fr* inner_weights [[buffer({next_buf})]],",
-            );
-            next_buf += 1;
-        } else {
-            let _ = writeln!(
-                s,
-                "    device const Fr* weights [[buffer({next_buf})]],",
-            );
-            next_buf += 1;
-        }
-    }
-    let _ = writeln!(s, "    device Fr* partials [[buffer({next_buf})]],");
-    next_buf += 1;
-    let _ = writeln!(
-        s,
-        "    device const uint* params [[buffer({next_buf})]],",
-    );
-    let _ = writeln!(s, "    uint gid [[threadgroup_position_in_grid]],");
-    let _ = writeln!(s, "    uint lid [[thread_position_in_threadgroup]],");
-    let _ = writeln!(s, "    uint num_groups [[threadgroups_per_grid]],");
-    let _ = writeln!(s, "    uint simd_lane [[thread_index_in_simdgroup]],");
-    let _ = writeln!(s, "    uint simd_id [[simdgroup_index_in_threadgroup]]");
-    let _ = writeln!(s, ") {{");
-
-    // Read params
-    let _ = writeln!(s, "    uint n_pairs = params[0];");
-    if is_tensor {
-        let _ = writeln!(s, "    uint inner_log = params[1];");
-        let _ = writeln!(s, "    uint inner_mask = params[2];");
-    }
-    s.push('\n');
-
-    // Result array — populated one element per pass
-    let _ = writeln!(s, "    Fr acc[{num_evals}];");
-    s.push('\n');
-
-    let needs_to_mont = matches!(strategy, AccumulationStrategy::DirectAdd);
-
-    // Multi-pass: one grid-stride loop per eval point
-    // Grid points: t=1, 2, ..., D-1, ∞ → eval indices 0, 1, ..., D-1
-    for eval_idx in 0..num_evals {
-        let _ = writeln!(s, "    {{ // Pass {eval_idx}");
-        let _ = writeln!(s, "    WideAcc wide_acc = acc_zero();");
-        let _ = writeln!(
-            s,
-            "    for (uint i = gid * {gs}u + lid; i < n_pairs; i += num_groups * {gs}u) {{"
-        );
-
-        // Read pairs — optimized per eval point
-        let is_t_inf = eval_idx == num_evals - 1;
-        let t_minus_1 = eval_idx; // number of diff additions needed (t=1→0, t=2→1, etc.)
-
-        if matches!(variant, KernelVariant::HighToLow) {
-            if is_t_inf || t_minus_1 > 0 {
-                // Need both lo and hi (to compute diff)
-                for idx in 0..num_inputs {
-                    let _ = writeln!(
-                        s,
-                        "        Fr lo_{idx} = input_{idx}[i]; Fr hi_{idx} = input_{idx}[i + n_pairs];"
-                    );
-                }
-            } else {
-                // t=1: only need hi
-                for idx in 0..num_inputs {
-                    let _ = writeln!(
-                        s,
-                        "        Fr hi_{idx} = input_{idx}[i + n_pairs];"
-                    );
-                }
-            }
-        } else {
-            // LowToHigh / Tensor
-            if is_t_inf || t_minus_1 > 0 {
-                for idx in 0..num_inputs {
-                    let _ = writeln!(
-                        s,
-                        "        Fr lo_{idx} = input_{idx}[2u * i]; Fr hi_{idx} = input_{idx}[2u * i + 1u];"
-                    );
-                }
-            } else {
-                for idx in 0..num_inputs {
-                    let _ = writeln!(
-                        s,
-                        "        Fr hi_{idx} = input_{idx}[2u * i + 1u];"
-                    );
-                }
-            }
-        }
-
-        // Read weight
-        if weighted {
-            if is_tensor {
-                let _ = writeln!(
-                    s,
-                    "        Fr w = fr_mul(outer_weights[i >> inner_log], inner_weights[i & inner_mask]);"
-                );
-            } else {
-                let _ = writeln!(s, "        Fr w = weights[i];");
-            }
-        }
-
-        // Compute eval at this grid point
-        // Each product group g computes: Π_{j=0..d-1} val_{g*d+j}
-        // where val depends on the grid point
-        let _ = writeln!(s, "        Fr eval_result;");
-        let _ = writeln!(s, "        {{ Fr sum = fr_zero();");
-
-        for g in 0..p {
-            let _ = writeln!(s, "          {{ ");
-            let first_input = g * d;
-
-            if is_t_inf {
-                // t=∞: product of diff[k] = hi[k] - lo[k]
-                for j in 0..d {
-                    let idx = first_input + j;
-                    if weight_folded && j == 0 {
-                        let _ = writeln!(
-                            s,
-                            "            Fr v_{idx} = fr_mul(w, fr_sub(hi_{idx}, lo_{idx}));"
-                        );
-                    } else {
-                        let _ = writeln!(
-                            s,
-                            "            Fr v_{idx} = fr_sub(hi_{idx}, lo_{idx});"
-                        );
-                    }
-                }
-            } else if t_minus_1 == 0 {
-                // t=1: val = hi (or w*hi for folded)
-                for j in 0..d {
-                    let idx = first_input + j;
-                    if weight_folded && j == 0 {
-                        let _ = writeln!(
-                            s,
-                            "            Fr v_{idx} = fr_mul(w, hi_{idx});"
-                        );
-                    } else {
-                        let _ = writeln!(s, "            Fr v_{idx} = hi_{idx};");
-                    }
-                }
-            } else {
-                // t=2..D-1: val = hi + t_minus_1 * diff
-                for j in 0..d {
-                    let idx = first_input + j;
-                    let _ = writeln!(
-                        s,
-                        "            Fr diff_{idx} = fr_sub(hi_{idx}, lo_{idx});"
-                    );
-                    if weight_folded && j == 0 {
-                        // w * (hi + t_minus_1 * diff) = w*hi + t_minus_1 * w*diff
-                        let _ = writeln!(
-                            s,
-                            "            Fr v_{idx} = fr_mul(w, hi_{idx});"
-                        );
-                        let _ = writeln!(
-                            s,
-                            "            Fr wdiff_{idx} = fr_mul(w, diff_{idx});"
-                        );
-                        for _ in 0..t_minus_1 {
-                            let _ = writeln!(
-                                s,
-                                "            v_{idx} = fr_add(v_{idx}, wdiff_{idx});"
-                            );
-                        }
-                    } else {
-                        let _ = writeln!(s, "            Fr v_{idx} = hi_{idx};");
-                        for _ in 0..t_minus_1 {
-                            let _ = writeln!(
-                                s,
-                                "            v_{idx} = fr_add(v_{idx}, diff_{idx});"
-                            );
-                        }
-                    }
-                }
-            }
-
-            // Compute product of v_{first_input..first_input+d}
-            let _ = writeln!(s, "            Fr prod = v_{first_input};");
-            for j in 1..d {
-                let idx = first_input + j;
-                let _ = writeln!(s, "            prod = fr_mul(prod, v_{idx});");
-            }
-            let _ = writeln!(s, "            sum = fr_add(sum, prod);");
-            let _ = writeln!(s, "          }}");
-        }
-
-        let _ = writeln!(s, "          eval_result = sum; }}");
-
-        // Accumulate
-        match strategy {
-            AccumulationStrategy::WeightedFmadd => {
-                let _ = writeln!(s, "        acc_fmadd(wide_acc, w, eval_result);");
-            }
-            AccumulationStrategy::DirectAdd => {
-                let _ = writeln!(s, "        acc_add_fr(wide_acc, eval_result);");
-            }
-        }
-
-        let _ = writeln!(s, "    }}"); // end grid-stride loop
-
-        // Reduce WideAcc → Fr
-        if needs_to_mont {
-            let _ = writeln!(
-                s,
-                "    acc[{eval_idx}] = fr_to_mont(acc_reduce(wide_acc));"
-            );
-        } else {
-            let _ = writeln!(
-                s,
-                "    acc[{eval_idx}] = acc_reduce(wide_acc);"
-            );
-        }
-        let _ = writeln!(s, "    }}"); // end pass scope
-        s.push('\n');
-    }
-
-    // Simdgroup reduction (identical to single-pass)
-    let half_simd = SIMD_SIZE / 2;
-    let _ = writeln!(
-        s,
-        "    for (ushort _off = {half_simd}u; _off > 0u; _off >>= 1u) {{"
-    );
-    for d_idx in 0..num_evals {
-        let _ = writeln!(s, "        {{ Fr _o;");
-        for l in 0..8 {
-            let _ = writeln!(
-                s,
-                "        _o.limbs[{l}] = simd_shuffle_down(acc[{d_idx}].limbs[{l}], _off);"
-            );
-        }
-        let _ = writeln!(s, "        acc[{d_idx}] = fr_add(acc[{d_idx}], _o); }}");
-    }
-    let _ = writeln!(s, "    }}");
-    s.push('\n');
-
-    // Lane 0 of each simdgroup writes to shared memory
-    let sh_size = num_evals * num_simdgroups;
-    let _ = writeln!(s, "    threadgroup Fr sh[{sh_size}];");
-    let _ = writeln!(s, "    if (simd_lane == 0u) {{");
-    for d_idx in 0..num_evals {
-        let _ = writeln!(
-            s,
-            "        sh[{}u + simd_id] = acc[{d_idx}];",
-            d_idx * num_simdgroups
-        );
-    }
-    let _ = writeln!(s, "    }}");
-    let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
-    s.push('\n');
-
-    // Tree reduction over simdgroup partials
-    let _ = writeln!(s, "    if (lid < {num_simdgroups}u) {{");
-    let mut stride = num_simdgroups / 2;
-    while stride > 0 {
-        let _ = writeln!(s, "        if (lid < {stride}u) {{");
-        for d_idx in 0..num_evals {
-            let base = d_idx * num_simdgroups;
-            let _ = writeln!(
-                s,
-                "            sh[{base}u + lid] = fr_add(sh[{base}u + lid], sh[{base}u + lid + {stride}u]);"
-            );
-        }
-        let _ = writeln!(s, "        }}");
-        if stride > 1 {
-            let _ = writeln!(
-                s,
-                "        threadgroup_barrier(mem_flags::mem_threadgroup);"
-            );
-        }
-        stride /= 2;
-    }
-    let _ = writeln!(s, "    }}");
-    s.push('\n');
-
-    // Write final partials
-    let _ = writeln!(s, "    if (lid == 0u) {{");
-    for d_idx in 0..num_evals {
-        let _ = writeln!(
-            s,
-            "        partials[gid * {num_evals}u + {d_idx}u] = sh[{}u];",
-            d_idx * num_simdgroups
-        );
-    }
-    let _ = writeln!(s, "    }}");
-    let _ = writeln!(s, "}}");
-
-    s
 }
 
 /// Generate MSL evaluation body for Custom expression shape.

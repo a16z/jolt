@@ -9,11 +9,11 @@ description = "zkVM prover and verifier orchestration for the Jolt proving syste
 workspace = true
 
 [features]
-parallel = ["dep:rayon", "jolt-compute/parallel", "jolt-poly/parallel", "jolt-sumcheck/parallel"]
+parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-sumcheck/parallel"]
 
 [dependencies]
 jolt-compute = { path = "../jolt-compute" }
-jolt-cpu-kernels = { path = "../jolt-cpu-kernels" }
+jolt-cpu = { path = "../jolt-cpu" }
 jolt-field = { path = "../jolt-field" }
 jolt-instructions = { path = "../jolt-instructions" }
 jolt-ir = { path = "../jolt-ir" }
@@ -37,6 +37,7 @@ jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
 jolt-profiling = { path = "../jolt-profiling" }
 jolt-verifier = { path = "../jolt-verifier" }
 num-traits = { workspace = true }
+postcard = { workspace = true, features = ["use-std"] }
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }
 

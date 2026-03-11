@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::{ComputeBackend, CpuBackend};
+use jolt_compute::ComputeBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -19,10 +19,10 @@ use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_sumcheck::prover::SumcheckCompute;
 use jolt_transcript::Transcript;
 
-use jolt_ir::zkvm::claims::reductions;
 use crate::evaluators::catalog;
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
+use jolt_ir::zkvm::claims::reductions;
 
 /// A single claim reduction instance within the stage.
 ///
@@ -41,16 +41,17 @@ struct ReductionInstance<F: Field> {
 /// Contains multiple reduction instances, each handling a group of
 /// related polynomial claims. Each instance produces one sumcheck
 /// claim and witness pair.
-pub struct ClaimReductionStage<F: Field> {
+pub struct ClaimReductionStage<F: Field, B: ComputeBackend> {
     instances: Option<Vec<ReductionInstance<F>>>,
     /// Eq evaluation point (shared across all instances).
     eq_point: Vec<F>,
     /// Claim definition generators, one per instance.
     claim_def_fns: Vec<fn() -> ClaimDefinition>,
     num_vars: usize,
+    backend: Arc<B>,
 }
 
-impl<F: Field> ClaimReductionStage<F> {
+impl<F: Field, B: ComputeBackend> ClaimReductionStage<F, B> {
     /// Creates a new claim reduction stage.
     ///
     /// Each element of `instances` is a `(poly_tables, coefficients)` pair
@@ -67,6 +68,7 @@ impl<F: Field> ClaimReductionStage<F> {
         instances: Vec<(Vec<Vec<F>>, Vec<F>)>,
         eq_point: Vec<F>,
         claim_def_fns: Vec<fn() -> ClaimDefinition>,
+        backend: Arc<B>,
     ) -> Self {
         let num_vars = eq_point.len();
         let expected = 1usize << num_vars;
@@ -105,6 +107,7 @@ impl<F: Field> ClaimReductionStage<F> {
             eq_point,
             claim_def_fns,
             num_vars,
+            backend,
         }
     }
 
@@ -118,6 +121,7 @@ impl<F: Field> ClaimReductionStage<F> {
         rs2_v: Vec<F>,
         eq_point: Vec<F>,
         gamma: F,
+        backend: Arc<B>,
     ) -> Self {
         let gamma_sq = gamma * gamma;
         let eq_eval = F::one(); // Will be derived from prior claims in production
@@ -126,22 +130,31 @@ impl<F: Field> ClaimReductionStage<F> {
             vec![(vec![rd_wv, rs1_v, rs2_v], coefficients)],
             eq_point,
             vec![reductions::registers_claim_reduction as fn() -> ClaimDefinition],
+            backend,
         )
     }
 
     /// Creates a single-instance increment claim reduction stage.
     ///
     /// Convenience constructor for `c0·ram_inc + c1·rd_inc`.
-    pub fn increment(ram_inc: Vec<F>, rd_inc: Vec<F>, eq_point: Vec<F>, c0: F, c1: F) -> Self {
+    pub fn increment(
+        ram_inc: Vec<F>,
+        rd_inc: Vec<F>,
+        eq_point: Vec<F>,
+        c0: F,
+        c1: F,
+        backend: Arc<B>,
+    ) -> Self {
         Self::new(
             vec![(vec![ram_inc, rd_inc], vec![c0, c1])],
             eq_point,
             vec![reductions::increment_claim_reduction as fn() -> ClaimDefinition],
+            backend,
         )
     }
 }
 
-impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F, B> {
     fn name(&self) -> &'static str {
         "S3_claim_reductions"
     }
@@ -153,7 +166,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
             .expect("build() called after extract_claims()");
         let n = 1usize << self.num_vars;
         let eq_table = EqPolynomial::new(self.eq_point.clone()).evaluations();
-        let backend = Arc::new(CpuBackend);
+        let backend = Arc::clone(&self.backend);
         let desc = catalog::eq_product();
 
         let mut claims = Vec::with_capacity(instances.len());
@@ -180,7 +193,7 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
                 claimed_sum,
             });
 
-            let kernel = jolt_cpu_kernels::compile::<F>(&desc);
+            let kernel = self.backend.compile_kernel::<F>(&desc);
             let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
             witnesses.push(Box::new(KernelEvaluator::with_unit_weights(
                 inputs,
@@ -227,11 +240,16 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_sumcheck::{BatchedSumcheckProver, BatchedSumcheckVerifier};
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    fn cpu() -> Arc<CpuBackend> {
+        Arc::new(CpuBackend)
+    }
 
     #[test]
     fn registers_reduction_prove_verify() {
@@ -245,8 +263,8 @@ mod tests {
         let rs1_v: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let rs2_v: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let mut stage: ClaimReductionStage<Fr> =
-            ClaimReductionStage::registers(rd_wv, rs1_v, rs2_v, eq_point, gamma);
+        let mut stage: ClaimReductionStage<Fr, CpuBackend> =
+            ClaimReductionStage::registers(rd_wv, rs1_v, rs2_v, eq_point, gamma, cpu());
 
         let mut pt = Blake2bTranscript::new(b"s3_registers");
         let mut batch = stage.build(&[], &mut pt);
@@ -271,12 +289,10 @@ mod tests {
         )
         .expect("verification should succeed");
 
-        let prover_claims =
-            <ClaimReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-                &mut stage,
-                &challenges,
-                final_eval,
-            );
+        let prover_claims = <ClaimReductionStage<Fr, CpuBackend> as ProverStage<
+            Fr,
+            Blake2bTranscript,
+        >>::extract_claims(&mut stage, &challenges, final_eval);
         // 3 polynomials → 3 opening claims
         assert_eq!(prover_claims.len(), 3);
 
@@ -299,8 +315,8 @@ mod tests {
         let c0 = Fr::random(&mut rng);
         let c1 = Fr::random(&mut rng);
 
-        let mut stage: ClaimReductionStage<Fr> =
-            ClaimReductionStage::increment(ram_inc, rd_inc, eq_point, c0, c1);
+        let mut stage: ClaimReductionStage<Fr, CpuBackend> =
+            ClaimReductionStage::increment(ram_inc, rd_inc, eq_point, c0, c1, cpu());
 
         let mut pt = Blake2bTranscript::new(b"s3_increment");
         let mut batch = stage.build(&[], &mut pt);
@@ -322,12 +338,10 @@ mod tests {
         )
         .expect("verification should succeed");
 
-        let prover_claims =
-            <ClaimReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-                &mut stage,
-                &challenges,
-                final_eval,
-            );
+        let prover_claims = <ClaimReductionStage<Fr, CpuBackend> as ProverStage<
+            Fr,
+            Blake2bTranscript,
+        >>::extract_claims(&mut stage, &challenges, final_eval);
         assert_eq!(prover_claims.len(), 2);
     }
 
@@ -348,13 +362,14 @@ mod tests {
         let p2: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let c2 = Fr::random(&mut rng);
 
-        let mut stage: ClaimReductionStage<Fr> = ClaimReductionStage::new(
+        let mut stage: ClaimReductionStage<Fr, CpuBackend> = ClaimReductionStage::new(
             vec![(vec![p0, p1], vec![c0, c1]), (vec![p2], vec![c2])],
             eq_point,
             vec![
                 reductions::increment_claim_reduction as fn() -> ClaimDefinition,
                 reductions::ram_ra_claim_reduction as fn() -> ClaimDefinition,
             ],
+            cpu(),
         );
 
         let mut pt = Blake2bTranscript::new(b"multi_instance");
@@ -378,12 +393,10 @@ mod tests {
         )
         .expect("verification should succeed");
 
-        let prover_claims =
-            <ClaimReductionStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
-                &mut stage,
-                &challenges,
-                final_eval,
-            );
+        let prover_claims = <ClaimReductionStage<Fr, CpuBackend> as ProverStage<
+            Fr,
+            Blake2bTranscript,
+        >>::extract_claims(&mut stage, &challenges, final_eval);
         // 2 + 1 = 3 opening claims total
         assert_eq!(prover_claims.len(), 3);
     }

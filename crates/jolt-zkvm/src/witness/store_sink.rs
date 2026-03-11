@@ -115,7 +115,10 @@ mod tests {
         }
         assert_eq!(store.get(100).len(), 3);
         assert_eq!(store.get(100)[0], Fr::from_u64(1));
-        assert!(store.get_one_hot(100).is_none(), "dense poly should not have one-hot repr");
+        assert!(
+            store.get_one_hot(100).is_none(),
+            "dense poly should not have one-hot repr"
+        );
     }
 
     #[test]
@@ -139,7 +142,9 @@ mod tests {
         assert_eq!(table[4], Fr::zero());
 
         // Sparse representation also stored
-        let oh = store.get_one_hot(200).expect("one-hot representation must be stored");
+        let oh = store
+            .get_one_hot(200)
+            .expect("one-hot representation must be stored");
         assert!(jolt_poly::MultilinearPoly::<Fr>::is_sparse(oh));
     }
 

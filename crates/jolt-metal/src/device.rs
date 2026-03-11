@@ -265,6 +265,14 @@ impl ComputeBackend for MetalBackend {
     type Buffer<T: Scalar> = MetalBuffer<T>;
     type CompiledKernel<F: Field> = MetalKernel<F>;
 
+    fn compile_kernel_with_challenges<F: Field>(
+        &self,
+        desc: &KernelDescriptor,
+        challenges: &[F],
+    ) -> MetalKernel<F> {
+        compiler::compile_with_challenges(&self.device, desc, challenges)
+    }
+
     fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T> {
         MetalBuffer::from_data(&self.device, data)
     }
@@ -448,10 +456,7 @@ impl ComputeBackend for MetalBackend {
                     .product_table_round
                     .max_total_threads_per_threadgroup()
                     .min(prev_len as u64);
-                enc.dispatch_threads(
-                    MTLSize::new(prev_len as u64, 1, 1),
-                    MTLSize::new(tpg, 1, 1),
-                );
+                enc.dispatch_threads(MTLSize::new(prev_len as u64, 1, 1), MTLSize::new(tpg, 1, 1));
                 enc.end_encoding();
             }
             cmd.commit();

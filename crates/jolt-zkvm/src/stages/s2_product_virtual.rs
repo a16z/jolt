@@ -24,7 +24,7 @@
 
 use std::sync::Arc;
 
-use jolt_compute::{ComputeBackend, CpuBackend};
+use jolt_compute::ComputeBackend;
 use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
@@ -61,7 +61,7 @@ pub const NUM_CONSTRAINTS: usize = 5;
 /// | 5     | lookup_output                   |
 /// | 6     | branch_flag                     |
 /// | 7     | next_is_noop                    |
-pub struct ProductVirtualStage<F: Field> {
+pub struct ProductVirtualStage<F: Field, B: ComputeBackend> {
     /// 8 factor polynomial evaluation tables (consumed by extract_claims).
     factor_polys: Option<Vec<Vec<F>>>,
     /// Eq polynomial evaluation point (r_cycle from Spartan).
@@ -70,9 +70,10 @@ pub struct ProductVirtualStage<F: Field> {
     gamma_powers: Vec<F>,
     num_vars: usize,
     claimed_sum: F,
+    backend: Arc<B>,
 }
 
-impl<F: Field> ProductVirtualStage<F> {
+impl<F: Field, B: ComputeBackend> ProductVirtualStage<F, B> {
     /// Creates a new product virtual stage.
     ///
     /// # Arguments
@@ -95,6 +96,7 @@ impl<F: Field> ProductVirtualStage<F> {
         eq_point: Vec<F>,
         gamma_powers: Vec<F>,
         claimed_sum: F,
+        backend: Arc<B>,
     ) -> Self {
         assert_eq!(factor_polys.len(), NUM_FACTORS);
         assert_eq!(gamma_powers.len(), NUM_CONSTRAINTS);
@@ -114,11 +116,12 @@ impl<F: Field> ProductVirtualStage<F> {
             gamma_powers,
             num_vars,
             claimed_sum,
+            backend,
         }
     }
 }
 
-impl<F: Field, T: Transcript> ProverStage<F, T> for ProductVirtualStage<F> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for ProductVirtualStage<F, B> {
     fn name(&self) -> &'static str {
         "S2_product_virtual"
     }
@@ -165,17 +168,18 @@ impl<F: Field, T: Transcript> ProverStage<F, T> for ProductVirtualStage<F> {
         ];
 
         let (desc, challenges) = catalog::formula_descriptor(&terms, NUM_FACTORS, 3);
-        let kernel = jolt_cpu_kernels::compile_with_challenges::<F>(&desc, &challenges);
+        let kernel = self
+            .backend
+            .compile_kernel_with_challenges::<F>(&desc, &challenges);
 
-        let backend = Arc::new(CpuBackend);
+        let backend = Arc::clone(&self.backend);
         let mut inputs = Vec::with_capacity(NUM_FACTORS + 1);
         inputs.push(backend.upload(&eq_table));
         for poly in factor_polys {
             inputs.push(backend.upload(poly));
         }
 
-        let witness =
-            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+        let witness = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         StageBatch {
             claims: vec![SumcheckClaim {
@@ -255,6 +259,7 @@ pub fn brute_force_product_virtual_sum<F: Field>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_sumcheck::{BatchedSumcheckProver, BatchedSumcheckVerifier, SumcheckClaim};
     use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -262,14 +267,16 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::{RngCore, SeedableRng};
 
+    fn cpu() -> Arc<CpuBackend> {
+        Arc::new(CpuBackend)
+    }
+
     fn random_poly(n: usize, rng: &mut ChaCha20Rng) -> Vec<Fr> {
         (0..n).map(|_| Fr::random(rng)).collect()
     }
 
     fn random_boolean_poly(n: usize, rng: &mut ChaCha20Rng) -> Vec<Fr> {
-        (0..n)
-            .map(|_| Fr::from_u64(rng.next_u64() % 2))
-            .collect()
+        (0..n).map(|_| Fr::from_u64(rng.next_u64() % 2)).collect()
     }
 
     fn gamma_powers(gamma: Fr) -> Vec<Fr> {
@@ -338,7 +345,7 @@ mod tests {
         let g = gamma_powers(gamma);
         let claimed_sum = brute_force_product_virtual_sum(&polys, &eq_point, &g);
 
-        let mut stage = ProductVirtualStage::new(polys, eq_point, g, claimed_sum);
+        let mut stage = ProductVirtualStage::new(polys, eq_point, g, claimed_sum, cpu());
 
         let mut transcript = Blake2bTranscript::new(b"pv_test");
         let batch = stage.build(&[], &mut transcript);
@@ -360,7 +367,8 @@ mod tests {
         let g = gamma_powers(gamma);
         let claimed_sum = brute_force_product_virtual_sum(&polys, &eq_point, &g);
 
-        let mut stage = ProductVirtualStage::new(polys.clone(), eq_point.clone(), g, claimed_sum);
+        let mut stage =
+            ProductVirtualStage::new(polys.clone(), eq_point.clone(), g, claimed_sum, cpu());
 
         let mut pt = Blake2bTranscript::new(b"pv_roundtrip");
         let mut batch = stage.build(&[], &mut pt);
@@ -389,7 +397,7 @@ mod tests {
 
         // Verify extract_claims produces correct evaluations at the reversed point.
         let claims =
-            <ProductVirtualStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
+            <ProductVirtualStage<Fr, CpuBackend> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
                 &mut stage,
                 &challenges,
                 final_eval,
@@ -429,8 +437,7 @@ mod tests {
         let g = gamma_powers(gamma);
         let claimed_sum = brute_force_product_virtual_sum(&polys, &eq_point, &g);
 
-        let mut stage =
-            ProductVirtualStage::new(polys.clone(), eq_point, g, claimed_sum);
+        let mut stage = ProductVirtualStage::new(polys.clone(), eq_point, g, claimed_sum, cpu());
 
         let mut pt = Blake2bTranscript::new(b"pv_extract");
         let mut batch = stage.build(&[], &mut pt);
@@ -456,7 +463,7 @@ mod tests {
         .expect("verification should succeed");
 
         let claims =
-            <ProductVirtualStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
+            <ProductVirtualStage<Fr, CpuBackend> as ProverStage<Fr, Blake2bTranscript>>::extract_claims(
                 &mut stage,
                 &challenges,
                 final_eval,
@@ -473,14 +480,15 @@ mod tests {
 
     #[test]
     fn claim_definitions_returns_product_virtual() {
-        let stage = ProductVirtualStage::<Fr>::new(
+        let stage = ProductVirtualStage::<Fr, CpuBackend>::new(
             vec![vec![Fr::zero(); 4]; NUM_FACTORS],
             vec![Fr::from_u64(1), Fr::from_u64(2)],
             vec![Fr::from_u64(1); NUM_CONSTRAINTS],
             Fr::zero(),
+            cpu(),
         );
         let defs =
-            <ProductVirtualStage<Fr> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(
+            <ProductVirtualStage<Fr, CpuBackend> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(
                 &stage,
             );
         assert_eq!(defs.len(), 1);
@@ -504,7 +512,7 @@ mod tests {
         let claimed_sum = brute_force_product_virtual_sum(&polys, &eq_point, &g);
         assert!(claimed_sum.is_zero());
 
-        let mut stage = ProductVirtualStage::new(polys, eq_point, g, claimed_sum);
+        let mut stage = ProductVirtualStage::new(polys, eq_point, g, claimed_sum, cpu());
         let mut pt = Blake2bTranscript::new(b"pv_zero");
         let mut batch = stage.build(&[], &mut pt);
 

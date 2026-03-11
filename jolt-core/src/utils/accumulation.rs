@@ -1,6 +1,6 @@
 use crate::field::{BarrettReduce, FMAdd, JoltField, MontgomeryReduce};
+use ark_ff::biginteger::{S128, S160, S192, S256, S64};
 use ark_std::{ops::Add, Zero};
-use jolt_field::signed::{S128, S160, S192, S256, S64};
 
 /// Unsigned accumulator at the "small" tier (field × u64 width).
 /// Stores a single `UnreducedMulU64` word. Supports FMA with u8, u64, and bool scalars.

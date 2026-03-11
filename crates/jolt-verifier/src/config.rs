@@ -295,7 +295,10 @@ mod tests {
 
     #[test]
     fn lookup_index_chunk_extraction() {
-        let config = OneHotConfig { log_k_chunk: 4, lookups_ra_virtual_log_k_chunk: 16 };
+        let config = OneHotConfig {
+            log_k_chunk: 4,
+            lookups_ra_virtual_log_k_chunk: 16,
+        };
         let params = OneHotParams::from_config(&config, 256, 256);
 
         // 128-bit index with known pattern

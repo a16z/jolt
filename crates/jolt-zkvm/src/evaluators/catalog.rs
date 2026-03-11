@@ -76,7 +76,7 @@ pub struct Term<F: Field> {
 /// become `challenge(k)`.
 ///
 /// Returns `(descriptor, challenge_values)` where `challenge_values[k] = terms[k].coeff`.
-/// Pass these to [`jolt_cpu_kernels::compile_with_challenges`] to compile.
+/// Pass these to [`jolt_cpu::compile_with_challenges`] to compile.
 ///
 /// # Panics
 ///
@@ -124,7 +124,8 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use jolt_compute::{ComputeBackend, CpuBackend};
+    use jolt_compute::ComputeBackend;
+    use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr};
     use jolt_poly::EqPolynomial;
     use jolt_sumcheck::prover::SumcheckCompute;
@@ -156,7 +157,7 @@ mod tests {
             .sum();
 
         let desc = eq_product();
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -192,7 +193,7 @@ mod tests {
         };
 
         let desc = eq_product();
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -260,7 +261,7 @@ mod tests {
             .sum();
 
         let desc = hamming_booleanity();
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -293,7 +294,7 @@ mod tests {
         };
 
         let desc = hamming_booleanity();
-        let kernel = jolt_cpu_kernels::compile::<Fr>(&desc);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h_table)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -357,7 +358,7 @@ mod tests {
         };
 
         let (desc, challenges) = formula_descriptor(&terms, 1, 2);
-        let kernel = jolt_cpu_kernels::compile_with_challenges::<Fr>(&desc, &challenges);
+        let kernel = jolt_cpu::compile_with_challenges::<Fr>(&desc, &challenges);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -410,7 +411,7 @@ mod tests {
         };
 
         let (desc, challenges) = formula_descriptor(&terms, 1, 3);
-        let kernel = jolt_cpu_kernels::compile_with_challenges::<Fr>(&desc, &challenges);
+        let kernel = jolt_cpu::compile_with_challenges::<Fr>(&desc, &challenges);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&h)];
         let mut witness =
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
@@ -469,7 +470,7 @@ mod tests {
         };
 
         let (desc, challenges) = formula_descriptor(&terms, 3, 3);
-        let kernel = jolt_cpu_kernels::compile_with_challenges::<Fr>(&desc, &challenges);
+        let kernel = jolt_cpu::compile_with_challenges::<Fr>(&desc, &challenges);
         let inputs = vec![
             backend.upload(&eq_table),
             backend.upload(&a),
@@ -538,7 +539,7 @@ mod tests {
         };
 
         let (desc, challenges) = formula_descriptor(&terms, 3, 2);
-        let kernel = jolt_cpu_kernels::compile_with_challenges::<Fr>(&desc, &challenges);
+        let kernel = jolt_cpu::compile_with_challenges::<Fr>(&desc, &challenges);
         let inputs = vec![
             backend.upload(&eq_table),
             backend.upload(&p0),

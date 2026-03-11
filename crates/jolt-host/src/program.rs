@@ -216,18 +216,23 @@ impl Program {
 
     pub fn get_elf_contents(&self) -> Option<Vec<u8>> {
         self.elf.as_ref().map(|elf| {
-            std::fs::read(elf).unwrap_or_else(|_| panic!("could not read elf file: {}", elf.display()))
+            std::fs::read(elf)
+                .unwrap_or_else(|_| panic!("could not read elf file: {}", elf.display()))
         })
     }
 
     pub fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>> {
         self.elf_compute_advice.as_ref().map(|elf| {
-            std::fs::read(elf).unwrap_or_else(|_| panic!("could not read elf file: {}", elf.display()))
+            std::fs::read(elf)
+                .unwrap_or_else(|_| panic!("could not read elf file: {}", elf.display()))
         })
     }
 
     fn read_elf(&self) -> Vec<u8> {
-        let elf = self.elf.as_ref().expect("ELF not built yet — call build() first");
+        let elf = self
+            .elf
+            .as_ref()
+            .expect("ELF not built yet — call build() first");
         std::fs::read(elf).unwrap_or_else(|_| panic!("could not read elf file: {}", elf.display()))
     }
 

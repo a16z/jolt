@@ -20,6 +20,7 @@
 //! single source of truth shared by prover and verifier.
 
 pub mod evaluators;
+pub mod host;
 pub mod pipeline;
 pub mod preprocessing;
 pub mod proof;

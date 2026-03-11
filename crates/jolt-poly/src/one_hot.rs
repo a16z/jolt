@@ -170,7 +170,9 @@ mod tests {
     fn evaluate_matches_dense() {
         let mut rng = ChaCha20Rng::seed_from_u64(1);
         let k = 4;
-        let indices: Vec<Option<u8>> = (0..4).map(|_| Some((rng.next_u32() % k as u32) as u8)).collect();
+        let indices: Vec<Option<u8>> = (0..4)
+            .map(|_| Some((rng.next_u32() % k as u32) as u8))
+            .collect();
         let oh = make_one_hot(k, &indices);
         let dense: Polynomial<Fr> = to_dense(&oh);
         let nv = oh.num_vars();
@@ -187,7 +189,13 @@ mod tests {
         let k = 8;
         let n_rows = 8;
         let indices: Vec<Option<u8>> = (0..n_rows)
-            .map(|i| if i % 3 == 0 { None } else { Some((rng.next_u32() % k as u32) as u8) })
+            .map(|i| {
+                if i % 3 == 0 {
+                    None
+                } else {
+                    Some((rng.next_u32() % k as u32) as u8)
+                }
+            })
             .collect();
         let oh = make_one_hot(k, &indices);
         let dense: Polynomial<Fr> = to_dense(&oh);
