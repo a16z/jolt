@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773192465992,
+  "lastUpdate": 1773261170024,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -63118,6 +63118,234 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 823152,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rwhitworth@a16z.com",
+            "name": "Ryan Whitworth",
+            "username": "persimmon16"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0d3545e1650794a9bfab27e5e33df97b358989c7",
+          "message": "fix: harden Claude CI workflows against prompt injection and unauthorized access (#1325)\n\n* fix: resolve Claude CI OIDC token failure on fork PRs\n\nSwitch code review workflow from pull_request to pull_request_target\nso fork PRs run in base repo context with access to secrets. Add\nexplicit github_token to both workflows to bypass OIDC token exchange.\nUpdate permissions from read to write for pull-requests and issues\nso the action can post reviews and comments.\n\nCo-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>\n\n* ci: add stage 1 workflow for secure fork PR review\n\nAdd prepare-claude-review.yml as the untrusted first stage of a\ntwo-stage review pipeline. This workflow:\n\n- Triggers on pull_request events (no secrets available, safe for forks)\n- Gates on author_association (MEMBER/COLLABORATOR/OWNER) or the\n  'claude-review-approved' label for external contributors\n- Uploads only the PR number as an artifact (no code checkout needed)\n- Uses env: indirection for all GitHub expressions (injection-safe)\n\nStage 2 (claude-code-review.yml) consumes this artifact via\nworkflow_run trigger, where secrets are available but only base\nbranch code is on disk.\n\nCo-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>\n\n* ci: replace pull_request_target with two-stage secure review\n\nReplace the single-stage pull_request_target approach with a secure\ntwo-job workflow triggered by workflow_run and issue_comment:\n\nPath A (auto): workflow_run consumes the artifact from stage 1\n  - Downloads PR metadata artifact\n  - Validates PR number is an integer\n  - Cross-references PR head SHA against workflow_run.head_sha\n    (GitHub-controlled, unforgeable) to detect artifact tampering\n  - Checks out base branch only (fork code never on disk with secrets)\n  - Runs claude-code-action with validated PR number\n\nPath B (manual): issue_comment trigger for fork PRs\n  - Fires when a CODEOWNER comments with thumbs-up on a PR\n  - Gates on author_association (MEMBER/COLLABORATOR/OWNER)\n  - issue_comment always runs in base repo context (safe by design)\n  - No artifact needed; PR number from event payload\n\nSecurity improvements over pull_request_target:\n  - Fork code is never on disk in the secret-bearing stage\n  - CLAUDE.md always comes from the trusted base branch\n  - Prompt injection surface reduced from full checkout to diff only\n  - Human gate required for fork/external contributor PRs\n\nCo-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>\n\n* ci: harden Claude workflows with author gating, tool restrictions, and SHA pinning\n\n- Add author_association gating (MEMBER/COLLABORATOR/OWNER) to claude.yml\n  so only trusted users can invoke @claude via comments/issues\n- Add --allowed-tools to claude.yml restricting Bash to gh and cargo commands\n- Pin all GitHub Actions to immutable commit SHAs across all three workflows\n- Add CODEOWNERS file protecting .github/workflows/ with maintainer review\n\n* ci: deduplicate labeled event in prepare-claude-review\n\nSeparate the labeled event path so only the specific\n'claude-review-approved' label triggers a scan. Other label changes\n(e.g. from bots or other workflows) no longer cause unnecessary runs.\n\nAddresses review feedback from @mattg-a16z.\n\n* ci: address PR review — merge CODEOWNERS, use /claude-review trigger\n\n- Move .github/CODEOWNERS rule into root CODEOWNERS (per @moodlezoup)\n- Replace 👍 trigger with /claude-review for manual review invocation\n- Keep pull-requests: write — required for claude-code-action to post reviews\n\n* ci: use individual maintainers for workflow CODEOWNERS rule\n\nReplace @a16z/jolt-maintainers team with explicit user list to avoid\nteam dependency and make ownership auditable in-file.\n\n---------\n\nCo-authored-by: Claude Opus 4.6 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-03-11T15:36:47-04:00",
+          "tree_id": "3b96455d932a5f9ec962c1c18a46df641f938ac4",
+          "url": "https://github.com/a16z/jolt/commit/0d3545e1650794a9bfab27e5e33df97b358989c7"
+        },
+        "date": 1773261168085,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.2353,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 830960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4225,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 441924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 448504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 446684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7926,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 448588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6402,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 444840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.2197,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 446680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4516,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 827388,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6182,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 445248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4742,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 448172,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.4869,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 444452,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 34.1911,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1011736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 16.0643,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 609804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 93.8005,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2125420,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5826,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 448948,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6133,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 446348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 17.3755,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 831524,
             "unit": "KB",
             "extra": ""
           }
