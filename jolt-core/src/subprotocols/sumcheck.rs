@@ -196,7 +196,12 @@ impl BatchedSumcheck {
     ///
     /// Returns (proof, challenges, initial_batched_claim)
     #[cfg(feature = "zk")]
-    pub fn prove_zk<F: JoltField, C: JoltCurve, ProofTranscript: Transcript, R: CryptoRngCore>(
+    pub fn prove_zk<
+        F: JoltField,
+        C: JoltCurve<F = F>,
+        ProofTranscript: Transcript,
+        R: CryptoRngCore,
+    >(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         blindfold_accumulator: &mut crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
@@ -398,7 +403,7 @@ impl BatchedSumcheck {
         )
     }
 
-    pub fn verify<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>(
+    pub fn verify<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>(
         proof: &SumcheckInstanceProof<F, C, ProofTranscript>,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
@@ -601,7 +606,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTrans
 /// The verifier appends commitments to transcript and derives challenges,
 /// but polynomial evaluation is verified by BlindFold's R1CS constraints.
 #[derive(Debug, Clone)]
-pub struct ZkSumcheckProof<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> {
+pub struct ZkSumcheckProof<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> {
     /// Pedersen commitments to round polynomials (G1 curve elements)
     pub round_commitments: Vec<C::G1>,
     /// Polynomial degrees for each round (public info needed for R1CS construction)
@@ -611,7 +616,7 @@ pub struct ZkSumcheckProof<F: JoltField, C: JoltCurve, ProofTranscript: Transcri
     _marker: PhantomData<(F, ProofTranscript)>,
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalSerialize
+impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalSerialize
     for ZkSumcheckProof<F, C, ProofTranscript>
 {
     fn serialize_with_mode<W: std::io::Write>(
@@ -634,7 +639,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalSerialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> ark_serialize::Valid
+impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> ark_serialize::Valid
     for ZkSumcheckProof<F, C, ProofTranscript>
 {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
@@ -644,7 +649,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> ark_serialize::Val
     }
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalDeserialize
+impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalDeserialize
     for ZkSumcheckProof<F, C, ProofTranscript>
 {
     fn deserialize_with_mode<R: std::io::Read>(
@@ -666,7 +671,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalDeseriali
     }
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
+impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>
     ZkSumcheckProof<F, C, ProofTranscript>
 {
     pub fn new(
@@ -721,14 +726,14 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
 }
 
 #[derive(Debug, Clone)]
-pub enum SumcheckInstanceProof<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> {
+pub enum SumcheckInstanceProof<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> {
     /// Non-ZK: coefficients visible to verifier
     Clear(ClearSumcheckProof<F, ProofTranscript>),
     /// ZK: only commitments visible, coefficients hidden in BlindFold
     Zk(ZkSumcheckProof<F, C, ProofTranscript>),
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalSerialize
+impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalSerialize
     for SumcheckInstanceProof<F, C, ProofTranscript>
 {
     fn serialize_with_mode<W: std::io::Write>(
@@ -756,7 +761,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalSerialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> ark_serialize::Valid
+impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> ark_serialize::Valid
     for SumcheckInstanceProof<F, C, ProofTranscript>
 {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
@@ -767,7 +772,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> ark_serialize::Val
     }
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalDeserialize
+impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalDeserialize
     for SumcheckInstanceProof<F, C, ProofTranscript>
 {
     fn deserialize_with_mode<R: std::io::Read>(
@@ -790,7 +795,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalDeseriali
     }
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
+impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>
     SumcheckInstanceProof<F, C, ProofTranscript>
 {
     /// Create a standard (non-ZK) sumcheck proof.

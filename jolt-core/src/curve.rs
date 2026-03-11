@@ -31,13 +31,15 @@ pub trait JoltGroupElement:
     + CanonicalSerialize
     + CanonicalDeserialize
 {
+    type Scalar: JoltField;
+
     fn zero() -> Self;
 
     fn is_zero(&self) -> bool;
 
     fn double(&self) -> Self;
 
-    fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self;
+    fn scalar_mul(&self, scalar: &Self::Scalar) -> Self;
 }
 
 /// A pairing-friendly curve suitable for Dory PCS and ZK operations.
@@ -46,11 +48,17 @@ pub trait JoltGroupElement:
 /// being an associated type, allowing flexibility in which field is used with
 /// the curve operations.
 pub trait JoltCurve: Clone + Sync + Send + 'static {
+    /// Scalar field for this curve's groups
+    type F: JoltField;
+
     /// G1 group element type
-    type G1: JoltGroupElement;
+    type G1: JoltGroupElement<Scalar = Self::F>;
 
     /// G2 group element type
-    type G2: JoltGroupElement;
+    type G2: JoltGroupElement<Scalar = Self::F>;
+
+    /// G1 affine representation — pre-converted for fast MSM
+    type G1Affine: Clone + Copy + Debug + Send + Sync + 'static;
 
     /// Target group element type (result of pairing)
     type GT: Clone
@@ -72,6 +80,9 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
     /// Returns the generator of G2
     fn g2_generator() -> Self::G2;
 
+    /// Convert projective G1 to affine (field inversion)
+    fn g1_to_affine(point: &Self::G1) -> Self::G1Affine;
+
     /// Compute pairing e(g1, g2)
     fn pairing(g1: &Self::G1, g2: &Self::G2) -> Self::GT;
 
@@ -79,10 +90,13 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
     fn multi_pairing(g1s: &[Self::G1], g2s: &[Self::G2]) -> Self::GT;
 
     /// Multi-scalar multiplication in G1: Σᵢ scalars[i] * bases[i]
-    fn g1_msm<F: JoltField>(bases: &[Self::G1], scalars: &[F]) -> Self::G1;
+    fn g1_msm(bases: &[Self::G1], scalars: &[Self::F]) -> Self::G1;
+
+    /// Multi-scalar multiplication in G1 with pre-converted affine bases
+    fn g1_affine_msm(bases: &[Self::G1Affine], scalars: &[Self::F]) -> Self::G1;
 
     /// Multi-scalar multiplication in G2: Σᵢ scalars[i] * bases[i]
-    fn g2_msm<F: JoltField>(bases: &[Self::G2], scalars: &[F]) -> Self::G2;
+    fn g2_msm(bases: &[Self::G2], scalars: &[Self::F]) -> Self::G2;
 
     /// Generate a random G1 element
     fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Self::G1;
@@ -90,13 +104,13 @@ pub trait JoltCurve: Clone + Sync + Send + 'static {
 
 use ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::{pairing::Pairing, AdditiveGroup, AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::{PrimeField, Zero};
+use ark_ff::Zero;
 use ark_std::UniformRand;
 use dory::backends::arkworks::ArkG1;
 use std::ops::MulAssign;
 
 macro_rules! impl_group_ops {
-    ($Name:ident, $Inner:ty) => {
+    ($Name:ident, $Inner:ty, $Field:ty) => {
         impl Add for $Name {
             type Output = Self;
             fn add(self, rhs: Self) -> Self {
@@ -137,10 +151,10 @@ macro_rules! impl_group_ops {
                 self.0 -= rhs.0;
             }
         }
-        impl<F: JoltField> Mul<F> for $Name {
+        impl Mul<$Field> for $Name {
             type Output = Self;
-            fn mul(mut self, rhs: F) -> Self {
-                self.0.mul_assign(jolt_field_to_fr(&rhs));
+            fn mul(mut self, rhs: $Field) -> Self {
+                self.0.mul_assign(rhs);
                 self
             }
         }
@@ -148,8 +162,10 @@ macro_rules! impl_group_ops {
 }
 
 macro_rules! impl_group_element {
-    ($Name:ident, $Proj:ty) => {
+    ($Name:ident, $Proj:ty, $Field:ty) => {
         impl JoltGroupElement for $Name {
+            type Scalar = $Field;
+
             fn zero() -> Self {
                 $Name(<$Proj>::zero())
             }
@@ -159,8 +175,10 @@ macro_rules! impl_group_element {
             fn double(&self) -> Self {
                 $Name(AdditiveGroup::double(&self.0))
             }
-            fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self {
-                $Name(self.0 * jolt_field_to_fr(scalar))
+            fn scalar_mul(&self, scalar: &$Field) -> Self {
+                let mut result = self.0;
+                result.mul_assign(*scalar);
+                $Name(result)
             }
         }
     };
@@ -168,8 +186,8 @@ macro_rules! impl_group_element {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Bn254G1(pub G1Projective);
-impl_group_ops!(Bn254G1, G1Projective);
-impl_group_element!(Bn254G1, G1Projective);
+impl_group_ops!(Bn254G1, G1Projective, Fr);
+impl_group_element!(Bn254G1, G1Projective, Fr);
 
 impl From<ArkG1> for Bn254G1 {
     fn from(value: ArkG1) -> Self {
@@ -185,8 +203,8 @@ impl From<G1Projective> for Bn254G1 {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Bn254G2(pub G2Projective);
-impl_group_ops!(Bn254G2, G2Projective);
-impl_group_element!(Bn254G2, G2Projective);
+impl_group_ops!(Bn254G2, G2Projective, Fr);
+impl_group_element!(Bn254G2, G2Projective, Fr);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Bn254GT(pub Fq12);
@@ -214,8 +232,10 @@ impl AddAssign for Bn254GT {
 pub struct Bn254Curve;
 
 impl JoltCurve for Bn254Curve {
+    type F = Fr;
     type G1 = Bn254G1;
     type G2 = Bn254G2;
+    type G1Affine = G1Affine;
     type GT = Bn254GT;
 
     fn g1_generator() -> Self::G1 {
@@ -224,6 +244,11 @@ impl JoltCurve for Bn254Curve {
 
     fn g2_generator() -> Self::G2 {
         Bn254G2(G2Affine::generator().into())
+    }
+
+    #[inline]
+    fn g1_to_affine(point: &Self::G1) -> G1Affine {
+        point.0.into_affine()
     }
 
     fn pairing(g1: &Self::G1, g2: &Self::G2) -> Self::GT {
@@ -239,43 +264,30 @@ impl JoltCurve for Bn254Curve {
         Bn254GT(Bn254::multi_pairing(&g1_affines, &g2_affines).0)
     }
 
-    fn g1_msm<F: JoltField>(bases: &[Self::G1], scalars: &[F]) -> Self::G1 {
+    fn g1_msm(bases: &[Self::G1], scalars: &[Fr]) -> Self::G1 {
         debug_assert_eq!(bases.len(), scalars.len());
 
         let affine_bases: Vec<G1Affine> = bases.iter().map(|b| b.0.into_affine()).collect();
-        let fr_scalars: Vec<Fr> = scalars.iter().map(jolt_field_to_fr).collect();
-        let bigint_scalars: Vec<_> = fr_scalars.iter().map(|s| s.into_bigint()).collect();
-
-        Bn254G1(G1Projective::msm_bigint(&affine_bases, &bigint_scalars))
+        Self::g1_affine_msm(&affine_bases, scalars)
     }
 
-    fn g2_msm<F: JoltField>(bases: &[Self::G2], scalars: &[F]) -> Self::G2 {
+    #[inline]
+    fn g1_affine_msm(bases: &[G1Affine], scalars: &[Fr]) -> Self::G1 {
+        debug_assert_eq!(bases.len(), scalars.len());
+
+        Bn254G1(VariableBaseMSM::msm(bases, scalars).expect("msm length mismatch"))
+    }
+
+    fn g2_msm(bases: &[Self::G2], scalars: &[Fr]) -> Self::G2 {
         debug_assert_eq!(bases.len(), scalars.len());
 
         let affine_bases: Vec<G2Affine> = bases.iter().map(|b| b.0.into_affine()).collect();
-        let fr_scalars: Vec<Fr> = scalars.iter().map(jolt_field_to_fr).collect();
-        let bigint_scalars: Vec<_> = fr_scalars.iter().map(|s| s.into_bigint()).collect();
-
-        Bn254G2(G2Projective::msm_bigint(&affine_bases, &bigint_scalars))
+        Bn254G2(VariableBaseMSM::msm(&affine_bases, scalars).expect("msm length mismatch"))
     }
 
     fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Self::G1 {
         Bn254G1(G1Projective::rand(rng))
     }
-}
-
-/// Convert a JoltField element to BN254 Fr.
-///
-/// This assumes the JoltField is compatible with BN254's scalar field.
-/// For ark_bn254::Fr, this is a direct conversion.
-#[inline]
-fn jolt_field_to_fr<F: JoltField>(f: &F) -> Fr {
-    // Serialize the field element and deserialize as Fr
-    // This is safe because JoltField elements are assumed to be in the same field
-    let mut bytes = [0u8; 32];
-    f.serialize_uncompressed(&mut bytes[..])
-        .expect("serialization should succeed");
-    Fr::from_le_bytes_mod_order(&bytes)
 }
 
 #[cfg(test)]

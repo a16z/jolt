@@ -33,7 +33,12 @@ use crate::{
 };
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
+pub struct JoltProof<
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+    FS: Transcript,
+> {
     pub commitments: Vec<PCS::Commitment>,
     pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
     pub stage1_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
