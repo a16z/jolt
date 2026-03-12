@@ -1,11 +1,8 @@
 use core::array;
 
-use tracer::{
-    instruction::{
-        add::ADD, format::format_inline::FormatInline, ld::LD, mul::MUL, mulhu::MULHU, sd::SD,
-        sltu::SLTU, Instruction,
-    },
-    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterGuard},
+use jolt_inlines_sdk::host::{
+    instruction::{add::ADD, ld::LD, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU},
+    FormatInline, InstrAssembler, Instruction, VirtualRegisterGuard,
 };
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
@@ -158,9 +155,7 @@ pub use inline_ops::*;
 
 #[cfg(feature = "host")]
 mod inline_ops {
-    use jolt_inlines_sdk::host::InlineOp;
-    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
-    use tracer::utils::inline_helpers::InstrAssembler;
+    use jolt_inlines_sdk::host::{FormatInline, InlineOp, InstrAssembler, Instruction};
 
     pub struct BigintMul256;
 

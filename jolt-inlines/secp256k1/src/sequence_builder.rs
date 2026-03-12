@@ -3,20 +3,18 @@ use std::collections::VecDeque;
 
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_secp256k1::{Fq, Fr};
+use jolt_inlines_sdk::host::{
+    instruction::{
+        add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU,
+        virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
+        virtual_assert_lte::VirtualAssertLTE,
+    },
+    Cpu, FormatInline, InstrAssembler, Instruction, VirtualRegisterGuard,
+};
 use num_bigint::BigInt as NBigInt;
 use num_bigint::BigUint as NBigUint;
 use num_bigint::Sign;
 use num_integer::Integer;
-use tracer::instruction::virtual_assert_lte::VirtualAssertLTE;
-use tracer::{
-    emulator::cpu::Cpu,
-    instruction::{
-        add::ADD, format::format_inline::FormatInline, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU,
-        sd::SD, sltu::SLTU, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
-        Instruction,
-    },
-    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterGuard},
-};
 
 /// inline constructor for GLV decomposition in secp256k1 scalar field
 struct GlvrAdvBuilder {
@@ -667,10 +665,7 @@ pub use inline_ops::*;
 mod inline_ops {
     use std::collections::VecDeque;
 
-    use jolt_inlines_sdk::host::InlineOp;
-    use tracer::emulator::cpu::Cpu;
-    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
-    use tracer::utils::inline_helpers::InstrAssembler;
+    use jolt_inlines_sdk::host::{Cpu, FormatInline, InlineOp, InstrAssembler, Instruction};
 
     macro_rules! secp256k1_inline_op {
         ($name:ident, funct3: $funct3:expr, name: $op_name:expr, seq: $seq_fn:ident, adv: $adv_fn:ident) => {

@@ -16,16 +16,12 @@
 use core::array;
 
 use crate::NUM_LANES;
-use tracer::instruction::andn::ANDN;
-use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::ld::LD;
-use tracer::instruction::sd::SD;
-use tracer::instruction::Instruction;
-use tracer::utils::inline_helpers::{
-    InstrAssembler,
+use jolt_inlines_sdk::host::{
+    instruction::{andn::ANDN, ld::LD, sd::SD},
+    FormatInline, InstrAssembler, Instruction,
     Value::{Imm, Reg},
+    VirtualRegisterGuard,
 };
-use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
 /// The 24 round constants for the Keccak-f[1600] permutation.
 /// These values are XORed into the state during the `iota` step of each round.
@@ -267,9 +263,7 @@ pub use inline_ops::*;
 
 #[cfg(feature = "host")]
 mod inline_ops {
-    use jolt_inlines_sdk::host::InlineOp;
-    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
-    use tracer::utils::inline_helpers::InstrAssembler;
+    use jolt_inlines_sdk::host::{FormatInline, InlineOp, InstrAssembler, Instruction};
 
     pub struct Keccak256Permutation;
 

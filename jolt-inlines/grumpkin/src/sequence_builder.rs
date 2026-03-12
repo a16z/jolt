@@ -2,12 +2,9 @@ use std::collections::VecDeque;
 
 use ark_ff::{BigInt, Field};
 use ark_grumpkin::{Fq, Fr};
-use tracer::{
-    emulator::cpu::Cpu,
-    instruction::{
-        format::format_inline::FormatInline, sd::SD, virtual_advice::VirtualAdvice, Instruction,
-    },
-    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterGuard},
+use jolt_inlines_sdk::host::{
+    instruction::{sd::SD, virtual_advice::VirtualAdvice},
+    Cpu, FormatInline, InstrAssembler, Instruction, VirtualRegisterGuard,
 };
 struct GrumpkinDivAdv {
     asm: InstrAssembler,
@@ -83,10 +80,7 @@ pub use inline_ops::*;
 mod inline_ops {
     use std::collections::VecDeque;
 
-    use jolt_inlines_sdk::host::InlineOp;
-    use tracer::emulator::cpu::Cpu;
-    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
-    use tracer::utils::inline_helpers::InstrAssembler;
+    use jolt_inlines_sdk::host::{Cpu, FormatInline, InlineOp, InstrAssembler, Instruction};
 
     pub struct GrumpkinDivQAdv;
 

@@ -10,17 +10,18 @@
 use core::array;
 
 use crate::{IV, SIGMA};
-use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::ld::LD;
-use tracer::instruction::lui::LUI;
-use tracer::instruction::sd::SD;
-use tracer::instruction::sub::SUB;
-use tracer::instruction::virtual_xor_rot::{
-    VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
+use jolt_inlines_sdk::host::{
+    instruction::{
+        ld::LD,
+        lui::LUI,
+        sd::SD,
+        sub::SUB,
+        virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
+    },
+    FormatInline, InstrAssembler, Instruction,
+    Value::{Imm, Reg},
+    VirtualRegisterGuard,
 };
-use tracer::instruction::Instruction;
-use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
-use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
 pub const NEEDED_REGISTERS: u8 = 43;
 
@@ -264,9 +265,7 @@ pub use inline_ops::*;
 
 #[cfg(feature = "host")]
 mod inline_ops {
-    use jolt_inlines_sdk::host::InlineOp;
-    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
-    use tracer::utils::inline_helpers::InstrAssembler;
+    use jolt_inlines_sdk::host::{FormatInline, InlineOp, InstrAssembler, Instruction};
 
     pub struct Blake2bCompression;
 

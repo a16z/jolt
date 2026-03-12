@@ -1,16 +1,17 @@
 use std::collections::VecDeque;
 
 use tracer::{
-    emulator::cpu::Cpu,
-    instruction::{format::format_inline::FormatInline, Instruction},
     register_inline,
-    utils::{
-        inline_helpers::InstrAssembler,
-        inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs},
-    },
+    utils::inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs},
 };
 
+pub use tracer::emulator::cpu::{Cpu, Xlen};
+pub use tracer::instruction;
+pub use tracer::instruction::format::format_inline::FormatInline;
+pub use tracer::instruction::Instruction;
+pub use tracer::utils::inline_helpers::{InstrAssembler, Value};
 pub use tracer::utils::inline_sequence_writer::AppendMode;
+pub use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
 /// Trait for declaring an inline operation's metadata and sequence builder.
 ///

@@ -1,15 +1,10 @@
 use core::array;
 
-use tracer::{
-    emulator::cpu::Xlen,
-    instruction::{andn::ANDN, format::format_inline::FormatInline, lw::LW, sw::SW, Instruction},
-    utils::{
-        inline_helpers::{
-            InstrAssembler,
-            Value::{self, Imm, Reg},
-        },
-        virtual_registers::VirtualRegisterGuard,
-    },
+use jolt_inlines_sdk::host::{
+    instruction::{andn::ANDN, lw::LW, sw::SW},
+    FormatInline, InstrAssembler, Instruction,
+    Value::{self, Imm, Reg},
+    VirtualRegisterGuard, Xlen,
 };
 
 /// SHA-256 initial hash values
@@ -365,9 +360,7 @@ pub use inline_ops::*;
 
 #[cfg(feature = "host")]
 mod inline_ops {
-    use jolt_inlines_sdk::host::InlineOp;
-    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
-    use tracer::utils::inline_helpers::InstrAssembler;
+    use jolt_inlines_sdk::host::{FormatInline, InlineOp, InstrAssembler, Instruction};
 
     pub struct Sha256Compression;
 

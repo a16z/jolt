@@ -13,18 +13,19 @@ use crate::{
     CHAINING_VALUE_LEN, COUNTER_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START, FLAG_KEYED_HASH, FLAG_ROOT,
     IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS,
 };
-use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::ld::LD;
-use tracer::instruction::lui::LUI;
-use tracer::instruction::lw::LW;
-use tracer::instruction::srli::SRLI;
-use tracer::instruction::virtual_xor_rotw::{
-    VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8,
+use jolt_inlines_sdk::host::{
+    instruction::{
+        ld::LD,
+        lui::LUI,
+        lw::LW,
+        srli::SRLI,
+        virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
+        virtual_zero_extend_word::VirtualZeroExtendWord,
+    },
+    FormatInline, InstrAssembler, Instruction,
+    Value::{Imm, Reg},
+    VirtualRegisterGuard,
 };
-use tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord;
-use tracer::instruction::Instruction;
-use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
-use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
 /// Number of virtual registers needed for the general compression builder.
 /// Layout: v[0..15] + m[0..15] + h[0..7] + counter[0..1] + block_len + flags + temp
@@ -475,9 +476,7 @@ pub use inline_ops::*;
 
 #[cfg(feature = "host")]
 mod inline_ops {
-    use jolt_inlines_sdk::host::InlineOp;
-    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
-    use tracer::utils::inline_helpers::InstrAssembler;
+    use jolt_inlines_sdk::host::{FormatInline, InlineOp, InstrAssembler, Instruction};
 
     pub struct Blake3Compression;
 
