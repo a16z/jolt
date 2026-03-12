@@ -31,6 +31,17 @@ pub use host_utils::*;
 #[cfg(not(feature = "host"))]
 pub fn register_all_inlines() {}
 
+mod spoil;
+pub use spoil::UnwrapOrSpoilProof;
+
+/// Halt-and-catch-fire: makes proof unsatisfiable.
+/// On RISC-V guest builds, emits a VirtualAssertEQ(0, 1) that the prover cannot satisfy.
+/// On all other targets, panics.
+#[inline(always)]
+pub fn hcf() {
+    check_advice!(false, "hcf: proof spoiled");
+}
+
 pub use jolt_platform::*;
 pub use jolt_sdk_macros::advice;
 pub use jolt_sdk_macros::provable;
