@@ -10,8 +10,6 @@ mod common;
 
 use common::*;
 
-// ── muldiv: (a * b) / c ────────────────────────────────────────────────
-
 #[test]
 fn muldiv_basic() {
     let inputs = postcard::to_stdvec(&(9u32, 5u32, 3u32)).unwrap();
@@ -72,8 +70,6 @@ fn muldiv_primes() {
     prove_and_verify_guest("muldiv-guest", &inputs);
 }
 
-// ── fibonacci: fib(n) ──────────────────────────────────────────────────
-
 #[test]
 fn fibonacci_small() {
     let inputs = postcard::to_stdvec(&5u32).unwrap();
@@ -110,7 +106,6 @@ fn fibonacci_twenty() {
     prove_and_verify_guest("fibonacci-guest", &inputs);
 }
 
-// ── collatz: convergence steps ─────────────────────────────────────────
 // Guest has two #[jolt::provable] functions; must use set_func to select.
 
 #[test]
@@ -151,8 +146,6 @@ fn collatz_twenty_seven() {
     prove_and_verify_guest_func("collatz-guest", "collatz_convergence", &inputs);
 }
 
-// ── alloc: heap allocation + indexing ──────────────────────────────────
-
 #[test]
 fn alloc_first_element() {
     let inputs = postcard::to_stdvec(&0u32).unwrap();
@@ -182,8 +175,6 @@ fn alloc_near_end() {
     let inputs = postcard::to_stdvec(&97u32).unwrap();
     prove_and_verify_guest("alloc-guest", &inputs);
 }
-
-// ── multi-function: add and mul entry points ───────────────────────────
 
 #[test]
 fn multi_function_add() {
@@ -227,14 +218,11 @@ fn multi_function_mul_large() {
     prove_and_verify_guest_func("multi-function-guest", "mul", &inputs);
 }
 
-// ── memory-ops: inline asm load/store variants ─────────────────────────
-
 #[test]
 fn memory_ops_pipeline() {
     prove_and_verify_guest("memory-ops-guest", &[]);
 }
 
-// ── Real program through synthetic-stage pipeline ──────────────────────
 // These use the existing pipeline with random claim reduction data
 // (not the host layer) — validates witness generation on real traces.
 

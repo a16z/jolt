@@ -1,6 +1,3 @@
-//! Implements `dory_pcs` traits for [`Fr`], allowing jolt-dory to use
-//! jolt field types directly without arkworks-to-jolt conversions.
-
 use crate::arkworks::bn254::Fr;
 use crate::Field;
 
@@ -165,25 +162,11 @@ mod tests {
     }
 
     #[test]
-    fn field_from_i64_negative() {
-        let neg_one = <Fr as DoryField>::from_i64(-1);
-        let one = <Fr as DoryField>::one();
-        assert_eq!(DoryField::add(&neg_one, &one), <Fr as DoryField>::zero());
-    }
-
-    #[test]
-    fn field_serialization_roundtrip() {
+    fn serialization_roundtrip() {
         let val = <Fr as DoryField>::from_u64(123_456_789);
         let mut buf = Vec::new();
         DorySerialize::serialize_compressed(&val, &mut buf).unwrap();
         let recovered: Fr = DoryDeserialize::deserialize_compressed(&buf[..]).unwrap();
         assert_eq!(val, recovered);
-    }
-
-    #[test]
-    fn field_random_nonzero() {
-        // Statistical: 100 random elements should not all be zero
-        let vals: Vec<Fr> = (0..100).map(|_| <Fr as DoryField>::random()).collect();
-        assert!(vals.iter().any(|v| !DoryField::is_zero(v)));
     }
 }

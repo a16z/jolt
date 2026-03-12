@@ -5,20 +5,11 @@
 
 mod field;
 pub use field::{Field, MaybeAllocative, OptimizedMul};
-#[cfg(feature = "bn254")]
-pub(crate) use field::{ReductionOps, UnreducedOps};
-
 mod accumulator;
 pub use accumulator::{FieldAccumulator, NaiveAccumulator};
 
-mod accumulation;
-#[cfg(feature = "bn254")]
-pub(crate) use accumulation::FMAdd;
-
 pub mod limbs;
 pub use limbs::Limbs;
-
-pub(crate) mod bigint_ext;
 
 pub mod signed;
 

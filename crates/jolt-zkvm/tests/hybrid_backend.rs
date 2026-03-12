@@ -23,8 +23,6 @@ fn hybrid() -> Arc<HybridBackend<MetalBackend, CpuBackend>> {
     Arc::new(HybridBackend::new(MetalBackend::new(), CpuBackend, 1 << 10))
 }
 
-// ── Synthetic pipeline with hybrid backend ───────────────────────────
-
 #[test]
 fn hybrid_claim_reduction_standalone() {
     use jolt_poly::EqPolynomial;
@@ -187,8 +185,6 @@ fn hybrid_multi_stage_pipeline() {
     assert_eq!(v_r_y.len(), key.spartan_key.num_col_vars());
 }
 
-// ── Host pipeline with Dory + hybrid backend ─────────────────────────
-
 #[test]
 fn hybrid_muldiv_basic() {
     let inputs = postcard::to_stdvec(&(9u32, 5u32, 3u32)).unwrap();
@@ -200,8 +196,6 @@ fn hybrid_fibonacci_small() {
     let inputs = postcard::to_stdvec(&5u32).unwrap();
     prove_and_verify_guest_hybrid("fibonacci-guest", &inputs);
 }
-
-// ── Helpers ──────────────────────────────────────────────────────────
 
 fn prove_and_verify_guest_hybrid(guest_name: &str, inputs: &[u8]) {
     use jolt_dory::DoryScheme;

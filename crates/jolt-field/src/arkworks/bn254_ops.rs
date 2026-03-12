@@ -1,9 +1,7 @@
 //! BN254 Fr field arithmetic operations.
 //!
 //! Low-level field arithmetic (Montgomery/Barrett reduction, scalar multiplication,
-//! precomputed lookup tables) implemented directly over arkworks' `Fp` representation.
-//! These are used by the `Fr` newtype and the challenge multiplication paths.
-
+//! precomputed lookup tables).
 use ark_bn254::FrConfig;
 use ark_ff::{BigInt, Fp, MontConfig};
 use num_traits::Zero;

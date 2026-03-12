@@ -24,8 +24,6 @@ pub fn cpu() -> Arc<CpuBackend> {
     Arc::new(CpuBackend)
 }
 
-// ── Synthetic witness builders ──────────────────────────────────────────
-
 /// NOP cycle: all zeros except constant=1 and PC update.
 pub fn nop_cycle_witness(unexpanded_pc: u64, pc: u64) -> Vec<Fr> {
     let mut w = vec![Fr::from_u64(0); r1cs::NUM_VARS_PER_CYCLE];
@@ -121,8 +119,6 @@ pub fn store_cycle_witness(
     w
 }
 
-// ── Synthetic claim reduction data ──────────────────────────────────────
-
 pub struct SyntheticReduction {
     pub poly_a: Vec<Fr>,
     pub poly_b: Vec<Fr>,
@@ -182,8 +178,6 @@ pub fn build_verifier_descriptor(
     )
     .with_reverse_challenges()
 }
-
-// ── Full pipeline runners ───────────────────────────────────────────────
 
 /// Runs prove → verify for given cycle witnesses with one claim reduction stage.
 pub fn run_e2e<PCS: AdditivelyHomomorphic<Field = Fr>>(
@@ -252,8 +246,6 @@ pub fn commit_and_append<PCS: CommitmentScheme<Field = Fr>>(
     let (commitment, _hint) = PCS::commit(flat_witness, pcs_setup);
     transcript.append_bytes(format!("{commitment:?}").as_bytes());
 }
-
-// ── Tracer cycle builders ───────────────────────────────────────────────
 
 use tracer::instruction::{
     add::ADD,
@@ -372,8 +364,6 @@ pub fn run_trace_e2e(trace: Vec<tracer::instruction::Cycle>, label: &'static [u8
     )
     .expect("trace-based verification should succeed");
 }
-
-// ── Real program helpers ────────────────────────────────────────────────
 
 /// Traces a guest program and runs prove → verify with Dory.
 pub fn prove_and_verify_guest(guest_name: &str, inputs: &[u8]) {

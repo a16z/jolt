@@ -63,9 +63,8 @@ impl<const N: usize> Limbs<N> {
         Self(limbs)
     }
 
-    /// Converts to `BigInt<N>` by copying limbs.
     #[inline]
-    pub fn to_bigint(self) -> BigInt<N> {
+    pub(crate) fn to_bigint(self) -> BigInt<N> {
         BigInt(self.0)
     }
 
@@ -97,7 +96,7 @@ impl<const N: usize> Limbs<N> {
     }
 
     /// Truncated multiplication: `self * other`, keeping the low `P` limbs.
-    #[inline]
+    #[inline(always)]
     pub fn mul_trunc<const M: usize, const P: usize>(&self, other: &Limbs<M>) -> Limbs<P> {
         let mut res = Limbs::<P>::zero();
         fm_limbs_into::<N, M, P>(&self.0, &other.0, &mut res.0);
@@ -207,7 +206,7 @@ impl<const N: usize> Limbs<N> {
     }
 
     /// Multiply and keep only the low `N` limbs (same width as self).
-    #[inline]
+    #[inline(always)]
     pub fn mul_low(&self, other: &Self) -> Self {
         let mut res = Limbs::<N>::zero();
         fm_limbs_into::<N, N, N>(&self.0, &other.0, &mut res.0);
@@ -311,6 +310,13 @@ impl<const N: usize> core::fmt::Display for Limbs<N> {
     }
 }
 
+#[cfg(feature = "allocative")]
+impl<const N: usize> allocative::Allocative for Limbs<N> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.visit_simple_sized::<Self>();
+    }
+}
+
 impl<const N: usize> ark_serialize::CanonicalSerialize for Limbs<N> {
     #[inline]
     fn serialize_with_mode<W: ark_serialize::Write>(
@@ -348,7 +354,7 @@ impl<const N: usize> ark_serialize::CanonicalDeserialize for Limbs<N> {
 /// Core schoolbook multiplication accumulator.
 ///
 /// Computes `acc += a[0..N] * b[0..M]`, keeping only the low `P` limbs.
-#[inline]
+#[inline(always)]
 fn fm_limbs_into<const N: usize, const M: usize, const P: usize>(
     a: &[u64; N],
     b: &[u64; M],

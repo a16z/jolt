@@ -147,7 +147,6 @@ impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T>
             .take()
             .expect("ra_materializer already consumed");
 
-        // --- Address phase kernel ---
         let (addr_desc, addr_challenges) = build_address_descriptor::<F>(&self.gamma_powers);
         let addr_kernel = self
             .backend
@@ -170,7 +169,6 @@ impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T>
             Arc::clone(&self.backend),
         );
 
-        // --- Transition closure ---
         let gamma_powers = self.gamma_powers.clone();
         let r_cycles = self.r_cycles.clone();
         let ra_slot = Arc::clone(&self.ra_slot);
@@ -281,7 +279,6 @@ impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T>
     }
 
     fn claim_definitions(&self) -> Vec<ClaimDefinition> {
-        // TODO: IR-based claim definitions for verifier
         vec![]
     }
 }

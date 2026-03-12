@@ -150,8 +150,8 @@ pub fn to_decimal_string(val: [u64; 4]) -> String {
     to_biguint(val).to_string()
 }
 
-pub fn to_bytes_le(val: [u64; 4]) -> Vec<u8> {
-    let mut bytes = vec![0u8; 32];
+pub fn to_bytes_le(val: [u64; 4]) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
     for (i, limb) in val.iter().enumerate() {
         bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
     }

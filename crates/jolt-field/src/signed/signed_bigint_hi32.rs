@@ -105,6 +105,7 @@ impl<const N: usize> SignedBigIntHi32<N> {
         Ordering::Equal
     }
 
+    #[inline(always)]
     fn add_assign_in_place(&mut self, rhs: &Self) {
         if self.is_positive == rhs.is_positive {
             let (lo, hi, _carry) = self.add_magnitudes_with_carry(rhs);
@@ -127,11 +128,13 @@ impl<const N: usize> SignedBigIntHi32<N> {
         }
     }
 
+    #[inline(always)]
     fn sub_assign_in_place(&mut self, rhs: &Self) {
         let neg_rhs = -*rhs;
         self.add_assign_in_place(&neg_rhs);
     }
 
+    #[inline(always)]
     fn mul_assign_in_place(&mut self, rhs: &Self) {
         let (lo, hi) = self.mul_magnitudes(rhs);
         self.is_positive = self.is_positive == rhs.is_positive;
@@ -193,33 +196,33 @@ impl<const N: usize> SignedBigIntHi32<N> {
             return (lo, hi);
         }
 
-        // General path
-        let mut prod = vec![0u64; 2 * N + 2];
+        // General path — reads limbs inline to avoid heap allocation.
+        // Stack buffer covers up to N=7 (2*(7+1) = 16 entries).
+        let num_limbs = N + 1;
+        let mut prod = [0u64; 16];
+        debug_assert!(
+            2 * num_limbs <= prod.len(),
+            "N too large for stack-allocated product buffer"
+        );
 
-        let self_limbs: Vec<u64> = self
-            .magnitude_lo
-            .iter()
-            .copied()
-            .chain(core::iter::once(self.magnitude_hi as u64))
-            .collect();
+        let limb_a = |i: usize| -> u64 {
+            if i < N { self.magnitude_lo[i] } else { self.magnitude_hi as u64 }
+        };
+        let limb_b = |j: usize| -> u64 {
+            if j < N { other.magnitude_lo[j] } else { other.magnitude_hi as u64 }
+        };
 
-        let other_limbs: Vec<u64> = other
-            .magnitude_lo
-            .iter()
-            .copied()
-            .chain(core::iter::once(other.magnitude_hi as u64))
-            .collect();
-
-        for (i, &a_limb) in self_limbs.iter().enumerate() {
+        for i in 0..num_limbs {
+            let a_limb = limb_a(i);
             let mut carry: u128 = 0;
-            for (j, &b_limb) in other_limbs.iter().enumerate() {
+            for j in 0..num_limbs {
                 let idx = i + j;
-                let p = (a_limb as u128) * (b_limb as u128) + (prod[idx] as u128) + carry;
+                let p = (a_limb as u128) * (limb_b(j) as u128) + (prod[idx] as u128) + carry;
                 prod[idx] = p as u64;
                 carry = p >> 64;
             }
             if carry > 0 {
-                let spill = i + other_limbs.len();
+                let spill = i + num_limbs;
                 if spill < prod.len() {
                     prod[spill] = prod[spill].wrapping_add(carry as u64);
                 }

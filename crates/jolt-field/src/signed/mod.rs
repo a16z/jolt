@@ -1,9 +1,7 @@
 //! Signed big integer types for the Jolt prover.
 //!
 //! These types represent signed integers with configurable bit widths using
-//! sign-magnitude representation. They are used extensively in R1CS evaluation,
-//! accumulation, and increment witness generation where intermediate values
-//! can be negative but have bounded magnitude.
+//! sign-magnitude representation.
 //!
 //! Two families are provided:
 //!

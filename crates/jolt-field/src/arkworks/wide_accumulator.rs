@@ -1,9 +1,7 @@
 //! Wide-integer accumulator for BN254 Fr deferred reduction.
 //!
 //! Accumulates `sum += a * b` as 9-limb (576-bit) schoolbook products,
-//! deferring the Montgomery reduction to a single call at the end. This
-//! amortizes the ~40ns reduction cost across hundreds of multiply-add steps
-//! in the sumcheck inner loop.
+//! deferring the Montgomery reduction to a single call at the end.
 //!
 //! # Capacity
 //!
@@ -40,12 +38,12 @@ impl Default for WideAccumulator {
 impl FieldAccumulator for WideAccumulator {
     type Field = Fr;
 
-    #[inline]
+    #[inline(always)]
     fn fmadd(&mut self, a: Fr, b: Fr) {
         self.limbs.fmadd::<4, 4>(&a.inner_limbs(), &b.inner_limbs());
     }
 
-    #[inline]
+    #[inline(always)]
     fn merge(&mut self, other: Self) {
         self.limbs.add_assign_trunc::<9>(&other.limbs);
     }
@@ -56,5 +54,60 @@ impl FieldAccumulator for WideAccumulator {
         // of sum_i (a_i × b_i).
         let bigint = self.limbs.to_bigint();
         Fr::from_inner(bn254_ops::from_montgomery_reduce(bigint))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Field;
+
+    #[test]
+    fn single_fmadd() {
+        let a = Fr::from_u64(7);
+        let b = Fr::from_u64(6);
+        let mut acc = WideAccumulator::default();
+        acc.fmadd(a, b);
+        assert_eq!(acc.reduce(), Fr::from_u64(42));
+    }
+
+    #[test]
+    fn multiple_fmadd() {
+        let mut acc = WideAccumulator::default();
+        acc.fmadd(Fr::from_u64(3), Fr::from_u64(4));
+        acc.fmadd(Fr::from_u64(5), Fr::from_u64(6));
+        // 3*4 + 5*6 = 12 + 30 = 42
+        assert_eq!(acc.reduce(), Fr::from_u64(42));
+    }
+
+    #[test]
+    fn merge_two_accumulators() {
+        let mut acc1 = WideAccumulator::default();
+        acc1.fmadd(Fr::from_u64(10), Fr::from_u64(10));
+
+        let mut acc2 = WideAccumulator::default();
+        acc2.fmadd(Fr::from_u64(20), Fr::from_u64(20));
+
+        acc1.merge(acc2);
+        // 10*10 + 20*20 = 100 + 400 = 500
+        assert_eq!(acc1.reduce(), Fr::from_u64(500));
+    }
+
+    #[test]
+    fn empty_reduces_to_zero() {
+        let acc = WideAccumulator::default();
+        assert_eq!(acc.reduce(), Fr::from_u64(0));
+    }
+
+    #[test]
+    fn large_accumulation() {
+        let mut acc = WideAccumulator::default();
+        let n = 10_000u64;
+        let a = Fr::from_u64(1);
+        let b = Fr::from_u64(1);
+        for _ in 0..n {
+            acc.fmadd(a, b);
+        }
+        assert_eq!(acc.reduce(), Fr::from_u64(n));
     }
 }

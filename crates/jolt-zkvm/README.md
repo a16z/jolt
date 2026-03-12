@@ -31,6 +31,8 @@ This crate composes all Jolt sub-crates into a complete proving system for RISC-
   - `s6_ra_booleanity` -- RA polynomial booleanity checks.
   - `s7_hamming_reduction` -- Hamming weight reduction.
   - `s8_opening` -- Opening proof stage.
+  - `s_bytecode_read_raf` -- Bytecode read-RAF checking.
+  - `s_instruction_read_raf` -- Instruction read-RAF checking.
 - **`witness`** -- `WitnessStore` for polynomial evaluation table storage, plus trace-to-witness conversion.
 
 ## Feature Flags

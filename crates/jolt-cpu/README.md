@@ -1,6 +1,6 @@
-# jolt-cpu-kernels
+# jolt-cpu
 
-CPU kernel compiler for the Jolt zkVM.
+CPU compute backend and kernel compiler for the Jolt zkVM.
 
 Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
@@ -26,7 +26,7 @@ This crate compiles `jolt-ir` kernel descriptors into `jolt-compute` CPU kernels
 
 ```
 jolt-field ─┐
-jolt-ir    ─┼─► jolt-cpu-kernels
+jolt-ir    ─┼─► jolt-cpu
 jolt-compute ─┘
 ```
 
@@ -34,7 +34,7 @@ Used by `jolt-sumcheck` and `jolt-zkvm`.
 
 ## Benchmarks
 
-BN254 Fr on Apple Silicon (M-series). Run with `cargo bench -p jolt-cpu-kernels`.
+BN254 Fr on Apple Silicon (M-series). Run with `cargo bench -p jolt-cpu`.
 
 ### `ProductSum` kernel — single pair evaluation
 

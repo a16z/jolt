@@ -645,7 +645,7 @@ fn pairwise_reduce_product_sum_d8_large() {
     };
     let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
-    let n = 64;
+    let n = 1024;
     let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
     let weights = random_elements(&mut rng, n / 2);
 
@@ -671,6 +671,141 @@ fn pairwise_reduce_product_sum_d8_large() {
     );
 
     assert_eq!(expected, got, "pairwise_reduce D=8 mismatch");
+}
+
+/// ProductSum D=8 with HighToLow binding (exercises split-pass H2L path).
+#[test]
+fn pairwise_reduce_product_sum_d8_high_to_low() {
+    let metal = &*METAL;
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xD010);
+
+    let desc = KernelDescriptor {
+        shape: KernelShape::ProductSum {
+            num_inputs_per_product: 8,
+            num_products: 1,
+        },
+        degree: 8,
+        tensor_split: None,
+    };
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+
+    let n = 1024;
+    let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
+    let weights = random_elements(&mut rng, n / 2);
+
+    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+    let cpu_w = cpu.upload(&weights);
+    let expected = cpu.pairwise_reduce(
+        &cpu_refs,
+        &cpu_w,
+        &cpu_k,
+        desc.num_evals(),
+        BindingOrder::HighToLow,
+    );
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+    let mtl_w = metal.upload(&weights);
+    let got = metal.pairwise_reduce(
+        &mtl_refs,
+        &mtl_w,
+        &mtl_k,
+        desc.num_evals(),
+        BindingOrder::HighToLow,
+    );
+
+    assert_eq!(expected, got, "pairwise_reduce D=8 H2L mismatch");
+}
+
+/// ProductSum D=8 with varying sizes to find split-pass boundary.
+#[test]
+fn pairwise_reduce_product_sum_d8_sizes() {
+    let metal = &*METAL;
+    let cpu = CpuBackend;
+
+    let desc = KernelDescriptor {
+        shape: KernelShape::ProductSum {
+            num_inputs_per_product: 8,
+            num_products: 1,
+        },
+        degree: 8,
+        tensor_split: None,
+    };
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+
+    for n_pairs in [32, 33, 48, 63, 64, 65, 128, 256] {
+        let n = n_pairs * 2;
+        let mut rng = StdRng::seed_from_u64(0xE000 + n_pairs as u64);
+        let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
+        let weights = random_elements(&mut rng, n_pairs);
+
+        let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+        let cpu_w = cpu.upload(&weights);
+        let expected = cpu.pairwise_reduce(
+            &cpu_refs,
+            &cpu_w,
+            &cpu_k,
+            desc.num_evals(),
+            BindingOrder::LowToHigh,
+        );
+
+        let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+        let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+        let mtl_w = metal.upload(&weights);
+        let got = metal.pairwise_reduce(
+            &mtl_refs,
+            &mtl_w,
+            &mtl_k,
+            desc.num_evals(),
+            BindingOrder::LowToHigh,
+        );
+
+        assert_eq!(
+            expected, got,
+            "D=8 mismatch at n_pairs={n_pairs}"
+        );
+    }
+}
+
+/// ProductSum D=8 unweighted (exercises split-pass unweighted path).
+#[test]
+fn pairwise_reduce_product_sum_d8_unweighted() {
+    let metal = &*METAL;
+    let cpu = CpuBackend;
+    let mut rng = StdRng::seed_from_u64(0xD011);
+
+    let desc = KernelDescriptor {
+        shape: KernelShape::ProductSum {
+            num_inputs_per_product: 8,
+            num_products: 1,
+        },
+        degree: 8,
+        tensor_split: None,
+    };
+    let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
+
+    let n = 1024;
+    let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
+
+    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+    let expected = cpu.pairwise_reduce_unweighted(
+        &cpu_refs,
+        &cpu_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+    let got = metal.pairwise_reduce_unweighted(
+        &mtl_refs,
+        &mtl_k,
+        desc.num_evals(),
+        BindingOrder::LowToHigh,
+    );
+
+    assert_eq!(expected, got, "pairwise_reduce D=8 unweighted mismatch");
 }
 
 /// HighToLow binding order.

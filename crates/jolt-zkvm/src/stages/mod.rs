@@ -19,3 +19,4 @@ pub mod s6_ra_booleanity;
 pub mod s7_hamming_reduction;
 pub mod s8_opening;
 pub mod s_bytecode_read_raf;
+pub mod s_instruction_read_raf;

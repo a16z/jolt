@@ -115,8 +115,6 @@ fn s1_challenge_vector_dimensions() {
     assert_eq!(result.witness_opening_claim.eval, result.proof.witness_eval);
 }
 
-// ── Real-program Spartan tests ──────────────────────────────────────────
-
 mod real_program_spartan {
     use super::*;
     use jolt_host::Program;

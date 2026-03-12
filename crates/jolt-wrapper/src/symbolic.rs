@@ -284,14 +284,14 @@ impl Field for SymbolicField {
 
     const NUM_BYTES: usize = 32;
 
-    fn to_bytes(&self) -> Vec<u8> {
+    fn to_bytes(&self) -> [u8; 32] {
         // Store the symbolic edge in thread-local for the transcript tunnel
         tunneling::set_pending_append(self.edge);
 
         // Return the constant bytes if available, otherwise dummy bytes
         match self.edge {
             Atom::Scalar(val) => scalar_ops::to_bytes_le(val),
-            Atom::Node(_) => vec![0u8; 32],
+            Atom::Node(_) => [0u8; 32],
         }
     }
 

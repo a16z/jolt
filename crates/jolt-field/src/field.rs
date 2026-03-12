@@ -1,6 +1,5 @@
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
-use ark_ff::BigInt;
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
@@ -58,8 +57,8 @@ pub trait Field:
     /// Byte length of a canonical (compressed) serialized element.
     const NUM_BYTES: usize;
 
-    /// Serializes to compressed canonical form (little-endian, `NUM_BYTES` long).
-    fn to_bytes(&self) -> Vec<u8>;
+    /// Serializes to compressed canonical form (little-endian, 32 bytes).
+    fn to_bytes(&self) -> [u8; 32];
 
     /// Samples a uniformly random field element.
     fn random<R: RngCore>(rng: &mut R) -> Self;
@@ -126,48 +125,6 @@ pub trait Field:
         }
         res.mul_u64(1 << pow)
     }
-}
-
-/// Exposes unreduced (wider-than-field) multiplication results.
-///
-/// In Montgomery form, a product of two 4-limb elements produces up to 8 limbs
-/// before reduction. This trait gives access to those raw limbs so that
-/// [`FMAdd`](crate::FMAdd) accumulators can defer reduction across many
-/// multiply-add steps, amortizing the cost.
-#[allow(dead_code)]
-pub(crate) trait UnreducedOps: Field {
-    /// Direct reference to the inner Montgomery-form limbs as `BigInt<4>`.
-    fn as_unreduced_ref(&self) -> &BigInt<4>;
-
-    /// Full Montgomery-form multiplication without reduction, returning `L` limbs.
-    fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L>;
-
-    /// Multiply by a `u64` without reduction, returning 5 limbs.
-    fn mul_u64_unreduced(self, other: u64) -> BigInt<5>;
-
-    /// Multiply by a `u128` without reduction, returning 6 limbs.
-    fn mul_u128_unreduced(self, other: u128) -> BigInt<6>;
-}
-
-/// Converts wide (unreduced) limb representations back to field elements.
-///
-/// Two reduction strategies are available:
-/// - **Montgomery reduction** — standard REDC; used when the accumulator is
-///   already in Montgomery form.
-/// - **Barrett reduction** — uses a precomputed approximate inverse of `p`;
-///   faster when the accumulator has more than `2N` limbs because it avoids
-///   the sequential carry chain of REDC.
-#[allow(dead_code)]
-pub(crate) trait ReductionOps: UnreducedOps {
-    /// Montgomery constant $R = 2^{256} \mod p$ (in Montgomery form).
-    const MONTGOMERY_R: Self;
-    /// Montgomery constant $R^2 = 2^{512} \mod p$ (in Montgomery form).
-    const MONTGOMERY_R_SQUARE: Self;
-
-    /// Reduces a wide `BigInt<L>` to a field element via Montgomery REDC.
-    fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Self;
-    /// Reduces a wide `BigInt<L>` to a field element via Barrett reduction.
-    fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self;
 }
 
 #[cfg(feature = "allocative")]

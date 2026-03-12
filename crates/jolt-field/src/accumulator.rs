@@ -20,10 +20,7 @@ use num_traits::One;
 /// (e.g., BN254 Fr) can instead accumulate unreduced wide products and
 /// reduce once at the end via [`reduce`](Self::reduce).
 ///
-/// `Copy` is required so that accumulators can be used in const-generic
-/// arrays (`[Self; N]`) for split-eq parallel folds.
-///
-/// # Contract
+/// # Invariants
 ///
 /// - [`fmadd`](Self::fmadd) must be equivalent to `result += a * b` in the field.
 /// - [`merge`](Self::merge) must be equivalent to adding another accumulator's
