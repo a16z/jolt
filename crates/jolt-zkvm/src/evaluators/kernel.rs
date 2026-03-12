@@ -174,6 +174,13 @@ pub struct KernelEvaluator<F: Field, B: ComputeBackend> {
 
     /// Controls how `pairwise_reduce` output is converted to a round polynomial.
     mode: InterpolationMode<F>,
+
+    /// Precomputed first-round polynomial for univariate skip optimization.
+    ///
+    /// When set, [`SumcheckCompute::first_round_polynomial`] returns this
+    /// instead of `None`, and the sumcheck prover uses it for round 0.
+    /// Consumed on first access (set to `None` after returning).
+    first_round_override: Option<UnivariatePoly<F>>,
 }
 
 impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
@@ -320,7 +327,21 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
             num_evals,
             backend,
             mode,
+            first_round_override: None,
         }
+    }
+
+    /// Sets a precomputed first-round polynomial for univariate skip.
+    ///
+    /// The caller computes $t_1(2)$ using formula-specific logic (e.g., by
+    /// iterating over the raw evaluation tables before upload), then calls
+    /// [`uniskip_round_poly`](jolt_spartan::uniskip_round_poly) to build the
+    /// analytical degree-3 polynomial, and passes it here.
+    ///
+    /// The polynomial is consumed on the first call to
+    /// [`first_round_polynomial`](SumcheckCompute::first_round_polynomial).
+    pub fn set_first_round_override(&mut self, poly: UnivariatePoly<F>) {
+        self.first_round_override = Some(poly);
     }
 
     pub fn num_inputs(&self) -> usize {
@@ -362,6 +383,10 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
             InterpolationMode::StandardGrid { claim: stored } => *stored = claim,
             InterpolationMode::ToomCook(state) => state.claim = claim,
         }
+    }
+
+    fn first_round_polynomial(&self) -> Option<UnivariatePoly<F>> {
+        self.first_round_override.clone()
     }
 
     fn round_polynomial(&self) -> UnivariatePoly<F> {

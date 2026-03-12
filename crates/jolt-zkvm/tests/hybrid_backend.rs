@@ -206,12 +206,12 @@ fn hybrid_fibonacci_small() {
 fn prove_and_verify_guest_hybrid(guest_name: &str, inputs: &[u8]) {
     use jolt_dory::DoryScheme;
     use jolt_host::Program;
-    use jolt_zkvm::host::{prove_trace, verify_proof};
+    use jolt_zkvm::prover::{prove, verify};
 
     let mut program = Program::new(guest_name);
     let (_, trace, _, _) = program.trace(inputs, &[], &[]);
 
-    let output = prove_trace::<DoryScheme, _>(
+    let output = prove::<DoryScheme, _>(
         &trace,
         |num_vars| {
             (
@@ -221,9 +221,9 @@ fn prove_and_verify_guest_hybrid(guest_name: &str, inputs: &[u8]) {
         },
         hybrid(),
     )
-    .expect("prove_trace should succeed");
+    .expect("prove should succeed");
 
-    verify_proof::<DoryScheme>(&output).expect("verify_proof should succeed");
+    verify::<DoryScheme>(&output).expect("verify should succeed");
 }
 
 /// Run prove → verify with mock PCS and hybrid backend.

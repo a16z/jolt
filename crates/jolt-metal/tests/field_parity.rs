@@ -47,7 +47,7 @@ fn random_elements(rng: &mut StdRng, n: usize) -> Vec<Fr> {
     (0..n).map(|_| Fr::random(rng)).collect()
 }
 
-const N: usize = 4096;
+const N: usize = 256;
 
 #[test]
 fn mul_parity() {

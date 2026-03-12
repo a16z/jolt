@@ -45,6 +45,20 @@ pub trait SumcheckCompute<F: Field>: Send + Sync {
     /// (e.g., `P(1) = claim - P(0)` to skip one kernel evaluation)
     /// should override this. The default is a no-op.
     fn set_claim(&mut self, _claim: F) {}
+
+    /// Optional first-round polynomial override (univariate skip).
+    ///
+    /// When `Some`, the prover uses this polynomial for round 0 instead of
+    /// calling [`round_polynomial`](Self::round_polynomial). This enables the
+    /// univariate skip optimization for zero-check sumchecks where the
+    /// polynomial is identically zero on the Boolean hypercube, exploiting
+    /// `t₁(0) = t₁(1) = 0` to derive the round polynomial from a single
+    /// evaluation point.
+    ///
+    /// The default returns `None`, using the standard path for all rounds.
+    fn first_round_polynomial(&self) -> Option<UnivariatePoly<F>> {
+        None
+    }
 }
 
 /// Stateless sumcheck prover engine.
@@ -80,9 +94,15 @@ impl SumcheckProver {
         H: RoundHandler<F>,
     {
         let mut running_claim = claim.claimed_sum;
-        for _round in 0..claim.num_vars {
+        for round in 0..claim.num_vars {
             witness.set_claim(running_claim);
-            let round_poly = witness.round_polynomial();
+            let round_poly = if round == 0 {
+                witness
+                    .first_round_polynomial()
+                    .unwrap_or_else(|| witness.round_polynomial())
+            } else {
+                witness.round_polynomial()
+            };
             handler.absorb_round_poly(&round_poly, transcript);
             let challenge: F = transcript.challenge();
             handler.on_challenge(challenge);

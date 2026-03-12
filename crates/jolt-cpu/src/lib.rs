@@ -2,8 +2,7 @@
 //!
 //! Provides [`CpuBackend`], the reference [`ComputeBackend`](jolt_compute::ComputeBackend)
 //! implementation using `Vec<T>` buffers and Rayon parallelism. Also provides
-//! kernel compilation from [`KernelDescriptor`](jolt_ir::KernelDescriptor)s
-//! into [`CpuKernel`]s.
+//! kernel compilation from [`KernelDescriptor`]s into [`CpuKernel`]s.
 //!
 //! # Kernel compilation strategies
 //!

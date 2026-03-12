@@ -26,6 +26,7 @@ This crate provides multilinear and univariate polynomial representations used t
 - **`EqPlusOnePolynomial<F>`** -- Successor polynomial `eq+1(x, y)` evaluating to 1 when `y = x + 1`. Used in Spartan shift sumcheck.
 - **`EqPlusOnePrefixSuffix<F>`** -- Prefix-suffix decomposition of `eq+1` for sqrt-sized sumcheck buffers.
 - **`IdentityPolynomial`** -- Maps hypercube points to their integer index.
+- **`LtPolynomial<F>`** -- Less-than polynomial `LT(x, r)` with split optimization for sqrt-sized sumcheck buffers. Used in register/RAM value evaluation.
 
 ### Streaming and Sparse Access
 
@@ -36,6 +37,12 @@ This crate provides multilinear and univariate polynomial representations used t
 ### Binding and Evaluation
 
 - **`BindingOrder`** -- Controls the order in which variables are bound during sumcheck (MSB-first vs LSB-first).
+
+### Utility Modules
+
+- **`lagrange`** -- Lagrange interpolation, symmetric power sums, polynomial multiplication, and Newton-form interpolation over integer domains.
+- **`math`** -- Bit-manipulation utilities on `usize` via the `Math` trait (`pow2`, `log_2`).
+- **`thread`** -- Threading utilities: `drop_in_background_thread` (rayon) and `unsafe_allocate_zero_vec` (zero-initialized allocation).
 
 ## Feature Flags
 

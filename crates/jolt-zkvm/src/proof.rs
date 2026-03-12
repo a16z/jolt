@@ -8,7 +8,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_spartan::UniformSpartanKey;
 
 pub use jolt_verifier::proof::{JoltProof, SumcheckStageProof};
-pub use jolt_verifier::{verify, verify_openings, verify_spartan};
+pub use jolt_verifier::{verify_openings, verify_spartan};
 pub use jolt_verifier::{
     JoltError, JoltVerifyingKey, OneHotConfig, OneHotParams, ProverConfig, ReadWriteConfig,
     StageDescriptor,

@@ -8,13 +8,8 @@
 //! proofs where the full $2^n$ table never resides in memory simultaneously.
 //!
 //! [`RlcSource`] composes multiple polynomials via random linear combination
-//! without materializing the combined table. Its [`fold_rows`] distributes
-//! across constituents, avoiding allocation of the combined table.
-//!
-//! [`MultilinearPoly`]: trait.MultilinearPoly.html
-//! [`RlcSource`]: struct.RlcSource.html
-//! [`OneHotPolynomial`]: crate::OneHotPolynomial
-//! [`fold_rows`]: trait.MultilinearPoly.html#method.fold_rows
+//! without materializing the combined table. Its [`fold_rows`](MultilinearPoly::fold_rows)
+//! distributes across constituents, avoiding allocation of the combined table.
 
 use jolt_field::Field;
 

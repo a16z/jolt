@@ -10,8 +10,6 @@ use jolt_field::signed::*;
 use jolt_field::{Field, FieldAccumulator, Fr, Limbs, NaiveAccumulator, OptimizedMul};
 use num_traits::{One, Zero};
 
-// 1. NaiveAccumulator
-
 #[test]
 fn naive_accumulator_fmadd() {
     let a = <Fr as Field>::from_u64(7);
@@ -44,8 +42,6 @@ fn naive_accumulator_reduce_empty() {
     let acc = NaiveAccumulator::<Fr>::default();
     assert!(acc.reduce().is_zero());
 }
-
-// 2. WideAccumulator
 
 #[test]
 fn wide_accumulator_fmadd() {
@@ -98,8 +94,6 @@ fn wide_accumulator_many_fmadds() {
     assert_eq!(acc.reduce(), expected);
 }
 
-// 3. OptimizedMul<Fr, Fr> blanket impl
-
 #[test]
 fn optimized_mul_blanket_impl() {
     let mut rng = test_rng();
@@ -135,9 +129,6 @@ fn optimized_mul_blanket_impl() {
     // mul_01_optimized: general path
     assert_eq!(a.mul_01_optimized(b), a * b);
 }
-
-// 6. Field default methods (from_u8, from_u16, from_u32, from_bool, mul_*)
-//    Already covered in field_operations.rs, but adding edge cases
 
 #[test]
 fn field_from_bool_edge() {
@@ -183,8 +174,6 @@ fn field_mul_pow_2_overflow() {
     let f = <Fr as Field>::from_u64(1);
     let _ = <Fr as Field>::mul_pow_2(&f, 256);
 }
-
-// 7. SignedBigInt — uncovered paths
 
 #[test]
 fn signed_bigint_neg() {
@@ -336,8 +325,6 @@ fn signed_bigint_ordering_negative_magnitudes() {
     let d = S64::from_i64(5);
     assert!(c > d);
 }
-
-// 8. SignedBigIntHi32 — uncovered paths
 
 #[test]
 fn s96_arithmetic() {
@@ -616,8 +603,6 @@ fn s160_from_s128() {
     assert_eq!(wide.magnitude_lo()[0], 999);
 }
 
-// 9. Macro-generated operator variants (signed/mod.rs)
-
 #[test]
 #[allow(clippy::op_ref)]
 fn signed_bigint_operator_variants() {
@@ -699,8 +684,6 @@ fn signed_bigint_hi32_operator_variants() {
     assert_eq!(d.magnitude_lo()[0], 30);
 }
 
-// 10. SignedBigIntHi32 mul_magnitudes specializations
-
 #[test]
 fn s96_mul_magnitudes_n1() {
     // N=1 specialization: single lo limb + hi32
@@ -772,8 +755,6 @@ fn s160_mul_mixed_signs() {
     assert_eq!(prod2.magnitude_lo()[0], 9);
 }
 
-// 11. S160 from conversions (i64, u64, S64, S128) — ensure full coverage
-
 #[test]
 fn s160_from_i64() {
     let v: S160 = (-7i64).into();
@@ -797,8 +778,6 @@ fn s160_from_s64() {
     assert!(!v.is_positive());
     assert_eq!(v.magnitude_lo()[0], 99);
 }
-
-// 12. SignedBigInt add/sub with opposite signs exercising all branches
 
 #[test]
 fn signed_bigint_add_opposite_signs_self_smaller() {
@@ -829,8 +808,6 @@ fn signed_bigint_sub_same_sign_smaller_magnitude() {
     assert_eq!(c.magnitude_as_u64(), 7);
 }
 
-// 13. SignedBigInt add_trunc_mixed — more branch coverage
-
 #[test]
 fn signed_bigint_add_trunc_mixed_opposite_signs_self_smaller() {
     let a = S64::from_i64(3);
@@ -846,8 +823,6 @@ fn signed_bigint_add_trunc_mixed_opposite_signs_self_larger() {
     let c: S128 = a.add_trunc_mixed::<1, 2>(&b);
     assert_eq!(c.to_i128(), Some(97));
 }
-
-// 14. SignedBigIntHi32 add with carry into hi32
 
 #[test]
 fn s96_add_with_carry_into_hi32() {
@@ -876,8 +851,6 @@ fn signed_bigint_hi32_default() {
     assert!(d.is_positive());
 }
 
-// 15. SignedBigInt zero_extend_from to wider
-
 #[test]
 fn signed_bigint_zero_extend_s64_to_s256() {
     let s = S64::from_i64(-7);
@@ -888,8 +861,6 @@ fn signed_bigint_zero_extend_s64_to_s256() {
     assert_eq!(wide.magnitude.0[2], 0);
     assert_eq!(wide.magnitude.0[3], 0);
 }
-
-// 16. SignedBigInt default, accessors
 
 #[test]
 fn signed_bigint_default_is_zero() {

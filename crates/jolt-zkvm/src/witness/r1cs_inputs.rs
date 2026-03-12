@@ -1,6 +1,6 @@
 //! R1CS witness generation from execution trace cycles.
 //!
-//! Converts a tracer `Cycle` into a per-cycle witness vector of 41 field
+//! Converts a tracer `Cycle` into a per-cycle witness vector of 38 field
 //! elements matching the variable layout in [`crate::r1cs`].
 
 use jolt_field::Field;
@@ -159,15 +159,10 @@ pub fn cycle_to_witness<F: Field>(
     }
 
     // Product factor variables
-    let is_rd_not_zero = iflags[InstructionFlags::IsRdNotZero as usize];
-    w[V_IS_RD_NOT_ZERO] = bool_to_field(is_rd_not_zero);
     w[V_BRANCH] = bool_to_field(is_branch);
     w[V_NEXT_IS_NOOP] = bool_to_field(next_is_noop);
 
-    // Product-derived booleans (must match product constraints 20-23)
-    w[V_WRITE_LOOKUP_OUTPUT_TO_RD] = bool_to_field(is_rd_not_zero && write_lookup_to_rd);
-    w[V_WRITE_PC_TO_RD] = bool_to_field(is_rd_not_zero && is_jump);
-
+    // Product-derived booleans (must match product constraints 20-21)
     let should_branch = lookup_output != F::zero() && is_branch;
     w[V_SHOULD_BRANCH] = bool_to_field(should_branch);
 
@@ -209,7 +204,7 @@ mod tests {
     use crate::r1cs;
     use jolt_field::Fr;
 
-    /// Verify that a witness satisfies all 24 R1CS constraints.
+    /// Verify that a witness satisfies all 22 R1CS constraints.
     fn assert_witness_satisfies(w: &[Fr]) {
         let key = r1cs::build_jolt_spartan_key::<Fr>(1);
         assert_eq!(w.len(), NUM_VARS_PER_CYCLE);

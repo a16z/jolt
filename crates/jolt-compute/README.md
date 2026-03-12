@@ -24,6 +24,12 @@ CUDA and WebGPU backends will follow the same pattern.
   - `LowToHigh` (default) — Interleaved pairs `(buf[2i], buf[2i+1])`. Binds least-significant variable first.
   - `HighToLow` — Split-half pairs `(buf[i], buf[i + n/2])`. Binds most-significant variable first.
 
+### Hybrid Backend
+
+- **`HybridBackend<P, Fb>`** — Wraps a primary (GPU) and fallback (CPU) backend. Buffers start on the primary and migrate to the fallback when they shrink below a size threshold during interpolation. The transition is one-way.
+- **`HybridBuffer<T, P, Fb>`** — Enum over `Primary(P::Buffer<T>)` or `Fallback(Fb::Buffer<T>)`.
+- **`HybridKernel<F, P, Fb>`** — Holds both backends' compiled kernels so dispatch works after migration.
+
 ### Trait: `ComputeBackend`
 
 Core device abstraction with associated types:
@@ -55,6 +61,7 @@ Core device abstraction with associated types:
 
 ```
 jolt-field ─► jolt-compute
+jolt-ir    ─►
 ```
 
 Used by `jolt-sumcheck` and `jolt-zkvm`.

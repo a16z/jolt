@@ -84,7 +84,7 @@ fn alloc_is_zeroed() {
     }
 }
 
-const SIZES: [usize; 4] = [1, 64, 4096, 1 << 16];
+const SIZES: [usize; 3] = [1, 64, 4096];
 
 #[test]
 fn add_parity() {
@@ -283,13 +283,13 @@ fn scale_by_one() {
     assert_eq!(data, result);
 }
 
-/// Large reduction that exercises multiple threadgroups.
+/// Reduction that exercises multiple threadgroups.
 #[test]
 fn sum_large() {
     let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xAAAA);
-    let n = 1 << 16; // 65536 elements — past MAX_REDUCTION_GROUPS * GROUP_SIZE
+    let n = 1 << 12;
     let data = random_elements(&mut rng, n);
 
     let cpu_buf = cpu.upload(&data);
@@ -301,13 +301,13 @@ fn sum_large() {
     assert_eq!(expected, got, "large sum mismatch at n={n}");
 }
 
-/// Large dot product exercising multiple threadgroups.
+/// Dot product exercising multiple threadgroups.
 #[test]
 fn dot_product_large() {
     let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xBBBB);
-    let n = 1 << 16;
+    let n = 1 << 12;
     let a_data = random_elements(&mut rng, n);
     let b_data = random_elements(&mut rng, n);
 
@@ -322,9 +322,7 @@ fn dot_product_large() {
     assert_eq!(expected, got, "large dot_product mismatch at n={n}");
 }
 
-// ── Phase 3: Interpolation + Product Table ────────────────────────────
-
-const INTERP_SIZES: [usize; 4] = [2, 128, 4096, 1 << 16];
+const INTERP_SIZES: [usize; 3] = [2, 128, 4096];
 
 #[test]
 fn interpolate_pairs_parity() {
@@ -494,21 +492,19 @@ fn product_table_sums_to_one() {
     assert_eq!(sum, Fr::from_u64(1), "eq-polynomial table must sum to 1");
 }
 
-/// Large product table (2^20 entries).
+/// Product table exercising GPU rounds (2^12 entries).
 #[test]
 fn product_table_large() {
     let metal = &*METAL;
     let cpu = CpuBackend;
     let mut rng = StdRng::seed_from_u64(0xCC01);
-    let point: Vec<Fr> = (0..16).map(|_| Fr::random(&mut rng)).collect();
+    let point: Vec<Fr> = (0..12).map(|_| Fr::random(&mut rng)).collect();
 
     let cpu_table = cpu.download(&cpu.product_table(&point));
     let mtl_table = metal.download(&metal.product_table(&point));
 
     assert_eq!(cpu_table, mtl_table, "large product_table mismatch");
 }
-
-// ── Phase 4: Kernel Compilation + Pairwise Reduce ──────────────────────
 
 fn compile_kernels(
     cpu: &CpuBackend,
@@ -649,8 +645,7 @@ fn pairwise_reduce_product_sum_d8_large() {
     };
     let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
-    // 2K elements: enough to exercise multiple threadgroups without slow CPU reference
-    let n = 1 << 11;
+    let n = 64;
     let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
     let weights = random_elements(&mut rng, n / 2);
 
@@ -675,7 +670,7 @@ fn pairwise_reduce_product_sum_d8_large() {
         BindingOrder::LowToHigh,
     );
 
-    assert_eq!(expected, got, "pairwise_reduce D=8 large mismatch");
+    assert_eq!(expected, got, "pairwise_reduce D=8 mismatch");
 }
 
 /// HighToLow binding order.

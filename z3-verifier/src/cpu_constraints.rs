@@ -193,8 +193,6 @@ struct JoltState<T = Int> {
     next_is_noop: T,
     should_jump: T,
     should_branch: T,
-    write_lookup_output_to_rd: T,
-    write_pc_to_rd: T,
     next_is_virtual: T,
     next_is_first_in_sequence: T,
     virtual_sequence_active: T,
@@ -227,10 +225,6 @@ impl JoltState {
             next_is_noop: Int::new_const(format!("{prefix}_next_is_noop")),
             should_jump: Int::new_const(format!("{prefix}_should_jump")),
             should_branch: Int::new_const(format!("{prefix}_should_branch")),
-            write_lookup_output_to_rd: Int::new_const(format!(
-                "{prefix}_write_lookup_output_to_rd_addr"
-            )),
-            write_pc_to_rd: Int::new_const(format!("{prefix}_write_pc_to_rd_addr")),
             next_is_virtual: Int::new_const(format!("{prefix}_next_is_virtual")),
             next_is_first_in_sequence: Int::new_const(format!(
                 "{prefix}_next_is_first_in_sequence"
@@ -242,15 +236,9 @@ impl JoltState {
     /// Bind all JoltState fields as Opening variables in a Z3Emitter,
     /// mapping each field to its corresponding V_* index.
     fn bind_to_emitter(&self, emitter: &mut Z3Emitter) {
-        // Core variables (V_* indices 1–23)
         emitter.bind_opening(V_LEFT_INSTRUCTION_INPUT as u32, self.left_input.clone());
         emitter.bind_opening(V_RIGHT_INSTRUCTION_INPUT as u32, self.right_input.clone());
         emitter.bind_opening(V_PRODUCT as u32, self.product.clone());
-        emitter.bind_opening(
-            V_WRITE_LOOKUP_OUTPUT_TO_RD as u32,
-            self.write_lookup_output_to_rd.clone(),
-        );
-        emitter.bind_opening(V_WRITE_PC_TO_RD as u32, self.write_pc_to_rd.clone());
         emitter.bind_opening(V_SHOULD_BRANCH as u32, self.should_branch.clone());
         emitter.bind_opening(V_PC as u32, self.pc.clone());
         emitter.bind_opening(V_UNEXPANDED_PC as u32, self.unexpanded_pc.clone());
@@ -279,10 +267,6 @@ impl JoltState {
         }
 
         // Product factor variables
-        emitter.bind_opening(
-            V_IS_RD_NOT_ZERO as u32,
-            self.instruction_flags[InstructionFlags::IsRdNotZero as usize].clone(),
-        );
         emitter.bind_opening(
             V_BRANCH as u32,
             self.instruction_flags[InstructionFlags::Branch as usize].clone(),
@@ -416,8 +400,6 @@ impl JoltState {
             next_is_noop: eval(&self.next_is_noop)?,
             should_jump: eval(&self.should_jump)?,
             should_branch: eval(&self.should_branch)?,
-            write_lookup_output_to_rd: eval(&self.write_lookup_output_to_rd)?,
-            write_pc_to_rd: eval(&self.write_pc_to_rd)?,
             next_is_virtual: eval(&self.next_is_virtual)?,
             next_is_first_in_sequence: eval(&self.next_is_first_in_sequence)?,
             virtual_sequence_active: eval(&self.virtual_sequence_active)?,

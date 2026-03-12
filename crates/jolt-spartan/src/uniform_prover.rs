@@ -150,6 +150,8 @@ impl UniformSpartanProver {
         let num_row_vars = log2_padded(total_rows_padded);
         let tau: Vec<F> = (0..num_row_vars).map(|_| transcript.challenge()).collect();
 
+        let uniskip_tau_1 = tau.first().copied();
+
         let eq_poly = Polynomial::new(EqPolynomial::new(tau).evaluations());
         let az_poly = Polynomial::new(az);
         let bz_poly = Polynomial::new(bz);
@@ -160,6 +162,7 @@ impl UniformSpartanProver {
             az: az_poly,
             bz: bz_poly,
             cz: cz_poly,
+            uniskip_tau_1,
         };
 
         let outer_claim = SumcheckClaim {
@@ -305,9 +308,22 @@ struct UniformOuterSumcheckCompute<F: Field> {
     az: Polynomial<F>,
     bz: Polynomial<F>,
     cz: Polynomial<F>,
+    /// First component of the eq challenge point, used for uni-skip.
+    uniskip_tau_1: Option<F>,
 }
 
 impl<F: Field> SumcheckCompute<F> for UniformOuterSumcheckCompute<F> {
+    fn first_round_polynomial(&self) -> Option<UnivariatePoly<F>> {
+        let tau_1 = self.uniskip_tau_1?;
+        Some(crate::uni_skip::uniskip_first_round(
+            self.eq.evaluations(),
+            self.az.evaluations(),
+            self.bz.evaluations(),
+            self.cz.evaluations(),
+            tau_1,
+        ))
+    }
+
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let half = self.eq.evaluations().len() / 2;
         let eq_evals = self.eq.evaluations();

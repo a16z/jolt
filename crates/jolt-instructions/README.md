@@ -29,8 +29,8 @@ This crate defines the instruction abstraction layer for the Jolt lookup argumen
 
 ### Modules
 
-- **`rv`** -- Concrete RISC-V instruction implementations (arithmetic, branch, compare, load/store, logic, shift, system).
-- **`virtual_`** -- Virtual instructions (assert, arithmetic, bitwise).
+- **`rv`** -- Concrete RISC-V instruction implementations (arithmetic, arithmetic_w, branch, compare, jump, load, logic, shift, shift_w, store, system).
+- **`virtual_`** -- Virtual instructions (advice, arithmetic, assert, bitwise, byte, division, extension, shift, xor-rotate).
 - **`tables`** -- Lookup table implementations with prefix/suffix sparse-dense decomposition.
 
 ## Dependency Position

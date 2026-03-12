@@ -26,10 +26,11 @@ This crate composes all Jolt sub-crates into a complete proving system for RISC-
   - `s3_instruction_input` -- Instruction input virtualization sumcheck.
   - `s4_ram_rw` / `s4_rw_checking` -- RAM read-write checking.
   - `s5_ram_checking` -- RAM checking.
+  - `s5_registers_val_eval` -- Registers value evaluation sumcheck.
   - `s6_booleanity` -- Hamming booleanity checks.
+  - `s6_ra_booleanity` -- RA polynomial booleanity checks.
   - `s7_hamming_reduction` -- Hamming weight reduction.
   - `s8_opening` -- Opening proof stage.
-- **`host`** -- Host-level proving and verification API (trace → proof).
 - **`witness`** -- `WitnessStore` for polynomial evaluation table storage, plus trace-to-witness conversion.
 
 ## Feature Flags

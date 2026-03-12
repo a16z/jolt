@@ -1364,8 +1364,6 @@ mod tests {
         assert_eq!(batch_result, individual_results);
     }
 
-    // --- interpolate_pairs_inplace tests ---
-
     #[test]
     fn inplace_low_to_high_matches_allocating() {
         let b = backend();
@@ -1486,8 +1484,6 @@ mod tests {
         assert_eq!(bufs, expected);
     }
 
-    // --- pairwise_reduce_fixed tests ---
-
     #[test]
     fn pairwise_reduce_fixed_matches_dynamic() {
         let b = backend();
@@ -1519,8 +1515,6 @@ mod tests {
 
         assert_eq!(fixed.as_slice(), dynamic.as_slice());
     }
-
-    // --- tensor_pairwise_reduce tests ---
 
     #[test]
     fn tensor_reduce_matches_flat_reduce() {
@@ -1637,8 +1631,6 @@ mod tests {
         assert_eq!(tensor_result, flat_result);
     }
 
-    // --- pairwise_reduce_multi tests ---
-
     #[test]
     fn multi_reduce_matches_individual() {
         let b = backend();
@@ -1708,8 +1700,6 @@ mod tests {
         assert_eq!(multi[0], individual_1);
         assert_eq!(multi[1], individual_2);
     }
-
-    // --- HighToLow pairwise_reduce tests ---
 
     #[test]
     fn pairwise_reduce_high_to_low_matches_manual() {
@@ -1832,8 +1822,6 @@ mod tests {
         assert_eq!(multi[0], individual_1);
         assert_eq!(multi[1], individual_2);
     }
-
-    // --- Element-wise operation tests ---
 
     #[test]
     fn sum_basic() {
@@ -1984,8 +1972,6 @@ mod tests {
         assert_eq!(buf, expected);
     }
 
-    // --- accumulate_weighted tests ---
-
     #[test]
     fn accumulate_weighted_basic() {
         let b = backend();
@@ -2073,8 +2059,6 @@ mod tests {
 
         assert_eq!(via_weighted, via_single);
     }
-
-    // --- scale_batch tests ---
 
     #[test]
     fn scale_batch_basic() {

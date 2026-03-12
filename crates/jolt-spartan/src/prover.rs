@@ -110,7 +110,10 @@ impl SpartanProver {
         let num_sc_vars = key.num_sumcheck_vars();
         let tau: Vec<F> = (0..num_sc_vars).map(|_| transcript.challenge()).collect();
 
-        let tau_1 = tau.first().copied();
+        let uniskip_tau_1 = match strategy {
+            FirstRoundStrategy::UnivariateSkip if num_sc_vars > 0 => tau.first().copied(),
+            _ => None,
+        };
 
         let eq_poly = Polynomial::new(EqPolynomial::new(tau).evaluations());
         let mut outer_witness = OuterSumcheckCompute {
@@ -118,6 +121,7 @@ impl SpartanProver {
             az: az_poly,
             bz: bz_poly,
             cz: cz_poly,
+            uniskip_tau_1,
         };
 
         let outer_claim = SumcheckClaim {
@@ -128,23 +132,13 @@ impl SpartanProver {
 
         let (outer_sumcheck_proof, r_x) = {
             let _span = tracing::info_span!("outer_sumcheck", num_vars = num_sc_vars).entered();
-            match strategy {
-                FirstRoundStrategy::UnivariateSkip if num_sc_vars > 0 => prove_outer_uniskip(
-                    &outer_claim,
-                    &mut outer_witness,
-                    transcript,
-                    tau_1.unwrap(),
-                ),
-                _ => {
-                    let handler = TrackingHandler::new(num_sc_vars);
-                    SumcheckProver::prove_with_handler(
-                        &outer_claim,
-                        &mut outer_witness,
-                        transcript,
-                        handler,
-                    )
-                }
-            }
+            let handler = TrackingHandler::new(num_sc_vars);
+            SumcheckProver::prove_with_handler(
+                &outer_claim,
+                &mut outer_witness,
+                transcript,
+                handler,
+            )
         };
 
         let az_eval = outer_witness.az.evaluations()[0];
@@ -464,48 +458,6 @@ impl<F: Field> RoundHandler<F> for TrackingHandler<F> {
     }
 }
 
-/// Runs the outer sumcheck with univariate skip for the first round.
-///
-/// The first round polynomial is computed analytically via the factored
-/// identity $t_1(0) = t_1(1) = 0$, requiring a single evaluation at $X=2$
-/// instead of four evaluations. Remaining rounds use standard enumeration.
-fn prove_outer_uniskip<F, T>(
-    claim: &SumcheckClaim<F>,
-    witness: &mut OuterSumcheckCompute<F>,
-    transcript: &mut T,
-    tau_1: F,
-) -> (SumcheckProof<F>, Vec<F>)
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    use crate::uni_skip::uniskip_first_round;
-
-    let mut handler = TrackingHandler::new(claim.num_vars);
-
-    let first_round_poly = uniskip_first_round(
-        witness.eq.evaluations(),
-        witness.az.evaluations(),
-        witness.bz.evaluations(),
-        witness.cz.evaluations(),
-        tau_1,
-    );
-    handler.absorb_round_poly(&first_round_poly, transcript);
-    let challenge: F = transcript.challenge();
-    handler.on_challenge(challenge);
-    witness.bind(challenge);
-
-    for _round in 1..claim.num_vars {
-        let round_poly = <OuterSumcheckCompute<F> as SumcheckCompute<F>>::round_polynomial(witness);
-        handler.absorb_round_poly(&round_poly, transcript);
-        let challenge: F = transcript.challenge();
-        handler.on_challenge(challenge);
-        witness.bind(challenge);
-    }
-
-    handler.finalize()
-}
-
 /// Sequential outer round evaluation shared by both cfg paths.
 fn outer_round_sequential<F: Field>(
     half: usize,
@@ -572,14 +524,31 @@ fn inner_round_sequential<F: Field>(half: usize, row_evals: &[F], w_evals: &[F])
 /// The round polynomial is computed by evaluating $g$ at $X \in \{0, 1, 2, 3\}$
 /// (summing over the remaining Boolean hypercube) and interpolating the
 /// resulting degree-3 univariate.
+///
+/// When `uniskip_tau_1` is set, the first round uses the univariate skip
+/// optimization instead of the standard 4-point evaluation.
 struct OuterSumcheckCompute<F: Field> {
     eq: Polynomial<F>,
     az: Polynomial<F>,
     bz: Polynomial<F>,
     cz: Polynomial<F>,
+    /// First component of the eq challenge point, used for uni-skip.
+    /// `None` disables uni-skip (standard path).
+    uniskip_tau_1: Option<F>,
 }
 
 impl<F: Field> SumcheckCompute<F> for OuterSumcheckCompute<F> {
+    fn first_round_polynomial(&self) -> Option<UnivariatePoly<F>> {
+        let tau_1 = self.uniskip_tau_1?;
+        Some(crate::uni_skip::uniskip_first_round(
+            self.eq.evaluations(),
+            self.az.evaluations(),
+            self.bz.evaluations(),
+            self.cz.evaluations(),
+            tau_1,
+        ))
+    }
+
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let half = self.eq.evaluations().len() / 2;
 

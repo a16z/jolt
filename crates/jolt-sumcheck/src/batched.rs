@@ -96,7 +96,13 @@ impl BatchedSumcheckProver {
                 .map(|(i, witness)| {
                     let active = round >= offsets[i] && round < offsets[i] + claims[i].num_vars;
                     if active {
-                        witness.round_polynomial()
+                        if round == offsets[i] {
+                            witness
+                                .first_round_polynomial()
+                                .unwrap_or_else(|| witness.round_polynomial())
+                        } else {
+                            witness.round_polynomial()
+                        }
                     } else {
                         UnivariatePoly::new(vec![individual_claims[i] * two_inv])
                     }

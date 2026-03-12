@@ -50,7 +50,7 @@ pub use key::SpartanKey;
 pub use proof::SpartanProof;
 pub use prover::SpartanProver;
 pub use r1cs::{SimpleR1CS, R1CS};
-pub use uni_skip::FirstRoundStrategy;
+pub use uni_skip::{uniskip_round_poly, FirstRoundStrategy};
 pub use uniform_key::UniformSpartanKey;
 pub use uniform_prover::{UniformSpartanProof, UniformSpartanProver};
 pub use uniform_verifier::UniformSpartanVerifier;

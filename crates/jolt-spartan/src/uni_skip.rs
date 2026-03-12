@@ -42,6 +42,32 @@ pub enum FirstRoundStrategy {
     UnivariateSkip,
 }
 
+/// Builds the degree-3 first-round polynomial analytically from $t_1(2)$
+/// and $\tau_1$.
+///
+/// Given $\alpha = t_1(2) / 2$ and the eq factor
+/// $\widetilde{eq}_1(X, \tau_1) = (1-\tau_1) + (2\tau_1-1) X$, constructs:
+///
+/// $$s_1(X) = \widetilde{eq}_1(X, \tau_1) \cdot \alpha \cdot X(X-1)$$
+///
+/// This is a utility used by any zero-check sumcheck that wants univariate
+/// skip. The caller computes $t_1(2)$ using its formula-specific logic.
+pub fn uniskip_round_poly<F: Field>(t1_at_2: F, tau_1: F) -> UnivariatePoly<F> {
+    let two = F::from_u64(2);
+    let alpha = t1_at_2 * two.inverse().expect("2 is invertible in any prime field");
+
+    let one_minus_tau = F::one() - tau_1;
+    let two_tau_minus_one = two * tau_1 - F::one();
+    let two_minus_3tau = two - F::from_u64(3) * tau_1;
+
+    UnivariatePoly::new(vec![
+        F::zero(),                 // X^0
+        -(alpha * one_minus_tau),  // X^1
+        alpha * two_minus_3tau,    // X^2
+        alpha * two_tau_minus_one, // X^3
+    ])
+}
+
 /// Computes the first outer sumcheck round polynomial using the factored
 /// univariate skip.
 ///

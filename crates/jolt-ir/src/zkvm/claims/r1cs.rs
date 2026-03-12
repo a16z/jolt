@@ -22,51 +22,50 @@ use crate::expr::Expr;
 /// terms are inlined via [`ExprNode::Constant`](crate::expr::ExprNode::Constant).
 pub const V_CONST: usize = 0;
 
+/// R1CS input indices (1–35), matching old `JoltR1CSInputs` ordering.
 pub const V_LEFT_INSTRUCTION_INPUT: usize = 1;
 pub const V_RIGHT_INSTRUCTION_INPUT: usize = 2;
 pub const V_PRODUCT: usize = 3;
-pub const V_WRITE_LOOKUP_OUTPUT_TO_RD: usize = 4;
-pub const V_WRITE_PC_TO_RD: usize = 5;
-pub const V_SHOULD_BRANCH: usize = 6;
-pub const V_PC: usize = 7;
-pub const V_UNEXPANDED_PC: usize = 8;
-pub const V_IMM: usize = 9;
-pub const V_RAM_ADDRESS: usize = 10;
-pub const V_RS1_VALUE: usize = 11;
-pub const V_RS2_VALUE: usize = 12;
-pub const V_RD_WRITE_VALUE: usize = 13;
-pub const V_RAM_READ_VALUE: usize = 14;
-pub const V_RAM_WRITE_VALUE: usize = 15;
-pub const V_LEFT_LOOKUP_OPERAND: usize = 16;
-pub const V_RIGHT_LOOKUP_OPERAND: usize = 17;
-pub const V_NEXT_UNEXPANDED_PC: usize = 18;
-pub const V_NEXT_PC: usize = 19;
-pub const V_NEXT_IS_VIRTUAL: usize = 20;
-pub const V_NEXT_IS_FIRST_IN_SEQUENCE: usize = 21;
-pub const V_LOOKUP_OUTPUT: usize = 22;
-pub const V_SHOULD_JUMP: usize = 23;
-pub const V_FLAG_ADD_OPERANDS: usize = 24;
-pub const V_FLAG_SUBTRACT_OPERANDS: usize = 25;
-pub const V_FLAG_MULTIPLY_OPERANDS: usize = 26;
-pub const V_FLAG_LOAD: usize = 27;
-pub const V_FLAG_STORE: usize = 28;
-pub const V_FLAG_JUMP: usize = 29;
-pub const V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD: usize = 30;
-pub const V_FLAG_VIRTUAL_INSTRUCTION: usize = 31;
-pub const V_FLAG_ASSERT: usize = 32;
-pub const V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC: usize = 33;
-pub const V_FLAG_ADVICE: usize = 34;
-pub const V_FLAG_IS_COMPRESSED: usize = 35;
-pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 36;
-pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 37;
+pub const V_SHOULD_BRANCH: usize = 4;
+pub const V_PC: usize = 5;
+pub const V_UNEXPANDED_PC: usize = 6;
+pub const V_IMM: usize = 7;
+pub const V_RAM_ADDRESS: usize = 8;
+pub const V_RS1_VALUE: usize = 9;
+pub const V_RS2_VALUE: usize = 10;
+pub const V_RD_WRITE_VALUE: usize = 11;
+pub const V_RAM_READ_VALUE: usize = 12;
+pub const V_RAM_WRITE_VALUE: usize = 13;
+pub const V_LEFT_LOOKUP_OPERAND: usize = 14;
+pub const V_RIGHT_LOOKUP_OPERAND: usize = 15;
+pub const V_NEXT_UNEXPANDED_PC: usize = 16;
+pub const V_NEXT_PC: usize = 17;
+pub const V_NEXT_IS_VIRTUAL: usize = 18;
+pub const V_NEXT_IS_FIRST_IN_SEQUENCE: usize = 19;
+pub const V_LOOKUP_OUTPUT: usize = 20;
+pub const V_SHOULD_JUMP: usize = 21;
+pub const V_FLAG_ADD_OPERANDS: usize = 22;
+pub const V_FLAG_SUBTRACT_OPERANDS: usize = 23;
+pub const V_FLAG_MULTIPLY_OPERANDS: usize = 24;
+pub const V_FLAG_LOAD: usize = 25;
+pub const V_FLAG_STORE: usize = 26;
+pub const V_FLAG_JUMP: usize = 27;
+pub const V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD: usize = 28;
+pub const V_FLAG_VIRTUAL_INSTRUCTION: usize = 29;
+pub const V_FLAG_ASSERT: usize = 30;
+pub const V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC: usize = 31;
+pub const V_FLAG_ADVICE: usize = 32;
+pub const V_FLAG_IS_COMPRESSED: usize = 33;
+pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 34;
+pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 35;
 
-pub const V_IS_RD_NOT_ZERO: usize = 38;
-pub const V_BRANCH: usize = 39;
-pub const V_NEXT_IS_NOOP: usize = 40;
+/// Product factor indices (36–37), not R1CS inputs but needed by product constraints.
+pub const V_BRANCH: usize = 36;
+pub const V_NEXT_IS_NOOP: usize = 37;
 
-pub const NUM_R1CS_INPUTS: usize = 37;
-pub const NUM_PRODUCT_FACTORS: usize = 3;
-pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 41
+pub const NUM_R1CS_INPUTS: usize = 35;
+pub const NUM_PRODUCT_FACTORS: usize = 2;
+pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 38
 pub const NUM_EQ_CONSTRAINTS: usize = 19;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 22
@@ -430,15 +429,12 @@ mod tests {
         witness(&[
             (V_FLAG_ADD_OPERANDS, f(1)),
             (V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD, f(1)),
-            (V_IS_RD_NOT_ZERO, f(1)),
             (V_LEFT_INSTRUCTION_INPUT, f(7)),
             (V_RIGHT_INSTRUCTION_INPUT, f(3)),
             (V_PRODUCT, f(21)),
             (V_LEFT_LOOKUP_OPERAND, f(0)),
             (V_RIGHT_LOOKUP_OPERAND, f(10)),
             (V_LOOKUP_OUTPUT, f(10)),
-            (V_WRITE_LOOKUP_OUTPUT_TO_RD, f(1)),
-            (V_WRITE_PC_TO_RD, f(0)),
             (V_RD_WRITE_VALUE, f(10)),
             (V_UNEXPANDED_PC, f(500)),
             (V_NEXT_UNEXPANDED_PC, f(504)),
@@ -645,15 +641,12 @@ mod z3_tests {
             &[
                 (V_FLAG_ADD_OPERANDS, 1),
                 (V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD, 1),
-                (V_IS_RD_NOT_ZERO, 1),
                 (V_LEFT_INSTRUCTION_INPUT, 7),
                 (V_RIGHT_INSTRUCTION_INPUT, 3),
                 (V_PRODUCT, 21),
                 (V_LEFT_LOOKUP_OPERAND, 0),
                 (V_RIGHT_LOOKUP_OPERAND, 10),
                 (V_LOOKUP_OUTPUT, 10),
-                (V_WRITE_LOOKUP_OUTPUT_TO_RD, 1),
-                (V_WRITE_PC_TO_RD, 0),
                 (V_RD_WRITE_VALUE, 10),
                 (V_UNEXPANDED_PC, 500),
                 (V_NEXT_UNEXPANDED_PC, 504),
@@ -727,7 +720,7 @@ mod z3_tests {
         assert_eq!(solver.check(), SatResult::Unsat);
     }
 
-    // ── Parity audit: prove jolt-ir constraints ≡ old jolt-core ──────
+    // Parity audit: prove jolt-ir constraints are equivalent to old jolt-core.
     //
     // For each constraint, we build the old jolt-core definition manually
     // as a Z3 expression (using the same symbolic variables bound to the

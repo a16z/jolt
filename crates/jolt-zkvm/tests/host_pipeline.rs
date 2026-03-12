@@ -1,11 +1,7 @@
-//! Host-layer integration tests with Dory commitment scheme.
+//! End-to-end integration tests with Dory commitment scheme.
 //!
-//! Exercises the unified `prove_trace` → `verify_proof` pipeline with real
-//! RISC-V guest programs compiled via jolt-host and the real Dory polynomial
-//! commitment scheme. Each test traces a guest binary, generates witnesses
-//! from the real execution trace, commits with Dory, builds an S3 increment
-//! claim reduction stage from real RD_INC/RAM_INC polynomials, proves and
-//! verifies the complete proof including Dory opening proofs.
+//! Exercises the `prove` → `verify` pipeline with real RISC-V guest programs
+//! compiled via jolt-host and the real Dory polynomial commitment scheme.
 //!
 //! These are the closest tests to production: real ELF → tracer → witness →
 //! Dory commit → Spartan → sumcheck → Dory openings → verify.

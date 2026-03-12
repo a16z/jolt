@@ -417,7 +417,6 @@ impl<F: Field> SubAssign<&Self> for UnivariatePoly<F> {
     }
 }
 
-/// Scalar multiplication: `poly * scalar`.
 impl<F: Field> Mul<F> for UnivariatePoly<F> {
     type Output = Self;
 
@@ -427,7 +426,6 @@ impl<F: Field> Mul<F> for UnivariatePoly<F> {
     }
 }
 
-/// Scalar multiplication by reference: `&poly * scalar`.
 impl<F: Field> Mul<F> for &UnivariatePoly<F> {
     type Output = UnivariatePoly<F>;
 

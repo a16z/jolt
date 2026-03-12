@@ -86,7 +86,6 @@ fn main() {
     let log_sizes: Vec<u32> = (6..=22).collect();
     let mut rng = StdRng::seed_from_u64(42);
 
-    // ── pairwise_reduce threshold ────────────────────────────────────
     for &d in &[4usize, 8] {
         let desc = KernelDescriptor {
             shape: KernelShape::ProductSum {
@@ -130,7 +129,6 @@ fn main() {
         }
     }
 
-    // ── interpolate_pairs_inplace threshold ───────────────────────────
     {
         println!("\n=== interpolate_pairs_inplace ===");
         println!(
@@ -163,7 +161,6 @@ fn main() {
         }
     }
 
-    // ── sumcheck round (reduce + bind) threshold ─────────────────────
     {
         let d = 4usize;
         let desc = KernelDescriptor {

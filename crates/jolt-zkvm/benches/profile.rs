@@ -57,15 +57,12 @@ fn add_cycle_witness(unexpanded_pc: u64, pc: u64) -> Vec<Fr> {
     w[r1cs::V_CONST] = Fr::from_u64(1);
     w[r1cs::V_FLAG_ADD_OPERANDS] = Fr::from_u64(1);
     w[r1cs::V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD] = Fr::from_u64(1);
-    w[r1cs::V_IS_RD_NOT_ZERO] = Fr::from_u64(1);
     w[r1cs::V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(7);
     w[r1cs::V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(3);
     w[r1cs::V_PRODUCT] = Fr::from_u64(21);
     w[r1cs::V_LEFT_LOOKUP_OPERAND] = Fr::from_u64(0);
     w[r1cs::V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(10);
     w[r1cs::V_LOOKUP_OUTPUT] = Fr::from_u64(10);
-    w[r1cs::V_WRITE_LOOKUP_OUTPUT_TO_RD] = Fr::from_u64(1);
-    w[r1cs::V_WRITE_PC_TO_RD] = Fr::from_u64(0);
     w[r1cs::V_RD_WRITE_VALUE] = Fr::from_u64(10);
     w[r1cs::V_UNEXPANDED_PC] = Fr::from_u64(unexpanded_pc);
     w[r1cs::V_NEXT_UNEXPANDED_PC] = Fr::from_u64(unexpanded_pc + 4);

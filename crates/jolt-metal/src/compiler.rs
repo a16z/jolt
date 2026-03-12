@@ -43,6 +43,9 @@ pub(crate) const MAX_REDUCE_GROUPS: usize = 256;
 /// Apple GPU SIMD width (32 threads per simdgroup on M-series).
 const SIMD_SIZE: usize = 32;
 
+/// WideAcc limb count (18 × u32 = 576 bits). Must match `ACC_LIMBS` in wide_accumulator.metal.
+const ACC_LIMBS: usize = 18;
+
 /// Which pair-reading and weight strategy a kernel uses.
 #[derive(Clone, Copy)]
 enum KernelVariant {
@@ -374,55 +377,55 @@ fn generate_reduce_kernel(
     let _ = writeln!(s, "    }}");
     s.push('\n');
 
-    // Reduce WideAcc to Fr
-    let _ = writeln!(s, "    Fr acc[{num_evals}];");
-    let needs_to_mont = matches!(strategy, AccumulationStrategy::DirectAdd);
-    if needs_to_mont {
-        for d in 0..num_evals {
-            let _ = writeln!(s, "    acc[{d}] = fr_to_mont(acc_reduce(wide_acc[{d}]));");
-        }
-    } else {
-        for d in 0..num_evals {
-            let _ = writeln!(s, "    acc[{d}] = acc_reduce(wide_acc[{d}]);");
-        }
-    }
-    s.push('\n');
-
-    // Simdgroup reduction via simd_shuffle_down (no barriers needed)
+    // ── Simdgroup reduction on WideAcc (before acc_reduce) ──────────
+    //
+    // Shuffle the 18-limb WideAcc across the simdgroup using acc_merge.
+    // Only lane 0 of each simdgroup calls the expensive acc_reduce (8 CIOS
+    // rounds). This saves 31 acc_reduce calls per simdgroup (248 per
+    // threadgroup of 256 threads).
     let half_simd = SIMD_SIZE / 2;
     let _ = writeln!(
         s,
         "    for (ushort _off = {half_simd}u; _off > 0u; _off >>= 1u) {{"
     );
     for d in 0..num_evals {
-        let _ = writeln!(s, "        {{ Fr _o;");
-        for l in 0..8 {
+        let _ = writeln!(s, "        {{ WideAcc _o;");
+        for l in 0..ACC_LIMBS {
             let _ = writeln!(
                 s,
-                "        _o.limbs[{l}] = simd_shuffle_down(acc[{d}].limbs[{l}], _off);"
+                "        _o.limbs[{l}] = simd_shuffle_down(wide_acc[{d}].limbs[{l}], _off);"
             );
         }
-        let _ = writeln!(s, "        acc[{d}] = fr_add(acc[{d}], _o); }}");
+        let _ = writeln!(s, "        acc_merge(wide_acc[{d}], _o); }}");
     }
     let _ = writeln!(s, "    }}");
     s.push('\n');
 
-    // Lane 0 of each simdgroup writes to shared memory
+    // Lane 0 of each simdgroup reduces WideAcc → Fr and writes to shared memory
+    let needs_to_mont = matches!(strategy, AccumulationStrategy::DirectAdd);
     let sh_size = num_evals * num_simdgroups;
     let _ = writeln!(s, "    threadgroup Fr sh[{sh_size}];");
     let _ = writeln!(s, "    if (simd_lane == 0u) {{");
     for d in 0..num_evals {
-        let _ = writeln!(
-            s,
-            "        sh[{}u + simd_id] = acc[{d}];",
-            d * num_simdgroups
-        );
+        if needs_to_mont {
+            let _ = writeln!(
+                s,
+                "        sh[{}u + simd_id] = fr_to_mont(acc_reduce(wide_acc[{d}]));",
+                d * num_simdgroups
+            );
+        } else {
+            let _ = writeln!(
+                s,
+                "        sh[{}u + simd_id] = acc_reduce(wide_acc[{d}]);",
+                d * num_simdgroups
+            );
+        }
     }
     let _ = writeln!(s, "    }}");
     let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
     s.push('\n');
 
-    // Tree reduction over simdgroup partials
+    // Tree reduction over simdgroup partials (8 → 1)
     let _ = writeln!(s, "    if (lid < {num_simdgroups}u) {{");
     let mut stride = num_simdgroups / 2;
     while stride > 0 {

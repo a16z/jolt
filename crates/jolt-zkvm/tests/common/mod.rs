@@ -12,7 +12,7 @@ use jolt_poly::EqPolynomial;
 pub use jolt_transcript::{Blake2bTranscript, Transcript};
 pub use jolt_verifier::StageDescriptor;
 pub use jolt_zkvm::preprocessing::{preprocess, JoltConfig};
-pub use jolt_zkvm::prover::prove;
+pub use jolt_zkvm::prover::prove_pipeline as prove;
 pub use jolt_zkvm::r1cs;
 pub use jolt_zkvm::stages::s3_claim_reductions::ClaimReductionStage;
 pub use rand_chacha::ChaCha20Rng;
@@ -47,7 +47,6 @@ pub fn add_cycle_witness(unexpanded_pc: u64, pc: u64, left: u64, right: u64) -> 
 
     w[r1cs::V_FLAG_ADD_OPERANDS] = Fr::from_u64(1);
     w[r1cs::V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD] = Fr::from_u64(1);
-    w[r1cs::V_IS_RD_NOT_ZERO] = Fr::from_u64(1);
 
     w[r1cs::V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(left);
     w[r1cs::V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(right);
@@ -57,7 +56,6 @@ pub fn add_cycle_witness(unexpanded_pc: u64, pc: u64, left: u64, right: u64) -> 
     w[r1cs::V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(sum);
     w[r1cs::V_LOOKUP_OUTPUT] = Fr::from_u64(sum);
 
-    w[r1cs::V_WRITE_LOOKUP_OUTPUT_TO_RD] = Fr::from_u64(1);
     w[r1cs::V_RD_WRITE_VALUE] = Fr::from_u64(sum);
 
     w[r1cs::V_UNEXPANDED_PC] = Fr::from_u64(unexpanded_pc);
@@ -80,7 +78,6 @@ pub fn load_cycle_witness(
     w[r1cs::V_CONST] = Fr::from_u64(1);
 
     w[r1cs::V_FLAG_LOAD] = Fr::from_u64(1);
-    w[r1cs::V_IS_RD_NOT_ZERO] = Fr::from_u64(1);
 
     w[r1cs::V_RS1_VALUE] = Fr::from_u64(rs1);
     w[r1cs::V_IMM] = Fr::from_u64(imm);
@@ -374,16 +371,16 @@ pub fn run_trace_e2e(trace: Vec<tracer::instruction::Cycle>, label: &'static [u8
 
 // ── Real program helpers ────────────────────────────────────────────────
 
-/// Traces a guest program and runs prove_trace → verify_proof with Dory.
+/// Traces a guest program and runs prove → verify with Dory.
 pub fn prove_and_verify_guest(guest_name: &str, inputs: &[u8]) {
     use jolt_dory::DoryScheme;
     use jolt_host::Program;
-    use jolt_zkvm::host::{prove_trace, verify_proof};
+    use jolt_zkvm::prover::{prove, verify};
 
     let mut program = Program::new(guest_name);
     let (_, trace, _, _) = program.trace(inputs, &[], &[]);
 
-    let output = prove_trace::<DoryScheme, _>(
+    let output = prove::<DoryScheme, _>(
         &trace,
         |num_vars| {
             (
@@ -393,22 +390,22 @@ pub fn prove_and_verify_guest(guest_name: &str, inputs: &[u8]) {
         },
         cpu(),
     )
-    .expect("prove_trace should succeed");
+    .expect("prove should succeed");
 
-    verify_proof::<DoryScheme>(&output).expect("verify_proof should succeed");
+    verify::<DoryScheme>(&output).expect("verify should succeed");
 }
 
 /// Traces a guest program with a specific function name, proves with Dory.
 pub fn prove_and_verify_guest_func(guest_name: &str, func: &str, inputs: &[u8]) {
     use jolt_dory::DoryScheme;
     use jolt_host::Program;
-    use jolt_zkvm::host::{prove_trace, verify_proof};
+    use jolt_zkvm::prover::{prove, verify};
 
     let mut program = Program::new(guest_name);
     program.set_func(func);
     let (_, trace, _, _) = program.trace(inputs, &[], &[]);
 
-    let output = prove_trace::<DoryScheme, _>(
+    let output = prove::<DoryScheme, _>(
         &trace,
         |num_vars| {
             (
@@ -418,9 +415,9 @@ pub fn prove_and_verify_guest_func(guest_name: &str, func: &str, inputs: &[u8]) 
         },
         cpu(),
     )
-    .expect("prove_trace should succeed");
+    .expect("prove should succeed");
 
-    verify_proof::<DoryScheme>(&output).expect("verify_proof should succeed");
+    verify::<DoryScheme>(&output).expect("verify should succeed");
 }
 
 /// Traces a guest program and runs through the synthetic-stage pipeline.

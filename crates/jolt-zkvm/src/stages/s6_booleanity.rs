@@ -81,11 +81,31 @@ impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T>
             claimed_sum: F::zero(),
         };
 
+        // Compute uni-skip first-round polynomial: t₁(2) = Σ eq_rest[i] · h(2,i) · (h(2,i) - 1)
+        let first_round_poly = if self.num_vars > 0 {
+            let half = eq_table.len() / 2;
+            let two = F::from_u64(2);
+            let mut t1_at_2 = F::zero();
+            for i in 0..half {
+                let eq_rest = eq_table[i] + eq_table[i + half];
+                let h_at_2 = two * h_evals[i + half] - h_evals[i];
+                t1_at_2 += eq_rest * h_at_2 * (h_at_2 - F::one());
+            }
+            Some(jolt_spartan::uniskip_round_poly(t1_at_2, self.eq_point[0]))
+        } else {
+            None
+        };
+
         let desc = catalog::hamming_booleanity();
         let kernel = self.backend.compile_kernel::<F>(&desc);
         let backend = Arc::clone(&self.backend);
         let inputs = vec![backend.upload(&eq_table), backend.upload(h_evals)];
-        let witness = KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+        let mut witness =
+            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
+
+        if let Some(poly) = first_round_poly {
+            witness.set_first_round_override(poly);
+        }
 
         StageBatch {
             claims: vec![claim],

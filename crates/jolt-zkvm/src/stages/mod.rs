@@ -15,5 +15,6 @@ pub mod s4_rw_checking;
 pub mod s5_ram_checking;
 pub mod s5_registers_val_eval;
 pub mod s6_booleanity;
+pub mod s6_ra_booleanity;
 pub mod s7_hamming_reduction;
 pub mod s8_opening;

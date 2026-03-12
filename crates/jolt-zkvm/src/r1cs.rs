@@ -1,6 +1,6 @@
 //! Jolt R1CS constraint definitions and [`UniformSpartanKey`] construction.
 //!
-//! Translates the 24 uniform per-cycle constraints (19 eq-conditional + 5 product)
+//! Translates the 22 uniform per-cycle constraints (19 eq-conditional + 3 product)
 //! into the sparse matrix format expected by [`UniformSpartanKey`].
 //!
 //! # Variable layout
@@ -10,13 +10,13 @@
 //! | Range | Description |
 //! |-------|-------------|
 //! | `[0]` | Constant 1 |
-//! | `[1..=37]` | R1CS inputs (canonical `JoltR1CSInputs` order) |
-//! | `[38..=40]` | Product factor variables (`IsRdNotZero`, `Branch`, `NextIsNoop`) |
+//! | `[1..=35]` | R1CS inputs (canonical `JoltR1CSInputs` order) |
+//! | `[36..=37]` | Product factor variables (`Branch`, `NextIsNoop`) |
 //!
 //! # Constraint forms
 //!
 //! - **Eq-conditional** (rows 0–18): $\text{guard} \cdot (\text{left} - \text{right}) = 0$.
-//! - **Product** (rows 19–23): $\text{left} \cdot \text{right} = \text{output}$.
+//! - **Product** (rows 19–21): $\text{left} \cdot \text{right} = \text{output}$.
 
 use jolt_field::Field;
 use jolt_spartan::UniformSpartanKey;
@@ -27,17 +27,15 @@ pub use jolt_ir::zkvm::claims::r1cs::{
     V_FLAG_ASSERT, V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC, V_FLAG_IS_COMPRESSED,
     V_FLAG_IS_FIRST_IN_SEQUENCE, V_FLAG_IS_LAST_IN_SEQUENCE, V_FLAG_JUMP, V_FLAG_LOAD,
     V_FLAG_MULTIPLY_OPERANDS, V_FLAG_STORE, V_FLAG_SUBTRACT_OPERANDS, V_FLAG_VIRTUAL_INSTRUCTION,
-    V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD, V_IMM, V_IS_RD_NOT_ZERO, V_LEFT_INSTRUCTION_INPUT,
-    V_LEFT_LOOKUP_OPERAND, V_LOOKUP_OUTPUT, V_NEXT_IS_FIRST_IN_SEQUENCE, V_NEXT_IS_NOOP,
-    V_NEXT_IS_VIRTUAL, V_NEXT_PC, V_NEXT_UNEXPANDED_PC, V_PC, V_PRODUCT, V_RAM_ADDRESS,
-    V_RAM_READ_VALUE, V_RAM_WRITE_VALUE, V_RD_WRITE_VALUE, V_RIGHT_INSTRUCTION_INPUT,
-    V_RIGHT_LOOKUP_OPERAND, V_RS1_VALUE, V_RS2_VALUE, V_SHOULD_BRANCH, V_SHOULD_JUMP,
-    V_UNEXPANDED_PC, V_WRITE_LOOKUP_OUTPUT_TO_RD, V_WRITE_PC_TO_RD,
+    V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD, V_IMM, V_LEFT_INSTRUCTION_INPUT, V_LEFT_LOOKUP_OPERAND,
+    V_LOOKUP_OUTPUT, V_NEXT_IS_FIRST_IN_SEQUENCE, V_NEXT_IS_NOOP, V_NEXT_IS_VIRTUAL, V_NEXT_PC,
+    V_NEXT_UNEXPANDED_PC, V_PC, V_PRODUCT, V_RAM_ADDRESS, V_RAM_READ_VALUE, V_RAM_WRITE_VALUE,
+    V_RD_WRITE_VALUE, V_RIGHT_INSTRUCTION_INPUT, V_RIGHT_LOOKUP_OPERAND, V_RS1_VALUE, V_RS2_VALUE,
+    V_SHOULD_BRANCH, V_SHOULD_JUMP, V_UNEXPANDED_PC,
 };
 
 type Sparse<F> = Vec<Vec<(usize, F)>>;
 
-/// Helper to convert an i128 coefficient to a field element.
 #[inline]
 fn coeff<F: Field>(c: i128) -> F {
     F::from_i128(c)
@@ -45,9 +43,8 @@ fn coeff<F: Field>(c: i128) -> F {
 
 /// Builds the Jolt R1CS as a [`UniformSpartanKey`].
 ///
-/// The key encodes 24 constraints × [`NUM_VARS_PER_CYCLE`] variables per cycle.
-/// Row order: 19 eq-conditional (matching `R1CS_CONSTRAINTS` order in jolt-core),
-/// then 5 product constraints (matching `PRODUCT_CONSTRAINTS` order).
+/// The key encodes 22 constraints × [`NUM_VARS_PER_CYCLE`] variables per cycle.
+/// Row order: 19 eq-conditional, then 3 product constraints.
 pub fn build_jolt_spartan_key<F: Field>(num_cycles: usize) -> UniformSpartanKey<F> {
     let one: F = F::from_u64(1);
     let neg_one: F = -one;
@@ -180,16 +177,16 @@ pub fn build_jolt_spartan_key<F: Field>(num_cycles: usize) -> UniformSpartanKey<
     c_sparse.push(vec![]);
 
     // 12: RdWriteEqLookupIfWriteLookupToRd
-    //     guard = WriteLookupOutputToRD (product-derived boolean)
+    //     guard = OpFlags(WriteLookupOutputToRD)
     //     left − right = RdWriteValue − LookupOutput
-    a_sparse.push(vec![(V_WRITE_LOOKUP_OUTPUT_TO_RD, one)]);
+    a_sparse.push(vec![(V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD, one)]);
     b_sparse.push(vec![(V_RD_WRITE_VALUE, one), (V_LOOKUP_OUTPUT, neg_one)]);
     c_sparse.push(vec![]);
 
     // 13: RdWriteEqPCPlusConstIfWritePCtoRD
-    //     guard = WritePCtoRD (product-derived boolean)
+    //     guard = OpFlags(Jump)
     //     left − right = RdWriteValue − UnexpandedPC − 4 + 2·IsCompressed
-    a_sparse.push(vec![(V_WRITE_PC_TO_RD, one)]);
+    a_sparse.push(vec![(V_FLAG_JUMP, one)]);
     b_sparse.push(vec![
         (V_RD_WRITE_VALUE, one),
         (V_UNEXPANDED_PC, neg_one),
@@ -265,22 +262,12 @@ pub fn build_jolt_spartan_key<F: Field>(num_cycles: usize) -> UniformSpartanKey<
     b_sparse.push(vec![(V_RIGHT_INSTRUCTION_INPUT, one)]);
     c_sparse.push(vec![(V_PRODUCT, one)]);
 
-    // 20: WriteLookupOutputToRD = IsRdNotZero · OpFlags(WriteLookupOutputToRD)
-    a_sparse.push(vec![(V_IS_RD_NOT_ZERO, one)]);
-    b_sparse.push(vec![(V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD, one)]);
-    c_sparse.push(vec![(V_WRITE_LOOKUP_OUTPUT_TO_RD, one)]);
-
-    // 21: WritePCtoRD = IsRdNotZero · OpFlags(Jump)
-    a_sparse.push(vec![(V_IS_RD_NOT_ZERO, one)]);
-    b_sparse.push(vec![(V_FLAG_JUMP, one)]);
-    c_sparse.push(vec![(V_WRITE_PC_TO_RD, one)]);
-
-    // 22: ShouldBranch = LookupOutput · Branch
+    // 20: ShouldBranch = LookupOutput · Branch
     a_sparse.push(vec![(V_LOOKUP_OUTPUT, one)]);
     b_sparse.push(vec![(V_BRANCH, one)]);
     c_sparse.push(vec![(V_SHOULD_BRANCH, one)]);
 
-    // 23: ShouldJump = OpFlags(Jump) · (1 − NextIsNoop)
+    // 21: ShouldJump = OpFlags(Jump) · (1 − NextIsNoop)
     a_sparse.push(vec![(V_FLAG_JUMP, one)]);
     b_sparse.push(vec![(V_CONST, one), (V_NEXT_IS_NOOP, neg_one)]);
     c_sparse.push(vec![(V_SHOULD_JUMP, one)]);
@@ -357,7 +344,6 @@ mod tests {
         // Flags
         w[V_FLAG_ADD_OPERANDS] = f(1);
         w[V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD] = f(1);
-        w[V_IS_RD_NOT_ZERO] = f(1);
 
         // Instruction inputs
         w[V_LEFT_INSTRUCTION_INPUT] = f(7);
@@ -368,10 +354,6 @@ mod tests {
         w[V_LEFT_LOOKUP_OPERAND] = f(0);
         w[V_RIGHT_LOOKUP_OPERAND] = f(10); // 7 + 3
         w[V_LOOKUP_OUTPUT] = f(10);
-
-        // Product-derived booleans
-        w[V_WRITE_LOOKUP_OUTPUT_TO_RD] = f(1); // IsRdNotZero * WriteLookupFlag = 1*1
-        w[V_WRITE_PC_TO_RD] = f(0); // IsRdNotZero * Jump = 1*0
 
         // Register writes
         w[V_RD_WRITE_VALUE] = f(10); // == LookupOutput
