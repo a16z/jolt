@@ -1,7 +1,6 @@
 use crate::sequence_builder::Keccak256Permutation;
 
-jolt_inlines_common::register_inlines! {
-    crate_name: "Keccak256",
+jolt_inlines_sdk::register_inlines! {
     trace_file: "keccak256_trace.joltinline",
     ops: [Keccak256Permutation],
 }

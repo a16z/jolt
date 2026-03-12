@@ -9,13 +9,11 @@ repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
-host = ["dep:ctor", "dep:tracer", "dep:tracing", "jolt-inlines-common/host"]
+host = ["dep:tracer", "jolt-inlines-sdk/host"]
 
 [dependencies]
-jolt-inlines-common.workspace = true
-ctor = { workspace = true, optional = true }
+jolt-inlines-sdk.workspace = true
 tracer = { workspace = true, optional = true, features = ["std"] }
-tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex-literal.workspace = true

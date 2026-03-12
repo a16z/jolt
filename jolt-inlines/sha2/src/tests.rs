@@ -2,9 +2,15 @@ use crate::{INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7, SHA256_INIT_FUNCT3, SHA
 use tracer::emulator::cpu::Xlen;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
+fn ensure_registered() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| crate::init_inlines().unwrap());
+}
+
 pub fn create_sha256_harness(xlen: Xlen) -> InlineTestHarness {
-    // SHA256: rs1=state/output, rs2=input (same as Blake/Keccak)
-    let layout = InlineMemoryLayout::single_input(64, 32); // 64-byte block, 32-byte state
+    ensure_registered();
+    let layout = InlineMemoryLayout::single_input(64, 32);
     InlineTestHarness::new(layout, xlen)
 }
 

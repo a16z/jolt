@@ -667,7 +667,7 @@ pub use inline_ops::*;
 mod inline_ops {
     use std::collections::VecDeque;
 
-    use jolt_inlines_common::host::InlineOp;
+    use jolt_inlines_sdk::host::InlineOp;
     use tracer::emulator::cpu::Cpu;
     use tracer::instruction::{format::format_inline::FormatInline, Instruction};
     use tracer::utils::inline_helpers::InstrAssembler;

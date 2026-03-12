@@ -3,8 +3,7 @@ use crate::sequence_builder::{
     Secp256k1SquareR,
 };
 
-jolt_inlines_common::register_inlines! {
-    crate_name: "secp256k1",
+jolt_inlines_sdk::register_inlines! {
     trace_file: "secp256k1_trace.joltinline",
     ops: [
         Secp256k1MulQ,

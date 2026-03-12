@@ -106,7 +106,7 @@ version = "0.3.4"
 source = "git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e#85b773d85d526d068ce94724ff7a7b81203fc95e"
 dependencies = [
  "allocative_derive",
- "ctor 0.1.26",
+ "ctor",
 ]
 
 [[package]]
@@ -1547,22 +1547,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctor"
-version = "0.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "424e0138278faeb2b401f174ad17e715c829512d74f3d1e81eb43365c2e0590e"
-dependencies = [
- "ctor-proc-macro",
- "dtor",
-]
-
-[[package]]
-name = "ctor-proc-macro"
-version = "0.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52560adf09603e58c9a7ee1fe1dcb95a16927b17c127f0ac02d6e768a0e25bc1"
-
-[[package]]
 name = "darling"
 version = "0.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1782,21 +1766,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
 ]
-
-[[package]]
-name = "dtor"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "404d02eeb088a82cfd873006cb713fe411306c7d182c344905e101fb1167d301"
-dependencies = [
- "dtor-proc-macro",
-]
-
-[[package]]
-name = "dtor-proc-macro"
-version = "0.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f678cf4a922c215c63e0de95eb1ff08a958a81d47e485cf9da1e27bf6305cfa5"
 
 [[package]]
 name = "dunce"
@@ -2905,11 +2874,9 @@ name = "jolt-inlines-bigint"
 version = "0.1.0"
 dependencies = [
  "ark-ff 0.5.0",
- "ctor 0.6.3",
- "jolt-inlines-common",
+ "jolt-inlines-sdk",
  "rand 0.8.5",
  "tracer",
- "tracing",
 ]
 
 [[package]]
@@ -2917,12 +2884,10 @@ name = "jolt-inlines-blake2"
 version = "0.1.0"
 dependencies = [
  "blake2",
- "ctor 0.6.3",
  "hex-literal",
- "jolt-inlines-common",
+ "jolt-inlines-sdk",
  "rand 0.8.5",
  "tracer",
- "tracing",
 ]
 
 [[package]]
@@ -2930,20 +2895,9 @@ name = "jolt-inlines-blake3"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "ctor 0.6.3",
- "jolt-inlines-common",
+ "jolt-inlines-sdk",
  "rand 0.8.5",
  "tracer",
- "tracing",
-]
-
-[[package]]
-name = "jolt-inlines-common"
-version = "0.1.0"
-dependencies = [
- "ctor 0.6.3",
- "tracer",
- "tracing",
 ]
 
 [[package]]
@@ -2953,23 +2907,26 @@ dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",
  "ark-grumpkin",
- "ctor 0.6.3",
- "jolt-inlines-common",
+ "jolt-inlines-sdk",
  "serde",
  "tracer",
- "tracing",
 ]
 
 [[package]]
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
 dependencies = [
- "ctor 0.6.3",
  "hex-literal",
- "jolt-inlines-common",
+ "jolt-inlines-sdk",
  "sha3",
  "tracer",
- "tracing",
+]
+
+[[package]]
+name = "jolt-inlines-sdk"
+version = "0.1.0"
+dependencies = [
+ "tracer",
 ]
 
 [[package]]
@@ -2978,24 +2935,20 @@ version = "0.1.0"
 dependencies = [
  "ark-ff 0.5.0",
  "ark-secp256k1",
- "ctor 0.6.3",
- "jolt-inlines-common",
+ "jolt-inlines-sdk",
  "num-bigint",
  "num-integer",
  "serde",
  "tracer",
- "tracing",
 ]
 
 [[package]]
 name = "jolt-inlines-sha2"
 version = "0.1.0"
 dependencies = [
- "ctor 0.6.3",
- "jolt-inlines-common",
+ "jolt-inlines-sdk",
  "sha2",
  "tracer",
- "tracing",
 ]
 
 [[package]]

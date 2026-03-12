@@ -2401,11 +2401,8 @@ mod tests {
     #[serial]
     fn sha3_e2e_dory() {
         DoryGlobals::reset();
-        // Ensure SHA3 inline library is linked and auto-registered
         #[cfg(feature = "host")]
-        use jolt_inlines_keccak256 as _;
-        // SHA3 inlines are automatically registered via #[ctor::ctor]
-        // when the jolt-inlines-keccak256 crate is linked (see lib.rs)
+        jolt_inlines_keccak256::init_inlines().expect("Failed to register keccak256 inlines");
 
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
@@ -2463,11 +2460,9 @@ mod tests {
     #[serial]
     fn sha2_e2e_dory() {
         DoryGlobals::reset();
-        // Ensure SHA2 inline library is linked and auto-registered
         #[cfg(feature = "host")]
-        use jolt_inlines_sha2 as _;
-        // SHA2 inlines are automatically registered via #[ctor::ctor]
-        // when the jolt-inlines-sha2 crate is linked (see lib.rs)
+        jolt_inlines_sha2::init_inlines().expect("Failed to register sha2 inlines");
+
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();

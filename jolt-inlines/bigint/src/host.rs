@@ -1,7 +1,6 @@
 use crate::sequence_builder::BigintMul256;
 
-jolt_inlines_common::register_inlines! {
-    crate_name: "BIGINT256_MUL",
+jolt_inlines_sdk::register_inlines! {
     trace_file: "bigint_mul256_trace.joltinline",
     ops: [BigintMul256],
 }

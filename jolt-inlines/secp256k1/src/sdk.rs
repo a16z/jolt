@@ -47,7 +47,7 @@ fn is_fr_non_canonical(x: &[u64; 4]) -> bool {
     x[0] >= Fr::MODULUS.0[0]
 }
 
-pub use jolt_inlines_common::{hcf, UnwrapOrSpoilProof};
+pub use jolt_inlines_sdk::{hcf, UnwrapOrSpoilProof};
 
 /// Error types for secp256k1 operations
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -311,7 +311,7 @@ impl Secp256k1Fq {
     }
 }
 
-impl jolt_inlines_common::ec::ECField for Secp256k1Fq {
+impl jolt_inlines_sdk::ec::ECField for Secp256k1Fq {
     type Error = Secp256k1Error;
     #[inline(always)]
     fn zero() -> Self {
@@ -633,7 +633,7 @@ impl Secp256k1Fr {
 #[derive(Clone)]
 pub struct Secp256k1Curve;
 
-impl jolt_inlines_common::ec::CurveParams<Secp256k1Fq> for Secp256k1Curve {
+impl jolt_inlines_sdk::ec::CurveParams<Secp256k1Fq> for Secp256k1Curve {
     type Error = Secp256k1Error;
     fn curve_b() -> Secp256k1Fq {
         Secp256k1Fq::seven()
@@ -643,7 +643,7 @@ impl jolt_inlines_common::ec::CurveParams<Secp256k1Fq> for Secp256k1Curve {
     }
 }
 
-pub type Secp256k1Point = jolt_inlines_common::ec::AffinePoint<Secp256k1Fq, Secp256k1Curve>;
+pub type Secp256k1Point = jolt_inlines_sdk::ec::AffinePoint<Secp256k1Fq, Secp256k1Curve>;
 
 pub trait Secp256k1PointExt {
     fn generator() -> Secp256k1Point;

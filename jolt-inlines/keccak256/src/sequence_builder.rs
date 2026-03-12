@@ -267,7 +267,7 @@ pub use inline_ops::*;
 
 #[cfg(feature = "host")]
 mod inline_ops {
-    use jolt_inlines_common::host::InlineOp;
+    use jolt_inlines_sdk::host::InlineOp;
     use tracer::instruction::{format::format_inline::FormatInline, Instruction};
     use tracer::utils::inline_helpers::InstrAssembler;
 

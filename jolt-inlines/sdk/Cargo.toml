@@ -1,17 +1,15 @@
 [package]
-name = "jolt-inlines-common"
+name = "jolt-inlines-sdk"
 version = "0.1.0"
 edition = "2021"
-description = "Shared utilities for Jolt inline implementations"
+description = "SDK for developing Jolt VM inline implementations"
 license = "MIT"
 homepage = "https://github.com/a16z/jolt/README.md"
 repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
-host = ["dep:ctor", "dep:tracer", "dep:tracing"]
+host = ["dep:tracer"]
 
 [dependencies]
-ctor = { workspace = true, optional = true }
 tracer = { workspace = true, optional = true, features = ["std"] }
-tracing = { workspace = true, optional = true }

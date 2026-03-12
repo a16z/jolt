@@ -6,16 +6,17 @@ use tracer::{
     register_inline,
     utils::{
         inline_helpers::InstrAssembler,
-        inline_sequence_writer::{
-            write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
-        },
+        inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs},
     },
 };
+
+pub use tracer::utils::inline_sequence_writer::AppendMode;
 
 /// Trait for declaring an inline operation's metadata and sequence builder.
 ///
 /// Implement this for each sub-inline (e.g. `Sha256Compression`, `Secp256k1MulQ`),
-/// then pass the types to [`register_inlines!`] to generate host registration boilerplate.
+/// then pass the types to [`register_inlines!`] to generate `init_inlines()` and
+/// `store_inlines()`.
 pub trait InlineOp: Send + Sync {
     const OPCODE: u32;
     const FUNCT3: u32;
@@ -66,13 +67,15 @@ pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), Stri
     write_inline_trace(file, &inline_info, &inputs, &instructions, mode).map_err(|e| e.to_string())
 }
 
-/// Generate `init_inlines`, `store_inlines`, and `#[ctor] auto_register` from a list of
-/// `InlineOp` types.
+/// Generate `init_inlines()` and `store_inlines()` from a list of `InlineOp` types.
 ///
-/// Usage:
+/// `init_inlines()` registers all ops with the tracer's global inline registry.
+/// `store_inlines()` writes default inline traces to the given file.
+///
+/// Call `init_inlines()` before tracing (e.g. in `preprocess` or `prove`).
+///
 /// ```ignore
 /// register_inlines! {
-///     crate_name: "SHA256",
 ///     trace_file: "sha256_trace.joltinline",
 ///     ops: [Sha256Compression, Sha256CompressionInitial],
 /// }
@@ -80,7 +83,6 @@ pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), Stri
 #[macro_export]
 macro_rules! register_inlines {
     (
-        crate_name: $crate_name:expr,
         trace_file: $trace_file:expr,
         ops: [$first:ty $(, $rest:ty)*$(,)?]$(,)?
     ) => {
@@ -93,27 +95,13 @@ macro_rules! register_inlines {
         pub fn store_inlines() -> Result<(), String> {
             $crate::host::store_trace::<$first>(
                 $trace_file,
-                tracer::utils::inline_sequence_writer::AppendMode::Overwrite,
+                $crate::host::AppendMode::Overwrite,
             )?;
             $($crate::host::store_trace::<$rest>(
                 $trace_file,
-                tracer::utils::inline_sequence_writer::AppendMode::Append,
+                $crate::host::AppendMode::Append,
             )?;)*
             Ok(())
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        #[ctor::ctor]
-        fn auto_register() {
-            if let Err(e) = init_inlines() {
-                tracing::error!(concat!("Failed to register ", $crate_name, " inlines: {}"), e);
-            }
-
-            if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
-                if let Err(e) = store_inlines() {
-                    tracing::error!(concat!("Failed to store ", $crate_name, " inline traces: {}"), e);
-                }
-            }
         }
     };
 }
