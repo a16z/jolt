@@ -3301,6 +3301,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "modexp"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "modexp-guest",
+ "rand 0.8.5",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "modexp-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "num-bigint",
+]
+
+[[package]]
 name = "modinv"
 version = "0.1.0"
 dependencies = [

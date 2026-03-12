@@ -12,6 +12,7 @@ const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
+const CYCLES_PER_MODEXP_256: f64 = 883_493.0;
 const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
 
 /// Calculate number of operations to target a specific cycle count
@@ -31,6 +32,7 @@ pub enum BenchType {
     Sha2Chain,
     #[strum(serialize = "SHA3 Chain")]
     Sha3Chain,
+    Modexp,
 }
 
 pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -41,6 +43,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Sha2Chain => sha2_chain(),
         BenchType::Sha3Chain => sha3_chain(),
         BenchType::Fibonacci => fibonacci(),
+        BenchType::Modexp => modexp(),
     }
 }
 
@@ -75,6 +78,22 @@ fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     );
     inputs.append(&mut postcard::to_stdvec(&iters).unwrap());
     prove_example("sha2-chain-guest", inputs)
+}
+
+fn modexp() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let base = [0xABu8; 32];
+    let exp = [0xCDu8; 32];
+    let mut modulus = [0xEFu8; 32];
+    modulus[31] |= 0x01;
+    let iters = 10u32;
+    let inputs = [
+        postcard::to_stdvec(&base).unwrap(),
+        postcard::to_stdvec(&exp).unwrap(),
+        postcard::to_stdvec(&modulus).unwrap(),
+        postcard::to_stdvec(&iters).unwrap(),
+    ]
+    .concat();
+    prove_example("modexp-guest", inputs)
 }
 
 fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -130,6 +149,20 @@ pub fn master_benchmark(
             }),
             BenchType::BTreeMap => ("btreemap", |target| {
                 postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP)).unwrap()
+            }),
+            BenchType::Modexp => ("modexp", |target| {
+                let iterations = scale_to_target_ops(target, CYCLES_PER_MODEXP_256);
+                let base = [0xABu8; 32];
+                let exp = [0xCDu8; 32];
+                let mut modulus = [0xEFu8; 32];
+                modulus[31] |= 0x01;
+                [
+                    postcard::to_stdvec(&base).unwrap(),
+                    postcard::to_stdvec(&exp).unwrap(),
+                    postcard::to_stdvec(&modulus).unwrap(),
+                    postcard::to_stdvec(&iterations).unwrap(),
+                ]
+                .concat()
             }),
             BenchType::Sha2 => panic!("Use sha2-chain instead"),
             BenchType::Sha3 => panic!("Use sha3-chain instead"),
