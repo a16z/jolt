@@ -2401,8 +2401,7 @@ mod tests {
     #[serial]
     fn sha3_e2e_dory() {
         DoryGlobals::reset();
-        #[cfg(feature = "host")]
-        jolt_inlines_keccak256::init_inlines().expect("Failed to register keccak256 inlines");
+        crate::register_all_inlines();
 
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
@@ -2460,8 +2459,7 @@ mod tests {
     #[serial]
     fn sha2_e2e_dory() {
         DoryGlobals::reset();
-        #[cfg(feature = "host")]
-        jolt_inlines_sha2::init_inlines().expect("Failed to register sha2 inlines");
+        crate::register_all_inlines();
 
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();

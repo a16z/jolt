@@ -25,3 +25,15 @@ pub use ark_bn254;
 
 // Re-export AdviceTape type for use in generated code
 pub use tracer::emulator::cpu::AdviceTape;
+
+/// Register all inline implementations compiled in via the `host` feature.
+/// Idempotent — safe to call multiple times (uses `Once` internally).
+#[cfg(feature = "host")]
+pub fn register_all_inlines() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        jolt_inlines_sha2::init_inlines().expect("Failed to register sha2 inlines");
+        jolt_inlines_keccak256::init_inlines().expect("Failed to register keccak256 inlines");
+    });
+}
