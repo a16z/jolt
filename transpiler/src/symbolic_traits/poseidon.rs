@@ -41,6 +41,8 @@ use zklean_extractor::mle_ast::{
     set_pending_challenge, take_pending_append, take_pending_commitment_chunks, MleAst,
 };
 
+use super::io_replay::pop_bytes_override;
+
 /// Symbolic Poseidon transcript for AST-based transpilation.
 #[derive(Clone)]
 pub struct PoseidonAstTranscript {
@@ -143,13 +145,31 @@ impl Transcript for PoseidonAstTranscript {
         self.hash_and_update(field);
     }
 
+    fn raw_append_label_with_len(&mut self, label: &'static [u8], len: u64) {
+        // The default impl calls raw_append_bytes(&packed), which would check the
+        // FIFO and steal an IO override meant for actual input/output data.
+        // We do the same packing + hashing but call append_field_elements directly.
+        assert!(label.len() <= 24);
+        let mut packed = [0u8; 32];
+        packed[..label.len()].copy_from_slice(label);
+        packed[24..32].copy_from_slice(&len.to_be_bytes());
+        let element = MleAst::from(bytes_to_scalar(&packed));
+        self.append_field_elements(&[element]);
+    }
+
     fn raw_append_bytes(&mut self, bytes: &[u8]) {
         let elements: Vec<MleAst> = bytes
             .chunks(32)
             .map(|chunk| {
-                let mut padded = [0u8; 32];
-                padded[..chunk.len()].copy_from_slice(chunk);
-                MleAst::from(bytes_to_scalar(&padded))
+                // If symbolize_io_device pre-loaded a FIFO override for this chunk,
+                // use the symbolic variable instead of the concrete bytes.
+                if let Some(symbolic) = pop_bytes_override() {
+                    symbolic
+                } else {
+                    let mut padded = [0u8; 32];
+                    padded[..chunk.len()].copy_from_slice(chunk);
+                    MleAst::from(bytes_to_scalar(&padded))
+                }
             })
             .collect();
         self.append_field_elements(&elements);

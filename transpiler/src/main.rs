@@ -33,6 +33,7 @@
 
 use ark_serialize::CanonicalDeserialize;
 use clap::{Parser, ValueEnum};
+use jolt_core::field::JoltField;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -202,6 +203,39 @@ fn main() {
     // IMPORTANT: The proof must have been generated with the same transcript feature,
     // otherwise challenge values will mismatch and verification will fail.
     let transcript: SelectedAstTranscript = Transcript::new(b"Jolt");
+
+    // =========================================================================
+    // Step 2b: Symbolize IO device
+    // =========================================================================
+    // Make inputs/outputs/panic into witness variables instead of constants.
+    // This sets up two override mechanisms:
+    // 1. PENDING_BYTES_OVERRIDES (FIFO): consumed by PoseidonAstTranscript::raw_append_bytes
+    //    during fiat_shamir_preamble
+    // 2. PENDING_IO_MLE: consumed by eval_io_mle during output sumcheck
+    println!("\n=== Symbolizing IO Device ===");
+    let (eval_input_words, _eval_output_words) =
+        transpiler::symbolize::symbolize_io_device(&io_device, &mut var_alloc);
+    println!("  IO input words: {}", eval_input_words.len());
+
+    // Set PENDING_INITIAL_RAM: bytecode as constants, inputs as symbolic
+    {
+        use jolt_core::zkvm::ram::{set_pending_initial_ram, PendingInitialRamValues};
+        let bytecode_words: Vec<MleAst> = real_preprocessing
+            .shared
+            .ram
+            .bytecode_words
+            .iter()
+            .map(|&w| MleAst::from_u64(w))
+            .collect();
+        set_pending_initial_ram(PendingInitialRamValues {
+            bytecode_words,
+            input_words: eval_input_words,
+        });
+    }
+    println!(
+        "  Total symbolic variables after IO: {}",
+        var_alloc.next_idx()
+    );
 
     // =========================================================================
     // Step 3: Set up symbolic verifier

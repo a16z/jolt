@@ -32,6 +32,7 @@
 
 pub mod ast_commitment_scheme;
 pub mod ast_curve;
+pub mod io_replay;
 pub mod opening_accumulator;
 pub mod poseidon;
 

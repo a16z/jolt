@@ -84,6 +84,7 @@
 pub mod gnark_codegen;
 pub mod symbolic_proof;
 pub mod symbolic_traits;
+pub mod symbolize;
 
 pub use gnark_codegen::{generate_circuit_from_bundle, sanitize_go_name};
 pub use symbolic_proof::{symbolize_proof, VarAllocator};
