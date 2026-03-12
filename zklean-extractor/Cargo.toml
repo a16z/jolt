@@ -19,7 +19,7 @@ ark-bn254.workspace = true
 ark-serialize.workspace = true
 ark-ff.workspace = true
 clap.workspace = true
-rand_core = { version = "0.6.4", default-features = false }
+rand_core = { version = "0.9.5", default-features = false }
 regex = "1.11.1"
 strum.workspace = true
 build-fs-tree = "0.8.1"
