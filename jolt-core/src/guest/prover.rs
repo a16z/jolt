@@ -19,13 +19,18 @@ pub fn preprocess(
 ) -> JoltProverPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme> {
     use crate::zkvm::verifier::JoltSharedPreprocessing;
 
-    let (bytecode, memory_init, program_size) = guest.decode();
+    let (bytecode, memory_init, program_size, e_entry) = guest.decode();
 
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    let shared_preprocessing =
-        JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init, max_trace_length);
+    let shared_preprocessing = JoltSharedPreprocessing::new(
+        bytecode,
+        memory_layout,
+        memory_init,
+        max_trace_length,
+        e_entry,
+    );
     JoltProverPreprocessing::new(shared_preprocessing)
 }
 
@@ -33,7 +38,7 @@ pub fn preprocess(
 #[cfg(feature = "prover")]
 pub fn prove<
     F: JoltField,
-    C: JoltCurve,
+    C: JoltCurve<F = F>,
     PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
     FS: Transcript,
 >(

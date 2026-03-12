@@ -652,8 +652,9 @@ impl LazyTracer for CheckpointingTracer {
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, Xlen) {
+pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64, Xlen) {
     let obj = object::File::parse(elf).unwrap();
+    let e_entry = obj.entry();
     let mut xlen = Xlen::Bit64;
     if let object::File::Elf32(_) = &obj {
         xlen = Xlen::Bit32;
@@ -739,7 +740,7 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, Xlen) {
             data.push((address + offset as u64, *byte));
         }
     }
-    (instructions, data, program_end, xlen)
+    (instructions, data, program_end, e_entry, xlen)
 }
 
 fn get_xlen() -> Xlen {

@@ -1,9 +1,6 @@
-#[cfg(feature = "std")]
 use std::collections::HashMap;
-#[cfg(feature = "std")]
-use syn::{Lit, Meta, MetaNameValue, NestedMeta};
+use syn::{punctuated::Punctuated, token::Comma, Expr, ExprLit, Lit, Meta, MetaNameValue};
 
-#[cfg(feature = "std")]
 use crate::constants::{
     DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRACE_LENGTH,
     DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
@@ -25,8 +22,7 @@ pub struct Attributes {
     pub backtrace: Option<String>,
 }
 
-#[cfg(feature = "std")]
-pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
+pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
     let mut attributes = HashMap::<_, u64>::new();
     let mut wasm = false;
     let mut guest_only = false;
@@ -34,10 +30,14 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
     let mut profile: Option<String> = None;
     let mut backtrace: Option<String> = None;
 
-    for attr in attr {
-        match attr {
-            NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
+    for meta in attr {
+        match meta {
+            Meta::NameValue(MetaNameValue { path, value, .. }) => {
                 let ident = &path.get_ident().expect("Expected identifier");
+                let lit = match value {
+                    Expr::Lit(ExprLit { lit, .. }) => lit,
+                    _ => panic!("expected literal expression"),
+                };
                 match ident.to_string().as_str() {
                     "backtrace" => {
                         let value = match lit {
@@ -75,16 +75,16 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
                     }
                 }
             }
-            NestedMeta::Meta(Meta::Path(path)) if path.is_ident("wasm") => {
+            Meta::Path(path) if path.is_ident("wasm") => {
                 wasm = true;
             }
-            NestedMeta::Meta(Meta::Path(path)) if path.is_ident("guest_only") => {
+            Meta::Path(path) if path.is_ident("guest_only") => {
                 guest_only = true;
             }
-            NestedMeta::Meta(Meta::Path(path)) if path.is_ident("nightly") => {
+            Meta::Path(path) if path.is_ident("nightly") => {
                 nightly = true;
             }
-            NestedMeta::Meta(Meta::Path(path)) if path.is_ident("backtrace") => {
+            Meta::Path(path) if path.is_ident("backtrace") => {
                 backtrace = Some("auto".to_string());
             }
             _ => panic!("expected integer literal"),

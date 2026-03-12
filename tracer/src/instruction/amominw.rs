@@ -14,14 +14,15 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
+use super::{format::format_amo::FormatAMO, Cycle, RAMWrite, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOMINW,
     mask   = 0xf800707f,
     match  = 0x8000202f,
     format = FormatAMO,
-    ram    = ()
+    ram    = RAMWrite,
+    side_effects = true
 );
 
 impl AMOMINW {
@@ -47,7 +48,7 @@ impl AMOMINW {
             .expect("MMU store error");
 
         // Return the original value
-        cpu.x[self.operands.rd as usize] = original_value;
+        cpu.write_register(self.operands.rd as usize, original_value);
     }
 }
 

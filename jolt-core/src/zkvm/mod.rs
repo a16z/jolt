@@ -170,6 +170,7 @@ pub fn fiat_shamir_preamble(
     program_io: &JoltDevice,
     ram_K: usize,
     trace_length: usize,
+    entry_address: u64,
     transcript: &mut impl Transcript,
 ) {
     transcript.append_u64(b"max_input_size", program_io.memory_layout.max_input_size);
@@ -180,6 +181,7 @@ pub fn fiat_shamir_preamble(
     transcript.append_u64(b"panic", program_io.panic as u64);
     transcript.append_u64(b"ram_K", ram_K as u64);
     transcript.append_u64(b"trace_length", trace_length as u64);
+    transcript.append_u64(b"entry_address", entry_address);
 }
 
 #[cfg(feature = "prover")]

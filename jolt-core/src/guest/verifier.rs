@@ -26,17 +26,23 @@ pub fn preprocess(
 }
 
 fn preprocess_shared(guest: &Program, max_trace_length: usize) -> JoltSharedPreprocessing {
-    let (bytecode, memory_init, program_size) = guest.decode();
+    let (bytecode, memory_init, program_size, e_entry) = guest.decode();
 
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    JoltSharedPreprocessing::new(bytecode, memory_layout, memory_init, max_trace_length)
+    JoltSharedPreprocessing::new(
+        bytecode,
+        memory_layout,
+        memory_init,
+        max_trace_length,
+        e_entry,
+    )
 }
 
 pub fn verify<
     F: JoltField,
-    C: JoltCurve,
+    C: JoltCurve<F = F>,
     PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
     FS: Transcript,
 >(

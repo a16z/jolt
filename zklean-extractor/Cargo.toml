@@ -9,7 +9,7 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [build-dependencies]
-build-fs-tree = "0.7.1"
+build-fs-tree = "0.8.1"
 
 [dependencies]
 ark-std.workspace = true
@@ -20,7 +20,7 @@ clap.workspace = true
 rand_core = { version = "0.6.4", default-features = false }
 regex = "1.11.1"
 strum.workspace = true
-build-fs-tree = "0.7.1"
+build-fs-tree = "0.8.1"
 allocative.workspace = true
 
 jolt-core = { path = "../jolt-core" }

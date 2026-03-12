@@ -22,9 +22,11 @@ declare_riscv_instr!(
 
 impl ADDW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <ADDW as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd as usize] = cpu.x[self.operands.rs1 as usize]
-            .wrapping_add(cpu.x[self.operands.rs2 as usize])
-            as i32 as i64;
+        cpu.write_register(
+            self.operands.rd as usize,
+            cpu.x[self.operands.rs1 as usize].wrapping_add(cpu.x[self.operands.rs2 as usize]) as i32
+                as i64,
+        );
     }
 }
 

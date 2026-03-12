@@ -49,11 +49,11 @@ impl InstructionFormat for FormatU {
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.0 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
+        state.rd.0 = normalize_register_value(cpu, self.rd as usize);
     }
 
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
+        state.rd.1 = normalize_register_value(cpu, self.rd as usize);
     }
 
     #[cfg(any(feature = "test-utils", test))]
@@ -64,6 +64,10 @@ impl InstructionFormat for FormatU {
             rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
             imm: rng.next_u64(),
         }
+    }
+
+    fn set_rd(&mut self, rd: u8) {
+        self.rd = rd;
     }
 }
 

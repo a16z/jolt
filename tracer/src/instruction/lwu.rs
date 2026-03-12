@@ -31,14 +31,17 @@ impl LWU {
         let address = cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64;
         let value = cpu.mmu.load_word(address);
 
-        cpu.x[self.operands.rd as usize] = match value {
-            Ok((word, memory_read)) => {
-                *ram_access = memory_read;
-                // Zero extension for unsigned word load
-                word as i64
-            }
-            Err(_) => panic!("MMU load error"),
-        };
+        cpu.write_register(
+            self.operands.rd as usize,
+            match value {
+                Ok((word, memory_read)) => {
+                    *ram_access = memory_read;
+                    // Zero extension for unsigned word load
+                    word as i64
+                }
+                Err(_) => panic!("MMU load error"),
+            },
+        );
     }
 }
 
@@ -71,16 +74,17 @@ impl LWU {
         xlen: Xlen,
     ) -> Vec<Instruction> {
         let v0 = allocator.allocate();
+        let v1 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_align::<VirtualAssertWordAlignment>(self.operands.rs1, self.operands.imm);
         asm.emit_i::<ADDI>(*v0, self.operands.rs1, self.operands.imm as u64);
-        asm.emit_i::<ANDI>(self.operands.rd, *v0, -8i64 as u64);
-        asm.emit_ld::<LD>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<ANDI>(*v1, *v0, -8i64 as u64);
+        asm.emit_ld::<LD>(*v1, *v1, 0);
         asm.emit_i::<XORI>(*v0, *v0, 4);
         asm.emit_i::<SLLI>(*v0, *v0, 3);
-        asm.emit_r::<SLL>(self.operands.rd, self.operands.rd, *v0);
-        asm.emit_i::<SRLI>(self.operands.rd, self.operands.rd, 32);
+        asm.emit_r::<SLL>(*v1, *v1, *v0);
+        asm.emit_i::<SRLI>(self.operands.rd, *v1, 32);
 
         asm.finalize()
     }

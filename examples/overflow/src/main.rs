@@ -43,6 +43,7 @@ pub fn main() {
     let verifier_preprocessing = guest::preprocess_verifier_allocate_stack_with_increased_size(
         shared_preprocessing,
         prover_preprocessing.generators.to_verifier_setup(),
+        None,
     );
 
     let prove_allocate_stack_with_increased_size =

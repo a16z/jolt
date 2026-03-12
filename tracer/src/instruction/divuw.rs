@@ -1,5 +1,5 @@
-use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use crate::{instruction::addi::ADDI, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -33,11 +33,14 @@ impl DIVUW {
         // quotient in rd, sign-extended to 64 bits.
         let dividend = cpu.x[self.operands.rs1 as usize] as u32;
         let divisor = cpu.x[self.operands.rs2 as usize] as u32;
-        cpu.x[self.operands.rd as usize] = (if divisor == 0 {
-            u32::MAX
-        } else {
-            dividend.wrapping_div(divisor)
-        }) as i32 as i64;
+        cpu.write_register(
+            self.operands.rd as usize,
+            (if divisor == 0 {
+                u32::MAX
+            } else {
+                dividend.wrapping_div(divisor)
+            }) as i32 as i64,
+        );
     }
 }
 
@@ -92,7 +95,7 @@ impl RISCVTrace for DIVUW {
         let rs1 = allocator.allocate();
         let rs2 = allocator.allocate();
         let quo = allocator.allocate();
-        // note that rd is used as a temporary in the middle of the sequence to save registers
+        let temp = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         // Zero-extend inputs to proper 32-bit unsigned values
         asm.emit_i::<VirtualZeroExtendWord>(*rs1, self.operands.rs1, 0);
@@ -102,18 +105,20 @@ impl RISCVTrace for DIVUW {
         // Verify no overflow: quotient × divisor must not overflow
         asm.emit_b::<VirtualAssertMulUNoOverflow>(*quo, *rs2, 0);
         // Compute quotient × divisor
-        asm.emit_r::<MUL>(self.operands.rd, *quo, *rs2);
+        asm.emit_r::<MUL>(*temp, *quo, *rs2);
         // Verify: quotient × divisor <= dividend
-        asm.emit_b::<VirtualAssertLTE>(self.operands.rd, *rs1, 0);
+        asm.emit_b::<VirtualAssertLTE>(*temp, *rs1, 0);
         // Compute remainder = dividend - quotient × divisor
         // Note: if divisor == 0, then remainder will equal dividend, which satisfies the spec
-        asm.emit_r::<SUB>(self.operands.rd, *rs1, self.operands.rd);
+        asm.emit_r::<SUB>(*temp, *rs1, *temp);
         // Verify: divisor == 0 || remainder < divisor (unsigned)
-        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(self.operands.rd, *rs2, 0);
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*temp, *rs2, 0);
         // Sign-extend 32-bit quotient to 64 bits
-        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *quo, 0);
+        asm.emit_i::<VirtualSignExtendWord>(*temp, *quo, 0);
         // Verify divisor == 0 implies quotient == uXX::MAX
-        asm.emit_b::<VirtualAssertValidDiv0>(*rs2, self.operands.rd, 0);
+        asm.emit_b::<VirtualAssertValidDiv0>(*rs2, *temp, 0);
+        // Move result into rd
+        asm.emit_i::<ADDI>(self.operands.rd, *temp, 0);
         asm.finalize()
     }
 }

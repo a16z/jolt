@@ -262,7 +262,7 @@ impl Program {
     ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf_contents = self.read_elf();
-        let (_, _, program_end, _) = tracer::decode(&elf_contents);
+        let (_, _, program_end, _, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
         let memory_config = self.memory_config(program_size);
 
@@ -288,7 +288,7 @@ impl Program {
     ) -> (Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf_contents = self.read_elf();
-        let (_, _, program_end, _) = tracer::decode(&elf_contents);
+        let (_, _, program_end, _, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
         let memory_config = self.memory_config(program_size);
 
@@ -327,13 +327,13 @@ impl Program {
 ///
 /// Returns `(instructions, memory_init_bytes, program_size)`.
 pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
-    let (mut instructions, raw_bytes, program_end, xlen) = tracer::decode(elf);
+    let (mut instructions, raw_bytes, program_end, _, xlen) = tracer::decode(elf);
     let program_size = program_end - RAM_START_ADDRESS;
     let allocator = VirtualRegisterAllocator::default();
 
     instructions = instructions
         .into_iter()
-        .flat_map(|instr| instr.inline_sequence(&allocator, xlen))
+        .flat_map(|instr: Instruction| instr.inline_sequence(&allocator, xlen))
         .collect();
 
     (instructions, raw_bytes, program_size)

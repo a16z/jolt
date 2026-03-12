@@ -233,54 +233,84 @@ impl JoltState {
         }
     }
 
-    /// Bind all JoltState fields as Opening variables in a Z3Emitter,
-    /// mapping each field to its corresponding V_* index.
-    fn bind_to_emitter(&self, emitter: &mut Z3Emitter) {
-        emitter.bind_opening(V_LEFT_INSTRUCTION_INPUT as u32, self.left_input.clone());
-        emitter.bind_opening(V_RIGHT_INSTRUCTION_INPUT as u32, self.right_input.clone());
-        emitter.bind_opening(V_PRODUCT as u32, self.product.clone());
-        emitter.bind_opening(V_SHOULD_BRANCH as u32, self.should_branch.clone());
-        emitter.bind_opening(V_PC as u32, self.pc.clone());
-        emitter.bind_opening(V_UNEXPANDED_PC as u32, self.unexpanded_pc.clone());
-        emitter.bind_opening(V_IMM as u32, self.imm.clone());
-        emitter.bind_opening(V_RAM_ADDRESS as u32, self.ram_addr.clone());
-        emitter.bind_opening(V_RS1_VALUE as u32, self.rs1_value.clone());
-        emitter.bind_opening(V_RS2_VALUE as u32, self.rs2_value.clone());
-        emitter.bind_opening(V_RD_WRITE_VALUE as u32, self.rd_write_value.clone());
-        emitter.bind_opening(V_RAM_READ_VALUE as u32, self.ram_read_value.clone());
-        emitter.bind_opening(V_RAM_WRITE_VALUE as u32, self.ram_write_value.clone());
-        emitter.bind_opening(V_LEFT_LOOKUP_OPERAND as u32, self.left_lookup.clone());
-        emitter.bind_opening(V_RIGHT_LOOKUP_OPERAND as u32, self.right_lookup.clone());
-        emitter.bind_opening(V_NEXT_UNEXPANDED_PC as u32, self.next_unexpanded_pc.clone());
-        emitter.bind_opening(V_NEXT_PC as u32, self.next_pc.clone());
-        emitter.bind_opening(V_NEXT_IS_VIRTUAL as u32, self.next_is_virtual.clone());
-        emitter.bind_opening(
-            V_NEXT_IS_FIRST_IN_SEQUENCE as u32,
-            self.next_is_first_in_sequence.clone(),
-        );
-        emitter.bind_opening(V_LOOKUP_OUTPUT as u32, self.lookup_output.clone());
-        emitter.bind_opening(V_SHOULD_JUMP as u32, self.should_jump.clone());
-
-        // Circuit flags (V_FLAG_ADD_OPERANDS is the base offset)
-        for i in 0..NUM_CIRCUIT_FLAGS {
-            emitter.bind_opening((V_FLAG_ADD_OPERANDS + i) as u32, self.flags[i].clone());
-        }
-
-        // Product factor variables
-        emitter.bind_opening(
-            V_BRANCH as u32,
-            self.instruction_flags[InstructionFlags::Branch as usize].clone(),
-        );
-        emitter.bind_opening(V_NEXT_IS_NOOP as u32, self.next_is_noop.clone());
+    fn r1cs_inputs(&self) -> [&Int; NUM_R1CS_INPUTS] {
+        [
+            &self.left_input,
+            &self.right_input,
+            &self.product,
+            &self.should_branch,
+            &self.pc,
+            &self.unexpanded_pc,
+            &self.imm,
+            &self.ram_addr,
+            &self.rs1_value,
+            &self.rs2_value,
+            &self.rd_write_value,
+            &self.ram_read_value,
+            &self.ram_write_value,
+            &self.left_lookup,
+            &self.right_lookup,
+            &self.next_unexpanded_pc,
+            &self.next_pc,
+            &self.next_is_virtual,
+            &self.next_is_first_in_sequence,
+            &self.lookup_output,
+            &self.should_jump,
+            &self.flags[CircuitFlags::AddOperands as usize],
+            &self.flags[CircuitFlags::SubtractOperands as usize],
+            &self.flags[CircuitFlags::MultiplyOperands as usize],
+            &self.flags[CircuitFlags::Load as usize],
+            &self.flags[CircuitFlags::Store as usize],
+            &self.flags[CircuitFlags::Jump as usize],
+            &self.flags[CircuitFlags::WriteLookupOutputToRD as usize],
+            &self.flags[CircuitFlags::VirtualInstruction as usize],
+            &self.flags[CircuitFlags::Assert as usize],
+            &self.flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize],
+            &self.flags[CircuitFlags::Advice as usize],
+            &self.flags[CircuitFlags::IsCompressed as usize],
+            &self.flags[CircuitFlags::IsFirstInSequence as usize],
+            &self.flags[CircuitFlags::IsLastInSequence as usize],
+        ]
     }
 
-    /// Add all R1CS + product constraints using jolt-ir constraint expressions.
-    fn add_ir_constraints(&self, solver: &mut Solver) {
-        for c in &constraint_exprs() {
-            let mut emitter = Z3Emitter::new();
-            self.bind_to_emitter(&mut emitter);
-            let z3_expr = c.expr.to_circuit(&mut emitter);
-            *solver += z3_expr.eq(Int::from(0));
+    fn lc_to_int(&self, lc: &LC) -> Int {
+        let mut result = lc
+            .const_term()
+            .map(|c| Int::from_str(&c.to_string()).unwrap())
+            .unwrap_or(Int::from_i64(0));
+        lc.for_each_term(|idx, coeff| {
+            let coeff: Int = Int::from_str(&coeff.to_string()).unwrap();
+            result += coeff * self.r1cs_inputs()[idx];
+        });
+        result
+    }
+
+    fn add_r1cs_constraints(&self, solver: &mut Solver) {
+        R1CS_CONSTRAINTS.iter().for_each(|c| {
+            let lhs = self.lc_to_int(&c.cons.a) * self.lc_to_int(&c.cons.b);
+            *solver += lhs.eq(Int::from(0));
+        });
+    }
+
+    fn virtpoly_to_int(&self, poly: &VirtualPolynomial) -> &Int {
+        match poly {
+            VirtualPolynomial::LeftInstructionInput => &self.left_input,
+            VirtualPolynomial::RightInstructionInput => &self.right_input,
+            VirtualPolynomial::Product => &self.product,
+            VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD) => {
+                &self.flags[CircuitFlags::WriteLookupOutputToRD as usize]
+            }
+            VirtualPolynomial::OpFlags(CircuitFlags::Jump) => {
+                &self.flags[CircuitFlags::Jump as usize]
+            }
+            VirtualPolynomial::LookupOutput => &self.lookup_output,
+            VirtualPolynomial::InstructionFlags(InstructionFlags::Branch) => {
+                &self.instruction_flags[InstructionFlags::Branch as usize]
+            }
+            VirtualPolynomial::ShouldBranch => &self.should_branch,
+            VirtualPolynomial::NextIsNoop => &self.next_is_noop,
+            VirtualPolynomial::ShouldJump => &self.should_jump,
+            _ => unreachable!(),
         }
     }
 
@@ -305,10 +335,9 @@ impl JoltState {
     fn assert_output_differs(&self, solver: &mut Solver, other: &Self) {
         let or_terms = vec![
             self.next_unexpanded_pc.ne(&other.next_unexpanded_pc),
-            self.instruction_flags[InstructionFlags::IsRdNotZero as usize]
-                .ne(&other.instruction_flags[InstructionFlags::IsRdNotZero as usize]),
-            &self.instruction_flags[InstructionFlags::IsRdNotZero as usize].eq(Int::from(1))
-                & (self.rd_write_value.ne(&other.rd_write_value)),
+            // write to rd differs
+            self.rd_write_value.ne(&other.rd_write_value),
+            // lookup inputs differ
             self.left_lookup.ne(&other.left_lookup),
             self.right_lookup.ne(&other.right_lookup),
             self.ram_addr.ne(&other.ram_addr),

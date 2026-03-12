@@ -40,6 +40,9 @@ enum JoltCommand {
         /// Whether to generate WASM compatible files
         #[arg(short, long)]
         wasm: bool,
+        /// Generate project with zero-knowledge (PrivateInput + BlindFold) support
+        #[arg(long)]
+        zk: bool,
     },
 
     /// Build a guest program for Jolt zkVM
@@ -125,8 +128,8 @@ fn main() {
 
     let cli = Cli::parse();
     let result = match cli.command {
-        JoltCommand::New { name, wasm } => {
-            create_project(name, wasm);
+        JoltCommand::New { name, wasm, zk } => {
+            create_project(name, wasm, zk);
             Ok(())
         }
         JoltCommand::Build(args) => build_command(args),
@@ -399,10 +402,10 @@ fn generate_linker_command(cli_args: JoltGenerateLinkerArgs) -> Result<()> {
 // Project scaffolding (original jolt new)
 // ============================================================================
 
-fn create_project(name: String, wasm: bool) {
+fn create_project(name: String, wasm: bool, zk: bool) {
     create_folder_structure(&name).expect("could not create directory");
-    create_host_files(&name).expect("file creation failed");
-    create_guest_files(&name).expect("file creation failed");
+    create_host_files(&name, zk).expect("file creation failed");
+    create_guest_files(&name, zk).expect("file creation failed");
     if wasm {
         modify_cargo_toml(&name).expect("Failed to update Cargo.toml");
     }
@@ -418,29 +421,37 @@ fn create_folder_structure(name: &str) -> eyre::Result<()> {
     Ok(())
 }
 
-fn create_host_files(name: &str) -> eyre::Result<()> {
+fn create_host_files(name: &str, zk: bool) -> eyre::Result<()> {
     let mut toolchain_file = File::create(format!("{name}/rust-toolchain.toml"))?;
     toolchain_file.write_all(RUST_TOOLCHAIN.as_bytes())?;
 
     let mut gitignore_file = File::create(format!("{name}/.gitignore"))?;
     gitignore_file.write_all(GITIGNORE.as_bytes())?;
 
-    let cargo_file_contents = HOST_CARGO_TEMPLATE.replace("{NAME}", name);
+    let template = if zk {
+        HOST_CARGO_TEMPLATE_ZK
+    } else {
+        HOST_CARGO_TEMPLATE
+    };
+    let cargo_file_contents = template.replace("{NAME}", name);
     let mut cargo_file = File::create(format!("{name}/Cargo.toml"))?;
     cargo_file.write_all(cargo_file_contents.as_bytes())?;
 
+    let main = if zk { HOST_MAIN_ZK } else { HOST_MAIN };
     let mut main_file = File::create(format!("{name}/src/main.rs"))?;
-    main_file.write_all(HOST_MAIN.as_bytes())?;
+    main_file.write_all(main.as_bytes())?;
 
     Ok(())
 }
 
-fn create_guest_files(name: &str) -> eyre::Result<()> {
+fn create_guest_files(name: &str, zk: bool) -> eyre::Result<()> {
+    let cargo = if zk { GUEST_CARGO_ZK } else { GUEST_CARGO };
     let mut cargo_file = File::create(format!("{name}/guest/Cargo.toml"))?;
-    cargo_file.write_all(GUEST_CARGO.as_bytes())?;
+    cargo_file.write_all(cargo.as_bytes())?;
 
+    let lib = if zk { GUEST_LIB_ZK } else { GUEST_LIB };
     let mut lib_file = File::create(format!("{name}/guest/src/lib.rs"))?;
-    lib_file.write_all(GUEST_LIB.as_bytes())?;
+    lib_file.write_all(lib.as_bytes())?;
 
     let mut main_file = File::create(format!("{name}/guest/src/main.rs"))?;
     main_file.write_all(GUEST_MAIN.as_bytes())?;
@@ -489,9 +500,9 @@ fn display_greeting() {
 }
 
 fn display_sysinfo() {
-    let mut sys = System::new_all();
-
-    sys.refresh_all();
+    let mut sys = System::new();
+    sys.refresh_memory();
+    sys.refresh_cpu_all();
 
     println!(
         "OS:             {}",
@@ -555,13 +566,70 @@ pub fn main() {
     let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
     let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
     let verifier_preprocessing =
-        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup);
+        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup, None);
 
     let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
 
     let (output, proof, io_device) = prove_fib(50);
     let is_valid = verify_fib(50, output, io_device.panic, proof);
+
+    info!("output: {output}");
+    info!("valid: {is_valid}");
+}
+"#;
+
+const HOST_CARGO_TEMPLATE_ZK: &str = r#"[package]
+name = "{NAME}"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = ["guest"]
+
+[profile.release]
+debug = 1
+codegen-units = 1
+lto = "fat"
+
+[dependencies]
+jolt-sdk = { git = "https://github.com/a16z/jolt", features = ["host", "zk"] }
+guest = { path = "./guest" }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[patch.crates-io]
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+"#;
+
+const HOST_MAIN_ZK: &str = r#"use jolt_sdk::PrivateInput;
+use tracing::info;
+
+pub fn main() {
+    tracing_subscriber::fmt::init();
+
+    let target_dir = "/tmp/jolt-guest-targets";
+    let mut program = guest::compile_fib(target_dir);
+
+    let shared_preprocessing = guest::preprocess_shared_fib(&mut program);
+
+    let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
+    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
+    let blindfold_setup = prover_preprocessing.blindfold_setup();
+    let verifier_preprocessing =
+        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup, Some(blindfold_setup));
+
+    let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
+    let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
+
+    // n is private — verifier doesn't receive it
+    let (output, proof, io_device) = prove_fib(PrivateInput::new(50));
+    let is_valid = verify_fib(output, io_device.panic, proof);
 
     info!("output: {output}");
     info!("valid: {is_valid}");
@@ -582,6 +650,18 @@ guest = []
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
 "#;
 
+const GUEST_CARGO_ZK: &str = r#"[package]
+name = "guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
+"#;
+
 const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]
 
 #[jolt::provable(heap_size = 32768, max_trace_length = 65536)]
@@ -590,6 +670,24 @@ fn fib(n: u32) -> u128 {
     let mut b: u128 = 1;
     let mut sum: u128;
     for _ in 1..n {
+        sum = a + b;
+        a = b;
+        b = sum;
+    }
+
+    b
+}
+"#;
+
+const GUEST_LIB_ZK: &str = r#"#![cfg_attr(feature = "guest", no_std)]
+use jolt::PrivateInput;
+
+#[jolt::provable(heap_size = 32768, max_trace_length = 65536)]
+fn fib(n: PrivateInput<u32>) -> u128 {
+    let mut a: u128 = 0;
+    let mut b: u128 = 1;
+    let mut sum: u128;
+    for _ in 1..*n {
         sum = a + b;
         a = b;
         b = sum;

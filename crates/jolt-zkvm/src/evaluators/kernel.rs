@@ -175,6 +175,14 @@ pub struct KernelEvaluator<F: Field, B: ComputeBackend> {
     /// Controls how `pairwise_reduce` output is converted to a round polynomial.
     mode: InterpolationMode<F>,
 
+    /// Variable binding order for pairwise operations.
+    ///
+    /// - `LowToHigh`: interleaved pairs `(buf[2i], buf[2i+1])`. Default for
+    ///   most sumcheck instances.
+    /// - `HighToLow`: split-half pairs `(buf[i], buf[i+n/2])`. Used by Spartan
+    ///   outer sumcheck and address-phase ReadRaf stages.
+    binding_order: BindingOrder,
+
     /// Precomputed first-round polynomial for univariate skip optimization.
     ///
     /// When set, [`SumcheckCompute::first_round_polynomial`] returns this
@@ -327,6 +335,7 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
             num_evals,
             backend,
             mode,
+            binding_order: BindingOrder::LowToHigh,
             first_round_override: None,
         }
     }
@@ -344,13 +353,37 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
         self.first_round_override = Some(poly);
     }
 
+    /// Sets the variable binding order for pairwise operations.
+    ///
+    /// Defaults to `LowToHigh`. Set to `HighToLow` for address-phase
+    /// ReadRaf stages or Spartan-style sumchecks that bind the MSB first.
+    pub fn with_binding_order(mut self, order: BindingOrder) -> Self {
+        self.binding_order = order;
+        self
+    }
+
+    /// Replaces the compiled kernel with one using updated parameters.
+    ///
+    /// Used for intra-segment re-parameterization (e.g., recompiling with
+    /// updated checkpoint challenge values every 2 rounds). On CPU this is
+    /// ~free (new closure capture). On GPU, use push constants to avoid
+    /// shader recompilation.
+    pub fn update_kernel(&mut self, kernel: B::CompiledKernel<F>) {
+        self.kernel = kernel;
+    }
+
     pub fn num_inputs(&self) -> usize {
         self.inputs.len()
     }
 
-    /// Halves each bind round.
+    /// Active element count of the first input buffer. Halves each bind round.
     pub fn current_len(&self) -> usize {
         self.backend.len(&self.inputs[0])
+    }
+
+    /// Returns a reference to the compute backend.
+    pub fn backend(&self) -> &Arc<B> {
+        &self.backend
     }
 
     /// Runs `pairwise_reduce` and returns the raw evaluation vector.
@@ -365,13 +398,13 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
                 w,
                 &self.kernel,
                 self.num_evals,
-                BindingOrder::LowToHigh,
+                self.binding_order,
             ),
             None => self.backend.pairwise_reduce_unweighted(
                 &input_refs,
                 &self.kernel,
                 self.num_evals,
-                BindingOrder::LowToHigh,
+                self.binding_order,
             ),
         }
     }
@@ -418,22 +451,37 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
             state.round += 1;
         }
 
-        if let Some(weights) = self.weights.take() {
-            // Weighted mode (Toom-Cook): interpolate inputs + weights together.
-            let mut all_bufs = std::mem::take(&mut self.inputs);
-            all_bufs.push(weights);
+        match self.binding_order {
+            BindingOrder::LowToHigh => {
+                if let Some(weights) = self.weights.take() {
+                    // Weighted mode (Toom-Cook): interpolate inputs + weights together.
+                    let mut all_bufs = std::mem::take(&mut self.inputs);
+                    all_bufs.push(weights);
 
-            let mut bound = self.backend.interpolate_pairs_batch(all_bufs, c);
-            self.weights = Some(
-                bound
-                    .pop()
-                    .expect("interpolate_pairs_batch returned fewer buffers than given"),
-            );
-            self.inputs = bound;
-        } else {
-            // Unit-weights mode (StandardGrid): skip weights entirely.
-            let inputs = std::mem::take(&mut self.inputs);
-            self.inputs = self.backend.interpolate_pairs_batch(inputs, c);
+                    let mut bound = self.backend.interpolate_pairs_batch(all_bufs, c);
+                    self.weights = Some(
+                        bound
+                            .pop()
+                            .expect("interpolate_pairs_batch returned fewer buffers than given"),
+                    );
+                    self.inputs = bound;
+                } else {
+                    // Unit-weights mode (StandardGrid): skip weights entirely.
+                    let inputs = std::mem::take(&mut self.inputs);
+                    self.inputs = self.backend.interpolate_pairs_batch(inputs, c);
+                }
+            }
+            BindingOrder::HighToLow => {
+                self.backend.interpolate_pairs_batch_inplace(
+                    &mut self.inputs,
+                    c,
+                    BindingOrder::HighToLow,
+                );
+                if let Some(ref mut w) = self.weights {
+                    self.backend
+                        .interpolate_pairs_inplace(w, c, BindingOrder::HighToLow);
+                }
+            }
         }
     }
 }
