@@ -25,7 +25,7 @@
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
-use jolt_field::Field;
+use jolt_field::{Field, WithChallenge};
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -121,7 +121,7 @@ impl<F: Field, B: ComputeBackend> ProductVirtualStage<F, B> {
     }
 }
 
-impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for ProductVirtualStage<F, B> {
+impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T> for ProductVirtualStage<F, B> {
     fn name(&self) -> &'static str {
         "S2_product_virtual"
     }
@@ -378,7 +378,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
         // Verify
@@ -387,7 +386,6 @@ mod tests {
             &[claim],
             &proof,
             &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         )
         .expect("verification should succeed");
 
@@ -445,7 +443,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
         // Get verifier challenges to pass to extract_claims
@@ -458,7 +455,6 @@ mod tests {
             }],
             &proof,
             &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         )
         .expect("verification should succeed");
 
@@ -520,7 +516,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
         let mut vt = Blake2bTranscript::new(b"pv_zero");
@@ -532,7 +527,6 @@ mod tests {
             }],
             &proof,
             &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
         assert!(result.is_ok(), "verification should succeed");
     }

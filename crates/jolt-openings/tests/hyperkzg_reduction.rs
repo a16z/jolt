@@ -18,10 +18,6 @@ use rand_core::SeedableRng;
 
 type KzgPCS = HyperKZGScheme<Bn254>;
 
-fn challenge_fn(c: u128) -> Fr {
-    Fr::from_u128(c)
-}
-
 fn make_setup(max_degree: usize) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifierSetup<Bn254>) {
     let mut rng = ChaCha20Rng::seed_from_u64(0xdead_beef);
     let g1 = Bn254::g1_generator();
@@ -64,7 +60,6 @@ fn reduce_open_verify(
     let (reduced_p, ()) = <RlcReduction as OpeningReduction<KzgPCS>>::reduce_prover(
         prover_claims,
         &mut transcript_p,
-        challenge_fn,
     );
     let proofs: Vec<_> = reduced_p
         .iter()
@@ -80,7 +75,6 @@ fn reduce_open_verify(
         verifier_claims,
         &(),
         &mut transcript_v,
-        challenge_fn,
     )
     .expect("reduction should succeed");
 
@@ -212,7 +206,6 @@ fn tampered_eval_detected() {
     let (reduced_p, ()) = <RlcReduction as OpeningReduction<KzgPCS>>::reduce_prover(
         prover_claims,
         &mut transcript_p,
-        challenge_fn,
     );
     let proofs: Vec<_> = reduced_p
         .iter()
@@ -235,7 +228,6 @@ fn tampered_eval_detected() {
         verifier_claims,
         &(),
         &mut transcript_v,
-        challenge_fn,
     )
     .expect("reduction itself should succeed");
 

@@ -42,9 +42,6 @@ fn cpu() -> Arc<CpuBackend> {
     Arc::new(CpuBackend)
 }
 
-fn challenge_fn(c: u128) -> Fr {
-    Fr::from_u128(c)
-}
 
 fn nop_cycle_witness(unexpanded_pc: u64, pc: u64) -> Vec<Fr> {
     let mut w = vec![Fr::from_u64(0); r1cs::NUM_VARS_PER_CYCLE];
@@ -279,9 +276,8 @@ fn run_profile<PCS: AdditivelyHomomorphic<Field = Fr>>(
             &key,
             &cycle_witnesses,
             poly_commitments,
-            |_r_x, r_y| sd.build_stages(r_y),
+            |_r_x, r_y, _transcript| sd.build_stages(r_y),
             &mut pt,
-            challenge_fn,
         )
         .expect("proving should succeed")
     };

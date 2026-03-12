@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
-use jolt_field::Field;
+use jolt_field::{Field, WithChallenge};
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -154,7 +154,7 @@ impl<F: Field, B: ComputeBackend> ClaimReductionStage<F, B> {
     }
 }
 
-impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F, B> {
+impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F, B> {
     fn name(&self) -> &'static str {
         "S3_claim_reductions"
     }
@@ -277,7 +277,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
         let mut vt = Blake2bTranscript::new(b"s3_registers");
@@ -285,7 +284,6 @@ mod tests {
             &[claim],
             &proof,
             &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         )
         .expect("verification should succeed");
 
@@ -326,7 +324,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
         let mut vt = Blake2bTranscript::new(b"s3_increment");
@@ -334,7 +331,6 @@ mod tests {
             &[claim],
             &proof,
             &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         )
         .expect("verification should succeed");
 
@@ -381,7 +377,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
         let mut vt = Blake2bTranscript::new(b"multi_instance");
@@ -389,7 +384,6 @@ mod tests {
             &batch.claims,
             &proof,
             &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         )
         .expect("verification should succeed");
 

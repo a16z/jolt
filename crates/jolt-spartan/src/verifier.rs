@@ -10,7 +10,7 @@
 //! The caller appends the witness commitment to the transcript before calling
 //! verify, and checks the witness opening proof after verify returns.
 
-use jolt_field::Field;
+use jolt_field::WithChallenge;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::EqPolynomial;
 use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
@@ -52,8 +52,9 @@ impl SpartanVerifier {
         transcript: &mut T,
     ) -> Result<(), SpartanError>
     where
-        F: Field,
-        T: Transcript<Challenge = u128>,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
+        T: Transcript,
     {
         Self::verify_with_challenges(key, proof, transcript).map(|_| ())
     }
@@ -70,12 +71,13 @@ impl SpartanVerifier {
         transcript: &mut T,
     ) -> Result<(Vec<F>, Vec<F>), SpartanError>
     where
-        F: Field,
-        T: Transcript<Challenge = u128>,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
+        T: Transcript,
     {
         let num_sc_vars = key.num_sumcheck_vars();
         let tau: Vec<F> = (0..num_sc_vars)
-            .map(|_| F::from_u128(transcript.challenge()))
+            .map(|_| F::Challenge::from(transcript.challenge()).into())
             .collect();
 
         let outer_claim = SumcheckClaim {
@@ -88,7 +90,6 @@ impl SpartanVerifier {
             &outer_claim,
             &proof.outer_sumcheck_proof,
             transcript,
-            |c: u128| F::from_u128(c),
         )?;
 
         let eq_eval = EqPolynomial::new(tau).evaluate(&r_x);
@@ -101,9 +102,9 @@ impl SpartanVerifier {
         transcript.append(&proof.bz_eval);
         transcript.append(&proof.cz_eval);
 
-        let rho_a = F::from_u128(transcript.challenge());
-        let rho_b = F::from_u128(transcript.challenge());
-        let rho_c = F::from_u128(transcript.challenge());
+        let rho_a = F::Challenge::from(transcript.challenge()).into();
+        let rho_b = F::Challenge::from(transcript.challenge()).into();
+        let rho_c = F::Challenge::from(transcript.challenge()).into();
 
         let num_witness_vars = key.num_witness_vars();
         let inner_claim = SumcheckClaim {
@@ -116,7 +117,6 @@ impl SpartanVerifier {
             &inner_claim,
             &proof.inner_sumcheck_proof,
             transcript,
-            |c: u128| F::from_u128(c),
         )?;
 
         let (a_eval, b_eval, c_eval) = key.evaluate_matrix_mles(&r_x, &r_y);
@@ -146,14 +146,16 @@ impl SpartanVerifier {
     ) -> Result<(), SpartanError>
     where
         PCS: CommitmentScheme,
-        T: Transcript<Challenge = u128>,
+        PCS::Field: WithChallenge,
+        <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>,
+        T: Transcript,
     {
         transcript.append_bytes(format!("{w_commitment:?}").as_bytes());
         transcript.append_bytes(format!("{e_commitment:?}").as_bytes());
 
         let num_sc_vars = key.num_sumcheck_vars();
         let tau: Vec<PCS::Field> = (0..num_sc_vars)
-            .map(|_| PCS::Field::from_u128(transcript.challenge()))
+            .map(|_| <PCS::Field as WithChallenge>::Challenge::from(transcript.challenge()).into())
             .collect();
 
         let outer_claim = SumcheckClaim {
@@ -166,7 +168,6 @@ impl SpartanVerifier {
             &outer_claim,
             &proof.outer_sumcheck_proof,
             transcript,
-            |c: u128| PCS::Field::from_u128(c),
         )?;
 
         // Check: eq(r_x, tau) * (Az(r_x)*Bz(r_x) - u*Cz(r_x) - E(r_x)) == outer_final_eval
@@ -181,9 +182,9 @@ impl SpartanVerifier {
         transcript.append(&proof.cz_eval);
         transcript.append(&proof.e_eval);
 
-        let rho_a = PCS::Field::from_u128(transcript.challenge());
-        let rho_b = PCS::Field::from_u128(transcript.challenge());
-        let rho_c = PCS::Field::from_u128(transcript.challenge());
+        let rho_a = <PCS::Field as WithChallenge>::Challenge::from(transcript.challenge()).into();
+        let rho_b = <PCS::Field as WithChallenge>::Challenge::from(transcript.challenge()).into();
+        let rho_c = <PCS::Field as WithChallenge>::Challenge::from(transcript.challenge()).into();
 
         let num_witness_vars = key.num_witness_vars();
         let inner_claim = SumcheckClaim {
@@ -196,7 +197,6 @@ impl SpartanVerifier {
             &inner_claim,
             &proof.inner_sumcheck_proof,
             transcript,
-            |c: u128| PCS::Field::from_u128(c),
         )?;
 
         let (a_eval, b_eval, c_eval) = key.evaluate_matrix_mles(&r_x, &r_y);

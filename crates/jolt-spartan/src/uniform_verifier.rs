@@ -7,7 +7,7 @@
 //! transcript before calling verify, and for checking the witness opening
 //! proof after verify returns.
 
-use jolt_field::Field;
+use jolt_field::WithChallenge;
 use jolt_poly::EqPolynomial;
 use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::Transcript;
@@ -42,8 +42,9 @@ impl UniformSpartanVerifier {
         transcript: &mut T,
     ) -> Result<(), SpartanError>
     where
-        F: Field,
-        T: Transcript<Challenge = u128>,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
+        T: Transcript,
     {
         Self::verify_with_challenges(key, proof, transcript).map(|_| ())
     }
@@ -62,8 +63,9 @@ impl UniformSpartanVerifier {
         transcript: &mut T,
     ) -> Result<(Vec<F>, Vec<F>), SpartanError>
     where
-        F: Field,
-        T: Transcript<Challenge = u128>,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
+        T: Transcript,
     {
         let total_rows_padded = key.total_rows().next_power_of_two();
         let total_cols_padded = key.total_cols().next_power_of_two();
@@ -71,7 +73,7 @@ impl UniformSpartanVerifier {
         let num_col_vars = total_cols_padded.trailing_zeros() as usize;
 
         let tau: Vec<F> = (0..num_row_vars)
-            .map(|_| F::from_u128(transcript.challenge()))
+            .map(|_| F::Challenge::from(transcript.challenge()).into())
             .collect();
 
         let outer_claim = SumcheckClaim {
@@ -84,7 +86,6 @@ impl UniformSpartanVerifier {
             &outer_claim,
             &proof.outer_sumcheck_proof,
             transcript,
-            |c: u128| F::from_u128(c),
         )?;
 
         let eq_eval = EqPolynomial::new(tau).evaluate(&r_x);
@@ -97,9 +98,9 @@ impl UniformSpartanVerifier {
         transcript.append(&proof.bz_eval);
         transcript.append(&proof.cz_eval);
 
-        let rho_a = F::from_u128(transcript.challenge());
-        let rho_b = F::from_u128(transcript.challenge());
-        let rho_c = F::from_u128(transcript.challenge());
+        let rho_a = F::Challenge::from(transcript.challenge()).into();
+        let rho_b = F::Challenge::from(transcript.challenge()).into();
+        let rho_c = F::Challenge::from(transcript.challenge()).into();
 
         let inner_claim = SumcheckClaim {
             num_vars: num_col_vars,
@@ -111,7 +112,6 @@ impl UniformSpartanVerifier {
             &inner_claim,
             &proof.inner_sumcheck_proof,
             transcript,
-            |c: u128| F::from_u128(c),
         )?;
 
         let (a_eval, b_eval, c_eval) = key.evaluate_matrix_mles(&r_x, &r_y);

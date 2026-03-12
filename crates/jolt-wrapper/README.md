@@ -27,10 +27,12 @@ The pipeline works in four stages:
 ### Codegen
 
 - **`AstEmitter`** -- Trait for pluggable codegen backends.
-- **`GnarkAstEmitter`** -- Gnark Go code emitter with CSE and `api.AssertIsEqual` support.
+- **`GnarkAstEmitter`** -- Gnark Go code emitter (arena-based AST) with CSE and `api.AssertIsEqual` support.
+- **`GnarkEmitter`** -- Gnark Go code emitter for `jolt-ir` expressions (`CircuitEmitter` impl).
 - **`MemoizedCodeGen`** -- Reference-counting CSE pass for efficient code generation.
 - **`generate_go_file`** -- Convenience function producing a complete Go source file from a bundle.
 - **`GoFileConfig`** -- Configuration for `generate_go_file`.
+- **`sanitize_go_name`** -- Converts Rust identifiers to valid Go exported names.
 
 ### Modules
 

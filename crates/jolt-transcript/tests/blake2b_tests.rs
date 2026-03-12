@@ -4,7 +4,9 @@ mod common;
 
 use jolt_transcript::Blake2bTranscript;
 
-transcript_tests!(Blake2bTranscript);
+type B2b = Blake2bTranscript<u128>;
+
+transcript_tests!(B2b);
 
 #[test]
 fn test_blake2b_known_vector() {

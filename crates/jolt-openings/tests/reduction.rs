@@ -18,10 +18,6 @@ use rand_core::SeedableRng;
 
 type MockPCS = MockCommitmentScheme<Fr>;
 
-fn challenge_fn(c: u128) -> Fr {
-    Fr::from_u128(c)
-}
-
 /// Full reduce → open → verify pipeline.
 fn reduce_open_verify<T: Transcript<Challenge = u128>>(
     polys: &[Polynomial<Fr>],
@@ -53,7 +49,6 @@ fn reduce_open_verify<T: Transcript<Challenge = u128>>(
     let (reduced_p, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
         prover_claims,
         &mut transcript_p,
-        challenge_fn,
     );
     let proofs: Vec<_> = reduced_p
         .iter()
@@ -69,7 +64,6 @@ fn reduce_open_verify<T: Transcript<Challenge = u128>>(
         verifier_claims,
         &(),
         &mut transcript_v,
-        challenge_fn,
     )
     .expect("reduction should succeed");
 
@@ -161,7 +155,6 @@ fn empty_claims_is_noop() {
     let (reduced, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
         Vec::new(),
         &mut transcript_p,
-        challenge_fn,
     );
     assert!(reduced.is_empty());
 
@@ -170,7 +163,6 @@ fn empty_claims_is_noop() {
         Vec::new(),
         &(),
         &mut transcript_v,
-        challenge_fn,
     )
     .unwrap();
     assert!(reduced_v.is_empty());
@@ -222,7 +214,6 @@ fn tampered_eval_detected() {
     let (reduced_p, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
         prover_claims,
         &mut transcript_p,
-        challenge_fn,
     );
     let proofs: Vec<_> = reduced_p
         .iter()
@@ -238,7 +229,6 @@ fn tampered_eval_detected() {
         verifier_claims,
         &(),
         &mut transcript_v,
-        challenge_fn,
     )
     .expect("reduction itself should succeed");
 

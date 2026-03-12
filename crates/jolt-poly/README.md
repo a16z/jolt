@@ -23,6 +23,8 @@ This crate provides multilinear and univariate polynomial representations used t
 - **`UnivariatePoly<F>`** -- Coefficient-form univariate polynomial with Lagrange interpolation and compression.
 - **`CompressedPoly<F>`** -- Compressed univariate with linear term omitted (saves one field element per sumcheck round).
 - **`EqPolynomial<F>`** -- Equality polynomial `eq(x, r)`. Materializes all `2^n` evaluations via bottom-up doubling.
+- **`EqPlusOnePolynomial<F>`** -- Successor polynomial `eq+1(x, y)` evaluating to 1 when `y = x + 1`. Used in Spartan shift sumcheck.
+- **`EqPlusOnePrefixSuffix<F>`** -- Prefix-suffix decomposition of `eq+1` for sqrt-sized sumcheck buffers.
 - **`IdentityPolynomial`** -- Maps hypercube points to their integer index.
 
 ### Streaming and Sparse Access

@@ -3,7 +3,7 @@
 //! [`MultilinearPoly`] is the core abstraction over multilinear polynomials
 //! in evaluation form. Implementations range from dense evaluation tables
 //! ([`Polynomial<F>`](crate::Polynomial)) to structured sparse representations
-//! ([`OneHotPolynomial`]) to lazy compositions ([`RlcSource`]). The trait
+//! ([`OneHotPolynomial`](crate::OneHotPolynomial)) to lazy compositions ([`RlcSource`]). The trait
 //! decouples polynomial *access* from *storage*, enabling streaming opening
 //! proofs where the full $2^n$ table never resides in memory simultaneously.
 //!
@@ -13,7 +13,7 @@
 //!
 //! [`MultilinearPoly`]: trait.MultilinearPoly.html
 //! [`RlcSource`]: struct.RlcSource.html
-//! [`OneHotPolynomial`]: struct.OneHotPolynomial.html
+//! [`OneHotPolynomial`]: crate::OneHotPolynomial
 //! [`fold_rows`]: trait.MultilinearPoly.html#method.fold_rows
 
 use jolt_field::Field;
@@ -25,7 +25,7 @@ use crate::Polynomial;
 /// The evaluation table can be viewed as a $(2^\nu \times 2^\sigma)$ matrix
 /// where $\nu + \sigma = n$. Implementations range from dense evaluation
 /// tables ([`Polynomial<F>`](crate::Polynomial)) to structured sparse forms
-/// ([`OneHotPolynomial`]) to lazy compositions ([`RlcSource`]).
+/// ([`OneHotPolynomial`](crate::OneHotPolynomial)) to lazy compositions ([`RlcSource`]).
 ///
 /// Core operations:
 /// - [`num_vars`](Self::num_vars) / [`evaluate`](Self::evaluate): metadata and point evaluation
@@ -90,7 +90,7 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
     /// Iterates over nonzero entries as `(flat_index, value)` pairs.
     ///
     /// For dense polynomials, the default scans the full table. Structured
-    /// sparse types (e.g., [`OneHotPolynomial`]) yield only O(T) entries.
+    /// sparse types (e.g., [`OneHotPolynomial`](crate::OneHotPolynomial)) yield only O(T) entries.
     fn for_each_nonzero(&self, f: &mut dyn FnMut(usize, F)) {
         let n = self.num_vars();
         let total = 1usize << n;

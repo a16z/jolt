@@ -3,7 +3,7 @@
 //! Tests the full S1→S2→S8 verification pipeline using uniform Spartan
 //! with per-cycle constraints and config-driven stage descriptors.
 
-use jolt_field::{Field, Fr};
+use jolt_field::{Field, Fr, WithChallenge};
 use jolt_openings::mock::{MockCommitment, MockCommitmentScheme};
 use jolt_openings::{CommitmentScheme, ProverClaim, VerifierClaim};
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -21,10 +21,6 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 type MockPCS = MockCommitmentScheme<Fr>;
-
-fn challenge_fn(c: u128) -> Fr {
-    Fr::from_u128(c)
-}
 
 fn test_prover_config() -> ProverConfig {
     use jolt_verifier::config::{OneHotConfig, ReadWriteConfig};
@@ -98,7 +94,7 @@ impl SumcheckCompute<Fr> for EqGWitness {
         jolt_poly::UnivariatePoly::interpolate_over_integers(&evals)
     }
 
-    fn bind(&mut self, c: Fr) {
+    fn bind(&mut self, c: <Fr as WithChallenge>::Challenge) {
         let half = self.eq.len() / 2;
         for j in 0..half {
             self.eq[j] = self.eq[j] + c * (self.eq[j + half] - self.eq[j]);
@@ -161,7 +157,6 @@ fn verify_openings_round_trip() {
     let (reduced_prover, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
         prover_claims,
         &mut pt,
-        &challenge_fn,
     );
     let proofs: Vec<_> = reduced_prover
         .into_iter()
@@ -171,7 +166,7 @@ fn verify_openings_round_trip() {
         })
         .collect();
     let mut vt = Blake2bTranscript::new(b"verify-openings-rt");
-    verify_openings::<MockPCS, _>(verifier_claims, &proofs, &(), &mut vt, challenge_fn)
+    verify_openings::<MockPCS, _>(verifier_claims, &proofs, &(), &mut vt)
         .expect("opening verification should succeed");
 }
 
@@ -215,7 +210,6 @@ fn verify_rejects_wrong_stage_count() {
             )]
         },
         &mut vt,
-        challenge_fn,
     );
     assert!(
         matches!(result, Err(JoltError::InvalidProof(_))),
@@ -261,7 +255,7 @@ fn verify_rejects_bad_evaluation() {
         g: poly_table.clone(),
     })];
     let sumcheck_proof =
-        BatchedSumcheckProver::prove(&[claim], &mut sc_witnesses, &mut pt, challenge_fn);
+        BatchedSumcheckProver::prove(&[claim], &mut sc_witnesses, &mut pt);
 
     let stage_proof = SumcheckStageProof {
         sumcheck_proof,
@@ -295,7 +289,6 @@ fn verify_rejects_bad_evaluation() {
             )]
         },
         &mut vt,
-        challenge_fn,
     );
     assert!(
         result.is_err(),
@@ -331,11 +324,11 @@ fn sumcheck_eq_g_final_eval_matches() {
         g: poly_table.clone(),
     })];
     let proof =
-        BatchedSumcheckProver::prove(&[claim.clone()], &mut sc_witnesses, &mut pt, challenge_fn);
+        BatchedSumcheckProver::prove(&[claim.clone()], &mut sc_witnesses, &mut pt);
 
     let mut vt = Blake2bTranscript::new(b"eq-g-test");
     let (final_eval, challenges) =
-        jolt_sumcheck::BatchedSumcheckVerifier::verify(&[claim], &proof, &mut vt, challenge_fn)
+        jolt_sumcheck::BatchedSumcheckVerifier::verify(&[claim], &proof, &mut vt)
             .expect("verification should succeed");
 
     let eq_eval = EqPolynomial::new(eq_point).evaluate(&challenges);
@@ -401,7 +394,7 @@ fn full_pipeline_spartan_plus_one_stage() {
         g: g_table,
     })];
     let sumcheck_proof =
-        BatchedSumcheckProver::prove(&[claim.clone()], &mut sc_witnesses, &mut pt, challenge_fn);
+        BatchedSumcheckProver::prove(&[claim.clone()], &mut sc_witnesses, &mut pt);
 
     // Replay verifier transcript to extract challenges
     let mut vt_replay = Blake2bTranscript::new(b"full-pipeline");
@@ -411,7 +404,6 @@ fn full_pipeline_spartan_plus_one_stage() {
         &[claim],
         &sumcheck_proof,
         &mut vt_replay,
-        challenge_fn,
     )
     .expect("sumcheck replay should succeed");
 
@@ -454,7 +446,6 @@ fn full_pipeline_spartan_plus_one_stage() {
     let (reduced, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
         prover_claims,
         &mut pt,
-        &challenge_fn,
     );
     let pcs_proofs: Vec<_> = reduced
         .into_iter()
@@ -490,7 +481,6 @@ fn full_pipeline_spartan_plus_one_stage() {
             )]
         },
         &mut vt,
-        challenge_fn,
     )
     .expect("full pipeline verification should succeed");
 
@@ -536,7 +526,6 @@ mod dory {
         let (reduced_prover, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
             prover_claims,
             &mut pt,
-            &challenge_fn,
         );
         let proofs: Vec<_> = reduced_prover
             .into_iter()
@@ -558,7 +547,6 @@ mod dory {
             &proofs,
             &verifier_setup,
             &mut vt,
-            challenge_fn,
         )
         .expect("Dory opening verification should succeed");
     }
@@ -622,7 +610,6 @@ mod dory {
             &[claim.clone()],
             &mut sc_witnesses,
             &mut pt,
-            challenge_fn,
         );
 
         let mut vt_replay = Blake2bTranscript::new(b"dory-full-pipeline");
@@ -632,7 +619,6 @@ mod dory {
             &[claim],
             &sumcheck_proof,
             &mut vt_replay,
-            challenge_fn,
         )
         .expect("sumcheck replay should succeed");
 
@@ -671,7 +657,6 @@ mod dory {
         let (reduced, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
             prover_claims,
             &mut pt,
-            &challenge_fn,
         );
         let pcs_proofs: Vec<_> = reduced
             .into_iter()
@@ -714,7 +699,6 @@ mod dory {
                 )]
             },
             &mut vt,
-            challenge_fn,
         )
         .expect("Dory full pipeline verification should succeed");
 

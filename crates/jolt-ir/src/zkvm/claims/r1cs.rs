@@ -18,8 +18,6 @@
 use crate::builder::ExprBuilder;
 use crate::expr::Expr;
 
-// ── Variable layout ──────────────────────────────────────────────────
-
 /// Constant-1 wire. Not used as an `Opening` in expressions; constant
 /// terms are inlined via [`ExprNode::Constant`](crate::expr::ExprNode::Constant).
 pub const V_CONST: usize = 0;
@@ -66,16 +64,12 @@ pub const V_IS_RD_NOT_ZERO: usize = 38;
 pub const V_BRANCH: usize = 39;
 pub const V_NEXT_IS_NOOP: usize = 40;
 
-// ── Dimension constants ──────────────────────────────────────────────
-
 pub const NUM_R1CS_INPUTS: usize = 37;
 pub const NUM_PRODUCT_FACTORS: usize = 3;
 pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 41
 pub const NUM_EQ_CONSTRAINTS: usize = 19;
-pub const NUM_PRODUCT_CONSTRAINTS: usize = 5;
-pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 24
-
-// ── Constraint expressions ───────────────────────────────────────────
+pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
+pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 22
 
 /// An R1CS constraint as a symbolic expression.
 ///
@@ -102,8 +96,6 @@ macro_rules! v {
 /// - Indices 19–23: product (`left · right − output = 0`)
 pub fn constraint_exprs() -> Vec<R1csConstraintExpr> {
     let mut cs = Vec::with_capacity(NUM_CONSTRAINTS_PER_CYCLE);
-
-    // ── Eq-conditional constraints (0–18) ────────────────────────────
 
     // 0: guard = Load + Store
     //    body  = RamAddress − Rs1Value − Imm
@@ -352,8 +344,6 @@ pub fn constraint_exprs() -> Vec<R1csConstraintExpr> {
         });
     }
 
-    // ── Product constraints (19–23) ──────────────────────────────────
-
     // 19: Product = LeftInput · RightInput
     {
         let b = ExprBuilder::new();
@@ -365,28 +355,7 @@ pub fn constraint_exprs() -> Vec<R1csConstraintExpr> {
         });
     }
 
-    // 20: WriteLookupOutputToRD = IsRdNotZero · WriteLookupFlag
-    {
-        let b = ExprBuilder::new();
-        let e = v!(b, V_IS_RD_NOT_ZERO) * v!(b, V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD)
-            - v!(b, V_WRITE_LOOKUP_OUTPUT_TO_RD);
-        cs.push(R1csConstraintExpr {
-            name: "WriteLookupToRdEqRdNzTimesFlag",
-            expr: b.build(e),
-        });
-    }
-
-    // 21: WritePCtoRD = IsRdNotZero · Jump
-    {
-        let b = ExprBuilder::new();
-        let e = v!(b, V_IS_RD_NOT_ZERO) * v!(b, V_FLAG_JUMP) - v!(b, V_WRITE_PC_TO_RD);
-        cs.push(R1csConstraintExpr {
-            name: "WritePcToRdEqRdNzTimesJump",
-            expr: b.build(e),
-        });
-    }
-
-    // 22: ShouldBranch = LookupOutput · Branch
+    // 20: ShouldBranch = LookupOutput · Branch
     {
         let b = ExprBuilder::new();
         let e = v!(b, V_LOOKUP_OUTPUT) * v!(b, V_BRANCH) - v!(b, V_SHOULD_BRANCH);
@@ -396,7 +365,7 @@ pub fn constraint_exprs() -> Vec<R1csConstraintExpr> {
         });
     }
 
-    // 23: ShouldJump = Jump · (1 − NextIsNoop)
+    // 21: ShouldJump = Jump · (1 − NextIsNoop)
     {
         let b = ExprBuilder::new();
         let e = v!(b, V_FLAG_JUMP) * (b.one() - v!(b, V_NEXT_IS_NOOP)) - v!(b, V_SHOULD_JUMP);
@@ -488,7 +457,7 @@ mod tests {
 
     #[test]
     fn constraint_count() {
-        assert_eq!(constraint_exprs().len(), 24);
+        assert_eq!(constraint_exprs().len(), 22);
     }
 
     #[test]
@@ -611,7 +580,6 @@ mod tests {
 #[cfg(all(test, feature = "z3"))]
 mod z3_tests {
     use super::*;
-    use crate::backends::circuit::CircuitEmitter;
     use crate::backends::z3::Z3Emitter;
     use z3::ast::Int;
     use z3::{SatResult, Solver};
@@ -758,4 +726,184 @@ mod z3_tests {
 
         assert_eq!(solver.check(), SatResult::Unsat);
     }
+
+    // ── Parity audit: prove jolt-ir constraints ≡ old jolt-core ──────
+    //
+    // For each constraint, we build the old jolt-core definition manually
+    // as a Z3 expression (using the same symbolic variables bound to the
+    // Z3Emitter), then assert `old ≠ new` and verify UNSAT — proving
+    // they're algebraically identical over all 8-bit variable assignments.
+    //
+    // Variable mapping: old JoltR1CSInputs indices → new V_* constants.
+    // Old constraints 0–18: eq-conditional `A(z) * B(z) = 0`
+    // Old product constraints 0–2 → new indices 19, 22, 23
+    // New-only product constraints: 20 (WriteLookupOutputToRD), 21 (WritePCtoRD)
+
+    /// Create 8-bit bounded symbolic variables for all V_* positions.
+    fn make_bounded_vars(solver: &Solver) -> Vec<Int> {
+        (0..NUM_VARS_PER_CYCLE)
+            .map(|i| {
+                let var = Int::new_const(format!("v{i}"));
+                solver.assert(var.ge(Int::from_i64(0)));
+                solver.assert(var.lt(Int::from_i64(256)));
+                var
+            })
+            .collect()
+    }
+
+    /// Bind all symbolic variables (indices 1..41) to a Z3Emitter.
+    fn bind_all_vars(emitter: &mut Z3Emitter, vars: &[Int]) {
+        for (i, var) in vars.iter().enumerate().skip(1) {
+            emitter.bind_opening(i as u32, var.clone());
+        }
+    }
+
+    /// Reconstruct old jolt-core eq-conditional constraint `A(z) * B(z)`.
+    ///
+    /// Each old constraint was `condition * (left − right)` with variables
+    /// indexed by `JoltR1CSInputs`, mapped here to V_* constants.
+    #[allow(clippy::too_many_lines)]
+    fn old_eq_conditional(idx: usize, vars: &[Int]) -> Int {
+        let v = |i: usize| vars[i].clone();
+        let c = |n: i64| Int::from_i64(n);
+        let two_64 = || Int::from_i64(0x1_0000_0000) * Int::from_i64(0x1_0000_0000);
+
+        match idx {
+            // (Load + Store) * (RamAddr − Rs1 − Imm)
+            0 => (v(V_FLAG_LOAD) + v(V_FLAG_STORE))
+                * (v(V_RAM_ADDRESS) - v(V_RS1_VALUE) - v(V_IMM)),
+            // (1 − Load − Store) * RamAddr
+            1 => (c(1) - v(V_FLAG_LOAD) - v(V_FLAG_STORE)) * v(V_RAM_ADDRESS),
+            // Load * (RamRead − RamWrite)
+            2 => v(V_FLAG_LOAD) * (v(V_RAM_READ_VALUE) - v(V_RAM_WRITE_VALUE)),
+            // Load * (RamRead − RdWrite)
+            3 => v(V_FLAG_LOAD) * (v(V_RAM_READ_VALUE) - v(V_RD_WRITE_VALUE)),
+            // Store * (Rs2 − RamWrite)
+            4 => v(V_FLAG_STORE) * (v(V_RS2_VALUE) - v(V_RAM_WRITE_VALUE)),
+            // (Add + Sub + Mul) * LeftLookup
+            5 => (v(V_FLAG_ADD_OPERANDS) + v(V_FLAG_SUBTRACT_OPERANDS)
+                + v(V_FLAG_MULTIPLY_OPERANDS))
+                * v(V_LEFT_LOOKUP_OPERAND),
+            // (1 − Add − Sub − Mul) * (LeftLookup − LeftInput)
+            6 => (c(1) - v(V_FLAG_ADD_OPERANDS) - v(V_FLAG_SUBTRACT_OPERANDS)
+                - v(V_FLAG_MULTIPLY_OPERANDS))
+                * (v(V_LEFT_LOOKUP_OPERAND) - v(V_LEFT_INSTRUCTION_INPUT)),
+            // Add * (RightLookup − LeftInput − RightInput)
+            7 => v(V_FLAG_ADD_OPERANDS)
+                * (v(V_RIGHT_LOOKUP_OPERAND) - v(V_LEFT_INSTRUCTION_INPUT)
+                    - v(V_RIGHT_INSTRUCTION_INPUT)),
+            // Sub * (RightLookup − LeftInput + RightInput − 2^64)
+            8 => v(V_FLAG_SUBTRACT_OPERANDS)
+                * (v(V_RIGHT_LOOKUP_OPERAND) - v(V_LEFT_INSTRUCTION_INPUT)
+                    + v(V_RIGHT_INSTRUCTION_INPUT)
+                    - two_64()),
+            // Mul * (RightLookup − Product)
+            9 => v(V_FLAG_MULTIPLY_OPERANDS)
+                * (v(V_RIGHT_LOOKUP_OPERAND) - v(V_PRODUCT)),
+            // (1 − Add − Sub − Mul − Advice) * (RightLookup − RightInput)
+            10 => (c(1) - v(V_FLAG_ADD_OPERANDS) - v(V_FLAG_SUBTRACT_OPERANDS)
+                - v(V_FLAG_MULTIPLY_OPERANDS)
+                - v(V_FLAG_ADVICE))
+                * (v(V_RIGHT_LOOKUP_OPERAND) - v(V_RIGHT_INSTRUCTION_INPUT)),
+            // Assert * (LookupOutput − 1)
+            11 => v(V_FLAG_ASSERT) * (v(V_LOOKUP_OUTPUT) - c(1)),
+            // WriteLookupFlag * (RdWrite − LookupOutput)
+            12 => v(V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD)
+                * (v(V_RD_WRITE_VALUE) - v(V_LOOKUP_OUTPUT)),
+            // Jump * (RdWrite − UnexpPC − 4 + 2·IsCompressed)
+            13 => v(V_FLAG_JUMP)
+                * (v(V_RD_WRITE_VALUE) - v(V_UNEXPANDED_PC) - c(4)
+                    + c(2) * v(V_FLAG_IS_COMPRESSED)),
+            // ShouldJump * (NextUnexpPC − LookupOutput)
+            14 => v(V_SHOULD_JUMP)
+                * (v(V_NEXT_UNEXPANDED_PC) - v(V_LOOKUP_OUTPUT)),
+            // ShouldBranch * (NextUnexpPC − UnexpPC − Imm)
+            15 => v(V_SHOULD_BRANCH)
+                * (v(V_NEXT_UNEXPANDED_PC) - v(V_UNEXPANDED_PC) - v(V_IMM)),
+            // (1 − ShouldBranch − Jump) *
+            //   (NextUnexpPC − UnexpPC − 4 + 4·DoNotUpdate + 2·IsCompressed)
+            16 => (c(1) - v(V_SHOULD_BRANCH) - v(V_FLAG_JUMP))
+                * (v(V_NEXT_UNEXPANDED_PC) - v(V_UNEXPANDED_PC) - c(4)
+                    + c(4) * v(V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)
+                    + c(2) * v(V_FLAG_IS_COMPRESSED)),
+            // (Virtual − IsLast) * (NextPC − PC − 1)
+            17 => (v(V_FLAG_VIRTUAL_INSTRUCTION) - v(V_FLAG_IS_LAST_IN_SEQUENCE))
+                * (v(V_NEXT_PC) - v(V_PC) - c(1)),
+            // (NextIsVirtual − NextIsFirst) * (1 − DoNotUpdate)
+            18 => (v(V_NEXT_IS_VIRTUAL) - v(V_NEXT_IS_FIRST_IN_SEQUENCE))
+                * (c(1) - v(V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Reconstruct old jolt-core product constraint `left * right − output`.
+    fn old_product_constraint(idx: usize, vars: &[Int]) -> Int {
+        let v = |i: usize| vars[i].clone();
+        let c = |n: i64| Int::from_i64(n);
+
+        match idx {
+            // Product = LeftInput · RightInput
+            0 => v(V_LEFT_INSTRUCTION_INPUT) * v(V_RIGHT_INSTRUCTION_INPUT) - v(V_PRODUCT),
+            // ShouldBranch = LookupOutput · Branch
+            1 => v(V_LOOKUP_OUTPUT) * v(V_BRANCH) - v(V_SHOULD_BRANCH),
+            // ShouldJump = Jump · (1 − NextIsNoop)
+            2 => v(V_FLAG_JUMP) * (c(1) - v(V_NEXT_IS_NOOP)) - v(V_SHOULD_JUMP),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Prove all 19 eq-conditional constraints match old jolt-core.
+    #[test]
+    fn z3_parity_eq_conditional() {
+        let constraints = constraint_exprs();
+
+        for (idx, c) in constraints.iter().enumerate().take(NUM_EQ_CONSTRAINTS) {
+            let solver = Solver::new();
+            let vars = make_bounded_vars(&solver);
+
+            let mut emitter = Z3Emitter::new();
+            bind_all_vars(&mut emitter, &vars);
+            let new_expr = c.expr.to_circuit(&mut emitter);
+            let old_expr = old_eq_conditional(idx, &vars);
+
+            solver.assert(old_expr.ne(new_expr));
+            assert_eq!(
+                solver.check(),
+                SatResult::Unsat,
+                "eq-conditional {idx} ({}) differs from old",
+                c.name,
+            );
+        }
+    }
+
+    /// Prove all 3 product constraints match old jolt-core.
+    ///
+    /// Old → new index mapping:
+    /// - 0 (Instruction)   → 19
+    /// - 1 (ShouldBranch)  → 20
+    /// - 2 (ShouldJump)    → 21
+    #[test]
+    fn z3_parity_product_constraints() {
+        let constraints = constraint_exprs();
+        let old_to_new = [(0, 19), (1, 20), (2, 21)];
+
+        for (old_idx, new_idx) in old_to_new {
+            let solver = Solver::new();
+            let vars = make_bounded_vars(&solver);
+
+            let mut emitter = Z3Emitter::new();
+            bind_all_vars(&mut emitter, &vars);
+            let new_expr = constraints[new_idx].expr.to_circuit(&mut emitter);
+            let old_expr = old_product_constraint(old_idx, &vars);
+
+            solver.assert(old_expr.ne(new_expr));
+            assert_eq!(
+                solver.check(),
+                SatResult::Unsat,
+                "product {old_idx} (new idx {new_idx}, {}) differs from old",
+                constraints[new_idx].name,
+            );
+        }
+    }
+
 }

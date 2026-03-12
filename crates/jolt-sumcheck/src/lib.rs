@@ -25,6 +25,8 @@
 //! | [`batched`] | Batched prover/verifier via random linear combination |
 //! | [`streaming`] | [`StreamingSumcheckProver`] trait for memory-constrained provers |
 //! | [`handler`] | [`RoundHandler`] / [`RoundVerifier`] — strategy traits for clear vs. committed mode |
+//! | [`split_eq`] | [`SplitEqEvaluator`] — Dao-Thaler + Gruen sqrt-cost eq polynomial evaluator |
+//! | [`prefix_suffix`] | [`PrefixSuffixEvaluator`] — two-phase evaluator for tensor-decomposed polynomials |
 //! | [`error`] | [`SumcheckError`] variants |
 //! | [`reduction`] | [`SumcheckReduction`] — sumcheck-based claim reduction trait |
 

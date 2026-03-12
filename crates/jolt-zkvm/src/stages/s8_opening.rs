@@ -8,6 +8,7 @@
 
 use std::marker::PhantomData;
 
+use jolt_field::WithChallenge;
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, OpeningReduction, OpeningsError, ProverClaim,
     RlcReduction, VerifierClaim,
@@ -47,12 +48,14 @@ impl<PCS: AdditivelyHomomorphic> OpeningStage<PCS> {
         claims: Vec<ProverClaim<PCS::Field>>,
         setup: &PCS::ProverSetup,
         transcript: &mut T,
-        challenge_fn: impl Fn(T::Challenge) -> PCS::Field,
-    ) -> OpeningProofs<PCS> {
+    ) -> OpeningProofs<PCS>
+    where
+        PCS::Field: WithChallenge,
+        <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>,
+    {
         let (reduced, ()) = <RlcReduction as OpeningReduction<PCS>>::reduce_prover(
             claims,
             transcript,
-            &challenge_fn,
         );
 
         let proofs = reduced
@@ -78,13 +81,15 @@ impl<PCS: AdditivelyHomomorphic> OpeningStage<PCS> {
         opening_proofs: &OpeningProofs<PCS>,
         setup: &PCS::VerifierSetup,
         transcript: &mut T,
-        challenge_fn: impl Fn(T::Challenge) -> PCS::Field,
-    ) -> Result<(), OpeningsError> {
+    ) -> Result<(), OpeningsError>
+    where
+        PCS::Field: WithChallenge,
+        <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>,
+    {
         let reduced = <RlcReduction as OpeningReduction<PCS>>::reduce_verifier(
             claims,
             &(),
             transcript,
-            &challenge_fn,
         )?;
 
         if reduced.len() != opening_proofs.proofs.len() {
@@ -118,9 +123,7 @@ mod tests {
 
     type MockPCS = MockCommitmentScheme<Fr>;
 
-    fn challenge_fn(c: u128) -> Fr {
-        Fr::from_u128(c)
-    }
+
 
     #[allow(clippy::type_complexity)]
     fn random_claims<PCS: CommitmentScheme<Field = Fr>>(
@@ -165,10 +168,10 @@ mod tests {
             random_claims::<MockPCS>(&mut rng, 1, num_vars, &point, &());
 
         let mut pt = Blake2bTranscript::new(b"s8_single");
-        let proofs = OpeningStage::<MockPCS>::prove(prover_claims, &(), &mut pt, challenge_fn);
+        let proofs = OpeningStage::<MockPCS>::prove(prover_claims, &(), &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"s8_single");
-        OpeningStage::<MockPCS>::verify(verifier_claims, &proofs, &(), &mut vt, challenge_fn)
+        OpeningStage::<MockPCS>::verify(verifier_claims, &proofs, &(), &mut vt)
             .expect("single claim should verify");
     }
 
@@ -182,11 +185,11 @@ mod tests {
             random_claims::<MockPCS>(&mut rng, 5, num_vars, &point, &());
 
         let mut pt = Blake2bTranscript::new(b"s8_shared");
-        let proofs = OpeningStage::<MockPCS>::prove(prover_claims, &(), &mut pt, challenge_fn);
+        let proofs = OpeningStage::<MockPCS>::prove(prover_claims, &(), &mut pt);
         assert_eq!(proofs.proofs.len(), 1, "same point → one reduced claim");
 
         let mut vt = Blake2bTranscript::new(b"s8_shared");
-        OpeningStage::<MockPCS>::verify(verifier_claims, &proofs, &(), &mut vt, challenge_fn)
+        OpeningStage::<MockPCS>::verify(verifier_claims, &proofs, &(), &mut vt)
             .expect("shared-point claims should verify");
     }
 
@@ -205,11 +208,11 @@ mod tests {
         vc_a.extend(vc_b);
 
         let mut pt = Blake2bTranscript::new(b"s8_distinct");
-        let proofs = OpeningStage::<MockPCS>::prove(pc_a, &(), &mut pt, challenge_fn);
+        let proofs = OpeningStage::<MockPCS>::prove(pc_a, &(), &mut pt);
         assert_eq!(proofs.proofs.len(), 2, "two distinct points → two proofs");
 
         let mut vt = Blake2bTranscript::new(b"s8_distinct");
-        OpeningStage::<MockPCS>::verify(vc_a, &proofs, &(), &mut vt, challenge_fn)
+        OpeningStage::<MockPCS>::verify(vc_a, &proofs, &(), &mut vt)
             .expect("distinct-point claims should verify");
     }
 
@@ -226,22 +229,22 @@ mod tests {
         verifier_claims[1].eval += Fr::from_u64(1);
 
         let mut pt = Blake2bTranscript::new(b"s8_tamper");
-        let proofs = OpeningStage::<MockPCS>::prove(prover_claims, &(), &mut pt, challenge_fn);
+        let proofs = OpeningStage::<MockPCS>::prove(prover_claims, &(), &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"s8_tamper");
         let result =
-            OpeningStage::<MockPCS>::verify(verifier_claims, &proofs, &(), &mut vt, challenge_fn);
+            OpeningStage::<MockPCS>::verify(verifier_claims, &proofs, &(), &mut vt);
         assert!(result.is_err(), "tampered evaluation should be rejected");
     }
 
     #[test]
     fn empty_claims_is_no_op() {
         let mut pt = Blake2bTranscript::new(b"s8_empty");
-        let proofs = OpeningStage::<MockPCS>::prove(vec![], &(), &mut pt, challenge_fn);
+        let proofs = OpeningStage::<MockPCS>::prove(vec![], &(), &mut pt);
         assert!(proofs.proofs.is_empty());
 
         let mut vt = Blake2bTranscript::new(b"s8_empty");
-        OpeningStage::<MockPCS>::verify(vec![], &proofs, &(), &mut vt, challenge_fn)
+        OpeningStage::<MockPCS>::verify(vec![], &proofs, &(), &mut vt)
             .expect("empty claims should verify trivially");
     }
 
@@ -264,7 +267,7 @@ mod tests {
         vc.extend(vc_c);
 
         let mut pt = Blake2bTranscript::new(b"s8_mixed");
-        let proofs = OpeningStage::<MockPCS>::prove(pc, &(), &mut pt, challenge_fn);
+        let proofs = OpeningStage::<MockPCS>::prove(pc, &(), &mut pt);
         assert_eq!(
             proofs.proofs.len(),
             3,
@@ -272,7 +275,7 @@ mod tests {
         );
 
         let mut vt = Blake2bTranscript::new(b"s8_mixed");
-        OpeningStage::<MockPCS>::verify(vc, &proofs, &(), &mut vt, challenge_fn)
+        OpeningStage::<MockPCS>::verify(vc, &proofs, &(), &mut vt)
             .expect("mixed-group claims should verify");
     }
 
@@ -296,7 +299,7 @@ mod tests {
                 prover_claims,
                 &prover_setup,
                 &mut pt,
-                challenge_fn,
+
             );
 
             let mut vt = Blake2bTranscript::new(b"s8_dory_single");
@@ -305,7 +308,7 @@ mod tests {
                 &proofs,
                 &verifier_setup,
                 &mut vt,
-                challenge_fn,
+
             )
             .expect("Dory single claim should verify");
         }
@@ -326,7 +329,7 @@ mod tests {
                 prover_claims,
                 &prover_setup,
                 &mut pt,
-                challenge_fn,
+
             );
             assert_eq!(proofs.proofs.len(), 1, "same point → one reduced proof");
 
@@ -336,7 +339,7 @@ mod tests {
                 &proofs,
                 &verifier_setup,
                 &mut vt,
-                challenge_fn,
+
             )
             .expect("Dory shared-point claims should verify");
         }
@@ -361,11 +364,11 @@ mod tests {
 
             let mut pt = Blake2bTranscript::new(b"s8_dory_distinct");
             let proofs =
-                OpeningStage::<DoryScheme>::prove(pc, &prover_setup, &mut pt, challenge_fn);
+                OpeningStage::<DoryScheme>::prove(pc, &prover_setup, &mut pt);
             assert_eq!(proofs.proofs.len(), 2, "two distinct points → two proofs");
 
             let mut vt = Blake2bTranscript::new(b"s8_dory_distinct");
-            OpeningStage::<DoryScheme>::verify(vc, &proofs, &verifier_setup, &mut vt, challenge_fn)
+            OpeningStage::<DoryScheme>::verify(vc, &proofs, &verifier_setup, &mut vt)
                 .expect("Dory distinct-point claims should verify");
         }
 
@@ -387,7 +390,7 @@ mod tests {
                 prover_claims,
                 &prover_setup,
                 &mut pt,
-                challenge_fn,
+
             );
 
             let mut vt = Blake2bTranscript::new(b"s8_dory_tamper");
@@ -396,7 +399,7 @@ mod tests {
                 &proofs,
                 &verifier_setup,
                 &mut vt,
-                challenge_fn,
+
             );
             assert!(result.is_err(), "Dory should reject tampered evaluation");
         }

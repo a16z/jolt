@@ -1,6 +1,6 @@
 //! Cross-crate integration tests for the sumcheck protocol.
 
-use jolt_field::{Field, Fr};
+use jolt_field::{Field, Fr, WithChallenge};
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_sumcheck::prover::{SumcheckCompute, SumcheckProver};
@@ -10,9 +10,7 @@ use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-fn challenge_to_field(c: u128) -> Fr {
-    Fr::from_u128(c)
-}
+type C = <Fr as WithChallenge>::Challenge;
 
 struct EqProductWitness {
     poly: Polynomial<Fr>,
@@ -49,13 +47,14 @@ impl SumcheckCompute<Fr> for EqProductWitness {
         UnivariatePoly::interpolate(&points)
     }
 
-    fn bind(&mut self, challenge: Fr) {
-        self.poly.bind(challenge);
+    fn bind(&mut self, challenge: C) {
+        let c: Fr = challenge.into();
+        self.poly.bind(c);
         let half = self.eq_evals.len() / 2;
         for i in 0..half {
             let lo = self.eq_evals[i];
             let hi = self.eq_evals[i + half];
-            self.eq_evals[i] = lo + challenge * (hi - lo);
+            self.eq_evals[i] = lo + c * (hi - lo);
         }
         self.eq_evals.truncate(half);
     }
@@ -78,11 +77,11 @@ fn blake2b_and_keccak_both_verify() {
     // Prove with Blake2b
     let mut w_b = EqProductWitness::new(poly.clone(), &tau);
     let mut pt_b = Blake2bTranscript::new(b"cross_crate");
-    let proof_b = SumcheckProver::prove(&claim, &mut w_b, &mut pt_b, challenge_to_field);
+    let proof_b = SumcheckProver::prove(&claim, &mut w_b, &mut pt_b);
 
     let mut vt_b = Blake2bTranscript::new(b"cross_crate");
     let (eval_b, challenges_b) =
-        SumcheckVerifier::verify(&claim, &proof_b, &mut vt_b, challenge_to_field)
+        SumcheckVerifier::verify(&claim, &proof_b, &mut vt_b)
             .expect("Blake2b verification should succeed");
 
     let expected_b =
@@ -92,11 +91,11 @@ fn blake2b_and_keccak_both_verify() {
     // Prove with Keccak
     let mut w_k = EqProductWitness::new(poly.clone(), &tau);
     let mut pt_k = KeccakTranscript::new(b"cross_crate");
-    let proof_k = SumcheckProver::prove(&claim, &mut w_k, &mut pt_k, challenge_to_field);
+    let proof_k = SumcheckProver::prove(&claim, &mut w_k, &mut pt_k);
 
     let mut vt_k = KeccakTranscript::new(b"cross_crate");
     let (eval_k, challenges_k) =
-        SumcheckVerifier::verify(&claim, &proof_k, &mut vt_k, challenge_to_field)
+        SumcheckVerifier::verify(&claim, &proof_k, &mut vt_k)
             .expect("Keccak verification should succeed");
 
     let expected_k = poly.evaluate(&challenges_k) * EqPolynomial::new(tau).evaluate(&challenges_k);
@@ -128,12 +127,12 @@ fn evaluate_then_prove_then_verify() {
 
     let mut witness = EqProductWitness::new(poly.clone(), &tau);
     let mut pt = Blake2bTranscript::new(b"eval_prove");
-    let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt, challenge_to_field);
+    let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
     // Step 3: verify
     let mut vt = Blake2bTranscript::new(b"eval_prove");
     let (final_eval, challenges) =
-        SumcheckVerifier::verify(&claim, &proof, &mut vt, challenge_to_field)
+        SumcheckVerifier::verify(&claim, &proof, &mut vt)
             .expect("verification should succeed");
 
     // Final evaluation matches f(r) * eq(r, tau)

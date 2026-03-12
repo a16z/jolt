@@ -22,7 +22,7 @@
 //! $$\tilde{M}(r_x, r_y) = \widetilde{eq}(r_x^{\text{cycle}}, r_y^{\text{cycle}}) \cdot \tilde{M}_{\text{local}}(r_x^{\text{constr}}, r_y^{\text{var}})$$
 //!
 //! where the local MLE is evaluated from the sparse representation:
-//! $$\tilde{M}_{\text{local}}(r_c, r_v) = \sum_{k} \widetilde{eq}(k, r_c) \sum_{(j, \alpha) \in M[k]} \alpha \cdot \widetilde{eq}(j, r_v)$$
+//! $$\tilde{M}_{\text{local}}(r_c, r_v) = \sum_{k} \widetilde{eq}(k, r_c) \sum_{(j, \alpha) \in M\[k\]} \alpha \cdot \widetilde{eq}(j, r_v)$$
 
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;

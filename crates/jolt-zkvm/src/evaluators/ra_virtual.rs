@@ -49,10 +49,11 @@ impl<F: WithChallenge> SumcheckCompute<F> for RaVirtualCompute<F> {
         }
     }
 
-    fn bind(&mut self, challenge: F) {
-        self.eq_poly.bind_f(challenge);
+    fn bind(&mut self, challenge: F::Challenge) {
+        self.eq_poly.bind(challenge);
+        let r: F = challenge.into();
         for mle in &mut self.mles {
-            mle.bind_f(challenge, self.binding_order);
+            mle.bind_f(r, self.binding_order);
         }
     }
 }

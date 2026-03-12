@@ -1,6 +1,6 @@
 //! R1CS witness generation from execution trace cycles.
 //!
-//! Converts a [`tracer::Cycle`] into a per-cycle witness vector of 41 field
+//! Converts a tracer `Cycle` into a per-cycle witness vector of 41 field
 //! elements matching the variable layout in [`crate::r1cs`].
 
 use jolt_field::Field;

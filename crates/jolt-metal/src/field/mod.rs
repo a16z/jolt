@@ -1,9 +1,11 @@
 //! Metal dispatch for BN254 Fr field arithmetic.
 //!
 //! Compiles the MSL shaders at runtime and provides a typed dispatch API
-//! for element-wise Fr operations. The dispatch layer handles limb
-//! conversion between the CPU's 4×u64 Montgomery representation and
-//! Metal's 8×u32 representation.
+//! for element-wise Fr operations. On little-endian ARM64, the CPU's
+//! `[u64; 4]` and Metal's `[u32; 8]` Montgomery representations have
+//! identical byte layout, so raw buffer uploads work without conversion.
+//! [`MetalFr`] provides explicit limb conversion for test and benchmark
+//! code that constructs values outside the `ComputeBackend` path.
 
 use std::ffi::c_void;
 

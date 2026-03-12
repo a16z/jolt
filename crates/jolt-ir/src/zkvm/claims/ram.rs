@@ -239,6 +239,45 @@ pub fn ram_val_check_input(n_advice: usize) -> ClaimDefinition {
     }
 }
 
+/// RAM RA virtual sumcheck output claim.
+///
+/// The virtual RAM RA polynomial is decomposed into `d` committed chunks.
+/// The output claim is the product of all chunk evaluations scaled by eq:
+///
+/// Output claim: `c_0 · Π_{i=0}^{d-1} ra_i`
+///
+/// where `c_0 = eq_eval` (single gamma power for 1 virtual polynomial).
+///
+/// `d` is the number of committed RA chunks per the one-hot decomposition.
+pub fn ram_ra_virtual(d: usize) -> ClaimDefinition {
+    let b = ExprBuilder::new();
+
+    let c0 = b.challenge(0);
+    let mut product = c0;
+    for i in 0..d {
+        product = product * b.opening(i as u32);
+    }
+
+    let expr = b.build(product);
+
+    let opening_bindings = (0..d)
+        .map(|idx| OpeningBinding {
+            var_id: idx as u32,
+            polynomial_tag: poly::ram_ra_committed(idx),
+            sumcheck_tag: sumcheck::RAM_RA_VIRTUAL,
+        })
+        .collect();
+
+    ClaimDefinition {
+        expr,
+        opening_bindings,
+        challenge_bindings: vec![ChallengeBinding {
+            var_id: 0,
+            source: ChallengeSource::Derived,
+        }],
+    }
+}
+
 /// RAM RAF evaluation output claim.
 ///
 /// Relates the read-address polynomial to the address unmapping polynomial.
@@ -363,6 +402,31 @@ mod tests {
 
         let result = claim.evaluate::<Fr>(&[ra], &[unmap]);
         assert_eq!(result, Fr::from_u64(15));
+    }
+
+    #[test]
+    fn ram_ra_virtual_formula() {
+        let claim = ram_ra_virtual(3);
+        let ra = [Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
+        let eq_eval = Fr::from_u64(7);
+
+        // eq_eval * 2 * 3 * 5 = 7*30 = 210
+        let result = claim.evaluate::<Fr>(&ra, &[eq_eval]);
+        assert_eq!(result, Fr::from_u64(210));
+    }
+
+    #[test]
+    fn ram_ra_virtual_sop_equivalence() {
+        let claim = ram_ra_virtual(4);
+        let openings: Vec<Fr> = (1..=4).map(Fr::from_u64).collect();
+        let challenges = vec![Fr::from_u64(10)];
+
+        let direct = claim.evaluate::<Fr>(&openings, &challenges);
+        let via_sop = claim
+            .expr
+            .to_sum_of_products()
+            .evaluate::<Fr>(&openings, &challenges);
+        assert_eq!(direct, via_sop);
     }
 
     #[test]

@@ -105,23 +105,27 @@ pub fn compile_with_challenges<F: Field>(
         KernelShape::EqProduct => {
             // eq * g: out = [P(0), P(2)] — t=1 derived from claim
             let body = r"
-    result[0] = lo[0] * lo[1];
-    float a2 = hi[0] + hi[0] - lo[0];
-    float b2 = hi[1] + hi[1] - lo[1];
-    result[1] = a2 * b2;"
+        evals[0] = fr_mul(lo[0], lo[1]);
+        Fr a2 = fr_sub(fr_add(hi[0], hi[0]), lo[0]);
+        Fr b2 = fr_sub(fr_add(hi[1], hi[1]), lo[1]);
+        evals[1] = fr_mul(a2, b2);"
                 .to_string();
             (body.clone(), body, false)
         }
         KernelShape::HammingBooleanity => {
             // eq * h * (h-1): out = [P(0), P(2), P(3)] — t=1 derived from claim
+            // Incremental interpolation: eq_val = lo[0] + t*d_eq, h_val = lo[1] + t*d_h
+            // Grid: {0, 2, 3} (skipping t=1). Start cur at t=2 (= hi + diff).
             let body = r"
-    float d_eq = hi[0] - lo[0]; float d_h = hi[1] - lo[1];
-    result[0] = lo[0] * lo[1] * (lo[1] - 1.0);
-    float eq_val = hi[0] + d_eq; float h_val = hi[1] + d_h;
-    for (uint k = 1; k < NUM_EVALS; k++) {
-        result[k] = eq_val * h_val * (h_val - 1.0);
-        eq_val += d_eq; h_val += d_h;
-    }"
+        Fr d_eq = fr_sub(hi[0], lo[0]);
+        Fr d_h = fr_sub(hi[1], lo[1]);
+        evals[0] = fr_mul(fr_mul(lo[0], lo[1]), fr_sub(lo[1], fr_one()));
+        Fr eq_val = fr_add(hi[0], d_eq);
+        Fr h_val = fr_add(hi[1], d_h);
+        evals[1] = fr_mul(fr_mul(eq_val, h_val), fr_sub(h_val, fr_one()));
+        eq_val = fr_add(eq_val, d_eq);
+        h_val = fr_add(h_val, d_h);
+        evals[2] = fr_mul(fr_mul(eq_val, h_val), fr_sub(h_val, fr_one()));"
             .to_string();
             (body.clone(), body, false)
         }

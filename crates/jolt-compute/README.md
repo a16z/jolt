@@ -8,9 +8,11 @@ Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 This crate defines the `ComputeBackend` trait — a protocol-agnostic interface over typed buffer management and parallel primitives (pairwise interpolation, composition-reduce, product tables).
 
-The `CpuBackend` implementation uses `Vec<T>` buffers with Rayon parallelism. After monomorphization every trait method compiles to a direct function call — identical codegen to hand-written Rayon code.
+Concrete backends live in separate crates:
+- `jolt-cpu` — CPU backend (`CpuBackend`) using `Vec<T>` buffers with Rayon parallelism. After monomorphization every trait method compiles to a direct function call — identical codegen to hand-written Rayon code.
+- `jolt-metal` — Apple Metal GPU backend (`MetalBackend`) with compiled MSL shader kernels.
 
-GPU backends (Metal, CUDA, WebGPU) live in separate crates and implement the same trait with device memory buffers and compiled shader kernels.
+CUDA and WebGPU backends will follow the same pattern.
 
 ## Public API
 
@@ -48,11 +50,6 @@ Core device abstraction with associated types:
 | `accumulate` | Fused multiply-add: `buf[i] += scalar * other[i]` |
 | `accumulate_weighted` | Multi-input weighted accumulation: `buf[i] += Σ_k s_k * inputs_k[i]` |
 | `scale_batch` | In-place scalar multiplication across multiple buffers |
-
-### Backends
-
-- **`CpuBackend`** — CPU backend using `Vec<T>` buffers and Rayon parallelism.
-- **`CpuKernel`** — Compiled kernel type for the CPU backend.
 
 ## Dependency Position
 
@@ -146,12 +143,6 @@ kernel launch overhead and memory bus bandwidth dominate.
 | 16 (64K) | 65 Melem/s | 71 Melem/s |
 | 20 (1M) | 136 Melem/s | 91 Melem/s |
 | 24 (16M) | 140 Melem/s | 170 Melem/s |
-
-## Feature Flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `parallel` | yes | Enables Rayon parallelism in `CpuBackend` |
 
 ## License
 

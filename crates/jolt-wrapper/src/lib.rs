@@ -57,7 +57,6 @@ pub mod symbolic;
 pub mod transcript;
 pub mod tunneling;
 
-// Re-exports for convenience
 pub use arena::ArenaSession;
 pub use ast_emitter::AstEmitter;
 pub use bundle::AstBundle;

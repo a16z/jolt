@@ -20,12 +20,16 @@ This crate composes all Jolt sub-crates into a complete proving system for RISC-
 - **`stages`** -- Concrete `ProverStage` implementations:
   - `s1_spartan` -- Spartan R1CS stage.
   - `s2_ra_virtual` -- RA virtual sumcheck.
+  - `s2_product_virtual` -- Product virtual remainder sumcheck.
   - `s3_claim_reductions` -- Claim reduction sumchecks.
+  - `s3_shift` -- Shift sumcheck (PC-shift invariant via EqPlusOne).
+  - `s3_instruction_input` -- Instruction input virtualization sumcheck.
   - `s4_ram_rw` / `s4_rw_checking` -- RAM read-write checking.
   - `s5_ram_checking` -- RAM checking.
   - `s6_booleanity` -- Hamming booleanity checks.
   - `s7_hamming_reduction` -- Hamming weight reduction.
   - `s8_opening` -- Opening proof stage.
+- **`host`** -- Host-level proving and verification API (trace → proof).
 - **`witness`** -- `WitnessStore` for polynomial evaluation table storage, plus trace-to-witness conversion.
 
 ## Feature Flags

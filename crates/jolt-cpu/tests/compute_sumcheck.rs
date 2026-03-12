@@ -8,20 +8,16 @@
 
 use jolt_compute::{BindingOrder, ComputeBackend};
 use jolt_cpu::{compile, CpuBackend};
-use jolt_field::{Field, Fr};
+use jolt_field::{Field, Fr, WithChallenge};
 use jolt_ir::{KernelDescriptor, KernelShape};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::claim::SumcheckClaim;
 use jolt_sumcheck::prover::{SumcheckCompute, SumcheckProver};
 use jolt_sumcheck::verifier::SumcheckVerifier;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::Blake2bTranscript;
 use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
-
-fn challenge_to_field(c: u128) -> Fr {
-    Fr::from_u128(c)
-}
 
 /// Reference SumcheckCompute for eq-weighted product of two polynomials.
 ///
@@ -94,7 +90,7 @@ impl SumcheckCompute<Fr> for EqProductWitness {
         UnivariatePoly::interpolate(&points)
     }
 
-    fn bind(&mut self, challenge: Fr) {
+    fn bind(&mut self, challenge: <Fr as WithChallenge>::Challenge) {
         let half = self.f.len() / 2;
         for i in 0..half {
             self.f[i] = self.f[i] + challenge * (self.f[i + half] - self.f[i]);
@@ -195,14 +191,15 @@ impl SumcheckCompute<Fr> for ComputeWitness {
         UnivariatePoly::from_evals_toom(&full_evals)
     }
 
-    fn bind(&mut self, challenge: Fr) {
+    fn bind(&mut self, challenge: <Fr as WithChallenge>::Challenge) {
         let backend = CpuBackend;
+        let c: Fr = challenge.into();
         self.f_buf =
-            backend.interpolate_pairs::<Fr, Fr>(std::mem::take(&mut self.f_buf), challenge);
+            backend.interpolate_pairs::<Fr, Fr>(std::mem::take(&mut self.f_buf), c);
         self.g_buf =
-            backend.interpolate_pairs::<Fr, Fr>(std::mem::take(&mut self.g_buf), challenge);
+            backend.interpolate_pairs::<Fr, Fr>(std::mem::take(&mut self.g_buf), c);
         self.eq_buf =
-            backend.interpolate_pairs::<Fr, Fr>(std::mem::take(&mut self.eq_buf), challenge);
+            backend.interpolate_pairs::<Fr, Fr>(std::mem::take(&mut self.eq_buf), c);
 
         // Re-interleave for next round: after interpolate_pairs we get
         // a flat half-size buffer. We need to re-interleave it as pairs
@@ -251,11 +248,11 @@ fn compute_witness_matches_reference() {
     };
     let mut ref_w = EqProductWitness::new(f.clone(), g.clone(), &tau);
     let mut ref_pt = Blake2bTranscript::new(b"ref");
-    let ref_proof = SumcheckProver::prove(&ref_claim, &mut ref_w, &mut ref_pt, challenge_to_field);
+    let ref_proof = SumcheckProver::prove(&ref_claim, &mut ref_w, &mut ref_pt);
 
     let mut ref_vt = Blake2bTranscript::new(b"ref");
     let ref_result =
-        SumcheckVerifier::verify(&ref_claim, &ref_proof, &mut ref_vt, challenge_to_field);
+        SumcheckVerifier::verify(&ref_claim, &ref_proof, &mut ref_vt);
     assert!(ref_result.is_ok(), "reference sumcheck should verify");
 
     let compute_claim = SumcheckClaim {
@@ -269,7 +266,6 @@ fn compute_witness_matches_reference() {
         &compute_claim,
         &mut compute_w,
         &mut compute_pt,
-        challenge_to_field,
     );
 
     let mut compute_vt = Blake2bTranscript::new(b"compute");
@@ -277,7 +273,6 @@ fn compute_witness_matches_reference() {
         &compute_claim,
         &compute_proof,
         &mut compute_vt,
-        challenge_to_field,
     );
     assert!(
         compute_result.is_ok(),
@@ -338,9 +333,10 @@ fn compute_round_poly_sum_check() {
             "round polynomial s(0)+s(1) must equal running sum"
         );
 
-        // Pick a random challenge
-        let challenge = Fr::random(&mut rng);
-        running_sum = round_poly.evaluate(challenge);
+        // Pick a random challenge (as Challenge type for bind, convert to Fr for eval)
+        let challenge = <Fr as WithChallenge>::Challenge::random(&mut rng);
+        let challenge_f: Fr = challenge.into();
+        running_sum = round_poly.evaluate(challenge_f);
         w.bind(challenge);
     }
 }

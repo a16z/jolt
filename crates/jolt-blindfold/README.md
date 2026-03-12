@@ -36,6 +36,11 @@ proved via Nova folding and Spartan.
 - **`fold_instances`** / **`fold_witnesses`** / **`fold_scalar`** -- Instance/witness folding operations.
 - **`compute_cross_term`** -- Cross-term computation for folding.
 - **`sample_random_witness`** -- Random satisfying instance generation.
+- **`check_relaxed_satisfaction`** -- Verifies a witness satisfies the relaxed R1CS equation.
+
+### Errors
+
+- **`BlindFoldError`** -- Error type for proof generation and verification failures.
 
 All types are generic over `JoltCommitment` -- Pedersen, hash-based, or
 lattice-based commitment schemes can be substituted.

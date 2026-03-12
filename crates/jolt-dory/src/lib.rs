@@ -6,6 +6,8 @@
 //! - [`CommitmentScheme`](jolt_openings::CommitmentScheme) -- commit, open, verify
 //! - [`AdditivelyHomomorphic`](jolt_openings::AdditivelyHomomorphic) -- linear combination of commitments
 //! - [`StreamingCommitment`](jolt_openings::StreamingCommitment) -- chunked commitment
+//! - [`ZkOpeningScheme`](jolt_openings::ZkOpeningScheme) -- zero-knowledge opening proofs
+//! - [`VcSetupExtractable`](jolt_openings::VcSetupExtractable) -- extract Pedersen setup from Dory SRS
 //!
 //! # Instance-local parameters
 //!

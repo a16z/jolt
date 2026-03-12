@@ -1,6 +1,6 @@
 //! Sumcheck prover: generates round polynomials and binds witnesses.
 
-use jolt_field::Field;
+use jolt_field::WithChallenge;
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::Transcript;
 
@@ -16,6 +16,12 @@ use crate::proof::SumcheckProof;
 /// current round, then calls [`bind`](SumcheckCompute::bind) with the
 /// Fiat-Shamir challenge to fix that variable and advance to the next round.
 ///
+/// # Challenge type
+///
+/// `bind` accepts `F::Challenge` (e.g., `MontU128Challenge<F>`) rather than a
+/// full field element `F`. This enables ~1.6× faster polynomial binding: the
+/// 125-bit challenge uses 4×2 Montgomery multiplication instead of 4×4.
+///
 /// # Implementor contract
 ///
 /// * `round_polynomial` must return a polynomial $s(X)$ of degree at most
@@ -23,7 +29,7 @@ use crate::proof::SumcheckProof;
 ///   sum over the remaining Boolean hypercube.
 /// * `bind(r)` must fix the current leading variable to $r$ in place,
 ///   reducing `num_vars` by one.
-pub trait SumcheckCompute<F: Field>: Send + Sync {
+pub trait SumcheckCompute<F: WithChallenge>: Send + Sync {
     /// Computes the round polynomial $s_i(X)$ for the current round.
     ///
     /// The returned univariate polynomial satisfies
@@ -33,7 +39,10 @@ pub trait SumcheckCompute<F: Field>: Send + Sync {
 
     /// Fixes the current leading variable to `challenge`, reducing the
     /// witness to one fewer variable.
-    fn bind(&mut self, challenge: F);
+    ///
+    /// Receives `F::Challenge` for faster 125-bit × 254-bit Montgomery
+    /// multiplication. Convert with `challenge.into()` when full `F` is needed.
+    fn bind(&mut self, challenge: F::Challenge);
 
     /// Provides the running sumcheck claim before each round.
     ///
@@ -66,17 +75,17 @@ impl SumcheckProver {
     /// 1. Queries the witness for the round polynomial $s_i(X)$.
     /// 2. Delegates to `handler.absorb_round_poly()` for transcript binding.
     /// 3. Squeezes a challenge $r_i$ from the transcript.
-    /// 4. Binds the witness at $r_i$.
+    /// 4. Binds the witness at $r_i$ using `F::Challenge` for fast 125-bit multiply.
     #[tracing::instrument(skip_all, name = "SumcheckProver::prove")]
     pub fn prove_with_handler<F, T, H>(
         claim: &SumcheckClaim<F>,
         witness: &mut impl SumcheckCompute<F>,
         transcript: &mut T,
-        challenge_fn: impl Fn(T::Challenge) -> F,
         mut handler: H,
     ) -> H::Proof
     where
-        F: Field,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
         T: Transcript,
         H: RoundHandler<F>,
     {
@@ -85,9 +94,10 @@ impl SumcheckProver {
             witness.set_claim(running_claim);
             let round_poly = witness.round_polynomial();
             handler.absorb_round_poly(&round_poly, transcript);
-            let challenge = challenge_fn(transcript.challenge());
-            handler.on_challenge(challenge);
-            running_claim = round_poly.evaluate(challenge);
+            let challenge = F::Challenge::from(transcript.challenge());
+            let challenge_f: F = challenge.into();
+            handler.on_challenge(challenge_f);
+            running_claim = round_poly.evaluate(challenge_f);
             witness.bind(challenge);
         }
         handler.finalize()
@@ -102,17 +112,16 @@ impl SumcheckProver {
         claim: &SumcheckClaim<F>,
         witness: &mut impl SumcheckCompute<F>,
         transcript: &mut T,
-        challenge_fn: impl Fn(T::Challenge) -> F,
     ) -> SumcheckProof<F>
     where
-        F: Field,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
         T: Transcript,
     {
         Self::prove_with_handler(
             claim,
             witness,
             transcript,
-            challenge_fn,
             ClearRoundHandler::with_capacity(claim.num_vars),
         )
     }

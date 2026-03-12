@@ -218,10 +218,6 @@ mod tests {
 
     type MockPCS = MockCommitmentScheme<Fr>;
 
-    fn challenge_fn(c: u128) -> Fr {
-        Fr::from_u128(c)
-    }
-
     #[test]
     fn commit_open_verify_roundtrip() {
         let mut rng = ChaCha20Rng::seed_from_u64(42);
@@ -340,7 +336,6 @@ mod tests {
         let (reduced_prover, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
             prover_claims,
             &mut transcript_p,
-            challenge_fn,
         );
         let proofs: Vec<_> = reduced_prover
             .iter()
@@ -363,7 +358,6 @@ mod tests {
             verifier_claims,
             &(),
             &mut transcript_v,
-            challenge_fn,
         )?;
 
         assert_eq!(reduced_verifier.len(), proofs.len());
@@ -473,7 +467,6 @@ mod tests {
         let (reduced, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
             claims,
             &mut transcript,
-            challenge_fn,
         );
         assert_eq!(reduced.len(), 2, "two distinct points → two reduced claims");
     }

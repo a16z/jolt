@@ -30,9 +30,11 @@ tracer = { path = "../../tracer" }
 tracing.workspace = true
 
 [dev-dependencies]
+jolt-compute = { path = "../jolt-compute" }
 jolt-crypto = { path = "../jolt-crypto" }
 jolt-dory = { path = "../jolt-dory" }
 jolt-host = { path = "../jolt-host" }
+jolt-metal = { path = "../jolt-metal" }
 jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
 jolt-profiling = { path = "../jolt-profiling" }
 jolt-verifier = { path = "../jolt-verifier" }

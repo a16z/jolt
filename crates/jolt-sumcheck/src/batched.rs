@@ -7,7 +7,7 @@
 //! earlier rounds. Each claim is scaled by $2^{N - n_i}$ where $N$ is the
 //! maximum `num_vars` across all claims.
 
-use jolt_field::Field;
+use jolt_field::{Field, WithChallenge};
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -44,11 +44,11 @@ impl BatchedSumcheckProver {
         claims: &[SumcheckClaim<F>],
         witnesses: &mut [Box<dyn SumcheckCompute<F>>],
         transcript: &mut T,
-        challenge_fn: impl Fn(T::Challenge) -> F,
         mut handler: H,
     ) -> H::Proof
     where
-        F: Field,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
         T: Transcript,
         H: RoundHandler<F>,
     {
@@ -68,7 +68,7 @@ impl BatchedSumcheckProver {
             claim.claimed_sum.append_to_transcript(transcript);
         }
 
-        let alpha = challenge_fn(transcript.challenge());
+        let alpha: F = F::Challenge::from(transcript.challenge()).into();
 
         let offsets: Vec<usize> = claims.iter().map(|c| max_num_vars - c.num_vars).collect();
 
@@ -123,11 +123,12 @@ impl BatchedSumcheckProver {
             let combined_poly = UnivariatePoly::interpolate(&points);
 
             handler.absorb_round_poly(&combined_poly, transcript);
-            let challenge = challenge_fn(transcript.challenge());
-            handler.on_challenge(challenge);
+            let challenge = F::Challenge::from(transcript.challenge());
+            let challenge_f: F = challenge.into();
+            handler.on_challenge(challenge_f);
 
             for (i, poly) in instance_polys.iter().enumerate() {
-                individual_claims[i] = poly.evaluate(challenge);
+                individual_claims[i] = poly.evaluate(challenge_f);
             }
 
             for (i, witness) in witnesses.iter_mut().enumerate() {
@@ -153,10 +154,10 @@ impl BatchedSumcheckProver {
         claims: &[SumcheckClaim<F>],
         witnesses: &mut [Box<dyn SumcheckCompute<F>>],
         transcript: &mut T,
-        challenge_fn: impl Fn(T::Challenge) -> F,
     ) -> SumcheckProof<F>
     where
-        F: Field,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
         T: Transcript,
     {
         let max_num_vars = claims.iter().map(|c| c.num_vars).max().unwrap_or(0);
@@ -164,7 +165,6 @@ impl BatchedSumcheckProver {
             claims,
             witnesses,
             transcript,
-            challenge_fn,
             ClearRoundHandler::with_capacity(max_num_vars),
         )
     }
@@ -192,11 +192,11 @@ impl BatchedSumcheckVerifier {
         claims: &[SumcheckClaim<F>],
         round_proofs: &[V::RoundProof],
         transcript: &mut T,
-        challenge_fn: impl Fn(T::Challenge) -> F,
         verifier: &V,
     ) -> Result<(F, Vec<F>), SumcheckError>
     where
-        F: Field,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
         T: Transcript,
         V: RoundVerifier<F>,
     {
@@ -210,7 +210,7 @@ impl BatchedSumcheckVerifier {
             claim.claimed_sum.append_to_transcript(transcript);
         }
 
-        let alpha = challenge_fn(transcript.challenge());
+        let alpha: F = F::Challenge::from(transcript.challenge()).into();
 
         let combined_sum: F = claims
             .iter()
@@ -230,7 +230,6 @@ impl BatchedSumcheckVerifier {
             &combined_claim,
             round_proofs,
             transcript,
-            challenge_fn,
             verifier,
         )
     }
@@ -246,17 +245,16 @@ impl BatchedSumcheckVerifier {
         claims: &[SumcheckClaim<F>],
         proof: &SumcheckProof<F>,
         transcript: &mut T,
-        challenge_fn: impl Fn(T::Challenge) -> F,
     ) -> Result<(F, Vec<F>), SumcheckError>
     where
-        F: Field,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
         T: Transcript,
     {
         Self::verify_with_handler(
             claims,
             &proof.round_polynomials,
             transcript,
-            challenge_fn,
             &ClearRoundVerifier,
         )
     }

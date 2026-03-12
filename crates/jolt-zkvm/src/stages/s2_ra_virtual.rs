@@ -24,7 +24,6 @@ use jolt_transcript::Transcript;
 use crate::evaluators::catalog;
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::stage::{ProverStage, StageBatch};
-use jolt_ir::zkvm::claims::instruction;
 
 /// RA virtual sumcheck prover stage.
 ///
@@ -50,6 +49,8 @@ pub struct RaVirtualStage<F: WithChallenge, B: ComputeBackend> {
     claimed_sum: F,
     /// Compute backend for kernel compilation and buffer management.
     backend: Arc<B>,
+    /// Claim definition for this RA virtual instance.
+    claim_definition: ClaimDefinition,
 }
 
 impl<F: WithChallenge, B: ComputeBackend> RaVirtualStage<F, B> {
@@ -66,6 +67,7 @@ impl<F: WithChallenge, B: ComputeBackend> RaVirtualStage<F, B> {
     /// * `n_committed_per_virtual` — chunks per virtual polynomial
     /// * `claimed_sum` — expected sum `g(0) + g(1) + ... = claimed_sum`
     /// * `backend` — compute backend for kernel compilation and buffer uploads
+    /// * `claim_definition` — claim definition for this RA virtual instance
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         ra_tables: Vec<Vec<F>>,
@@ -76,6 +78,7 @@ impl<F: WithChallenge, B: ComputeBackend> RaVirtualStage<F, B> {
         n_committed_per_virtual: usize,
         claimed_sum: F,
         backend: Arc<B>,
+        claim_definition: ClaimDefinition,
     ) -> Self {
         let num_vars = eq_point.len();
         let total_chunks = n_virtual * n_committed_per_virtual;
@@ -93,6 +96,7 @@ impl<F: WithChallenge, B: ComputeBackend> RaVirtualStage<F, B> {
             num_vars,
             claimed_sum,
             backend,
+            claim_definition,
         }
     }
 }
@@ -186,10 +190,7 @@ impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T>
     }
 
     fn claim_definitions(&self) -> Vec<ClaimDefinition> {
-        vec![instruction::instruction_ra_virtual(
-            self.n_virtual,
-            self.n_committed_per_virtual,
-        )]
+        vec![self.claim_definition.clone()]
     }
 }
 
@@ -198,6 +199,7 @@ mod tests {
     use super::*;
     use jolt_cpu::CpuBackend;
     use jolt_field::{Field, Fr, WithChallenge};
+    use jolt_ir::zkvm::claims::{instruction, ram};
     use jolt_poly::{EqPolynomial, UnivariatePoly};
     use jolt_sumcheck::{BatchedSumcheckProver, BatchedSumcheckVerifier, ClearRoundHandler};
     use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -288,6 +290,7 @@ mod tests {
             m,
             claimed_sum,
             cpu(),
+            instruction::instruction_ra_virtual(n_virtual, m),
         );
 
         let mut transcript = Blake2bTranscript::new(b"s2-test");
@@ -304,7 +307,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut transcript,
-            |c: u128| Fr::from_u128(c),
             handler,
         );
 
@@ -316,9 +318,7 @@ mod tests {
             claimed_sum,
         };
         let _result =
-            BatchedSumcheckVerifier::verify(&[verify_claim], &proof, &mut vt, |c: u128| {
-                Fr::from_u128(c)
-            })
+            BatchedSumcheckVerifier::verify(&[verify_claim], &proof, &mut vt)
             .expect("verification should succeed");
     }
 
@@ -346,6 +346,7 @@ mod tests {
             m,
             claimed_sum,
             cpu(),
+            instruction::instruction_ra_virtual(n_virtual, m),
         );
 
         let mut transcript = Blake2bTranscript::new(b"s2-extract");
@@ -385,7 +386,6 @@ mod tests {
                 &batch.claims,
                 &mut batch.witnesses,
                 &mut transcript,
-                |c: u128| Fr::from_u128(c),
                 handler,
             )
         };
@@ -431,6 +431,7 @@ mod tests {
             m,
             claimed_sum,
             cpu(),
+            instruction::instruction_ra_virtual(n_virtual, m),
         );
 
         let defs =
@@ -454,6 +455,100 @@ mod tests {
             }
             expected += product;
         }
+        assert_eq!(result, expected);
+    }
+
+    /// RAM RA virtual: n_virtual=1, d chunks, gamma_powers=[1].
+    /// Same RaVirtualStage but with RAM claim definition.
+    #[test]
+    fn ram_ra_virtual_single_product() {
+        let mut rng = ChaCha20Rng::seed_from_u64(55);
+        let num_vars = 4;
+        let n_virtual = 1;
+        let d = 4; // typical ram_d
+        let total = n_virtual * d;
+
+        let (tables, indices) = random_ra_data(num_vars, total, &mut rng);
+        let eq_point = random_eq_point(num_vars, &mut rng);
+        let gamma_powers = vec![Fr::from_u64(1)];
+
+        let claimed_sum = brute_force_sum(&tables, &eq_point, &gamma_powers, n_virtual, d);
+
+        let mut stage = RaVirtualStage::new(
+            tables.clone(),
+            indices,
+            eq_point,
+            gamma_powers,
+            n_virtual,
+            d,
+            claimed_sum,
+            cpu(),
+            ram::ram_ra_virtual(d),
+        );
+
+        let mut transcript = Blake2bTranscript::new(b"ram-ra-virtual");
+        let mut batch = stage.build(&[], &mut transcript);
+
+        assert_eq!(batch.claims.len(), 1);
+        assert_eq!(batch.claims[0].degree, d + 1);
+        assert_eq!(batch.claims[0].num_vars, num_vars);
+
+        let claims_snapshot = batch.claims.clone();
+        let handler = ClearRoundHandler::with_capacity(num_vars);
+        let proof = BatchedSumcheckProver::prove_with_handler(
+            &batch.claims,
+            &mut batch.witnesses,
+            &mut transcript,
+            handler,
+        );
+
+        let mut vt = Blake2bTranscript::new(b"ram-ra-virtual");
+        let _result = BatchedSumcheckVerifier::verify(
+            &claims_snapshot,
+            &proof,
+            &mut vt,
+        )
+        .expect("RAM RA virtual verification should succeed");
+    }
+
+    #[test]
+    fn ram_ra_virtual_claim_definition() {
+        let mut rng = ChaCha20Rng::seed_from_u64(77);
+        let num_vars = 3;
+        let d = 3;
+
+        let (tables, indices) = random_ra_data(num_vars, d, &mut rng);
+        let eq_point = random_eq_point(num_vars, &mut rng);
+        let gamma_powers = vec![Fr::from_u64(1)];
+        let claimed_sum = brute_force_sum(&tables, &eq_point, &gamma_powers, 1, d);
+
+        let stage = RaVirtualStage::new(
+            tables,
+            indices,
+            eq_point,
+            gamma_powers,
+            1,
+            d,
+            claimed_sum,
+            cpu(),
+            ram::ram_ra_virtual(d),
+        );
+
+        let defs =
+            <RaVirtualStage<Fr, CpuBackend> as ProverStage<Fr, Blake2bTranscript>>::claim_definitions(&stage);
+        assert_eq!(defs.len(), 1);
+
+        let def = &defs[0];
+        assert_eq!(def.opening_bindings.len(), d);
+        // RAM: single challenge (eq_eval)
+        assert_eq!(def.challenge_bindings.len(), 1);
+
+        // Verify formula: c0 * ra0 * ra1 * ra2
+        let openings: Vec<Fr> = (2..=4).map(Fr::from_u64).collect();
+        let eq_eval = Fr::from_u64(7);
+
+        let result = def.evaluate::<Fr>(&openings, &[eq_eval]);
+        let expected = eq_eval * Fr::from_u64(2) * Fr::from_u64(3) * Fr::from_u64(4);
         assert_eq!(result, expected);
     }
 }

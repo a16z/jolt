@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
-use jolt_field::Field;
+use jolt_field::{Field, WithChallenge};
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -84,7 +84,7 @@ impl<F: Field, B: ComputeBackend> HammingReductionStage<F, B> {
     }
 }
 
-impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for HammingReductionStage<F, B> {
+impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T> for HammingReductionStage<F, B> {
     fn name(&self) -> &'static str {
         "S7_hamming_reduction"
     }
@@ -221,7 +221,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut prover_transcript,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
         let mut verifier_transcript = Blake2bTranscript::new(b"s7_roundtrip");
@@ -229,7 +228,6 @@ mod tests {
             &[claim],
             &proof,
             &mut verifier_transcript,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         )
         .expect("verification should succeed");
 

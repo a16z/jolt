@@ -51,6 +51,11 @@ This crate defines abstract interfaces for polynomial commitment schemes (PCS) a
 - **`rlc_combine`** -- Random linear combination of polynomial evaluation tables.
 - **`rlc_combine_scalars`** -- Random linear combination of scalar evaluations.
 
+### Transcript Helpers (`transcript` module)
+
+- **`bind_opening_claim`** -- Appends point + cleartext eval to a Fiat-Shamir transcript (standard mode).
+- **`bind_opening_claim_zk`** -- Appends point + eval commitment to a transcript (ZK mode).
+
 ### Errors
 
 - **`OpeningsError`** -- Variants: `VerificationFailed`, `CommitmentMismatch`, `InvalidSetup`, `PolynomialTooLarge`.

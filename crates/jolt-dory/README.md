@@ -8,13 +8,13 @@ Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 This crate wraps the [Dory](https://eprint.iacr.org/2020/1274) polynomial commitment scheme for use in Jolt. Dory is a pairing-based PCS over BN254 with transparent setup, logarithmic proof size, and logarithmic verification time. It supports streaming commitment (for polynomials larger than memory) and additive homomorphism for batch opening reduction.
 
-The crate implements `CommitmentScheme`, `AdditivelyHomomorphic`, and `StreamingCommitment` from `jolt-openings`, making it a drop-in PCS backend for Spartan and other protocol components.
+The crate implements `CommitmentScheme`, `AdditivelyHomomorphic`, `StreamingCommitment`, `ZkOpeningScheme`, and `VcSetupExtractable` from `jolt-openings`, making it a drop-in PCS backend for Spartan and other protocol components.
 
 ## Public API
 
 ### Commitment Scheme
 
-- **`DoryScheme`** — Main entry point. Constructed from `DoryParams`, implements all three commitment scheme traits. Inherent methods: `setup_prover(num_vars)`, `setup_verifier(num_vars)`. Trait methods: `commit`, `open`, `verify`, `combine`, `begin`/`feed`/`finish`.
+- **`DoryScheme`** — Main entry point. Constructed from `DoryParams`, implements all five commitment scheme traits. Inherent methods: `setup_prover(num_vars)`, `setup_verifier(num_vars)`. Trait methods: `commit`, `open`, `verify`, `combine`, `begin`/`feed`/`finish`, `open_zk`/`verify_zk`, `extract_vc_setup`.
 
 ### Parameters
 

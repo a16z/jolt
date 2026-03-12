@@ -6,7 +6,7 @@
 #![allow(unused_results)]
 
 use jolt_dory::DoryScheme;
-use jolt_field::{Field, Fr};
+use jolt_field::{Field, Fr, WithChallenge};
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, OpeningReduction, ProverClaim, RlcReduction,
     VerifierClaim,
@@ -15,10 +15,6 @@ use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
-
-fn challenge_fn(c: u128) -> Fr {
-    Fr::from_u128(c)
-}
 
 fn rho_powers(rho: Fr, n: usize) -> Vec<Fr> {
     std::iter::successors(Some(Fr::from_u64(1)), |prev| Some(*prev * rho))
@@ -89,7 +85,6 @@ fn pipeline_round_trip<T: Transcript<Challenge = u128>>(
     let (reduced_p, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
         prover_claims,
         &mut transcript_p,
-        challenge_fn,
     );
 
     // Replay challenges on the cloned transcript to recover per-group rho values,
@@ -105,7 +100,7 @@ fn pipeline_round_trip<T: Transcript<Challenge = u128>>(
         hint_groups
             .into_iter()
             .map(|(_point, group_hints)| {
-                let rho = challenge_fn(replay.challenge());
+                let rho: Fr = <Fr as WithChallenge>::Challenge::from(replay.challenge()).into();
                 let powers = rho_powers(rho, group_hints.len());
                 Some(DoryScheme::combine_hints(group_hints, &powers))
             })
@@ -137,7 +132,6 @@ fn pipeline_round_trip<T: Transcript<Challenge = u128>>(
         verifier_claims,
         &(),
         &mut transcript_v,
-        challenge_fn,
     )?;
 
     assert_eq!(reduced_v.len(), proofs.len());
@@ -436,7 +430,6 @@ fn transcript_mismatch_causes_failure() {
     let (reduced_p, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
         prover_claims,
         &mut tp,
-        challenge_fn,
     );
     let proof = {
         let claim = &reduced_p[0];
@@ -457,7 +450,6 @@ fn transcript_mismatch_causes_failure() {
         verifier_claims,
         &(),
         &mut tv,
-        challenge_fn,
     )
     .expect("reduction itself succeeds");
 
@@ -509,7 +501,6 @@ fn tampered_eval_after_reduction() {
     let (reduced_p, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
         prover_claims,
         &mut tp,
-        challenge_fn,
     );
     let proof = {
         let claim = &reduced_p[0];
@@ -536,7 +527,6 @@ fn tampered_eval_after_reduction() {
         verifier_claims,
         &(),
         &mut tv,
-        challenge_fn,
     )
     .expect("reduction itself succeeds");
 
@@ -580,7 +570,6 @@ fn tampered_commitment_in_verifier() {
     let (reduced_p, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
         prover_claims,
         &mut tp,
-        challenge_fn,
     );
     let proof = {
         let claim = &reduced_p[0];
@@ -600,7 +589,6 @@ fn tampered_commitment_in_verifier() {
         verifier_claims,
         &(),
         &mut tv,
-        challenge_fn,
     )
     .expect("reduction itself succeeds");
 
@@ -658,7 +646,6 @@ fn extra_claim_causes_fiat_shamir_mismatch() {
     let (reduced_p, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
         prover_claims,
         &mut tp,
-        challenge_fn,
     );
     let proofs: Vec<DoryProofType> = reduced_p
         .iter()
@@ -693,7 +680,6 @@ fn extra_claim_causes_fiat_shamir_mismatch() {
         verifier_claims,
         &(),
         &mut tv,
-        challenge_fn,
     )
     .expect("reduction itself succeeds");
 

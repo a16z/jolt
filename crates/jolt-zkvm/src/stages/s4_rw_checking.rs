@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
-use jolt_field::Field;
+use jolt_field::{Field, WithChallenge};
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -101,6 +101,9 @@ impl<F: Field, B: ComputeBackend> RwCheckingStage<F, B> {
         }
     }
 
+}
+
+impl<F: WithChallenge, B: ComputeBackend> RwCheckingStage<F, B> {
     fn build_register_rw(&self) -> (SumcheckClaim<F>, Box<dyn SumcheckCompute<F>>) {
         let val = self.reg_val.as_ref().unwrap();
         let rs1_ra = self.rs1_ra.as_ref().unwrap();
@@ -217,7 +220,7 @@ impl<F: Field, B: ComputeBackend> RwCheckingStage<F, B> {
     }
 }
 
-impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for RwCheckingStage<F, B> {
+impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T> for RwCheckingStage<F, B> {
     fn name(&self) -> &'static str {
         "S4_rw_checking"
     }
@@ -359,7 +362,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
         let mut vt = Blake2bTranscript::new(b"s4_roundtrip");
@@ -367,7 +369,6 @@ mod tests {
             &claims_snapshot,
             &proof,
             &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         )
         .expect("verification should succeed");
 

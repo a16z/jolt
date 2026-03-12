@@ -35,7 +35,7 @@
 use std::sync::Arc;
 
 use jolt_compute::{BindingOrder, ComputeBackend};
-use jolt_field::Field;
+use jolt_field::{Field, WithChallenge};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::prover::SumcheckCompute;
 
@@ -356,7 +356,7 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
     }
 }
 
-impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
+impl<F: WithChallenge, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
     fn set_claim(&mut self, claim: F) {
         match &mut self.mode {
             InterpolationMode::StandardGrid { claim: stored } => *stored = claim,
@@ -382,13 +382,14 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
         }
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F::Challenge) {
+        let c: F = challenge.into();
         // Update Toom-Cook state (claim is now set externally via set_claim).
         if let InterpolationMode::ToomCook(state) = &mut self.mode {
             let w_k = state.eq_w[state.round];
-            state.outer_scalar *= eq_single(w_k, challenge);
+            state.outer_scalar *= eq_single(w_k, c);
             if state.round + 1 < state.eq_w.len() {
-                state.weight_scalar *= eq_single(state.eq_w[state.round + 1], challenge);
+                state.weight_scalar *= eq_single(state.eq_w[state.round + 1], c);
             }
             state.round += 1;
         }
@@ -398,7 +399,7 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
             let mut all_bufs = std::mem::take(&mut self.inputs);
             all_bufs.push(weights);
 
-            let mut bound = self.backend.interpolate_pairs_batch(all_bufs, challenge);
+            let mut bound = self.backend.interpolate_pairs_batch(all_bufs, c);
             self.weights = Some(
                 bound
                     .pop()
@@ -408,7 +409,7 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
         } else {
             // Unit-weights mode (StandardGrid): skip weights entirely.
             let inputs = std::mem::take(&mut self.inputs);
-            self.inputs = self.backend.interpolate_pairs_batch(inputs, challenge);
+            self.inputs = self.backend.interpolate_pairs_batch(inputs, c);
         }
     }
 }
@@ -418,13 +419,15 @@ mod tests {
     use super::*;
     use crate::evaluators::catalog;
     use jolt_cpu::CpuBackend;
-    use jolt_field::{Field, Fr};
+    use jolt_field::{Challenge, Field, Fr, WithChallenge};
     use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
     use jolt_sumcheck::{SumcheckClaim, SumcheckProver, SumcheckVerifier};
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    type C = <Fr as WithChallenge>::Challenge;
 
     fn cpu() -> Arc<CpuBackend> {
         Arc::new(CpuBackend)
@@ -461,20 +464,10 @@ mod tests {
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"kw_eq_product");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"kw_eq_product");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
 
@@ -510,20 +503,10 @@ mod tests {
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"kw_hamming");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"kw_hamming");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
 
@@ -559,20 +542,10 @@ mod tests {
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"kw_hamming_random");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"kw_hamming_random");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
 
@@ -636,20 +609,10 @@ mod tests {
         };
 
         let mut pt = Blake2bTranscript::new(b"kw_formula");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"kw_formula");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
 
@@ -675,7 +638,7 @@ mod tests {
         );
 
         for _ in 0..num_vars - 1 {
-            let challenge = Fr::random(&mut rng);
+            let challenge = C::rand(&mut rng);
             kw.bind(challenge);
 
             assert!(
@@ -708,7 +671,7 @@ mod tests {
 
         assert_eq!(kw.current_len(), n);
         for round in 1..=num_vars {
-            kw.bind(Fr::random(&mut rng));
+            kw.bind(C::rand(&mut rng));
             assert_eq!(kw.current_len(), n >> round);
         }
     }
@@ -757,20 +720,10 @@ mod tests {
         };
 
         let mut pt = Blake2bTranscript::new(b"tc_single");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"tc_single");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
 
@@ -845,20 +798,10 @@ mod tests {
         };
 
         let mut pt = Blake2bTranscript::new(b"tc_multi_gamma");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"tc_multi_gamma");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
 
@@ -906,20 +849,10 @@ mod tests {
         };
 
         let mut pt = Blake2bTranscript::new(b"tc_d8");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"tc_d8");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
 }

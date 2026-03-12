@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use jolt_cpu::CpuBackend;
-use jolt_field::Field;
+use jolt_compute::ComputeBackend;
+use jolt_field::{Field, WithChallenge};
 use jolt_ir::zkvm::tags::poly;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_transcript::Transcript;
@@ -42,17 +42,25 @@ pub struct CommittedTables<F: Field> {
 ///
 /// Orchestrates: trace → witness gen → preprocess → commit → prove.
 ///
+/// The `backend` parameter controls which compute backend is used for
+/// sumcheck kernel evaluation. Pass `Arc::new(CpuBackend)` for CPU-only
+/// or `Arc::new(HybridBackend::new(MetalBackend::new(), CpuBackend, threshold))`
+/// for GPU-accelerated proving with automatic fallback.
+///
 /// Currently wires up S3 (increment claim reduction) as the sole sumcheck
 /// stage, using RD_INC and RAM_INC from witness generation. Additional
 /// stages (S2, S4–S7) will be added incrementally.
 #[tracing::instrument(skip_all, name = "prove_trace")]
-pub fn prove_trace<PCS>(
+pub fn prove_trace<PCS, B>(
     trace: &[Cycle],
     pcs_setup: impl FnOnce(usize) -> (PCS::ProverSetup, PCS::VerifierSetup),
+    backend: Arc<B>,
 ) -> Result<ProveOutput<PCS::Field, PCS>, ProveError>
 where
     PCS: AdditivelyHomomorphic,
-    PCS::Field: From<u128>,
+    PCS::Field: WithChallenge,
+    <PCS::Field as WithChallenge>::Challenge: From<u128>,
+    B: ComputeBackend,
 {
     let output = generate_witnesses::<PCS::Field>(trace);
 
@@ -71,23 +79,16 @@ where
     let (com_rd_inc, _) = PCS::commit(&rd_inc, &key.pcs_prover_setup);
     let poly_commitments = vec![com_ram_inc, com_rd_inc];
 
-    let mut transcript =
-        jolt_transcript::Blake2bTranscript::new(b"jolt-v2");
+    let mut transcript = jolt_transcript::Blake2bTranscript::new(b"jolt-v2");
 
     let proof = prove::<PCS, jolt_transcript::Blake2bTranscript>(
         &key,
         &output.cycle_witnesses,
         poly_commitments,
         |_r_x, r_y, transcript| {
-            build_prover_stages(
-                &rd_inc,
-                &ram_inc,
-                r_y,
-                transcript,
-            )
+            build_prover_stages(&rd_inc, &ram_inc, r_y, transcript, Arc::clone(&backend))
         },
         &mut transcript,
-        |c: u128| PCS::Field::from(c),
     )?;
 
     let verifying_key = jolt_verifier::JoltVerifyingKey {
@@ -112,10 +113,10 @@ pub fn verify_proof<PCS>(
 ) -> Result<(), jolt_verifier::JoltError>
 where
     PCS: AdditivelyHomomorphic,
-    PCS::Field: From<u128>,
+    PCS::Field: WithChallenge,
+    <PCS::Field as WithChallenge>::Challenge: From<u128>,
 {
-    let mut transcript =
-        jolt_transcript::Blake2bTranscript::new(b"jolt-v2");
+    let mut transcript = jolt_transcript::Blake2bTranscript::new(b"jolt-v2");
 
     let tables = &output.committed_tables;
 
@@ -123,15 +124,9 @@ where
         &output.proof,
         &output.verifying_key,
         |_r_x, r_y, transcript| {
-            build_verifier_descriptors(
-                &tables.rd_inc,
-                &tables.ram_inc,
-                r_y,
-                transcript,
-            )
+            build_verifier_descriptors(&tables.rd_inc, &tables.ram_inc, r_y, transcript)
         },
         &mut transcript,
-        |c: u128| PCS::Field::from(c),
     )?;
 
     Ok(())
@@ -141,24 +136,25 @@ where
 ///
 /// Currently implements:
 /// - S3 increment reduction: `c0·rd_inc + c1·ram_inc` with Fiat-Shamir coefficients
-fn build_prover_stages<F, T>(
+fn build_prover_stages<F, T, B>(
     rd_inc: &[F],
     ram_inc: &[F],
     r_y: &[F],
     transcript: &mut T,
+    backend: Arc<B>,
 ) -> Vec<Box<dyn ProverStage<F, T>>>
 where
-    F: Field + From<u128>,
-    T: Transcript<Challenge = u128>,
+    F: WithChallenge,
+    F::Challenge: From<T::Challenge>,
+    T: Transcript,
+    B: ComputeBackend,
 {
-    let c0 = F::from(transcript.challenge());
-    let c1 = F::from(transcript.challenge());
+    let c0: F = F::Challenge::from(transcript.challenge()).into();
+    let c1: F = F::Challenge::from(transcript.challenge()).into();
 
     // r_y = [r_cycle..., r_var...]; committed polys are indexed by cycle only.
     let num_cycle_vars = rd_inc.len().trailing_zeros() as usize;
     let r_cycle = &r_y[..num_cycle_vars];
-
-    let backend: Arc<CpuBackend> = Arc::new(CpuBackend);
 
     let inc_stage = ClaimReductionStage::increment(
         ram_inc.to_vec(),
@@ -180,13 +176,14 @@ fn build_verifier_descriptors<F, T>(
     transcript: &mut T,
 ) -> Vec<StageDescriptor<F>>
 where
-    F: Field + From<u128>,
-    T: Transcript<Challenge = u128>,
+    F: WithChallenge,
+    F::Challenge: From<T::Challenge>,
+    T: Transcript,
 {
     use jolt_poly::EqPolynomial;
 
-    let c0 = F::from(transcript.challenge());
-    let c1 = F::from(transcript.challenge());
+    let c0: F = F::Challenge::from(transcript.challenge()).into();
+    let c1: F = F::Challenge::from(transcript.challenge()).into();
 
     // r_y = [r_cycle..., r_var...]; committed polys are indexed by cycle only.
     let num_cycle_vars = rd_inc.len().trailing_zeros() as usize;

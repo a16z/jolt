@@ -7,7 +7,7 @@
 //! appending the commitment to the Fiat-Shamir transcript **before** calling
 //! `prove`. The witness opening proof is handled by S8 (batch opening phase).
 
-use jolt_field::Field;
+use jolt_field::{Field, WithChallenge};
 use jolt_openings::ProverClaim;
 use jolt_spartan::{
     FirstRoundStrategy, SpartanError, SpartanKey, SpartanProof, SpartanProver, SpartanVerifier,
@@ -46,8 +46,9 @@ impl SpartanStage {
         strategy: FirstRoundStrategy,
     ) -> Result<SpartanResult<F>, SpartanError>
     where
-        F: Field,
-        T: Transcript<Challenge = u128>,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
+        T: Transcript,
     {
         let (proof, r_x, r_y) =
             SpartanProver::prove_with_challenges(r1cs, key, witness, transcript, strategy)?;
@@ -77,8 +78,9 @@ impl SpartanStage {
         transcript: &mut T,
     ) -> Result<(Vec<F>, Vec<F>), SpartanError>
     where
-        F: Field,
-        T: Transcript<Challenge = u128>,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
+        T: Transcript,
     {
         SpartanVerifier::verify_with_challenges(key, proof, transcript)
     }
@@ -133,8 +135,9 @@ impl UniformSpartanStage {
         transcript: &mut T,
     ) -> Result<UniformSpartanResult<F>, SpartanError>
     where
-        F: Field,
-        T: Transcript<Challenge = u128>,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
+        T: Transcript,
     {
         let (proof, r_x, r_y) =
             UniformSpartanProver::prove_dense_with_challenges(key, flat_witness, transcript)?;
@@ -165,8 +168,9 @@ impl UniformSpartanStage {
         transcript: &mut T,
     ) -> Result<(Vec<F>, Vec<F>), SpartanError>
     where
-        F: Field,
-        T: Transcript<Challenge = u128>,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
+        T: Transcript,
     {
         UniformSpartanVerifier::verify_with_challenges(key, proof, transcript)
     }

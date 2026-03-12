@@ -35,3 +35,7 @@ default = []
 [[bench]]
 name = "metal_vs_cpu"
 harness = false
+
+[[bench]]
+name = "threshold"
+harness = false

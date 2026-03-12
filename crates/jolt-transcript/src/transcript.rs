@@ -9,6 +9,11 @@
 /// and verifier maintain identical transcripts to derive the same challenges,
 /// transforming an interactive proof into a non-interactive one.
 ///
+/// The `Challenge` associated type controls the output of [`challenge`](Transcript::challenge).
+/// Hash-based transcripts are generic over `C: From<u128>`, so the caller
+/// picks the challenge type (e.g. `MontU128Challenge<Fr>` for fast bind,
+/// or plain `u128` for field-agnostic use).
+///
 /// # Security
 ///
 /// Domain separation is provided via the label in [`new`](Transcript::new).
@@ -16,8 +21,8 @@
 pub trait Transcript: Default + Clone + Sync + Send + 'static {
     /// The challenge type produced by this transcript.
     ///
-    /// Typically a Field element. Caller is responsible for serialization
-    /// of the Challenge type
+    /// For typed transcripts this is `F::Challenge` (e.g. `MontU128Challenge<Fr>`),
+    /// enabling direct use in `bind()` and `.into()` for full field elements.
     type Challenge: Copy + Default;
 
     /// Creates a new transcript with the given domain separation label.
@@ -41,9 +46,10 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
         value.append_to_transcript(self);
     }
 
-    /// Squeezes a challenge from the transcript.
+    /// Squeezes a typed challenge from the transcript.
     ///
     /// Each call produces a new challenge and advances the transcript state.
+    /// Use directly for `bind()` calls, or `.into()` for full field elements.
     #[must_use]
     fn challenge(&mut self) -> Self::Challenge;
 

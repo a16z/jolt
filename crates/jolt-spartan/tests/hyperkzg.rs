@@ -228,7 +228,7 @@ fn relaxed_standard_instance() {
     let (pk, vk) = make_setup(srs_size);
 
     // x=3: [1, 3, 9, 27]
-    let witness = [one, Fr::from_u64(3), Fr::from_u64(9), Fr::from_u64(27)];
+    let witness = vec![one, Fr::from_u64(3), Fr::from_u64(9), Fr::from_u64(27)];
     let error = vec![Fr::from_u64(0); key.num_constraints_padded];
 
     let (w_com, ()) = <KzgPCS as CommitmentScheme>::commit(&witness, &pk);

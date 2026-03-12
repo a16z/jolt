@@ -26,6 +26,11 @@ This crate implements the sumcheck interactive proof protocol for multilinear po
 - **`StreamingSumcheckProver`** -- Memory-efficient streaming variant for large witnesses.
 - **`SplitEqEvaluator`** -- Split-eq optimization for sqrt-cost sumcheck evaluation.
 
+### Prefix-Suffix Decomposition
+
+- **`PrefixSuffixEvaluator<F>`** -- Two-phase evaluator for tensor-decomposed polynomials `f(x) = Sum_i P_i(x_prefix) * S_i(x_suffix)`. Phase 1 operates on sqrt(N)-sized pair buffers; Phase 2 materializes suffix tables.
+- **`PrefixSuffixTransition<F>`** -- State at the Phase 1 to Phase 2 transition, carrying prefix challenges and scalar evaluations.
+
 ### Streaming Types
 
 - **`StreamingSumcheck`** -- Streaming sumcheck prover for memory-constrained settings.

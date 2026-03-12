@@ -416,13 +416,13 @@ Each step is independently testable: synthetic witness → prove → verify.
 |---|---|---|---|---|---|
 | 1 | ProductVirtualUniSkip | S1 | Step 1c | ⬜ Not started | Optional perf optimization, defer |
 | 2 | ProductVirtualRemainder | S2 | Step 1a | ⬜ Not started | Needs uni-skip infra |
-| 3 | **ShiftSumcheck** | S3 | Step 2a | 🔄 **IN PROGRESS** | Uses PrefixSuffixEvaluator + EqPlusOne |
-| 4 | **InstructionInput** | S3 | Step 2b | ⬜ Not started | Uses SplitEqEvaluator, deg 3 |
+| 3 | **ShiftSumcheck** | S3 | Step 2a | ✅ Done (3 tests) | HighToLow binding, standalone stage (not batchable with KernelEvaluator) |
+| 4 | **InstructionInput** | S3 | Step 2b | ✅ Done (4 tests) | HighToLow binding, standalone stage, deg 3 |
 | 5 | InstructionReadRaf | S5 | Step 4a | ⬜ Not started | Uses PrefixSuffixEvaluator, complex |
 | 6 | RegistersValEvaluation | S5 | Step 4c | ⬜ Not started | LT poly, deg 3 |
 | 7 | BytecodeReadRaf | S6 | Step 5a | ⬜ Not started | 5-stage decomposition |
 | 8 | Booleanity (all RA) | S6 | Step 5b | ⬜ Not started | Extend current S6 |
-| 9 | RamRaVirtual | S6 | Step 5d | ⬜ Not started | Same pattern as InstrRaVirtual |
+| 9 | RamRaVirtual | S6 | Step 5d | ✅ Done (2 tests) | Reuses `RaVirtualStage` with `n_virtual=1`, `ram_ra_virtual(d)` claim def |
 
 ### Structural Work
 

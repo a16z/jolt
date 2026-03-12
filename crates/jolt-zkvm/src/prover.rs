@@ -3,6 +3,7 @@
 //! [`prove`] runs the complete Jolt proving pipeline — from witness commitment
 //! through Spartan, sumcheck stages, and batch opening proofs.
 
+use jolt_field::WithChallenge;
 use jolt_openings::{AdditivelyHomomorphic, OpeningReduction, RlcReduction};
 use jolt_spartan::SpartanError;
 use jolt_transcript::Transcript;
@@ -64,7 +65,6 @@ impl std::error::Error for ProveError {
 ///   returns prover stages for S2–S7. Transcript access allows squeezing
 ///   batching challenges (e.g., γ) at the correct Fiat-Shamir state.
 /// * `transcript` — Fiat-Shamir transcript
-/// * `challenge_fn` — converts transcript challenges to field elements
 #[tracing::instrument(skip_all, name = "prove")]
 pub fn prove<PCS, T>(
     key: &JoltProvingKey<PCS::Field, PCS>,
@@ -76,11 +76,12 @@ pub fn prove<PCS, T>(
         &mut T,
     ) -> Vec<Box<dyn ProverStage<PCS::Field, T>>>,
     transcript: &mut T,
-    challenge_fn: impl Fn(T::Challenge) -> PCS::Field + Copy,
 ) -> Result<JoltProof<PCS::Field, PCS>, ProveError>
 where
     PCS: AdditivelyHomomorphic,
-    T: Transcript<Challenge = u128>,
+    PCS::Field: WithChallenge,
+    <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>,
+    T: Transcript,
 {
     // S0: Interleave per-cycle witnesses and commit.
     let (flat_witness, witness_commitment) = {
@@ -107,7 +108,7 @@ where
     let mut stages = build_stages(&spartan_result.r_x, &spartan_result.r_y, transcript);
 
     // S2–S7: Sumcheck stages.
-    let (stage_proofs, mut opening_claims) = prove_stages(&mut stages, transcript, challenge_fn);
+    let (stage_proofs, mut opening_claims) = prove_stages(&mut stages, transcript);
 
     // Spartan witness opening claim — added last to match verifier ordering.
     opening_claims.push(spartan_result.witness_opening_claim);
@@ -120,7 +121,6 @@ where
         let (reduced, ()) = <RlcReduction as OpeningReduction<PCS>>::reduce_prover(
             opening_claims,
             transcript,
-            challenge_fn,
         );
 
         tracing::info!(reduced_claims = reduced.len(), "opening PCS proofs");

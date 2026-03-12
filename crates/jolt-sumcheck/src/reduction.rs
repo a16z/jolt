@@ -23,7 +23,7 @@
 //! | Claims out | `Vec<ProverClaim<F>>` | `Vec<ProverClaim<F>>` |
 //! | Lives in | `jolt-openings` | `jolt-sumcheck` |
 
-use jolt_field::Field;
+use jolt_field::WithChallenge;
 use jolt_openings::{ProverClaim, VerifierClaim};
 
 use crate::claim::SumcheckClaim;
@@ -63,7 +63,7 @@ pub type SumcheckWitnessBatch<F> = (Vec<SumcheckClaim<F>>, Vec<Box<dyn SumcheckC
 /// This is how the advice two-phase reduction works: phase 1 produces an
 /// intermediate `ProverClaim` whose `evaluations` is the partially-bound
 /// polynomial. Phase 2 constructs its witness from that evaluation table.
-pub trait SumcheckReduction<F: Field> {
+pub trait SumcheckReduction<F: WithChallenge> {
     /// Constructs sumcheck claims and witnesses from input opening claims.
     ///
     /// The returned witnesses implement [`SumcheckCompute`] and are fed

@@ -11,6 +11,8 @@
 //!
 //! GPU backends (CUDA, WebGPU) will follow the same pattern.
 
+mod hybrid;
 mod traits;
 
+pub use hybrid::{HybridBackend, HybridBuffer, HybridKernel};
 pub use traits::{BindingOrder, ComputeBackend, Scalar};

@@ -38,8 +38,11 @@ const WIDTH: usize = 3;
 const BYTES_PER_CHUNK: usize = 32;
 
 /// Fiat-Shamir transcript using Poseidon hash over BN254.
-#[derive(Clone, Default)]
-pub struct PoseidonTranscript {
+///
+/// Generic over the challenge type `C`. Use `From<u128>` challenge types
+/// like `MontU128Challenge<Fr>` for optimized field operations.
+#[derive(Clone)]
+pub struct PoseidonTranscript<C: Copy + Default + From<u128> = u128> {
     /// 256-bit running state (canonical LE serialization of Fr).
     state: [u8; 32],
     /// Round counter for domain separation.
@@ -49,9 +52,24 @@ pub struct PoseidonTranscript {
     state_history: Vec<[u8; 32]>,
     #[cfg(test)]
     expected_state_history: Option<Vec<[u8; 32]>>,
+    _challenge: std::marker::PhantomData<C>,
 }
 
-impl std::fmt::Debug for PoseidonTranscript {
+impl<C: Copy + Default + From<u128>> Default for PoseidonTranscript<C> {
+    fn default() -> Self {
+        Self {
+            state: [0u8; 32],
+            n_rounds: 0,
+            #[cfg(test)]
+            state_history: Vec::new(),
+            #[cfg(test)]
+            expected_state_history: None,
+            _challenge: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<C: Copy + Default + From<u128>> std::fmt::Debug for PoseidonTranscript<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PoseidonTranscript")
             .field("state", &hex::encode(self.state))
@@ -60,7 +78,7 @@ impl std::fmt::Debug for PoseidonTranscript {
     }
 }
 
-impl PoseidonTranscript {
+impl<C: Copy + Default + From<u128>> PoseidonTranscript<C> {
     fn hasher() -> Poseidon<Fr> {
         Poseidon::<Fr>::new_circom(WIDTH).expect("failed to initialize Poseidon")
     }
@@ -125,8 +143,8 @@ impl PoseidonTranscript {
     }
 }
 
-impl Transcript for PoseidonTranscript {
-    type Challenge = u128;
+impl<C: Copy + Default + From<u128> + Send + Sync + 'static> Transcript for PoseidonTranscript<C> {
+    type Challenge = C;
 
     fn new(label: &'static [u8]) -> Self {
         assert!(label.len() < 33, "label must be less than 33 bytes");
@@ -151,6 +169,7 @@ impl Transcript for PoseidonTranscript {
             state_history: vec![state],
             #[cfg(test)]
             expected_state_history: None,
+            _challenge: std::marker::PhantomData,
         }
     }
 
@@ -185,10 +204,10 @@ impl Transcript for PoseidonTranscript {
         self.update_state(new_state);
     }
 
-    fn challenge(&mut self) -> Self::Challenge {
+    fn challenge(&mut self) -> C {
         let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
-        u128::from_le_bytes(buf)
+        C::from(u128::from_le_bytes(buf))
     }
 
     #[inline]

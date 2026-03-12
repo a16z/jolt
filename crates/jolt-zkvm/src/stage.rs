@@ -3,7 +3,7 @@
 //! Each sumcheck stage in the Jolt pipeline implements [`ProverStage`],
 //! producing claims and witnesses for [`BatchedSumcheckProver`](jolt_sumcheck::BatchedSumcheckProver).
 
-use jolt_field::Field;
+use jolt_field::WithChallenge;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_sumcheck::claim::SumcheckClaim;
@@ -14,7 +14,7 @@ use jolt_transcript::Transcript;
 ///
 /// Contains paired sumcheck claims and witnesses, ready to feed into
 /// [`BatchedSumcheckProver::prove`](jolt_sumcheck::BatchedSumcheckProver::prove).
-pub struct StageBatch<F: Field> {
+pub struct StageBatch<F: WithChallenge> {
     /// Sumcheck claims (one per instance in this stage).
     pub claims: Vec<SumcheckClaim<F>>,
     /// Sumcheck witnesses (element-wise paired with `claims`).
@@ -31,7 +31,7 @@ pub struct StageBatch<F: Field> {
 ///
 /// Generic over `T: Transcript` for dyn-compatibility — the pipeline fixes
 /// a concrete transcript type and uses `dyn ProverStage<F, T>`.
-pub trait ProverStage<F: Field, T: Transcript> {
+pub trait ProverStage<F: WithChallenge, T: Transcript> {
     /// Human-readable stage name for tracing and profiling.
     ///
     /// Used by the pipeline to create named tracing spans (e.g. in Perfetto).
@@ -77,7 +77,7 @@ pub trait ProverStage<F: Field, T: Transcript> {
 /// In [`extract_claims`](ProverStage::extract_claims), each sub-stage
 /// receives the challenge slice corresponding to its active rounds
 /// (accounting for the front-loaded offset).
-pub struct CompositeStage<F: Field, T: Transcript> {
+pub struct CompositeStage<F: WithChallenge, T: Transcript> {
     sub_stages: Vec<Box<dyn ProverStage<F, T>>>,
     /// `(offset, num_vars)` per sub-stage, computed during `build()`.
     /// `offset = max_num_vars - sub_stage_max_num_vars`.
@@ -85,7 +85,7 @@ pub struct CompositeStage<F: Field, T: Transcript> {
     name: &'static str,
 }
 
-impl<F: Field, T: Transcript> CompositeStage<F, T> {
+impl<F: WithChallenge, T: Transcript> CompositeStage<F, T> {
     pub fn new(name: &'static str, sub_stages: Vec<Box<dyn ProverStage<F, T>>>) -> Self {
         Self {
             sub_stages,
@@ -95,7 +95,7 @@ impl<F: Field, T: Transcript> CompositeStage<F, T> {
     }
 }
 
-impl<F: Field, T: Transcript> ProverStage<F, T> for CompositeStage<F, T> {
+impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for CompositeStage<F, T> {
     fn name(&self) -> &'static str {
         self.name
     }
@@ -210,7 +210,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
         let mut vt = Blake2bTranscript::new(b"composite_test");
@@ -218,7 +217,6 @@ mod tests {
             &claims_snapshot,
             &proof,
             &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         )
         .expect("verification should succeed");
 
@@ -277,7 +275,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
         let mut vt = Blake2bTranscript::new(b"mixed_vars");
@@ -285,7 +282,6 @@ mod tests {
             &claims_snapshot,
             &proof,
             &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         )
         .expect("verification should succeed");
 
@@ -322,7 +318,6 @@ mod tests {
 
         let eq_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
 
-        // --- ProductVirtual (degree 3, 8 factor polys) ---
         let factor_polys: Vec<Vec<Fr>> = vec![
             random_poly(&mut rng),      // left_inst
             random_poly(&mut rng),      // right_inst
@@ -349,7 +344,6 @@ mod tests {
             ProductVirtualStage::new(factor_polys, eq_point.clone(), g_pv, pv_sum, cpu()),
         );
 
-        // --- RamRW (degree 3, 3 polys: ra, val, inc) ---
         let ra = random_poly(&mut rng);
         let val = random_poly(&mut rng);
         let inc = random_poly(&mut rng);
@@ -359,7 +353,6 @@ mod tests {
             RamRwCheckingStage::new(ra, val, inc, eq_point.clone(), [c0, c1], cpu()),
         );
 
-        // --- RamChecking (2× degree 2) ---
         let val_final = random_poly(&mut rng);
         let ram_ra = random_poly(&mut rng);
         let oc0 = Fr::random(&mut rng);
@@ -393,7 +386,6 @@ mod tests {
             &batch.claims,
             &mut batch.witnesses,
             &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         );
 
         let mut vt = Blake2bTranscript::new(b"s2_batch");
@@ -401,7 +393,6 @@ mod tests {
             &claims_snapshot,
             &proof,
             &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
         )
         .expect("verification should succeed");
 

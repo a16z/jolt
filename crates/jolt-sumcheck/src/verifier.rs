@@ -1,6 +1,6 @@
 //! Sumcheck verifier: checks round polynomials against the claimed sum.
 
-use jolt_field::Field;
+use jolt_field::WithChallenge;
 use jolt_transcript::Transcript;
 
 use crate::claim::SumcheckClaim;
@@ -35,11 +35,11 @@ impl SumcheckVerifier {
         claim: &SumcheckClaim<F>,
         round_proofs: &[V::RoundProof],
         transcript: &mut T,
-        challenge_fn: impl Fn(T::Challenge) -> F,
         verifier: &V,
     ) -> Result<(F, Vec<F>), SumcheckError>
     where
-        F: Field,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
         T: Transcript,
         V: RoundVerifier<F>,
     {
@@ -55,7 +55,7 @@ impl SumcheckVerifier {
 
         for (round, round_proof) in round_proofs.iter().enumerate() {
             verifier.absorb_and_check(round_proof, running_sum, claim.degree, round, transcript)?;
-            let r = challenge_fn(transcript.challenge());
+            let r: F = F::Challenge::from(transcript.challenge()).into();
             running_sum = verifier.next_running_sum(round_proof, r);
             challenges.push(r);
         }
@@ -86,17 +86,16 @@ impl SumcheckVerifier {
         claim: &SumcheckClaim<F>,
         proof: &SumcheckProof<F>,
         transcript: &mut T,
-        challenge_fn: impl Fn(T::Challenge) -> F,
     ) -> Result<(F, Vec<F>), SumcheckError>
     where
-        F: Field,
+        F: WithChallenge,
+        F::Challenge: From<T::Challenge>,
         T: Transcript,
     {
         Self::verify_with_handler(
             claim,
             &proof.round_polynomials,
             transcript,
-            challenge_fn,
             &ClearRoundVerifier,
         )
     }

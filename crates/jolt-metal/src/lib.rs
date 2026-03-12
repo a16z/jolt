@@ -1,6 +1,6 @@
 #![cfg(target_os = "macos")]
 #![allow(unused_results)]
-#![allow(clippy::todo, clippy::missing_safety_doc, dead_code)]
+#![allow(clippy::missing_safety_doc, dead_code)]
 
 mod buffer;
 mod compiler;

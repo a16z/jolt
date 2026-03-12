@@ -476,13 +476,8 @@ mod tests {
         let mut running_sum = claimed_sum;
 
         for &r_i in &challenges {
-            // Pick c2 freely, then derive c0, c1 from sum check
+            // Pick c2 freely, derive c0 and c1 from 2*c0 + c1 + c2 = running_sum
             let c2 = Fr::from_u64(1);
-            // 2*c0 + c1 + c2 = running_sum
-            // Choose c0 = running_sum / 3 (approximately — just pick consistent values)
-            // Simpler: let c1 = 0, then 2*c0 + c2 = running_sum → c0 = (running_sum - c2) / 2
-            // But we need inverse of 2...
-            // Even simpler: c0 = 5, c1 = running_sum - 2*5 - 1 = running_sum - 11
             let c0 = Fr::from_u64(5);
             let c1 = running_sum - Fr::from_u64(2) * c0 - c2;
 

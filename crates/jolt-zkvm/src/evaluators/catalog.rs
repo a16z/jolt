@@ -199,20 +199,10 @@ mod tests {
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"eq_product_test");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"eq_product_test");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
 
@@ -300,20 +290,10 @@ mod tests {
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"test_hamming_booleanity");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"test_hamming_booleanity");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok(), "verification failed: {result:?}");
     }
 
@@ -364,20 +344,10 @@ mod tests {
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"formula_linear");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"formula_linear");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok());
     }
 
@@ -417,20 +387,10 @@ mod tests {
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"formula_quad");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"formula_quad");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok());
     }
 
@@ -481,20 +441,10 @@ mod tests {
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"formula_multi");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"formula_multi");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok());
     }
 
@@ -550,20 +500,10 @@ mod tests {
             KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), backend);
 
         let mut pt = Blake2bTranscript::new(b"claim_reduction");
-        let proof = SumcheckProver::prove(
-            &claim,
-            &mut witness,
-            &mut pt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"claim_reduction");
-        let result = SumcheckVerifier::verify(
-            &claim,
-            &proof,
-            &mut vt,
-            |c: <Blake2bTranscript as Transcript>::Challenge| c.into(),
-        );
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok());
     }
 }
