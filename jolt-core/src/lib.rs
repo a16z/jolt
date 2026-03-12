@@ -25,11 +25,3 @@ pub use ark_bn254;
 
 // Re-export AdviceTape type for use in generated code
 pub use tracer::emulator::cpu::AdviceTape;
-
-/// Register all inline implementations linked into the binary.
-/// Discovers plugins via `inventory` — external inline crates are included automatically.
-/// Idempotent — safe to call multiple times.
-#[cfg(feature = "host")]
-pub fn register_all_inlines() {
-    jolt_inlines_sdk::host::register_all_inlines();
-}

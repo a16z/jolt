@@ -27,7 +27,6 @@ default = ["host"]
 zk = ["dory/zk"]
 host = [
     "prover",
-    "jolt-inlines-sdk/host",
     "dep:jolt-inlines-sha2",
     "dep:jolt-inlines-keccak256",
 ]
@@ -85,7 +84,6 @@ derive_more.workspace = true
 dory.workspace = true
 allocative.workspace = true
 inferno = { workspace = true, optional = true }
-jolt-inlines-sdk.workspace = true
 jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [
     "host",
@@ -103,6 +101,7 @@ ignored = ["prost"]
 
 [dev-dependencies]
 criterion.workspace = true
+jolt-inlines-sdk = { workspace = true, features = ["host"] }
 iai-callgrind.workspace = true
 serial_test.workspace = true
 tracer = { workspace = true, default-features = false, features = [

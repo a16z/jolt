@@ -2401,7 +2401,7 @@ mod tests {
     #[serial]
     fn sha3_e2e_dory() {
         DoryGlobals::reset();
-        crate::register_all_inlines();
+        jolt_inlines_sdk::host::register_all_inlines();
 
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
@@ -2459,7 +2459,7 @@ mod tests {
     #[serial]
     fn sha2_e2e_dory() {
         DoryGlobals::reset();
-        crate::register_all_inlines();
+        jolt_inlines_sdk::host::register_all_inlines();
 
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();

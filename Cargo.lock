@@ -3004,6 +3004,7 @@ dependencies = [
  "cfg-if",
  "common",
  "jolt-core",
+ "jolt-inlines-sdk",
  "jolt-platform",
  "jolt-sdk-macros",
  "postcard",

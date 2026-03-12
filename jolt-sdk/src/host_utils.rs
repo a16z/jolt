@@ -12,13 +12,13 @@ pub use jolt_core::curve::JoltCurve;
 pub use jolt_core::field::JoltField;
 pub use jolt_core::guest;
 pub use jolt_core::poly::commitment::dory::DoryCommitmentScheme as PCS;
-#[cfg(feature = "host")]
-pub use jolt_core::register_all_inlines;
 pub use jolt_core::zkvm::{
     proof_serialization::JoltProof, verifier::JoltSharedPreprocessing,
     verifier::JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, Serializable,
 };
 pub use jolt_core::AdviceTape;
+#[cfg(feature = "host")]
+pub use jolt_inlines_sdk::host::register_all_inlines;
 
 // Re-exports needed by the provable macro
 pub use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
