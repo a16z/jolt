@@ -52,7 +52,7 @@ impl BlindFoldProver {
         VC: JoltCommitment,
         PCS: CommitmentScheme,
         PCS::Output: HomomorphicCommitment<PCS::Field>,
-        T: Transcript<Challenge = u128>,
+        T: Transcript<Challenge = PCS::Field>,
     {
         let stages = accumulator.into_stages();
         if stages.len() != stage_configs.len() {
@@ -115,7 +115,7 @@ impl BlindFoldProver {
         transcript.append_bytes(format!("{cross_term_commitment:?}").as_bytes());
 
         // Sample folding challenge
-        let r = PCS::Field::from_u128(transcript.challenge());
+        let r: PCS::Field = transcript.challenge();
 
         // Fold witnesses
         let w_real = RelaxedWitness {
@@ -177,7 +177,7 @@ impl BlindFoldVerifier {
     where
         PCS: CommitmentScheme,
         PCS::Output: HomomorphicCommitment<PCS::Field>,
-        T: Transcript<Challenge = u128>,
+        T: Transcript<Challenge = PCS::Field>,
     {
         let r1cs = build_verifier_r1cs(stage_configs, baked);
         let key = SpartanKey::from_r1cs(&r1cs);
@@ -191,7 +191,7 @@ impl BlindFoldVerifier {
         transcript.append_bytes(format!("{:?}", proof.cross_term_commitment).as_bytes());
 
         // Derive folding challenge
-        let r = PCS::Field::from_u128(transcript.challenge());
+        let r: PCS::Field = transcript.challenge();
 
         // Fold instance commitments
         let u_folded = fold_scalar(PCS::Field::one(), proof.random_u, r);

@@ -9,3 +9,4 @@ pub mod kernel;
 pub mod mles_product_sum;
 pub mod ra_poly;
 pub mod ra_virtual;
+pub mod segmented;
