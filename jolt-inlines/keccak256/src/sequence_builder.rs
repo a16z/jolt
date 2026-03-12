@@ -259,7 +259,28 @@ pub fn keccak256_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    // Virtual registers used as a scratch space
-    let builder = Keccak256SequenceBuilder::new(asm, operands);
-    builder.build()
+    Keccak256SequenceBuilder::new(asm, operands).build()
+}
+
+#[cfg(feature = "host")]
+pub use inline_ops::*;
+
+#[cfg(feature = "host")]
+mod inline_ops {
+    use jolt_inlines_common::host::InlineOp;
+    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
+    use tracer::utils::inline_helpers::InstrAssembler;
+
+    pub struct Keccak256Permutation;
+
+    impl InlineOp for Keccak256Permutation {
+        const OPCODE: u32 = crate::INLINE_OPCODE;
+        const FUNCT3: u32 = crate::KECCAK256_FUNCT3;
+        const FUNCT7: u32 = crate::KECCAK256_FUNCT7;
+        const NAME: &'static str = crate::KECCAK256_NAME;
+
+        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+            super::keccak256_inline_sequence_builder(asm, operands)
+        }
+    }
 }

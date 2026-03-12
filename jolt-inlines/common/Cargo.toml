@@ -1,22 +1,17 @@
 [package]
-name = "jolt-inlines-sha2"
+name = "jolt-inlines-common"
 version = "0.1.0"
 edition = "2021"
-description = "SHA2 inline implementations for Jolt VM"
+description = "Shared utilities for Jolt inline implementations"
 license = "MIT"
 homepage = "https://github.com/a16z/jolt/README.md"
 repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
-host = ["dep:ctor", "dep:tracer", "dep:tracing", "jolt-inlines-common/host"]
+host = ["dep:ctor", "dep:tracer", "dep:tracing"]
 
 [dependencies]
-jolt-inlines-common.workspace = true
 ctor = { workspace = true, optional = true }
 tracer = { workspace = true, optional = true, features = ["std"] }
 tracing = { workspace = true, optional = true }
-
-[dev-dependencies]
-sha2.workspace = true
-tracer = { workspace = true, features = ["std", "test-utils"] }

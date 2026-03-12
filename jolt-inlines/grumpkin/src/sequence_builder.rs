@@ -76,7 +76,63 @@ impl GrumpkinDivAdv {
     }
 }
 
-/// Virtual instruction builder for unchecked grumpkin base field modular division
+#[cfg(feature = "host")]
+pub use inline_ops::*;
+
+#[cfg(feature = "host")]
+mod inline_ops {
+    use std::collections::VecDeque;
+
+    use jolt_inlines_common::host::InlineOp;
+    use tracer::emulator::cpu::Cpu;
+    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
+    use tracer::utils::inline_helpers::InstrAssembler;
+
+    pub struct GrumpkinDivQAdv;
+
+    impl InlineOp for GrumpkinDivQAdv {
+        const OPCODE: u32 = crate::INLINE_OPCODE;
+        const FUNCT3: u32 = crate::GRUMPKIN_DIVQ_ADV_FUNCT3;
+        const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
+        const NAME: &'static str = crate::GRUMPKIN_DIVQ_ADV_NAME;
+        const HAS_ADVICE: bool = true;
+
+        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+            super::grumpkin_divq_adv_sequence_builder(asm, operands)
+        }
+
+        fn build_advice(
+            asm: InstrAssembler,
+            operands: FormatInline,
+            cpu: &mut Cpu,
+        ) -> Option<VecDeque<u64>> {
+            Some(super::grumpkin_divq_adv_advice(asm, operands, cpu))
+        }
+    }
+
+    pub struct GrumpkinDivRAdv;
+
+    impl InlineOp for GrumpkinDivRAdv {
+        const OPCODE: u32 = crate::INLINE_OPCODE;
+        const FUNCT3: u32 = crate::GRUMPKIN_DIVR_ADV_FUNCT3;
+        const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
+        const NAME: &'static str = crate::GRUMPKIN_DIVR_ADV_NAME;
+        const HAS_ADVICE: bool = true;
+
+        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+            super::grumpkin_divr_adv_sequence_builder(asm, operands)
+        }
+
+        fn build_advice(
+            asm: InstrAssembler,
+            operands: FormatInline,
+            cpu: &mut Cpu,
+        ) -> Option<VecDeque<u64>> {
+            Some(super::grumpkin_divr_adv_advice(asm, operands, cpu))
+        }
+    }
+}
+
 pub fn grumpkin_divq_adv_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,

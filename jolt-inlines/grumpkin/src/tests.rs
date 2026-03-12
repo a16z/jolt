@@ -1,5 +1,5 @@
 mod sequence_tests {
-    use crate::sdk::GrumpkinPoint;
+    use crate::sdk::{GrumpkinPoint, GrumpkinPointExt};
     use crate::{
         GRUMPKIN_DIVQ_ADV_FUNCT3, GRUMPKIN_DIVR_ADV_FUNCT3, GRUMPKIN_FUNCT7, INLINE_OPCODE,
     };

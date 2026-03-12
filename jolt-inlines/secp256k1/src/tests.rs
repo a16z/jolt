@@ -1,5 +1,5 @@
 mod sequence_tests {
-    use crate::sdk::Secp256k1Point;
+    use crate::sdk::{Secp256k1Point, Secp256k1PointExt};
     use crate::{
         Secp256k1Fq, Secp256k1Fr, INLINE_OPCODE, SECP256K1_DIVQ_FUNCT3, SECP256K1_DIVR_FUNCT3,
         SECP256K1_FUNCT7, SECP256K1_MULQ_FUNCT3, SECP256K1_MULR_FUNCT3, SECP256K1_SQUAREQ_FUNCT3,
@@ -372,7 +372,7 @@ mod sequence_tests {
         .unwrap();
         // check that k * q == k1 * q + k2 * endo_q
         let expected = fr_point_mul(&k, &q);
-        let decomp = Secp256k1Point::decompose_scalar(&k);
+        let decomp = k.glv_decompose();
         let sq = if decomp[0].0 { q.neg() } else { q.clone() };
         let sq_endo = if decomp[1].0 {
             endo_q.neg()

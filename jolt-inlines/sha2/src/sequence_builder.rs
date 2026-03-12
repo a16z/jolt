@@ -2,11 +2,7 @@ use core::array;
 
 use tracer::{
     emulator::cpu::Xlen,
-    instruction::{
-        andn::ANDN, format::format_inline::FormatInline, ld::LD, lw::LW, or::OR, sd::SD,
-        slli::SLLI, srli::SRLI, sw::SW, virtual_zero_extend_word::VirtualZeroExtendWord,
-        Instruction,
-    },
+    instruction::{andn::ANDN, format::format_inline::FormatInline, lw::LW, sw::SW, Instruction},
     utils::{
         inline_helpers::{
             InstrAssembler,
@@ -88,7 +84,7 @@ impl Sha256SequenceBuilder {
                 });
             } else {
                 (0..4).for_each(|i| {
-                    self.load_paired_u32_dirty(
+                    self.asm.load_paired_u32_dirty(
                         self.operands.rs1,
                         (i as i64) * 8,
                         *self.iv[i * 2],
@@ -105,7 +101,7 @@ impl Sha256SequenceBuilder {
             });
         } else {
             (0..8).for_each(|i| {
-                self.load_paired_u32_dirty(
+                self.asm.load_paired_u32_dirty(
                     self.operands.rs2,
                     (i as i64) * 8,
                     *self.message[i * 2],
@@ -128,7 +124,7 @@ impl Sha256SequenceBuilder {
         } else {
             let outs = [('A', 'B'), ('C', 'D'), ('E', 'F'), ('G', 'H')];
             for (i, (ch1, ch2)) in outs.iter().enumerate() {
-                self.store_paired_u32(
+                self.asm.store_paired_u32(
                     self.operands.rs1,
                     (i as i64) * 8,
                     self.vr(*ch1),
@@ -142,22 +138,6 @@ impl Sha256SequenceBuilder {
         drop(self.message);
         drop(self.iv);
         self.asm.finalize_inline()
-    }
-
-    /// WARNING: leaves junk in upper 32 bits of vr_lo. Safe because SHA-256 ops
-    /// preserve lower 32-bit correctness independent of upper bits.
-    /// Cleanup happens in `store_paired_u32`.
-    fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        self.asm.emit_ld::<LD>(vr_lo, base, offset);
-        self.asm.emit_i::<SRLI>(vr_hi, vr_lo, 32);
-    }
-
-    /// WARNING: clobbers both input registers.
-    fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        self.asm.emit_i::<VirtualZeroExtendWord>(vr_lo, vr_lo, 0);
-        self.asm.emit_i::<SLLI>(vr_hi, vr_hi, 32);
-        self.asm.emit_r::<OR>(vr_lo, vr_hi, vr_lo);
-        self.asm.emit_s::<SD>(base, vr_lo, offset);
     }
 
     /// Adds IV to the final hash value to produce output
@@ -366,24 +346,52 @@ impl Sha256SequenceBuilder {
     }
 }
 
-// Virtual instructions builder for sha256
 pub fn sha2_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Sha256SequenceBuilder::new(
-        asm, operands, false, // not initial - uses custom IV from rs1
-    );
-    builder.build()
+    Sha256SequenceBuilder::new(asm, operands, false).build()
 }
 
-// Virtual instructions builder for sha256_init
 pub fn sha2_init_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Sha256SequenceBuilder::new(
-        asm, operands, true, // initial - uses BLOCK constants
-    );
-    builder.build()
+    Sha256SequenceBuilder::new(asm, operands, true).build()
+}
+
+#[cfg(feature = "host")]
+pub use inline_ops::*;
+
+#[cfg(feature = "host")]
+mod inline_ops {
+    use jolt_inlines_common::host::InlineOp;
+    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
+    use tracer::utils::inline_helpers::InstrAssembler;
+
+    pub struct Sha256Compression;
+
+    impl InlineOp for Sha256Compression {
+        const OPCODE: u32 = crate::INLINE_OPCODE;
+        const FUNCT3: u32 = crate::SHA256_FUNCT3;
+        const FUNCT7: u32 = crate::SHA256_FUNCT7;
+        const NAME: &'static str = crate::SHA256_NAME;
+
+        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+            super::sha2_inline_sequence_builder(asm, operands)
+        }
+    }
+
+    pub struct Sha256CompressionInitial;
+
+    impl InlineOp for Sha256CompressionInitial {
+        const OPCODE: u32 = crate::INLINE_OPCODE;
+        const FUNCT3: u32 = crate::SHA256_INIT_FUNCT3;
+        const FUNCT7: u32 = crate::SHA256_INIT_FUNCT7;
+        const NAME: &'static str = crate::SHA256_INIT_NAME;
+
+        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+            super::sha2_init_inline_sequence_builder(asm, operands)
+        }
+    }
 }

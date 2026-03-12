@@ -256,8 +256,30 @@ pub fn blake2b_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Blake2SequenceBuilder::new(asm, operands);
-    builder.build()
+    Blake2SequenceBuilder::new(asm, operands).build()
+}
+
+#[cfg(feature = "host")]
+pub use inline_ops::*;
+
+#[cfg(feature = "host")]
+mod inline_ops {
+    use jolt_inlines_common::host::InlineOp;
+    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
+    use tracer::utils::inline_helpers::InstrAssembler;
+
+    pub struct Blake2bCompression;
+
+    impl InlineOp for Blake2bCompression {
+        const OPCODE: u32 = crate::INLINE_OPCODE;
+        const FUNCT3: u32 = crate::BLAKE2_FUNCT3;
+        const FUNCT7: u32 = crate::BLAKE2_FUNCT7;
+        const NAME: &'static str = crate::BLAKE2_NAME;
+
+        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+            super::blake2b_inline_sequence_builder(asm, operands)
+        }
+    }
 }
 
 #[cfg(test)]

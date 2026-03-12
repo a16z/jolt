@@ -146,11 +146,32 @@ impl BigIntMulSequenceBuilder {
     }
 }
 
-/// Virtual instructions builder for bigint multiplication
 pub fn bigint_mul_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = BigIntMulSequenceBuilder::new(asm, operands);
-    builder.build()
+    BigIntMulSequenceBuilder::new(asm, operands).build()
+}
+
+#[cfg(feature = "host")]
+pub use inline_ops::*;
+
+#[cfg(feature = "host")]
+mod inline_ops {
+    use jolt_inlines_common::host::InlineOp;
+    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
+    use tracer::utils::inline_helpers::InstrAssembler;
+
+    pub struct BigintMul256;
+
+    impl InlineOp for BigintMul256 {
+        const OPCODE: u32 = crate::INLINE_OPCODE;
+        const FUNCT3: u32 = crate::BIGINT256_MUL_FUNCT3;
+        const FUNCT7: u32 = crate::BIGINT256_MUL_FUNCT7;
+        const NAME: &'static str = crate::BIGINT256_MUL_NAME;
+
+        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+            super::bigint_mul_sequence_builder(asm, operands)
+        }
+    }
 }

@@ -19,16 +19,16 @@ use tracer::{
 };
 
 /// inline constructor for GLV decomposition in secp256k1 scalar field
-struct Secp256k1GlvrAdv {
+struct GlvrAdvBuilder {
     asm: InstrAssembler,
     vr: VirtualRegisterGuard, // only one register needed
     operands: FormatInline,
 }
 
-impl Secp256k1GlvrAdv {
+impl GlvrAdvBuilder {
     fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
         let vr = asm.allocator.allocate_for_inline();
-        Secp256k1GlvrAdv { asm, vr, operands }
+        GlvrAdvBuilder { asm, vr, operands }
     }
     // Custom advice function
     // heavily based on the implementation found in ec/src/scalar_mul/glv.rs in arkworks
@@ -117,7 +117,7 @@ pub fn secp256k1_glvr_adv_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1GlvrAdv::new(asm, operands);
+    let builder = GlvrAdvBuilder::new(asm, operands);
     builder.inline_sequence()
 }
 
@@ -127,7 +127,7 @@ pub fn secp256k1_glvr_adv_advice(
     operands: FormatInline,
     cpu: &mut Cpu,
 ) -> VecDeque<u64> {
-    let builder = Secp256k1GlvrAdv::new(asm, operands);
+    let builder = GlvrAdvBuilder::new(asm, operands);
     builder.advice(cpu)
 }
 
@@ -175,7 +175,7 @@ enum MulqType {
 // Additionally, to minimize the use of virtual registers, the LHS is never fully constructed.
 // Rather, the implementation considers 2 limbs at a time, one that is the main focus
 // And one that accumulates carries. The algorithm ping-pongs between these two limbs as it computes the LHS.
-struct Secp256k1Mulq {
+struct MulqBuilder {
     asm: InstrAssembler,
     a: [VirtualRegisterGuard; 4],
     b: Option<[VirtualRegisterGuard; 4]>, // only allocated if Mul or Div
@@ -190,7 +190,7 @@ struct Secp256k1Mulq {
     is_scalar_field: bool,
 }
 
-impl Secp256k1Mulq {
+impl MulqBuilder {
     fn new(
         asm: InstrAssembler,
         operands: FormatInline,
@@ -215,7 +215,7 @@ impl Secp256k1Mulq {
             _ => None,
         };
         let r = array::from_fn(|_| asm.allocator.allocate_for_inline());
-        Secp256k1Mulq {
+        MulqBuilder {
             asm,
             a,
             b,
@@ -660,12 +660,58 @@ impl Secp256k1Mulq {
     }
 }
 
-/// Virtual instruction builder for secp256k1 base field modular multiplication
+#[cfg(feature = "host")]
+pub use inline_ops::*;
+
+#[cfg(feature = "host")]
+mod inline_ops {
+    use std::collections::VecDeque;
+
+    use jolt_inlines_common::host::InlineOp;
+    use tracer::emulator::cpu::Cpu;
+    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
+    use tracer::utils::inline_helpers::InstrAssembler;
+
+    macro_rules! secp256k1_inline_op {
+        ($name:ident, funct3: $funct3:expr, name: $op_name:expr, seq: $seq_fn:ident, adv: $adv_fn:ident) => {
+            pub struct $name;
+
+            impl InlineOp for $name {
+                const OPCODE: u32 = crate::INLINE_OPCODE;
+                const FUNCT3: u32 = $funct3;
+                const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
+                const NAME: &'static str = $op_name;
+                const HAS_ADVICE: bool = true;
+
+                fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+                    super::$seq_fn(asm, operands)
+                }
+
+                fn build_advice(
+                    asm: InstrAssembler,
+                    operands: FormatInline,
+                    cpu: &mut Cpu,
+                ) -> Option<VecDeque<u64>> {
+                    Some(super::$adv_fn(asm, operands, cpu))
+                }
+            }
+        };
+    }
+
+    secp256k1_inline_op!(Secp256k1MulQ,     funct3: crate::SECP256K1_MULQ_FUNCT3,     name: crate::SECP256K1_MULQ_NAME,     seq: secp256k1_mulq_sequence_builder,     adv: secp256k1_mulq_advice);
+    secp256k1_inline_op!(Secp256k1SquareQ,   funct3: crate::SECP256K1_SQUAREQ_FUNCT3,  name: crate::SECP256K1_SQUAREQ_NAME,  seq: secp256k1_squareq_sequence_builder,  adv: secp256k1_squareq_advice);
+    secp256k1_inline_op!(Secp256k1DivQ,      funct3: crate::SECP256K1_DIVQ_FUNCT3,     name: crate::SECP256K1_DIVQ_NAME,     seq: secp256k1_divq_sequence_builder,     adv: secp256k1_divq_advice);
+    secp256k1_inline_op!(Secp256k1MulR,      funct3: crate::SECP256K1_MULR_FUNCT3,     name: crate::SECP256K1_MULR_NAME,     seq: secp256k1_mulr_sequence_builder,     adv: secp256k1_mulr_advice);
+    secp256k1_inline_op!(Secp256k1SquareR,   funct3: crate::SECP256K1_SQUARER_FUNCT3,  name: crate::SECP256K1_SQUARER_NAME,  seq: secp256k1_squarer_sequence_builder,  adv: secp256k1_squarer_advice);
+    secp256k1_inline_op!(Secp256k1DivR,      funct3: crate::SECP256K1_DIVR_FUNCT3,     name: crate::SECP256K1_DIVR_NAME,     seq: secp256k1_divr_sequence_builder,     adv: secp256k1_divr_advice);
+    secp256k1_inline_op!(Secp256k1GlvrAdv,   funct3: crate::SECP256K1_GLVR_ADV_FUNCT3, name: crate::SECP256K1_GLVR_ADV_NAME, seq: secp256k1_glvr_adv_sequence_builder, adv: secp256k1_glvr_adv_advice);
+}
+
 pub fn secp256k1_mulq_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul, false);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Mul, false);
     builder.inline_sequence()
 }
 
@@ -675,7 +721,7 @@ pub fn secp256k1_mulq_advice(
     operands: FormatInline,
     cpu: &mut Cpu,
 ) -> VecDeque<u64> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul, false);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Mul, false);
     builder.advice(cpu)
 }
 
@@ -684,7 +730,7 @@ pub fn secp256k1_squareq_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square, false);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Square, false);
     builder.inline_sequence()
 }
 
@@ -694,7 +740,7 @@ pub fn secp256k1_squareq_advice(
     operands: FormatInline,
     cpu: &mut Cpu,
 ) -> VecDeque<u64> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square, false);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Square, false);
     builder.advice(cpu)
 }
 
@@ -703,7 +749,7 @@ pub fn secp256k1_divq_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div, false);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Div, false);
     builder.inline_sequence()
 }
 
@@ -713,7 +759,7 @@ pub fn secp256k1_divq_advice(
     operands: FormatInline,
     cpu: &mut Cpu,
 ) -> VecDeque<u64> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div, false);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Div, false);
     builder.advice(cpu)
 }
 
@@ -722,7 +768,7 @@ pub fn secp256k1_mulr_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul, true);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Mul, true);
     builder.inline_sequence()
 }
 
@@ -732,7 +778,7 @@ pub fn secp256k1_mulr_advice(
     operands: FormatInline,
     cpu: &mut Cpu,
 ) -> VecDeque<u64> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Mul, true);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Mul, true);
     builder.advice(cpu)
 }
 
@@ -741,7 +787,7 @@ pub fn secp256k1_squarer_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square, true);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Square, true);
     builder.inline_sequence()
 }
 
@@ -751,7 +797,7 @@ pub fn secp256k1_squarer_advice(
     operands: FormatInline,
     cpu: &mut Cpu,
 ) -> VecDeque<u64> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Square, true);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Square, true);
     builder.advice(cpu)
 }
 
@@ -760,7 +806,7 @@ pub fn secp256k1_divr_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div, true);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Div, true);
     builder.inline_sequence()
 }
 
@@ -770,6 +816,6 @@ pub fn secp256k1_divr_advice(
     operands: FormatInline,
     cpu: &mut Cpu,
 ) -> VecDeque<u64> {
-    let builder = Secp256k1Mulq::new(asm, operands, MulqType::Div, true);
+    let builder = MulqBuilder::new(asm, operands, MulqType::Div, true);
     builder.advice(cpu)
 }

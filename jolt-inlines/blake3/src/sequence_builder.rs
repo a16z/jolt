@@ -17,9 +17,6 @@ use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::ld::LD;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::lw::LW;
-use tracer::instruction::or::OR;
-use tracer::instruction::sd::SD;
-use tracer::instruction::slli::SLLI;
 use tracer::instruction::srli::SRLI;
 use tracer::instruction::virtual_xor_rotw::{
     VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8,
@@ -30,8 +27,8 @@ use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
 use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
 /// Number of virtual registers needed for the general compression builder.
-/// Layout: v[0..15] + m[0..15] + h[0..7] + counter[0..1] + block_len + flags + temp1 + temp2
-pub const NEEDED_REGISTERS: u8 = 46;
+/// Layout: v[0..15] + m[0..15] + h[0..7] + counter[0..1] + block_len + flags + temp
+pub const NEEDED_REGISTERS: u8 = 45;
 
 /// Number of virtual registers needed for the keyed64 builder (smaller footprint).
 /// Layout: v[0..15] + m[0..15] only (no separate h/counter/flags banks, no temp regs).
@@ -75,7 +72,6 @@ const COUNTER_START_VR: usize = 40;
 const INPUT_BYTES_VR: usize = 42;
 const FLAG_VR: usize = 43;
 const TEMP_VR: usize = 44;
-const TEMP_VR2: usize = 45;
 
 struct Blake3SequenceBuilder {
     asm: InstrAssembler,
@@ -229,11 +225,9 @@ impl Blake3SequenceBuilder {
         }
     }
 
-    /// Update chaining value using paired store (optimized for 8-byte aligned access)
     fn store_state(&mut self) {
-        // Store 8 u32 values as 4 paired u64 stores
         for i in 0..CHAINING_VALUE_LEN / 2 {
-            self.store_paired_u32(
+            self.asm.store_paired_u32(
                 self.operands.rs1,
                 (i * 2) as i64 * 4,
                 *self.vr[CV_START_VR + i * 2],
@@ -242,41 +236,6 @@ impl Blake3SequenceBuilder {
         }
     }
 
-    /// Load two u32 values from an 8-byte aligned address using a single LD
-    /// This is more efficient than two separate LW instructions in 64-bit mode
-    fn load_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        let v_dword = *self.vr[TEMP_VR];
-
-        // Load 64 bits (2 x u32)
-        self.asm.emit_ld::<LD>(v_dword, base, offset);
-
-        // Extract low 32 bits: zero-extend word
-        self.asm.emit_i::<VirtualZeroExtendWord>(vr_lo, v_dword, 0);
-
-        // Extract high 32 bits: shift right by 32
-        self.asm.emit_i::<SRLI>(vr_hi, v_dword, 32);
-    }
-
-    /// Store two u32 values to an 8-byte aligned address using a single SD
-    fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        let v_dword = *self.vr[TEMP_VR];
-        let v_high_shifted = *self.vr[TEMP_VR2];
-
-        // Zero-extend low word to clear upper 32 bits
-        self.asm.emit_i::<VirtualZeroExtendWord>(v_dword, vr_lo, 0);
-
-        // Shift high word to upper 32 bits
-        self.asm.emit_i::<SLLI>(v_high_shifted, vr_hi, 32);
-
-        // OR them together
-        self.asm.emit_r::<OR>(v_dword, v_dword, v_high_shifted);
-
-        // Store 64 bits
-        self.asm.emit_s::<SD>(base, v_dword, offset);
-    }
-
-    /// Load data from memory using paired access (optimized)
-    /// Requires 8-byte alignment
     fn load_data_range_paired(
         &mut self,
         base_register: u8,
@@ -288,8 +247,10 @@ impl Blake3SequenceBuilder {
             count.is_multiple_of(2),
             "count must be even for paired loading"
         );
+        let temp = *self.vr[TEMP_VR];
         for i in 0..count / 2 {
-            self.load_paired_u32(
+            self.asm.load_paired_u32(
+                temp,
                 base_register,
                 (memory_offset_start + i * 2) as i64 * 4,
                 *self.vr[vr_start + i * 2],
@@ -384,7 +345,7 @@ impl Blake3Keyed64SequenceBuilder {
         }
 
         for i in 0..CHAINING_VALUE_LEN / 2 {
-            self.store_paired_u32_in_place(
+            self.asm.store_paired_u32(
                 self.operands.rs3,
                 (i * 2) as i64 * 4,
                 *self.vr[INTERNAL_STATE_VR_START + i * 2],
@@ -493,41 +454,56 @@ impl Blake3Keyed64SequenceBuilder {
             );
         }
     }
-
-    /// Store two u32 values to an 8-byte aligned address using a single SD.
-    /// Mutates `vr_lo` and `vr_hi` (safe at end of the keyed64 sequence).
-    fn store_paired_u32_in_place(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        // Zero-extend low word to clear upper 32 bits (in place).
-        self.asm.emit_i::<VirtualZeroExtendWord>(vr_lo, vr_lo, 0);
-        // Shift high word to upper 32 bits (in place).
-        self.asm.emit_i::<SLLI>(vr_hi, vr_hi, 32);
-        // OR them together into vr_lo.
-        self.asm.emit_r::<OR>(vr_lo, vr_lo, vr_hi);
-        // Store 64 bits from vr_lo.
-        self.asm.emit_s::<SD>(base, vr_lo, offset);
-    }
 }
 
 pub fn blake3_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Blake3SequenceBuilder::new(asm, operands);
-    builder.build()
+    Blake3SequenceBuilder::new(asm, operands).build()
 }
 
-/// Build sequence for keyed64 (`blake3::keyed_hash` for a single 64B block):
-/// - **Input**: left 32B from `rs1`, right 32B from `rs2`
-/// - **Key**: 32B from `rs3/rd` (also used as the output destination)
-/// - **Params**: `counter = 0`, `block_len = 64`,
-///   `flags = CHUNK_START | CHUNK_END | ROOT | KEYED_HASH`
-/// - **Output**: overwrites `rs3/rd` with the 32B digest
 pub fn blake3_keyed64_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
 ) -> Vec<Instruction> {
-    let builder = Blake3Keyed64SequenceBuilder::new(asm, operands);
-    builder.build()
+    Blake3Keyed64SequenceBuilder::new(asm, operands).build()
+}
+
+#[cfg(feature = "host")]
+pub use inline_ops::*;
+
+#[cfg(feature = "host")]
+mod inline_ops {
+    use jolt_inlines_common::host::InlineOp;
+    use tracer::instruction::{format::format_inline::FormatInline, Instruction};
+    use tracer::utils::inline_helpers::InstrAssembler;
+
+    pub struct Blake3Compression;
+
+    impl InlineOp for Blake3Compression {
+        const OPCODE: u32 = crate::INLINE_OPCODE;
+        const FUNCT3: u32 = crate::BLAKE3_FUNCT3;
+        const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
+        const NAME: &'static str = crate::BLAKE3_NAME;
+
+        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+            super::blake3_inline_sequence_builder(asm, operands)
+        }
+    }
+
+    pub struct Blake3Keyed64Compression;
+
+    impl InlineOp for Blake3Keyed64Compression {
+        const OPCODE: u32 = crate::INLINE_OPCODE;
+        const FUNCT3: u32 = crate::BLAKE3_KEYED64_FUNCT3;
+        const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
+        const NAME: &'static str = crate::BLAKE3_KEYED64_NAME;
+
+        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+            super::blake3_keyed64_inline_sequence_builder(asm, operands)
+        }
+    }
 }
 
 #[cfg(test)]
