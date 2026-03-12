@@ -6,13 +6,6 @@ use ark_ff::Field;
 use ark_ff::{BigInt, PrimeField};
 use ark_secp256k1::{Fq, Fr};
 
-#[cfg(feature = "host")]
-use num_bigint::BigInt as NBigInt;
-#[cfg(feature = "host")]
-use num_bigint::Sign;
-#[cfg(feature = "host")]
-use num_integer::Integer;
-
 extern crate alloc;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
@@ -784,60 +777,8 @@ fn decompose_scalar_impl(_k: &Secp256k1Fr) -> [(bool, u128); 2] {
 
 #[cfg(feature = "host")]
 fn decompose_scalar_impl(k: &Secp256k1Fr) -> [(bool, u128); 2] {
-    let k: NBigInt = Fr::new(BigInt(k.e)).into_bigint().into();
-    let r = NBigInt::from_bytes_le(
-        Sign::Plus,
-        &[
-            65, 65, 54, 208, 140, 94, 210, 191, 59, 160, 72, 175, 230, 220, 174, 186, 254, 255,
-            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-        ],
-    );
-    let a1 = NBigInt::from_bytes_le(
-        Sign::Plus,
-        &[
-            21, 235, 132, 146, 228, 144, 108, 232, 205, 107, 212, 167, 33, 210, 134, 48,
-        ],
-    );
-    let b1 = NBigInt::from_bytes_le(
-        Sign::Plus,
-        &[
-            195, 228, 191, 10, 169, 127, 84, 111, 40, 136, 14, 1, 214, 126, 67, 228,
-        ],
-    );
-    let a2 = NBigInt::from_bytes_le(
-        Sign::Plus,
-        &[
-            216, 207, 68, 157, 141, 16, 193, 87, 246, 243, 226, 168, 247, 80, 202, 20, 1,
-        ],
-    );
-    let beta_1 = {
-        let (mut div, rem) = (&k * &a1).div_rem(&r);
-        if (&rem + &rem) > r {
-            div += NBigInt::from_bytes_le(Sign::Plus, &[1u8]);
-        }
-        div
-    };
-    let beta_2 = {
-        let (mut div, rem) = (&k * &b1).div_rem(&r);
-        if (&rem + &rem) > r {
-            div += NBigInt::from_bytes_le(Sign::Plus, &[1u8]);
-        }
-        div
-    };
-    let k1 = &k - &beta_1 * &a1 - &beta_2 * &a2;
-    let k2 = &beta_1 * &b1 - &beta_2 * &a1;
-    // return as (sign, abs_value) pairs
-    let to_sign_abs = |n: NBigInt| -> (bool, u128) {
-        let (sign, bytes) = n.to_bytes_le();
-        // pad bytes to 16 bytes
-        let mut bytes_padded = bytes.clone();
-        while bytes_padded.len() < 16 {
-            bytes_padded.push(0u8);
-        }
-        let abs_value = u128::from_le_bytes(bytes_padded[..16].try_into().unwrap());
-        (sign == Sign::Minus, abs_value)
-    };
-    [to_sign_abs(k1), to_sign_abs(k2)]
+    let k = Fr::new(BigInt(k.e)).into_bigint().into();
+    crate::glv::decompose_scalar(k)
 }
 
 // ECDSA signature verification function + helpers
