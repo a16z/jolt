@@ -6,7 +6,7 @@ use jolt_ir::KernelDescriptor;
 use metal::{Device, MTLResourceOptions, MTLSize};
 
 use crate::buffer::MetalBuffer;
-use crate::compiler;
+use crate::compiler::{self, CompileMode};
 use crate::kernel::MetalKernel;
 use crate::shaders::{ElementwiseKernels, InterpolationKernels};
 
@@ -36,17 +36,32 @@ pub struct MetalBackend {
     queue: metal::CommandQueue,
     elementwise: ElementwiseKernels,
     interpolation: InterpolationKernels,
+    compile_mode: CompileMode,
 }
 
 impl MetalBackend {
     /// Create a backend using the system default Metal device.
     ///
-    /// Compiles all shader pipelines on creation.
+    /// Compiles all shader pipelines on creation with full LLVM inlining.
     ///
     /// # Panics
     ///
     /// Panics if no Metal-capable device is available.
     pub fn new() -> Self {
+        Self::with_compile_mode(CompileMode::Performance)
+    }
+
+    /// Create a backend with fast shader compilation (noinline on field ops).
+    ///
+    /// Reduces kernel compilation time from minutes to seconds for large
+    /// kernels (D=8+) at the cost of minor GPU runtime overhead.
+    /// Ideal for tests where correctness matters but throughput doesn't.
+    pub fn new_fast_compile() -> Self {
+        Self::with_compile_mode(CompileMode::FastCompile)
+    }
+
+    /// Create a backend with an explicit compile mode.
+    pub fn with_compile_mode(compile_mode: CompileMode) -> Self {
         let device = Device::system_default().expect("no Metal device available");
         let queue = device.new_command_queue();
         let elementwise = ElementwiseKernels::compile(&device);
@@ -56,6 +71,7 @@ impl MetalBackend {
             queue,
             elementwise,
             interpolation,
+            compile_mode,
         }
     }
 
@@ -71,7 +87,7 @@ impl MetalBackend {
 
     /// Compile a `KernelDescriptor` into a Metal compute pipeline.
     pub fn compile_kernel<F: Field>(&self, descriptor: &KernelDescriptor) -> MetalKernel<F> {
-        compiler::compile(&self.device, descriptor)
+        compiler::compile_with_mode(&self.device, descriptor, &[], self.compile_mode)
     }
 
     /// Compile with baked challenge values for Custom expression kernels.
@@ -80,7 +96,7 @@ impl MetalBackend {
         descriptor: &KernelDescriptor,
         challenges: &[F],
     ) -> MetalKernel<F> {
-        compiler::compile_with_challenges(&self.device, descriptor, challenges)
+        compiler::compile_with_mode(&self.device, descriptor, challenges, self.compile_mode)
     }
 
     /// Dispatch a reduce kernel and finish partial sums on CPU.
@@ -270,7 +286,7 @@ impl ComputeBackend for MetalBackend {
         desc: &KernelDescriptor,
         challenges: &[F],
     ) -> MetalKernel<F> {
-        compiler::compile_with_challenges(&self.device, desc, challenges)
+        compiler::compile_with_mode(&self.device, desc, challenges, self.compile_mode)
     }
 
     fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T> {

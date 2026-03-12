@@ -11,5 +11,6 @@ mod reduction;
 pub(crate) mod shaders;
 
 pub use buffer::MetalBuffer;
+pub use compiler::CompileMode;
 pub use device::MetalBackend;
 pub use kernel::MetalKernel;

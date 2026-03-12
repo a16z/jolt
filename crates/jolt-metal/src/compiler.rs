@@ -32,7 +32,18 @@ use jolt_ir::{Expr, ExprVisitor, KernelDescriptor, KernelShape, Var};
 use metal::CompileOptions;
 
 use crate::kernel::MetalKernel;
-use crate::shaders::{build_source, make_pipeline, SHADER_BN254_FR, SHADER_WIDE_ACC};
+use crate::shaders::{build_source_with_mode, make_pipeline, SHADER_BN254_FR, SHADER_WIDE_ACC};
+
+/// Controls Metal shader compilation strategy.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum CompileMode {
+    /// Full LLVM inlining — maximum GPU throughput, slow compilation.
+    #[default]
+    Performance,
+    /// Noinline on field arithmetic — fast compilation, minor GPU overhead.
+    /// Reduces D=8 kernel compilation from ~3 minutes to seconds.
+    FastCompile,
+}
 
 /// Threadgroup size for reduce kernels. Power of 2.
 pub(crate) const REDUCE_GROUP_SIZE: usize = 256;
@@ -80,6 +91,16 @@ pub fn compile_with_challenges<F: Field>(
     device: &metal::Device,
     descriptor: &KernelDescriptor,
     challenges: &[F],
+) -> MetalKernel<F> {
+    compile_with_mode(device, descriptor, challenges, CompileMode::Performance)
+}
+
+/// Compile with explicit compile mode and optional challenge values.
+pub fn compile_with_mode<F: Field>(
+    device: &metal::Device,
+    descriptor: &KernelDescriptor,
+    challenges: &[F],
+    mode: CompileMode,
 ) -> MetalKernel<F> {
     let num_inputs = descriptor.num_inputs();
     let num_evals = descriptor.num_evals();
@@ -170,7 +191,8 @@ pub fn compile_with_challenges<F: Field>(
         msl.push('\n');
     }
 
-    let source = build_source(&[SHADER_BN254_FR, SHADER_WIDE_ACC, &msl]);
+    let noinline = matches!(mode, CompileMode::FastCompile);
+    let source = build_source_with_mode(&[SHADER_BN254_FR, SHADER_WIDE_ACC, &msl], noinline);
     let options = CompileOptions::new();
     let library = device
         .new_library_with_source(&source, &options)

@@ -27,18 +27,20 @@ Theoretical: **~96ns per fr_mul per thread** (single-threaded) or **~0.1ns throu
 | EqProduct | 128 B + weight | 3 fr_mul + 3 fr_add | Bandwidth-bound |
 | HammingBooleanity | 128 B + weight | 5 fr_mul + 7 fr_add | Balanced |
 
-### Baseline performance
+### Current performance (post-OPT-1)
 
 | Op | Size | Metal | CPU | Speedup |
 |----|------|-------|-----|---------|
-| reduce D=4 | 2^20 | 18.6ms | 76.8ms | **4.1x** |
-| reduce D=4 | 2^22 | 66.9ms | 394ms | **5.9x** |
-| reduce D=8 | 2^20 | 86.8ms | 120.9ms | **1.4x** |
-| reduce D=8 | 2^22 | 325ms | 617ms | **1.9x** |
-| interpolate | 2^22 | 18.0ms | 14.7ms | **0.8x** (CPU wins) |
-| sumcheck round D=4 | 2^22 | 112ms | 637ms | **5.7x** |
+| reduce D=4 | 2^14 | 947μs | 642μs | 0.68x (CPU) |
+| reduce D=4 | 2^20 | 18.1ms | 37.8ms | **2.09x** |
+| reduce D=8 | 2^14 | 2.37ms | 2.72ms | 1.15x |
+| reduce D=8 | 2^20 | 85.8ms | 243ms | **2.84x** |
+| reduce D=8 unw | 2^20 | 75.8ms | 92.9ms | **1.23x** |
+| sumcheck D=4 (4r) | 2^20 | 67.2ms | 98.8ms | **1.47x** |
+| sumcheck D=8 (4r) | 2^20 | 210ms | 229ms | **1.09x** |
+| interpolate | 2^20 | 6.2ms | 3.6ms | 0.58x (CPU) |
 
-D=8 is suspiciously slow (1.9x vs 5.9x for D=4). Root cause: **register pressure**.
+D=8 barely beats CPU (1.09x for full sumcheck). Root cause: **register pressure**.
 
 ## Register Pressure Problem
 
@@ -62,17 +64,23 @@ D=4 uses ~280 registers → ~29 threads → ~0.9 simdgroups. Still low, but 2x b
 
 ## Optimizations (priority order)
 
-### OPT-1: Simdgroup WideAcc reduction (before acc_reduce)
+### OPT-1: Simdgroup WideAcc reduction (before acc_reduce) ✅
 
-**Impact: 10-15%** | Effort: Medium
+**Impact: 10-15%** | Effort: Medium | **Status: IMPLEMENTED**
 
-Currently each of 256 threads calls `acc_reduce` (8 CIOS rounds ≈ 3500 ops), then simd_shuffles the 8-limb Fr result. 248 of those `acc_reduce` calls are wasted.
+Simd_shuffle the 18-limb WideAcc *before* `acc_reduce`. Only lane 0 of each simdgroup calls the expensive `acc_reduce` (8 CIOS rounds). Saves 248 × ~3500 ops = ~865K ops per threadgroup.
 
-**Fix**: Simd_shuffle the 18-limb WideAcc *before* `acc_reduce`. Only lane 0 of each simdgroup calls `acc_reduce`.
+**Measured results:**
 
-Saves: 248 × ~3500 ops = ~868K ops per threadgroup.
-Costs: 32 threads × 18 limbs × 5 rounds = 2880 shuffle ops.
-**Net: ~865K ops saved per threadgroup.**
+| Benchmark | Before | After | Change |
+|-----------|--------|-------|--------|
+| reduce D=4 2^14 | 985μs | 947μs | -4% |
+| reduce D=4 2^20 | 18.6ms | 18.1ms | -3% |
+| reduce D=8 2^14 | 3.7ms | 2.37ms | **-36%** |
+| reduce D=8 2^20 | 86.8ms | 85.8ms | -1% |
+| sumcheck D=8 2^20 | ~221ms | 210ms | -5% |
+
+Big win at small sizes (acc_reduce dominates). Marginal at large sizes (grid-stride loop dominates).
 
 ### OPT-2: Streaming pair loading (D≥8 occupancy fix)
 
@@ -141,6 +149,24 @@ Complicated by signed intermediates in the accumulator. Defer to later.
 **Impact: ~30% faster for squarings** | Effort: Medium
 
 CIOS squaring exploits `a[i]*a[j] = a[j]*a[i]` symmetry, halving cross-terms. Used in Toom-Cook grid evaluation when `t² * x` patterns appear. Not currently exploited in the eval body.
+
+## Test Compilation Speedup: `CompileMode::FastCompile`
+
+**Problem**: D=8 kernel generates ~5000 lines of MSL across 5 variants. Apple's LLVM
+spends ~3 minutes inlining 56 `fr_mul` calls (each expanding to ~224 ALU ops) into the
+eval body. Tests were taking 183+ seconds due to shader compilation, not GPU execution.
+
+**Solution**: `#define FR_NOINLINE` marks `fr_mul`, `fr_add`, `fr_sub`, `acc_fmadd`,
+`acc_reduce` etc. with `__attribute__((noinline))`. LLVM compiles each function once as
+a call target instead of inlining everywhere.
+
+| Test | Before | After | Speedup |
+|------|--------|-------|---------|
+| `pairwise_reduce_product_sum_d8_large` | 183s | 6.7s | **27x** |
+| Full suite (47 tests) | ~210s+ | 89s | **2.4x+** |
+
+Usage: `MetalBackend::new_fast_compile()` enables noinline mode. Tests use this.
+Benchmarks and production use `MetalBackend::new()` (full inlining).
 
 ## Validation Strategy
 

@@ -36,7 +36,7 @@ inline WideAcc acc_zero() {
 // For summation: acc += a_mont. The accumulated wide value is Σ a_i_mont.
 // After acc_reduce this gives Σ a_i (standard form); use fr_to_mont to
 // convert back to Montgomery representation.
-inline void acc_add_fr(thread WideAcc &acc, Fr a) {
+FR_FUNC_ATTR void acc_add_fr(thread WideAcc &acc, Fr a) {
     uint carry = 0;
     for (int i = 0; i < 8; i++) {
         uint2 r = adc(acc.limbs[i], a.limbs[i], carry);
@@ -52,7 +52,7 @@ inline void acc_add_fr(thread WideAcc &acc, Fr a) {
 
 // Fused multiply-add: acc += a * b (schoolbook, 8×8 → 16 limbs, accumulated into 18).
 // Pure 32-bit: uses mul + mulhi instead of ulong emulation.
-inline void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {
+FR_FUNC_ATTR void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {
     for (int j = 0; j < 8; j++) {
         uint carry = 0;
         for (int i = 0; i < 8; i++) {
@@ -78,7 +78,7 @@ inline void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {
 }
 
 // Merge two accumulators: dst += src.
-inline void acc_merge(thread WideAcc &dst, WideAcc src) {
+FR_FUNC_ATTR void acc_merge(thread WideAcc &dst, WideAcc src) {
     uint carry = 0;
     for (int i = 0; i < ACC_LIMBS; i++) {
         uint2 r = adc(dst.limbs[i], src.limbs[i], carry);
@@ -88,7 +88,7 @@ inline void acc_merge(thread WideAcc &dst, WideAcc src) {
 }
 
 // Threadgroup overload for reduction kernels using shared memory.
-inline void acc_merge(threadgroup WideAcc &dst, threadgroup WideAcc &src) {
+FR_FUNC_ATTR void acc_merge(threadgroup WideAcc &dst, threadgroup WideAcc &src) {
     uint carry = 0;
     for (int i = 0; i < ACC_LIMBS; i++) {
         uint2 r = adc(dst.limbs[i], src.limbs[i], carry);
@@ -107,7 +107,7 @@ inline void acc_merge(threadgroup WideAcc &dst, threadgroup WideAcc &src) {
 // multiply the value fits in 8 limbs, but after many accumulated products
 // it can exceed 256 bits (e.g. 256 products → ~260 bits). We subtract
 // the modulus in a loop to bring it into [0, r).
-inline Fr acc_reduce(WideAcc acc) {
+FR_FUNC_ATTR Fr acc_reduce(WideAcc acc) {
     for (int round = 0; round < 8; round++) {
         uint m = acc.limbs[round] * FR_INV32;
         // First limb: acc[round] + m * MODULUS[0] ≡ 0 mod 2^32 (CIOS property)
@@ -170,7 +170,7 @@ inline Fr acc_reduce(WideAcc acc) {
 }
 
 // Copy a threadgroup accumulator to thread-local memory and reduce.
-inline Fr acc_reduce_tg(threadgroup WideAcc &tg_acc) {
+FR_FUNC_ATTR Fr acc_reduce_tg(threadgroup WideAcc &tg_acc) {
     WideAcc acc;
     for (int i = 0; i < ACC_LIMBS; i++) acc.limbs[i] = tg_acc.limbs[i];
     return acc_reduce(acc);

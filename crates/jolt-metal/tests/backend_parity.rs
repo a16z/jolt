@@ -16,7 +16,7 @@ use num_traits::Zero;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
-static METAL: LazyLock<MetalBackend> = LazyLock::new(MetalBackend::new);
+static METAL: LazyLock<MetalBackend> = LazyLock::new(MetalBackend::new_fast_compile);
 
 fn random_elements(rng: &mut StdRng, n: usize) -> Vec<Fr> {
     (0..n).map(|_| Fr::random(rng)).collect()

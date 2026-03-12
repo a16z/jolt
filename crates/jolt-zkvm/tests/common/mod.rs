@@ -304,17 +304,21 @@ pub fn make_sub_cycle(addr: u64, rs1: u64, rs2: u64) -> tracer::instruction::Cyc
     })
 }
 
-/// JAL-to-self terminal cycle (rd=0, imm=0).
+/// JAL-to-self terminal cycle (rd=1, imm=0).
+/// Uses rd=1 (not rd=0) because the tracer rewrites rd=x0 JALs into virtual
+/// register writes, and these hand-built cycles bypass that rewriting.
 /// FLAG_JUMP=1 zeros constraint 16's guard, allowing NextUnexpPC=0
 /// when this is the last cycle (next=None).
 pub fn make_jal_terminal(addr: u64) -> tracer::instruction::Cycle {
     tracer::instruction::Cycle::from(RISCVCycle {
         instruction: JAL {
             address: addr,
-            operands: FormatJ { rd: 0, imm: 0 },
+            operands: FormatJ { rd: 1, imm: 0 },
             ..JAL::default()
         },
-        register_state: RegisterStateFormatJ { rd: (0, 0) },
+        register_state: RegisterStateFormatJ {
+            rd: (0, addr + 4),
+        },
         ram_access: (),
     })
 }

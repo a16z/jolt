@@ -16,6 +16,17 @@
 
 #include "common.metal"
 
+// When FR_NOINLINE is defined, heavy field arithmetic functions use
+// __attribute__((noinline)) to prevent LLVM from inlining them into
+// the caller. This dramatically reduces Metal shader compilation time
+// (minutes → seconds for large kernels) at the cost of minor GPU
+// runtime overhead from function calls. Used for test builds.
+#ifdef FR_NOINLINE
+#define FR_FUNC_ATTR __attribute__((noinline))
+#else
+#define FR_FUNC_ATTR inline
+#endif
+
 // r = 21888242871839275222246405745257275088548364400416034343698204186575808495617
 constant uint FR_MODULUS[8] = {
     0xf0000001u, 0x43e1f593u, 0x79b97091u, 0x2833e848u,
@@ -57,7 +68,7 @@ inline Fr fr_select(bool cond, Fr if_true, Fr if_false) {
     return r;
 }
 
-inline Fr fr_reduce(Fr a) {
+FR_FUNC_ATTR Fr fr_reduce(Fr a) {
     Fr reduced;
     uint borrow = 0;
     for (int i = 0; i < 8; i++) {
@@ -69,7 +80,7 @@ inline Fr fr_reduce(Fr a) {
     return fr_select(borrow == 0, reduced, a);
 }
 
-inline Fr fr_add(Fr a, Fr b) {
+FR_FUNC_ATTR Fr fr_add(Fr a, Fr b) {
     Fr result;
     uint carry = 0;
     for (int i = 0; i < 8; i++) {
@@ -89,7 +100,7 @@ inline Fr fr_add(Fr a, Fr b) {
     return fr_select(carry >= borrow, reduced, result);
 }
 
-inline Fr fr_sub(Fr a, Fr b) {
+FR_FUNC_ATTR Fr fr_sub(Fr a, Fr b) {
     Fr result;
     uint borrow = 0;
     for (int i = 0; i < 8; i++) {
@@ -109,7 +120,7 @@ inline Fr fr_sub(Fr a, Fr b) {
     return corrected;
 }
 
-inline Fr fr_neg(Fr a) {
+FR_FUNC_ATTR Fr fr_neg(Fr a) {
     Fr zero;
     for (int i = 0; i < 8; i++) zero.limbs[i] = 0;
     return fr_sub(zero, a);
@@ -162,7 +173,7 @@ inline Fr fr_neg(Fr a) {
     }                                                                        \
 }
 
-inline Fr fr_mul(Fr a, Fr b) {
+FR_FUNC_ATTR Fr fr_mul(Fr a, Fr b) {
     uint T[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     uint T9;
     FR_CIOS_ROUND(T, a, b.limbs[0], T9);
@@ -178,7 +189,7 @@ inline Fr fr_mul(Fr a, Fr b) {
     return fr_reduce(result);
 }
 
-inline Fr fr_sqr(Fr a) {
+FR_FUNC_ATTR Fr fr_sqr(Fr a) {
     return fr_mul(a, a);
 }
 
@@ -195,14 +206,14 @@ inline Fr fr_one() {
 }
 
 // Convert a raw integer (in standard form) to Montgomery form: a_mont = a * R^2 * R^{-1} = a * R
-inline Fr fr_to_mont(Fr a) {
+FR_FUNC_ATTR Fr fr_to_mont(Fr a) {
     Fr r2;
     for (int i = 0; i < 8; i++) r2.limbs[i] = FR_R2[i];
     return fr_mul(a, r2);
 }
 
 // Convert from Montgomery form to standard form: a * 1 * R^{-1} = a / R
-inline Fr fr_from_mont(Fr a) {
+FR_FUNC_ATTR Fr fr_from_mont(Fr a) {
     Fr one_std;
     one_std.limbs[0] = 1;
     for (int i = 1; i < 8; i++) one_std.limbs[i] = 0;
@@ -211,7 +222,7 @@ inline Fr fr_from_mont(Fr a) {
 
 // Convert a u64 scalar to Fr in Montgomery form.
 // The u64 is placed in limbs[0..1] (little-endian 32-bit), then multiplied by R^2.
-inline Fr fr_from_u64(ulong val) {
+FR_FUNC_ATTR Fr fr_from_u64(ulong val) {
     Fr a;
     a.limbs[0] = uint(val);
     a.limbs[1] = uint(val >> 32);

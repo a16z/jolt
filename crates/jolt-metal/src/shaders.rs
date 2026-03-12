@@ -73,9 +73,17 @@ impl InterpolationKernels {
 /// Metal's runtime compiler doesn't support `#include` from string sources,
 /// so we prepend the common header and inline subsequent files, skipping
 /// any `#include` lines (already inlined by concatenation order).
-pub(crate) fn build_source(shaders: &[&str]) -> String {
+///
+/// When `noinline` is true, prepends `#define FR_NOINLINE 1` which causes
+/// heavy field arithmetic functions to use `__attribute__((noinline))`,
+/// dramatically reducing LLVM compilation time for large kernels.
+pub(crate) fn build_source_with_mode(shaders: &[&str], noinline: bool) -> String {
     let total: usize = SHADER_COMMON.len() + shaders.iter().map(|s| s.len()).sum::<usize>();
     let mut src = String::with_capacity(total + 256);
+
+    if noinline {
+        src.push_str("#define FR_NOINLINE 1\n");
+    }
 
     src.push_str(SHADER_COMMON);
     src.push('\n');
@@ -90,6 +98,11 @@ pub(crate) fn build_source(shaders: &[&str]) -> String {
     }
 
     src
+}
+
+/// Build MSL source in performance mode (full inlining).
+pub(crate) fn build_source(shaders: &[&str]) -> String {
+    build_source_with_mode(shaders, false)
 }
 
 /// Create a compute pipeline from a named kernel function.
