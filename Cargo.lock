@@ -512,7 +512,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -523,7 +523,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1929,7 +1929,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2690,6 +2690,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "009ae045c87e7082cb72dab0ccd01ae075dd00141ddc108f43a0ea150a9e7227"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2713,7 +2722,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2843,6 +2852,7 @@ dependencies = [
  "inferno 0.12.6",
  "itertools 0.14.0",
  "jolt-inlines-keccak256",
+ "jolt-inlines-sdk",
  "jolt-inlines-sha2",
  "jolt-optimizations",
  "memory-stats",
@@ -2874,6 +2884,7 @@ name = "jolt-inlines-bigint"
 version = "0.1.0"
 dependencies = [
  "ark-ff 0.5.0",
+ "inventory",
  "jolt-inlines-sdk",
  "rand 0.8.5",
  "tracer",
@@ -2885,6 +2896,7 @@ version = "0.1.0"
 dependencies = [
  "blake2",
  "hex-literal",
+ "inventory",
  "jolt-inlines-sdk",
  "rand 0.8.5",
  "tracer",
@@ -2895,6 +2907,7 @@ name = "jolt-inlines-blake3"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "inventory",
  "jolt-inlines-sdk",
  "rand 0.8.5",
  "tracer",
@@ -2907,6 +2920,7 @@ dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",
  "ark-grumpkin",
+ "inventory",
  "jolt-inlines-sdk",
  "serde",
  "tracer",
@@ -2917,6 +2931,7 @@ name = "jolt-inlines-keccak256"
 version = "0.1.0"
 dependencies = [
  "hex-literal",
+ "inventory",
  "jolt-inlines-sdk",
  "sha3",
  "tracer",
@@ -2926,6 +2941,7 @@ dependencies = [
 name = "jolt-inlines-sdk"
 version = "0.1.0"
 dependencies = [
+ "inventory",
  "tracer",
 ]
 
@@ -2935,6 +2951,7 @@ version = "0.1.0"
 dependencies = [
  "ark-ff 0.5.0",
  "ark-secp256k1",
+ "inventory",
  "jolt-inlines-sdk",
  "num-bigint",
  "num-integer",
@@ -2946,6 +2963,7 @@ dependencies = [
 name = "jolt-inlines-sha2"
 version = "0.1.0"
 dependencies = [
+ "inventory",
  "jolt-inlines-sdk",
  "sha2",
  "tracer",
@@ -3404,7 +3422,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4037,7 +4055,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.12.1",
  "log",
  "multimap",
@@ -4745,7 +4763,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5527,7 +5545,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6151,7 +6169,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

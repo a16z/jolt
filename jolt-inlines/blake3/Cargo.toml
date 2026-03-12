@@ -9,11 +9,12 @@ repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
-host = ["dep:tracer", "jolt-inlines-sdk/host"]
+host = ["dep:tracer", "dep:inventory", "jolt-inlines-sdk/host"]
 
 [dependencies]
 jolt-inlines-sdk.workspace = true
 tracer = { workspace = true, optional = true, features = ["std"] }
+inventory = { workspace = true, optional = true }
 
 [dev-dependencies]
 blake3.workspace = true

@@ -27,6 +27,7 @@ default = ["host"]
 zk = ["dory/zk"]
 host = [
     "prover",
+    "jolt-inlines-sdk/host",
     "dep:jolt-inlines-sha2",
     "dep:jolt-inlines-keccak256",
 ]
@@ -84,6 +85,7 @@ derive_more.workspace = true
 dory.workspace = true
 allocative.workspace = true
 inferno = { workspace = true, optional = true }
+jolt-inlines-sdk.workspace = true
 jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [
     "host",

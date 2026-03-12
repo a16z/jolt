@@ -15,8 +15,7 @@ pub use tracer::utils::inline_sequence_writer::AppendMode;
 /// Trait for declaring an inline operation's metadata and sequence builder.
 ///
 /// Implement this for each sub-inline (e.g. `Sha256Compression`, `Secp256k1MulQ`),
-/// then pass the types to [`register_inlines!`] to generate `init_inlines()` and
-/// `store_inlines()`.
+/// then pass the types to [`register_inlines!`] to generate registration boilerplate.
 pub trait InlineOp: Send + Sync {
     const OPCODE: u32;
     const FUNCT3: u32;
@@ -67,12 +66,31 @@ pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), Stri
     write_inline_trace(file, &inline_info, &inputs, &instructions, mode).map_err(|e| e.to_string())
 }
 
-/// Generate `init_inlines()` and `store_inlines()` from a list of `InlineOp` types.
+/// Plugin registration entry submitted by each inline crate via [`register_inlines!`].
+/// Collected at link time by `inventory` — no manual bookkeeping needed.
+pub struct InlineRegistration {
+    pub init: fn() -> Result<(), String>,
+}
+
+inventory::collect!(InlineRegistration);
+
+/// Register all inline implementations that are linked into the binary.
+/// Idempotent — safe to call multiple times.
+pub fn register_all_inlines() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        for entry in inventory::iter::<InlineRegistration> {
+            (entry.init)().expect("Failed to register inlines");
+        }
+    });
+}
+
+/// Generate `init_inlines()` and `store_inlines()`, and register the crate's inlines
+/// with the global plugin registry via `inventory`.
 ///
-/// `init_inlines()` registers all ops with the tracer's global inline registry.
-/// `store_inlines()` writes default inline traces to the given file.
-///
-/// Call `init_inlines()` before tracing (e.g. in `preprocess` or `prove`).
+/// Any binary that links this crate will automatically discover its inlines
+/// when [`register_all_inlines()`] is called.
 ///
 /// ```ignore
 /// register_inlines! {
@@ -102,6 +120,12 @@ macro_rules! register_inlines {
                 $crate::host::AppendMode::Append,
             )?;)*
             Ok(())
+        }
+
+        inventory::submit! {
+            $crate::host::InlineRegistration {
+                init: init_inlines,
+            }
         }
     };
 }

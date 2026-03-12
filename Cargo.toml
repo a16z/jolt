@@ -242,6 +242,7 @@ getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = f
 # Build and Development
 ctor = { version = "0.6" }
 hex-literal = "0.4.1"
+inventory = "0.3"
 hex = "0.4.3"
 spinners = { version = "4.2.0", default-features = false }
 
