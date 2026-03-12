@@ -2516,6 +2516,7 @@ mod tests {
     #[serial]
     fn sha2_e2e_dory_with_unused_advice() {
         DoryGlobals::reset();
+        jolt_inlines_sdk::host::register_all_inlines();
         // SHA2 guest does not consume advice, but providing both trusted and untrusted advice
         // should still work correctly through the full pipeline:
         // - Trusted: commit in preprocessing-only context, reduce in Stage 6, batch in Stage 8
@@ -2641,6 +2642,7 @@ mod tests {
     #[serial]
     fn advice_e2e_dory() {
         DoryGlobals::reset();
+        jolt_inlines_sdk::host::register_all_inlines();
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
         let mut program = host::Program::new("merkle-tree-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
@@ -3516,6 +3518,7 @@ mod tests {
     fn advice_e2e_dory_address_major() {
         DoryGlobals::reset();
         DoryGlobals::set_layout(DoryLayout::AddressMajor);
+        jolt_inlines_sdk::host::register_all_inlines();
 
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
         let mut program = host::Program::new("merkle-tree-guest");

@@ -12,6 +12,12 @@
 #[cfg(feature = "host")]
 pub mod host;
 
+// Force-link inline crates so `inventory` discovers their registrations.
+#[cfg(feature = "host")]
+extern crate jolt_inlines_keccak256;
+#[cfg(feature = "host")]
+extern crate jolt_inlines_sha2;
+
 pub mod curve;
 pub mod field;
 pub mod guest;
