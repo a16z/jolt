@@ -71,8 +71,56 @@ use common::{
     jolt_device::MemoryLayout,
 };
 use rayon::prelude::*;
+use std::any::Any;
+use std::cell::RefCell;
 use tracer::emulator::memory::Memory;
 use tracer::JoltDevice;
+
+// ---------------------------------------------------------------------------
+// Symbolic IO overrides (used by transpiler, no-op in native prover/verifier)
+// ---------------------------------------------------------------------------
+
+/// Override values for `eval_io_mle` during symbolic execution.
+pub struct PendingIoMleValues<F: JoltField> {
+    pub input_words: Vec<F>,
+    pub output_words: Vec<F>,
+    pub panic_val: F,
+}
+
+/// Override values for `eval_initial_ram_mle` during symbolic execution.
+pub struct PendingInitialRamValues<F: JoltField> {
+    pub bytecode_words: Vec<F>,
+    pub input_words: Vec<F>,
+}
+
+thread_local! {
+    static PENDING_IO_MLE: RefCell<Option<Box<dyn Any>>> = RefCell::new(None);
+    static PENDING_INITIAL_RAM: RefCell<Option<Box<dyn Any>>> = RefCell::new(None);
+}
+
+pub fn set_pending_io_mle<F: JoltField + 'static>(v: PendingIoMleValues<F>) {
+    PENDING_IO_MLE.with(|cell| *cell.borrow_mut() = Some(Box::new(v)));
+}
+
+pub fn take_pending_io_mle<F: JoltField + 'static>() -> Option<PendingIoMleValues<F>> {
+    PENDING_IO_MLE.with(|cell| {
+        cell.borrow_mut()
+            .take()
+            .and_then(|b| b.downcast().ok().map(|b| *b))
+    })
+}
+
+pub fn set_pending_initial_ram<F: JoltField + 'static>(v: PendingInitialRamValues<F>) {
+    PENDING_INITIAL_RAM.with(|cell| *cell.borrow_mut() = Some(Box::new(v)));
+}
+
+pub fn take_pending_initial_ram<F: JoltField + 'static>() -> Option<PendingInitialRamValues<F>> {
+    PENDING_INITIAL_RAM.with(|cell| {
+        cell.borrow_mut()
+            .take()
+            .and_then(|b| b.downcast().ok().map(|b| *b))
+    })
+}
 
 pub mod hamming_booleanity;
 pub mod output_check;
@@ -437,7 +485,37 @@ pub fn reconstruct_full_eval<F: JoltField>(
     eval
 }
 
-/// Evaluate a shifted slice of `u64` coefficients as a multilinear polynomial at `r`.
+/// Trait for coefficient types usable in sparse MLE evaluation.
+///
+/// `u64` uses Barrett-reduced accumulation (`MedAccumU`) for performance.
+/// Any `JoltField` type uses direct field multiplication (needed for symbolic `MleAst`).
+trait SparseEvalCoeff<F: JoltField>: Sized {
+    fn block_weighted_sum(block_evals: &[F], values: &[Self], off: usize, len: usize) -> F;
+}
+
+impl<F: JoltField> SparseEvalCoeff<F> for u64 {
+    #[inline]
+    fn block_weighted_sum(block_evals: &[F], values: &[Self], off: usize, len: usize) -> F {
+        let mut block_acc: MedAccumU<F> = MedAccumU::default();
+        for j in 0..len {
+            block_acc.fmadd(&block_evals[j], &values[off + j]);
+        }
+        block_acc.barrett_reduce()
+    }
+}
+
+impl<F: JoltField> SparseEvalCoeff<F> for F {
+    #[inline]
+    fn block_weighted_sum(block_evals: &[F], values: &[Self], off: usize, len: usize) -> F {
+        let mut acc = F::zero();
+        for j in 0..len {
+            acc += values[off + j] * block_evals[j];
+        }
+        acc
+    }
+}
+
+/// Evaluate a shifted slice of coefficients as a multilinear polynomial at `r`.
 ///
 /// Conceptually computes:
 /// \[
@@ -445,11 +523,12 @@ pub fn reconstruct_full_eval<F: JoltField>(
 /// \]
 /// without materializing a full length-\(K\) vector or a full `eq(r, ·)` table.
 ///
-/// Uses aligned power-of-two block decomposition with `EqPolynomial::evals_for_max_aligned_block`,
-/// and accumulates using unreduced limb arithmetic via `MedAccumU`.
-fn sparse_eval_u64_block<F: JoltField>(
+/// Uses aligned power-of-two block decomposition with `EqPolynomial::evals_for_max_aligned_block`.
+/// The accumulation strategy depends on `V`: `u64` uses Barrett reduction, field elements use
+/// direct multiplication.
+fn sparse_eval_block<F: JoltField, V: SparseEvalCoeff<F>>(
     start_index: usize,
-    values: &[u64],
+    values: &[V],
     r: &[F::Challenge],
 ) -> F {
     if values.is_empty() {
@@ -465,13 +544,7 @@ fn sparse_eval_u64_block<F: JoltField>(
             EqPolynomial::<F>::evals_for_max_aligned_block(r, idx, remaining);
         debug_assert_eq!(block_evals.len(), block_size);
 
-        // Accumulate this block in unreduced form, then reduce once.
-        let mut block_acc: MedAccumU<F> = MedAccumU::default();
-        for j in 0..block_size {
-            // FMAdd implementation skips zeros internally.
-            block_acc.fmadd(&block_evals[j], &values[off + j]);
-        }
-        acc += block_acc.barrett_reduce();
+        acc += V::block_weighted_sum(&block_evals, values, off, block_size);
 
         idx += block_size;
         off += block_size;
@@ -489,21 +562,39 @@ fn sparse_eval_u64_block<F: JoltField>(
 /// This function computes:
 ///   \sum_k Val_init_public[k] * eq(r_address, k)
 /// but only over the (contiguous) regions that can be non-zero.
-pub fn eval_initial_ram_mle<F: JoltField>(
+pub fn eval_initial_ram_mle<F: JoltField + 'static>(
     ram_preprocessing: &RAMPreprocessing,
     program_io: &JoltDevice,
     r_address: &[F::Challenge],
 ) -> F {
-    // Bytecode region
+    // Symbolic override path (transpiler sets this before verify())
+    if let Some(pending) = take_pending_initial_ram::<F>() {
+        let bytecode_start = remap_address(
+            ram_preprocessing.min_bytecode_address,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+        let mut acc = sparse_eval_block::<F, F>(bytecode_start, &pending.bytecode_words, r_address);
+        if !pending.input_words.is_empty() {
+            let input_start = remap_address(
+                program_io.memory_layout.input_start,
+                &program_io.memory_layout,
+            )
+            .unwrap() as usize;
+            acc += sparse_eval_block::<F, F>(input_start, &pending.input_words, r_address);
+        }
+        return acc;
+    }
+
+    // Concrete path (native prover/verifier)
     let bytecode_start = remap_address(
         ram_preprocessing.min_bytecode_address,
         &program_io.memory_layout,
     )
     .unwrap() as usize;
     let mut acc =
-        sparse_eval_u64_block::<F>(bytecode_start, &ram_preprocessing.bytecode_words, r_address);
+        sparse_eval_block::<F, _>(bytecode_start, &ram_preprocessing.bytecode_words, r_address);
 
-    // Inputs region (packed into u64 words in little-endian)
     if !program_io.inputs.is_empty() {
         let input_start = remap_address(
             program_io.memory_layout.input_start,
@@ -521,7 +612,7 @@ pub fn eval_initial_ram_mle<F: JoltField>(
                 u64::from_le_bytes(word)
             })
             .collect();
-        acc += sparse_eval_u64_block::<F>(input_start, &input_words, r_address);
+        acc += sparse_eval_block::<F, _>(input_start, &input_words, r_address);
     }
 
     acc
@@ -542,7 +633,10 @@ pub fn eval_initial_ram_mle<F: JoltField>(
 /// When `r_address` has more variables than the IO polynomial, we embed it into the larger
 /// domain by fixing the extra high-order variables to 0, which corresponds to multiplying
 /// by `∏(1 - r_hi[i])`.
-pub fn eval_io_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challenge]) -> F {
+pub fn eval_io_mle<F: JoltField + 'static>(
+    program_io: &JoltDevice,
+    r_address: &[F::Challenge],
+) -> F {
     // IO region size in words (power of two).
     let range_end_words =
         remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
@@ -559,6 +653,47 @@ pub fn eval_io_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challe
         hi_scale *= F::one() - *r_i;
     }
 
+    // Symbolic override path (transpiler sets this before verify())
+    if let Some(pending) = take_pending_io_mle::<F>() {
+        let mut acc = F::zero();
+
+        if !pending.input_words.is_empty() {
+            let input_start = remap_address(
+                program_io.memory_layout.input_start,
+                &program_io.memory_layout,
+            )
+            .unwrap() as usize;
+            acc += sparse_eval_block::<F, F>(input_start, &pending.input_words, r_lo);
+        }
+
+        if !pending.output_words.is_empty() {
+            let output_start = remap_address(
+                program_io.memory_layout.output_start,
+                &program_io.memory_layout,
+            )
+            .unwrap() as usize;
+            acc += sparse_eval_block::<F, F>(output_start, &pending.output_words, r_lo);
+        }
+
+        // Panic: arithmetic (not branch) so it's transpilable
+        let panic_index = remap_address(program_io.memory_layout.panic, &program_io.memory_layout)
+            .unwrap() as usize;
+        let panic_word = [pending.panic_val];
+        acc += sparse_eval_block::<F, F>(panic_index, &panic_word, r_lo);
+
+        // Termination = (1 - panic) * eq(r, term_index) (arithmetic select)
+        let termination_index = remap_address(
+            program_io.memory_layout.termination,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+        let term_val = [F::one() - pending.panic_val];
+        acc += sparse_eval_block::<F, F>(termination_index, &term_val, r_lo);
+
+        return hi_scale * acc;
+    }
+
+    // Concrete path (native prover/verifier)
     let mut acc = F::zero();
 
     // Inputs region
@@ -579,7 +714,7 @@ pub fn eval_io_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challe
                 u64::from_le_bytes(word)
             })
             .collect();
-        acc += sparse_eval_u64_block::<F>(input_start, &input_words, r_lo);
+        acc += sparse_eval_block::<F, _>(input_start, &input_words, r_lo);
     }
 
     // Outputs region
@@ -600,14 +735,14 @@ pub fn eval_io_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challe
                 u64::from_le_bytes(word)
             })
             .collect();
-        acc += sparse_eval_u64_block::<F>(output_start, &output_words, r_lo);
+        acc += sparse_eval_block::<F, _>(output_start, &output_words, r_lo);
     }
 
     // Panic bit (one word)
     let panic_index =
         remap_address(program_io.memory_layout.panic, &program_io.memory_layout).unwrap() as usize;
     let panic_word = [program_io.panic as u64];
-    acc += sparse_eval_u64_block::<F>(panic_index, &panic_word, r_lo);
+    acc += sparse_eval_block::<F, _>(panic_index, &panic_word, r_lo);
 
     // Termination bit (one word), only set when not panicking.
     if !program_io.panic {
@@ -617,7 +752,7 @@ pub fn eval_io_mle<F: JoltField>(program_io: &JoltDevice, r_address: &[F::Challe
         )
         .unwrap() as usize;
         let term_word = [1u64];
-        acc += sparse_eval_u64_block::<F>(termination_index, &term_word, r_lo);
+        acc += sparse_eval_block::<F, _>(termination_index, &term_word, r_lo);
     }
 
     hi_scale * acc
