@@ -194,7 +194,7 @@ jobs:
         run: |
           set -euo pipefail
           for pkg in ${{ steps.discover_inlines.outputs.pkgs }}; do
-            cargo nextest run --features host -p "$pkg"
+            cargo nextest run --features host -p "$pkg" --no-tests=pass
           done
 
   test-sdk-verifier:
