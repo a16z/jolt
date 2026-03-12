@@ -12,7 +12,7 @@
 //!
 //! Both modes produce the same [`UniformSpartanProof`] structure.
 
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::proof::SumcheckProof;
 use jolt_sumcheck::{
@@ -62,9 +62,8 @@ impl UniformSpartanProver {
         transcript: &mut T,
     ) -> Result<UniformSpartanProof<F>, SpartanError>
     where
-        F: WithChallenge,
-        F::Challenge: From<T::Challenge>,
-        T: Transcript,
+        F: Field,
+        T: Transcript<Challenge = F>,
     {
         let (proof, _r_x, _r_y) = Self::prove_dense_with_challenges(key, witness, transcript)?;
         Ok(proof)
@@ -83,9 +82,8 @@ impl UniformSpartanProver {
         transcript: &mut T,
     ) -> Result<(UniformSpartanProof<F>, Vec<F>, Vec<F>), SpartanError>
     where
-        F: WithChallenge,
-        F::Challenge: From<T::Challenge>,
-        T: Transcript,
+        F: Field,
+        T: Transcript<Challenge = F>,
     {
         let total_rows = key.total_rows();
         let total_cols = key.total_cols();
@@ -150,9 +148,7 @@ impl UniformSpartanProver {
         let witness_poly = Polynomial::new(witness.to_vec());
 
         let num_row_vars = log2_padded(total_rows_padded);
-        let tau: Vec<F> = (0..num_row_vars)
-            .map(|_| F::Challenge::from(transcript.challenge()).into())
-            .collect();
+        let tau: Vec<F> = (0..num_row_vars).map(|_| transcript.challenge()).collect();
 
         let eq_poly = Polynomial::new(EqPolynomial::new(tau).evaluations());
         let az_poly = Polynomial::new(az);
@@ -179,7 +175,6 @@ impl UniformSpartanProver {
                 &outer_claim,
                 &mut outer_witness,
                 transcript,
-
                 handler,
             )
         };
@@ -192,9 +187,9 @@ impl UniformSpartanProver {
         transcript.append(&bz_eval);
         transcript.append(&cz_eval);
 
-        let rho_a = F::Challenge::from(transcript.challenge()).into();
-        let rho_b = F::Challenge::from(transcript.challenge()).into();
-        let rho_c = F::Challenge::from(transcript.challenge()).into();
+        let rho_a: F = transcript.challenge();
+        let rho_b: F = transcript.challenge();
+        let rho_c: F = transcript.challenge();
 
         let num_col_vars = log2_padded(total_cols_padded);
         let combined_row = {
@@ -220,7 +215,6 @@ impl UniformSpartanProver {
                 &inner_claim,
                 &mut inner_witness,
                 transcript,
-
                 inner_handler,
             )
         };
@@ -313,7 +307,7 @@ struct UniformOuterSumcheckCompute<F: Field> {
     cz: Polynomial<F>,
 }
 
-impl<F: WithChallenge> SumcheckCompute<F> for UniformOuterSumcheckCompute<F> {
+impl<F: Field> SumcheckCompute<F> for UniformOuterSumcheckCompute<F> {
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let half = self.eq.evaluations().len() / 2;
         let eq_evals = self.eq.evaluations();
@@ -353,12 +347,11 @@ impl<F: WithChallenge> SumcheckCompute<F> for UniformOuterSumcheckCompute<F> {
         UnivariatePoly::interpolate(&points)
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
-        let r: F = challenge.into();
-        self.eq.bind(r);
-        self.az.bind(r);
-        self.bz.bind(r);
-        self.cz.bind(r);
+    fn bind(&mut self, challenge: F) {
+        self.eq.bind(challenge);
+        self.az.bind(challenge);
+        self.bz.bind(challenge);
+        self.cz.bind(challenge);
     }
 }
 
@@ -368,7 +361,7 @@ struct InnerSumcheckCompute<F: Field> {
     witness: Polynomial<F>,
 }
 
-impl<F: WithChallenge> SumcheckCompute<F> for InnerSumcheckCompute<F> {
+impl<F: Field> SumcheckCompute<F> for InnerSumcheckCompute<F> {
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let half = self.combined_row.evaluations().len() / 2;
         let row_evals = self.combined_row.evaluations();
@@ -398,10 +391,9 @@ impl<F: WithChallenge> SumcheckCompute<F> for InnerSumcheckCompute<F> {
         UnivariatePoly::interpolate(&points)
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
-        let r: F = challenge.into();
-        self.combined_row.bind(r);
-        self.witness.bind(r);
+    fn bind(&mut self, challenge: F) {
+        self.combined_row.bind(challenge);
+        self.witness.bind(challenge);
     }
 }
 

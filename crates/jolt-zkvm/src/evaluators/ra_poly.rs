@@ -16,7 +16,7 @@ use rayon::prelude::*;
 
 use std::{mem, sync::Arc};
 
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_poly::{
     thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     BindingOrder, Polynomial,
@@ -35,7 +35,7 @@ fn eq_single_bit<F: Field>(bit: F, r: F) -> F {
 /// - `F`: field type
 #[allow(non_snake_case)]
 #[derive(Clone)]
-pub enum RaPolynomial<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge> {
+pub enum RaPolynomial<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: Field> {
     None,
     Round1(RaPolynomialRound1<I, F>),
     Round2(RaPolynomialRound2<I, F>),
@@ -44,7 +44,7 @@ pub enum RaPolynomial<I: Into<usize> + Copy + Default + Send + Sync + 'static, F
 }
 
 #[allow(non_snake_case)]
-impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge> RaPolynomial<I, F> {
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: Field> RaPolynomial<I, F> {
     pub fn new(lookup_indices: Arc<Vec<Option<I>>>, eq_evals: Vec<F>) -> Self {
         Self::Round1(RaPolynomialRound1 {
             F: eq_evals,
@@ -86,17 +86,9 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge> 
     }
 
     /// Bind the next variable, advancing the state machine.
-    pub fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
-        self.bind_f(r.into(), order);
-    }
-
-    /// Like [`bind`](Self::bind), but accepts a field element directly.
-    ///
-    /// Useful inside [`SumcheckCompute::bind(F)`](jolt_sumcheck::SumcheckCompute::bind)
-    /// wrappers where the challenge has already been converted to `F`.
-    pub fn bind_f(&mut self, r: F, order: BindingOrder) {
+    pub fn bind(&mut self, r: F, order: BindingOrder) {
         match self {
-            Self::None => panic!("RaPolynomial::bind_f called on None"),
+            Self::None => panic!("RaPolynomial::bind called on None"),
             Self::Round1(mle) => *self = Self::Round2(mem::take(mle).bind_round(r, order)),
             Self::Round2(mle) => *self = Self::Round3(mem::take(mle).bind_round(r, order)),
             Self::Round3(mle) => *self = Self::RoundN(mem::take(mle).bind_round(r, order)),
@@ -149,9 +141,7 @@ pub struct RaPolynomialRound1<I: Into<usize> + Copy + Default + Send + Sync + 's
 }
 
 #[allow(non_snake_case)]
-impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
-    RaPolynomialRound1<I, F>
-{
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: Field> RaPolynomialRound1<I, F> {
     fn len(&self) -> usize {
         self.lookup_indices.len()
     }
@@ -207,9 +197,7 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: Field> Default
 }
 
 #[allow(non_snake_case)]
-impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
-    RaPolynomialRound2<I, F>
-{
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: Field> RaPolynomialRound2<I, F> {
     fn len(&self) -> usize {
         self.lookup_indices.len() / 2
     }
@@ -305,9 +293,7 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: Field> Default
 }
 
 #[allow(non_snake_case)]
-impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: WithChallenge>
-    RaPolynomialRound3<I, F>
-{
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: Field> RaPolynomialRound3<I, F> {
     fn len(&self) -> usize {
         self.lookup_indices.len() / 4
     }

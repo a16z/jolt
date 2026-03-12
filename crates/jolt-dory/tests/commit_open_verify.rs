@@ -11,7 +11,7 @@ use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-fn round_trip<T: Transcript>(num_vars: usize, seed: u64, label: &'static [u8]) {
+fn round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, label: &'static [u8]) {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let prover_setup = DoryScheme::setup_prover(num_vars);
     let verifier_setup = DoryScheme::setup_verifier(num_vars);

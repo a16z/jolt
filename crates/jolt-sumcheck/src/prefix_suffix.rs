@@ -41,7 +41,7 @@
 //!
 //! See <https://eprint.iacr.org/2025/611.pdf> (Appendix A).
 
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 
 use crate::prover::SumcheckCompute;
@@ -108,7 +108,7 @@ pub type Phase2Builder<F> =
 /// **Phase 2** (suffix variables): Delegates to a user-provided
 /// [`SumcheckCompute`] produced by the [`Phase2Builder`] callback, which
 /// typically materializes √N-sized tables for the suffix domain.
-pub struct PrefixSuffixEvaluator<F: WithChallenge> {
+pub struct PrefixSuffixEvaluator<F: Field> {
     pairs: Vec<(Vec<F>, Vec<F>)>,
     prefix_vars: usize,
     claim: F,
@@ -117,7 +117,7 @@ pub struct PrefixSuffixEvaluator<F: WithChallenge> {
     phase2_builder: Option<Phase2Builder<F>>,
 }
 
-impl<F: WithChallenge> PrefixSuffixEvaluator<F> {
+impl<F: Field> PrefixSuffixEvaluator<F> {
     /// Creates a new prefix-suffix evaluator.
     ///
     /// # Arguments
@@ -169,7 +169,7 @@ impl<F: WithChallenge> PrefixSuffixEvaluator<F> {
 /// Pairs `table[j]` (x_msb=0) with `table[j + half]` (x_msb=1):
 /// `table[j] = table[j] + r · (table[j + half] - table[j])` for `j ∈ [0, len/2)`.
 #[inline]
-fn bind_high_to_low<F: WithChallenge>(table: &mut Vec<F>, r: F::Challenge) {
+fn bind_high_to_low<F: Field>(table: &mut Vec<F>, r: F) {
     let half = table.len() / 2;
     for j in 0..half {
         let lo = table[j];
@@ -179,7 +179,7 @@ fn bind_high_to_low<F: WithChallenge>(table: &mut Vec<F>, r: F::Challenge) {
     table.truncate(half);
 }
 
-impl<F: WithChallenge> SumcheckCompute<F> for PrefixSuffixEvaluator<F> {
+impl<F: Field> SumcheckCompute<F> for PrefixSuffixEvaluator<F> {
     fn set_claim(&mut self, claim: F) {
         if let Some(ref mut inner) = self.phase2 {
             inner.set_claim(claim);
@@ -218,7 +218,7 @@ impl<F: WithChallenge> SumcheckCompute<F> for PrefixSuffixEvaluator<F> {
         UnivariatePoly::from_evals_and_hint(self.claim, &[eval_0, eval_2])
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
+    fn bind(&mut self, challenge: F) {
         if let Some(ref mut inner) = self.phase2 {
             inner.bind(challenge);
             return;
@@ -228,7 +228,7 @@ impl<F: WithChallenge> SumcheckCompute<F> for PrefixSuffixEvaluator<F> {
             bind_high_to_low(p, challenge);
             bind_high_to_low(q, challenge);
         }
-        self.challenges.push(challenge.into());
+        self.challenges.push(challenge);
 
         if self.challenges.len() == self.prefix_vars {
             let prefix_evals = self.pairs.iter().map(|(p, _)| p[0]).collect();
@@ -248,7 +248,7 @@ impl<F: WithChallenge> SumcheckCompute<F> for PrefixSuffixEvaluator<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Field, Fr, WithChallenge};
+    use jolt_field::{Field, Fr};
     use jolt_poly::{EqPolynomial, Polynomial};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
@@ -259,13 +259,13 @@ mod tests {
 
     /// Phase 2 witness: eq·g product over suffix-domain tables.
     /// Uses HighToLow binding to match the overall convention.
-    struct SimplePhase2<F: WithChallenge> {
+    struct SimplePhase2<F: Field> {
         eq_table: Vec<F>,
         g_table: Vec<F>,
         claim: F,
     }
 
-    impl<F: WithChallenge> SumcheckCompute<F> for SimplePhase2<F> {
+    impl<F: Field> SumcheckCompute<F> for SimplePhase2<F> {
         fn set_claim(&mut self, claim: F) {
             self.claim = claim;
         }
@@ -287,7 +287,7 @@ mod tests {
             UnivariatePoly::from_evals_and_hint(self.claim, &[eval_0, eval_2])
         }
 
-        fn bind(&mut self, challenge: F::Challenge) {
+        fn bind(&mut self, challenge: F) {
             bind_high_to_low(&mut self.eq_table, challenge);
             bind_high_to_low(&mut self.g_table, challenge);
         }
@@ -341,7 +341,7 @@ mod tests {
                     fn round_polynomial(&self) -> UnivariatePoly<Fr> {
                         UnivariatePoly::zero()
                     }
-                    fn bind(&mut self, _: <Fr as WithChallenge>::Challenge) {}
+                    fn bind(&mut self, _: Fr) {}
                 }
                 Box::new(Dummy) as Box<dyn SumcheckCompute<Fr>>
             }),
@@ -352,15 +352,15 @@ mod tests {
 
         evaluator.set_claim(Fr::zero());
         let _ = evaluator.round_polynomial();
-        evaluator.bind(<Fr as WithChallenge>::Challenge::from(1u128));
+        evaluator.bind(Fr::from_u128(1));
         assert!(evaluator.in_prefix_phase());
 
         let _ = evaluator.round_polynomial();
-        evaluator.bind(<Fr as WithChallenge>::Challenge::from(2u128));
+        evaluator.bind(Fr::from_u128(2));
         assert!(evaluator.in_prefix_phase());
 
         let _ = evaluator.round_polynomial();
-        evaluator.bind(<Fr as WithChallenge>::Challenge::from(3u128));
+        evaluator.bind(Fr::from_u128(3));
         assert!(!evaluator.in_prefix_phase());
     }
 
@@ -427,8 +427,7 @@ mod tests {
         let proof = SumcheckProver::prove(&claim, &mut evaluator, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"single_pair");
-        let (final_eval, challenges) =
-            SumcheckVerifier::verify(&claim, &proof, &mut vt).unwrap();
+        let (final_eval, challenges) = SumcheckVerifier::verify(&claim, &proof, &mut vt).unwrap();
 
         // Oracle check: final_eval must equal eq(r, challenges) · g(challenges).
         let eq_at_r = eval_mle(&eq_full, &challenges);
@@ -513,8 +512,7 @@ mod tests {
         let proof = SumcheckProver::prove(&claim, &mut evaluator, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"two_pair_eq");
-        let (final_eval, challenges) =
-            SumcheckVerifier::verify(&claim, &proof, &mut vt).unwrap();
+        let (final_eval, challenges) = SumcheckVerifier::verify(&claim, &proof, &mut vt).unwrap();
 
         // Oracle check
         let expected = (a * eval_mle(&eq1, &challenges) + b * eval_mle(&eq2, &challenges))
@@ -524,7 +522,12 @@ mod tests {
 
     #[test]
     fn combined_suffix_matches_manual() {
-        let suffix_a = vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(4)];
+        let suffix_a = vec![
+            Fr::from_u64(1),
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(4),
+        ];
         let suffix_b = vec![
             Fr::from_u64(10),
             Fr::from_u64(20),
@@ -586,8 +589,7 @@ mod tests {
         let proof = SumcheckProver::prove(&claim, &mut evaluator, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"identity");
-        let (final_eval, challenges) =
-            SumcheckVerifier::verify(&claim, &proof, &mut vt).unwrap();
+        let (final_eval, challenges) = SumcheckVerifier::verify(&claim, &proof, &mut vt).unwrap();
 
         // eq(r, challenges) · 1 should equal final_eval
         let eq_full = EqPolynomial::new(r).evaluations();

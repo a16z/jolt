@@ -94,16 +94,14 @@ pub struct HybridKernel<Fld: Field, P: ComputeBackend, Fb: ComputeBackend> {
 
 // SAFETY: `HybridKernel` wraps `P::CompiledKernel` and `Fb::CompiledKernel`,
 // both `Send + Sync` as required by `ComputeBackend`. No additional state.
-unsafe impl<Fld: Field, P: ComputeBackend, Fb: ComputeBackend> Send
-    for HybridKernel<Fld, P, Fb>
+unsafe impl<Fld: Field, P: ComputeBackend, Fb: ComputeBackend> Send for HybridKernel<Fld, P, Fb>
 where
     P::CompiledKernel<Fld>: Send,
     Fb::CompiledKernel<Fld>: Send,
 {
 }
 // SAFETY: See `Send` impl above.
-unsafe impl<Fld: Field, P: ComputeBackend, Fb: ComputeBackend> Sync
-    for HybridKernel<Fld, P, Fb>
+unsafe impl<Fld: Field, P: ComputeBackend, Fb: ComputeBackend> Sync for HybridKernel<Fld, P, Fb>
 where
     P::CompiledKernel<Fld>: Sync,
     Fb::CompiledKernel<Fld>: Sync,
@@ -126,8 +124,12 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         challenges: &[Fld],
     ) -> Self::CompiledKernel<Fld> {
         HybridKernel {
-            primary: self.primary.compile_kernel_with_challenges(desc, challenges),
-            fallback: self.fallback.compile_kernel_with_challenges(desc, challenges),
+            primary: self
+                .primary
+                .compile_kernel_with_challenges(desc, challenges),
+            fallback: self
+                .fallback
+                .compile_kernel_with_challenges(desc, challenges),
         }
     }
 
@@ -244,10 +246,7 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         for &(is_primary, idx) in &indices {
             if is_primary {
                 // We need to take from primary_results — use a sentinel swap.
-                let b = std::mem::replace(
-                    &mut primary_results[idx],
-                    self.primary.alloc(0),
-                );
+                let b = std::mem::replace(&mut primary_results[idx], self.primary.alloc(0));
                 let len = self.primary.len(&b);
                 if len <= self.threshold {
                     let data = self.primary.download(&b);
@@ -256,10 +255,7 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
                     results.push(HybridBuffer::Primary(b));
                 }
             } else {
-                let b = std::mem::replace(
-                    &mut fallback_results[idx],
-                    self.fallback.alloc(0),
-                );
+                let b = std::mem::replace(&mut fallback_results[idx], self.fallback.alloc(0));
                 results.push(HybridBuffer::Fallback(b));
             }
         }
@@ -368,8 +364,12 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
                             panic!("weight buffer backend mismatch in pairwise_reduce_fixed")
                         }
                     };
-                    self.primary
-                        .pairwise_reduce_fixed::<Fld, D>(&p_inputs, p_weights, &kernel.primary, order)
+                    self.primary.pairwise_reduce_fixed::<Fld, D>(
+                        &p_inputs,
+                        p_weights,
+                        &kernel.primary,
+                        order,
+                    )
                 }
                 HybridBuffer::Fallback(_) => {
                     let f_inputs: Vec<&Fb::Buffer<Fld>> = inputs
@@ -387,8 +387,12 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
                             panic!("weight buffer backend mismatch in pairwise_reduce_fixed")
                         }
                     };
-                    self.fallback
-                        .pairwise_reduce_fixed::<Fld, D>(&f_inputs, f_weights, &kernel.fallback, order)
+                    self.fallback.pairwise_reduce_fixed::<Fld, D>(
+                        &f_inputs,
+                        f_weights,
+                        &kernel.fallback,
+                        order,
+                    )
                 }
             }
         } else {
@@ -546,10 +550,8 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
                             panic!("weight buffer backend mismatch in pairwise_reduce_multi")
                         }
                     };
-                    let p_kernels: Vec<(&P::CompiledKernel<Fld>, usize)> = kernels
-                        .iter()
-                        .map(|(k, n)| (&k.primary, *n))
-                        .collect();
+                    let p_kernels: Vec<(&P::CompiledKernel<Fld>, usize)> =
+                        kernels.iter().map(|(k, n)| (&k.primary, *n)).collect();
                     self.primary
                         .pairwise_reduce_multi(&p_inputs, p_weights, &p_kernels, order)
                 }
@@ -569,10 +571,8 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
                             panic!("weight buffer backend mismatch in pairwise_reduce_multi")
                         }
                     };
-                    let f_kernels: Vec<(&Fb::CompiledKernel<Fld>, usize)> = kernels
-                        .iter()
-                        .map(|(k, n)| (&k.fallback, *n))
-                        .collect();
+                    let f_kernels: Vec<(&Fb::CompiledKernel<Fld>, usize)> =
+                        kernels.iter().map(|(k, n)| (&k.fallback, *n)).collect();
                     self.fallback
                         .pairwise_reduce_multi(&f_inputs, f_weights, &f_kernels, order)
                 }
@@ -598,15 +598,9 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         }
     }
 
-    fn dot_product<Fld: Field>(
-        &self,
-        a: &Self::Buffer<Fld>,
-        b: &Self::Buffer<Fld>,
-    ) -> Fld {
+    fn dot_product<Fld: Field>(&self, a: &Self::Buffer<Fld>, b: &Self::Buffer<Fld>) -> Fld {
         match (a, b) {
-            (HybridBuffer::Primary(a), HybridBuffer::Primary(b)) => {
-                self.primary.dot_product(a, b)
-            }
+            (HybridBuffer::Primary(a), HybridBuffer::Primary(b)) => self.primary.dot_product(a, b),
             (HybridBuffer::Fallback(a), HybridBuffer::Fallback(b)) => {
                 self.fallback.dot_product(a, b)
             }
@@ -621,11 +615,7 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         }
     }
 
-    fn add<Fld: Field>(
-        &self,
-        a: &Self::Buffer<Fld>,
-        b: &Self::Buffer<Fld>,
-    ) -> Self::Buffer<Fld> {
+    fn add<Fld: Field>(&self, a: &Self::Buffer<Fld>, b: &Self::Buffer<Fld>) -> Self::Buffer<Fld> {
         match (a, b) {
             (HybridBuffer::Primary(a), HybridBuffer::Primary(b)) => {
                 HybridBuffer::Primary(self.primary.add(a, b))
@@ -637,11 +627,7 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
         }
     }
 
-    fn sub<Fld: Field>(
-        &self,
-        a: &Self::Buffer<Fld>,
-        b: &Self::Buffer<Fld>,
-    ) -> Self::Buffer<Fld> {
+    fn sub<Fld: Field>(&self, a: &Self::Buffer<Fld>, b: &Self::Buffer<Fld>) -> Self::Buffer<Fld> {
         match (a, b) {
             (HybridBuffer::Primary(a), HybridBuffer::Primary(b)) => {
                 HybridBuffer::Primary(self.primary.sub(a, b))
@@ -833,12 +819,7 @@ mod tests {
             a.iter().zip(b.iter()).map(|(x, y)| *x - *y).collect()
         }
 
-        fn accumulate<Fld: Field>(
-            &self,
-            buf: &mut Vec<Fld>,
-            scalar: Fld,
-            other: &Vec<Fld>,
-        ) {
+        fn accumulate<Fld: Field>(&self, buf: &mut Vec<Fld>, scalar: Fld, other: &Vec<Fld>) {
             for (x, y) in buf.iter_mut().zip(other.iter()) {
                 *x += scalar * *y;
             }
@@ -938,13 +919,7 @@ mod tests {
         let buf_w = hybrid.upload(&weights_large);
         assert!(is_primary(&buf_a));
 
-        let result = hybrid.pairwise_reduce(
-            &[&buf_a],
-            &buf_w,
-            &kernel,
-            4,
-            BindingOrder::LowToHigh,
-        );
+        let result = hybrid.pairwise_reduce(&[&buf_a], &buf_w, &kernel, 4, BindingOrder::LowToHigh);
         assert_eq!(result, vec![Fr::from_u64(1); 4]);
 
         // Fallback inputs → dispatches to fallback → returns all 2s.
@@ -954,13 +929,8 @@ mod tests {
         let buf_ws = hybrid.upload(&weights_small);
         assert!(!is_primary(&buf_b));
 
-        let result = hybrid.pairwise_reduce(
-            &[&buf_b],
-            &buf_ws,
-            &kernel,
-            4,
-            BindingOrder::LowToHigh,
-        );
+        let result =
+            hybrid.pairwise_reduce(&[&buf_b], &buf_ws, &kernel, 4, BindingOrder::LowToHigh);
         assert_eq!(result, vec![Fr::from_u64(2); 4]);
     }
 

@@ -57,8 +57,7 @@ fn hybrid_claim_reduction_standalone() {
         vec![Box::new(prover_stage)];
 
     let mut pt = Blake2bTranscript::new(b"hybrid-standalone");
-    let (stage_proofs, _) =
-        jolt_zkvm::pipeline::prove_stages(&mut prover_stages, &mut pt);
+    let (stage_proofs, _) = jolt_zkvm::pipeline::prove_stages(&mut prover_stages, &mut pt);
 
     assert_eq!(stage_proofs.len(), 1);
 
@@ -250,8 +249,11 @@ fn run_hybrid_mock_e2e(cycle_witnesses: &[Vec<Fr>]) {
         cycle_witnesses,
         poly_commitments,
         |_r_x, r_y, _t| {
-            let stage =
-                build_prover_stage_with_backend(&reduction_data, r_y.to_vec(), Arc::clone(&backend));
+            let stage = build_prover_stage_with_backend(
+                &reduction_data,
+                r_y.to_vec(),
+                Arc::clone(&backend),
+            );
             vec![Box::new(stage)]
         },
         &mut pt,

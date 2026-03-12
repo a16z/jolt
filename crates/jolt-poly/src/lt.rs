@@ -195,11 +195,7 @@ mod tests {
                 let table = LtPolynomial::evaluations(&r_bits);
 
                 for x_int in 0..(1u64 << n) {
-                    let expected = if x_int < r_int {
-                        Fr::one()
-                    } else {
-                        Fr::zero()
-                    };
+                    let expected = if x_int < r_int { Fr::one() } else { Fr::zero() };
                     assert_eq!(
                         table[x_int as usize], expected,
                         "LT({x_int}, {r_int}) wrong for n={n}"
@@ -278,10 +274,7 @@ mod tests {
             let final_val = split.get(0);
 
             let expected = LtPolynomial::evaluate(&challenges, &r);
-            assert_eq!(
-                final_val, expected,
-                "bind convergence failed for n={n}"
-            );
+            assert_eq!(final_val, expected, "bind convergence failed for n={n}");
         }
     }
 
@@ -301,11 +294,7 @@ mod tests {
 
             assert_eq!(split.len(), full.len());
             for (j, &expected) in full.iter().enumerate() {
-                assert_eq!(
-                    split.get(j),
-                    expected,
-                    "post-bind mismatch at j={j}, n={n}"
-                );
+                assert_eq!(split.get(j), expected, "post-bind mismatch at j={j}, n={n}");
             }
         }
     }
@@ -325,11 +314,7 @@ mod tests {
             split.bind(c);
             bind_in_place(&mut full, c);
 
-            assert_eq!(
-                split.len(),
-                full.len(),
-                "size mismatch after round {round}"
-            );
+            assert_eq!(split.len(), full.len(), "size mismatch after round {round}");
             for (j, &expected) in full.iter().enumerate() {
                 assert_eq!(
                     split.get(j),
@@ -396,11 +381,7 @@ mod tests {
             assert_eq!(split.n_lo_vars, mid);
 
             for (j, &expected) in full_table.iter().enumerate() {
-                assert_eq!(
-                    split.get(j),
-                    expected,
-                    "odd split mismatch at j={j}, n={n}"
-                );
+                assert_eq!(split.get(j), expected, "odd split mismatch at j={j}, n={n}");
             }
         }
     }

@@ -18,7 +18,7 @@
 //! | 3 | IsFirstInSequence | Sequence start flag at cycle j+1 |
 //! | 4 | IsNoop | Noop flag at cycle j+1 |
 
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPlusOnePrefixSuffix, EqPolynomial, Polynomial, UnivariatePoly};
@@ -95,7 +95,7 @@ impl<F: Field> ShiftSumcheckStage<F> {
     }
 }
 
-impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for ShiftSumcheckStage<F> {
+impl<F: Field, T: Transcript> ProverStage<F, T> for ShiftSumcheckStage<F> {
     fn name(&self) -> &'static str {
         "S3_shift"
     }
@@ -119,8 +119,7 @@ impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for ShiftSumcheckStage<F
         let mut noop_witness = Vec::with_capacity(n);
         for j in 0..n {
             v_witness.push(
-                g[0] * polys[0][j] + g[1] * polys[1][j] + g[2] * polys[2][j]
-                    + g[3] * polys[3][j],
+                g[0] * polys[0][j] + g[1] * polys[1][j] + g[2] * polys[2][j] + g[3] * polys[3][j],
             );
             noop_witness.push(g[4] * (F::one() - polys[4][j]));
         }
@@ -175,38 +174,39 @@ impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for ShiftSumcheckStage<F
         let prefix_0_product = ps_product.prefix_0;
         let prefix_1_product = ps_product.prefix_1;
 
-        let phase2_builder: Phase2Builder<F> = Box::new(move |transition: PrefixSuffixTransition<F>| {
-            let pe = &transition.prefix_evals;
-            debug_assert_eq!(pe.len(), 4);
+        let phase2_builder: Phase2Builder<F> =
+            Box::new(move |transition: PrefixSuffixTransition<F>| {
+                let pe = &transition.prefix_evals;
+                debug_assert_eq!(pe.len(), 4);
 
-            // Combined eq+1 tables over y_lo domain, weighted by bound suffix scalars.
-            // eq_outer_lo[lo] = pe[0]·prefix_0_outer[lo] + pe[1]·prefix_1_outer[lo]
-            let mut eq_outer_lo = vec![F::zero(); lo_size];
-            let mut eq_product_lo = vec![F::zero(); lo_size];
-            for lo in 0..lo_size {
-                eq_outer_lo[lo] = pe[0] * prefix_0_outer[lo] + pe[1] * prefix_1_outer[lo];
-                eq_product_lo[lo] = pe[2] * prefix_0_product[lo] + pe[3] * prefix_1_product[lo];
-            }
-
-            // Fold full witness tables over y_hi using eq(hi_challenges, ·).
-            let eq_hi = EqPolynomial::new(transition.challenges).evaluations();
-            let mut v_lo = vec![F::zero(); lo_size];
-            let mut noop_lo = vec![F::zero(); lo_size];
-            for lo in 0..lo_size {
-                for (hi, &eq_val) in eq_hi.iter().enumerate() {
-                    v_lo[lo] += eq_val * v_witness[hi * lo_size + lo];
-                    noop_lo[lo] += eq_val * noop_witness[hi * lo_size + lo];
+                // Combined eq+1 tables over y_lo domain, weighted by bound suffix scalars.
+                // eq_outer_lo[lo] = pe[0]·prefix_0_outer[lo] + pe[1]·prefix_1_outer[lo]
+                let mut eq_outer_lo = vec![F::zero(); lo_size];
+                let mut eq_product_lo = vec![F::zero(); lo_size];
+                for lo in 0..lo_size {
+                    eq_outer_lo[lo] = pe[0] * prefix_0_outer[lo] + pe[1] * prefix_1_outer[lo];
+                    eq_product_lo[lo] = pe[2] * prefix_0_product[lo] + pe[3] * prefix_1_product[lo];
                 }
-            }
 
-            Box::new(ShiftPhase2 {
-                eq_outer: Polynomial::new(eq_outer_lo),
-                eq_product: Polynomial::new(eq_product_lo),
-                v_witness: Polynomial::new(v_lo),
-                noop_witness: Polynomial::new(noop_lo),
-                claim: F::zero(), // Overwritten by set_claim before first round.
-            }) as Box<dyn SumcheckCompute<F>>
-        });
+                // Fold full witness tables over y_hi using eq(hi_challenges, ·).
+                let eq_hi = EqPolynomial::new(transition.challenges).evaluations();
+                let mut v_lo = vec![F::zero(); lo_size];
+                let mut noop_lo = vec![F::zero(); lo_size];
+                for lo in 0..lo_size {
+                    for (hi, &eq_val) in eq_hi.iter().enumerate() {
+                        v_lo[lo] += eq_val * v_witness[hi * lo_size + lo];
+                        noop_lo[lo] += eq_val * noop_witness[hi * lo_size + lo];
+                    }
+                }
+
+                Box::new(ShiftPhase2 {
+                    eq_outer: Polynomial::new(eq_outer_lo),
+                    eq_product: Polynomial::new(eq_product_lo),
+                    v_witness: Polynomial::new(v_lo),
+                    noop_witness: Polynomial::new(noop_lo),
+                    claim: F::zero(), // Overwritten by set_claim before first round.
+                }) as Box<dyn SumcheckCompute<F>>
+            });
 
         let evaluator = PrefixSuffixEvaluator::new(pairs, phase2_builder);
 
@@ -266,7 +266,7 @@ struct ShiftPhase2<F: Field> {
     claim: F,
 }
 
-impl<F: WithChallenge> SumcheckCompute<F> for ShiftPhase2<F> {
+impl<F: Field> SumcheckCompute<F> for ShiftPhase2<F> {
     fn set_claim(&mut self, claim: F) {
         self.claim = claim;
     }
@@ -306,12 +306,11 @@ impl<F: WithChallenge> SumcheckCompute<F> for ShiftPhase2<F> {
         UnivariatePoly::from_evals_and_hint(self.claim, &[eval_0, eval_2])
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
-        let c: F = challenge.into();
-        self.eq_outer.bind(c);
-        self.eq_product.bind(c);
-        self.v_witness.bind(c);
-        self.noop_witness.bind(c);
+    fn bind(&mut self, challenge: F) {
+        self.eq_outer.bind(challenge);
+        self.eq_product.bind(challenge);
+        self.v_witness.bind(challenge);
+        self.noop_witness.bind(challenge);
     }
 }
 
@@ -389,19 +388,12 @@ mod tests {
         assert_eq!(batch.claims[0].claimed_sum, claimed_sum);
 
         let claims_snapshot = batch.claims.clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"shift");
-        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &claims_snapshot,
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (final_eval, challenges) =
+            BatchedSumcheckVerifier::verify(&claims_snapshot, &proof, &mut vt)
+                .expect("verification should succeed");
 
         // Oracle check: final_eval = eq+1(r_outer, r)·v(r) + eq+1(r_product, r)·noop(r).
         let eq_outer_r = EqPlusOnePolynomial::new(r_outer).evaluate(&challenges);

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -61,7 +61,7 @@ impl<F: Field, B: ComputeBackend> RamRwCheckingStage<F, B> {
     }
 }
 
-impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F, B> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for RamRwCheckingStage<F, B> {
     fn name(&self) -> &'static str {
         "S4_ram_rw_checking"
     }
@@ -189,19 +189,11 @@ mod tests {
         assert_eq!(batch.claims[0].degree, 3);
 
         let claim = batch.claims[0].clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"ram_rw");
-        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &[claim],
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(&[claim], &proof, &mut vt)
+            .expect("verification should succeed");
 
         let prover_claims = <RamRwCheckingStage<Fr, CpuBackend> as ProverStage<
             Fr,

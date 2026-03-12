@@ -24,7 +24,6 @@ rand_core = { workspace = true }
 default = ["bn254"]
 bn254 = ["dep:ark-bn254"]
 dory-pcs = ["dep:dory", "bn254"]
-challenge-254-bit = []
 
 [dev-dependencies]
 ark-std = { workspace = true }

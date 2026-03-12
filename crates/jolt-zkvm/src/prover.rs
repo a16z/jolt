@@ -3,7 +3,6 @@
 //! [`prove`] runs the complete Jolt proving pipeline — from witness commitment
 //! through Spartan, sumcheck stages, and batch opening proofs.
 
-use jolt_field::WithChallenge;
 use jolt_openings::{AdditivelyHomomorphic, OpeningReduction, RlcReduction};
 use jolt_spartan::SpartanError;
 use jolt_transcript::Transcript;
@@ -79,9 +78,7 @@ pub fn prove<PCS, T>(
 ) -> Result<JoltProof<PCS::Field, PCS>, ProveError>
 where
     PCS: AdditivelyHomomorphic,
-    PCS::Field: WithChallenge,
-    <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>,
-    T: Transcript,
+    T: Transcript<Challenge = PCS::Field>,
 {
     // S0: Interleave per-cycle witnesses and commit.
     let (flat_witness, witness_commitment) = {
@@ -118,10 +115,8 @@ where
         let _span = tracing::info_span!("S8_opening_proofs").entered();
         tracing::info!(total_claims = opening_claims.len(), "reducing and opening");
 
-        let (reduced, ()) = <RlcReduction as OpeningReduction<PCS>>::reduce_prover(
-            opening_claims,
-            transcript,
-        );
+        let (reduced, ()) =
+            <RlcReduction as OpeningReduction<PCS>>::reduce_prover(opening_claims, transcript);
 
         tracing::info!(reduced_claims = reduced.len(), "opening PCS proofs");
 

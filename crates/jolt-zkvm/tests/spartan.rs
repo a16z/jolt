@@ -150,8 +150,7 @@ mod real_program_spartan {
 
         let mut vt = Blake2bTranscript::new(b"spartan-only");
         vt.append_bytes(format!("{commitment:?}").as_bytes());
-        UniformSpartanVerifier::verify(&key, &proof, &mut vt)
-            .expect("verification should succeed");
+        UniformSpartanVerifier::verify(&key, &proof, &mut vt).expect("verification should succeed");
     }
 
     #[test]
@@ -200,8 +199,7 @@ mod real_program_spartan {
         use jolt_zkvm::witness::r1cs_inputs;
 
         for &n in &[2, 4, 8, 16, 32, 64, 128, 256, 512] {
-            let trace: Vec<tracer::instruction::Cycle> =
-                vec![tracer::instruction::Cycle::NoOp; n];
+            let trace: Vec<tracer::instruction::Cycle> = vec![tracer::instruction::Cycle::NoOp; n];
             let bytecode = BytecodePreprocessing::new(&trace);
             let witnesses: Vec<Vec<Fr>> = trace
                 .iter()
@@ -227,12 +225,12 @@ mod real_program_spartan {
             let mut pt = Blake2bTranscript::new(b"nop-sweep");
             pt.append_bytes(format!("{commitment:?}").as_bytes());
             let proof = UniformSpartanProver::prove_dense(&key, &flat, &mut pt)
-                .expect(&format!("proving should succeed at n={n}"));
+                .unwrap_or_else(|_| panic!("proving should succeed at n={n}"));
 
             let mut vt = Blake2bTranscript::new(b"nop-sweep");
             vt.append_bytes(format!("{commitment:?}").as_bytes());
             UniformSpartanVerifier::verify(&key, &proof, &mut vt)
-                .expect(&format!("verification should succeed at n={n}"));
+                .unwrap_or_else(|_| panic!("verification should succeed at n={n}"));
         }
     }
 }

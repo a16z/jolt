@@ -35,7 +35,7 @@
 use std::sync::Arc;
 
 use jolt_compute::{BindingOrder, ComputeBackend};
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::prover::SumcheckCompute;
 
@@ -356,7 +356,7 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
     }
 }
 
-impl<F: WithChallenge, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
+impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
     fn set_claim(&mut self, claim: F) {
         match &mut self.mode {
             InterpolationMode::StandardGrid { claim: stored } => *stored = claim,
@@ -382,8 +382,7 @@ impl<F: WithChallenge, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator
         }
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
-        let c: F = challenge.into();
+    fn bind(&mut self, c: F) {
         // Update Toom-Cook state (claim is now set externally via set_claim).
         if let InterpolationMode::ToomCook(state) = &mut self.mode {
             let w_k = state.eq_w[state.round];
@@ -419,15 +418,13 @@ mod tests {
     use super::*;
     use crate::evaluators::catalog;
     use jolt_cpu::CpuBackend;
-    use jolt_field::{Challenge, Field, Fr, WithChallenge};
+    use jolt_field::{Field, Fr};
     use jolt_ir::{ExprBuilder, KernelDescriptor, KernelShape};
     use jolt_sumcheck::{SumcheckClaim, SumcheckProver, SumcheckVerifier};
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
-
-    type C = <Fr as WithChallenge>::Challenge;
 
     fn cpu() -> Arc<CpuBackend> {
         Arc::new(CpuBackend)
@@ -638,7 +635,7 @@ mod tests {
         );
 
         for _ in 0..num_vars - 1 {
-            let challenge = C::rand(&mut rng);
+            let challenge = Fr::random(&mut rng);
             kw.bind(challenge);
 
             assert!(
@@ -671,7 +668,7 @@ mod tests {
 
         assert_eq!(kw.current_len(), n);
         for round in 1..=num_vars {
-            kw.bind(C::rand(&mut rng));
+            kw.bind(Fr::random(&mut rng));
             assert_eq!(kw.current_len(), n >> round);
         }
     }

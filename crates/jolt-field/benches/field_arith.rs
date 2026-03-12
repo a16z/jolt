@@ -1,8 +1,7 @@
 #![allow(unused_results)]
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use jolt_field::challenge::MontU128Challenge;
-use jolt_field::{Field, Fr, OptimizedMul};
+use jolt_field::{Field, Fr};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -36,16 +35,6 @@ fn bench_mul_u128(c: &mut Criterion) {
     });
 }
 
-fn bench_challenge_mul_fr(c: &mut Criterion) {
-    let mut rng = ChaCha20Rng::seed_from_u64(3);
-    let challenge = MontU128Challenge::<Fr>::random(&mut rng);
-    let field: Fr = Field::random(&mut rng);
-
-    c.bench_function("MontU128Challenge * Fr", |bench| {
-        bench.iter(|| black_box(challenge) * black_box(field));
-    });
-}
-
 fn bench_to_from_bytes(c: &mut Criterion) {
     let mut rng = ChaCha20Rng::seed_from_u64(4);
     let a: Fr = Field::random(&mut rng);
@@ -60,23 +49,11 @@ fn bench_to_from_bytes(c: &mut Criterion) {
     });
 }
 
-fn bench_challenge_mul_01_optimized(c: &mut Criterion) {
-    let mut rng = ChaCha20Rng::seed_from_u64(5);
-    let challenge = MontU128Challenge::<Fr>::random(&mut rng);
-    let field: Fr = Field::random(&mut rng);
-
-    c.bench_function("MontU128Challenge::mul_01_optimized", |bench| {
-        bench.iter(|| black_box(challenge).mul_01_optimized(black_box(field)));
-    });
-}
-
 criterion_group!(
     benches,
     bench_field_mul,
     bench_mul_u64,
     bench_mul_u128,
-    bench_challenge_mul_fr,
     bench_to_from_bytes,
-    bench_challenge_mul_01_optimized,
 );
 criterion_main!(benches);

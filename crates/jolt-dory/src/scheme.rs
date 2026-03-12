@@ -125,7 +125,7 @@ impl CommitmentScheme for DoryScheme {
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
@@ -169,7 +169,7 @@ impl CommitmentScheme for DoryScheme {
         eval: Fr,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
         let ark_point: Vec<InnerFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let ark_eval = jolt_fr_to_ark(&eval);
@@ -245,7 +245,7 @@ impl ZkOpeningScheme for DoryScheme {
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::EvalCommitment, Self::EvalBlinding) {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
@@ -296,7 +296,7 @@ impl ZkOpeningScheme for DoryScheme {
         _eval_commitment: &Self::EvalCommitment,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
         let ark_point: Vec<InnerFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
 

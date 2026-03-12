@@ -6,11 +6,7 @@
 //! require serde bounds without leaking arkworks serialization traits.
 
 use crate::bigint_ext::BigIntExt;
-#[cfg(feature = "challenge-254-bit")]
-use crate::challenge::Mont254BitChallenge;
-#[cfg(not(feature = "challenge-254-bit"))]
-use crate::challenge::MontU128Challenge;
-use crate::{Field, Limbs, ReductionOps, UnreducedOps, WithChallenge};
+use crate::{Field, Limbs, ReductionOps, UnreducedOps};
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rand_core::RngCore;
 
@@ -291,15 +287,6 @@ impl allocative::Allocative for Fr {
 }
 
 impl Fr {
-    /// Multiplies `self` by a 128-bit value stored as two high limbs.
-    ///
-    /// Used by the `impl_field_ops_inline!` macro for the optimized
-    /// [`MontU128Challenge`] multiplication path.
-    #[inline(always)]
-    pub fn mul_by_hi_2limbs(&self, limb_lo: u64, limb_hi: u64) -> Self {
-        Fr(bn254_ops::mul_by_hi_2limbs(self.0, limb_lo, limb_hi))
-    }
-
     /// Deserializes from little-endian bytes, reducing modulo the field prime.
     #[inline]
     pub fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
@@ -472,14 +459,6 @@ impl ReductionOps for Fr {
     fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
         Fr(bn254_ops::from_barrett_reduce(unreduced))
     }
-}
-
-impl WithChallenge for Fr {
-    #[cfg(not(feature = "challenge-254-bit"))]
-    type Challenge = MontU128Challenge<Fr>;
-
-    #[cfg(feature = "challenge-254-bit")]
-    type Challenge = Mont254BitChallenge<Fr>;
 }
 
 impl<const N: usize, const M: usize> crate::FMAdd<BigInt<4>, BigInt<M>> for BigInt<N> {

@@ -14,7 +14,7 @@ use num_traits::{One, Zero};
 use rayon::prelude::*;
 
 use crate::error::HyperKZGError;
-use crate::kzg::{self, challenge_to_field, kzg_open_batch, kzg_verify_batch};
+use crate::kzg::{self, kzg_open_batch, kzg_verify_batch};
 use crate::types::{HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup};
 
 /// HyperKZG multilinear polynomial commitment scheme.
@@ -105,7 +105,7 @@ where
 
     /// Full HyperKZG opening proof.
     #[tracing::instrument(skip_all, name = "HyperKZG::open")]
-    pub fn open<T: Transcript>(
+    pub fn open<T: Transcript<Challenge = P::ScalarField>>(
         setup: &HyperKZGProverSetup<P>,
         evals: &[P::ScalarField],
         point: &[P::ScalarField],
@@ -130,8 +130,7 @@ where
         for c in &com {
             transcript.append(c);
         }
-        let r_challenge = transcript.challenge();
-        let r = challenge_to_field::<P::ScalarField, T>(r_challenge);
+        let r: P::ScalarField = transcript.challenge();
         let u = vec![r, -r, r * r];
 
         // Phase 3: batch open all polynomials at the three points
@@ -142,7 +141,7 @@ where
 
     /// HyperKZG verification.
     #[tracing::instrument(skip_all, name = "HyperKZG::verify")]
-    pub fn verify<T: Transcript>(
+    pub fn verify<T: Transcript<Challenge = P::ScalarField>>(
         vk: &HyperKZGVerifierSetup<P>,
         commitment: &HyperKZGCommitment<P>,
         point: &[P::ScalarField],
@@ -158,8 +157,7 @@ where
         for c in &com {
             transcript.append(c);
         }
-        let r_challenge = transcript.challenge();
-        let r = challenge_to_field::<P::ScalarField, T>(r_challenge);
+        let r: P::ScalarField = transcript.challenge();
 
         if r.is_zero() {
             return Err(HyperKZGError::VerificationFailed);
@@ -249,7 +247,7 @@ where
         _eval: Self::Field,
         setup: &Self::ProverSetup,
         _hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
         Self::open(setup, poly.evaluations(), point, transcript)
             .expect("HyperKZG open should not fail with valid inputs")
@@ -261,7 +259,7 @@ where
         eval: Self::Field,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
         Self::verify(setup, commitment, point, &eval, proof, transcript)
             .map_err(|_| OpeningsError::VerificationFailed)

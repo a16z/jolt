@@ -221,7 +221,7 @@ fn multi_function_mul_by_zero() {
 
 #[test]
 fn multi_function_add_large() {
-    let inputs = postcard::to_stdvec(&(1000000u32, 2000000u32)).unwrap();
+    let inputs = postcard::to_stdvec(&(1_000_000_u32, 2_000_000_u32)).unwrap();
     prove_and_verify_guest_func("multi-function-guest", "add", &inputs);
 }
 

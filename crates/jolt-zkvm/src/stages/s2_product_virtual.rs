@@ -25,7 +25,7 @@
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -121,7 +121,7 @@ impl<F: Field, B: ComputeBackend> ProductVirtualStage<F, B> {
     }
 }
 
-impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T> for ProductVirtualStage<F, B> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for ProductVirtualStage<F, B> {
     fn name(&self) -> &'static str {
         "S2_product_virtual"
     }
@@ -347,7 +347,7 @@ mod tests {
 
         let mut stage = ProductVirtualStage::new(polys, eq_point, g, claimed_sum, cpu());
 
-        let mut transcript = Blake2bTranscript::new(b"pv_test");
+        let mut transcript = Blake2bTranscript::<Fr>::new(b"pv_test");
         let batch = stage.build(&[], &mut transcript);
 
         assert_eq!(batch.claims.len(), 1);
@@ -374,20 +374,12 @@ mod tests {
         let mut batch = stage.build(&[], &mut pt);
 
         let claim = batch.claims[0].clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         // Verify
         let mut vt = Blake2bTranscript::new(b"pv_roundtrip");
-        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &[claim],
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(&[claim], &proof, &mut vt)
+            .expect("verification should succeed");
 
         // LowToHigh sumcheck: challenges[j] = bit j (LSB-first).
         // Polynomial::evaluate / EqPolynomial expect MSB-first.
@@ -439,11 +431,7 @@ mod tests {
 
         let mut pt = Blake2bTranscript::new(b"pv_extract");
         let mut batch = stage.build(&[], &mut pt);
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         // Get verifier challenges to pass to extract_claims
         let mut vt = Blake2bTranscript::new(b"pv_extract");
@@ -512,11 +500,7 @@ mod tests {
         let mut pt = Blake2bTranscript::new(b"pv_zero");
         let mut batch = stage.build(&[], &mut pt);
 
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"pv_zero");
         let result = BatchedSumcheckVerifier::verify(

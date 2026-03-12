@@ -126,7 +126,7 @@ pub fn compile_with_challenges<F: Field>(
         eq_val = fr_add(eq_val, d_eq);
         h_val = fr_add(h_val, d_h);
         evals[2] = fr_mul(fr_mul(eq_val, h_val), fr_sub(h_val, fr_one()));"
-            .to_string();
+                .to_string();
             (body.clone(), body, false)
         }
         KernelShape::Custom { expr, num_inputs } => {

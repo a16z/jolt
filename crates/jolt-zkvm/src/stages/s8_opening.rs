@@ -8,7 +8,6 @@
 
 use std::marker::PhantomData;
 
-use jolt_field::WithChallenge;
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, OpeningReduction, OpeningsError, ProverClaim,
     RlcReduction, VerifierClaim,
@@ -44,19 +43,13 @@ impl<PCS: AdditivelyHomomorphic> OpeningStage<PCS> {
     /// The transcript must be in the same Fiat-Shamir state as the verifier's
     /// transcript at this protocol step.
     #[tracing::instrument(skip_all, name = "OpeningStage::prove")]
-    pub fn prove<T: Transcript>(
+    pub fn prove<T: Transcript<Challenge = PCS::Field>>(
         claims: Vec<ProverClaim<PCS::Field>>,
         setup: &PCS::ProverSetup,
         transcript: &mut T,
-    ) -> OpeningProofs<PCS>
-    where
-        PCS::Field: WithChallenge,
-        <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>,
-    {
-        let (reduced, ()) = <RlcReduction as OpeningReduction<PCS>>::reduce_prover(
-            claims,
-            transcript,
-        );
+    ) -> OpeningProofs<PCS> {
+        let (reduced, ()) =
+            <RlcReduction as OpeningReduction<PCS>>::reduce_prover(claims, transcript);
 
         let proofs = reduced
             .into_iter()
@@ -76,21 +69,14 @@ impl<PCS: AdditivelyHomomorphic> OpeningStage<PCS> {
     /// Returns [`OpeningsError::VerificationFailed`] if any opening proof
     /// is invalid, or if the reduction detects inconsistency.
     #[tracing::instrument(skip_all, name = "OpeningStage::verify")]
-    pub fn verify<T: Transcript>(
+    pub fn verify<T: Transcript<Challenge = PCS::Field>>(
         claims: Vec<VerifierClaim<PCS::Field, PCS::Output>>,
         opening_proofs: &OpeningProofs<PCS>,
         setup: &PCS::VerifierSetup,
         transcript: &mut T,
-    ) -> Result<(), OpeningsError>
-    where
-        PCS::Field: WithChallenge,
-        <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>,
-    {
-        let reduced = <RlcReduction as OpeningReduction<PCS>>::reduce_verifier(
-            claims,
-            &(),
-            transcript,
-        )?;
+    ) -> Result<(), OpeningsError> {
+        let reduced =
+            <RlcReduction as OpeningReduction<PCS>>::reduce_verifier(claims, &(), transcript)?;
 
         if reduced.len() != opening_proofs.proofs.len() {
             return Err(OpeningsError::VerificationFailed);
@@ -122,8 +108,6 @@ mod tests {
     use rand_core::SeedableRng;
 
     type MockPCS = MockCommitmentScheme<Fr>;
-
-
 
     #[allow(clippy::type_complexity)]
     fn random_claims<PCS: CommitmentScheme<Field = Fr>>(
@@ -232,8 +216,7 @@ mod tests {
         let proofs = OpeningStage::<MockPCS>::prove(prover_claims, &(), &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"s8_tamper");
-        let result =
-            OpeningStage::<MockPCS>::verify(verifier_claims, &proofs, &(), &mut vt);
+        let result = OpeningStage::<MockPCS>::verify(verifier_claims, &proofs, &(), &mut vt);
         assert!(result.is_err(), "tampered evaluation should be rejected");
     }
 
@@ -295,22 +278,11 @@ mod tests {
                 random_claims::<DoryScheme>(&mut rng, 1, num_vars, &point, &prover_setup);
 
             let mut pt = Blake2bTranscript::new(b"s8_dory_single");
-            let proofs = OpeningStage::<DoryScheme>::prove(
-                prover_claims,
-                &prover_setup,
-                &mut pt,
-
-            );
+            let proofs = OpeningStage::<DoryScheme>::prove(prover_claims, &prover_setup, &mut pt);
 
             let mut vt = Blake2bTranscript::new(b"s8_dory_single");
-            OpeningStage::<DoryScheme>::verify(
-                verifier_claims,
-                &proofs,
-                &verifier_setup,
-                &mut vt,
-
-            )
-            .expect("Dory single claim should verify");
+            OpeningStage::<DoryScheme>::verify(verifier_claims, &proofs, &verifier_setup, &mut vt)
+                .expect("Dory single claim should verify");
         }
 
         #[test]
@@ -325,23 +297,12 @@ mod tests {
                 random_claims::<DoryScheme>(&mut rng, 4, num_vars, &point, &prover_setup);
 
             let mut pt = Blake2bTranscript::new(b"s8_dory_shared");
-            let proofs = OpeningStage::<DoryScheme>::prove(
-                prover_claims,
-                &prover_setup,
-                &mut pt,
-
-            );
+            let proofs = OpeningStage::<DoryScheme>::prove(prover_claims, &prover_setup, &mut pt);
             assert_eq!(proofs.proofs.len(), 1, "same point → one reduced proof");
 
             let mut vt = Blake2bTranscript::new(b"s8_dory_shared");
-            OpeningStage::<DoryScheme>::verify(
-                verifier_claims,
-                &proofs,
-                &verifier_setup,
-                &mut vt,
-
-            )
-            .expect("Dory shared-point claims should verify");
+            OpeningStage::<DoryScheme>::verify(verifier_claims, &proofs, &verifier_setup, &mut vt)
+                .expect("Dory shared-point claims should verify");
         }
 
         #[test]
@@ -363,8 +324,7 @@ mod tests {
             vc.extend(vc_b);
 
             let mut pt = Blake2bTranscript::new(b"s8_dory_distinct");
-            let proofs =
-                OpeningStage::<DoryScheme>::prove(pc, &prover_setup, &mut pt);
+            let proofs = OpeningStage::<DoryScheme>::prove(pc, &prover_setup, &mut pt);
             assert_eq!(proofs.proofs.len(), 2, "two distinct points → two proofs");
 
             let mut vt = Blake2bTranscript::new(b"s8_dory_distinct");
@@ -386,12 +346,7 @@ mod tests {
             verifier_claims[0].eval += Fr::from_u64(1);
 
             let mut pt = Blake2bTranscript::new(b"s8_dory_tamper");
-            let proofs = OpeningStage::<DoryScheme>::prove(
-                prover_claims,
-                &prover_setup,
-                &mut pt,
-
-            );
+            let proofs = OpeningStage::<DoryScheme>::prove(prover_claims, &prover_setup, &mut pt);
 
             let mut vt = Blake2bTranscript::new(b"s8_dory_tamper");
             let result = OpeningStage::<DoryScheme>::verify(
@@ -399,7 +354,6 @@ mod tests {
                 &proofs,
                 &verifier_setup,
                 &mut vt,
-
             );
             assert!(result.is_err(), "Dory should reject tampered evaluation");
         }

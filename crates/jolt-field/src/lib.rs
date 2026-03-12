@@ -4,7 +4,7 @@
 //! used throughout the Jolt zkVM ecosystem.
 
 mod field;
-pub use field::{Challenge, Field, MaybeAllocative, OptimizedMul, WithChallenge};
+pub use field::{Field, MaybeAllocative, OptimizedMul};
 #[cfg(feature = "bn254")]
 pub(crate) use field::{ReductionOps, UnreducedOps};
 
@@ -17,9 +17,6 @@ pub(crate) use accumulation::FMAdd;
 
 pub mod limbs;
 pub use limbs::Limbs;
-
-#[cfg(feature = "bn254")]
-pub mod challenge;
 
 pub(crate) mod bigint_ext;
 
@@ -34,8 +31,3 @@ pub use arkworks::wide_accumulator::WideAccumulator;
 
 #[cfg(feature = "dory-pcs")]
 mod dory_interop;
-
-#[cfg(all(feature = "bn254", not(feature = "challenge-254-bit")))]
-pub type DefaultChallenge<F> = challenge::MontU128Challenge<F>;
-#[cfg(all(feature = "bn254", feature = "challenge-254-bit"))]
-pub type DefaultChallenge<F> = challenge::Mont254BitChallenge<F>;

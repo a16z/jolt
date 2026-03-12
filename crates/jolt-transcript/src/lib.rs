@@ -19,8 +19,9 @@
 //!
 //! ```
 //! use jolt_transcript::{Transcript, Blake2bTranscript};
+//! use jolt_field::{Field, Fr};
 //!
-//! let mut transcript = Blake2bTranscript::new(b"my_protocol");
+//! let mut transcript = Blake2bTranscript::<Fr>::new(b"my_protocol");
 //!
 //! // Absorb data using append (for types implementing AppendToTranscript)
 //! transcript.append(&42u64);
@@ -29,8 +30,8 @@
 //! // Or use append_bytes directly
 //! transcript.append_bytes(b"raw bytes");
 //!
-//! // Squeeze a challenge
-//! let challenge: u128 = transcript.challenge();
+//! // Squeeze a challenge — returns Fr directly
+//! let challenge: Fr = transcript.challenge();
 //! ```
 
 #![deny(missing_docs)]

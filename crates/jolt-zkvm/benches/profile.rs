@@ -42,7 +42,6 @@ fn cpu() -> Arc<CpuBackend> {
     Arc::new(CpuBackend)
 }
 
-
 fn nop_cycle_witness(unexpanded_pc: u64, pc: u64) -> Vec<Fr> {
     let mut w = vec![Fr::from_u64(0); r1cs::NUM_VARS_PER_CYCLE];
     w[r1cs::V_CONST] = Fr::from_u64(1);

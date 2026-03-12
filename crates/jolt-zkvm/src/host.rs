@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_ir::zkvm::tags::poly;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_transcript::Transcript;
@@ -58,8 +58,6 @@ pub fn prove_trace<PCS, B>(
 ) -> Result<ProveOutput<PCS::Field, PCS>, ProveError>
 where
     PCS: AdditivelyHomomorphic,
-    PCS::Field: WithChallenge,
-    <PCS::Field as WithChallenge>::Challenge: From<u128>,
     B: ComputeBackend,
 {
     let output = generate_witnesses::<PCS::Field>(trace);
@@ -79,9 +77,9 @@ where
     let (com_rd_inc, _) = PCS::commit(&rd_inc, &key.pcs_prover_setup);
     let poly_commitments = vec![com_ram_inc, com_rd_inc];
 
-    let mut transcript = jolt_transcript::Blake2bTranscript::new(b"jolt-v2");
+    let mut transcript = jolt_transcript::Blake2bTranscript::<PCS::Field>::new(b"jolt-v2");
 
-    let proof = prove::<PCS, jolt_transcript::Blake2bTranscript>(
+    let proof = prove::<PCS, jolt_transcript::Blake2bTranscript<PCS::Field>>(
         &key,
         &output.cycle_witnesses,
         poly_commitments,
@@ -113,14 +111,12 @@ pub fn verify_proof<PCS>(
 ) -> Result<(), jolt_verifier::JoltError>
 where
     PCS: AdditivelyHomomorphic,
-    PCS::Field: WithChallenge,
-    <PCS::Field as WithChallenge>::Challenge: From<u128>,
 {
-    let mut transcript = jolt_transcript::Blake2bTranscript::new(b"jolt-v2");
+    let mut transcript = jolt_transcript::Blake2bTranscript::<PCS::Field>::new(b"jolt-v2");
 
     let tables = &output.committed_tables;
 
-    let _ = jolt_verifier::verify::<PCS, jolt_transcript::Blake2bTranscript>(
+    let _ = jolt_verifier::verify::<PCS, jolt_transcript::Blake2bTranscript<PCS::Field>>(
         &output.proof,
         &output.verifying_key,
         |_r_x, r_y, transcript| {
@@ -144,13 +140,12 @@ fn build_prover_stages<F, T, B>(
     backend: Arc<B>,
 ) -> Vec<Box<dyn ProverStage<F, T>>>
 where
-    F: WithChallenge,
-    F::Challenge: From<T::Challenge>,
-    T: Transcript,
+    F: Field,
+    T: Transcript<Challenge = F>,
     B: ComputeBackend,
 {
-    let c0: F = F::Challenge::from(transcript.challenge()).into();
-    let c1: F = F::Challenge::from(transcript.challenge()).into();
+    let c0: F = transcript.challenge();
+    let c1: F = transcript.challenge();
 
     // r_y = [r_cycle..., r_var...]; committed polys are indexed by cycle only.
     let num_cycle_vars = rd_inc.len().trailing_zeros() as usize;
@@ -176,14 +171,13 @@ fn build_verifier_descriptors<F, T>(
     transcript: &mut T,
 ) -> Vec<StageDescriptor<F>>
 where
-    F: WithChallenge,
-    F::Challenge: From<T::Challenge>,
-    T: Transcript,
+    F: Field,
+    T: Transcript<Challenge = F>,
 {
     use jolt_poly::EqPolynomial;
 
-    let c0: F = F::Challenge::from(transcript.challenge()).into();
-    let c1: F = F::Challenge::from(transcript.challenge()).into();
+    let c0: F = transcript.challenge();
+    let c1: F = transcript.challenge();
 
     // r_y = [r_cycle..., r_var...]; committed polys are indexed by cycle only.
     let num_cycle_vars = rd_inc.len().trailing_zeros() as usize;
@@ -196,13 +190,9 @@ where
         .map(|j| eq_table[j] * (c0 * ram_inc[j] + c1 * rd_inc[j]))
         .sum();
 
-    let desc = StageDescriptor::claim_reduction(
-        r_cycle.to_vec(),
-        vec![c0, c1],
-        claimed_sum,
-        vec![0, 1],
-    )
-    .with_reverse_challenges();
+    let desc =
+        StageDescriptor::claim_reduction(r_cycle.to_vec(), vec![c0, c1], claimed_sum, vec![0, 1])
+            .with_reverse_challenges();
 
     vec![desc]
 }

@@ -57,10 +57,8 @@ fn reduce_open_verify(
 
     // Prover: reduce + open
     let mut transcript_p = Blake2bTranscript::new(label);
-    let (reduced_p, ()) = <RlcReduction as OpeningReduction<KzgPCS>>::reduce_prover(
-        prover_claims,
-        &mut transcript_p,
-    );
+    let (reduced_p, ()) =
+        <RlcReduction as OpeningReduction<KzgPCS>>::reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
         .map(|c| {
@@ -203,10 +201,8 @@ fn tampered_eval_detected() {
 
     // Prover reduces and opens honestly
     let mut transcript_p = Blake2bTranscript::new(b"kzg-tampered");
-    let (reduced_p, ()) = <RlcReduction as OpeningReduction<KzgPCS>>::reduce_prover(
-        prover_claims,
-        &mut transcript_p,
-    );
+    let (reduced_p, ()) =
+        <RlcReduction as OpeningReduction<KzgPCS>>::reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
         .map(|c| {

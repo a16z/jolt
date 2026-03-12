@@ -7,7 +7,7 @@
 //! earlier rounds. Each claim is scaled by $2^{N - n_i}$ where $N$ is the
 //! maximum `num_vars` across all claims.
 
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -47,9 +47,8 @@ impl BatchedSumcheckProver {
         mut handler: H,
     ) -> H::Proof
     where
-        F: WithChallenge,
-        F::Challenge: From<T::Challenge>,
-        T: Transcript,
+        F: Field,
+        T: Transcript<Challenge = F>,
         H: RoundHandler<F>,
     {
         assert!(!claims.is_empty(), "must have at least one claim");
@@ -63,12 +62,12 @@ impl BatchedSumcheckProver {
         let max_degree = claims.iter().map(|c| c.degree).max().unwrap();
 
         // Fiat-Shamir: bind each claimed sum before deriving the batching
-        // coefficient. This ensures α depends on all input claims.
+        // coefficient. This ensures alpha depends on all input claims.
         for claim in claims {
             claim.claimed_sum.append_to_transcript(transcript);
         }
 
-        let alpha: F = F::Challenge::from(transcript.challenge()).into();
+        let alpha: F = transcript.challenge();
 
         let offsets: Vec<usize> = claims.iter().map(|c| max_num_vars - c.num_vars).collect();
 
@@ -123,12 +122,11 @@ impl BatchedSumcheckProver {
             let combined_poly = UnivariatePoly::interpolate(&points);
 
             handler.absorb_round_poly(&combined_poly, transcript);
-            let challenge = F::Challenge::from(transcript.challenge());
-            let challenge_f: F = challenge.into();
-            handler.on_challenge(challenge_f);
+            let challenge: F = transcript.challenge();
+            handler.on_challenge(challenge);
 
             for (i, poly) in instance_polys.iter().enumerate() {
-                individual_claims[i] = poly.evaluate(challenge_f);
+                individual_claims[i] = poly.evaluate(challenge);
             }
 
             for (i, witness) in witnesses.iter_mut().enumerate() {
@@ -156,9 +154,8 @@ impl BatchedSumcheckProver {
         transcript: &mut T,
     ) -> SumcheckProof<F>
     where
-        F: WithChallenge,
-        F::Challenge: From<T::Challenge>,
-        T: Transcript,
+        F: Field,
+        T: Transcript<Challenge = F>,
     {
         let max_num_vars = claims.iter().map(|c| c.num_vars).max().unwrap_or(0);
         Self::prove_with_handler(
@@ -195,9 +192,8 @@ impl BatchedSumcheckVerifier {
         verifier: &V,
     ) -> Result<(F, Vec<F>), SumcheckError>
     where
-        F: WithChallenge,
-        F::Challenge: From<T::Challenge>,
-        T: Transcript,
+        F: Field,
+        T: Transcript<Challenge = F>,
         V: RoundVerifier<F>,
     {
         assert!(!claims.is_empty(), "must have at least one claim");
@@ -210,7 +206,7 @@ impl BatchedSumcheckVerifier {
             claim.claimed_sum.append_to_transcript(transcript);
         }
 
-        let alpha: F = F::Challenge::from(transcript.challenge()).into();
+        let alpha: F = transcript.challenge();
 
         let combined_sum: F = claims
             .iter()
@@ -247,9 +243,8 @@ impl BatchedSumcheckVerifier {
         transcript: &mut T,
     ) -> Result<(F, Vec<F>), SumcheckError>
     where
-        F: WithChallenge,
-        F::Challenge: From<T::Challenge>,
-        T: Transcript,
+        F: Field,
+        T: Transcript<Challenge = F>,
     {
         Self::verify_with_handler(
             claims,

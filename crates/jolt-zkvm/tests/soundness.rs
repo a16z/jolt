@@ -101,7 +101,7 @@ fn tampered_proof_rejected() {
 /// Wrong constant (V_CONST=0) — either prover or verifier rejects.
 /// Currently underconstrained; enable once constant-check sumcheck is added.
 #[test]
-#[ignore]
+#[ignore = "underconstrained: enable once constant-check sumcheck is added"]
 fn bad_constant_rejected() {
     let mut rng = ChaCha20Rng::seed_from_u64(77);
     let config = JoltConfig { num_cycles: 4 };
@@ -159,7 +159,7 @@ fn bad_constant_rejected() {
 /// Inconsistent PC update (NextPC=999) — either prover or verifier rejects.
 /// Currently underconstrained; enable once PC-consistency sumcheck is added.
 #[test]
-#[ignore]
+#[ignore = "underconstrained: enable once PC-consistency sumcheck is added"]
 fn bad_pc_update_rejected() {
     let mut rng = ChaCha20Rng::seed_from_u64(88);
     let config = JoltConfig { num_cycles: 4 };

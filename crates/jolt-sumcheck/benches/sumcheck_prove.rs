@@ -1,7 +1,7 @@
 #![allow(unused_results)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_field::{Field, Fr, WithChallenge};
+use jolt_field::{Field, Fr};
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::batched::BatchedSumcheckProver;
 use jolt_sumcheck::claim::SumcheckClaim;
@@ -11,8 +11,6 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 use num_traits::Zero;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
-
-type C = <Fr as WithChallenge>::Challenge;
 
 struct EqProductWitness {
     poly: Polynomial<Fr>,
@@ -49,14 +47,13 @@ impl SumcheckCompute<Fr> for EqProductWitness {
         UnivariatePoly::interpolate(&points)
     }
 
-    fn bind(&mut self, challenge: C) {
-        let c: Fr = challenge.into();
-        self.poly.bind(c);
+    fn bind(&mut self, challenge: Fr) {
+        self.poly.bind(challenge);
         let half = self.eq_evals.len() / 2;
         for i in 0..half {
             let lo = self.eq_evals[i];
             let hi = self.eq_evals[i + half];
-            self.eq_evals[i] = lo + c * (hi - lo);
+            self.eq_evals[i] = lo + challenge * (hi - lo);
         }
         self.eq_evals.truncate(half);
     }
@@ -88,11 +85,7 @@ fn bench_prove(c: &mut Criterion) {
                         )
                     },
                     |(mut witness, mut transcript)| {
-                        SumcheckProver::prove(
-                            black_box(&claim),
-                            &mut witness,
-                            &mut transcript,
-                        )
+                        SumcheckProver::prove(black_box(&claim), &mut witness, &mut transcript)
                     },
                     criterion::BatchSize::LargeInput,
                 );
@@ -157,8 +150,8 @@ impl SumcheckCompute<Fr> for PlainSumWitness {
         UnivariatePoly::new(vec![sum_lo, sum_hi - sum_lo])
     }
 
-    fn bind(&mut self, challenge: C) {
-        self.poly.bind(challenge.into());
+    fn bind(&mut self, challenge: Fr) {
+        self.poly.bind(challenge);
     }
 }
 
@@ -196,11 +189,7 @@ fn bench_batched_prove(c: &mut Criterion) {
                 (witnesses, Blake2bTranscript::new(b"bench"))
             },
             |(mut witnesses, mut transcript)| {
-                BatchedSumcheckProver::prove(
-                    black_box(&claims),
-                    &mut witnesses,
-                    &mut transcript,
-                )
+                BatchedSumcheckProver::prove(black_box(&claims), &mut witnesses, &mut transcript)
             },
             criterion::BatchSize::LargeInput,
         );

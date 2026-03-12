@@ -1,11 +1,11 @@
 //! Convenience trait bounds for challenge-field arithmetic in prefix/suffix evaluation.
 //!
-//! During the sumcheck protocol, prefix MLEs are evaluated using "challenge" values
-//! that may be smaller than full field elements (e.g., 128-bit vs 254-bit). These
-//! traits capture the arithmetic bounds needed for prefix/suffix MLE computation.
+//! During the sumcheck protocol, prefix MLEs are evaluated using challenge values
+//! drawn from the Fiat-Shamir transcript. These traits capture the arithmetic bounds
+//! needed for prefix/suffix MLE computation.
 //!
-//! The concrete challenge types in `jolt-field` (`MontU128Challenge`, `Mont254BitChallenge`)
-//! implement all these operations via the `impl_field_ops_inline!` macro.
+//! Since challenges are now just field elements (`C = F`), these traits are trivially
+//! satisfied by any `F: Field`. They remain as named bounds for readability at use sites.
 
 use jolt_field::Field;
 use std::ops::{Add, Mul, Sub};

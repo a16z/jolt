@@ -6,7 +6,7 @@
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use jolt_field::{FieldAccumulator, WithChallenge};
+use jolt_field::{Field, FieldAccumulator};
 use jolt_poly::{math::Math, BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 
 /// Factors `eq(w, x)` into three parts and precomputes prefix tables:
@@ -45,14 +45,14 @@ use jolt_poly::{math::Math, BindingOrder, EqPolynomial, Polynomial, UnivariatePo
 /// Tables are popped during [`bind`](Self::bind) as variables are consumed.
 #[allow(non_snake_case)]
 #[derive(Clone, Debug)]
-pub struct SplitEqEvaluator<F: WithChallenge> {
+pub struct SplitEqEvaluator<F: Field> {
     /// Number of unbound variables remaining (LowToHigh) or
     /// number of bound variables (HighToLow).
     pub(crate) current_index: usize,
     /// Accumulated `eq(w_bound, r_bound)` from already-bound variables.
     pub(crate) current_scalar: F,
     /// The full challenge vector w.
-    pub(crate) w: Vec<F::Challenge>,
+    pub(crate) w: Vec<F>,
     /// Prefix eq tables for w_in.
     pub(crate) E_in_vec: Vec<Vec<F>>,
     /// Prefix eq tables for w_out.
@@ -62,10 +62,10 @@ pub struct SplitEqEvaluator<F: WithChallenge> {
 }
 
 #[allow(non_snake_case)]
-impl<F: WithChallenge> SplitEqEvaluator<F> {
+impl<F: Field> SplitEqEvaluator<F> {
     #[tracing::instrument(skip_all, name = "SplitEqEvaluator::new_with_scaling")]
     pub fn new_with_scaling(
-        w: &[F::Challenge],
+        w: &[F],
         binding_order: BindingOrder,
         scaling_factor: Option<F>,
     ) -> Self {
@@ -124,7 +124,7 @@ impl<F: WithChallenge> SplitEqEvaluator<F> {
     }
 
     #[tracing::instrument(skip_all, name = "SplitEqEvaluator::new")]
-    pub fn new(w: &[F::Challenge], binding_order: BindingOrder) -> Self {
+    pub fn new(w: &[F], binding_order: BindingOrder) -> Self {
         Self::new_with_scaling(w, binding_order, None)
     }
 
@@ -234,14 +234,12 @@ impl<F: WithChallenge> SplitEqEvaluator<F> {
     /// Binds the current variable to challenge `r`, updating `current_scalar`
     /// by `eq(w_i, r) = 1 - w_i - r + 2·w_i·r` and popping the consumed eq table.
     #[tracing::instrument(skip_all, name = "SplitEqEvaluator::bind")]
-    pub fn bind(&mut self, r: F::Challenge) {
+    pub fn bind(&mut self, r: F) {
         match self.binding_order {
             BindingOrder::LowToHigh => {
-                // Convert to field for the eq evaluation (avoids Challenge×Challenge)
-                let w_i: F = self.w[self.current_index - 1].into();
-                let r_f: F = r.into();
-                let prod = w_i * r_f;
-                self.current_scalar *= F::one() - w_i - r_f + prod + prod;
+                let w_i = self.w[self.current_index - 1];
+                let prod = w_i * r;
+                self.current_scalar *= F::one() - w_i - r + prod + prod;
                 self.current_index -= 1;
                 // Pop the consumed table; never pop the [1] at index 0
                 if self.w.len() / 2 < self.current_index && self.E_in_vec.len() > 1 {
@@ -251,10 +249,9 @@ impl<F: WithChallenge> SplitEqEvaluator<F> {
                 }
             }
             BindingOrder::HighToLow => {
-                let w_i: F = self.w[self.current_index].into();
-                let r_f: F = r.into();
-                let prod = w_i * r_f;
-                self.current_scalar *= F::one() - w_i - r_f + prod + prod;
+                let w_i = self.w[self.current_index];
+                let prod = w_i * r;
+                self.current_scalar *= F::one() - w_i - r + prod + prod;
                 self.current_index += 1;
                 if self.current_index <= self.w.len() / 2 && self.E_in_vec.len() > 1 {
                     let _ = self.E_in_vec.pop();
@@ -265,35 +262,12 @@ impl<F: WithChallenge> SplitEqEvaluator<F> {
         }
     }
 
-    /// Like [`bind`](Self::bind), but accepts a field element directly.
+    /// Alias for [`bind`](Self::bind).
     ///
-    /// Useful when the challenge has already been converted from `F::Challenge`
-    /// to `F` (e.g. inside a `SumcheckCompute::bind(F)` wrapper).
+    /// Retained for backward compatibility; challenges are now field elements.
+    #[inline]
     pub fn bind_f(&mut self, r: F) {
-        match self.binding_order {
-            BindingOrder::LowToHigh => {
-                let w_i: F = self.w[self.current_index - 1].into();
-                let prod = w_i * r;
-                self.current_scalar *= F::one() - w_i - r + prod + prod;
-                self.current_index -= 1;
-                if self.w.len() / 2 < self.current_index && self.E_in_vec.len() > 1 {
-                    let _ = self.E_in_vec.pop();
-                } else if 0 < self.current_index && self.E_out_vec.len() > 1 {
-                    let _ = self.E_out_vec.pop();
-                }
-            }
-            BindingOrder::HighToLow => {
-                let w_i: F = self.w[self.current_index].into();
-                let prod = w_i * r;
-                self.current_scalar *= F::one() - w_i - r + prod + prod;
-                self.current_index += 1;
-                if self.current_index <= self.w.len() / 2 && self.E_in_vec.len() > 1 {
-                    let _ = self.E_in_vec.pop();
-                } else if self.current_index <= self.w.len() && self.E_out_vec.len() > 1 {
-                    let _ = self.E_out_vec.pop();
-                }
-            }
-        }
+        self.bind(r);
     }
 
     /// Computes the cubic round polynomial `s(X) = l(X) · q(X)` where `l(X)` is
@@ -365,7 +339,7 @@ impl<F: WithChallenge> SplitEqEvaluator<F> {
     /// leading coefficient. Recovers `q(0)` from the claim, interpolates via
     /// Toom-Cook, then multiplies by the linear eq polynomial.
     pub fn gruen_poly_from_evals(&self, q_evals: &[F], s_0_plus_s_1: F) -> UnivariatePoly<F> {
-        let r_round: F = self.get_current_w().into();
+        let r_round = self.get_current_w();
         let l_at_0 = self.current_scalar * (F::one() - r_round);
         let l_at_1 = self.current_scalar * r_round;
 
@@ -408,7 +382,7 @@ impl<F: WithChallenge> SplitEqEvaluator<F> {
         self.current_scalar
     }
 
-    pub fn get_current_w(&self) -> F::Challenge {
+    pub fn get_current_w(&self) -> F {
         match self.binding_order {
             BindingOrder::LowToHigh => self.w[self.current_index - 1],
             BindingOrder::HighToLow => self.w[self.current_index],
@@ -514,7 +488,7 @@ impl<F: WithChallenge> SplitEqEvaluator<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Field, Fr, WithChallenge};
+    use jolt_field::{Field, Fr};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -542,10 +516,9 @@ mod tests {
     fn bind_low_to_high() {
         const NUM_VARS: usize = 10;
         let mut rng = ChaCha20Rng::seed_from_u64(100);
-        let w: Vec<<Fr as WithChallenge>::Challenge> =
-            std::iter::repeat_with(|| <Fr as WithChallenge>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(NUM_VARS)
+            .collect();
 
         let mut regular_evals = EqPolynomial::<Fr>::evals(&w, None);
         let mut split_eq = SplitEqEvaluator::new(&w, BindingOrder::LowToHigh);
@@ -554,9 +527,8 @@ mod tests {
         assert_eq!(&regular_evals, merged.evaluations(), "initial mismatch");
 
         for _ in 0..NUM_VARS {
-            let r = <Fr as WithChallenge>::Challenge::random(&mut rng);
-            let r_f: Fr = r.into();
-            bind_bottom(&mut regular_evals, r_f);
+            let r = Fr::random(&mut rng);
+            bind_bottom(&mut regular_evals, r);
             split_eq.bind(r);
 
             let merged = split_eq.merge();
@@ -568,10 +540,9 @@ mod tests {
     fn bind_high_to_low() {
         const NUM_VARS: usize = 10;
         let mut rng = ChaCha20Rng::seed_from_u64(101);
-        let w: Vec<<Fr as WithChallenge>::Challenge> =
-            std::iter::repeat_with(|| <Fr as WithChallenge>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(NUM_VARS)
+            .collect();
 
         let mut regular_evals = EqPolynomial::<Fr>::evals(&w, None);
         let mut split_eq = SplitEqEvaluator::new(&w, BindingOrder::HighToLow);
@@ -580,9 +551,8 @@ mod tests {
         assert_eq!(&regular_evals, merged.evaluations());
 
         for _ in 0..NUM_VARS {
-            let r = <Fr as WithChallenge>::Challenge::random(&mut rng);
-            let r_f: Fr = r.into();
-            bind_top(&mut regular_evals, r_f);
+            let r = Fr::random(&mut rng);
+            bind_top(&mut regular_evals, r);
             split_eq.bind(r);
 
             let merged = split_eq.merge();
@@ -594,10 +564,9 @@ mod tests {
     fn window_out_in() {
         const NUM_VARS: usize = 17;
         let mut rng = ChaCha20Rng::seed_from_u64(102);
-        let w: Vec<<Fr as WithChallenge>::Challenge> =
-            std::iter::repeat_with(|| <Fr as WithChallenge>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(NUM_VARS)
+            .collect();
 
         let split_eq = SplitEqEvaluator::<Fr>::new(&w, BindingOrder::LowToHigh);
         let (e_prime_out, e_prime_in) = split_eq.E_out_in_for_window(1);
@@ -610,10 +579,9 @@ mod tests {
     fn window_size_one_matches_current() {
         const NUM_VARS: usize = 10;
         let mut rng = ChaCha20Rng::seed_from_u64(103);
-        let w: Vec<<Fr as WithChallenge>::Challenge> =
-            std::iter::repeat_with(|| <Fr as WithChallenge>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(NUM_VARS)
+            .collect();
 
         let mut split_eq = SplitEqEvaluator::<Fr>::new(&w, BindingOrder::LowToHigh);
 
@@ -643,7 +611,7 @@ mod tests {
                 }
             }
 
-            let r = <Fr as WithChallenge>::Challenge::random(&mut rng);
+            let r = Fr::random(&mut rng);
             split_eq.bind(r);
         }
     }
@@ -652,10 +620,9 @@ mod tests {
     fn window_bit_accounting_invariants() {
         const NUM_VARS: usize = 8;
         let mut rng = ChaCha20Rng::seed_from_u64(104);
-        let w: Vec<<Fr as WithChallenge>::Challenge> =
-            std::iter::repeat_with(|| <Fr as WithChallenge>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(NUM_VARS)
+            .collect();
 
         let mut split_eq = SplitEqEvaluator::<Fr>::new(&w, BindingOrder::LowToHigh);
 
@@ -680,7 +647,7 @@ mod tests {
                 );
             }
 
-            let r = <Fr as WithChallenge>::Challenge::random(&mut rng);
+            let r = Fr::random(&mut rng);
             split_eq.bind(r);
         }
     }
@@ -689,10 +656,9 @@ mod tests {
     fn e_vec_invariant_preserved_through_binding() {
         const NUM_VARS: usize = 10;
         let mut rng = ChaCha20Rng::seed_from_u64(105);
-        let w: Vec<<Fr as WithChallenge>::Challenge> =
-            std::iter::repeat_with(|| <Fr as WithChallenge>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(NUM_VARS)
+            .collect();
 
         let mut split_eq = SplitEqEvaluator::<Fr>::new(&w, BindingOrder::LowToHigh);
 
@@ -701,7 +667,7 @@ mod tests {
         assert_eq!(split_eq.E_in_vec[0], vec![Fr::one()]);
 
         for _ in 0..NUM_VARS {
-            let r = <Fr as WithChallenge>::Challenge::random(&mut rng);
+            let r = Fr::random(&mut rng);
             split_eq.bind(r);
             // Invariant: E_*_vec never empty, index 0 always [1]
             assert!(!split_eq.E_out_vec.is_empty());
@@ -715,10 +681,9 @@ mod tests {
     fn par_fold_out_in_unreduced_matches_direct() {
         const NUM_VARS: usize = 8;
         let mut rng = ChaCha20Rng::seed_from_u64(106);
-        let w: Vec<<Fr as WithChallenge>::Challenge> =
-            std::iter::repeat_with(|| <Fr as WithChallenge>::Challenge::random(&mut rng))
-                .take(NUM_VARS)
-                .collect();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(NUM_VARS)
+            .collect();
 
         let split_eq = SplitEqEvaluator::<Fr>::new(&w, BindingOrder::LowToHigh);
 
@@ -757,10 +722,9 @@ mod tests {
         // s(x) = l(x)·q(x)
         // Verify s(0) + s(1) = previous_claim
         let mut rng = ChaCha20Rng::seed_from_u64(107);
-        let w: Vec<<Fr as WithChallenge>::Challenge> =
-            std::iter::repeat_with(|| <Fr as WithChallenge>::Challenge::random(&mut rng))
-                .take(5)
-                .collect();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(5)
+            .collect();
 
         let split_eq = SplitEqEvaluator::<Fr>::new(&w, BindingOrder::LowToHigh);
 
@@ -780,10 +744,9 @@ mod tests {
     #[test]
     fn gruen_poly_deg_3_consistency() {
         let mut rng = ChaCha20Rng::seed_from_u64(108);
-        let w: Vec<<Fr as WithChallenge>::Challenge> =
-            std::iter::repeat_with(|| <Fr as WithChallenge>::Challenge::random(&mut rng))
-                .take(5)
-                .collect();
+        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(5)
+            .collect();
 
         let split_eq = SplitEqEvaluator::<Fr>::new(&w, BindingOrder::LowToHigh);
 

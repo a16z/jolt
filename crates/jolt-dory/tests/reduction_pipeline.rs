@@ -6,7 +6,7 @@
 #![allow(unused_results)]
 
 use jolt_dory::DoryScheme;
-use jolt_field::{Field, Fr, WithChallenge};
+use jolt_field::{Field, Fr};
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, OpeningReduction, ProverClaim, RlcReduction,
     VerifierClaim,
@@ -46,7 +46,7 @@ type DoryVerifierSetupType = <DoryScheme as CommitmentScheme>::VerifierSetup;
 /// When `use_hints` is true, hints are combined via `DoryScheme::combine_hints`
 /// using rho powers replayed from a cloned transcript. When false, hints are
 /// discarded and `None` is passed to `DoryScheme::open`.
-fn pipeline_round_trip<T: Transcript<Challenge = u128>>(
+fn pipeline_round_trip<T: Transcript<Challenge = Fr>>(
     polys: &[Polynomial<Fr>],
     points: &[Vec<Fr>],
     prover_setup: &DoryProverSetupType,
@@ -100,7 +100,7 @@ fn pipeline_round_trip<T: Transcript<Challenge = u128>>(
         hint_groups
             .into_iter()
             .map(|(_point, group_hints)| {
-                let rho: Fr = <Fr as WithChallenge>::Challenge::from(replay.challenge()).into();
+                let rho: Fr = replay.challenge();
                 let powers = rho_powers(rho, group_hints.len());
                 Some(DoryScheme::combine_hints(group_hints, &powers))
             })
@@ -427,10 +427,8 @@ fn transcript_mismatch_causes_failure() {
 
     // Prover uses label "aaa"
     let mut tp = Blake2bTranscript::new(b"aaa");
-    let (reduced_p, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
-        prover_claims,
-        &mut tp,
-    );
+    let (reduced_p, ()) =
+        <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(prover_claims, &mut tp);
     let proof = {
         let claim = &reduced_p[0];
         let p: Polynomial<Fr> = claim.evaluations.clone().into();
@@ -498,10 +496,8 @@ fn tampered_eval_after_reduction() {
     ];
 
     let mut tp = Blake2bTranscript::new(b"tampered-eval");
-    let (reduced_p, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
-        prover_claims,
-        &mut tp,
-    );
+    let (reduced_p, ()) =
+        <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(prover_claims, &mut tp);
     let proof = {
         let claim = &reduced_p[0];
         let p: Polynomial<Fr> = claim.evaluations.clone().into();
@@ -567,10 +563,8 @@ fn tampered_commitment_in_verifier() {
     }];
 
     let mut tp = Blake2bTranscript::new(b"tampered-commit");
-    let (reduced_p, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
-        prover_claims,
-        &mut tp,
-    );
+    let (reduced_p, ()) =
+        <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(prover_claims, &mut tp);
     let proof = {
         let claim = &reduced_p[0];
         let p: Polynomial<Fr> = claim.evaluations.clone().into();
@@ -643,10 +637,8 @@ fn extra_claim_causes_fiat_shamir_mismatch() {
     ];
 
     let mut tp = Blake2bTranscript::new(b"extra-claim");
-    let (reduced_p, ()) = <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(
-        prover_claims,
-        &mut tp,
-    );
+    let (reduced_p, ()) =
+        <RlcReduction as OpeningReduction<DoryScheme>>::reduce_prover(prover_claims, &mut tp);
     let proofs: Vec<DoryProofType> = reduced_p
         .iter()
         .map(|claim| {

@@ -71,7 +71,7 @@ pub(crate) fn kzg_open_batch<P, T>(
 ) -> (Vec<P::G1>, Vec<Vec<P::ScalarField>>)
 where
     P: PairingGroup,
-    T: Transcript,
+    T: Transcript<Challenge = P::ScalarField>,
     P::ScalarField: AppendToTranscript,
     P::G1: AppendToTranscript,
 {
@@ -91,8 +91,8 @@ where
     }
 
     // Derive batching challenge and compute powers q, q^2, ..., q^{k-1}
-    let q_challenge = transcript.challenge();
-    let q_powers = challenge_powers::<P::ScalarField, T>(q_challenge, k);
+    let q: P::ScalarField = transcript.challenge();
+    let q_powers = challenge_powers(q, k);
 
     // B(x) = sum_j q^j * f_j(x)
     let poly_len = f[0].len();
@@ -117,7 +117,7 @@ where
     for wi in &w {
         transcript.append(wi);
     }
-    let _: <T as Transcript>::Challenge = transcript.challenge();
+    let _: P::ScalarField = transcript.challenge();
 
     (w, v)
 }
@@ -136,7 +136,7 @@ pub(crate) fn kzg_verify_batch<P, T>(
 ) -> bool
 where
     P: PairingGroup,
-    T: Transcript,
+    T: Transcript<Challenge = P::ScalarField>,
     P::ScalarField: AppendToTranscript,
     P::G1: AppendToTranscript,
 {
@@ -149,15 +149,14 @@ where
         }
     }
 
-    let q_challenge = transcript.challenge();
-    let q_powers = challenge_powers::<P::ScalarField, T>(q_challenge, k);
+    let q: P::ScalarField = transcript.challenge();
+    let q_powers = challenge_powers(q, k);
 
     // Absorb witness commitments
     for wi in wit {
         transcript.append(wi);
     }
-    let d_challenge = transcript.challenge();
-    let d_0 = challenge_to_field::<P::ScalarField, T>(d_challenge);
+    let d_0: P::ScalarField = transcript.challenge();
     let d_1 = d_0 * d_0;
 
     assert_eq!(
@@ -208,12 +207,8 @@ where
     result.is_identity()
 }
 
-/// Computes `[1, c, c^2, ..., c^{n-1}]` from a transcript challenge.
-pub(crate) fn challenge_powers<F: Field, T: Transcript>(
-    challenge: T::Challenge,
-    n: usize,
-) -> Vec<F> {
-    let c = challenge_to_field::<F, T>(challenge);
+/// Computes `[1, c, c^2, ..., c^{n-1}]`.
+pub(crate) fn challenge_powers<F: Field>(c: F, n: usize) -> Vec<F> {
     let mut powers = Vec::with_capacity(n);
     let mut cur = F::one();
     for _ in 0..n {
@@ -221,20 +216,6 @@ pub(crate) fn challenge_powers<F: Field, T: Transcript>(
         cur *= c;
     }
     powers
-}
-
-/// Converts a transcript challenge to a field element by interpreting
-/// the challenge bytes.
-pub(crate) fn challenge_to_field<F: Field, T: Transcript>(challenge: T::Challenge) -> F {
-    // SAFETY: Challenge is Copy + Default, typically u128. Reading as bytes is safe
-    // because we only read `size_of::<Challenge>()` bytes from a valid reference.
-    let bytes: &[u8] = unsafe {
-        std::slice::from_raw_parts(
-            std::ptr::from_ref(&challenge).cast::<u8>(),
-            std::mem::size_of::<T::Challenge>(),
-        )
-    };
-    F::from_bytes(bytes)
 }
 
 #[cfg(test)]

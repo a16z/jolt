@@ -6,7 +6,7 @@
 //! Provides specialized kernels for arity `d ∈ {4, 8, 16, 32}` using
 //! stack-allocated product evaluation, with a generic fallback for arbitrary `d`.
 
-use jolt_field::{FieldAccumulator, WithChallenge};
+use jolt_field::{Field, FieldAccumulator};
 use jolt_ir::toom_cook::{
     eval_linear_prod_assign, eval_prod_16_assign, eval_prod_32_assign, eval_prod_4_assign,
     eval_prod_8_assign,
@@ -19,7 +19,7 @@ use super::ra_poly::RaPolynomial;
 /// Computes the univariate polynomial `g(X) = Σ_j eq((r', X, j), r) · Π_i mle_i(X, j)`.
 ///
 /// `claim` should equal `g(0) + g(1)`.
-pub fn compute_mles_product_sum<F: WithChallenge>(
+pub fn compute_mles_product_sum<F: Field>(
     mles: &[RaPolynomial<u8, F>],
     claim: F,
     eq_poly: &SplitEqEvaluator<F>,
@@ -42,7 +42,7 @@ pub fn compute_mles_product_sum<F: WithChallenge>(
 /// and the groups are summed before multiplication by the split-eq factor.
 ///
 /// `claim` should equal `g(0) + g(1)`.
-pub fn compute_mles_weighted_sop<F: WithChallenge>(
+pub fn compute_mles_weighted_sop<F: Field>(
     mles: &[RaPolynomial<u8, F>],
     weights: &[F],
     n_products: usize,
@@ -62,7 +62,7 @@ pub fn compute_mles_weighted_sop<F: WithChallenge>(
 /// Returns evaluations on the grid `[1, 2, ..., m-1, ∞]` where m is the
 /// degree per product term.
 #[inline]
-fn compute_mles_weighted_sop_evals_generic<F: WithChallenge>(
+fn compute_mles_weighted_sop_evals_generic<F: Field>(
     mles: &[RaPolynomial<u8, F>],
     weights: &[F],
     m: usize,
@@ -126,13 +126,13 @@ fn compute_mles_weighted_sop_evals_generic<F: WithChallenge>(
 /// Generic split-eq fold computing evaluations of `g(X) / eq(X, r[round])`
 /// on the grid `[1, 2, ..., d - 1, ∞]` for arbitrary `d`.
 #[inline]
-fn compute_mles_product_sum_evals_generic<F: WithChallenge>(
+fn compute_mles_product_sum_evals_generic<F: Field>(
     mles: &[RaPolynomial<u8, F>],
     eq_poly: &SplitEqEvaluator<F>,
 ) -> Vec<F> {
     let d = mles.len();
 
-    struct InnerAcc<F: WithChallenge> {
+    struct InnerAcc<F: Field> {
         lanes: Vec<F::Accumulator>,
         pairs: Vec<(F, F)>,
         endpoints: Vec<F>,
@@ -182,7 +182,7 @@ fn compute_mles_product_sum_evals_generic<F: WithChallenge>(
 macro_rules! impl_mles_product_sum_evals_d {
     ($fn_name:ident, $d:expr, $eval_prod:ident) => {
         #[inline]
-        pub fn $fn_name<F: WithChallenge>(
+        pub fn $fn_name<F: Field>(
             mles: &[RaPolynomial<u8, F>],
             eq_poly: &SplitEqEvaluator<F>,
         ) -> Vec<F> {
@@ -220,7 +220,7 @@ impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d32, 32, eval_prod
 macro_rules! impl_mles_sum_of_products_evals_d {
     ($fn_name:ident, $d:expr, $eval_prod:ident) => {
         #[inline]
-        pub fn $fn_name<F: WithChallenge>(
+        pub fn $fn_name<F: Field>(
             mles: &[RaPolynomial<u8, F>],
             n_products: usize,
             eq_poly: &SplitEqEvaluator<F>,
@@ -280,12 +280,12 @@ impl_mles_sum_of_products_evals_d!(
 /// Recovers the full univariate polynomial `g(X) = eq(X, r[round]) · (interpolated quotient)`
 /// from quotient evaluations on `[1, 2, ..., d - 1, ∞]`.
 #[inline]
-pub fn finish_mles_product_sum_from_evals<F: WithChallenge>(
+pub fn finish_mles_product_sum_from_evals<F: Field>(
     sum_evals: &[F],
     claim: F,
     eq_poly: &SplitEqEvaluator<F>,
 ) -> UnivariatePoly<F> {
-    let r_round: F = eq_poly.get_current_w().into();
+    let r_round: F = eq_poly.get_current_w();
     let eq_eval_at_0 = F::one() - r_round;
     let eq_eval_at_1 = r_round;
 

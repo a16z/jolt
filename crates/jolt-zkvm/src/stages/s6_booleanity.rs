@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -60,7 +60,7 @@ impl<F: Field, B: ComputeBackend> HammingBooleanityStage<F, B> {
     }
 }
 
-impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T>
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T>
     for HammingBooleanityStage<F, B>
 {
     fn name(&self) -> &'static str {
@@ -140,7 +140,7 @@ mod tests {
 
         let mut stage = HammingBooleanityStage::new(h_evals, eq_point, cpu());
 
-        let mut transcript = Blake2bTranscript::new(b"test_stage");
+        let mut transcript = Blake2bTranscript::<Fr>::new(b"test_stage");
         let batch = stage.build(&[], &mut transcript);
 
         assert_eq!(batch.claims.len(), 1);
@@ -174,12 +174,9 @@ mod tests {
         );
 
         let mut verifier_transcript = Blake2bTranscript::new(b"stage_roundtrip");
-        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &[claim],
-            &proof,
-            &mut verifier_transcript,
-        )
-        .expect("verification should succeed");
+        let (final_eval, challenges) =
+            BatchedSumcheckVerifier::verify(&[claim], &proof, &mut verifier_transcript)
+                .expect("verification should succeed");
 
         let prover_claims = <HammingBooleanityStage<Fr, CpuBackend> as ProverStage<
             Fr,

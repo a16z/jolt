@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -100,10 +100,9 @@ impl<F: Field, B: ComputeBackend> RwCheckingStage<F, B> {
             num_vars,
         }
     }
-
 }
 
-impl<F: WithChallenge, B: ComputeBackend> RwCheckingStage<F, B> {
+impl<F: Field, B: ComputeBackend> RwCheckingStage<F, B> {
     fn build_register_rw(&self) -> (SumcheckClaim<F>, Box<dyn SumcheckCompute<F>>) {
         let val = self.reg_val.as_ref().unwrap();
         let rs1_ra = self.rs1_ra.as_ref().unwrap();
@@ -220,7 +219,7 @@ impl<F: WithChallenge, B: ComputeBackend> RwCheckingStage<F, B> {
     }
 }
 
-impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T> for RwCheckingStage<F, B> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for RwCheckingStage<F, B> {
     fn name(&self) -> &'static str {
         "S4_rw_checking"
     }
@@ -317,7 +316,7 @@ mod tests {
             cpu(),
         );
 
-        let mut t = Blake2bTranscript::new(b"test_s4");
+        let mut t = Blake2bTranscript::<Fr>::new(b"test_s4");
         let batch = stage.build(&[], &mut t);
 
         assert_eq!(batch.claims.len(), 2);
@@ -358,19 +357,12 @@ mod tests {
         let mut batch = stage.build(&[], &mut pt);
 
         let claims_snapshot: Vec<_> = batch.claims.clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"s4_roundtrip");
-        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &claims_snapshot,
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (final_eval, challenges) =
+            BatchedSumcheckVerifier::verify(&claims_snapshot, &proof, &mut vt)
+                .expect("verification should succeed");
 
         let prover_claims = <RwCheckingStage<Fr, CpuBackend> as ProverStage<
             Fr,

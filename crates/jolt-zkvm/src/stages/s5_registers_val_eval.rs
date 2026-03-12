@@ -8,7 +8,7 @@
 //! Degree 3 (product of three multilinear polynomials), `log_T` rounds,
 //! HighToLow binding.
 
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{LtPolynomial, Polynomial, UnivariatePoly};
@@ -64,7 +64,7 @@ impl<F: Field> RegistersValEvalStage<F> {
     }
 }
 
-impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for RegistersValEvalStage<F> {
+impl<F: Field, T: Transcript> ProverStage<F, T> for RegistersValEvalStage<F> {
     fn name(&self) -> &'static str {
         "S5_registers_val_eval"
     }
@@ -130,14 +130,14 @@ impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for RegistersValEvalStag
 ///
 /// Uses HighToLow binding. The LT polynomial uses its split representation
 /// for √N memory efficiency.
-struct RegistersValEvalWitness<F: WithChallenge> {
+struct RegistersValEvalWitness<F: Field> {
     inc: Polynomial<F>,
     wa: Polynomial<F>,
     lt: LtPolynomial<F>,
     claim: F,
 }
 
-impl<F: WithChallenge> SumcheckCompute<F> for RegistersValEvalWitness<F> {
+impl<F: Field> SumcheckCompute<F> for RegistersValEvalWitness<F> {
     fn set_claim(&mut self, claim: F) {
         self.claim = claim;
     }
@@ -151,10 +151,14 @@ impl<F: WithChallenge> SumcheckCompute<F> for RegistersValEvalWitness<F> {
 
         // HighToLow: pair [j] (MSB=0) with [j + half] (MSB=1).
         for j in 0..half {
-            let (inc_lo, inc_hi) = self.inc.sumcheck_eval_pair(j, jolt_poly::BindingOrder::HighToLow);
+            let (inc_lo, inc_hi) = self
+                .inc
+                .sumcheck_eval_pair(j, jolt_poly::BindingOrder::HighToLow);
             let inc_d = inc_hi - inc_lo;
 
-            let (wa_lo, wa_hi) = self.wa.sumcheck_eval_pair(j, jolt_poly::BindingOrder::HighToLow);
+            let (wa_lo, wa_hi) = self
+                .wa
+                .sumcheck_eval_pair(j, jolt_poly::BindingOrder::HighToLow);
             let wa_d = wa_hi - wa_lo;
 
             let (lt_lo, lt_hi) = self.lt.sumcheck_eval_pair(j);
@@ -180,11 +184,10 @@ impl<F: WithChallenge> SumcheckCompute<F> for RegistersValEvalWitness<F> {
         UnivariatePoly::from_evals_and_hint(self.claim, &[eval_0, eval_2, eval_3])
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
-        let c: F = challenge.into();
-        self.inc.bind(c);
-        self.wa.bind(c);
-        self.lt.bind(c);
+    fn bind(&mut self, challenge: F) {
+        self.inc.bind(challenge);
+        self.wa.bind(challenge);
+        self.lt.bind(challenge);
     }
 }
 
@@ -231,19 +234,12 @@ mod tests {
         assert_eq!(batch.claims[0].num_vars, num_vars);
 
         let claims_snapshot = batch.claims.clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"val_eval");
-        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &claims_snapshot,
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (final_eval, challenges) =
+            BatchedSumcheckVerifier::verify(&claims_snapshot, &proof, &mut vt)
+                .expect("verification should succeed");
 
         // Oracle check: final_eval = inc(r) * wa(r) * LT(r, r_cycle).
         let inc_at_r = Polynomial::new(inc_copy.clone()).evaluate(&challenges);
@@ -320,25 +316,16 @@ mod tests {
 
         let claimed_sum = brute_force_val_eval_sum(&inc, &wa, &r_cycle);
 
-        let mut stage =
-            RegistersValEvalStage::new(inc, wa, r_cycle.clone(), claimed_sum);
+        let mut stage = RegistersValEvalStage::new(inc, wa, r_cycle.clone(), claimed_sum);
 
         let mut pt = Blake2bTranscript::new(b"bool_val");
         let mut batch = stage.build(&[], &mut pt);
 
         let claims_snapshot = batch.claims.clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"bool_val");
-        let result = BatchedSumcheckVerifier::verify(
-            &claims_snapshot,
-            &proof,
-            &mut vt,
-        );
+        let result = BatchedSumcheckVerifier::verify(&claims_snapshot, &proof, &mut vt);
         assert!(result.is_ok(), "boolean-witness verification failed");
     }
 
@@ -355,25 +342,16 @@ mod tests {
 
         let claimed_sum = Fr::zero();
 
-        let mut stage =
-            RegistersValEvalStage::new(inc, wa, r_cycle, claimed_sum);
+        let mut stage = RegistersValEvalStage::new(inc, wa, r_cycle, claimed_sum);
 
         let mut pt = Blake2bTranscript::new(b"zero_val");
         let mut batch = stage.build(&[], &mut pt);
 
         let claims_snapshot = batch.claims.clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"zero_val");
-        let result = BatchedSumcheckVerifier::verify(
-            &claims_snapshot,
-            &proof,
-            &mut vt,
-        );
+        let result = BatchedSumcheckVerifier::verify(&claims_snapshot, &proof, &mut vt);
         assert!(result.is_ok(), "zero-sum verification failed");
     }
 }

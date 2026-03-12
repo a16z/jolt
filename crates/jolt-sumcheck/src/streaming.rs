@@ -23,7 +23,7 @@
 
 use std::cmp::Ordering;
 
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 
 use crate::SumcheckCompute;
@@ -284,7 +284,7 @@ where
 impl<F, S, Shared, Streaming, Linear> SumcheckCompute<F>
     for StreamingSumcheck<F, S, Shared, Streaming, Linear>
 where
-    F: WithChallenge,
+    F: Field,
     S: StreamingSchedule,
     Shared: Send + Sync,
     Streaming: StreamingSumcheckWindow<F, Shared = Shared>,
@@ -297,12 +297,11 @@ where
         panic!("StreamingSumcheck must be driven via compute_round(), not round_polynomial()")
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
-        let challenge_f: F = challenge.into();
+    fn bind(&mut self, challenge: F) {
         if let Some(streaming) = &mut self.streaming {
-            streaming.ingest_challenge(&mut self.shared, challenge_f, 0);
+            streaming.ingest_challenge(&mut self.shared, challenge, 0);
         } else if let Some(linear) = &mut self.linear {
-            linear.ingest_challenge(&mut self.shared, challenge_f, 0);
+            linear.ingest_challenge(&mut self.shared, challenge, 0);
         }
     }
 }

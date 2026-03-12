@@ -3,7 +3,7 @@
 //! [`prove_stages`] drives the proving pipeline over a sequence of
 //! [`ProverStage`] implementations.
 
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_openings::ProverClaim;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::handler::RoundHandler;
@@ -99,9 +99,8 @@ pub fn prove_stages<F, T>(
     transcript: &mut T,
 ) -> (Vec<SumcheckStageProof<F>>, Vec<ProverClaim<F>>)
 where
-    F: WithChallenge,
-    F::Challenge: From<T::Challenge>,
-    T: Transcript,
+    F: Field,
+    T: Transcript<Challenge = F>,
 {
     let mut all_opening_claims: Vec<ProverClaim<F>> = Vec::new();
     let mut stage_proofs: Vec<SumcheckStageProof<F>> = Vec::new();

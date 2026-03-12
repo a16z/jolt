@@ -2,9 +2,8 @@
 
 /// Implements the `Transcript` trait for a hash-based transcript.
 ///
-/// The generated struct is generic over `C: Copy + Default + From<u128>`,
-/// allowing callers to pick the challenge type (e.g. `MontU128Challenge<Fr>`
-/// for optimized field multiply, or plain `u128` for field-agnostic use).
+/// The generated struct is generic over `F: Field`, producing field-element
+/// challenges directly via `F::from_u128()`.
 macro_rules! impl_transcript {
     ($name:ident, $hasher:ty, $new_hasher:expr) => {
         use $crate::transcript::Transcript;
@@ -19,10 +18,10 @@ macro_rules! impl_transcript {
 
         #[doc = concat!("Fiat-Shamir transcript backed by ", stringify!($hasher), ".")]
         ///
-        /// Generic over the challenge type `C`. Use `From<u128>` challenge types
-        /// like `MontU128Challenge<Fr>` for optimized field operations.
+        /// Generic over the field type `F`. Challenges are produced as field
+        /// elements directly via `F::from_u128()`.
         #[derive(Clone)]
-        pub struct $name<C: Copy + Default + From<u128> = u128> {
+        pub struct $name<F: jolt_field::Field = jolt_field::Fr> {
             /// 256-bit running state.
             state: [u8; 32],
             /// Round counter for domain separation.
@@ -30,22 +29,22 @@ macro_rules! impl_transcript {
             /// Test-only state for transcript comparison.
             #[cfg(test)]
             test_state: TestState,
-            _challenge: std::marker::PhantomData<C>,
+            _field: std::marker::PhantomData<F>,
         }
 
-        impl<C: Copy + Default + From<u128>> Default for $name<C> {
+        impl<F: jolt_field::Field> Default for $name<F> {
             fn default() -> Self {
                 Self {
                     state: [0u8; 32],
                     n_rounds: 0,
                     #[cfg(test)]
                     test_state: TestState::default(),
-                    _challenge: std::marker::PhantomData,
+                    _field: std::marker::PhantomData,
                 }
             }
         }
 
-        impl<C: Copy + Default + From<u128>> std::fmt::Debug for $name<C> {
+        impl<F: jolt_field::Field> std::fmt::Debug for $name<F> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.debug_struct(stringify!($name))
                     .field("state", &hex::encode(self.state))
@@ -54,7 +53,7 @@ macro_rules! impl_transcript {
             }
         }
 
-        impl<C: Copy + Default + From<u128>> $name<C> {
+        impl<F: jolt_field::Field> $name<F> {
             /// Returns a hasher seeded with `state || round_counter` for domain separation.
             #[inline]
             fn hasher(&self) -> $hasher {
@@ -109,8 +108,8 @@ macro_rules! impl_transcript {
             }
         }
 
-        impl<C: Copy + Default + From<u128> + Send + Sync + 'static> Transcript for $name<C> {
-            type Challenge = C;
+        impl<F: jolt_field::Field> Transcript for $name<F> {
+            type Challenge = F;
 
             fn new(label: &'static [u8]) -> Self {
                 assert!(label.len() < 33, "label must be less than 33 bytes");
@@ -131,7 +130,7 @@ macro_rules! impl_transcript {
                         state_history: vec![hash],
                         expected_state_history: None,
                     },
-                    _challenge: std::marker::PhantomData,
+                    _field: std::marker::PhantomData,
                 }
             }
 
@@ -140,10 +139,10 @@ macro_rules! impl_transcript {
                 self.update_state(hash);
             }
 
-            fn challenge(&mut self) -> C {
+            fn challenge(&mut self) -> F {
                 let mut buf = [0u8; 16];
                 self.challenge_bytes(&mut buf);
-                C::from(u128::from_le_bytes(buf))
+                F::from_u128(u128::from_le_bytes(buf))
             }
 
             #[inline]

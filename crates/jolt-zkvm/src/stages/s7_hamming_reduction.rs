@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -84,7 +84,7 @@ impl<F: Field, B: ComputeBackend> HammingReductionStage<F, B> {
     }
 }
 
-impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T> for HammingReductionStage<F, B> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for HammingReductionStage<F, B> {
     fn name(&self) -> &'static str {
         "S7_hamming_reduction"
     }
@@ -188,7 +188,7 @@ mod tests {
 
         let coefficients = vec![Fr::one(), gamma, gamma * gamma];
         let mut stage = HammingReductionStage::new(polys, coefficients, eq_point, cpu());
-        let mut transcript = Blake2bTranscript::new(b"test_s7");
+        let mut transcript = Blake2bTranscript::<Fr>::new(b"test_s7");
         let batch = stage.build(&[], &mut transcript);
 
         assert_eq!(batch.claims.len(), 1);
@@ -224,12 +224,9 @@ mod tests {
         );
 
         let mut verifier_transcript = Blake2bTranscript::new(b"s7_roundtrip");
-        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &[claim],
-            &proof,
-            &mut verifier_transcript,
-        )
-        .expect("verification should succeed");
+        let (final_eval, challenges) =
+            BatchedSumcheckVerifier::verify(&[claim], &proof, &mut verifier_transcript)
+                .expect("verification should succeed");
 
         let prover_claims = <HammingReductionStage<Fr, CpuBackend> as ProverStage<
             Fr,
@@ -252,7 +249,7 @@ mod tests {
         let eq_point = vec![Fr::from_u64(3), Fr::from_u64(5)];
 
         let mut stage = HammingReductionStage::new(polys, coefficients, eq_point, cpu());
-        let mut t = Blake2bTranscript::new(b"test");
+        let mut t = Blake2bTranscript::<Fr>::new(b"test");
         let _ = stage.build(&[], &mut t);
 
         let challenges = vec![Fr::from_u64(7), Fr::from_u64(11)];
@@ -262,13 +259,12 @@ mod tests {
         >>::extract_claims(&mut stage, &challenges, Fr::zero());
         assert_eq!(_claims.len(), 2);
 
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _ = <HammingReductionStage<Fr, CpuBackend> as ProverStage<
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = <HammingReductionStage<Fr, CpuBackend> as ProverStage<
                     Fr,
                     Blake2bTranscript,
                 >>::extract_claims(&mut stage, &challenges, Fr::zero());
-            }));
+        }));
         assert!(result.is_err());
     }
 

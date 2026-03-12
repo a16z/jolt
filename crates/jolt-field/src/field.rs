@@ -170,51 +170,6 @@ pub(crate) trait ReductionOps: UnreducedOps {
     fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self;
 }
 
-/// A Fiat-Shamir challenge value that can be combined with field elements.
-///
-/// Challenges are drawn from a transcript and used as random scalars in
-/// batching (RLC) and sumcheck. Two implementations exist:
-/// - `MontU128Challenge` — 125-bit range, avoids full-width Montgomery
-///   reduction (default).
-/// - `Mont254BitChallenge` — full 254-bit field element, used when the wider
-///   range is needed.
-///
-/// The `impl_field_ops_inline!` macro generates all 4 ownership variants
-/// (val-val, val-ref, ref-val, ref-ref) for the concrete implementations.
-/// Self-operations (`C op C → F`) and ref variants are available on the
-/// concrete types but not required by this trait — use function-level bounds
-/// where needed.
-pub trait Challenge<F: Field>:
-    Copy
-    + Send
-    + Sync
-    + From<u128>
-    + Into<F>
-    + Add<F, Output = F>
-    + Sub<F, Output = F>
-    + Mul<F, Output = F>
-{
-    fn rand<R: RngCore>(rng: &mut R) -> Self;
-}
-
-/// Associates a [`Field`] with its default [`Challenge`] type.
-///
-/// The associated type is selected at compile time via the
-/// `challenge-254-bit` feature flag.
-///
-/// Bounds on `Self` enable `F op C → F` expressions in generic code
-/// (e.g., `field_val * challenge` or `field_val - challenge`). These bounds
-/// are satisfiable because `WithChallenge` is only implemented for concrete
-/// field types (e.g., `Fr`) where the macro-generated operators exist.
-pub trait WithChallenge:
-    Field
-    + Add<<Self as WithChallenge>::Challenge, Output = Self>
-    + Sub<<Self as WithChallenge>::Challenge, Output = Self>
-    + Mul<<Self as WithChallenge>::Challenge, Output = Self>
-{
-    type Challenge: Challenge<Self>;
-}
-
 #[cfg(feature = "allocative")]
 pub trait MaybeAllocative: Allocative {}
 #[cfg(feature = "allocative")]

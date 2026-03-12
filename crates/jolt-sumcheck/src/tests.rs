@@ -1,6 +1,6 @@
 //! Integration tests for the sumcheck protocol.
 
-use jolt_field::{Field, Fr, WithChallenge};
+use jolt_field::{Field, Fr};
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use num_traits::Zero;
@@ -12,8 +12,6 @@ use crate::claim::SumcheckClaim;
 use crate::prover::{SumcheckCompute, SumcheckProver};
 use crate::streaming::StreamingSumcheckProver;
 use crate::verifier::SumcheckVerifier;
-
-type C = <Fr as WithChallenge>::Challenge;
 
 /// Witness for the claim $\sum_{x \in \{0,1\}^n} f(x) \cdot \widetilde{eq}(x, \tau) = f(\tau)$.
 ///
@@ -63,15 +61,14 @@ impl SumcheckCompute<Fr> for EqProductWitness {
         UnivariatePoly::interpolate(&points)
     }
 
-    fn bind(&mut self, challenge: C) {
-        let c: Fr = challenge.into();
-        self.poly.bind(c);
+    fn bind(&mut self, challenge: Fr) {
+        self.poly.bind(challenge);
 
         let half = self.eq_evals.len() / 2;
         for i in 0..half {
             let lo = self.eq_evals[i];
             let hi = self.eq_evals[i + half];
-            self.eq_evals[i] = lo + c * (hi - lo);
+            self.eq_evals[i] = lo + challenge * (hi - lo);
         }
         self.eq_evals.truncate(half);
     }
@@ -101,8 +98,8 @@ impl SumcheckCompute<Fr> for PlainSumWitness {
         UnivariatePoly::new(vec![sum_lo, sum_hi - sum_lo])
     }
 
-    fn bind(&mut self, challenge: C) {
-        self.poly.bind(challenge.into());
+    fn bind(&mut self, challenge: Fr) {
+        self.poly.bind(challenge);
     }
 }
 
@@ -123,17 +120,12 @@ fn plain_sum_prove_verify() {
     let mut witness = PlainSumWitness { poly: poly.clone() };
     let mut prover_transcript = Blake2bTranscript::new(b"test_plain_sum");
 
-    let proof = SumcheckProver::prove(
-        &claim,
-        &mut witness,
-        &mut prover_transcript,
-    );
+    let proof = SumcheckProver::prove(&claim, &mut witness, &mut prover_transcript);
 
     assert_eq!(proof.round_polynomials.len(), num_vars);
 
     let mut verifier_transcript = Blake2bTranscript::new(b"test_plain_sum");
-    let result =
-        SumcheckVerifier::verify(&claim, &proof, &mut verifier_transcript);
+    let result = SumcheckVerifier::verify(&claim, &proof, &mut verifier_transcript);
 
     let (final_eval, challenges) = result.expect("verification should succeed");
 
@@ -161,15 +153,10 @@ fn eq_product_prove_verify() {
     let mut witness = EqProductWitness::new(poly.clone(), &tau);
     let mut prover_transcript = Blake2bTranscript::new(b"test_eq_prod");
 
-    let proof = SumcheckProver::prove(
-        &claim,
-        &mut witness,
-        &mut prover_transcript,
-    );
+    let proof = SumcheckProver::prove(&claim, &mut witness, &mut prover_transcript);
 
     let mut verifier_transcript = Blake2bTranscript::new(b"test_eq_prod");
-    let result =
-        SumcheckVerifier::verify(&claim, &proof, &mut verifier_transcript);
+    let result = SumcheckVerifier::verify(&claim, &proof, &mut verifier_transcript);
     let (final_eval, challenges) = result.expect("verification should succeed");
 
     // Verify: final_eval should equal f(challenges) * eq(challenges, tau)
@@ -196,15 +183,10 @@ fn wrong_claimed_sum_fails() {
     let mut witness = PlainSumWitness { poly };
     let mut prover_transcript = Blake2bTranscript::new(b"test_wrong");
 
-    let proof = SumcheckProver::prove(
-        &claim,
-        &mut witness,
-        &mut prover_transcript,
-    );
+    let proof = SumcheckProver::prove(&claim, &mut witness, &mut prover_transcript);
 
     let mut verifier_transcript = Blake2bTranscript::new(b"test_wrong");
-    let result =
-        SumcheckVerifier::verify(&claim, &proof, &mut verifier_transcript);
+    let result = SumcheckVerifier::verify(&claim, &proof, &mut verifier_transcript);
 
     assert!(result.is_err(), "verification should fail with wrong sum");
 }
@@ -376,9 +358,8 @@ fn batched_single_claim_matches_unbatched() {
     let proof = BatchedSumcheckProver::prove(&claims, &mut witnesses, &mut pt);
 
     let mut vt = Blake2bTranscript::new(b"batched_single");
-    let (final_eval, challenges) =
-        BatchedSumcheckVerifier::verify(&claims, &proof, &mut vt)
-            .expect("single-claim batch should verify");
+    let (final_eval, challenges) = BatchedSumcheckVerifier::verify(&claims, &proof, &mut vt)
+        .expect("single-claim batch should verify");
 
     // alpha^0 = 1, so the combined claim is identical to the original.
     // The final evaluation must equal the polynomial at the challenge point.
@@ -459,8 +440,7 @@ fn batched_wrong_claim_fails() {
     ];
 
     let mut pt = Blake2bTranscript::new(b"batched_wrong");
-    let proof =
-        BatchedSumcheckProver::prove(&prover_claims, &mut witnesses, &mut pt);
+    let proof = BatchedSumcheckProver::prove(&prover_claims, &mut witnesses, &mut pt);
 
     // Verifier uses a tampered second claim
     let verifier_claims = vec![
@@ -477,8 +457,7 @@ fn batched_wrong_claim_fails() {
     ];
 
     let mut vt = Blake2bTranscript::new(b"batched_wrong");
-    let result =
-        BatchedSumcheckVerifier::verify(&verifier_claims, &proof, &mut vt);
+    let result = BatchedSumcheckVerifier::verify(&verifier_claims, &proof, &mut vt);
     assert!(
         result.is_err(),
         "verification should fail when one claim has a wrong sum"
@@ -544,16 +523,15 @@ impl SumcheckCompute<Fr> for TripleProductWitness {
         UnivariatePoly::interpolate(&points)
     }
 
-    fn bind(&mut self, challenge: C) {
-        let c: Fr = challenge.into();
-        self.f.bind(c);
-        self.g.bind(c);
+    fn bind(&mut self, challenge: Fr) {
+        self.f.bind(challenge);
+        self.g.bind(challenge);
 
         let half = self.eq_evals.len() / 2;
         for i in 0..half {
             let lo = self.eq_evals[i];
             let hi = self.eq_evals[i + half];
-            self.eq_evals[i] = lo + c * (hi - lo);
+            self.eq_evals[i] = lo + challenge * (hi - lo);
         }
         self.eq_evals.truncate(half);
     }
@@ -585,9 +563,8 @@ fn degree_3_triple_product() {
     }
 
     let mut vt = Blake2bTranscript::new(b"degree3");
-    let (final_eval, challenges) =
-        SumcheckVerifier::verify(&claim, &proof, &mut vt)
-            .expect("degree-3 verification should succeed");
+    let (final_eval, challenges) = SumcheckVerifier::verify(&claim, &proof, &mut vt)
+        .expect("degree-3 verification should succeed");
 
     let f_r = f.evaluate(&challenges);
     let g_r = g.evaluate(&challenges);
@@ -622,8 +599,7 @@ fn zero_claimed_sum() {
 
     let mut vt = Blake2bTranscript::new(b"zero_sum");
     let (final_eval, challenges) =
-        SumcheckVerifier::verify(&claim, &proof, &mut vt)
-            .expect("zero claimed sum should verify");
+        SumcheckVerifier::verify(&claim, &proof, &mut vt).expect("zero claimed sum should verify");
 
     assert_eq!(final_eval, poly.evaluate(&challenges));
 }
@@ -708,8 +684,8 @@ fn streaming_prover_produces_correct_rounds() {
             coeff.append_to_transcript(&mut transcript);
         }
 
-        let challenge: C = transcript.challenge().into();
-        streaming.bind(challenge.into());
+        let challenge: Fr = transcript.challenge();
+        streaming.bind(challenge);
         round_polys.push(rp);
     }
 
@@ -725,9 +701,8 @@ fn streaming_prover_produces_correct_rounds() {
 
     // Verify the proof produced by the streaming prover.
     let mut vt = Blake2bTranscript::new(b"streaming_test");
-    let (final_eval, challenges) =
-        SumcheckVerifier::verify(&claim, &proof, &mut vt)
-            .expect("streaming prover proof should verify");
+    let (final_eval, challenges) = SumcheckVerifier::verify(&claim, &proof, &mut vt)
+        .expect("streaming prover proof should verify");
 
     assert_eq!(final_eval, poly.evaluate(&challenges));
 }
@@ -760,8 +735,8 @@ fn streaming_prover_multi_chunk() {
             coeff.append_to_transcript(&mut transcript);
         }
 
-        let challenge: C = transcript.challenge().into();
-        streaming.bind(challenge.into());
+        let challenge: Fr = transcript.challenge();
+        streaming.bind(challenge);
         round_polys.push(rp);
     }
 
@@ -776,9 +751,8 @@ fn streaming_prover_multi_chunk() {
     };
 
     let mut vt = Blake2bTranscript::new(b"streaming_multi");
-    let (final_eval, challenges) =
-        SumcheckVerifier::verify(&claim, &proof, &mut vt)
-            .expect("multi-chunk streaming proof should verify");
+    let (final_eval, challenges) = SumcheckVerifier::verify(&claim, &proof, &mut vt)
+        .expect("multi-chunk streaming proof should verify");
 
     assert_eq!(final_eval, poly.evaluate(&challenges));
 }
@@ -941,9 +915,8 @@ fn batched_challenge_slicing() {
     let proof = BatchedSumcheckProver::prove(&claims, &mut witnesses, &mut pt);
 
     let mut vt = Blake2bTranscript::new(b"slice_test");
-    let (_final_eval, challenges) =
-        BatchedSumcheckVerifier::verify(&claims, &proof, &mut vt)
-            .expect("verification should succeed");
+    let (_final_eval, challenges) = BatchedSumcheckVerifier::verify(&claims, &proof, &mut vt)
+        .expect("verification should succeed");
 
     assert_eq!(challenges.len(), max_num_vars);
 
@@ -1078,9 +1051,8 @@ fn keccak_transcript_prove_verify() {
     let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
     let mut vt = KeccakTranscript::new(b"keccak_test");
-    let (final_eval, challenges) =
-        SumcheckVerifier::verify(&claim, &proof, &mut vt)
-            .expect("keccak transcript verification should succeed");
+    let (final_eval, challenges) = SumcheckVerifier::verify(&claim, &proof, &mut vt)
+        .expect("keccak transcript verification should succeed");
 
     assert_eq!(final_eval, poly.evaluate(&challenges));
 }

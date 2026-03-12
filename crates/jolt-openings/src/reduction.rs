@@ -14,7 +14,7 @@
 //! for computing random linear combinations of polynomial evaluation tables
 //! and scalar evaluations respectively.
 
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -36,12 +36,8 @@ use crate::traits::{AdditivelyHomomorphic, CommitmentScheme};
 /// artifact produced by the reduction itself. For deterministic reductions
 /// like RLC this is `()`.
 ///
-/// Challenges are derived via `F::Challenge::from(transcript.challenge()).into()`,
-/// using the field's associated `Challenge` type for optimized multiply.
-pub trait OpeningReduction<PCS: CommitmentScheme>
-where
-    PCS::Field: WithChallenge,
-{
+/// Challenges are derived directly from the transcript as field elements.
+pub trait OpeningReduction<PCS: CommitmentScheme> {
     /// Proof artifact produced by the reduction (if any).
     type ReductionProof: Clone + Send + Sync + Serialize + DeserializeOwned;
 
@@ -52,25 +48,21 @@ where
     /// Implementations absorb claim evaluations into the transcript before
     /// drawing any Fiat-Shamir challenges. Callers need not absorb claims
     /// beforehand.
-    fn reduce_prover<T: Transcript>(
+    fn reduce_prover<T: Transcript<Challenge = PCS::Field>>(
         claims: Vec<ProverClaim<PCS::Field>>,
         transcript: &mut T,
-    ) -> (Vec<ProverClaim<PCS::Field>>, Self::ReductionProof)
-    where
-        <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>;
+    ) -> (Vec<ProverClaim<PCS::Field>>, Self::ReductionProof);
 
     /// Reduces verifier-side claims.
     ///
     /// Returns the reduced claims or an error if the reduction detects
     /// inconsistency. Absorbs claim evaluations into the transcript
     /// (must match prover).
-    fn reduce_verifier<T: Transcript>(
+    fn reduce_verifier<T: Transcript<Challenge = PCS::Field>>(
         claims: Vec<VerifierClaim<PCS::Field, PCS::Output>>,
         proof: &Self::ReductionProof,
         transcript: &mut T,
-    ) -> Result<Vec<VerifierClaim<PCS::Field, PCS::Output>>, OpeningsError>
-    where
-        <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>;
+    ) -> Result<Vec<VerifierClaim<PCS::Field, PCS::Output>>, OpeningsError>;
 }
 
 /// Random linear combination (RLC) reduction for additively homomorphic PCS.
@@ -90,19 +82,14 @@ where
 /// [`ReductionProof`](OpeningReduction::ReductionProof) is `()`.
 pub struct RlcReduction;
 
-impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction
-where
-    PCS::Field: WithChallenge,
-{
+impl<PCS: AdditivelyHomomorphic> OpeningReduction<PCS> for RlcReduction {
     type ReductionProof = ();
 
     #[tracing::instrument(skip_all, name = "RlcReduction::reduce_prover")]
-    fn reduce_prover<T: Transcript>(
+    fn reduce_prover<T: Transcript<Challenge = PCS::Field>>(
         claims: Vec<ProverClaim<PCS::Field>>,
         transcript: &mut T,
-    ) -> (Vec<ProverClaim<PCS::Field>>, ())
-    where
-        <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>, {
+    ) -> (Vec<ProverClaim<PCS::Field>>, ()) {
         if claims.is_empty() {
             return (Vec::new(), ());
         }
@@ -124,8 +111,7 @@ where
                 "evaluation table size must equal 2^num_vars"
             );
 
-            let rho: PCS::Field =
-                <PCS::Field as WithChallenge>::Challenge::from(transcript.challenge()).into();
+            let rho: PCS::Field = transcript.challenge();
 
             let eval_slices: Vec<&[PCS::Field]> = group_claims
                 .iter()
@@ -148,13 +134,11 @@ where
 
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "RlcReduction::reduce_verifier")]
-    fn reduce_verifier<T: Transcript>(
+    fn reduce_verifier<T: Transcript<Challenge = PCS::Field>>(
         claims: Vec<VerifierClaim<PCS::Field, PCS::Output>>,
         _proof: &(),
         transcript: &mut T,
-    ) -> Result<Vec<VerifierClaim<PCS::Field, PCS::Output>>, OpeningsError>
-    where
-        <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>, {
+    ) -> Result<Vec<VerifierClaim<PCS::Field, PCS::Output>>, OpeningsError> {
         if claims.is_empty() {
             return Ok(Vec::new());
         }
@@ -168,8 +152,7 @@ where
         let mut reduced = Vec::with_capacity(groups.len());
 
         for (point, group_claims) in groups {
-            let rho: PCS::Field =
-                <PCS::Field as WithChallenge>::Challenge::from(transcript.challenge()).into();
+            let rho: PCS::Field = transcript.challenge();
 
             let commitments: Vec<PCS::Output> =
                 group_claims.iter().map(|c| c.commitment.clone()).collect();

@@ -6,7 +6,7 @@
 //!
 //! # Why Poseidon?
 //!
-//! Poseidon is ~600× cheaper in-circuit than Keccak (~250 constraints vs
+//! Poseidon is ~600x cheaper in-circuit than Keccak (~250 constraints vs
 //! ~150,000). When the Jolt verifier runs inside a Groth16/gnark circuit,
 //! all Fiat-Shamir challenges must be recomputed — using a SNARK-friendly
 //! hash makes this feasible.
@@ -39,10 +39,10 @@ const BYTES_PER_CHUNK: usize = 32;
 
 /// Fiat-Shamir transcript using Poseidon hash over BN254.
 ///
-/// Generic over the challenge type `C`. Use `From<u128>` challenge types
-/// like `MontU128Challenge<Fr>` for optimized field operations.
+/// Generic over the field type `F`. Challenges are produced as field
+/// elements directly via `F::from_u128()`.
 #[derive(Clone)]
-pub struct PoseidonTranscript<C: Copy + Default + From<u128> = u128> {
+pub struct PoseidonTranscript<F: jolt_field::Field = jolt_field::Fr> {
     /// 256-bit running state (canonical LE serialization of Fr).
     state: [u8; 32],
     /// Round counter for domain separation.
@@ -52,10 +52,10 @@ pub struct PoseidonTranscript<C: Copy + Default + From<u128> = u128> {
     state_history: Vec<[u8; 32]>,
     #[cfg(test)]
     expected_state_history: Option<Vec<[u8; 32]>>,
-    _challenge: std::marker::PhantomData<C>,
+    _field: std::marker::PhantomData<F>,
 }
 
-impl<C: Copy + Default + From<u128>> Default for PoseidonTranscript<C> {
+impl<F: jolt_field::Field> Default for PoseidonTranscript<F> {
     fn default() -> Self {
         Self {
             state: [0u8; 32],
@@ -64,12 +64,12 @@ impl<C: Copy + Default + From<u128>> Default for PoseidonTranscript<C> {
             state_history: Vec::new(),
             #[cfg(test)]
             expected_state_history: None,
-            _challenge: std::marker::PhantomData,
+            _field: std::marker::PhantomData,
         }
     }
 }
 
-impl<C: Copy + Default + From<u128>> std::fmt::Debug for PoseidonTranscript<C> {
+impl<F: jolt_field::Field> std::fmt::Debug for PoseidonTranscript<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PoseidonTranscript")
             .field("state", &hex::encode(self.state))
@@ -78,7 +78,7 @@ impl<C: Copy + Default + From<u128>> std::fmt::Debug for PoseidonTranscript<C> {
     }
 }
 
-impl<C: Copy + Default + From<u128>> PoseidonTranscript<C> {
+impl<F: jolt_field::Field> PoseidonTranscript<F> {
     fn hasher() -> Poseidon<Fr> {
         Poseidon::<Fr>::new_circom(WIDTH).expect("failed to initialize Poseidon")
     }
@@ -143,8 +143,8 @@ impl<C: Copy + Default + From<u128>> PoseidonTranscript<C> {
     }
 }
 
-impl<C: Copy + Default + From<u128> + Send + Sync + 'static> Transcript for PoseidonTranscript<C> {
-    type Challenge = C;
+impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
+    type Challenge = F;
 
     fn new(label: &'static [u8]) -> Self {
         assert!(label.len() < 33, "label must be less than 33 bytes");
@@ -169,7 +169,7 @@ impl<C: Copy + Default + From<u128> + Send + Sync + 'static> Transcript for Pose
             state_history: vec![state],
             #[cfg(test)]
             expected_state_history: None,
-            _challenge: std::marker::PhantomData,
+            _field: std::marker::PhantomData,
         }
     }
 
@@ -204,10 +204,10 @@ impl<C: Copy + Default + From<u128> + Send + Sync + 'static> Transcript for Pose
         self.update_state(new_state);
     }
 
-    fn challenge(&mut self) -> C {
+    fn challenge(&mut self) -> F {
         let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
-        C::from(u128::from_le_bytes(buf))
+        F::from_u128(u128::from_le_bytes(buf))
     }
 
     #[inline]
@@ -224,28 +224,30 @@ impl<C: Copy + Default + From<u128> + Send + Sync + 'static> Transcript for Pose
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_field::Field;
+
+    type Poseidon = PoseidonTranscript<jolt_field::Fr>;
 
     #[test]
     fn new_initializes_from_label() {
-        let t1 = PoseidonTranscript::new(b"protocol_a");
-        let t2 = PoseidonTranscript::new(b"protocol_b");
+        let t1 = Poseidon::new(b"protocol_a");
+        let t2 = Poseidon::new(b"protocol_b");
 
-        // Different labels → different initial states
         assert_ne!(t1.state, t2.state);
         assert_eq!(t1.n_rounds, 0);
     }
 
     #[test]
     fn same_label_same_state() {
-        let t1 = PoseidonTranscript::new(b"same");
-        let t2 = PoseidonTranscript::new(b"same");
+        let t1 = Poseidon::new(b"same");
+        let t2 = Poseidon::new(b"same");
 
         assert_eq!(t1.state, t2.state);
     }
 
     #[test]
     fn append_changes_state() {
-        let mut t = PoseidonTranscript::new(b"test");
+        let mut t = Poseidon::new(b"test");
         let before = t.state;
 
         t.append_bytes(b"hello");
@@ -255,8 +257,8 @@ mod tests {
 
     #[test]
     fn append_order_matters() {
-        let mut t1 = PoseidonTranscript::new(b"test");
-        let mut t2 = PoseidonTranscript::new(b"test");
+        let mut t1 = Poseidon::new(b"test");
+        let mut t2 = Poseidon::new(b"test");
 
         t1.append_bytes(b"a");
         t1.append_bytes(b"b");
@@ -269,7 +271,7 @@ mod tests {
 
     #[test]
     fn challenge_advances_state() {
-        let mut t = PoseidonTranscript::new(b"test");
+        let mut t = Poseidon::new(b"test");
         t.append_bytes(b"data");
         let before = t.state;
 
@@ -279,8 +281,8 @@ mod tests {
 
     #[test]
     fn deterministic_challenges() {
-        let mut t1 = PoseidonTranscript::new(b"test");
-        let mut t2 = PoseidonTranscript::new(b"test");
+        let mut t1 = Poseidon::new(b"test");
+        let mut t2 = Poseidon::new(b"test");
 
         t1.append_bytes(b"same_data");
         t2.append_bytes(b"same_data");
@@ -290,23 +292,20 @@ mod tests {
 
     #[test]
     fn multi_chunk_append() {
-        let mut t = PoseidonTranscript::new(b"test");
+        let mut t = Poseidon::new(b"test");
 
-        // 64 bytes = 2 chunks of 32 bytes
         let data = [0xABu8; 64];
         t.append_bytes(&data);
 
-        // Should still be a single n_rounds increment (chained internally)
         assert_eq!(t.n_rounds, 1);
     }
 
     #[test]
     fn challenge_vector_produces_distinct() {
-        let mut t = PoseidonTranscript::new(b"test");
+        let mut t = Poseidon::new(b"test");
         t.append_bytes(b"seed");
 
-        let challenges = t.challenge_vector(5);
-        // All challenges should be distinct
+        let challenges: Vec<jolt_field::Fr> = t.challenge_vector(5);
         for i in 0..5 {
             for j in (i + 1)..5 {
                 assert_ne!(challenges[i], challenges[j]);
@@ -316,7 +315,7 @@ mod tests {
 
     #[test]
     fn clone_independence() {
-        let mut t = PoseidonTranscript::new(b"test");
+        let mut t = Poseidon::new(b"test");
         t.append_bytes(b"shared");
 
         let mut fork = t.clone();
@@ -328,9 +327,7 @@ mod tests {
 
     #[test]
     fn hash_zeros_produces_known_output() {
-        // Validate that our Poseidon parameters produce a non-trivial hash
-        // for the simplest input. This catches parameter initialization bugs.
-        let mut poseidon = PoseidonTranscript::hasher();
+        let mut poseidon = PoseidonTranscript::<jolt_field::Fr>::hasher();
         let result = poseidon
             .hash(&[Fr::zero(), Fr::zero(), Fr::zero()])
             .expect("hash failed");
@@ -339,14 +336,13 @@ mod tests {
 
     #[test]
     fn transcript_comparison() {
-        let mut prover = PoseidonTranscript::new(b"test");
+        let mut prover = Poseidon::new(b"test");
         prover.append_bytes(b"data");
         let _ = prover.challenge();
 
-        let mut verifier = PoseidonTranscript::new(b"test");
+        let mut verifier = Poseidon::new(b"test");
         verifier.compare_to(&prover);
         verifier.append_bytes(b"data");
         let _ = verifier.challenge();
-        // No panic means states matched
     }
 }

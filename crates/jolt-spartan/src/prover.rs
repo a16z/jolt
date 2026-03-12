@@ -11,7 +11,7 @@
 //! The caller commits to the witness before calling prove, and opens the
 //! witness polynomial at $r_y$ after prove returns.
 
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::proof::SumcheckProof;
@@ -62,9 +62,8 @@ impl SpartanProver {
         strategy: FirstRoundStrategy,
     ) -> Result<SpartanProof<F>, SpartanError>
     where
-        F: WithChallenge,
-        F::Challenge: From<T::Challenge>,
-        T: Transcript,
+        F: Field,
+        T: Transcript<Challenge = F>,
     {
         let (proof, _r_x, _r_y) =
             Self::prove_with_challenges(r1cs, key, witness, transcript, strategy)?;
@@ -86,9 +85,8 @@ impl SpartanProver {
         strategy: FirstRoundStrategy,
     ) -> Result<(SpartanProof<F>, Vec<F>, Vec<F>), SpartanError>
     where
-        F: WithChallenge,
-        F::Challenge: From<T::Challenge>,
-        T: Transcript,
+        F: Field,
+        T: Transcript<Challenge = F>,
     {
         let (az, bz, cz) = {
             let _span = tracing::info_span!("multiply_witness").entered();
@@ -110,9 +108,7 @@ impl SpartanProver {
         let cz_poly = pad_to_power_of_two(&cz, key.num_constraints_padded);
 
         let num_sc_vars = key.num_sumcheck_vars();
-        let tau: Vec<F> = (0..num_sc_vars)
-            .map(|_| F::Challenge::from(transcript.challenge()).into())
-            .collect();
+        let tau: Vec<F> = (0..num_sc_vars).map(|_| transcript.challenge()).collect();
 
         let tau_1 = tau.first().copied();
 
@@ -159,9 +155,9 @@ impl SpartanProver {
         transcript.append(&bz_eval);
         transcript.append(&cz_eval);
 
-        let rho_a: F = F::Challenge::from(transcript.challenge()).into();
-        let rho_b: F = F::Challenge::from(transcript.challenge()).into();
-        let rho_c: F = F::Challenge::from(transcript.challenge()).into();
+        let rho_a: F = transcript.challenge();
+        let rho_b: F = transcript.challenge();
+        let rho_c: F = transcript.challenge();
 
         // Fuse partial-evaluation of all three matrix MLEs into a single combined
         // row: M(r_x, ·) = ρ_A·A(r_x,·) + ρ_B·B(r_x,·) + ρ_C·C(r_x,·).
@@ -237,9 +233,7 @@ impl SpartanProver {
     ) -> Result<RelaxedSpartanProof<PCS::Field, PCS>, SpartanError>
     where
         PCS: CommitmentScheme,
-        PCS::Field: WithChallenge,
-        <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>,
-        T: Transcript,
+        T: Transcript<Challenge = PCS::Field>,
     {
         let (az, bz, cz) = r1cs.multiply_witness(witness);
 
@@ -259,11 +253,7 @@ impl SpartanProver {
         transcript.append_bytes(format!("{e_commitment:?}").as_bytes());
 
         let num_sc_vars = key.num_sumcheck_vars();
-        let tau: Vec<PCS::Field> = (0..num_sc_vars)
-            .map(|_| {
-                <PCS::Field as WithChallenge>::Challenge::from(transcript.challenge()).into()
-            })
-            .collect();
+        let tau: Vec<PCS::Field> = (0..num_sc_vars).map(|_| transcript.challenge()).collect();
 
         let eq_poly = Polynomial::new(EqPolynomial::new(tau).evaluations());
         let mut outer_witness = RelaxedOuterSumcheckCompute {
@@ -299,12 +289,9 @@ impl SpartanProver {
         transcript.append(&cz_eval);
         transcript.append(&e_eval);
 
-        let rho_a: PCS::Field =
-            <PCS::Field as WithChallenge>::Challenge::from(transcript.challenge()).into();
-        let rho_b: PCS::Field =
-            <PCS::Field as WithChallenge>::Challenge::from(transcript.challenge()).into();
-        let rho_c: PCS::Field =
-            <PCS::Field as WithChallenge>::Challenge::from(transcript.challenge()).into();
+        let rho_a: PCS::Field = transcript.challenge();
+        let rho_b: PCS::Field = transcript.challenge();
+        let rho_c: PCS::Field = transcript.challenge();
 
         let combined_row = combined_partial_evaluate(
             key.a_mle(),
@@ -489,9 +476,8 @@ fn prove_outer_uniskip<F, T>(
     tau_1: F,
 ) -> (SumcheckProof<F>, Vec<F>)
 where
-    F: WithChallenge,
-    F::Challenge: From<T::Challenge>,
-    T: Transcript,
+    F: Field,
+    T: Transcript<Challenge = F>,
 {
     use crate::uni_skip::uniskip_first_round;
 
@@ -505,17 +491,15 @@ where
         tau_1,
     );
     handler.absorb_round_poly(&first_round_poly, transcript);
-    let challenge: F::Challenge = transcript.challenge().into();
-    let challenge_f: F = challenge.into();
-    handler.on_challenge(challenge_f);
+    let challenge: F = transcript.challenge();
+    handler.on_challenge(challenge);
     witness.bind(challenge);
 
     for _round in 1..claim.num_vars {
         let round_poly = <OuterSumcheckCompute<F> as SumcheckCompute<F>>::round_polynomial(witness);
         handler.absorb_round_poly(&round_poly, transcript);
-        let challenge: F::Challenge = transcript.challenge().into();
-        let challenge_f: F = challenge.into();
-        handler.on_challenge(challenge_f);
+        let challenge: F = transcript.challenge();
+        handler.on_challenge(challenge);
         witness.bind(challenge);
     }
 
@@ -595,7 +579,7 @@ struct OuterSumcheckCompute<F: Field> {
     cz: Polynomial<F>,
 }
 
-impl<F: WithChallenge> SumcheckCompute<F> for OuterSumcheckCompute<F> {
+impl<F: Field> SumcheckCompute<F> for OuterSumcheckCompute<F> {
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let half = self.eq.evaluations().len() / 2;
 
@@ -664,12 +648,11 @@ impl<F: WithChallenge> SumcheckCompute<F> for OuterSumcheckCompute<F> {
         UnivariatePoly::interpolate(&points)
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
-        let r: F = challenge.into();
-        self.eq.bind(r);
-        self.az.bind(r);
-        self.bz.bind(r);
-        self.cz.bind(r);
+    fn bind(&mut self, challenge: F) {
+        self.eq.bind(challenge);
+        self.az.bind(challenge);
+        self.bz.bind(challenge);
+        self.cz.bind(challenge);
     }
 }
 
@@ -700,7 +683,7 @@ impl<F: Field> InnerSumcheckCompute<F> {
     }
 }
 
-impl<F: WithChallenge> SumcheckCompute<F> for InnerSumcheckCompute<F> {
+impl<F: Field> SumcheckCompute<F> for InnerSumcheckCompute<F> {
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let half = self.combined_row.evaluations().len() / 2;
 
@@ -756,10 +739,9 @@ impl<F: WithChallenge> SumcheckCompute<F> for InnerSumcheckCompute<F> {
         UnivariatePoly::interpolate(&points)
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
-        let r: F = challenge.into();
-        self.combined_row.bind(r);
-        self.witness.bind(r);
+    fn bind(&mut self, challenge: F) {
+        self.combined_row.bind(challenge);
+        self.witness.bind(challenge);
     }
 }
 
@@ -821,7 +803,7 @@ fn relaxed_outer_round_sequential<F: Field>(
     evals
 }
 
-impl<F: WithChallenge> SumcheckCompute<F> for RelaxedOuterSumcheckCompute<F> {
+impl<F: Field> SumcheckCompute<F> for RelaxedOuterSumcheckCompute<F> {
     fn round_polynomial(&self) -> UnivariatePoly<F> {
         let half = self.eq.evaluations().len() / 2;
 
@@ -897,12 +879,11 @@ impl<F: WithChallenge> SumcheckCompute<F> for RelaxedOuterSumcheckCompute<F> {
         UnivariatePoly::interpolate(&points)
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
-        let r: F = challenge.into();
-        self.eq.bind(r);
-        self.az.bind(r);
-        self.bz.bind(r);
-        self.cz.bind(r);
-        self.e.bind(r);
+    fn bind(&mut self, challenge: F) {
+        self.eq.bind(challenge);
+        self.az.bind(challenge);
+        self.bz.bind(challenge);
+        self.cz.bind(challenge);
+        self.e.bind(challenge);
     }
 }

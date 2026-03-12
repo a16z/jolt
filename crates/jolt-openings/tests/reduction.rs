@@ -152,10 +152,8 @@ fn mixed_shared_and_distinct_points() {
 #[test]
 fn empty_claims_is_noop() {
     let mut transcript_p = Blake2bTranscript::new(b"empty");
-    let (reduced, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
-        Vec::new(),
-        &mut transcript_p,
-    );
+    let (reduced, ()) =
+        <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(Vec::new(), &mut transcript_p);
     assert!(reduced.is_empty());
 
     let mut transcript_v = Blake2bTranscript::new(b"empty");

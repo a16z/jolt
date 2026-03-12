@@ -1,6 +1,7 @@
 #![allow(unused_results)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use jolt_field::Fr;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 
 fn bench_append_bytes(c: &mut Criterion) {
@@ -11,7 +12,7 @@ fn bench_append_bytes(c: &mut Criterion) {
     for (label, data) in [("32B", &data_32[..]), ("256B", &data_256[..])] {
         group.bench_with_input(BenchmarkId::new("Blake2b", label), data, |bench, data| {
             bench.iter_batched(
-                || Blake2bTranscript::new(b"bench"),
+                || Blake2bTranscript::<Fr>::new(b"bench"),
                 |mut t| {
                     t.append_bytes(black_box(data));
                     t
@@ -21,7 +22,7 @@ fn bench_append_bytes(c: &mut Criterion) {
         });
         group.bench_with_input(BenchmarkId::new("Keccak", label), data, |bench, data| {
             bench.iter_batched(
-                || KeccakTranscript::new(b"bench"),
+                || KeccakTranscript::<Fr>::new(b"bench"),
                 |mut t| {
                     t.append_bytes(black_box(data));
                     t
@@ -39,7 +40,7 @@ fn bench_challenge(c: &mut Criterion) {
     group.bench_function("Blake2b", |bench| {
         bench.iter_batched(
             || {
-                let mut t = Blake2bTranscript::new(b"bench");
+                let mut t = Blake2bTranscript::<Fr>::new(b"bench");
                 t.append_bytes(&[42u8; 32]);
                 t
             },
@@ -51,7 +52,7 @@ fn bench_challenge(c: &mut Criterion) {
     group.bench_function("Keccak", |bench| {
         bench.iter_batched(
             || {
-                let mut t = KeccakTranscript::new(b"bench");
+                let mut t = KeccakTranscript::<Fr>::new(b"bench");
                 t.append_bytes(&[42u8; 32]);
                 t
             },

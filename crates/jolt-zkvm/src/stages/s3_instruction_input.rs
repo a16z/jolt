@@ -11,7 +11,7 @@
 //!
 //! Degree 3 (eq × flag × value), `log_T` rounds, HighToLow binding.
 
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
@@ -89,7 +89,7 @@ impl<F: Field> InstructionInputStage<F> {
     }
 }
 
-impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for InstructionInputStage<F> {
+impl<F: Field, T: Transcript> ProverStage<F, T> for InstructionInputStage<F> {
     fn name(&self) -> &'static str {
         "S3_instruction_input"
     }
@@ -159,14 +159,14 @@ impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for InstructionInputStag
 /// `left = is_rs1 · rs1_v + is_pc · unexpanded_pc`.
 ///
 /// Uses HighToLow binding via `Polynomial::bind`.
-struct InstructionInputWitness<F: WithChallenge> {
+struct InstructionInputWitness<F: Field> {
     eq: Polynomial<F>,
     polys: [Polynomial<F>; NUM_INSTR_INPUT_POLYS],
     gamma: F,
     claim: F,
 }
 
-impl<F: WithChallenge> SumcheckCompute<F> for InstructionInputWitness<F> {
+impl<F: Field> SumcheckCompute<F> for InstructionInputWitness<F> {
     fn set_claim(&mut self, claim: F) {
         self.claim = claim;
     }
@@ -247,11 +247,10 @@ impl<F: WithChallenge> SumcheckCompute<F> for InstructionInputWitness<F> {
         UnivariatePoly::from_evals_and_hint(self.claim, &[eval_0, eval_2, eval_3])
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
-        let c: F = challenge.into();
-        self.eq.bind(c);
+    fn bind(&mut self, challenge: F) {
+        self.eq.bind(challenge);
         for poly in &mut self.polys {
-            poly.bind(c);
+            poly.bind(challenge);
         }
     }
 }
@@ -299,7 +298,8 @@ mod tests {
         let claimed_sum = brute_force_instr_input_sum(&witness_polys, &r_cycle, gamma);
 
         let polys_copy = witness_polys.clone();
-        let mut stage = InstructionInputStage::new(witness_polys, r_cycle.clone(), gamma, claimed_sum);
+        let mut stage =
+            InstructionInputStage::new(witness_polys, r_cycle.clone(), gamma, claimed_sum);
 
         let mut pt = Blake2bTranscript::new(b"instr_input");
         let mut batch = stage.build(&[], &mut pt);
@@ -309,23 +309,16 @@ mod tests {
         assert_eq!(batch.claims[0].num_vars, num_vars);
 
         let claims_snapshot = batch.claims.clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"instr_input");
-        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &claims_snapshot,
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (final_eval, challenges) =
+            BatchedSumcheckVerifier::verify(&claims_snapshot, &proof, &mut vt)
+                .expect("verification should succeed");
 
         // Oracle check: final_eval = eq(r_cycle, r) · (right(r) + γ·left(r)).
-        let eq_at_r = Polynomial::new(EqPolynomial::new(r_cycle).evaluations())
-            .evaluate(&challenges);
+        let eq_at_r =
+            Polynomial::new(EqPolynomial::new(r_cycle).evaluations()).evaluate(&challenges);
         let right_at_r = Polynomial::new(polys_copy[RIGHT_IS_RS2].clone()).evaluate(&challenges)
             * Polynomial::new(polys_copy[RS2_VALUE].clone()).evaluate(&challenges)
             + Polynomial::new(polys_copy[RIGHT_IS_IMM].clone()).evaluate(&challenges)
@@ -412,18 +405,10 @@ mod tests {
         let mut batch = stage.build(&[], &mut pt);
 
         let claims_snapshot = batch.claims.clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"bool_flags");
-        let result = BatchedSumcheckVerifier::verify(
-            &claims_snapshot,
-            &proof,
-            &mut vt,
-        );
+        let result = BatchedSumcheckVerifier::verify(&claims_snapshot, &proof, &mut vt);
         assert!(result.is_ok(), "boolean-flag verification failed");
     }
 }

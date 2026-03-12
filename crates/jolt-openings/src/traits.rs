@@ -116,7 +116,7 @@ pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
         eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof;
 
     /// Verifies that the committed polynomial evaluates to `eval` at `point`.
@@ -130,7 +130,7 @@ pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
         eval: Self::Field,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError>;
 }
 
@@ -241,7 +241,7 @@ pub trait ZkOpeningScheme: CommitmentScheme {
         eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::EvalCommitment, Self::EvalBlinding);
 
     /// Verifies a ZK opening proof against an eval commitment.
@@ -258,7 +258,7 @@ pub trait ZkOpeningScheme: CommitmentScheme {
         eval_commitment: &Self::EvalCommitment,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError>;
 
     /// Extracts the eval commitment from a proof, if present.

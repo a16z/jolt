@@ -9,7 +9,7 @@
 //! 3. **S8 (Openings)**: Reduce all opening claims via RLC and verify PCS
 //!    opening proofs
 
-use jolt_field::WithChallenge;
+use jolt_field::Field;
 use jolt_openings::{
     AdditivelyHomomorphic, OpeningReduction, OpeningsError, RlcReduction, VerifierClaim,
 };
@@ -39,9 +39,8 @@ pub fn verify_spartan<F, T>(
     transcript: &mut T,
 ) -> Result<(Vec<F>, Vec<F>), SpartanError>
 where
-    F: WithChallenge,
-    F::Challenge: From<T::Challenge>,
-    T: Transcript,
+    F: Field,
+    T: Transcript<Challenge = F>,
 {
     UniformSpartanVerifier::verify_with_challenges(key, proof, transcript)
 }
@@ -59,16 +58,10 @@ pub fn verify_openings<PCS, T>(
 ) -> Result<(), JoltError>
 where
     PCS: AdditivelyHomomorphic,
-    PCS::Field: WithChallenge,
-    <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>,
-    T: Transcript,
+    T: Transcript<Challenge = PCS::Field>,
 {
-    let reduced = <RlcReduction as OpeningReduction<PCS>>::reduce_verifier(
-        claims,
-        &(),
-        transcript,
-    )
-    .map_err(JoltError::Opening)?;
+    let reduced = <RlcReduction as OpeningReduction<PCS>>::reduce_verifier(claims, &(), transcript)
+        .map_err(JoltError::Opening)?;
 
     if reduced.len() != opening_proofs.len() {
         return Err(JoltError::Opening(OpeningsError::VerificationFailed));
@@ -100,10 +93,9 @@ fn verify_stage<F, C, T>(
     transcript: &mut T,
 ) -> Result<Vec<VerifierClaim<F, C>>, JoltError>
 where
-    F: WithChallenge,
-    F::Challenge: From<T::Challenge>,
+    F: Field,
     C: Clone,
-    T: Transcript,
+    T: Transcript<Challenge = F>,
 {
     let _span = tracing::info_span!("verify_stage", stage = stage_index).entered();
 
@@ -113,15 +105,13 @@ where
         claimed_sum: desc.claimed_sum,
     }];
 
-    let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-        &claims,
-        &stage_proof.sumcheck_proof,
-        transcript,
-    )
-    .map_err(|e| JoltError::StageVerification {
-        stage: stage_index,
-        reason: e.to_string(),
-    })?;
+    let (final_eval, challenges) =
+        BatchedSumcheckVerifier::verify(&claims, &stage_proof.sumcheck_proof, transcript).map_err(
+            |e| JoltError::StageVerification {
+                stage: stage_index,
+                reason: e.to_string(),
+            },
+        )?;
 
     let eval_point: Vec<F> = if desc.reverse_challenges {
         challenges.iter().rev().copied().collect()
@@ -201,9 +191,7 @@ pub fn verify<PCS, T>(
 ) -> Result<(Vec<PCS::Field>, Vec<PCS::Field>), JoltError>
 where
     PCS: AdditivelyHomomorphic,
-    PCS::Field: WithChallenge,
-    <PCS::Field as WithChallenge>::Challenge: From<T::Challenge>,
-    T: Transcript,
+    T: Transcript<Challenge = PCS::Field>,
 {
     // Append witness commitment to transcript (matches prover's commit step).
     transcript.append_bytes(format!("{:?}", proof.witness_commitment).as_bytes());
@@ -223,13 +211,7 @@ where
     let mut all_opening_claims: Vec<VerifierClaim<PCS::Field, PCS::Output>> = Vec::new();
 
     for (i, (desc, stage_proof)) in descriptors.iter().zip(&proof.stage_proofs).enumerate() {
-        let new_claims = verify_stage(
-            i + 2,
-            desc,
-            stage_proof,
-            &proof.commitments,
-            transcript,
-        )?;
+        let new_claims = verify_stage(i + 2, desc, stage_proof, &proof.commitments, transcript)?;
 
         // Fiat-Shamir: absorb opening claim evaluations before the next
         // stage derives its challenges. Must match the prover's flush.

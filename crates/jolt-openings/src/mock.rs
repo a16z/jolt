@@ -73,7 +73,7 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         _eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Option<()>,
-        _transcript: &mut impl Transcript,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
         MockProof {
             evaluations: poly.evaluations().to_vec(),
@@ -86,7 +86,7 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         eval: Self::Field,
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
-        _transcript: &mut impl Transcript,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
         if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::CommitmentMismatch {
@@ -165,7 +165,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
         eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Option<Self::OpeningHint>,
-        _transcript: &mut impl Transcript,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::EvalCommitment, Self::EvalBlinding) {
         let proof = MockProof {
             evaluations: poly.evaluations().to_vec(),
@@ -180,7 +180,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
         eval_commitment: &Self::EvalCommitment,
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
-        _transcript: &mut impl Transcript,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
         if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::CommitmentMismatch {
@@ -464,10 +464,8 @@ mod tests {
         ];
 
         let mut transcript = Blake2bTranscript::new(b"grouping");
-        let (reduced, ()) = <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(
-            claims,
-            &mut transcript,
-        );
+        let (reduced, ()) =
+            <RlcReduction as OpeningReduction<MockPCS>>::reduce_prover(claims, &mut transcript);
         assert_eq!(reduced.len(), 2, "two distinct points → two reduced claims");
     }
 

@@ -170,14 +170,8 @@ fn claim_reduction_standalone() {
         .map(|j| eq_table[j] * (c0 * poly_a[j] + c1 * poly_b[j]))
         .sum();
 
-    let prover_stage = ClaimReductionStage::increment(
-        poly_a,
-        poly_b,
-        eq_point.clone(),
-        c0,
-        c1,
-        cpu(),
-    );
+    let prover_stage =
+        ClaimReductionStage::increment(poly_a, poly_b, eq_point.clone(), c0, c1, cpu());
     let mut prover_stages: Vec<Box<dyn ProverStage<Fr, Blake2bTranscript>>> =
         vec![Box::new(prover_stage)];
 

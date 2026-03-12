@@ -770,8 +770,9 @@ mod z3_tests {
 
         match idx {
             // (Load + Store) * (RamAddr − Rs1 − Imm)
-            0 => (v(V_FLAG_LOAD) + v(V_FLAG_STORE))
-                * (v(V_RAM_ADDRESS) - v(V_RS1_VALUE) - v(V_IMM)),
+            0 => {
+                (v(V_FLAG_LOAD) + v(V_FLAG_STORE)) * (v(V_RAM_ADDRESS) - v(V_RS1_VALUE) - v(V_IMM))
+            }
             // (1 − Load − Store) * RamAddr
             1 => (c(1) - v(V_FLAG_LOAD) - v(V_FLAG_STORE)) * v(V_RAM_ADDRESS),
             // Load * (RamRead − RamWrite)
@@ -781,57 +782,75 @@ mod z3_tests {
             // Store * (Rs2 − RamWrite)
             4 => v(V_FLAG_STORE) * (v(V_RS2_VALUE) - v(V_RAM_WRITE_VALUE)),
             // (Add + Sub + Mul) * LeftLookup
-            5 => (v(V_FLAG_ADD_OPERANDS) + v(V_FLAG_SUBTRACT_OPERANDS)
-                + v(V_FLAG_MULTIPLY_OPERANDS))
-                * v(V_LEFT_LOOKUP_OPERAND),
+            5 => {
+                (v(V_FLAG_ADD_OPERANDS) + v(V_FLAG_SUBTRACT_OPERANDS) + v(V_FLAG_MULTIPLY_OPERANDS))
+                    * v(V_LEFT_LOOKUP_OPERAND)
+            }
             // (1 − Add − Sub − Mul) * (LeftLookup − LeftInput)
-            6 => (c(1) - v(V_FLAG_ADD_OPERANDS) - v(V_FLAG_SUBTRACT_OPERANDS)
-                - v(V_FLAG_MULTIPLY_OPERANDS))
-                * (v(V_LEFT_LOOKUP_OPERAND) - v(V_LEFT_INSTRUCTION_INPUT)),
+            6 => {
+                (c(1)
+                    - v(V_FLAG_ADD_OPERANDS)
+                    - v(V_FLAG_SUBTRACT_OPERANDS)
+                    - v(V_FLAG_MULTIPLY_OPERANDS))
+                    * (v(V_LEFT_LOOKUP_OPERAND) - v(V_LEFT_INSTRUCTION_INPUT))
+            }
             // Add * (RightLookup − LeftInput − RightInput)
-            7 => v(V_FLAG_ADD_OPERANDS)
-                * (v(V_RIGHT_LOOKUP_OPERAND) - v(V_LEFT_INSTRUCTION_INPUT)
-                    - v(V_RIGHT_INSTRUCTION_INPUT)),
+            7 => {
+                v(V_FLAG_ADD_OPERANDS)
+                    * (v(V_RIGHT_LOOKUP_OPERAND)
+                        - v(V_LEFT_INSTRUCTION_INPUT)
+                        - v(V_RIGHT_INSTRUCTION_INPUT))
+            }
             // Sub * (RightLookup − LeftInput + RightInput − 2^64)
-            8 => v(V_FLAG_SUBTRACT_OPERANDS)
-                * (v(V_RIGHT_LOOKUP_OPERAND) - v(V_LEFT_INSTRUCTION_INPUT)
-                    + v(V_RIGHT_INSTRUCTION_INPUT)
-                    - two_64()),
+            8 => {
+                v(V_FLAG_SUBTRACT_OPERANDS)
+                    * (v(V_RIGHT_LOOKUP_OPERAND) - v(V_LEFT_INSTRUCTION_INPUT)
+                        + v(V_RIGHT_INSTRUCTION_INPUT)
+                        - two_64())
+            }
             // Mul * (RightLookup − Product)
-            9 => v(V_FLAG_MULTIPLY_OPERANDS)
-                * (v(V_RIGHT_LOOKUP_OPERAND) - v(V_PRODUCT)),
+            9 => v(V_FLAG_MULTIPLY_OPERANDS) * (v(V_RIGHT_LOOKUP_OPERAND) - v(V_PRODUCT)),
             // (1 − Add − Sub − Mul − Advice) * (RightLookup − RightInput)
-            10 => (c(1) - v(V_FLAG_ADD_OPERANDS) - v(V_FLAG_SUBTRACT_OPERANDS)
-                - v(V_FLAG_MULTIPLY_OPERANDS)
-                - v(V_FLAG_ADVICE))
-                * (v(V_RIGHT_LOOKUP_OPERAND) - v(V_RIGHT_INSTRUCTION_INPUT)),
+            10 => {
+                (c(1)
+                    - v(V_FLAG_ADD_OPERANDS)
+                    - v(V_FLAG_SUBTRACT_OPERANDS)
+                    - v(V_FLAG_MULTIPLY_OPERANDS)
+                    - v(V_FLAG_ADVICE))
+                    * (v(V_RIGHT_LOOKUP_OPERAND) - v(V_RIGHT_INSTRUCTION_INPUT))
+            }
             // Assert * (LookupOutput − 1)
             11 => v(V_FLAG_ASSERT) * (v(V_LOOKUP_OUTPUT) - c(1)),
             // WriteLookupFlag * (RdWrite − LookupOutput)
-            12 => v(V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD)
-                * (v(V_RD_WRITE_VALUE) - v(V_LOOKUP_OUTPUT)),
+            12 => v(V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD) * (v(V_RD_WRITE_VALUE) - v(V_LOOKUP_OUTPUT)),
             // Jump * (RdWrite − UnexpPC − 4 + 2·IsCompressed)
-            13 => v(V_FLAG_JUMP)
-                * (v(V_RD_WRITE_VALUE) - v(V_UNEXPANDED_PC) - c(4)
-                    + c(2) * v(V_FLAG_IS_COMPRESSED)),
+            13 => {
+                v(V_FLAG_JUMP)
+                    * (v(V_RD_WRITE_VALUE) - v(V_UNEXPANDED_PC) - c(4)
+                        + c(2) * v(V_FLAG_IS_COMPRESSED))
+            }
             // ShouldJump * (NextUnexpPC − LookupOutput)
-            14 => v(V_SHOULD_JUMP)
-                * (v(V_NEXT_UNEXPANDED_PC) - v(V_LOOKUP_OUTPUT)),
+            14 => v(V_SHOULD_JUMP) * (v(V_NEXT_UNEXPANDED_PC) - v(V_LOOKUP_OUTPUT)),
             // ShouldBranch * (NextUnexpPC − UnexpPC − Imm)
-            15 => v(V_SHOULD_BRANCH)
-                * (v(V_NEXT_UNEXPANDED_PC) - v(V_UNEXPANDED_PC) - v(V_IMM)),
+            15 => v(V_SHOULD_BRANCH) * (v(V_NEXT_UNEXPANDED_PC) - v(V_UNEXPANDED_PC) - v(V_IMM)),
             // (1 − ShouldBranch − Jump) *
             //   (NextUnexpPC − UnexpPC − 4 + 4·DoNotUpdate + 2·IsCompressed)
-            16 => (c(1) - v(V_SHOULD_BRANCH) - v(V_FLAG_JUMP))
-                * (v(V_NEXT_UNEXPANDED_PC) - v(V_UNEXPANDED_PC) - c(4)
-                    + c(4) * v(V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)
-                    + c(2) * v(V_FLAG_IS_COMPRESSED)),
+            16 => {
+                (c(1) - v(V_SHOULD_BRANCH) - v(V_FLAG_JUMP))
+                    * (v(V_NEXT_UNEXPANDED_PC) - v(V_UNEXPANDED_PC) - c(4)
+                        + c(4) * v(V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)
+                        + c(2) * v(V_FLAG_IS_COMPRESSED))
+            }
             // (Virtual − IsLast) * (NextPC − PC − 1)
-            17 => (v(V_FLAG_VIRTUAL_INSTRUCTION) - v(V_FLAG_IS_LAST_IN_SEQUENCE))
-                * (v(V_NEXT_PC) - v(V_PC) - c(1)),
+            17 => {
+                (v(V_FLAG_VIRTUAL_INSTRUCTION) - v(V_FLAG_IS_LAST_IN_SEQUENCE))
+                    * (v(V_NEXT_PC) - v(V_PC) - c(1))
+            }
             // (NextIsVirtual − NextIsFirst) * (1 − DoNotUpdate)
-            18 => (v(V_NEXT_IS_VIRTUAL) - v(V_NEXT_IS_FIRST_IN_SEQUENCE))
-                * (c(1) - v(V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)),
+            18 => {
+                (v(V_NEXT_IS_VIRTUAL) - v(V_NEXT_IS_FIRST_IN_SEQUENCE))
+                    * (c(1) - v(V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC))
+            }
             _ => unreachable!(),
         }
     }
@@ -905,5 +924,4 @@ mod z3_tests {
             );
         }
     }
-
 }

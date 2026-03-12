@@ -60,11 +60,7 @@ fn bench_reduce_latency<B: ComputeBackend>(
 }
 
 /// Measure median latency of `interpolate_pairs_inplace` for a given backend.
-fn bench_bind_latency<B: ComputeBackend>(
-    backend: &B,
-    data: &[Fr],
-    scalar: Fr,
-) -> f64 {
+fn bench_bind_latency<B: ComputeBackend>(backend: &B, data: &[Fr], scalar: Fr) -> f64 {
     // Warmup
     for _ in 0..WARMUP {
         let mut buf = backend.upload(data);
@@ -104,7 +100,10 @@ fn main() {
         let cpu_k = cpu.compile_kernel::<Fr>(&desc);
 
         println!("\n=== pairwise_reduce D={d} ===");
-        println!("{:<12} {:>14} {:>14} {:>10}", "n", "metal_ns", "cpu_ns", "winner");
+        println!(
+            "{:<12} {:>14} {:>14} {:>10}",
+            "n", "metal_ns", "cpu_ns", "winner"
+        );
         println!("{}", "-".repeat(54));
 
         let mut crossover: Option<usize> = None;
@@ -134,7 +133,10 @@ fn main() {
     // ── interpolate_pairs_inplace threshold ───────────────────────────
     {
         println!("\n=== interpolate_pairs_inplace ===");
-        println!("{:<12} {:>14} {:>14} {:>10}", "n", "metal_ns", "cpu_ns", "winner");
+        println!(
+            "{:<12} {:>14} {:>14} {:>10}",
+            "n", "metal_ns", "cpu_ns", "winner"
+        );
         println!("{}", "-".repeat(54));
 
         let scalar = Fr::random(&mut rng);
@@ -176,7 +178,10 @@ fn main() {
         let cpu_k = cpu.compile_kernel::<Fr>(&desc);
 
         println!("\n=== sumcheck_round (reduce + bind) D={d} ===");
-        println!("{:<12} {:>14} {:>14} {:>10}", "n", "metal_ns", "cpu_ns", "winner");
+        println!(
+            "{:<12} {:>14} {:>14} {:>10}",
+            "n", "metal_ns", "cpu_ns", "winner"
+        );
         println!("{}", "-".repeat(54));
 
         let scalar = Fr::random(&mut rng);
@@ -191,7 +196,10 @@ fn main() {
                 let mut bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
                 let refs: Vec<_> = bufs.iter().collect();
                 let _ = metal.pairwise_reduce_unweighted(
-                    &refs, &mtl_k, desc.num_evals(), BindingOrder::LowToHigh,
+                    &refs,
+                    &mtl_k,
+                    desc.num_evals(),
+                    BindingOrder::LowToHigh,
                 );
                 bufs = metal.interpolate_pairs_batch(bufs, scalar);
                 drop(bufs);
@@ -204,7 +212,10 @@ fn main() {
                 let start = Instant::now();
                 let refs: Vec<_> = bufs.iter().collect();
                 let _ = metal.pairwise_reduce_unweighted(
-                    &refs, &mtl_k, desc.num_evals(), BindingOrder::LowToHigh,
+                    &refs,
+                    &mtl_k,
+                    desc.num_evals(),
+                    BindingOrder::LowToHigh,
                 );
                 bufs = metal.interpolate_pairs_batch(bufs, scalar);
                 drop(bufs);
@@ -220,7 +231,10 @@ fn main() {
                 let start = Instant::now();
                 let refs: Vec<_> = bufs.iter().collect();
                 let _ = cpu.pairwise_reduce_unweighted(
-                    &refs, &cpu_k, desc.num_evals(), BindingOrder::LowToHigh,
+                    &refs,
+                    &cpu_k,
+                    desc.num_evals(),
+                    BindingOrder::LowToHigh,
                 );
                 bufs = cpu.interpolate_pairs_batch(bufs, scalar);
                 drop(bufs);

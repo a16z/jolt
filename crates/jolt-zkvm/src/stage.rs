@@ -3,7 +3,7 @@
 //! Each sumcheck stage in the Jolt pipeline implements [`ProverStage`],
 //! producing claims and witnesses for [`BatchedSumcheckProver`](jolt_sumcheck::BatchedSumcheckProver).
 
-use jolt_field::WithChallenge;
+use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_sumcheck::claim::SumcheckClaim;
@@ -14,7 +14,7 @@ use jolt_transcript::Transcript;
 ///
 /// Contains paired sumcheck claims and witnesses, ready to feed into
 /// [`BatchedSumcheckProver::prove`](jolt_sumcheck::BatchedSumcheckProver::prove).
-pub struct StageBatch<F: WithChallenge> {
+pub struct StageBatch<F: Field> {
     /// Sumcheck claims (one per instance in this stage).
     pub claims: Vec<SumcheckClaim<F>>,
     /// Sumcheck witnesses (element-wise paired with `claims`).
@@ -31,7 +31,7 @@ pub struct StageBatch<F: WithChallenge> {
 ///
 /// Generic over `T: Transcript` for dyn-compatibility — the pipeline fixes
 /// a concrete transcript type and uses `dyn ProverStage<F, T>`.
-pub trait ProverStage<F: WithChallenge, T: Transcript> {
+pub trait ProverStage<F: Field, T: Transcript> {
     /// Human-readable stage name for tracing and profiling.
     ///
     /// Used by the pipeline to create named tracing spans (e.g. in Perfetto).
@@ -77,7 +77,7 @@ pub trait ProverStage<F: WithChallenge, T: Transcript> {
 /// In [`extract_claims`](ProverStage::extract_claims), each sub-stage
 /// receives the challenge slice corresponding to its active rounds
 /// (accounting for the front-loaded offset).
-pub struct CompositeStage<F: WithChallenge, T: Transcript> {
+pub struct CompositeStage<F: Field, T: Transcript> {
     sub_stages: Vec<Box<dyn ProverStage<F, T>>>,
     /// `(offset, num_vars)` per sub-stage, computed during `build()`.
     /// `offset = max_num_vars - sub_stage_max_num_vars`.
@@ -85,7 +85,7 @@ pub struct CompositeStage<F: WithChallenge, T: Transcript> {
     name: &'static str,
 }
 
-impl<F: WithChallenge, T: Transcript> CompositeStage<F, T> {
+impl<F: Field, T: Transcript> CompositeStage<F, T> {
     pub fn new(name: &'static str, sub_stages: Vec<Box<dyn ProverStage<F, T>>>) -> Self {
         Self {
             sub_stages,
@@ -95,7 +95,7 @@ impl<F: WithChallenge, T: Transcript> CompositeStage<F, T> {
     }
 }
 
-impl<F: WithChallenge, T: Transcript> ProverStage<F, T> for CompositeStage<F, T> {
+impl<F: Field, T: Transcript> ProverStage<F, T> for CompositeStage<F, T> {
     fn name(&self) -> &'static str {
         self.name
     }
@@ -206,19 +206,12 @@ mod tests {
         assert_eq!(batch.claims[1].degree, 2);
 
         let claims_snapshot: Vec<_> = batch.claims.clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"composite_test");
-        let (_final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &claims_snapshot,
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (_final_eval, challenges) =
+            BatchedSumcheckVerifier::verify(&claims_snapshot, &proof, &mut vt)
+                .expect("verification should succeed");
 
         let all_claims = composite.extract_claims(&challenges, _final_eval);
 
@@ -271,19 +264,12 @@ mod tests {
         assert_eq!(composite.sub_stage_layout, vec![(2, 3), (0, 5)]);
 
         let claims_snapshot: Vec<_> = batch.claims.clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"mixed_vars");
-        let (_final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &claims_snapshot,
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (_final_eval, challenges) =
+            BatchedSumcheckVerifier::verify(&claims_snapshot, &proof, &mut vt)
+                .expect("verification should succeed");
 
         assert_eq!(challenges.len(), nv2); // max_num_vars
 
@@ -382,19 +368,12 @@ mod tests {
         assert_eq!(batch.claims[3].degree, 2);
 
         let claims_snapshot: Vec<_> = batch.claims.clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"s2_batch");
-        let (_final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &claims_snapshot,
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (_final_eval, challenges) =
+            BatchedSumcheckVerifier::verify(&claims_snapshot, &proof, &mut vt)
+                .expect("verification should succeed");
 
         let all_claims = composite.extract_claims(&challenges, _final_eval);
         // PV: 8 polys, RW: 3 polys, RC: 2 polys → 13 total

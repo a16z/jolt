@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
-use jolt_field::{Field, WithChallenge};
+use jolt_field::Field;
 use jolt_ir::ClaimDefinition;
 use jolt_openings::ProverClaim;
 use jolt_poly::{EqPolynomial, Polynomial};
@@ -154,7 +154,7 @@ impl<F: Field, B: ComputeBackend> ClaimReductionStage<F, B> {
     }
 }
 
-impl<F: WithChallenge, B: ComputeBackend, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F, B> {
+impl<F: Field, B: ComputeBackend, T: Transcript> ProverStage<F, T> for ClaimReductionStage<F, B> {
     fn name(&self) -> &'static str {
         "S3_claim_reductions"
     }
@@ -273,19 +273,11 @@ mod tests {
         assert_eq!(batch.claims[0].degree, 2);
 
         let claim = batch.claims[0].clone();
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"s3_registers");
-        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &[claim],
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(&[claim], &proof, &mut vt)
+            .expect("verification should succeed");
 
         let prover_claims = <ClaimReductionStage<Fr, CpuBackend> as ProverStage<
             Fr,
@@ -320,19 +312,11 @@ mod tests {
         let mut batch = stage.build(&[], &mut pt);
         let claim = batch.claims[0].clone();
 
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"s3_increment");
-        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &[claim],
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(&[claim], &proof, &mut vt)
+            .expect("verification should succeed");
 
         let prover_claims = <ClaimReductionStage<Fr, CpuBackend> as ProverStage<
             Fr,
@@ -373,19 +357,12 @@ mod tests {
 
         assert_eq!(batch.claims.len(), 2);
 
-        let proof = BatchedSumcheckProver::prove(
-            &batch.claims,
-            &mut batch.witnesses,
-            &mut pt,
-        );
+        let proof = BatchedSumcheckProver::prove(&batch.claims, &mut batch.witnesses, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"multi_instance");
-        let (final_eval, challenges) = BatchedSumcheckVerifier::verify(
-            &batch.claims,
-            &proof,
-            &mut vt,
-        )
-        .expect("verification should succeed");
+        let (final_eval, challenges) =
+            BatchedSumcheckVerifier::verify(&batch.claims, &proof, &mut vt)
+                .expect("verification should succeed");
 
         let prover_claims = <ClaimReductionStage<Fr, CpuBackend> as ProverStage<
             Fr,

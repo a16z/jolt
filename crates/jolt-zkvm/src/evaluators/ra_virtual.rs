@@ -3,7 +3,7 @@
 //! Wraps [`RaPolynomial`] and [`SplitEqEvaluator`] to compute
 //! `g(X) = Σ_j eq(·) · Σ_i γ^i · Π_k ra_{i·m+k}(X, j)` per round.
 
-use jolt_field::WithChallenge;
+use jolt_field::Field;
 use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{SplitEqEvaluator, SumcheckCompute};
 
@@ -15,7 +15,7 @@ use super::ra_poly::RaPolynomial;
 /// When `n_products == 1`, delegates to [`compute_mles_product_sum`] (single product).
 /// When `n_products > 1`, uses [`compute_mles_weighted_sop`] for the gamma-weighted
 /// sum of products `Σ_i γ^i · Π_k ra_{i·m+k}`.
-pub struct RaVirtualCompute<F: WithChallenge> {
+pub struct RaVirtualCompute<F: Field> {
     /// RA chunk polynomials (one per committed chunk across all virtual polys).
     pub mles: Vec<RaPolynomial<u8, F>>,
     /// Split-eq evaluator factoring `eq(w, x)`.
@@ -30,7 +30,7 @@ pub struct RaVirtualCompute<F: WithChallenge> {
     pub n_products: usize,
 }
 
-impl<F: WithChallenge> SumcheckCompute<F> for RaVirtualCompute<F> {
+impl<F: Field> SumcheckCompute<F> for RaVirtualCompute<F> {
     fn set_claim(&mut self, claim: F) {
         self.claim = claim;
     }
@@ -49,11 +49,10 @@ impl<F: WithChallenge> SumcheckCompute<F> for RaVirtualCompute<F> {
         }
     }
 
-    fn bind(&mut self, challenge: F::Challenge) {
+    fn bind(&mut self, challenge: F) {
         self.eq_poly.bind(challenge);
-        let r: F = challenge.into();
         for mle in &mut self.mles {
-            mle.bind_f(r, self.binding_order);
+            mle.bind(challenge, self.binding_order);
         }
     }
 }
