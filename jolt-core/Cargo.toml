@@ -38,6 +38,7 @@ prover = [
     "dory/backends",
     "dory/cache", # This includes `parallel` feature
     "dory/disk-persistence",
+    "dep:tikv-jemallocator",
 ]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
@@ -89,6 +90,7 @@ jolt-inlines-keccak256 = { workspace = true, features = [
     "host",
 ], optional = true }
 sysinfo = { workspace = true, optional = true }
+tikv-jemallocator = { workspace = true, optional = true }
 pprof = { version = "0.15", features = [
     "prost-codec",
     "flamegraph",

@@ -106,8 +106,8 @@ ProofTranscript: Transcript               — Fiat-Shamir transcript (Blake2bTra
 
 - `DensePolynomial<F>`: Full field-element coefficients
 - `CompactPolynomial<T>`: Small scalar coefficients (u8–i128), promoted to field on bind
-- `RaPolynomial`: Lazy materialization via Round1→Round2→Round3→RoundN state machine
-- `SharedRaPolynomials`: Shares eq tables across N polynomials for memory efficiency
+- `RaPolynomial`: Lazy materialization via table-doubling state machine (TableRound → RoundN, materializes at 8 groups)
+- `SharedRaPolynomials`: Shares eq tables across N polynomials via table-doubling (TableRound → RoundN, materializes at 16 groups)
 - `PrefixSuffixDecomposition`: Splits polynomial as `Σ P_i(prefix) · Q_i(suffix)` for efficient sumcheck
 - `MultilinearPolynomial<F>`: Enum dispatching over all scalar types + OneHot/RLC variants
 
