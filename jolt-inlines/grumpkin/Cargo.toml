@@ -20,5 +20,8 @@ ark-grumpkin.workspace = true
 ark-ff.workspace = true
 ark-ec.workspace = true
 
+[package.metadata.cargo-machete]
+ignored = ["inventory"]
+
 [dev-dependencies]
 tracer = { workspace = true, features = ["std", "test-utils"] }

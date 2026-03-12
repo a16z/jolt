@@ -21,5 +21,8 @@ ark-ff.workspace = true
 num-bigint.workspace = true
 num-integer.workspace = true
 
+[package.metadata.cargo-machete]
+ignored = ["inventory"]
+
 [dev-dependencies]
 tracer = { workspace = true, features = ["std", "test-utils"] }
