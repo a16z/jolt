@@ -5,20 +5,12 @@ use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 pub type ChainingValue = [u32; crate::CHAINING_VALUE_LEN];
 pub type MessageBlock = [u32; crate::MSG_BLOCK_LEN];
 
-fn ensure_registered() {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    INIT.call_once(|| crate::init_inlines().unwrap());
-}
-
 pub fn create_blake3_harness() -> InlineTestHarness {
-    ensure_registered();
     let layout = InlineMemoryLayout::single_input(80, 32);
     InlineTestHarness::new(layout, Xlen::Bit64)
 }
 
 pub fn create_blake3_keyed64_harness() -> InlineTestHarness {
-    ensure_registered();
     let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
     InlineTestHarness::new(layout, Xlen::Bit64)
 }

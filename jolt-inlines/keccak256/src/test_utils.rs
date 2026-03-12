@@ -13,10 +13,6 @@ pub struct KeccakTestCase {
 }
 
 pub fn create_keccak_harness(xlen: Xlen) -> InlineTestHarness {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    INIT.call_once(|| crate::init_inlines().unwrap());
-
     let layout = InlineMemoryLayout::single_input(136, 200);
     InlineTestHarness::new(layout, xlen)
 }

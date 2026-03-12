@@ -17,8 +17,6 @@ pub use jolt_core::zkvm::{
     verifier::JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, Serializable,
 };
 pub use jolt_core::AdviceTape;
-#[cfg(feature = "host")]
-pub use jolt_inlines_sdk::host::register_all_inlines;
 
 // Re-exports needed by the provable macro
 pub use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;

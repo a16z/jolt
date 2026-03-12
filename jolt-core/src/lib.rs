@@ -12,7 +12,8 @@
 #[cfg(feature = "host")]
 pub mod host;
 
-// Force-link inline crates so `inventory` discovers their registrations.
+// Force-link inline crates so their `inventory::submit!` entries are retained by the linker.
+// Without this, the linker strips the optional deps since nothing references them in code.
 #[cfg(feature = "host")]
 extern crate jolt_inlines_keccak256;
 #[cfg(feature = "host")]

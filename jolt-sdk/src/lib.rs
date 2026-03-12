@@ -26,11 +26,6 @@ pub mod host_utils;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub use host_utils::*;
 
-/// Register all compiled-in inline implementations.
-/// No-op when `host` feature is not enabled.
-#[cfg(not(feature = "host"))]
-pub fn register_all_inlines() {}
-
 mod spoil;
 pub use spoil::UnwrapOrSpoilProof;
 

@@ -10,12 +10,6 @@ mod sequence_tests {
     use tracer::emulator::cpu::Xlen;
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
-    fn ensure_registered() {
-        use std::sync::Once;
-        static INIT: Once = Once::new();
-        INIT.call_once(|| crate::init_inlines().unwrap());
-    }
-
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         // get expected value
         let arr_to_fq = |arr: &[u64; 4]| Fq::new(BigInt(*arr));
@@ -27,7 +21,7 @@ mod sequence_tests {
         .0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        ensure_registered();
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -73,7 +67,7 @@ mod sequence_tests {
         let expected = (arr_to_fq(a) * arr_to_fq(b)).into_bigint().0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        ensure_registered();
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -122,7 +116,7 @@ mod sequence_tests {
         let expected = (arr_to_fq(a) * arr_to_fq(a)).into_bigint().0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        ensure_registered();
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -166,7 +160,7 @@ mod sequence_tests {
         .0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        ensure_registered();
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -212,7 +206,7 @@ mod sequence_tests {
         let expected = (arr_to_fr(a) * arr_to_fr(b)).into_bigint().0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        ensure_registered();
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);
@@ -261,7 +255,7 @@ mod sequence_tests {
         let expected = (arr_to_fr(a) * arr_to_fr(a)).into_bigint().0;
         // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
-        ensure_registered();
+
         let mut harness = InlineTestHarness::new(layout, Xlen::Bit64);
         harness.setup_registers();
         harness.load_input64(a);

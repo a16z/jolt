@@ -2852,7 +2852,6 @@ dependencies = [
  "inferno 0.12.6",
  "itertools 0.14.0",
  "jolt-inlines-keccak256",
- "jolt-inlines-sdk",
  "jolt-inlines-sha2",
  "jolt-optimizations",
  "memory-stats",
@@ -2941,7 +2940,6 @@ dependencies = [
 name = "jolt-inlines-sdk"
 version = "0.1.0"
 dependencies = [
- "inventory",
  "tracer",
 ]
 
@@ -3004,7 +3002,6 @@ dependencies = [
  "cfg-if",
  "common",
  "jolt-core",
- "jolt-inlines-sdk",
  "jolt-platform",
  "jolt-sdk-macros",
  "postcard",
@@ -5795,6 +5792,7 @@ dependencies = [
  "common",
  "derive_more 2.1.1",
  "fnv",
+ "inventory",
  "itertools 0.14.0",
  "jolt-platform",
  "object 0.38.1",

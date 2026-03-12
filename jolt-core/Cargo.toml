@@ -101,7 +101,6 @@ ignored = ["prost"]
 
 [dev-dependencies]
 criterion.workspace = true
-jolt-inlines-sdk = { workspace = true, features = ["host"] }
 iai-callgrind.workspace = true
 serial_test.workspace = true
 tracer = { workspace = true, default-features = false, features = [

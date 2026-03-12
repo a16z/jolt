@@ -6,10 +6,6 @@ pub type BigIntInput = ([u64; INPUT_LIMBS], [u64; INPUT_LIMBS]);
 pub type BigIntOutput = [u64; OUTPUT_LIMBS];
 
 pub fn create_bigint_harness() -> InlineTestHarness {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    INIT.call_once(|| crate::init_inlines().unwrap());
-
     let layout = InlineMemoryLayout::two_inputs(32, 32, 64);
     InlineTestHarness::new(layout, Xlen::Bit64)
 }

@@ -3,10 +3,6 @@ use tracer::emulator::cpu::Xlen;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 pub fn create_blake2_harness() -> InlineTestHarness {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    INIT.call_once(|| crate::init_inlines().unwrap());
-
     let layout = InlineMemoryLayout::single_input(144, 64);
     InlineTestHarness::new(layout, Xlen::Bit64)
 }

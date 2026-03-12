@@ -470,7 +470,6 @@ impl MacroBuilder {
             {
                 #imports
 
-                jolt::register_all_inlines();
                 let (bytecode, memory_init, program_size, e_entry) = program.decode();
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,

@@ -676,7 +676,6 @@ mod inline_ops {
                 const FUNCT3: u32 = $funct3;
                 const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
                 const NAME: &'static str = $op_name;
-                const HAS_ADVICE: bool = true;
 
                 fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
                     super::$seq_fn(asm, operands)
