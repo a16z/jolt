@@ -2883,7 +2883,6 @@ name = "jolt-inlines-bigint"
 version = "0.1.0"
 dependencies = [
  "ark-ff 0.5.0",
- "inventory",
  "jolt-inlines-sdk",
  "rand 0.8.5",
  "tracer",
@@ -2895,7 +2894,6 @@ version = "0.1.0"
 dependencies = [
  "blake2",
  "hex-literal",
- "inventory",
  "jolt-inlines-sdk",
  "rand 0.8.5",
  "tracer",
@@ -2906,7 +2904,6 @@ name = "jolt-inlines-blake3"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "inventory",
  "jolt-inlines-sdk",
  "rand 0.8.5",
  "tracer",
@@ -2919,7 +2916,6 @@ dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",
  "ark-grumpkin",
- "inventory",
  "jolt-inlines-sdk",
  "serde",
  "tracer",
@@ -2930,7 +2926,6 @@ name = "jolt-inlines-keccak256"
 version = "0.1.0"
 dependencies = [
  "hex-literal",
- "inventory",
  "jolt-inlines-sdk",
  "sha3",
  "tracer",
@@ -2940,6 +2935,7 @@ dependencies = [
 name = "jolt-inlines-sdk"
 version = "0.1.0"
 dependencies = [
+ "inventory",
  "tracer",
 ]
 
@@ -2949,7 +2945,6 @@ version = "0.1.0"
 dependencies = [
  "ark-ff 0.5.0",
  "ark-secp256k1",
- "inventory",
  "jolt-inlines-sdk",
  "num-bigint",
  "num-integer",
@@ -2961,7 +2956,6 @@ dependencies = [
 name = "jolt-inlines-sha2"
 version = "0.1.0"
 dependencies = [
- "inventory",
  "jolt-inlines-sdk",
  "sha2",
  "tracer",

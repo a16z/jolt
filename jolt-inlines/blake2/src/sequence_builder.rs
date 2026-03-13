@@ -253,31 +253,16 @@ impl Blake2SequenceBuilder {
     }
 }
 
-pub fn blake2b_inline_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    Blake2SequenceBuilder::new(asm, operands).build()
-}
+pub struct Blake2bCompression;
 
-#[cfg(feature = "host")]
-pub use inline_ops::*;
+impl jolt_inlines_sdk::host::InlineOp for Blake2bCompression {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::BLAKE2_FUNCT3;
+    const FUNCT7: u32 = crate::BLAKE2_FUNCT7;
+    const NAME: &'static str = crate::BLAKE2_NAME;
 
-#[cfg(feature = "host")]
-mod inline_ops {
-    use jolt_inlines_sdk::host::{FormatInline, InlineOp, InstrAssembler, Instruction};
-
-    pub struct Blake2bCompression;
-
-    impl InlineOp for Blake2bCompression {
-        const OPCODE: u32 = crate::INLINE_OPCODE;
-        const FUNCT3: u32 = crate::BLAKE2_FUNCT3;
-        const FUNCT7: u32 = crate::BLAKE2_FUNCT7;
-        const NAME: &'static str = crate::BLAKE2_NAME;
-
-        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-            super::blake2b_inline_sequence_builder(asm, operands)
-        }
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        Blake2SequenceBuilder::new(asm, operands).build()
     }
 }
 

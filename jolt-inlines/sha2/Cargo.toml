@@ -9,14 +9,10 @@ repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
-host = ["dep:inventory", "jolt-inlines-sdk/host"]
+host = ["jolt-inlines-sdk/host"]
 
 [dependencies]
-jolt-inlines-sdk.workspace = true
-inventory = { workspace = true, optional = true }
-
-[package.metadata.cargo-machete]
-ignored = ["inventory"]
+jolt-inlines-sdk = { workspace = true, optional = true }
 
 [dev-dependencies]
 sha2.workspace = true

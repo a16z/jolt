@@ -9,7 +9,8 @@ repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
-host = ["dep:tracer"]
+host = ["dep:tracer", "dep:inventory"]
 
 [dependencies]
 tracer = { workspace = true, optional = true, features = ["std"] }
+inventory = { workspace = true, optional = true }

@@ -4,6 +4,7 @@ pub mod multiplication;
 pub use multiplication::*;
 
 #[cfg(feature = "host")]
-mod host;
-#[cfg(feature = "host")]
-pub use host::*;
+jolt_inlines_sdk::register_inlines! {
+    trace_file: "bigint_mul256_trace.joltinline",
+    ops: [multiplication::sequence_builder::BigintMul256],
+}

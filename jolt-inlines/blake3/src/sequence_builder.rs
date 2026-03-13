@@ -457,51 +457,29 @@ impl Blake3Keyed64SequenceBuilder {
     }
 }
 
-pub fn blake3_inline_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    Blake3SequenceBuilder::new(asm, operands).build()
-}
+pub struct Blake3Compression;
 
-pub fn blake3_keyed64_inline_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    Blake3Keyed64SequenceBuilder::new(asm, operands).build()
-}
+impl jolt_inlines_sdk::host::InlineOp for Blake3Compression {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::BLAKE3_FUNCT3;
+    const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
+    const NAME: &'static str = crate::BLAKE3_NAME;
 
-#[cfg(feature = "host")]
-pub use inline_ops::*;
-
-#[cfg(feature = "host")]
-mod inline_ops {
-    use jolt_inlines_sdk::host::{FormatInline, InlineOp, InstrAssembler, Instruction};
-
-    pub struct Blake3Compression;
-
-    impl InlineOp for Blake3Compression {
-        const OPCODE: u32 = crate::INLINE_OPCODE;
-        const FUNCT3: u32 = crate::BLAKE3_FUNCT3;
-        const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
-        const NAME: &'static str = crate::BLAKE3_NAME;
-
-        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-            super::blake3_inline_sequence_builder(asm, operands)
-        }
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        Blake3SequenceBuilder::new(asm, operands).build()
     }
+}
 
-    pub struct Blake3Keyed64Compression;
+pub struct Blake3Keyed64Compression;
 
-    impl InlineOp for Blake3Keyed64Compression {
-        const OPCODE: u32 = crate::INLINE_OPCODE;
-        const FUNCT3: u32 = crate::BLAKE3_KEYED64_FUNCT3;
-        const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
-        const NAME: &'static str = crate::BLAKE3_KEYED64_NAME;
+impl jolt_inlines_sdk::host::InlineOp for Blake3Keyed64Compression {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::BLAKE3_KEYED64_FUNCT3;
+    const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
+    const NAME: &'static str = crate::BLAKE3_KEYED64_NAME;
 
-        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-            super::blake3_keyed64_inline_sequence_builder(asm, operands)
-        }
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        Blake3Keyed64SequenceBuilder::new(asm, operands).build()
     }
 }
 

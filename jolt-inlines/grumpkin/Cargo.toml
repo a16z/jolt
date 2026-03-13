@@ -9,18 +9,14 @@ repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
-host = ["dep:inventory", "jolt-inlines-sdk/host"]
+host = ["jolt-inlines-sdk/host"]
 
 [dependencies]
 jolt-inlines-sdk.workspace = true
-inventory = { workspace = true, optional = true }
 serde.workspace = true
 ark-grumpkin.workspace = true
 ark-ff.workspace = true
 ark-ec.workspace = true
-
-[package.metadata.cargo-machete]
-ignored = ["inventory"]
 
 [dev-dependencies]
 tracer = { workspace = true, features = ["std", "test-utils"] }

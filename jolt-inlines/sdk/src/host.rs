@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 use tracer::utils::inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
 
+pub use inventory;
 pub use tracer::emulator::cpu::{Cpu, Xlen};
 pub use tracer::instruction;
 pub use tracer::instruction::format::format_inline::FormatInline;
@@ -78,7 +79,7 @@ macro_rules! register_inlines {
 #[macro_export]
 macro_rules! __submit_inline_op {
     ($op:ty) => {
-        inventory::submit! {
+        $crate::host::inventory::submit! {
             $crate::host::InlineRegistration {
                 opcode: <$op as $crate::host::InlineOp>::OPCODE,
                 funct3: <$op as $crate::host::InlineOp>::FUNCT3,

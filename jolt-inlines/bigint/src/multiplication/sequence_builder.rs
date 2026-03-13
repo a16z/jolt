@@ -143,30 +143,15 @@ impl BigIntMulSequenceBuilder {
     }
 }
 
-pub fn bigint_mul_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    BigIntMulSequenceBuilder::new(asm, operands).build()
-}
+pub struct BigintMul256;
 
-#[cfg(feature = "host")]
-pub use inline_ops::*;
+impl jolt_inlines_sdk::host::InlineOp for BigintMul256 {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::BIGINT256_MUL_FUNCT3;
+    const FUNCT7: u32 = crate::BIGINT256_MUL_FUNCT7;
+    const NAME: &'static str = crate::BIGINT256_MUL_NAME;
 
-#[cfg(feature = "host")]
-mod inline_ops {
-    use jolt_inlines_sdk::host::{FormatInline, InlineOp, InstrAssembler, Instruction};
-
-    pub struct BigintMul256;
-
-    impl InlineOp for BigintMul256 {
-        const OPCODE: u32 = crate::INLINE_OPCODE;
-        const FUNCT3: u32 = crate::BIGINT256_MUL_FUNCT3;
-        const FUNCT7: u32 = crate::BIGINT256_MUL_FUNCT7;
-        const NAME: &'static str = crate::BIGINT256_MUL_NAME;
-
-        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-            super::bigint_mul_sequence_builder(asm, operands)
-        }
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        BigIntMulSequenceBuilder::new(asm, operands).build()
     }
 }

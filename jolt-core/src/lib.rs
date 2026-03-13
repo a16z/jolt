@@ -14,9 +14,9 @@ pub mod host;
 
 // Force-link inline crates so their `inventory::submit!` entries are retained by the linker.
 // Without this, the linker strips the optional deps since nothing references them in code.
-#[cfg(feature = "host")]
+#[cfg(test)]
 extern crate jolt_inlines_keccak256;
-#[cfg(feature = "host")]
+#[cfg(test)]
 extern crate jolt_inlines_sha2;
 
 pub mod curve;
