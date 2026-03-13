@@ -196,6 +196,17 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve<F = F>, R: Crypt
         w_row_blindings[R_coeff + oc_rows + row] = F::random(rng);
     }
 
+    // Commit regular non-coeff rows
+    let regular_noncoeff_rows = hyrax.regular_noncoeff_rows();
+    let mut noncoeff_row_commitments = Vec::with_capacity(regular_noncoeff_rows);
+    for row in 0..regular_noncoeff_rows {
+        let start = (R_coeff + oc_rows) * hyrax_C + row * hyrax_C;
+        let end = (start + hyrax_C).min(W.len());
+        let row_blinding = F::random(rng);
+        noncoeff_row_commitments.push(gens.commit(&W[start..end], &row_blinding));
+        w_row_blindings[R_coeff + oc_rows + row] = row_blinding;
+    }
+
     let u = loop {
         let candidate = F::random(rng);
         if !candidate.is_zero() {

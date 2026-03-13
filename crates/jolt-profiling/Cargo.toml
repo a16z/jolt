@@ -1,0 +1,48 @@
+[package]
+name = "jolt-profiling"
+version = "0.1.0"
+edition = "2021"
+description = "Profiling and tracing infrastructure for the Jolt proving system"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[features]
+default = []
+monitor = ["dep:sysinfo"]
+pprof = ["dep:pprof", "dep:prost"]
+allocative = ["dep:inferno", "dep:allocative"]
+
+[dependencies]
+tracing.workspace = true
+tracing-chrome.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+memory-stats.workspace = true
+
+# Optional: system metrics monitoring
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.sysinfo]
+version = "0.37"
+optional = true
+
+# Optional: CPU profiling via pprof
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.pprof]
+version = "0.15"
+features = ["prost-codec", "flamegraph", "frame-pointer"]
+optional = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.prost]
+version = "0.14"
+optional = true
+
+# Optional: heap flamegraphs
+[dependencies.inferno]
+workspace = true
+optional = true
+
+[dependencies.allocative]
+workspace = true
+optional = true
+
+[package.metadata.cargo-machete]
+ignored = ["prost"]

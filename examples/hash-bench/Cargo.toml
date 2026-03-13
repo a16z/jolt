@@ -14,4 +14,9 @@ guest = { package = "hashbench-guest", path = "./guest" }
 hex.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["jolt-inlines-sha2", "jolt-inlines-keccak256", "jolt-inlines-blake2", "jolt-inlines-blake3"]
+ignored = [
+  "jolt-inlines-sha2",
+  "jolt-inlines-keccak256",
+  "jolt-inlines-blake2",
+  "jolt-inlines-blake3",
+]

@@ -1,0 +1,41 @@
+//! Error types for Spartan proof generation and verification.
+
+/// Errors that can occur during Spartan proving or verification.
+///
+/// Wraps errors from the underlying sumcheck and opening proof sub-protocols,
+/// and adds Spartan-specific failure modes such as unsatisfied R1CS constraints
+/// and evaluation mismatches.
+#[derive(Debug, thiserror::Error)]
+pub enum SpartanError {
+    /// The witness does not satisfy the R1CS constraint system.
+    ///
+    /// The constraint at the given index has $Az_i \cdot Bz_i \neq Cz_i$.
+    #[error("R1CS constraint violation at index {0}")]
+    ConstraintViolation(usize),
+
+    /// A sumcheck sub-protocol failed (degree bound, round check, etc.).
+    #[error("sumcheck failed: {0}")]
+    Sumcheck(#[from] jolt_sumcheck::SumcheckError),
+
+    /// The polynomial opening proof did not verify.
+    #[error("opening proof failed: {0}")]
+    Opening(#[from] jolt_openings::OpeningsError),
+
+    /// The outer sumcheck final evaluation does not match the expected value
+    /// derived from the matrix MLEs and equality polynomial.
+    #[error(
+        "outer evaluation mismatch: the sumcheck final value does not match the MLE evaluations"
+    )]
+    OuterEvaluationMismatch,
+
+    /// The inner sumcheck final evaluation does not match the expected value
+    /// derived from the combined matrix MLE and witness polynomial evaluations.
+    #[error("inner evaluation mismatch: combined_matrix_eval * witness_eval != inner_final_eval")]
+    InnerEvaluationMismatch,
+
+    /// The witness does not satisfy the relaxed R1CS equation.
+    ///
+    /// The constraint at the given index has $Az_i \cdot Bz_i \neq u \cdot Cz_i + E_i$.
+    #[error("relaxed R1CS constraint violation at index {0}: Az∘Bz ≠ u·Cz + E")]
+    RelaxedConstraintViolation(usize),
+}

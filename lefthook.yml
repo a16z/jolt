@@ -1,0 +1,87 @@
+pre-commit:
+  piped: true
+  commands:
+    # Stage 1: Auto-fix everything
+    autofix-fmt:
+      priority: 1
+      glob: "*.rs"
+      run: cargo fmt --all -q && git add -u -- '*.rs'
+    autofix-clippy:
+      priority: 1
+      glob: "*.rs"
+      run: >-
+        cargo clippy
+        -p jolt-field -p jolt-poly -p jolt-transcript -p jolt-sumcheck
+        -p jolt-spartan -p jolt-openings -p jolt-dory -p jolt-instructions -p jolt-zkvm
+        --all-features --message-format=short -q --all-targets
+        --fix --allow-dirty --allow-staged 2>/dev/null;
+        git add -u -- '*.rs'
+    autofix-taplo:
+      priority: 1
+      glob: "*.toml"
+      run: taplo fmt && git add -u -- '*.toml'
+    autofix-typos:
+      priority: 1
+      run: typos -w 2>/dev/null; git add -u
+    # Stage 2: Verify everything is clean
+    check-fmt:
+      priority: 2
+      glob: "*.rs"
+      run: cargo fmt --all -- --check
+    check-clippy:
+      priority: 2
+      glob: "*.rs"
+      run: >-
+        cargo clippy
+        -p jolt-field -p jolt-poly -p jolt-transcript -p jolt-sumcheck
+        -p jolt-spartan -p jolt-openings -p jolt-dory -p jolt-instructions -p jolt-zkvm
+        --all-features --message-format=short -q --all-targets
+        -- -D warnings
+    check-taplo:
+      priority: 2
+      glob: "*.toml"
+      run: taplo fmt --check
+    check-typos:
+      priority: 2
+      run: typos
+    check-machete:
+      priority: 2
+      glob: "*.toml"
+      run: cargo machete --with-metadata
+    check-doc:
+      priority: 2
+      glob: "*.rs"
+      run: >-
+        RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -q
+        -p jolt-field -p jolt-poly -p jolt-transcript -p jolt-sumcheck
+        -p jolt-spartan -p jolt-openings -p jolt-dory -p jolt-instructions -p jolt-zkvm
+    check-fuzz:
+      priority: 2
+      glob: "*.rs"
+      run: >-
+        if command -v cargo-fuzz >/dev/null 2>&1 && rustup run nightly rustc --version >/dev/null 2>&1; then
+          for crate_dir in crates/jolt-field crates/jolt-poly crates/jolt-transcript crates/jolt-dory; do
+            if [ -d "$crate_dir/fuzz" ]; then
+              (cd "$crate_dir/fuzz" && cargo +nightly build -q 2>&1) || exit 1;
+            fi;
+          done;
+        else
+          echo "SKIP: cargo-fuzz or nightly toolchain not installed";
+        fi
+
+commit-msg:
+  commands:
+    conventional:
+      run: |
+        msg=$(head -1 {1})
+        if ! echo "$msg" | grep -qE '^(feat|fix|refactor|chore|docs|test|ci|perf|style|build|revert)(\(.+\))?: .+'; then
+          echo "ERROR: Commit message must follow conventional commits format:"
+          echo "  feat(scope): description"
+          echo "  fix(scope): description"
+          echo "  refactor(scope): description"
+          echo ""
+          echo "Valid scopes: core, tracer, sdk, poly, spartan, dory, sumcheck, field, transcript, openings, instructions, zkvm, deps, ci"
+          echo ""
+          echo "Got: $msg"
+          exit 1
+        fi

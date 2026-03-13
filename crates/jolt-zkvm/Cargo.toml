@@ -1,0 +1,48 @@
+[package]
+name = "jolt-zkvm"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "zkVM prover and verifier orchestration for the Jolt proving system"
+
+[lints]
+workspace = true
+
+[features]
+parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-sumcheck/parallel"]
+
+[dependencies]
+jolt-compute = { path = "../jolt-compute" }
+jolt-cpu = { path = "../jolt-cpu" }
+jolt-field = { path = "../jolt-field" }
+jolt-instructions = { path = "../jolt-instructions" }
+jolt-ir = { path = "../jolt-ir" }
+jolt-openings = { path = "../jolt-openings" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-spartan = { path = "../jolt-spartan" }
+jolt-sumcheck = { path = "../jolt-sumcheck" }
+jolt-transcript = { path = "../jolt-transcript" }
+jolt-verifier = { path = "../jolt-verifier" }
+jolt-witness = { path = "../jolt-witness" }
+rayon = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+tracer = { path = "../../tracer" }
+tracing.workspace = true
+
+[dev-dependencies]
+jolt-compute = { path = "../jolt-compute" }
+jolt-crypto = { path = "../jolt-crypto" }
+jolt-dory = { path = "../jolt-dory" }
+jolt-host = { path = "../jolt-host" }
+jolt-metal = { path = "../jolt-metal" }
+jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
+jolt-profiling = { path = "../jolt-profiling" }
+jolt-verifier = { path = "../jolt-verifier" }
+num-traits = { workspace = true }
+postcard = { workspace = true, features = ["use-std"] }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }
+
+[[bench]]
+name = "profile"
+harness = false

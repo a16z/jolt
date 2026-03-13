@@ -1,0 +1,21 @@
+[workspace]
+
+[package]
+name = "jolt-dory-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-dory = { path = ".." }
+serde_json = "1"
+bincode = "1"
+
+[[bin]]
+name = "deser_commitment"
+path = "fuzz_targets/deser_commitment.rs"
+doc = false

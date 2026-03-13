@@ -1,0 +1,40 @@
+[package]
+name = "jolt-cpu"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "CPU compute backend and kernel compiler for the Jolt zkVM"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field", default-features = false }
+jolt-ir = { path = "../jolt-ir" }
+jolt-compute = { path = "../jolt-compute" }
+tracing.workspace = true
+rayon = { workspace = true, optional = true }
+
+[dev-dependencies]
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-poly = { path = "../jolt-poly" }
+jolt-sumcheck = { path = "../jolt-sumcheck" }
+jolt-transcript = { path = "../jolt-transcript" }
+rand = { workspace = true }
+rand_core = { workspace = true }
+rand_chacha = { workspace = true }
+num-traits = { workspace = true }
+criterion = { workspace = true }
+rayon = { workspace = true }
+
+[features]
+default = ["parallel"]
+parallel = ["rayon"]
+
+[[bench]]
+name = "compiled_kernels"
+harness = false
+
+[[bench]]
+name = "rayon_vs_backend"
+harness = false

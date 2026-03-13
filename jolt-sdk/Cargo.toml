@@ -2,11 +2,11 @@
 name = "jolt-sdk"
 version = "0.1.0"
 authors = [
-    "Michael Zhu <mzhu@a16z.com>",
-    "Sam Ragsdale <sragsdale@a16z.com>",
-    "Noah Citron <ncitron@a16z.com>",
-    "Andrew Tretyakov <atretyakov@a16z.com>",
-    "Markos Georghiades <mgeorghiades@a16z.com>",
+  "Michael Zhu <mzhu@a16z.com>",
+  "Sam Ragsdale <sragsdale@a16z.com>",
+  "Noah Citron <ncitron@a16z.com>",
+  "Andrew Tretyakov <atretyakov@a16z.com>",
+  "Markos Georghiades <mgeorghiades@a16z.com>",
 ]
 description = "SDK for Jolt"
 license = "MIT"
@@ -20,31 +20,25 @@ debug = ["zeroos?/debug"]
 zk = ["jolt-core?/zk"]
 
 host = [
-    "jolt-core/default",
-    "jolt-platform/std",
-    "dep:common",
-    "postcard/use-std",
-    "serde/std",
+  "jolt-core/default",
+  "jolt-platform/std",
+  "dep:common",
+  "postcard/use-std",
+  "serde/std",
 ]
 
-guest-nostd = [
-    "zeroos-nostd",
-]
+guest-nostd = ["zeroos-nostd"]
 
 # ZeroOS features
 guest-std = [
-    "postcard/use-std",
-    "jolt-platform/std",
-    "jolt-sdk-macros/guest-std",
-    "serde/std",
-    "zeroos-std",
+  "postcard/use-std",
+  "jolt-platform/std",
+  "jolt-sdk-macros/guest-std",
+  "serde/std",
+  "zeroos-std",
 ]
 
-guest-verifier = [
-    "guest-std",
-    "dep:common",
-    "jolt-core/minimal",
-]
+guest-verifier = ["guest-std", "dep:common", "jolt-core/minimal"]
 
 malloc-shim = ["jolt-platform/malloc-shim"]
 
@@ -67,15 +61,9 @@ zeroos-vfs = ["zeroos?/vfs"]
 zeroos-random = ["zeroos?/random", "zeroos?/rng-lcg"]
 zeroos-vfs-device-console = ["zeroos-vfs", "zeroos?/vfs-device-console"]
 
-zeroos-nostd = [
-    "dep:zeroos",
-    "zeroos-runtime-nostd",
-]
+zeroos-nostd = ["dep:zeroos", "zeroos-runtime-nostd"]
 
-zeroos-std = [
-    "dep:zeroos",
-    "zeroos-runtime-musl",
-]
+zeroos-std = ["dep:zeroos", "zeroos-runtime-musl"]
 
 [dependencies]
 
@@ -94,10 +82,16 @@ cfg-if = { workspace = true }
 
 [target.'cfg(all(target_arch = "riscv64"))'.dependencies]
 riscv = { workspace = true }
-zeroos = { workspace = true, default-features = false, features = ["arch-riscv", "alloc-linked-list"]}
+zeroos = { workspace = true, default-features = false, features = [
+  "arch-riscv",
+  "alloc-linked-list",
+] }
 
 [target.'cfg(all(target_arch = "riscv64", target_os = "none"))'.dependencies]
-zeroos = { workspace = true, default-features = false, features = ["runtime-nostd", "panic"]}
+zeroos = { workspace = true, default-features = false, features = [
+  "runtime-nostd",
+  "panic",
+] }
 
 [target.'cfg(all(target_arch = "riscv64", target_os = "linux"))'.dependencies]
-zeroos = { workspace = true, default-features = false, features = ["os-linux"]}
+zeroos = { workspace = true, default-features = false, features = ["os-linux"] }

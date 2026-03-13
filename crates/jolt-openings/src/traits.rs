@@ -1,0 +1,288 @@
+//! Abstract commitment scheme trait hierarchy.
+//!
+//! Four tiers of polynomial commitment scheme (PCS) interfaces:
+//!
+//! 1. [`CommitmentScheme`] — base trait for commit, open, and verify.
+//!    Extends [`jolt_crypto::Commitment`] to inherit the `Output` associated type.
+//! 2. [`AdditivelyHomomorphic`] — commitments can be linearly combined.
+//! 3. [`StreamingCommitment`] — incremental/chunked commitment.
+//! 4. [`ZkOpeningScheme`] — zero-knowledge opening proofs with committed evaluations.
+//!
+//! Additionally, [`VcSetupExtractable`] bridges PCS and vector commitment setup
+//! when both share trust assumptions (e.g., same SRS).
+
+use std::fmt::Debug;
+
+use jolt_crypto::{Commitment, JoltCommitment};
+use jolt_field::Field;
+use jolt_poly::MultilinearPoly;
+use jolt_transcript::{AppendToTranscript, Transcript};
+use serde::{de::DeserializeOwned, Serialize};
+
+use crate::error::OpeningsError;
+
+/// Base polynomial commitment scheme for multilinear polynomials.
+///
+/// A PCS allows a prover to commit to a multilinear polynomial
+/// $f : \mathbb{F}^n \to \mathbb{F}$ and later prove that $f(r) = v$
+/// for a verifier-chosen point $r \in \mathbb{F}^n$.
+///
+/// Extends [`Commitment`] from `jolt-crypto` — the `Output` associated type
+/// serves as the commitment value, shared with the vector commitment hierarchy.
+///
+/// ## Polynomial representation
+///
+/// The [`Polynomial`](Self::Polynomial) associated type allows PCS backends to
+/// accept richer polynomial representations than flat evaluation tables. Schemes
+/// with streaming or lazy evaluation (e.g., Dory's matrix-based vector-matrix
+/// product) avoid full materialization by using a structured polynomial type.
+/// The `From<Vec<F>>` bound ensures that materialized evaluation tables (e.g.,
+/// from [`rlc_combine`](crate::rlc_combine)) can always be converted.
+///
+/// ## Opening hints
+///
+/// The [`OpeningHint`](Self::OpeningHint) captures auxiliary data produced
+/// during commitment that accelerates opening proof generation. For example,
+/// Dory's commit phase produces row-level Pedersen commitments (G1 elements)
+/// that are reused during `open` to avoid redundant MSM. Schemes without
+/// commit-phase hints set `OpeningHint = ()`.
+///
+/// Setup parameters are provided externally (not created by the trait).
+/// Concrete types (e.g., `DoryScheme`) may provide inherent `setup_prover`/
+/// `setup_verifier` methods, but these are not part of the generic interface.
+pub trait CommitmentScheme: Commitment + Clone + Send + Sync + 'static {
+    /// Scalar field of the polynomial.
+    type Field: Field;
+
+    /// A proof that a committed polynomial evaluates to a claimed value at a given point.
+    type Proof: Clone + Send + Sync + Serialize + DeserializeOwned;
+
+    /// Prover-side structured reference string or setup material.
+    type ProverSetup: Clone + Send + Sync;
+
+    /// Verifier-side structured reference string or setup material.
+    type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
+
+    /// Polynomial representation accepted by [`open`](Self::open).
+    ///
+    /// Must implement [`MultilinearPoly`] to support streaming access
+    /// patterns during opening proofs (e.g., Dory's vector-matrix product
+    /// via [`fold_rows`](MultilinearPoly::fold_rows), or row-wise iteration
+    /// via [`for_each_row`](MultilinearPoly::for_each_row)).
+    ///
+    /// Simple schemes use `jolt_poly::Polynomial<F>` (evaluation table with
+    /// bind/evaluate). Schemes with streaming optimizations (e.g., Dory over
+    /// lazily-generated rows) use richer types like
+    /// [`RlcSource`](jolt_poly::RlcSource).
+    ///
+    /// `From<Vec<F>>` ensures materialized evaluation tables (produced by
+    /// RLC reduction) can always be passed to `open`.
+    type Polynomial: MultilinearPoly<Self::Field> + From<Vec<Self::Field>>;
+
+    /// Auxiliary data from the commit phase, reused during opening proofs.
+    ///
+    /// For Dory: row-level Pedersen commitments (avoids redundant MSM in `open`).
+    /// For schemes without commit-phase hints: `()`.
+    type OpeningHint: Clone + Send + Sync + Default;
+
+    /// Commits to a multilinear polynomial.
+    ///
+    /// Accepts any [`MultilinearPoly`] implementation: dense evaluation tables
+    /// (`&[F]`, `&Vec<F>`, `&Polynomial<F>`), sparse representations
+    /// ([`OneHotPolynomial`](jolt_poly::OneHotPolynomial)), or lazy compositions
+    /// ([`RlcSource`](jolt_poly::RlcSource)). PCS backends may check
+    /// [`is_sparse()`](MultilinearPoly::is_sparse) to select optimized commit
+    /// strategies (e.g., generator lookup instead of MSM for one-hot polynomials).
+    ///
+    /// Returns both the commitment and an opening hint. Callers that discard
+    /// the hint can pattern-match with `let (commitment, _) = PCS::commit(...)`.
+    fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint);
+
+    /// Produces an opening proof that the committed polynomial evaluates to `eval` at `point`.
+    ///
+    /// `poly` is the polynomial representation — either a materialized evaluation table
+    /// (via `Vec<F>::into()`) or a richer streaming type. The transcript must be in the
+    /// same state as the verifier's transcript at this protocol step.
+    ///
+    /// When `hint` is `Some`, the implementation reuses commit-phase auxiliary data
+    /// (e.g., row commitments) to avoid redundant computation. When `None`,
+    /// implementations that need hints must recompute them internally.
+    fn open(
+        poly: &Self::Polynomial,
+        point: &[Self::Field],
+        eval: Self::Field,
+        setup: &Self::ProverSetup,
+        hint: Option<Self::OpeningHint>,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Self::Proof;
+
+    /// Verifies that the committed polynomial evaluates to `eval` at `point`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OpeningsError::VerificationFailed`] if the proof is invalid.
+    fn verify(
+        commitment: &Self::Output,
+        point: &[Self::Field],
+        eval: Self::Field,
+        proof: &Self::Proof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<(), OpeningsError>;
+}
+
+/// Additively homomorphic commitment scheme (e.g., Dory, KZG).
+///
+/// When commitments live in an additive group, they can be linearly combined:
+///
+/// $$C_{\text{combined}} = \sum_{i=0}^{k-1} s_i \cdot C_i$$
+///
+/// This algebraic property enables batch reduction strategies like
+/// [`RlcReduction`](crate::RlcReduction), but batching itself is not
+/// part of this trait — it is a reduction concern.
+pub trait AdditivelyHomomorphic: CommitmentScheme {
+    /// Computes a linear combination of commitments:
+    /// $C = \sum_i s_i \cdot C_i$.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `commitments` and `scalars` have different lengths.
+    fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output;
+
+    /// Homomorphic combination of opening proof hints.
+    ///
+    /// Computes the same linear combination as [`combine`](Self::combine) but
+    /// over hints instead of commitments. For Dory, this combines row-level
+    /// Pedersen commitments via scalar-mul-add (much cheaper than recomputing
+    /// row commitments for the combined polynomial from scratch).
+    ///
+    /// Default: returns the zero hint. Suitable for `OpeningHint = ()`.
+    fn combine_hints(
+        _hints: Vec<Self::OpeningHint>,
+        _scalars: &[Self::Field],
+    ) -> Self::OpeningHint {
+        Self::OpeningHint::default()
+    }
+}
+
+/// Streaming (chunked) commitment scheme.
+///
+/// Allows committing to a polynomial incrementally, one chunk of evaluations
+/// at a time, without materializing the full evaluation table. Useful for
+/// large polynomials that exceed available memory (e.g., Dory tier-1/tier-2).
+///
+/// The prover setup is passed explicitly to [`feed`](Self::feed) and
+/// [`finish`](Self::finish) — no lifetime or ownership gymnastics required.
+pub trait StreamingCommitment: CommitmentScheme {
+    /// Intermediate state accumulated during streaming.
+    type PartialCommitment: Clone + Send + Sync;
+
+    /// Begins a streaming commitment session.
+    fn begin(setup: &Self::ProverSetup) -> Self::PartialCommitment;
+
+    /// Feeds the next chunk of evaluations into the partial commitment.
+    fn feed(
+        partial: &mut Self::PartialCommitment,
+        chunk: &[Self::Field],
+        setup: &Self::ProverSetup,
+    );
+
+    /// Finalizes the streaming session, producing the full commitment.
+    fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output;
+}
+
+/// Zero-knowledge polynomial commitment scheme.
+///
+/// Extends [`CommitmentScheme`] with the ability to produce opening proofs
+/// that hide the evaluation value. Instead of revealing the cleartext
+/// evaluation $v = f(r)$, the prover sends a hiding commitment to $v$
+/// (the [`EvalCommitment`](Self::EvalCommitment)) and proves that the
+/// committed polynomial evaluates to the committed value.
+///
+/// This trait makes no assumptions about the underlying algebraic structure.
+/// `EvalCommitment` could be a Pedersen commitment (group element), a
+/// lattice commitment, or a hash — the trait is fully generic.
+///
+/// PCS that do not support ZK simply do not implement this trait.
+pub trait ZkOpeningScheme: CommitmentScheme {
+    /// Hiding commitment to the evaluation value.
+    ///
+    /// For Dory: Pedersen commitment in G1.
+    /// For lattice-based PCS: a lattice commitment.
+    /// No group structure assumed.
+    type EvalCommitment: Clone
+        + Debug
+        + Eq
+        + Send
+        + Sync
+        + 'static
+        + Serialize
+        + DeserializeOwned
+        + AppendToTranscript;
+
+    /// Blinding factor for the eval commitment.
+    ///
+    /// Flows into the BlindFold witness so the prover can later open the
+    /// committed evaluation inside the verifier R1CS. Could be a field
+    /// element (Pedersen) or a vector (lattice).
+    type EvalBlinding: Clone + Send + Sync;
+
+    /// Produces a ZK opening proof that hides the evaluation value.
+    ///
+    /// Returns the proof, a hiding commitment to `eval`, and the blinding
+    /// factor used for that commitment. The verifier receives the proof and
+    /// `EvalCommitment` but never learns `eval` or the blinding factor.
+    fn open_zk(
+        poly: &Self::Polynomial,
+        point: &[Self::Field],
+        eval: Self::Field,
+        setup: &Self::ProverSetup,
+        hint: Option<Self::OpeningHint>,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> (Self::Proof, Self::EvalCommitment, Self::EvalBlinding);
+
+    /// Verifies a ZK opening proof against an eval commitment.
+    ///
+    /// Unlike [`CommitmentScheme::verify`], the verifier checks against
+    /// the `eval_commitment` rather than a cleartext evaluation value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OpeningsError::VerificationFailed`] if the proof is invalid.
+    fn verify_zk(
+        commitment: &Self::Output,
+        point: &[Self::Field],
+        eval_commitment: &Self::EvalCommitment,
+        proof: &Self::Proof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<(), OpeningsError>;
+
+    /// Extracts the eval commitment from a proof, if present.
+    ///
+    /// Returns `Some` for ZK-mode proofs, `None` for transparent-mode proofs.
+    /// Enables runtime detection of ZK vs. transparent mode on the verifier side.
+    fn extract_eval_commitment(proof: &Self::Proof) -> Option<Self::EvalCommitment>;
+}
+
+/// Bridge between a PCS's setup and a vector commitment's setup.
+///
+/// When a PCS and a vector commitment scheme share trust assumptions
+/// (e.g., both derive from the same SRS), this trait extracts the VC setup
+/// from the PCS prover setup. The orchestrator (jolt-zkvm) calls this once
+/// at setup time to obtain the VC parameters for BlindFold's committed
+/// sumcheck rounds.
+///
+/// No group structure assumed — works for Pedersen (extract generators from
+/// SRS), lattice VC (extract lattice parameters), hash VC (extract hash
+/// parameters), or any other vector commitment scheme.
+pub trait VcSetupExtractable<VC: JoltCommitment>: CommitmentScheme {
+    /// Derives a vector commitment setup from the PCS prover setup.
+    ///
+    /// `capacity` is the maximum number of values the VC needs to commit
+    /// (e.g., max sumcheck polynomial degree + 1).
+    fn extract_vc_setup(setup: &Self::ProverSetup, capacity: usize) -> VC::Setup;
+}

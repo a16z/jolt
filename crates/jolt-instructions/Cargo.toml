@@ -1,0 +1,16 @@
+[package]
+name = "jolt-instructions"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "RISC-V instruction set and lookup tables for the Jolt zkVM"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+rand = { workspace = true }

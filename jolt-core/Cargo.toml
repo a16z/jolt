@@ -79,7 +79,7 @@ tracing-subscriber.workspace = true
 eyre.workspace = true
 common.workspace = true
 tracer = { workspace = true, default-features = false, features = ["std"] }
-bincode.workspace = true
+bincode = { version = "2", features = ["serde"] }
 derive_more.workspace = true
 dory.workspace = true
 allocative.workspace = true

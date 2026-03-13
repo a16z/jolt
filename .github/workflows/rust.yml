@@ -25,6 +25,38 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all --check
 
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Check crate READMEs exist
+        run: |
+          missing=()
+          for crate in jolt-field jolt-poly jolt-sumcheck jolt-openings jolt-spartan jolt-instructions jolt-transcript jolt-dory jolt-zkvm; do
+            if [ ! -f "crates/$crate/README.md" ]; then
+              missing+=("crates/$crate/README.md")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing crate READMEs: ${missing[*]}"
+            exit 1
+          fi
+      - name: Check docs for crates/
+        run: |
+          cargo doc --no-deps --document-private-items \
+            -p jolt-field \
+            -p jolt-transcript \
+            -p jolt-poly \
+            -p jolt-openings \
+            -p jolt-sumcheck \
+            -p jolt-spartan \
+            -p jolt-instructions \
+            -p jolt-dory \
+            -p jolt-zkvm
+        env:
+          RUSTDOCFLAGS: -D warnings
+
   clippy:
     runs-on: ubuntu-latest
     steps:
@@ -38,6 +70,18 @@ jobs:
         run: cargo clippy --all --all-targets --features allocative,host,zk
       - name: cargo clippy --no-default-features
         run: cargo clippy --all --all-targets --no-default-features
+
+  taplo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: uncenter/setup-taplo@v1
+        with:
+          version: "0.9.3"
+      - name: Check TOML formatting
+        run: taplo fmt --check
+      - name: Validate TOML files
+        run: taplo lint
 
   machete:
     runs-on: ubuntu-latest
@@ -58,6 +102,24 @@ jobs:
       - name: Build Wasm
         working-directory: ./jolt-core
         run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --target wasm32-unknown-unknown
+
+  test-crates:
+    runs-on: ubuntu-latest
+    name: Test modular crates
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@nextest
+      - name: Run modular crate tests
+        run: >
+          cargo nextest run --cargo-quiet
+          -p jolt-field
+          -p jolt-transcript
+          -p jolt-poly
+          -p jolt-openings
+          -p jolt-sumcheck
+          -p jolt-spartan
+          -p jolt-dory
 
   test-core:
     runs-on: ubuntu-latest

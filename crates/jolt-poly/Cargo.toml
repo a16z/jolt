@@ -1,0 +1,34 @@
+[package]
+name = "jolt-poly"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Polynomial types and operations for the Jolt zkVM"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+serde = { workspace = true, features = ["derive", "alloc"] }
+tracing.workspace = true
+rayon = { workspace = true, optional = true }
+rand_core = { workspace = true }
+num-traits = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+bincode = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "poly_ops"
+harness = false
+
+[package.metadata.cargo-machete]
+ignored = ["rand"]
+
+[features]
+default = ["parallel"]
+parallel = ["rayon"]

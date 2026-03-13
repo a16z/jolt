@@ -2989,6 +2989,54 @@ mod tests {
         verifier.verify().expect("Failed to verify proof");
     }
 
+    /// Exercises std mode guest compilation (riscv64imac-zero-linux-musl custom target spec).
+    /// Catches regressions in target spec JSON generation, e.g. target-pointer-width type errors.
+    #[test]
+    #[serial]
+    fn stdlib_e2e_dory() {
+        DoryGlobals::reset();
+        let mut program = host::Program::new("stdlib-guest");
+        program.set_std(true);
+        program.set_func("int_to_string");
+        let inputs = postcard::to_stdvec(&81i32).unwrap();
+        let (bytecode, init_memory_state, _) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+        );
+
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, debug_info) = prover.prove();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        )
+        .expect("Failed to create verifier");
+        verifier.verify().expect("Failed to verify proof");
+    }
+
     /// Test BlindFold R1CS satisfaction using real sumcheck data from muldiv proof.
     ///
     /// This test extracts sumcheck polynomials from all 6 stages of a real Jolt proof

@@ -1,0 +1,35 @@
+[package]
+name = "jolt-verifier"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Lightweight Jolt proof verification — no prover dependencies"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field = { path = "../jolt-field" }
+jolt-transcript = { path = "../jolt-transcript" }
+jolt-crypto = { path = "../jolt-crypto" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-openings = { path = "../jolt-openings" }
+jolt-sumcheck = { path = "../jolt-sumcheck" }
+jolt-spartan = { path = "../jolt-spartan" }
+jolt-ir = { path = "../jolt-ir" }
+jolt-dory = { path = "../jolt-dory" }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+jolt-crypto = { path = "../jolt-crypto" }
+jolt-dory = { path = "../jolt-dory" }
+jolt-openings = { path = "../jolt-openings", features = ["test-utils"] }
+num-traits = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }
+
+[package.metadata.cargo-machete]
+ignored = ["rand"]
