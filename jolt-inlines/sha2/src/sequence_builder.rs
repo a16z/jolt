@@ -341,50 +341,28 @@ impl Sha256SequenceBuilder {
     }
 }
 
-pub fn sha2_inline_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    Sha256SequenceBuilder::new(asm, operands, false).build()
-}
+pub struct Sha256Compression;
 
-pub fn sha2_init_inline_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    Sha256SequenceBuilder::new(asm, operands, true).build()
-}
+impl jolt_inlines_sdk::host::InlineOp for Sha256Compression {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::SHA256_FUNCT3;
+    const FUNCT7: u32 = crate::SHA256_FUNCT7;
+    const NAME: &'static str = crate::SHA256_NAME;
 
-#[cfg(feature = "host")]
-pub use inline_ops::*;
-
-#[cfg(feature = "host")]
-mod inline_ops {
-    use jolt_inlines_sdk::host::{FormatInline, InlineOp, InstrAssembler, Instruction};
-
-    pub struct Sha256Compression;
-
-    impl InlineOp for Sha256Compression {
-        const OPCODE: u32 = crate::INLINE_OPCODE;
-        const FUNCT3: u32 = crate::SHA256_FUNCT3;
-        const FUNCT7: u32 = crate::SHA256_FUNCT7;
-        const NAME: &'static str = crate::SHA256_NAME;
-
-        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-            super::sha2_inline_sequence_builder(asm, operands)
-        }
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        Sha256SequenceBuilder::new(asm, operands, false).build()
     }
+}
 
-    pub struct Sha256CompressionInitial;
+pub struct Sha256CompressionInitial;
 
-    impl InlineOp for Sha256CompressionInitial {
-        const OPCODE: u32 = crate::INLINE_OPCODE;
-        const FUNCT3: u32 = crate::SHA256_INIT_FUNCT3;
-        const FUNCT7: u32 = crate::SHA256_INIT_FUNCT7;
-        const NAME: &'static str = crate::SHA256_INIT_NAME;
+impl jolt_inlines_sdk::host::InlineOp for Sha256CompressionInitial {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::SHA256_INIT_FUNCT3;
+    const FUNCT7: u32 = crate::SHA256_INIT_FUNCT7;
+    const NAME: &'static str = crate::SHA256_INIT_NAME;
 
-        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-            super::sha2_init_inline_sequence_builder(asm, operands)
-        }
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        Sha256SequenceBuilder::new(asm, operands, true).build()
     }
 }

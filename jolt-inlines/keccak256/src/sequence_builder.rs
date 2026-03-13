@@ -251,30 +251,15 @@ impl Keccak256SequenceBuilder {
     }
 }
 
-pub fn keccak256_inline_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    Keccak256SequenceBuilder::new(asm, operands).build()
-}
+pub struct Keccak256Permutation;
 
-#[cfg(feature = "host")]
-pub use inline_ops::*;
+impl jolt_inlines_sdk::host::InlineOp for Keccak256Permutation {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::KECCAK256_FUNCT3;
+    const FUNCT7: u32 = crate::KECCAK256_FUNCT7;
+    const NAME: &'static str = crate::KECCAK256_NAME;
 
-#[cfg(feature = "host")]
-mod inline_ops {
-    use jolt_inlines_sdk::host::{FormatInline, InlineOp, InstrAssembler, Instruction};
-
-    pub struct Keccak256Permutation;
-
-    impl InlineOp for Keccak256Permutation {
-        const OPCODE: u32 = crate::INLINE_OPCODE;
-        const FUNCT3: u32 = crate::KECCAK256_FUNCT3;
-        const FUNCT7: u32 = crate::KECCAK256_FUNCT7;
-        const NAME: &'static str = crate::KECCAK256_NAME;
-
-        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-            super::keccak256_inline_sequence_builder(asm, operands)
-        }
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        Keccak256SequenceBuilder::new(asm, operands).build()
     }
 }

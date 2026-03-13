@@ -11,11 +11,12 @@ mod tests {
     use std::io::{BufRead, BufReader};
     use std::path::Path;
 
+    use jolt_inlines_sdk::host::InlineOp;
     use tracer::utils::inline_sequence_writer::{
         DEFAULT_RAM_START_ADDRESS, DEFAULT_RS1, DEFAULT_RS2, DEFAULT_RS3,
     };
 
-    use crate::sequence_builder::keccak256_inline_sequence_builder;
+    use crate::sequence_builder::Keccak256Permutation;
 
     #[test]
     fn test_keccak256_trace_file_matches_generated() {
@@ -25,7 +26,7 @@ mod tests {
 
         let inputs = SequenceInputs::default();
         let generated_instructions =
-            keccak256_inline_sequence_builder((&inputs).into(), (&inputs).into());
+            Keccak256Permutation::build_sequence((&inputs).into(), (&inputs).into());
 
         let test_file_name = format!("keccak256_trace_test_{}.joltinline", std::process::id());
         let trace_file_path = Path::new(&test_file_name);

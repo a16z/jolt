@@ -50,25 +50,6 @@ impl GlvrAdvBuilder {
     }
 }
 
-/// Virtual instruction builder for unchecked secp256k1 GLV decomposition
-pub fn secp256k1_glvr_adv_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = GlvrAdvBuilder::new(asm, operands);
-    builder.inline_sequence()
-}
-
-/// Custom trace function for unchecked secp256k1 GLV decomposition
-pub fn secp256k1_glvr_adv_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = GlvrAdvBuilder::new(asm, operands);
-    builder.advice(cpu)
-}
-
 // helper function to convert from vector of u64 limbs to NBigUint
 fn limbs_to_nbiguint(limbs: &[u64]) -> NBigUint {
     let mut bytes = Vec::with_capacity(limbs.len() * 8);
@@ -598,158 +579,55 @@ impl MulqBuilder {
     }
 }
 
-#[cfg(feature = "host")]
-pub use inline_ops::*;
+macro_rules! secp256k1_mulq_op {
+    ($name:ident, funct3: $funct3:expr, name: $op_name:expr, mul_type: $mul_type:expr, is_scalar: $is_scalar:expr) => {
+        pub struct $name;
 
-#[cfg(feature = "host")]
-mod inline_ops {
-    use std::collections::VecDeque;
+        impl jolt_inlines_sdk::host::InlineOp for $name {
+            const OPCODE: u32 = crate::INLINE_OPCODE;
+            const FUNCT3: u32 = $funct3;
+            const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
+            const NAME: &'static str = $op_name;
 
-    use jolt_inlines_sdk::host::{Cpu, FormatInline, InlineOp, InstrAssembler, Instruction};
-
-    macro_rules! secp256k1_inline_op {
-        ($name:ident, funct3: $funct3:expr, name: $op_name:expr, seq: $seq_fn:ident, adv: $adv_fn:ident) => {
-            pub struct $name;
-
-            impl InlineOp for $name {
-                const OPCODE: u32 = crate::INLINE_OPCODE;
-                const FUNCT3: u32 = $funct3;
-                const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
-                const NAME: &'static str = $op_name;
-
-                fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-                    super::$seq_fn(asm, operands)
-                }
-
-                fn build_advice(
-                    asm: InstrAssembler,
-                    operands: FormatInline,
-                    cpu: &mut Cpu,
-                ) -> Option<VecDeque<u64>> {
-                    Some(super::$adv_fn(asm, operands, cpu))
-                }
+            fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+                MulqBuilder::new(asm, operands, $mul_type, $is_scalar).inline_sequence()
             }
-        };
+
+            fn build_advice(
+                asm: InstrAssembler,
+                operands: FormatInline,
+                cpu: &mut Cpu,
+            ) -> Option<VecDeque<u64>> {
+                Some(MulqBuilder::new(asm, operands, $mul_type, $is_scalar).advice(cpu))
+            }
+        }
+    };
+}
+
+secp256k1_mulq_op!(Secp256k1MulQ,     funct3: crate::SECP256K1_MULQ_FUNCT3,    name: crate::SECP256K1_MULQ_NAME,    mul_type: MulqType::Mul,    is_scalar: false);
+secp256k1_mulq_op!(Secp256k1SquareQ,  funct3: crate::SECP256K1_SQUAREQ_FUNCT3, name: crate::SECP256K1_SQUAREQ_NAME, mul_type: MulqType::Square, is_scalar: false);
+secp256k1_mulq_op!(Secp256k1DivQ,     funct3: crate::SECP256K1_DIVQ_FUNCT3,    name: crate::SECP256K1_DIVQ_NAME,    mul_type: MulqType::Div,    is_scalar: false);
+secp256k1_mulq_op!(Secp256k1MulR,     funct3: crate::SECP256K1_MULR_FUNCT3,    name: crate::SECP256K1_MULR_NAME,    mul_type: MulqType::Mul,    is_scalar: true);
+secp256k1_mulq_op!(Secp256k1SquareR,  funct3: crate::SECP256K1_SQUARER_FUNCT3, name: crate::SECP256K1_SQUARER_NAME, mul_type: MulqType::Square, is_scalar: true);
+secp256k1_mulq_op!(Secp256k1DivR,     funct3: crate::SECP256K1_DIVR_FUNCT3,    name: crate::SECP256K1_DIVR_NAME,    mul_type: MulqType::Div,    is_scalar: true);
+
+pub struct Secp256k1GlvrAdv;
+
+impl jolt_inlines_sdk::host::InlineOp for Secp256k1GlvrAdv {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::SECP256K1_GLVR_ADV_FUNCT3;
+    const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
+    const NAME: &'static str = crate::SECP256K1_GLVR_ADV_NAME;
+
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        GlvrAdvBuilder::new(asm, operands).inline_sequence()
     }
 
-    secp256k1_inline_op!(Secp256k1MulQ,     funct3: crate::SECP256K1_MULQ_FUNCT3,     name: crate::SECP256K1_MULQ_NAME,     seq: secp256k1_mulq_sequence_builder,     adv: secp256k1_mulq_advice);
-    secp256k1_inline_op!(Secp256k1SquareQ,   funct3: crate::SECP256K1_SQUAREQ_FUNCT3,  name: crate::SECP256K1_SQUAREQ_NAME,  seq: secp256k1_squareq_sequence_builder,  adv: secp256k1_squareq_advice);
-    secp256k1_inline_op!(Secp256k1DivQ,      funct3: crate::SECP256K1_DIVQ_FUNCT3,     name: crate::SECP256K1_DIVQ_NAME,     seq: secp256k1_divq_sequence_builder,     adv: secp256k1_divq_advice);
-    secp256k1_inline_op!(Secp256k1MulR,      funct3: crate::SECP256K1_MULR_FUNCT3,     name: crate::SECP256K1_MULR_NAME,     seq: secp256k1_mulr_sequence_builder,     adv: secp256k1_mulr_advice);
-    secp256k1_inline_op!(Secp256k1SquareR,   funct3: crate::SECP256K1_SQUARER_FUNCT3,  name: crate::SECP256K1_SQUARER_NAME,  seq: secp256k1_squarer_sequence_builder,  adv: secp256k1_squarer_advice);
-    secp256k1_inline_op!(Secp256k1DivR,      funct3: crate::SECP256K1_DIVR_FUNCT3,     name: crate::SECP256K1_DIVR_NAME,     seq: secp256k1_divr_sequence_builder,     adv: secp256k1_divr_advice);
-    secp256k1_inline_op!(Secp256k1GlvrAdv,   funct3: crate::SECP256K1_GLVR_ADV_FUNCT3, name: crate::SECP256K1_GLVR_ADV_NAME, seq: secp256k1_glvr_adv_sequence_builder, adv: secp256k1_glvr_adv_advice);
-}
-
-pub fn secp256k1_mulq_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Mul, false);
-    builder.inline_sequence()
-}
-
-/// Custom trace function for secp256k1 base field modular multiplication
-pub fn secp256k1_mulq_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Mul, false);
-    builder.advice(cpu)
-}
-
-/// Virtual instruction builder for secp256k1 base field modular squaring
-pub fn secp256k1_squareq_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Square, false);
-    builder.inline_sequence()
-}
-
-/// Custom trace function for secp256k1 base field modular squaring
-pub fn secp256k1_squareq_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Square, false);
-    builder.advice(cpu)
-}
-
-/// Virtual instruction builder for secp256k1 base field modular division
-pub fn secp256k1_divq_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Div, false);
-    builder.inline_sequence()
-}
-
-/// Custom trace function for secp256k1 base field modular division
-pub fn secp256k1_divq_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Div, false);
-    builder.advice(cpu)
-}
-
-/// Virtual instruction builder for secp256k1 scalar field modular multiplication
-pub fn secp256k1_mulr_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Mul, true);
-    builder.inline_sequence()
-}
-
-/// Custom trace function for secp256k1 scalar field modular multiplication
-pub fn secp256k1_mulr_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Mul, true);
-    builder.advice(cpu)
-}
-
-/// Virtual instruction builder for secp256k1 scalar field modular squaring
-pub fn secp256k1_squarer_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Square, true);
-    builder.inline_sequence()
-}
-
-/// Custom trace function for secp256k1 scalar field modular squaring
-pub fn secp256k1_squarer_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Square, true);
-    builder.advice(cpu)
-}
-
-/// Virtual instruction builder for secp256k1 scalar field modular division
-pub fn secp256k1_divr_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Div, true);
-    builder.inline_sequence()
-}
-
-/// Custom trace function for secp256k1 scalar field modular division
-pub fn secp256k1_divr_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = MulqBuilder::new(asm, operands, MulqType::Div, true);
-    builder.advice(cpu)
+    fn build_advice(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        Some(GlvrAdvBuilder::new(asm, operands).advice(cpu))
+    }
 }

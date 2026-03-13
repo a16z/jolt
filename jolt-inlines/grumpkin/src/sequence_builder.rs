@@ -73,91 +73,44 @@ impl GrumpkinDivAdv {
     }
 }
 
-#[cfg(feature = "host")]
-pub use inline_ops::*;
+pub struct GrumpkinDivQAdv;
 
-#[cfg(feature = "host")]
-mod inline_ops {
-    use std::collections::VecDeque;
+impl jolt_inlines_sdk::host::InlineOp for GrumpkinDivQAdv {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::GRUMPKIN_DIVQ_ADV_FUNCT3;
+    const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
+    const NAME: &'static str = crate::GRUMPKIN_DIVQ_ADV_NAME;
 
-    use jolt_inlines_sdk::host::{Cpu, FormatInline, InlineOp, InstrAssembler, Instruction};
-
-    pub struct GrumpkinDivQAdv;
-
-    impl InlineOp for GrumpkinDivQAdv {
-        const OPCODE: u32 = crate::INLINE_OPCODE;
-        const FUNCT3: u32 = crate::GRUMPKIN_DIVQ_ADV_FUNCT3;
-        const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
-        const NAME: &'static str = crate::GRUMPKIN_DIVQ_ADV_NAME;
-
-        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-            super::grumpkin_divq_adv_sequence_builder(asm, operands)
-        }
-
-        fn build_advice(
-            asm: InstrAssembler,
-            operands: FormatInline,
-            cpu: &mut Cpu,
-        ) -> Option<VecDeque<u64>> {
-            Some(super::grumpkin_divq_adv_advice(asm, operands, cpu))
-        }
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        GrumpkinDivAdv::new(asm, operands, true).inline_sequence()
     }
 
-    pub struct GrumpkinDivRAdv;
-
-    impl InlineOp for GrumpkinDivRAdv {
-        const OPCODE: u32 = crate::INLINE_OPCODE;
-        const FUNCT3: u32 = crate::GRUMPKIN_DIVR_ADV_FUNCT3;
-        const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
-        const NAME: &'static str = crate::GRUMPKIN_DIVR_ADV_NAME;
-
-        fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-            super::grumpkin_divr_adv_sequence_builder(asm, operands)
-        }
-
-        fn build_advice(
-            asm: InstrAssembler,
-            operands: FormatInline,
-            cpu: &mut Cpu,
-        ) -> Option<VecDeque<u64>> {
-            Some(super::grumpkin_divr_adv_advice(asm, operands, cpu))
-        }
+    fn build_advice(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        Some(GrumpkinDivAdv::new(asm, operands, true).advice(cpu))
     }
 }
 
-pub fn grumpkin_divq_adv_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = GrumpkinDivAdv::new(asm, operands, true);
-    builder.inline_sequence()
-}
+pub struct GrumpkinDivRAdv;
 
-/// Custom trace function for unchecked grumpkin base field modular division
-pub fn grumpkin_divq_adv_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = GrumpkinDivAdv::new(asm, operands, true);
-    builder.advice(cpu)
-}
+impl jolt_inlines_sdk::host::InlineOp for GrumpkinDivRAdv {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::GRUMPKIN_DIVR_ADV_FUNCT3;
+    const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
+    const NAME: &'static str = crate::GRUMPKIN_DIVR_ADV_NAME;
 
-/// Virtual instruction builder for unchecked grumpkin scalar field modular division
-pub fn grumpkin_divr_adv_sequence_builder(
-    asm: InstrAssembler,
-    operands: FormatInline,
-) -> Vec<Instruction> {
-    let builder = GrumpkinDivAdv::new(asm, operands, false);
-    builder.inline_sequence()
-}
+    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
+        GrumpkinDivAdv::new(asm, operands, false).inline_sequence()
+    }
 
-/// Custom trace function for unchecked grumpkin scalar field modular division
-pub fn grumpkin_divr_adv_advice(
-    asm: InstrAssembler,
-    operands: FormatInline,
-    cpu: &mut Cpu,
-) -> VecDeque<u64> {
-    let builder = GrumpkinDivAdv::new(asm, operands, false);
-    builder.advice(cpu)
+    fn build_advice(
+        asm: InstrAssembler,
+        operands: FormatInline,
+        cpu: &mut Cpu,
+    ) -> Option<VecDeque<u64>> {
+        Some(GrumpkinDivAdv::new(asm, operands, false).advice(cpu))
+    }
 }
