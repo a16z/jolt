@@ -40,7 +40,10 @@ use crate::zkvm::ram::RAMPreprocessing;
 use crate::zkvm::witness::all_committed_polynomials;
 use crate::zkvm::Serializable;
 use crate::zkvm::{
-    bytecode::read_raf_checking::BytecodeReadRafSumcheckVerifier,
+    bytecode::read_raf_checking::{
+        BytecodeReadRafAddressSumcheckVerifier, BytecodeReadRafCycleSumcheckVerifier,
+        BytecodeReadRafSumcheckParams,
+    },
     claim_reductions::{
         AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier,
         IncClaimReductionSumcheckVerifier, InstructionLookupsClaimReductionSumcheckVerifier,
@@ -82,7 +85,10 @@ use crate::{
     },
     pprof_scope,
     subprotocols::{
-        booleanity::{BooleanitySumcheckParams, BooleanitySumcheckVerifier},
+        booleanity::{
+            BooleanityAddressSumcheckVerifier, BooleanityCycleSumcheckVerifier,
+            BooleanitySumcheckParams,
+        },
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
@@ -909,25 +915,66 @@ impl<
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
     fn verify_stage6(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+        let (bytecode_read_raf_params, booleanity_params) = self.verify_stage6a()?;
+        self.verify_stage6b(bytecode_read_raf_params, booleanity_params)
+    }
+
+    fn verify_stage6a(
+        &mut self,
+    ) -> Result<
+        (
+            BytecodeReadRafSumcheckParams<F>,
+            BooleanitySumcheckParams<F>,
+        ),
+        ProofVerifyError,
+    > {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
+        let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
             &self.preprocessing.shared.bytecode,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-
-        let ram_hamming_booleanity =
-            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
-        let booleanity_params = BooleanitySumcheckParams::new(
+        let booleanity = BooleanityAddressSumcheckVerifier::new(BooleanitySumcheckParams::new(
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        ));
 
-        let booleanity = BooleanitySumcheckVerifier::new(booleanity_params);
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
+            vec![&bytecode_read_raf, &booleanity];
+        BatchedSumcheck::verify(
+            &self.proof.stage6a_sumcheck_proof,
+            instances,
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )?;
+        #[cfg(feature = "zk")]
+        {
+            // Stage 6a is proven in clear and excluded from BlindFold stage data.
+            // Drop any pending OC IDs so Stage 6b OC blocks stay aligned.
+            let _ = self.opening_accumulator.take_pending_claim_ids();
+        }
+
+        Ok((bytecode_read_raf.into_params(), booleanity.into_params()))
+    }
+
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
+    fn verify_stage6b(
+        &mut self,
+        bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
+        booleanity_params: BooleanitySumcheckParams<F>,
+    ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+        let bytecode_read_raf = BytecodeReadRafCycleSumcheckVerifier::new(
+            bytecode_read_raf_params,
+            &self.opening_accumulator,
+        );
+        let ram_hamming_booleanity =
+            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
+        let booleanity =
+            BooleanityCycleSumcheckVerifier::new(booleanity_params, &self.opening_accumulator);
         let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
@@ -945,7 +992,7 @@ impl<
             &mut self.transcript,
         );
 
-        // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
+        // Advice claim reduction (Phase 1 in Stage 6b): trusted and untrusted are separate instances.
         if self.trusted_advice_commitment.is_some() {
             self.advice_reduction_verifier_trusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Trusted,
@@ -978,8 +1025,8 @@ impl<
             instances.push(advice);
         }
 
-        let (batching_coefficients, r_stage6) = BatchedSumcheck::verify(
-            &self.proof.stage6_sumcheck_proof,
+        let (batching_coefficients, r_stage6b) = BatchedSumcheck::verify(
+            &self.proof.stage6b_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -997,7 +1044,7 @@ impl<
             for instance in &instances {
                 let num_rounds = instance.num_rounds();
                 let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage6[offset..offset + num_rounds];
+                let r_slice = &r_stage6b[offset..offset + num_rounds];
                 output_constraint_challenge_values.extend(
                     instance
                         .get_params()
@@ -1010,7 +1057,7 @@ impl<
                 );
             }
             Ok(StageVerifyResult::new(
-                r_stage6,
+                r_stage6b,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
@@ -1020,7 +1067,7 @@ impl<
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
-            challenges: r_stage6,
+            challenges: r_stage6b,
         })
     }
 
@@ -1050,7 +1097,7 @@ impl<
             &self.proof.stage3_sumcheck_proof,
             &self.proof.stage4_sumcheck_proof,
             &self.proof.stage5_sumcheck_proof,
-            &self.proof.stage6_sumcheck_proof,
+            &self.proof.stage6b_sumcheck_proof,
             &self.proof.stage7_sumcheck_proof,
         ];
 

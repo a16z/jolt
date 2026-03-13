@@ -47,7 +47,10 @@ use crate::{
     },
     pprof_scope,
     subprotocols::{
-        booleanity::{BooleanitySumcheckParams, BooleanitySumcheckProver},
+        booleanity::{
+            BooleanityAddressSumcheckProver, BooleanityCycleSumcheckProver,
+            BooleanitySumcheckParams,
+        },
         streaming_schedule::LinearOnlySchedule,
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
@@ -99,7 +102,9 @@ use crate::{
 use crate::{
     poly::commitment::commitment_scheme::CommitmentScheme,
     zkvm::{
-        bytecode::read_raf_checking::BytecodeReadRafSumcheckProver,
+        bytecode::read_raf_checking::{
+            BytecodeReadRafAddressSumcheckProver, BytecodeReadRafCycleSumcheckProver,
+        },
         fiat_shamir_preamble,
         instruction_lookups::{
             ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
@@ -522,7 +527,10 @@ impl<
         let (stage3_sumcheck_proof, r_stage3) = self.prove_stage3();
         let (stage4_sumcheck_proof, r_stage4) = self.prove_stage4();
         let (stage5_sumcheck_proof, r_stage5) = self.prove_stage5();
-        let (stage6_sumcheck_proof, r_stage6) = self.prove_stage6();
+        let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_params) =
+            self.prove_stage6a();
+        let (stage6b_sumcheck_proof, r_stage6) =
+            self.prove_stage6b(bytecode_read_raf_params, booleanity_params);
         let (stage7_sumcheck_proof, r_stage7) = self.prove_stage7();
 
         let _sumcheck_challenges = [
@@ -569,7 +577,8 @@ impl<
             stage3_sumcheck_proof,
             stage4_sumcheck_proof,
             stage5_sumcheck_proof,
-            stage6_sumcheck_proof,
+            stage6a_sumcheck_proof,
+            stage6b_sumcheck_proof,
             stage7_sumcheck_proof,
             #[cfg(feature = "zk")]
             blindfold_proof,
@@ -1208,14 +1217,15 @@ impl<
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_stage6(
+    fn prove_stage6a(
         &mut self,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
-        Vec<F::Challenge>,
+        BytecodeReadRafSumcheckParams<F>,
+        BooleanitySumcheckParams<F>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
-        print_current_memory_usage("Stage 6 baseline");
+        print_current_memory_usage("Stage 6a baseline");
 
         let bytecode_read_raf_params = BytecodeReadRafSumcheckParams::gen(
             &self.preprocessing.shared.bytecode,
@@ -1225,15 +1235,83 @@ impl<
             &mut self.transcript,
         );
 
-        let ram_hamming_booleanity_params =
-            HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
-
         let booleanity_params = BooleanitySumcheckParams::new(
             self.trace.len().log_2(),
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
+
+        let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize(
+            bytecode_read_raf_params.clone(),
+            Arc::clone(&self.trace),
+            Arc::clone(&self.preprocessing.shared.bytecode),
+        );
+        let mut booleanity = BooleanityAddressSumcheckProver::initialize(
+            booleanity_params.clone(),
+            &self.trace,
+            &self.preprocessing.shared.bytecode,
+            &self.program_io.memory_layout,
+        );
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage(
+                "BytecodeReadRafAddressSumcheckProver",
+                &bytecode_read_raf,
+            );
+            print_data_structure_heap_usage("BooleanityAddressSumcheckProver", &booleanity);
+        }
+
+        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_, _>> =
+            vec![&mut bytecode_read_raf, &mut booleanity];
+
+        #[cfg(feature = "allocative")]
+        write_instance_flamegraph_svg(&instances, "stage6a_start_flamechart.svg");
+        tracing::info!("Stage 6a proving");
+
+        #[cfg(feature = "zk")]
+        let (sumcheck_proof, _r_stage6a, _initial_claim) = {
+            // Stage 6a input claims depend on hidden prior-stage outputs in ZK mode,
+            // so we prove it with a ZK sumcheck proof. We keep a local blindfold
+            // accumulator so this split-internal phase does not add a new global
+            // BlindFold stage.
+            let mut rng = rand::thread_rng();
+            let mut local_blindfold =
+                crate::subprotocols::blindfold::BlindFoldAccumulator::<F, C>::new();
+            BatchedSumcheck::prove_zk::<F, C, _, _>(
+                instances.iter_mut().map(|v| &mut **v as _).collect(),
+                &mut self.opening_accumulator,
+                &mut local_blindfold,
+                &mut self.transcript,
+                &self.pedersen_generators,
+                &mut rng,
+            )
+        };
+        #[cfg(not(feature = "zk"))]
+        let (sumcheck_proof, _r_stage6a, _initial_claim) =
+            self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
+
+        #[cfg(feature = "allocative")]
+        write_instance_flamegraph_svg(&instances, "stage6a_end_flamechart.svg");
+
+        (sumcheck_proof, bytecode_read_raf_params, booleanity_params)
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn prove_stage6b(
+        &mut self,
+        bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
+        booleanity_params: BooleanitySumcheckParams<F>,
+    ) -> (
+        SumcheckInstanceProof<F, C, ProofTranscript>,
+        Vec<F::Challenge>,
+    ) {
+        #[cfg(not(target_arch = "wasm32"))]
+        print_current_memory_usage("Stage 6b baseline");
+
+        let ram_hamming_booleanity_params =
+            HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
 
         let ram_ra_virtual_params = RamRaVirtualParams::new(
             self.trace.len(),
@@ -1251,7 +1329,7 @@ impl<
             &mut self.transcript,
         );
 
-        // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
+        // Advice claim reduction (Phase 1 in Stage 6b): trusted and untrusted are separate instances.
         if self.advice.trusted_advice_polynomial.is_some() {
             let trusted_advice_params = AdviceClaimReductionParams::new(
                 AdviceKind::Trusted,
@@ -1296,20 +1374,21 @@ impl<
             };
         }
 
-        let mut bytecode_read_raf = BytecodeReadRafSumcheckProver::initialize(
+        let mut bytecode_read_raf = BytecodeReadRafCycleSumcheckProver::initialize(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
             Arc::clone(&self.preprocessing.shared.bytecode),
+            &self.opening_accumulator,
         );
-        let mut ram_hamming_booleanity =
-            HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
-
-        let mut booleanity = BooleanitySumcheckProver::initialize(
+        let mut booleanity = BooleanityCycleSumcheckProver::initialize(
             booleanity_params,
             &self.trace,
             &self.preprocessing.shared.bytecode,
             &self.program_io.memory_layout,
+            &self.opening_accumulator,
         );
+        let mut ram_hamming_booleanity =
+            HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
 
         let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
             ram_ra_virtual_params,
@@ -1324,8 +1403,11 @@ impl<
 
         #[cfg(feature = "allocative")]
         {
-            print_data_structure_heap_usage("BytecodeReadRafSumcheckProver", &bytecode_read_raf);
-            print_data_structure_heap_usage("BooleanitySumcheckProver", &booleanity);
+            print_data_structure_heap_usage(
+                "BytecodeReadRafCycleSumcheckProver",
+                &bytecode_read_raf,
+            );
+            print_data_structure_heap_usage("BooleanityCycleSumcheckProver", &booleanity);
             print_data_structure_heap_usage(
                 "ram HammingBooleanitySumcheckProver",
                 &ram_hamming_booleanity,
@@ -1360,13 +1442,13 @@ impl<
         }
 
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage6_start_flamechart.svg");
-        tracing::info!("Stage 6 proving");
+        write_instance_flamegraph_svg(&instances, "stage6b_start_flamechart.svg");
+        tracing::info!("Stage 6b proving");
 
-        let (sumcheck_proof, r_stage6, _initial_claim) =
+        let (sumcheck_proof, r_stage6b, _initial_claim) =
             self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
         #[cfg(feature = "allocative")]
-        write_instance_flamegraph_svg(&instances, "stage6_end_flamechart.svg");
+        write_instance_flamegraph_svg(&instances, "stage6b_end_flamechart.svg");
         drop_in_background_thread(bytecode_read_raf);
         drop_in_background_thread(booleanity);
         drop_in_background_thread(ram_hamming_booleanity);
@@ -1377,7 +1459,7 @@ impl<
         self.advice_reduction_prover_trusted = advice_trusted;
         self.advice_reduction_prover_untrusted = advice_untrusted;
 
-        (sumcheck_proof, r_stage6)
+        (sumcheck_proof, r_stage6b)
     }
 
     #[tracing::instrument(skip_all)]
@@ -3141,7 +3223,7 @@ mod tests {
             ("Stage 5 (Value+Lookup)", &jolt_proof.stage5_sumcheck_proof),
             (
                 "Stage 6 (OneHot+Hamming)",
-                &jolt_proof.stage6_sumcheck_proof,
+                &jolt_proof.stage6b_sumcheck_proof,
             ),
             (
                 "Stage 7 (HammingWeight+ClaimReduction)",
