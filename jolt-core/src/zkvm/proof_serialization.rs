@@ -48,7 +48,8 @@ pub struct JoltProof<
     pub stage3_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage6_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage6a_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage6b_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     #[cfg(feature = "zk")]
     pub blindfold_proof: BlindFoldProof<F, C>,
@@ -403,6 +404,8 @@ impl CanonicalSerialize for VirtualPolynomial {
                 38u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*flag).unwrap()).serialize_with_mode(&mut writer, compress)
             }
+            Self::BytecodeReadRafAddrClaim => 39u8.serialize_with_mode(&mut writer, compress),
+            Self::BooleanityAddrClaim => 40u8.serialize_with_mode(&mut writer, compress),
         }
     }
 
@@ -442,7 +445,9 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::RamValInit
             | Self::RamValFinal
             | Self::RamHammingWeight
-            | Self::UnivariateSkip => 1,
+            | Self::UnivariateSkip
+            | Self::BytecodeReadRafAddrClaim
+            | Self::BooleanityAddrClaim => 1,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
@@ -520,6 +525,8 @@ impl CanonicalDeserialize for VirtualPolynomial {
                     let flag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
                     Self::LookupTableFlag(flag as usize)
                 }
+                39 => Self::BytecodeReadRafAddrClaim,
+                40 => Self::BooleanityAddrClaim,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
