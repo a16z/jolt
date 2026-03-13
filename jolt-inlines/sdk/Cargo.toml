@@ -1,0 +1,16 @@
+[package]
+name = "jolt-inlines-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "SDK for developing Jolt VM inline implementations"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
+
+[features]
+default = []
+host = ["dep:tracer", "dep:inventory"]
+
+[dependencies]
+tracer = { workspace = true, optional = true, features = ["std"] }
+inventory = { workspace = true, optional = true }

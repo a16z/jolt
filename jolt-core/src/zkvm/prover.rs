@@ -2401,11 +2401,6 @@ mod tests {
     #[serial]
     fn sha3_e2e_dory() {
         DoryGlobals::reset();
-        // Ensure SHA3 inline library is linked and auto-registered
-        #[cfg(feature = "host")]
-        use jolt_inlines_keccak256 as _;
-        // SHA3 inlines are automatically registered via #[ctor::ctor]
-        // when the jolt-inlines-keccak256 crate is linked (see lib.rs)
 
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
@@ -2463,11 +2458,7 @@ mod tests {
     #[serial]
     fn sha2_e2e_dory() {
         DoryGlobals::reset();
-        // Ensure SHA2 inline library is linked and auto-registered
-        #[cfg(feature = "host")]
-        use jolt_inlines_sha2 as _;
-        // SHA2 inlines are automatically registered via #[ctor::ctor]
-        // when the jolt-inlines-sha2 crate is linked (see lib.rs)
+
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
@@ -2523,6 +2514,7 @@ mod tests {
     #[serial]
     fn sha2_e2e_dory_with_unused_advice() {
         DoryGlobals::reset();
+
         // SHA2 guest does not consume advice, but providing both trusted and untrusted advice
         // should still work correctly through the full pipeline:
         // - Trusted: commit in preprocessing-only context, reduce in Stage 6, batch in Stage 8
@@ -2648,6 +2640,7 @@ mod tests {
     #[serial]
     fn advice_e2e_dory() {
         DoryGlobals::reset();
+
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
         let mut program = host::Program::new("merkle-tree-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();

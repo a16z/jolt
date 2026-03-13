@@ -557,6 +557,39 @@ impl InstrAssembler {
         // rotl(n) == rotr(64 - n)
         self.rotr64(rs1, 64 - amount, rd)
     }
+
+    /// Load two packed u32 from 8-byte aligned `base+offset` into `vr_lo` and `vr_hi`.
+    /// Clean extraction: `vr_lo` gets zero-extended low 32 bits; `vr_hi` gets high 32 bits.
+    /// Clobbers `temp` for the intermediate 64-bit load.
+    pub fn load_paired_u32(&mut self, temp: u8, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
+        use crate::instruction::ld::LD;
+        use crate::instruction::virtual_zero_extend_word::VirtualZeroExtendWord;
+        self.emit_ld::<LD>(temp, base, offset);
+        self.emit_i::<VirtualZeroExtendWord>(vr_lo, temp, 0);
+        self.emit_i::<SRLI>(vr_hi, temp, 32);
+    }
+
+    /// Store two u32 values to 8-byte aligned `base+offset` as a single SD.
+    /// WARNING: clobbers both `vr_lo` and `vr_hi`.
+    pub fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
+        use crate::instruction::or::OR;
+        use crate::instruction::sd::SD;
+        use crate::instruction::slli::SLLI;
+        use crate::instruction::virtual_zero_extend_word::VirtualZeroExtendWord;
+        self.emit_i::<VirtualZeroExtendWord>(vr_lo, vr_lo, 0);
+        self.emit_i::<SLLI>(vr_hi, vr_hi, 32);
+        self.emit_r::<OR>(vr_lo, vr_hi, vr_lo);
+        self.emit_s::<SD>(base, vr_lo, offset);
+    }
+
+    /// Load two packed u32 from 8-byte aligned `base+offset` into `vr_lo` and `vr_hi`.
+    /// WARNING: leaves junk in upper 32 bits of `vr_lo`. Safe only when downstream ops
+    /// preserve correctness independent of upper bits (e.g. SHA-256 32-bit arithmetic).
+    pub fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
+        use crate::instruction::ld::LD;
+        self.emit_ld::<LD>(vr_lo, base, offset);
+        self.emit_i::<SRLI>(vr_hi, vr_lo, 32);
+    }
 }
 
 #[cfg(test)]

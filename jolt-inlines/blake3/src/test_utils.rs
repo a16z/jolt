@@ -6,20 +6,12 @@ pub type ChainingValue = [u32; crate::CHAINING_VALUE_LEN];
 pub type MessageBlock = [u32; crate::MSG_BLOCK_LEN];
 
 pub fn create_blake3_harness() -> InlineTestHarness {
-    // Blake3 needs message block (64 bytes) + params (16 bytes) contiguous at rs2
-    // and state (32 bytes) at rs1
-    let layout = InlineMemoryLayout::single_input(80, 32); // 80 bytes for message+params, 32-byte state
+    let layout = InlineMemoryLayout::single_input(80, 32);
     InlineTestHarness::new(layout, Xlen::Bit64)
 }
 
-/// Create harness for Keyed64 instruction (Merkle tree merge)
-/// ABI: rs1 = left, rs2 = right, rd = iv (in/out)
 pub fn create_blake3_keyed64_harness() -> InlineTestHarness {
-    // Keyed64 needs:
-    // - rs1: left CV (32 bytes) -> input
-    // - rs2: right CV (32 bytes) -> input2
-    // - rd: IV (32 bytes, in/out) -> output
-    let layout = InlineMemoryLayout::two_inputs(32, 32, 32); // left, right, iv
+    let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
     InlineTestHarness::new(layout, Xlen::Bit64)
 }
 

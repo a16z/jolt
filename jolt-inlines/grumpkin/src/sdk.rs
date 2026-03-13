@@ -64,56 +64,7 @@ fn is_not_equal(x: &[u64; 4], y: &[u64; 4]) -> bool {
     x[0] != y[0] || x[1] != y[1] || x[2] != y[2] || x[3] != y[3]
 }
 
-/// Halt-and-catch-fire: makes proof unsatisfiable
-#[cfg(all(
-    not(feature = "host"),
-    any(target_arch = "riscv32", target_arch = "riscv64")
-))]
-#[inline(always)]
-pub fn hcf() {
-    unsafe {
-        let u = 0u64;
-        let v = 1u64;
-        core::arch::asm!(
-            ".insn b {opcode}, {funct3}, {rs1}, {rs2}, . + 2",
-            opcode = const 0x5B,
-            funct3 = const 0b001,
-            rs1 = in(reg) u,
-            rs2 = in(reg) v,
-            options(nostack)
-        );
-    }
-}
-#[cfg(all(
-    not(feature = "host"),
-    not(any(target_arch = "riscv32", target_arch = "riscv64"))
-))]
-pub fn hcf() {
-    panic!("hcf called on non-RISC-V target without host feature");
-}
-#[cfg(feature = "host")]
-pub fn hcf() {
-    panic!("explicit host code panic function called");
-}
-
-/// Unwrap that spoils proof on error (vs `.unwrap()` which allows valid proof of panic)
-pub trait UnwrapOrSpoilProof<T> {
-    fn unwrap_or_spoil_proof(self) -> T;
-}
-
-impl<T> UnwrapOrSpoilProof<T> for Result<T, GrumpkinError> {
-    #[inline(always)]
-    fn unwrap_or_spoil_proof(self) -> T {
-        match self {
-            Ok(v) => v,
-            Err(_) => {
-                hcf();
-                // hcf() spoils the proof; panic to satisfy the type checker
-                panic!("unwrap_or_spoil_proof failed")
-            }
-        }
-    }
-}
+pub use jolt_inlines_sdk::{hcf, UnwrapOrSpoilProof};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum GrumpkinError {
@@ -277,6 +228,66 @@ impl GrumpkinFq {
     }
 }
 
+impl jolt_inlines_sdk::ec::ECField for GrumpkinFq {
+    type Error = GrumpkinError;
+    #[inline(always)]
+    fn zero() -> Self {
+        Self::zero()
+    }
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.is_zero()
+    }
+    #[inline(always)]
+    fn neg(&self) -> Self {
+        self.neg()
+    }
+    #[inline(always)]
+    fn add(&self, other: &Self) -> Self {
+        self.add(other)
+    }
+    #[inline(always)]
+    fn sub(&self, other: &Self) -> Self {
+        self.sub(other)
+    }
+    #[inline(always)]
+    fn dbl(&self) -> Self {
+        self.dbl()
+    }
+    #[inline(always)]
+    fn tpl(&self) -> Self {
+        self.tpl()
+    }
+    #[inline(always)]
+    fn mul(&self, other: &Self) -> Self {
+        self.mul(other)
+    }
+    #[inline(always)]
+    fn square(&self) -> Self {
+        self.square()
+    }
+    #[inline(always)]
+    fn div(&self, other: &Self) -> Self {
+        self.div(other)
+    }
+    #[inline(always)]
+    fn div_assume_nonzero(&self, other: &Self) -> Self {
+        self.div_assume_nonzero(other)
+    }
+    #[inline(always)]
+    fn to_u64_arr(&self) -> [u64; 4] {
+        self.e.0 .0
+    }
+    #[inline(always)]
+    fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, Self::Error> {
+        Self::from_u64_arr(arr)
+    }
+    #[inline(always)]
+    fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
+        Self::from_u64_arr_unchecked(arr)
+    }
+}
+
 /// Wrapper around ark_grumpkin::Fr with inline-accelerated division
 #[derive(Clone, PartialEq, Debug)]
 pub struct GrumpkinFr {
@@ -410,155 +421,32 @@ impl GrumpkinFr {
     }
 }
 
-/// Affine point on Grumpkin curve y² = x³ - 17. Infinity = (0, 0).
-#[derive(Clone, PartialEq, Debug)]
-pub struct GrumpkinPoint {
-    x: GrumpkinFq,
-    y: GrumpkinFq,
+#[derive(Clone)]
+pub struct GrumpkinCurve;
+
+impl jolt_inlines_sdk::ec::CurveParams<GrumpkinFq> for GrumpkinCurve {
+    type Error = GrumpkinError;
+    const DOUBLE_AND_ADD_DIVISOR_CHECK: bool = true;
+    fn curve_b() -> GrumpkinFq {
+        GrumpkinFq::negative_seventeen()
+    }
+    fn not_on_curve_error() -> Self::Error {
+        GrumpkinError::NotOnCurve
+    }
 }
 
-impl GrumpkinPoint {
+pub type GrumpkinPoint = jolt_inlines_sdk::ec::AffinePoint<GrumpkinFq, GrumpkinCurve>;
+
+pub trait GrumpkinPointExt {
+    fn generator() -> GrumpkinPoint;
+}
+
+impl GrumpkinPointExt for GrumpkinPoint {
     #[inline(always)]
-    pub fn new(x: GrumpkinFq, y: GrumpkinFq) -> Result<Self, GrumpkinError> {
-        let p = GrumpkinPoint { x, y };
-        if p.is_on_curve() {
-            Ok(p)
-        } else {
-            Err(GrumpkinError::NotOnCurve)
-        }
-    }
-    #[inline(always)]
-    pub fn new_unchecked(x: GrumpkinFq, y: GrumpkinFq) -> Self {
-        GrumpkinPoint { x, y }
-    }
-    /// Returns Montgomery form. Use `from_u64_arr_unchecked` to round-trip.
-    #[inline(always)]
-    pub fn to_u64_arr(&self) -> [u64; 8] {
-        let mut arr = [0u64; 8];
-        arr[0..4].copy_from_slice(&self.x.e.0 .0);
-        arr[4..8].copy_from_slice(&self.y.e.0 .0);
-        arr
-    }
-    /// Converts from standard form, validates on-curve.
-    #[inline(always)]
-    pub fn from_u64_arr(arr: &[u64; 8]) -> Result<Self, GrumpkinError> {
-        let x = GrumpkinFq::from_u64_arr(&[arr[0], arr[1], arr[2], arr[3]])?;
-        let y = GrumpkinFq::from_u64_arr(&[arr[4], arr[5], arr[6], arr[7]])?;
-        GrumpkinPoint::new(x, y)
-    }
-    /// SAFETY: input must be canonical Montgomery form and on-curve (or (0,0) for infinity)
-    #[inline(always)]
-    pub fn from_u64_arr_unchecked(arr: &[u64; 8]) -> Self {
-        let x = GrumpkinFq::from_u64_arr_unchecked(&[arr[0], arr[1], arr[2], arr[3]]);
-        let y = GrumpkinFq::from_u64_arr_unchecked(&[arr[4], arr[5], arr[6], arr[7]]);
-        GrumpkinPoint { x, y }
-    }
-    #[inline(always)]
-    pub fn x(&self) -> GrumpkinFq {
-        self.x.clone()
-    }
-    #[inline(always)]
-    pub fn y(&self) -> GrumpkinFq {
-        self.y.clone()
-    }
-    #[inline(always)]
-    pub fn generator() -> Self {
-        GrumpkinPoint {
-            x: GrumpkinFq::new(ark_grumpkin::G_GENERATOR_X),
-            y: GrumpkinFq::new(ark_grumpkin::G_GENERATOR_Y),
-        }
-    }
-    /// (0, 0) represents infinity since it's not on the curve y² = x³ - 17
-    #[inline(always)]
-    pub fn infinity() -> Self {
-        GrumpkinPoint {
-            x: GrumpkinFq::zero(),
-            y: GrumpkinFq::zero(),
-        }
-    }
-    #[inline(always)]
-    pub fn is_infinity(&self) -> bool {
-        self.x.e.is_zero() && self.y.e.is_zero()
-    }
-    #[inline(always)]
-    pub fn is_on_curve(&self) -> bool {
-        self.is_infinity()
-            || self.y.square()
-                == (self
-                    .x
-                    .square()
-                    .mul(&self.x)
-                    .add(&GrumpkinFq::negative_seventeen()))
-    }
-    #[inline(always)]
-    pub fn neg(&self) -> Self {
-        if self.is_infinity() {
-            GrumpkinPoint::infinity()
-        } else {
-            GrumpkinPoint {
-                x: self.x.clone(),
-                y: self.y.neg(),
-            }
-        }
-    }
-    #[inline(always)]
-    pub fn double(&self) -> Self {
-        if self.y.is_zero() {
-            GrumpkinPoint::infinity()
-        } else {
-            let s = self.x.square().tpl().div_assume_nonzero(&self.y.dbl());
-            let x2 = s.square().sub(&self.x.dbl());
-            let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
-            GrumpkinPoint { x: x2, y: y2 }
-        }
-    }
-    #[inline(always)]
-    pub fn add(&self, other: &GrumpkinPoint) -> Self {
-        if self.is_infinity() {
-            other.clone()
-        } else if other.is_infinity() {
-            self.clone()
-        } else if self.x == other.x && self.y == other.y {
-            self.double()
-        } else if self.x == other.x {
-            GrumpkinPoint::infinity()
-        } else {
-            let s = (self.y.sub(&other.y)).div_assume_nonzero(&self.x.sub(&other.x));
-            let x2 = s.square().sub(&self.x.add(&other.x));
-            let y2 = s.mul(&(self.x.sub(&x2))).sub(&self.y);
-            GrumpkinPoint { x: x2, y: y2 }
-        }
-    }
-    /// computes 2*self + other using an optimized formula that saves one field operation
-    /// compared to naive double-then-add
-    ///
-    /// Formula derivation: Let R = P + Q (intermediate point). We compute R + P directly
-    /// using the identity: the slope from P to R+P can be expressed in terms of
-    /// known quantities without explicitly computing R's y-coordinate.
-    #[inline(always)]
-    pub fn double_and_add(&self, other: &GrumpkinPoint) -> Self {
-        if self.is_infinity() {
-            other.clone()
-        } else if other.is_infinity() {
-            self.add(self)
-        } else if self.x == other.x && self.y == other.y {
-            self.add(self).add(other)
-        } else if self.x == other.x && self.y != other.y {
-            // self + other = infinity, so 2*self + other = self
-            self.clone()
-        } else {
-            // ns = negated slope of line through P and Q
-            let ns = (self.y.sub(&other.y)).div_assume_nonzero(&other.x.sub(&self.x));
-            let nx2 = other.x.sub(&ns.square());
-            let divisor = self.x.dbl().add(&nx2);
-            // When divisor = 0, result is infinity. This happens when Q = -2P.
-            if divisor.is_zero() {
-                return GrumpkinPoint::infinity();
-            }
-            let t = self.y.dbl().div_assume_nonzero(&divisor).add(&ns);
-            let x3 = t.square().add(&nx2);
-            let y3 = t.mul(&(self.x.sub(&x3))).sub(&self.y);
-            GrumpkinPoint { x: x3, y: y3 }
-        }
+    fn generator() -> Self {
+        Self::new_unchecked(
+            GrumpkinFq::new(ark_grumpkin::G_GENERATOR_X),
+            GrumpkinFq::new(ark_grumpkin::G_GENERATOR_Y),
+        )
     }
 }
