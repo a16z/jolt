@@ -1,3 +1,73 @@
+//! # RamReadWriteChecking (Stage 2)
+//!
+//! Source: `jolt-core/src/zkvm/ram/read_write_checking.rs`
+//!
+//!
+//! - `γ ∈ F`: Batching randomness
+//!
+//! ## Schwartz–Zippel randomness
+//!
+//! - Re-uses `r^(1)_cycle ∈ F^{log₂ T}` from Stage 1 (SpartanOuter)
+//!
+//!
+//! ## Sumcheck
+//!
+//! `eq(r^(1)_cycle, X_j)` is the [multilinear Lagrange basis polynomial][ml].
+//!
+//! [ml]: https://en.wikipedia.org/wiki/Multilinear_polynomial
+//!
+//! ```text
+//! LHS := Σ_{X_k, X_j}  eq(r^(1)_cycle, X_j) · RamRa(X_k, X_j)
+//!                      · (RamVal(X_k, X_j)
+//!                        + γ · (RamVal(X_k, X_j) + RamInc(X_j)))
+//!
+//! RHS := RamReadValue(r^(1)_cycle) + γ · RamWriteValue(r^(1)_cycle)
+//!
+//! where  X_k ∈ {0,1}^{log₂ K_RAM},  X_j ∈ {0,1}^{log₂ T}
+//! ```
+//!
+//! Dimensions: `log₂ K_RAM + log₂ T` rounds (address + cycle).
+//!
+//! The RHS is known: `RamReadValue` and `RamWriteValue` were opened
+//! at `r^(1)_cycle` in Stage 1.
+//!
+//! - `RamRa(X_k, X_j)`: 1 if address `X_k` is accessed at cycle `X_j` (virtual)
+//! - `RamVal(X_k, X_j)`: value at address `X_k` right before cycle `X_j` (virtual)
+//! - `RamInc(X_j)`: write increment at cycle `X_j` (COMMITTED)
+//!
+//!
+//! ## Opening point
+//!
+//! After sumcheck: `(r^(2)_{K_RAM}, r^(2)_cycle) ∈ F^{log₂ K_RAM + log₂ T}`.
+//! Both components are used downstream.
+//!
+//!
+//! ## Verifier opening claim
+//!
+//! The verifier checks that the final sumcheck message equals:
+//!
+//! ```text
+//! eq(r^(1)_cycle, r^(2)_cycle) · RamRa(r^(2)_{K_RAM}, r^(2)_cycle)
+//!   · (RamVal(r^(2)_{K_RAM}, r^(2)_cycle)
+//!     + γ · (RamVal(r^(2)_{K_RAM}, r^(2)_cycle) + RamInc(r^(2)_cycle)))
+//! ```
+//!
+//! The `eq` term is computable by the verifier. The prover supplies
+//! openings for `RamRa`, `RamVal`, and `RamInc`.
+//!
+//!
+//! ## Polynomials opened
+//!
+//! Virtual:
+//! ```text
+//! RamVal  at (r^(2)_{K_RAM}, r^(2)_cycle)
+//! RamRa   at (r^(2)_{K_RAM}, r^(2)_cycle)
+//! ```
+//!
+//! Committed:
+//! ```text
+//! RamInc  at r^(2)_cycle
+//! ```
 use common::jolt_device::MemoryLayout;
 use num::Integer;
 use num_traits::Zero;
@@ -44,21 +114,6 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
-
-// RAM read-write checking sumcheck
-//
-// Proves the relation:
-//   Σ_{k,j} eq(r_cycle, j) ⋅ ra(k, j) ⋅ (Val(k, j) + γ ⋅ (inc(j) + Val(k, j)))
-//   = rv_claim + γ ⋅ wv_claim
-// where:
-// - r_cycle are the challenges for the cycle variables in this sumcheck (from Spartan outer)
-// - ra(k, j) = 1 if memory address k is accessed at cycle j, and 0 otherwise
-// - Val(k, j) is the value at memory address k right before cycle j
-// - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise
-// - rv_claim and wv_claim are the claimed read and write values from the Spartan outer sumcheck.
-//
-// This sumcheck ensures that the values read from and written to RAM are consistent
-// with the memory trace and the initial/final memory states.
 
 /// Degree bound of the sumcheck round polynomials in [`RamReadWriteCheckingVerifier`].
 const DEGREE_BOUND: usize = 3;

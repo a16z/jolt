@@ -1,3 +1,87 @@
+//! # ProductVirtualization (Stage 2)
+//!
+//! Source: `jolt-core/src/zkvm/spartan/product.rs`
+//! Inputs: `jolt-core/src/zkvm/r1cs/inputs.rs` (`ProductCycleInputs`, `PRODUCT_UNIQUE_FACTOR_VIRTUALS`)
+//!
+//!
+//! ## Schwartz–Zippel randomness
+//!
+//! - `τ_c ∈ F`: fresh constraint-index challenge
+//! - Re-uses `r^(1)_cycle ∈ F^{log₂ T}` from Stage 1 (SpartanOuter)
+//!
+//!
+//! ## Sumcheck
+//!
+//! `eq(r^(1)_cycle, X_t)` is the [multilinear Lagrange basis polynomial][ml].
+//! `L_{τ_c}(X_c)` is the [univariate Lagrange interpolation polynomial][ul]
+//! over the domain `{-2, -1, 0, 1, 2}`.
+//!
+//! [ml]: https://en.wikipedia.org/wiki/Multilinear_polynomial
+//! [ul]: https://en.wikipedia.org/wiki/Lagrange_polynomial
+//!
+//! ```text
+//! LHS := Σ_{X_t, X_c}  eq(r^(1)_cycle, X_t) · L_{τ_c}(X_c)
+//!                      · Left(X_t, X_c) · Right(X_t, X_c)
+//!
+//! RHS := Σ_{X_c}  L_{τ_c}(X_c) · Output(r^(1)_cycle, X_c)
+//!
+//! where  X_t ∈ {0,1}^{log₂ T},  X_c ∈ {-2, …, 2}
+//! ```
+//!
+//! Dimensions: `log₂ T + 1` rounds (cycle + univariate-skip constraint index).
+//!
+//! `Left(X_t, X_c)` and `Right(X_t, X_c)` are fused compositions — each
+//! constraint index `c` selects a different pair of `VirtualPolynomial` factors:
+//!
+//! ```text
+//! c  | Output                    | Left factor                      | Right factor
+//! ---+---------------------------+----------------------------------+----------------------------------
+//! -2 | Product                   | LeftInstructionInput             | RightInstructionInput
+//! -1 | WriteLookupOutputToRD     | InstructionFlags(IsRdNotZero)    | OpFlags(WriteLookupOutputToRD)
+//!  0 | WritePCtoRD               | InstructionFlags(IsRdNotZero)    | OpFlags(Jump)
+//!  1 | ShouldBranch              | LookupOutput                     | InstructionFlags(Branch)
+//!  2 | ShouldJump                | OpFlags(Jump)                    | 1 - NextIsNoop
+//! ```
+//!
+//! Each row enforces `Left(t, c) · Right(t, c) = Output(t, c)`.
+//! The RHS is known: the `Output` values are the Stage 1 openings of
+//! `Product`, `WriteLookupOutputToRD`, `WritePCtoRD`, `ShouldBranch`,
+//! `ShouldJump` at `r^(1)_cycle`, already in the openings table.
+//!
+//!
+//! ## Opening point
+//!
+//! After sumcheck: `r^(2)_cycle ∈ F^{log₂ T}`, `r^(2)_c ∈ F`.
+//! Only `r^(2)_cycle` is used downstream; `r^(2)_c` is absorbed.
+//!
+//!
+//! ## Verifier opening claim
+//!
+//! The verifier checks that the final sumcheck message equals:
+//!
+//! ```text
+//! eq(r^(1)_cycle, r^(2)_cycle) · L_{τ_c}(r^(2)_c)
+//!   · Left(r^(2)_cycle, r^(2)_c) · Right(r^(2)_cycle, r^(2)_c)
+//! ```
+//!
+//! The `eq` and `L` terms are computable by the verifier.
+//! The `Left` and `Right` terms are fused Lagrange-weighted
+//! combinations of the 9 factor polynomials below — the prover
+//! supplies their openings at `r^(2)_cycle`.
+//!
+//!
+//! ## VirtualPolynomials opened at `r^(2)_cycle`
+//!
+//! 9 unique factors from `PRODUCT_UNIQUE_FACTOR_VIRTUALS` in
+//! `jolt-core/src/zkvm/r1cs/inputs.rs`:
+//!
+//! ```text
+//! LeftInstructionInput, RightInstructionInput,
+//! InstructionFlags(IsRdNotZero),
+//! OpFlags(WriteLookupOutputToRD), OpFlags(Jump),
+//! LookupOutput, InstructionFlags(Branch),
+//! NextIsNoop, OpFlags(VirtualInstruction)
+//! ```
 use std::iter::zip;
 use std::sync::Arc;
 
