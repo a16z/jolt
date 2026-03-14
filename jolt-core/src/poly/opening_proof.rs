@@ -811,37 +811,37 @@ where
     }
 }
 
-/// Computes the Lagrange factor for embedding a smaller "advice" polynomial into the top-left
-/// block of the main Dory matrix.
+/// Computes the Lagrange factor for embedding a smaller polynomial into the top-left block of
+/// the main Dory matrix.
 ///
-/// Advice polynomials have fewer variables than main polynomials. To batch them together,
-/// we embed advice in the top-left corner of the larger matrix and multiply by a Lagrange
+/// Embedded polynomials can have fewer variables than main polynomials. To batch them together,
+/// we embed them in the top-left corner of the larger matrix and multiply by a Lagrange
 /// selector that is 1 on that block and 0 elsewhere:
 ///
 /// ```text
-/// Lagrange factor = ∏_{r ∈ opening_point, r ∉ advice_opening_point} (1 - r)
+/// Lagrange factor = ∏_{r ∈ opening_point, r ∉ embedded_opening_point} (1 - r)
 /// ```
 ///
 /// # Arguments
 /// - `opening_point`: The unified opening point for the Dory opening proof
-/// - `advice_opening_point`: The opening point for the advice polynomial
+/// - `embedded_opening_point`: The opening point for the embedded polynomial
 ///
 /// # Returns
 /// The Lagrange factor as a field element
-pub fn compute_advice_lagrange_factor<F: JoltField>(
+pub fn compute_lagrange_factor<F: JoltField>(
     opening_point: &[F::Challenge],
-    advice_opening_point: &[F::Challenge],
+    embedded_opening_point: &[F::Challenge],
 ) -> F {
     #[cfg(test)]
     {
-        for r in advice_opening_point.iter() {
+        for r in embedded_opening_point.iter() {
             assert!(opening_point.contains(r));
         }
     }
     opening_point
         .iter()
         .map(|r| {
-            if advice_opening_point.contains(r) {
+            if embedded_opening_point.contains(r) {
                 F::one()
             } else {
                 F::one() - r

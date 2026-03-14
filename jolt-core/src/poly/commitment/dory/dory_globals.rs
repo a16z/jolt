@@ -4,7 +4,7 @@ use crate::utils::math::Math;
 use allocative::Allocative;
 use dory::backends::arkworks::{init_cache, ArkG1, ArkG2};
 use std::sync::{
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicU8, AtomicUsize, Ordering},
     RwLock,
 };
 
@@ -138,6 +138,7 @@ impl From<DoryLayout> for u8 {
 
 // Main polynomial globals
 static GLOBAL_T: RwLock<Option<usize>> = RwLock::new(None);
+static MAIN_K_CHUNK: RwLock<Option<usize>> = RwLock::new(None);
 static MAX_NUM_ROWS: RwLock<Option<usize>> = RwLock::new(None);
 static NUM_COLUMNS: RwLock<Option<usize>> = RwLock::new(None);
 
@@ -156,6 +157,8 @@ static CURRENT_CONTEXT: AtomicU8 = AtomicU8::new(0);
 
 // Layout tracking: 0=CycleMajor, 1=AddressMajor
 static CURRENT_LAYOUT: AtomicU8 = AtomicU8::new(0);
+// Largest Main log-embedding needed for precommitted/embed calculations.
+static MAIN_LOG_EMBEDDING: AtomicUsize = AtomicUsize::new(0);
 
 /// Dory commitment context - determines which set of global parameters to use
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,6 +232,22 @@ impl DoryGlobals {
         log_t.saturating_sub(sigma_main)
     }
 
+    #[inline]
+    pub fn get_main_log_embedding() -> usize {
+        let stored = MAIN_LOG_EMBEDDING.load(Ordering::SeqCst);
+        if stored > 0 {
+            stored
+        } else {
+            let main_cols = Self::configured_main_num_columns();
+            let main_rows = *MAX_NUM_ROWS
+                .read()
+                .unwrap()
+                .as_ref()
+                .expect("main max_num_rows not initialized");
+            main_cols.log_2() + main_rows.log_2()
+        }
+    }
+
     /// Get the current Dory context
     pub fn current_context() -> DoryContext {
         CURRENT_CONTEXT.load(Ordering::SeqCst).into()
@@ -261,11 +280,84 @@ impl DoryGlobals {
         (Self::get_max_num_rows(), Self::get_num_columns())
     }
 
+    #[inline]
+    pub(crate) fn main_k() -> usize {
+        *MAIN_K_CHUNK
+            .read()
+            .unwrap()
+            .as_ref()
+            .expect("main k not initialized")
+    }
+
+    #[inline]
+    pub(crate) fn main_t() -> usize {
+        *GLOBAL_T
+            .read()
+            .unwrap()
+            .as_ref()
+            .expect("main t not initialized")
+    }
+
+    #[inline]
+    pub(crate) fn configured_main_num_columns() -> usize {
+        *NUM_COLUMNS
+            .read()
+            .unwrap()
+            .as_ref()
+            .expect("main num_columns not initialized")
+    }
+
+    #[inline]
+    fn main_embedding_extra_vars() -> usize {
+        let main_total_vars = Self::main_k().log_2() + Self::get_T().log_2();
+        Self::get_main_log_embedding().saturating_sub(main_total_vars)
+    }
+
+    /// Column stride for one-hot embeddings in the current layout/context.
+    pub fn one_hot_stride() -> usize {
+        if Self::current_context() != DoryContext::Main
+            || Self::get_layout() != DoryLayout::AddressMajor
+        {
+            return 1;
+        }
+        1usize << Self::main_embedding_extra_vars()
+    }
+
+    /// Column stride for dense trace-domain embeddings in the current layout/context.
+    pub fn dense_stride() -> usize {
+        if Self::current_context() != DoryContext::Main
+            || Self::get_layout() != DoryLayout::AddressMajor
+        {
+            return 1;
+        }
+        let dense_stride_log = Self::main_embedding_extra_vars() + Self::main_k().log_2();
+        1usize << dense_stride_log
+    }
+
+    /// Returns the embedded cycle-domain size for the current Dory matrix.
+    pub fn get_embedded_t() -> usize {
+        let context = Self::current_context();
+        if context != DoryContext::Main {
+            return Self::get_T();
+        }
+
+        let k = Self::main_k();
+        let num_rows = Self::get_max_num_rows();
+        let num_cols = Self::get_num_columns();
+        let total = num_rows * num_cols;
+        debug_assert_eq!(
+            total % k,
+            0,
+            "Invalid Main DoryGlobals: num_rows*num_cols must be divisible by K"
+        );
+        total / k
+    }
+
     /// Returns the "K" used to initialize the *main* Dory matrix for OneHot polynomials.
-    ///
-    /// This is derived from the identity:
-    /// `K * T == num_rows * num_cols`  (all values are powers of two in our usage).
     pub fn k_from_matrix_shape() -> usize {
+        if Self::current_context() == DoryContext::Main {
+            return Self::main_k();
+        }
         let (num_rows, num_cols) = Self::matrix_shape();
         let t = Self::get_T();
         debug_assert_eq!(
@@ -278,18 +370,22 @@ impl DoryGlobals {
 
     /// For `AddressMajor`, each Dory matrix row corresponds to this many cycles.
     ///
-    /// Equivalent to `T / num_rows` and to `num_cols / K`.
+    /// Equivalent to `T / num_rows` and to `num_cols / dense_stride`.
     pub fn address_major_cycles_per_row() -> usize {
-        let (num_rows, num_cols) = Self::matrix_shape();
-        let k = Self::k_from_matrix_shape();
-        debug_assert!(k > 0);
-        debug_assert_eq!(num_cols % k, 0, "Expected num_cols to be divisible by K");
-        debug_assert_eq!(
-            Self::get_T() % num_rows,
+        let num_cols = Self::get_num_columns();
+        let dense_stride = Self::dense_stride();
+        assert!(dense_stride > 0, "Dense stride must be positive");
+        assert_eq!(
+            num_cols % dense_stride,
             0,
-            "Expected T to be divisible by num_rows"
+            "Expected num_cols to be divisible by dense stride"
         );
-        num_cols / k
+        let cycles_per_row = num_cols / dense_stride;
+        assert!(
+            cycles_per_row > 0,
+            "AddressMajor row must contain at least one cycle"
+        );
+        cycles_per_row
     }
 
     fn set_max_num_rows_for_context(max_num_rows: usize, context: DoryContext) {
@@ -336,6 +432,10 @@ impl DoryGlobals {
                 *UNTRUSTED_ADVICE_NUM_COLUMNS.write().unwrap() = Some(num_columns);
             }
         }
+    }
+
+    fn set_main_k(k: usize) {
+        *MAIN_K_CHUNK.write().unwrap() = Some(k);
     }
 
     pub fn get_num_columns() -> usize {
@@ -403,6 +503,20 @@ impl DoryGlobals {
         (num_columns, num_rows, T)
     }
 
+    fn initialize_context_common(
+        K: usize,
+        embedded_t: usize,
+        stored_t: usize,
+        context: DoryContext,
+    ) -> Option<()> {
+        let (num_columns, num_rows, _) = Self::calculate_dimensions(K, embedded_t);
+        Self::set_num_columns_for_context(num_columns, context);
+        Self::set_T_for_context(stored_t, context);
+        Self::set_max_num_rows_for_context(num_rows, context);
+
+        Some(())
+    }
+
     /// Initialize the globals for a specific Dory context
     ///
     /// # Arguments
@@ -422,19 +536,30 @@ impl DoryGlobals {
         context: DoryContext,
         layout: Option<DoryLayout>,
     ) -> Option<()> {
-        let (num_columns, num_rows, t) = Self::calculate_dimensions(K, T);
-        Self::set_num_columns_for_context(num_columns, context);
-        Self::set_T_for_context(t, context);
-        Self::set_max_num_rows_for_context(num_rows, context);
-
-        // For Main context, set layout (if provided) and ensure subsequent uses of `get_*` read from it
         if context == DoryContext::Main {
-            if let Some(l) = layout {
-                CURRENT_LAYOUT.store(l as u8, Ordering::SeqCst);
-            }
-            CURRENT_CONTEXT.store(DoryContext::Main as u8, Ordering::SeqCst);
+            return Self::initialize_main_with_log_embedding(K, T, K.log_2() + T.log_2(), layout);
         }
+        Self::initialize_context_common(K, T, T, context)?;
+        Some(())
+    }
 
+    /// Initialize Main context with execution `T` and explicit `main_log_embedding` for
+    /// global precommitted geometry.
+    pub fn initialize_main_with_log_embedding(
+        K: usize,
+        T: usize,
+        matrix_total_vars: usize,
+        layout: Option<DoryLayout>,
+    ) -> Option<()> {
+        let log_k = K.log_2();
+        let embedded_t = 1usize << matrix_total_vars.saturating_sub(log_k);
+        Self::initialize_context_common(K, embedded_t, T, DoryContext::Main)?;
+        Self::set_main_k(K);
+        if let Some(l) = layout {
+            CURRENT_LAYOUT.store(l as u8, Ordering::SeqCst);
+        }
+        CURRENT_CONTEXT.store(DoryContext::Main as u8, Ordering::SeqCst);
+        MAIN_LOG_EMBEDDING.store(matrix_total_vars, Ordering::SeqCst);
         Some(())
     }
 
@@ -443,6 +568,7 @@ impl DoryGlobals {
     pub fn reset() {
         // Reset main globals
         *GLOBAL_T.write().unwrap() = None;
+        *MAIN_K_CHUNK.write().unwrap() = None;
         *MAX_NUM_ROWS.write().unwrap() = None;
         *NUM_COLUMNS.write().unwrap() = None;
 
@@ -460,6 +586,7 @@ impl DoryGlobals {
         *UNTRUSTED_ADVICE_NUM_COLUMNS.write().unwrap() = None;
 
         CURRENT_CONTEXT.store(0, Ordering::SeqCst);
+        MAIN_LOG_EMBEDDING.store(0, Ordering::SeqCst);
     }
 
     /// Initialize the prepared point cache for faster pairing operations

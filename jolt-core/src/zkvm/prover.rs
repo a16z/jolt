@@ -2,7 +2,6 @@
 use crate::poly::opening_proof::OpeningId;
 #[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
-use crate::zkvm::{claim_reductions::advice::ReductionPhase, config::OneHotConfig};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use std::{
@@ -37,11 +36,10 @@ use crate::{
             commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment},
             dory::{DoryGlobals, DoryLayout},
         },
-        eq_poly::EqPolynomial,
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
-            compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator,
-            ProverOpeningAccumulator, SumcheckId,
+            compute_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningPoint,
+            ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         rlc_polynomial::{RLCStreamingData, TraceSource},
     },
@@ -65,9 +63,9 @@ use crate::{
             HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
             IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
-            InstructionLookupsClaimReductionSumcheckProver, RaReductionParams,
-            RamRaClaimReductionSumcheckProver, RegistersClaimReductionSumcheckParams,
-            RegistersClaimReductionSumcheckProver,
+            InstructionLookupsClaimReductionSumcheckProver, PrecommittedClaimReduction,
+            RaReductionParams, RamRaClaimReductionSumcheckProver,
+            RegistersClaimReductionSumcheckParams, RegistersClaimReductionSumcheckProver,
         },
         config::OneHotParams,
         instruction_lookups::{
@@ -279,81 +277,81 @@ impl<
         )
     }
 
-    /// Adjusts the padded trace length to ensure the main Dory matrix is large enough
-    /// to embed advice polynomials as the top-left block.
-    ///
-    /// Returns the adjusted padded_trace_len that satisfies:
-    /// - `sigma_main >= max_sigma_a`
-    /// - `nu_main >= max_nu_a`
-    ///
-    /// Panics if `max_padded_trace_length` is too small for the configured advice sizes.
-    fn adjust_trace_length_for_advice(
-        mut padded_trace_len: usize,
-        max_padded_trace_length: usize,
-        max_trusted_advice_size: u64,
-        max_untrusted_advice_size: u64,
-        has_trusted_advice: bool,
-        has_untrusted_advice: bool,
-    ) -> usize {
-        // Canonical advice shape policy (balanced):
-        // - advice_vars = log2(advice_len)
-        // - sigma_a = ceil(advice_vars/2)
-        // - nu_a    = advice_vars - sigma_a
-        let mut max_sigma_a = 0usize;
-        let mut max_nu_a = 0usize;
-
-        if has_trusted_advice {
-            let (sigma_a, nu_a) =
-                DoryGlobals::advice_sigma_nu_from_max_bytes(max_trusted_advice_size as usize);
-            max_sigma_a = max_sigma_a.max(sigma_a);
-            max_nu_a = max_nu_a.max(nu_a);
+    #[inline]
+    fn main_total_vars(&self) -> usize {
+        let trace_log_t = self.trace.len().log_2();
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        let mut max_total_vars = trace_log_t + log_k_chunk;
+        for total_vars in self.precommitted_candidate_total_vars() {
+            max_total_vars = max_total_vars.max(total_vars);
         }
-        if has_untrusted_advice {
-            let (sigma_a, nu_a) =
-                DoryGlobals::advice_sigma_nu_from_max_bytes(max_untrusted_advice_size as usize);
-            max_sigma_a = max_sigma_a.max(sigma_a);
-            max_nu_a = max_nu_a.max(nu_a);
+        max_total_vars
+    }
+
+    #[inline]
+    fn precommitted_candidate_total_vars(&self) -> Vec<usize> {
+        let mut candidates = Vec::new();
+        if !self.program_io.trusted_advice.is_empty() {
+            let (sigma, nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+                self.program_io.memory_layout.max_trusted_advice_size as usize,
+            );
+            candidates.push(sigma + nu);
         }
 
-        if max_sigma_a == 0 && max_nu_a == 0 {
-            return padded_trace_len;
+        if !self.program_io.untrusted_advice.is_empty() {
+            let (sigma, nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+                self.program_io.memory_layout.max_untrusted_advice_size as usize,
+            );
+            candidates.push(sigma + nu);
+        }
+        candidates
+    }
+
+    fn stage8_opening_point(&self) -> OpeningPoint<BIG_ENDIAN, F> {
+        let native_main_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
+        let mut opening_candidates: Vec<(&str, OpeningPoint<BIG_ENDIAN, F>)> = Vec::new();
+        if let Some((point, _)) = self
+            .opening_accumulator
+            .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
+        {
+            opening_candidates.push(("trusted_advice", point));
+        }
+        if let Some((point, _)) = self
+            .opening_accumulator
+            .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
+        {
+            opening_candidates.push(("untrusted_advice", point));
         }
 
-        // Require main matrix dimensions to be large enough to embed advice as the top-left
-        // block: sigma_main >= sigma_a and nu_main >= nu_a.
-        //
-        // This loop doubles padded_trace_len until the main Dory matrix is large enough.
-        // Each doubling increases log_t by 1, which increases total_vars by 1 (since
-        // log_k_chunk stays constant for a given log_t range), increasing both sigma_main
-        // and nu_main by roughly 0.5 each iteration.
-        while {
-            let log_t = padded_trace_len.log_2();
-            let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-            let (sigma_main, nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
-            sigma_main < max_sigma_a || nu_main < max_nu_a
-        } {
-            if padded_trace_len >= max_padded_trace_length {
-                // This is a configuration error: the preprocessing was set up with
-                // max_padded_trace_length too small for the configured advice sizes.
-                // Cannot recover at runtime - user must fix their configuration.
-                let log_t = padded_trace_len.log_2();
-                let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-                let total_vars = log_k_chunk + log_t;
-                let (sigma_main, nu_main) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
-                panic!(
-                    "Configuration error: trace too small to embed advice into Dory batch opening.\n\
-                    Current: (sigma_main={sigma_main}, nu_main={nu_main}) from total_vars={total_vars} (log_t={log_t}, log_k_chunk={log_k_chunk})\n\
-                    Required: (sigma_a={max_sigma_a}, nu_a={max_nu_a}) for advice embedding\n\
-                    Solutions:\n\
-                    1. Increase max_trace_length in preprocessing (currently {max_padded_trace_length})\n\
-                    2. Reduce max_trusted_advice_size or max_untrusted_advice_size\n\
-                    3. Run a program with more cycles"
+        let max_len = opening_candidates
+            .iter()
+            .map(|(_, p)| p.r.len())
+            .max()
+            .unwrap_or(0);
+        if max_len > native_main_vars {
+            let dominant = opening_candidates
+                .iter()
+                .find(|(_, p)| p.r.len() == max_len)
+                .expect("at least one dominant precommitted candidate expected");
+            for (name, point) in opening_candidates
+                .iter()
+                .filter(|(_, p)| p.r.len() == max_len)
+            {
+                assert_eq!(
+                    point.r, dominant.1.r,
+                    "incompatible dominant precommitted anchors: {} and {} have equal dimensionality {} but different opening points",
+                    dominant.0, name, max_len
                 );
             }
-            padded_trace_len = (padded_trace_len * 2).min(max_padded_trace_length);
+            OpeningPoint::<BIG_ENDIAN, F>::new(dominant.1.r.clone())
+        } else {
+            self.opening_accumulator
+                .get_committed_polynomial_opening(
+                    CommittedPolynomial::InstructionRa(0),
+                    SumcheckId::HammingWeightClaimReduction,
+                )
+                .0
         }
-
-        padded_trace_len
     }
 
     pub fn gen_from_trace(
@@ -388,20 +386,6 @@ impl<
                 Increase max_trace_length to at least {padded_trace_len}."
             );
         }
-
-        // We may need extra padding so the main Dory matrix has enough (row, col) variables
-        // to embed advice commitments committed in their own preprocessing-only contexts.
-        let has_trusted_advice = !program_io.trusted_advice.is_empty();
-        let has_untrusted_advice = !program_io.untrusted_advice.is_empty();
-
-        let padded_trace_len = Self::adjust_trace_length_for_advice(
-            padded_trace_len,
-            preprocessing.shared.max_padded_trace_length,
-            preprocessing.shared.memory_layout.max_trusted_advice_size,
-            preprocessing.shared.memory_layout.max_untrusted_advice_size,
-            has_trusted_advice,
-            has_untrusted_advice,
-        );
 
         trace.resize(padded_trace_len, Cycle::NoOp);
 
@@ -672,29 +656,27 @@ impl<
         Vec<PCS::Commitment>,
         HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
     ) {
-        let _guard = DoryGlobals::initialize_context(
+        let main_total_vars = self.main_total_vars();
+        let trace = Arc::clone(&self.trace);
+        let _guard = DoryGlobals::initialize_main_with_log_embedding(
             1 << self.one_hot_params.log_k_chunk,
-            self.padded_trace_len,
-            DoryContext::Main,
+            trace.len(),
+            main_total_vars,
             Some(DoryGlobals::get_layout()),
         );
 
         let polys = all_committed_polynomials(&self.one_hot_params);
-        let T = DoryGlobals::get_T();
+        let T = DoryGlobals::get_embedded_t();
 
-        // For AddressMajor, use non-streaming commit path since streaming assumes CycleMajor layout
-        let (commitments, hint_map) = if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
+        // AddressMajor uses non-streaming commit path, and we also use non-streaming when
+        // Stage 6/8 embedding domain exceeds the trace domain.
+        let use_materialized_commit =
+            DoryGlobals::get_layout() == DoryLayout::AddressMajor || self.trace.len() != T;
+        let (commitments, hint_map) = if use_materialized_commit {
             tracing::debug!(
-                "Using non-streaming commit path for AddressMajor layout with {} polynomials",
+                "Using non-streaming commit path with {} polynomials",
                 polys.len()
             );
-
-            // Materialize the trace for non-streaming commit
-            let trace: Vec<Cycle> = self
-                .lazy_trace
-                .clone()
-                .pad_using(T, |_| Cycle::NoOp)
-                .collect();
 
             // Generate witnesses and commit using the regular (non-streaming) path
             let (commitments, hints): (Vec<_>, Vec<_>) = polys
@@ -1329,12 +1311,21 @@ impl<
             &mut self.transcript,
         );
 
+        let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
+        let precommitted_candidates = self.precommitted_candidate_total_vars();
+        let precommitted_scheduling_reference =
+            PrecommittedClaimReduction::<F>::scheduling_reference(
+                main_total_vars,
+                &precommitted_candidates,
+            );
+
         // Advice claim reduction (Phase 1 in Stage 6b): trusted and untrusted are separate instances.
         if self.advice.trusted_advice_polynomial.is_some() {
             let trusted_advice_params = AdviceClaimReductionParams::new(
                 AdviceKind::Trusted,
-                &self.program_io.memory_layout,
+                self.program_io.memory_layout.max_trusted_advice_size as usize,
                 self.trace.len(),
+                precommitted_scheduling_reference,
                 &self.opening_accumulator,
             );
             // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
@@ -1355,8 +1346,9 @@ impl<
         if self.advice.untrusted_advice_polynomial.is_some() {
             let untrusted_advice_params = AdviceClaimReductionParams::new(
                 AdviceKind::Untrusted,
-                &self.program_io.memory_layout,
+                self.program_io.memory_layout.max_untrusted_advice_size as usize,
                 self.trace.len(),
+                precommitted_scheduling_reference,
                 &self.opening_accumulator,
             );
             // Note: We clone the advice polynomial here because Stage 8 needs the original polynomial
@@ -1943,12 +1935,12 @@ impl<
             self.advice_reduction_prover_trusted.take()
         {
             if advice_reduction_prover_trusted
-                .params
+                .params()
                 .num_address_phase_rounds()
                 > 0
             {
                 // Transition phase
-                advice_reduction_prover_trusted.params.phase = ReductionPhase::AddressVariables;
+                advice_reduction_prover_trusted.transition_to_address_phase();
                 instances.push(Box::new(advice_reduction_prover_trusted));
             }
         }
@@ -1956,12 +1948,12 @@ impl<
             self.advice_reduction_prover_untrusted.take()
         {
             if advice_reduction_prover_untrusted
-                .params
+                .params()
                 .num_address_phase_rounds()
                 > 0
             {
                 // Transition phase
-                advice_reduction_prover_untrusted.params.phase = ReductionPhase::AddressVariables;
+                advice_reduction_prover_untrusted.transition_to_address_phase();
                 instances.push(Box::new(advice_reduction_prover_untrusted));
             }
         }
@@ -1988,70 +1980,60 @@ impl<
     ) -> PCS::Proof {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
-        let _guard = DoryGlobals::initialize_context(
-            self.one_hot_params.k_chunk,
-            self.padded_trace_len,
-            DoryContext::Main,
-            Some(DoryGlobals::get_layout()),
-        );
-
-        // Get the unified opening point from HammingWeightClaimReduction
-        // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
-        let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::InstructionRa(0),
-            SumcheckId::HammingWeightClaimReduction,
-        );
-
-        let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let r_address_stage7 = &opening_point.r[..log_k_chunk];
+        let opening_point = self.stage8_opening_point();
 
         let mut polynomial_claims = Vec::new();
         let mut scaling_factors = Vec::new();
 
-        // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
-        // at r_cycle_stage6 only (length log_T)
-        let (_, ram_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RamInc,
-            SumcheckId::IncClaimReduction,
-        );
-        let (_, rd_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RdInc,
-            SumcheckId::IncClaimReduction,
-        );
+        let (ram_inc_point, ram_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamInc,
+                SumcheckId::IncClaimReduction,
+            );
+        let (rd_inc_point, rd_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RdInc,
+                SumcheckId::IncClaimReduction,
+            );
 
-        // Dense polynomials are zero-padded in the Dory matrix, so their evaluation
-        // includes a factor eq(r_addr, 0) = ∏(1 − r_addr_i).
-        let lagrange_factor: F = EqPolynomial::zero_selector(r_address_stage7);
-        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
-        scaling_factors.push(lagrange_factor);
-        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
-        scaling_factors.push(lagrange_factor);
+        let ram_inc_lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ram_inc_point.r);
+        let rd_inc_lagrange = compute_lagrange_factor::<F>(&opening_point.r, &rd_inc_point.r);
+        polynomial_claims.push((
+            CommittedPolynomial::RamInc,
+            ram_inc_claim * ram_inc_lagrange,
+        ));
+        scaling_factors.push(ram_inc_lagrange);
+        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * rd_inc_lagrange));
+        scaling_factors.push(rd_inc_lagrange);
 
         // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
         // These are at (r_address_stage7, r_cycle_stage6)
         for i in 0..self.one_hot_params.instruction_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            let (ra_point, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::InstructionRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
-            scaling_factors.push(F::one());
+            let lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ra_point.r);
+            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim * lagrange));
+            scaling_factors.push(lagrange);
         }
         for i in 0..self.one_hot_params.bytecode_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            let (ra_point, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::BytecodeRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
-            scaling_factors.push(F::one());
+            let lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ra_point.r);
+            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim * lagrange));
+            scaling_factors.push(lagrange);
         }
         for i in 0..self.one_hot_params.ram_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            let (ra_point, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::RamRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
-            scaling_factors.push(F::one());
+            let lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ra_point.r);
+            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim * lagrange));
+            scaling_factors.push(lagrange);
         }
 
         // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
@@ -2066,8 +2048,7 @@ impl<
             .opening_accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
         {
-            let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
+            let lagrange_factor = compute_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::TrustedAdvice,
                 advice_claim * lagrange_factor,
@@ -2083,8 +2064,7 @@ impl<
             .opening_accumulator
             .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
         {
-            let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
+            let lagrange_factor = compute_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::UntrustedAdvice,
                 advice_claim * lagrange_factor,

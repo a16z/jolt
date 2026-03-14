@@ -2014,6 +2014,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "fibonacci2"
+version = "0.1.0"
+dependencies = [
+ "fibonacci2-guest",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "fibonacci2-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
