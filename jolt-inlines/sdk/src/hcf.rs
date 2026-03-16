@@ -6,7 +6,7 @@
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 #[inline(always)]
-pub fn hcf() {
+pub fn hcf() -> ! {
     unsafe {
         let u = 0u64;
         let v = 1u64;
@@ -16,7 +16,7 @@ pub fn hcf() {
             funct3 = const 0b001,
             rs1 = in(reg) u,
             rs2 = in(reg) v,
-            options(nostack)
+            options(nostack, noreturn)
         );
     }
 }
@@ -25,11 +25,11 @@ pub fn hcf() {
     not(feature = "host"),
     not(any(target_arch = "riscv32", target_arch = "riscv64"))
 ))]
-pub fn hcf() {
+pub fn hcf() -> ! {
     panic!("hcf called on non-RISC-V target without host feature");
 }
 
 #[cfg(feature = "host")]
-pub fn hcf() {
+pub fn hcf() -> ! {
     panic!("explicit host code panic function called");
 }

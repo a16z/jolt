@@ -64,6 +64,7 @@ fn is_not_equal(x: &[u64; 4], y: &[u64; 4]) -> bool {
     x[0] != y[0] || x[1] != y[1] || x[2] != y[2] || x[3] != y[3]
 }
 
+use jolt_inlines_sdk::ec::{AffinePoint, CurveParams, ECField};
 pub use jolt_inlines_sdk::{hcf, UnwrapOrSpoilProof};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -228,7 +229,7 @@ impl GrumpkinFq {
     }
 }
 
-impl jolt_inlines_sdk::ec::ECField for GrumpkinFq {
+impl ECField for GrumpkinFq {
     type Error = GrumpkinError;
     #[inline(always)]
     fn zero() -> Self {
@@ -424,7 +425,7 @@ impl GrumpkinFr {
 #[derive(Clone)]
 pub struct GrumpkinCurve;
 
-impl jolt_inlines_sdk::ec::CurveParams<GrumpkinFq> for GrumpkinCurve {
+impl CurveParams<GrumpkinFq> for GrumpkinCurve {
     type Error = GrumpkinError;
     const DOUBLE_AND_ADD_DIVISOR_CHECK: bool = true;
     fn curve_b() -> GrumpkinFq {
@@ -435,7 +436,7 @@ impl jolt_inlines_sdk::ec::CurveParams<GrumpkinFq> for GrumpkinCurve {
     }
 }
 
-pub type GrumpkinPoint = jolt_inlines_sdk::ec::AffinePoint<GrumpkinFq, GrumpkinCurve>;
+pub type GrumpkinPoint = AffinePoint<GrumpkinFq, GrumpkinCurve>;
 
 pub trait GrumpkinPointExt {
     fn generator() -> GrumpkinPoint;

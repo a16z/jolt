@@ -18,7 +18,7 @@ use jolt_inlines_sdk::host::{
         sub::SUB,
         virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
     },
-    FormatInline, InstrAssembler, Instruction,
+    FormatInline, InlineOp, InstrAssembler, Instruction,
     Value::{Imm, Reg},
     VirtualRegisterGuard,
 };
@@ -255,7 +255,7 @@ impl Blake2SequenceBuilder {
 
 pub struct Blake2bCompression;
 
-impl jolt_inlines_sdk::host::InlineOp for Blake2bCompression {
+impl InlineOp for Blake2bCompression {
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::BLAKE2_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE2_FUNCT7;

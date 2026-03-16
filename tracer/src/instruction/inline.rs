@@ -232,4 +232,23 @@ mod tests {
         assert_eq!(inline.funct7, 0x7f);
         assert_eq!(inline.address, 0x1000);
     }
+
+    #[test]
+    fn test_find_inline_panics_for_unregistered() {
+        let result = std::panic::catch_unwind(|| find_inline(0x7F, 0x7, 0x7F));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_is_inline_registered_returns_false_for_unregistered() {
+        assert!(!is_inline_registered(0x7F, 0x7, 0x7F));
+    }
+
+    #[test]
+    fn test_list_registered_inlines_returns_vec() {
+        let inlines = list_registered_inlines();
+        for ((opcode, funct3, funct7), _name) in &inlines {
+            assert!(is_inline_registered(*opcode, *funct3, *funct7));
+        }
+    }
 }

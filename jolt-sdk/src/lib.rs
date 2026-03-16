@@ -33,8 +33,22 @@ pub use spoil::UnwrapOrSpoilProof;
 /// On RISC-V guest builds, emits a VirtualAssertEQ(0, 1) that the prover cannot satisfy.
 /// On all other targets, panics.
 #[inline(always)]
-pub fn hcf() {
-    check_advice!(false, "hcf: proof spoiled");
+pub fn hcf() -> ! {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    unsafe {
+        let u = 0u64;
+        let v = 1u64;
+        core::arch::asm!(
+            ".insn b {opcode}, {funct3}, {rs1}, {rs2}, . + 2",
+            opcode = const CUSTOM_OPCODE,
+            funct3 = const FUNCT3_VIRTUAL_ASSERT_EQ,
+            rs1 = in(reg) u,
+            rs2 = in(reg) v,
+            options(nostack, noreturn)
+        );
+    }
+    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+    panic!("hcf: proof spoiled");
 }
 
 pub use jolt_platform::*;

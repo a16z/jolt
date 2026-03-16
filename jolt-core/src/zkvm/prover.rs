@@ -2220,6 +2220,10 @@ impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>> Serial
 
 #[cfg(test)]
 mod tests {
+    // Force-link inline crates so their `inventory::submit!` entries are retained by the linker.
+    extern crate jolt_inlines_keccak256;
+    extern crate jolt_inlines_sha2;
+
     use std::sync::Arc;
 
     use ark_bn254::Fr;

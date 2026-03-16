@@ -2,7 +2,7 @@ use core::array;
 
 use jolt_inlines_sdk::host::{
     instruction::{add::ADD, ld::LD, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU},
-    FormatInline, InstrAssembler, Instruction, VirtualRegisterGuard,
+    FormatInline, InlineOp, InstrAssembler, Instruction, VirtualRegisterGuard,
 };
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
@@ -145,7 +145,7 @@ impl BigIntMulSequenceBuilder {
 
 pub struct BigintMul256;
 
-impl jolt_inlines_sdk::host::InlineOp for BigintMul256 {
+impl InlineOp for BigintMul256 {
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::BIGINT256_MUL_FUNCT3;
     const FUNCT7: u32 = crate::BIGINT256_MUL_FUNCT7;

@@ -6,6 +6,8 @@ use ark_ff::Field;
 use ark_ff::{BigInt, PrimeField};
 use ark_secp256k1::{Fq, Fr};
 
+use jolt_inlines_sdk::ec::{AffinePoint, CurveParams, ECField};
+
 extern crate alloc;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
@@ -304,7 +306,7 @@ impl Secp256k1Fq {
     }
 }
 
-impl jolt_inlines_sdk::ec::ECField for Secp256k1Fq {
+impl ECField for Secp256k1Fq {
     type Error = Secp256k1Error;
     #[inline(always)]
     fn zero() -> Self {
@@ -626,7 +628,7 @@ impl Secp256k1Fr {
 #[derive(Clone)]
 pub struct Secp256k1Curve;
 
-impl jolt_inlines_sdk::ec::CurveParams<Secp256k1Fq> for Secp256k1Curve {
+impl CurveParams<Secp256k1Fq> for Secp256k1Curve {
     type Error = Secp256k1Error;
     fn curve_b() -> Secp256k1Fq {
         Secp256k1Fq::seven()
@@ -636,7 +638,7 @@ impl jolt_inlines_sdk::ec::CurveParams<Secp256k1Fq> for Secp256k1Curve {
     }
 }
 
-pub type Secp256k1Point = jolt_inlines_sdk::ec::AffinePoint<Secp256k1Fq, Secp256k1Curve>;
+pub type Secp256k1Point = AffinePoint<Secp256k1Fq, Secp256k1Curve>;
 
 pub trait Secp256k1PointExt {
     fn generator() -> Secp256k1Point;

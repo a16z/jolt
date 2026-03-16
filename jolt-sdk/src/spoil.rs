@@ -13,10 +13,7 @@ impl<T, E> UnwrapOrSpoilProof<T> for Result<T, E> {
     fn unwrap_or_spoil_proof(self) -> T {
         match self {
             Ok(v) => v,
-            Err(_) => {
-                hcf();
-                panic!("unwrap_or_spoil_proof failed")
-            }
+            Err(_) => hcf(),
         }
     }
 }

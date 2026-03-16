@@ -12,7 +12,7 @@ default = []
 host = ["jolt-inlines-sdk/host"]
 
 [dependencies]
-jolt-inlines-sdk.workspace = true
+jolt-inlines-sdk = { workspace = true, features = ["elliptic-curve"] }
 serde.workspace = true
 ark-secp256k1.workspace = true
 ark-ff.workspace = true

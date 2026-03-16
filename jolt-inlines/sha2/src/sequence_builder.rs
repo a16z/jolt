@@ -2,7 +2,7 @@ use core::array;
 
 use jolt_inlines_sdk::host::{
     instruction::{andn::ANDN, lw::LW, sw::SW},
-    FormatInline, InstrAssembler, Instruction,
+    FormatInline, InlineOp, InstrAssembler, Instruction,
     Value::{self, Imm, Reg},
     VirtualRegisterGuard, Xlen,
 };
@@ -343,7 +343,7 @@ impl Sha256SequenceBuilder {
 
 pub struct Sha256Compression;
 
-impl jolt_inlines_sdk::host::InlineOp for Sha256Compression {
+impl InlineOp for Sha256Compression {
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::SHA256_FUNCT3;
     const FUNCT7: u32 = crate::SHA256_FUNCT7;
@@ -356,7 +356,7 @@ impl jolt_inlines_sdk::host::InlineOp for Sha256Compression {
 
 pub struct Sha256CompressionInitial;
 
-impl jolt_inlines_sdk::host::InlineOp for Sha256CompressionInitial {
+impl InlineOp for Sha256CompressionInitial {
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::SHA256_INIT_FUNCT3;
     const FUNCT7: u32 = crate::SHA256_INIT_FUNCT7;

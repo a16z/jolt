@@ -22,7 +22,7 @@ use jolt_inlines_sdk::host::{
         virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
         virtual_zero_extend_word::VirtualZeroExtendWord,
     },
-    FormatInline, InstrAssembler, Instruction,
+    FormatInline, InlineOp, InstrAssembler, Instruction,
     Value::{Imm, Reg},
     VirtualRegisterGuard,
 };
@@ -459,7 +459,7 @@ impl Blake3Keyed64SequenceBuilder {
 
 pub struct Blake3Compression;
 
-impl jolt_inlines_sdk::host::InlineOp for Blake3Compression {
+impl InlineOp for Blake3Compression {
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::BLAKE3_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
@@ -472,7 +472,7 @@ impl jolt_inlines_sdk::host::InlineOp for Blake3Compression {
 
 pub struct Blake3Keyed64Compression;
 
-impl jolt_inlines_sdk::host::InlineOp for Blake3Keyed64Compression {
+impl InlineOp for Blake3Keyed64Compression {
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::BLAKE3_KEYED64_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE3_FUNCT7;

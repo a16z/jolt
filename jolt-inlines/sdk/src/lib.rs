@@ -6,6 +6,7 @@ pub use hcf::hcf;
 mod spoil;
 pub use spoil::UnwrapOrSpoilProof;
 
+#[cfg(feature = "elliptic-curve")]
 pub mod ec;
 
 #[cfg(feature = "host")]

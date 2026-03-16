@@ -18,7 +18,7 @@ use core::array;
 use crate::NUM_LANES;
 use jolt_inlines_sdk::host::{
     instruction::{andn::ANDN, ld::LD, sd::SD},
-    FormatInline, InstrAssembler, Instruction,
+    FormatInline, InlineOp, InstrAssembler, Instruction,
     Value::{Imm, Reg},
     VirtualRegisterGuard,
 };
@@ -253,7 +253,7 @@ impl Keccak256SequenceBuilder {
 
 pub struct Keccak256Permutation;
 
-impl jolt_inlines_sdk::host::InlineOp for Keccak256Permutation {
+impl InlineOp for Keccak256Permutation {
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::KECCAK256_FUNCT3;
     const FUNCT7: u32 = crate::KECCAK256_FUNCT7;

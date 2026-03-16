@@ -9,7 +9,7 @@ use jolt_inlines_sdk::host::{
         virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
         virtual_assert_lte::VirtualAssertLTE,
     },
-    Cpu, FormatInline, InstrAssembler, Instruction, VirtualRegisterGuard,
+    Cpu, FormatInline, InlineOp, InstrAssembler, Instruction, VirtualRegisterGuard,
 };
 use num_bigint::BigUint as NBigUint;
 use num_integer::Integer;
@@ -583,7 +583,7 @@ macro_rules! secp256k1_mulq_op {
     ($name:ident, funct3: $funct3:expr, name: $op_name:expr, mul_type: $mul_type:expr, is_scalar: $is_scalar:expr) => {
         pub struct $name;
 
-        impl jolt_inlines_sdk::host::InlineOp for $name {
+        impl InlineOp for $name {
             const OPCODE: u32 = crate::INLINE_OPCODE;
             const FUNCT3: u32 = $funct3;
             const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
@@ -613,7 +613,7 @@ secp256k1_mulq_op!(Secp256k1DivR,     funct3: crate::SECP256K1_DIVR_FUNCT3,    n
 
 pub struct Secp256k1GlvrAdv;
 
-impl jolt_inlines_sdk::host::InlineOp for Secp256k1GlvrAdv {
+impl InlineOp for Secp256k1GlvrAdv {
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::SECP256K1_GLVR_ADV_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;

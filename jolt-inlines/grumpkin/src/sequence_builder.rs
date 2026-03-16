@@ -4,7 +4,7 @@ use ark_ff::{BigInt, Field};
 use ark_grumpkin::{Fq, Fr};
 use jolt_inlines_sdk::host::{
     instruction::{sd::SD, virtual_advice::VirtualAdvice},
-    Cpu, FormatInline, InstrAssembler, Instruction, VirtualRegisterGuard,
+    Cpu, FormatInline, InlineOp, InstrAssembler, Instruction, VirtualRegisterGuard,
 };
 struct GrumpkinDivAdv {
     asm: InstrAssembler,
@@ -75,7 +75,7 @@ impl GrumpkinDivAdv {
 
 pub struct GrumpkinDivQAdv;
 
-impl jolt_inlines_sdk::host::InlineOp for GrumpkinDivQAdv {
+impl InlineOp for GrumpkinDivQAdv {
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::GRUMPKIN_DIVQ_ADV_FUNCT3;
     const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
@@ -96,7 +96,7 @@ impl jolt_inlines_sdk::host::InlineOp for GrumpkinDivQAdv {
 
 pub struct GrumpkinDivRAdv;
 
-impl jolt_inlines_sdk::host::InlineOp for GrumpkinDivRAdv {
+impl InlineOp for GrumpkinDivRAdv {
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::GRUMPKIN_DIVR_ADV_FUNCT3;
     const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;

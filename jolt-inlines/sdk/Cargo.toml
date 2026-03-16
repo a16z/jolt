@@ -9,6 +9,7 @@ repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
+elliptic-curve = []
 host = ["dep:tracer", "dep:inventory"]
 
 [dependencies]
