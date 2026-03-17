@@ -195,8 +195,8 @@ impl MacroBuilder {
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #build_prover_fn_name(
-                program: jolt::host::Program,
+            pub fn #build_prover_fn_name<S: jolt::host::JoltProgramSource + Send + Sync + 'static>(
+                program: S,
                 preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>,
             ) -> #return_type
             {
@@ -205,9 +205,8 @@ impl MacroBuilder {
                 let preprocessing = std::sync::Arc::new(preprocessing);
 
                 let prove_closure = move |#inputs #commitment_param_in_closure| {
-                    let program = (*program).clone();
                     let preprocessing = (*preprocessing).clone();
-                    #prove_fn_name(program, preprocessing, #(#all_names),* #commitment_arg_in_call)
+                    #prove_fn_name(program.as_ref(), preprocessing, #(#all_names),* #commitment_arg_in_call)
                 };
 
                 prove_closure
@@ -465,7 +464,7 @@ impl MacroBuilder {
             Ident::new(&format!("preprocess_shared_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_shared_fn_name(program: &mut jolt::host::Program)
+            pub fn #preprocess_shared_fn_name(program: &mut dyn jolt::host::JoltProgramSource)
                 -> jolt::JoltSharedPreprocessing
             {
                 #imports
@@ -690,7 +689,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             #[allow(clippy::too_many_arguments)]
             pub fn #prove_fn_name(
-                mut program: jolt::host::Program,
+                program: &dyn jolt::host::JoltProgramSource,
                 preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>,
                 #inputs
                 #commitment_param
@@ -938,6 +937,7 @@ impl MacroBuilder {
                 RV64IMACVerifier,
                 RV64IMACProof,
                 host::Program,
+                host::JoltProgramSource,
                 JoltProverPreprocessing,
                 MemoryConfig,
                 MemoryLayout,
