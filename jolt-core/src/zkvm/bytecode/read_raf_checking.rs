@@ -2313,19 +2313,38 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
 
     #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        let factors: Vec<ValueSource> = (0..self.d)
+        let ra_factors: Vec<ValueSource> = (0..self.d)
             .map(|i| {
-                let opening = OpeningId::committed(
+                ValueSource::Opening(OpeningId::committed(
                     CommittedPolynomial::BytecodeRa(i),
                     SumcheckId::BytecodeReadRaf,
-                );
-                ValueSource::Opening(opening)
+                ))
             })
             .collect();
 
-        let terms = vec![ProductTerm::scaled(ValueSource::Challenge(0), factors)];
-
-        Some(OutputClaimConstraint::sum_of_products(terms))
+        if self.use_staged_val_claims {
+            // In committed mode, verifier does not materialize stage Val polynomials.
+            // Encode output as:
+            //   ra_prod * (Σ_stage coeff_stage * ValStage(stage) + const_term)
+            // where coeff_stage / const_term are public challenge values.
+            let mut terms = Vec::with_capacity(N_STAGES + 1);
+            for stage in 0..N_STAGES {
+                let mut factors = ra_factors.clone();
+                factors.push(ValueSource::Opening(OpeningId::virt(
+                    VirtualPolynomial::BytecodeValStage(stage),
+                    SumcheckId::BytecodeReadRafAddressPhase,
+                )));
+                terms.push(ProductTerm::scaled(ValueSource::Challenge(stage), factors));
+            }
+            terms.push(ProductTerm::scaled(
+                ValueSource::Challenge(N_STAGES),
+                ra_factors,
+            ));
+            Some(OutputClaimConstraint::sum_of_products(terms))
+        } else {
+            let terms = vec![ProductTerm::scaled(ValueSource::Challenge(0), ra_factors)];
+            Some(OutputClaimConstraint::sum_of_products(terms))
+        }
     }
 
     #[cfg(feature = "zk")]
@@ -2333,7 +2352,46 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
         let opening_point = self.normalize_opening_point(sumcheck_challenges);
         let (r_address_prime, r_cycle_prime) = opening_point.split_at(self.log_K);
 
-        // Prover stores bound values before clearing polys; verifier evaluates directly
+        if self.use_staged_val_claims {
+            let int_poly = self.int_poly.evaluate(&r_address_prime.r);
+            let eq_cycles: Vec<F> = self
+                .r_cycles
+                .iter()
+                .map(|r_cycle| EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime.r))
+                .collect();
+
+            let mut coeffs: Vec<F> = (0..N_STAGES)
+                .map(|stage| self.gamma_powers[stage] * eq_cycles[stage])
+                .collect();
+
+            let int_poly_contrib_by_stage = [
+                int_poly * self.gamma_powers[5], // RAF for Stage1
+                F::zero(),
+                int_poly * self.gamma_powers[4], // RAF for Stage3
+                F::zero(),
+                F::zero(),
+            ];
+            let int_contrib: F = (0..N_STAGES)
+                .map(|stage| {
+                    int_poly_contrib_by_stage[stage] * eq_cycles[stage] * self.gamma_powers[stage]
+                })
+                .sum();
+
+            let log_k = self.log_K;
+            let e = self.entry_bytecode_index;
+            let entry_bits: Vec<F> = (0..log_k)
+                .map(|i| F::from_u64(((e >> (log_k - 1 - i)) & 1) as u64))
+                .collect();
+            let f_entry_at_r_addr = EqPolynomial::<F>::mle(&entry_bits, &r_address_prime.r);
+            let zeros: Vec<F::Challenge> = vec![F::Challenge::default(); r_cycle_prime.r.len()];
+            let eq_zero_at_r_cycle = EqPolynomial::<F>::mle(&zeros, &r_cycle_prime.r);
+            let entry_contrib = self.entry_gamma * f_entry_at_r_addr * eq_zero_at_r_cycle;
+
+            coeffs.push(int_contrib + entry_contrib);
+            return coeffs;
+        }
+
+        // Prover stores bound values before clearing polys; verifier evaluates directly.
         let val: F = if let Some(bound_val_polys) = &self.bound_val_polys {
             bound_val_polys
                 .iter()

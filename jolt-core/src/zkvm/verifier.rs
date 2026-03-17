@@ -23,6 +23,8 @@ use crate::subprotocols::sumcheck::BatchedSumcheck;
 #[cfg(feature = "zk")]
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 #[cfg(feature = "zk")]
+use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
+#[cfg(feature = "zk")]
 use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
 use crate::zkvm::bytecode::chunks::DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT;
 use crate::zkvm::bytecode::chunks::{

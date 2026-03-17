@@ -508,8 +508,10 @@ impl MacroBuilder {
         let fn_name = self.get_func_name();
         let preprocess_shared_fn_name =
             Ident::new(&format!("preprocess_shared_{fn_name}"), fn_name.span());
-        let preprocess_shared_committed_fn_name =
-            Ident::new(&format!("preprocess_shared_committed_{fn_name}"), fn_name.span());
+        let preprocess_shared_committed_fn_name = Ident::new(
+            &format!("preprocess_shared_committed_{fn_name}"),
+            fn_name.span(),
+        );
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_shared_committed_fn_name(
@@ -563,8 +565,10 @@ impl MacroBuilder {
         let fn_name = self.get_func_name();
         let preprocess_committed_fn_name =
             Ident::new(&format!("preprocess_committed_{fn_name}"), fn_name.span());
-        let preprocess_shared_committed_fn_name =
-            Ident::new(&format!("preprocess_shared_committed_{fn_name}"), fn_name.span());
+        let preprocess_shared_committed_fn_name = Ident::new(
+            &format!("preprocess_shared_committed_{fn_name}"),
+            fn_name.span(),
+        );
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_committed_fn_name(
@@ -607,8 +611,10 @@ impl MacroBuilder {
 
     fn make_preprocess_committed_verifier_func(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
-        let preprocess_committed_verifier_fn_name =
-            Ident::new(&format!("preprocess_committed_verifier_{fn_name}"), fn_name.span());
+        let preprocess_committed_verifier_fn_name = Ident::new(
+            &format!("preprocess_committed_verifier_{fn_name}"),
+            fn_name.span(),
+        );
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]

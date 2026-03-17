@@ -56,15 +56,9 @@ impl<F: JoltField> OneHotPolynomial<F> {
     ///
     /// Note: the Dory matrix may be square or almost-square depending on `log2(K*T)`.
     pub fn num_rows(&self) -> usize {
-        let t = DoryGlobals::get_T();
         match DoryGlobals::get_layout() {
-            DoryLayout::AddressMajor => {
-                if t == 0 {
-                    return 0;
-                }
-                t.div_ceil(DoryGlobals::address_major_cycles_per_row())
-            }
-            DoryLayout::CycleMajor => (t * self.K).div_ceil(DoryGlobals::get_num_columns()),
+            DoryLayout::AddressMajor => DoryGlobals::get_max_num_rows(),
+            DoryLayout::CycleMajor => (DoryGlobals::get_T() * self.K).div_ceil(DoryGlobals::get_num_columns()),
         }
     }
 

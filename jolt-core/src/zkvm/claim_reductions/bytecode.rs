@@ -9,11 +9,15 @@ use crate::field::JoltField;
 use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -210,6 +214,77 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeClaimReductionParams<F>
             challenges,
             self.dense_cycle_prefix_vars,
         )
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        match self.phase {
+            PrecommittedPhase::CycleVariables => {
+                let openings: Vec<OpeningId> = (0..NUM_VAL_STAGES)
+                    .map(|stage| {
+                        OpeningId::virt(
+                            VirtualPolynomial::BytecodeValStage(stage),
+                            SumcheckId::BytecodeReadRafAddressPhase,
+                        )
+                    })
+                    .collect();
+                InputClaimConstraint::all_weighted_openings(&openings)
+            }
+            PrecommittedPhase::AddressVariables => InputClaimConstraint::direct(OpeningId::virt(
+                VirtualPolynomial::BytecodeClaimReductionIntermediate,
+                SumcheckId::BytecodeClaimReductionCyclePhase,
+            )),
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        match self.phase {
+            PrecommittedPhase::CycleVariables => self.eta_powers.to_vec(),
+            PrecommittedPhase::AddressVariables => Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        match self.phase {
+            PrecommittedPhase::CycleVariables => {
+                Some(OutputClaimConstraint::direct(OpeningId::virt(
+                    VirtualPolynomial::BytecodeClaimReductionIntermediate,
+                    SumcheckId::BytecodeClaimReductionCyclePhase,
+                )))
+            }
+            PrecommittedPhase::AddressVariables => {
+                let terms = (0..self.bytecode_chunk_count)
+                    .map(|chunk_idx| {
+                        let opening = OpeningId::committed(
+                            CommittedPolynomial::BytecodeChunk(chunk_idx),
+                            SumcheckId::BytecodeClaimReduction,
+                        );
+                        (
+                            ValueSource::Challenge(chunk_idx),
+                            ValueSource::Opening(opening),
+                        )
+                    })
+                    .collect();
+                Some(OutputClaimConstraint::linear(terms))
+            }
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        match self.phase {
+            PrecommittedPhase::CycleVariables => vec![],
+            PrecommittedPhase::AddressVariables => {
+                let eq_combined = evaluate_bytecode_eq_combined(self, sumcheck_challenges);
+                let scale: F = precommitted_skip_round_scale(&self.precommitted);
+                self.chunk_rbc_weights
+                    .iter()
+                    .map(|w| *w * eq_combined * scale)
+                    .collect()
+            }
+        }
     }
 }
 

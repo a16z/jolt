@@ -11,11 +11,15 @@ use crate::field::JoltField;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
@@ -175,6 +179,60 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProgramImageClaimReductionParam
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.precommitted
             .normalize_opening_point(self.is_cycle_phase(), challenges, self.log_t)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        match self.phase {
+            PrecommittedPhase::CycleVariables => InputClaimConstraint::direct(OpeningId::virt(
+                VirtualPolynomial::ProgramImageInitContributionRw,
+                SumcheckId::RamValCheck,
+            )),
+            PrecommittedPhase::AddressVariables => {
+                InputClaimConstraint::direct(OpeningId::committed(
+                    CommittedPolynomial::ProgramImageInit,
+                    SumcheckId::ProgramImageClaimReductionCyclePhase,
+                ))
+            }
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        match self.phase {
+            PrecommittedPhase::CycleVariables => {
+                Some(OutputClaimConstraint::direct(OpeningId::committed(
+                    CommittedPolynomial::ProgramImageInit,
+                    SumcheckId::ProgramImageClaimReductionCyclePhase,
+                )))
+            }
+            PrecommittedPhase::AddressVariables => Some(OutputClaimConstraint::linear(vec![(
+                ValueSource::Challenge(0),
+                ValueSource::Opening(OpeningId::committed(
+                    CommittedPolynomial::ProgramImageInit,
+                    SumcheckId::ProgramImageClaimReduction,
+                )),
+            )])),
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        match self.phase {
+            PrecommittedPhase::CycleVariables => vec![],
+            PrecommittedPhase::AddressVariables => {
+                let opening_point = self.normalize_opening_point(sumcheck_challenges);
+                let eq_combined =
+                    self.selector_rw * EqPolynomial::mle(&opening_point.r, &self.r_addr_rw_reduced);
+                let scale: F = precommitted_skip_round_scale(&self.precommitted);
+                vec![eq_combined * scale]
+            }
+        }
     }
 }
 

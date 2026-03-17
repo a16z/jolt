@@ -368,26 +368,6 @@ impl DoryGlobals {
         (num_rows * num_cols) / t
     }
 
-    /// For `AddressMajor`, each Dory matrix row corresponds to this many cycles.
-    ///
-    /// Equivalent to `T / num_rows` and to `num_cols / dense_stride`.
-    pub fn address_major_cycles_per_row() -> usize {
-        let num_cols = Self::get_num_columns();
-        let dense_stride = Self::dense_stride();
-        assert!(dense_stride > 0, "Dense stride must be positive");
-        assert_eq!(
-            num_cols % dense_stride,
-            0,
-            "Expected num_cols to be divisible by dense stride"
-        );
-        let cycles_per_row = num_cols / dense_stride;
-        assert!(
-            cycles_per_row > 0,
-            "AddressMajor row must contain at least one cycle"
-        );
-        cycles_per_row
-    }
-
     fn set_max_num_rows_for_context(max_num_rows: usize, context: DoryContext) {
         match context {
             DoryContext::Main => {
