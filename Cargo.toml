@@ -43,8 +43,6 @@ members = [
     "examples/collatz/guest",
     "examples/fibonacci",
     "examples/fibonacci/guest",
-    "examples/fibonacci2",
-    "examples/fibonacci2/guest",
     "examples/secp256k1-ecdsa-verify",
     "examples/secp256k1-ecdsa-verify/guest",
     "examples/sha2-ex",

@@ -30,24 +30,6 @@ pub use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
 /// We do what they describe as "front-loaded" batch sumcheck.
 pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
-    fn debug_final_claims_enabled() -> bool {
-        std::env::var("JOLT_DEBUG_BATCHED_SUMCHECK_FINAL_CLAIMS")
-            .map(|v| {
-                let value = v.trim().to_ascii_lowercase();
-                !matches!(value.as_str(), "" | "0" | "false" | "off")
-            })
-            .unwrap_or(false)
-    }
-
-    fn debug_pending_ids_enabled() -> bool {
-        std::env::var("JOLT_DEBUG_PENDING_IDS")
-            .map(|v| {
-                let value = v.trim().to_ascii_lowercase();
-                !matches!(value.as_str(), "" | "0" | "false" | "off")
-            })
-            .unwrap_or(false)
-    }
-
     /// Returns (proof, challenges, initial_batched_claim)
     /// For non-ZK mode - returns ClearSumcheckProof with polynomial coefficients visible.
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
@@ -61,15 +43,9 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
-        let input_claims: Vec<F> = sumcheck_instances
-            .iter()
-            .map(|sumcheck| sumcheck.input_claim(opening_accumulator))
-            .collect();
-        if Self::debug_final_claims_enabled() {
-            tracing::info!("BatchedSumcheck::prove input claims: {:?}", input_claims);
-        }
-        input_claims.iter().for_each(|input_claim| {
-            transcript.append_scalar(b"sumcheck_claim", input_claim);
+        sumcheck_instances.iter().for_each(|sumcheck| {
+            let input_claim = sumcheck.input_claim(opening_accumulator);
+            transcript.append_scalar(b"sumcheck_claim", &input_claim);
         });
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
@@ -84,9 +60,9 @@ impl BatchedSumcheck {
         //   = A * 2^N * claim_a + B * claim_b
         let mut individual_claims: Vec<F> = sumcheck_instances
             .iter()
-            .zip(input_claims.iter())
-            .map(|(sumcheck, input_claim)| {
+            .map(|sumcheck| {
                 let num_rounds = sumcheck.num_rounds();
+                let input_claim = sumcheck.input_claim(opening_accumulator);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
             .collect();
@@ -189,26 +165,6 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
-        if Self::debug_final_claims_enabled() {
-            let final_claims: Vec<(usize, usize, usize, F)> = sumcheck_instances
-                .iter()
-                .zip(individual_claims.iter())
-                .enumerate()
-                .map(|(idx, (sumcheck, claim))| {
-                    (
-                        idx,
-                        sumcheck.round_offset(max_num_rounds),
-                        sumcheck.num_rounds(),
-                        *claim,
-                    )
-                })
-                .collect();
-            tracing::info!(
-                "BatchedSumcheck::prove final individual claims: {:?}",
-                final_claims
-            );
-        }
-
         for sumcheck in sumcheck_instances.iter() {
             // Instance-local slice can start at a custom global offset.
             let offset = sumcheck.round_offset(max_num_rounds);
@@ -217,15 +173,6 @@ impl BatchedSumcheck {
             // Cache polynomial opening claims, to be proven using either an
             // opening proof or sumcheck (in the case of virtual polynomials).
             sumcheck.cache_openings(opening_accumulator, r_slice);
-        }
-
-        if Self::debug_pending_ids_enabled() {
-            tracing::info!(
-                "BatchedSumcheck::prove pending_ids (instances={} rounds={}): {:?}",
-                sumcheck_instances.len(),
-                max_num_rounds,
-                opening_accumulator.pending_claim_ids_debug()
-            );
         }
 
         opening_accumulator.flush_to_transcript(transcript);
@@ -502,22 +449,12 @@ impl BatchedSumcheck {
             .sum();
 
         let (output_claim, r_sumcheck) =
-            proof.verify(claim, max_num_rounds, max_degree, transcript)
-                .map_err(|err| {
-                    tracing::error!(
-                        "BatchedSumcheck::verify failed inside proof.verify: claim={} max_num_rounds={} max_degree={}",
-                        claim,
-                        max_num_rounds,
-                        max_degree
-                    );
-                    err
-                })?;
+            proof.verify(claim, max_num_rounds, max_degree, transcript)?;
 
-        let expected_output_terms: Vec<(usize, usize, F, F, F)> = sumcheck_instances
+        let expected_output_claim: F = sumcheck_instances
             .iter()
             .zip(batching_coeffs.iter())
-            .enumerate()
-            .map(|(idx, (sumcheck, coeff))| {
+            .map(|(sumcheck, coeff)| {
                 let offset = sumcheck.round_offset(max_num_rounds);
                 let r_slice = &r_sumcheck[offset..offset + sumcheck.num_rounds()];
 
@@ -526,28 +463,9 @@ impl BatchedSumcheck {
                 sumcheck.cache_openings(opening_accumulator, r_slice);
                 let claim = sumcheck.expected_output_claim(opening_accumulator, r_slice);
 
-                (idx, sumcheck.num_rounds(), *coeff, claim, claim * coeff)
+                claim * coeff
             })
-            .collect();
-        if Self::debug_final_claims_enabled() {
-            tracing::info!(
-                "BatchedSumcheck::verify expected output terms: {:?}",
-                expected_output_terms
-            );
-        }
-        let expected_output_claim: F = expected_output_terms
-            .iter()
-            .map(|(_, _, _, _, weighted_claim)| *weighted_claim)
             .sum();
-
-        if Self::debug_pending_ids_enabled() {
-            tracing::info!(
-                "BatchedSumcheck::verify pending_ids (instances={} rounds={}): {:?}",
-                sumcheck_instances.len(),
-                max_num_rounds,
-                opening_accumulator.pending_claim_ids_debug()
-            );
-        }
 
         if !is_zk {
             opening_accumulator.flush_to_transcript(transcript);
@@ -559,15 +477,6 @@ impl BatchedSumcheck {
 
         // In ZK mode, skip output claim verification — BlindFold proves this
         if !is_zk && output_claim != expected_output_claim {
-            tracing::error!(
-                "BatchedSumcheck::verify output-claim mismatch: output_claim={} expected_output_claim={}",
-                output_claim,
-                expected_output_claim
-            );
-            tracing::error!(
-                "BatchedSumcheck::verify expected output terms: {:?}",
-                expected_output_terms
-            );
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 

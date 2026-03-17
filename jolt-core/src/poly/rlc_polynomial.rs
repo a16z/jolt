@@ -530,9 +530,8 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
         let num_rows = T / num_columns;
         let trace_len = trace.len();
 
-        let has_onehot = !ctx.onehot_polys.is_empty();
-        let exact_onehot_prefix_mode =
-            DoryGlobals::get_layout() == DoryLayout::CycleMajor && has_onehot && trace_len < T;
+        let main_embedding_mode =
+            DoryGlobals::get_layout() == DoryLayout::CycleMajor && trace_len < T;
 
         // When the dominant Stage-8 matrix is larger than the trace-backed prefix, one-hot
         // witnesses still live on the exact trace prefix rather than the expanded matrix T.
@@ -569,14 +568,14 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
 
                     // Process valid trace elements.
                     for (col_idx, cycle) in row_cycles.iter().enumerate() {
-                        if exact_onehot_prefix_mode {
+                        if main_embedding_mode {
                             setup.process_cycle_dense(
                                 cycle,
                                 scaled_rd_inc,
                                 scaled_ram_inc,
                                 &mut dense_accs[col_idx],
                             );
-                            setup.process_cycle_onehot_prefix_exact(
+                            setup.process_cycle_onehot_prefix(
                                 cycle,
                                 chunk_start + col_idx,
                                 trace_len,
@@ -625,9 +624,8 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
     ) -> Vec<F> {
         let num_rows = T / num_columns;
         let trace_len = DoryGlobals::main_t();
-        let has_onehot = !ctx.onehot_polys.is_empty();
-        let exact_onehot_prefix_mode =
-            DoryGlobals::get_layout() == DoryLayout::CycleMajor && has_onehot && trace_len < T;
+        let main_embedding_mode =
+            DoryGlobals::get_layout() == DoryLayout::CycleMajor && trace_len < T;
 
         // Setup: precompute coefficients, row factors, and folded one-hot tables.
         let onehot_rows_per_k = trace_len.div_ceil(num_columns).min(num_rows);
@@ -648,14 +646,14 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                     // Process columns within chunk sequentially.
                     for (col_idx, cycle) in chunk.iter().enumerate() {
                         let cycle_idx = row_idx * num_columns + col_idx;
-                        if exact_onehot_prefix_mode && cycle_idx < trace_len {
+                        if main_embedding_mode && cycle_idx < trace_len {
                             setup.process_cycle_dense(
                                 cycle,
                                 scaled_rd_inc,
                                 scaled_ram_inc,
                                 &mut dense_accs[col_idx],
                             );
-                            setup.process_cycle_onehot_prefix_exact(
+                            setup.process_cycle_onehot_prefix(
                                 cycle,
                                 cycle_idx,
                                 trace_len,
@@ -816,7 +814,7 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
 
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
-    fn process_cycle_onehot_prefix_exact(
+    fn process_cycle_onehot_prefix(
         &self,
         cycle: &Cycle,
         cycle_idx: usize,

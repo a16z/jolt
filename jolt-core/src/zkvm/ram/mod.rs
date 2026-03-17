@@ -285,6 +285,7 @@ pub fn verifier_accumulate_advice<F: JoltField>(
 ///
 /// These are scalar inner products:
 /// - `C_rw  = Σ_j ProgramWord[j] * eq(r_address_rw, start_index + j)`
+///
 /// This is stored as a virtual opening under `SumcheckId::RamValCheck`.
 pub fn prover_accumulate_program_image<F: JoltField>(
     ram_K: usize,

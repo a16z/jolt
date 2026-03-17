@@ -214,16 +214,12 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
 
     #[inline]
     pub fn is_cycle_phase_round(&self, round: usize) -> bool {
-        self.cycle_phase_rounds
-            .iter()
-            .any(|&scheduled| scheduled == round)
+        self.cycle_phase_rounds.contains(&round)
     }
 
     #[inline]
     pub fn is_address_phase_round(&self, round: usize) -> bool {
-        self.address_phase_rounds
-            .iter()
-            .any(|&scheduled| scheduled == round)
+        self.address_phase_rounds.contains(&round)
     }
 
     #[inline]
@@ -374,13 +370,13 @@ where
         .collect()
 }
 
-pub fn precommitted_eq_evals_with_scaling<F: JoltField>(
+pub fn precommitted_eq_evals_with_scaling<F>(
     challenges_be: &[F::Challenge],
     scaling_factor: Option<F>,
     precommitted: &PrecommittedClaimReduction<F>,
 ) -> Vec<F>
 where
-    F: std::ops::Mul<F::Challenge, Output = F> + std::ops::SubAssign<F>,
+    F: JoltField + std::ops::Mul<F::Challenge, Output = F> + std::ops::SubAssign<F>,
 {
     let permuted_challenges = precommitted_permute_eq_challenges(
         challenges_be,

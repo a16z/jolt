@@ -2,7 +2,6 @@
 use crate::poly::opening_proof::OpeningId;
 #[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
-use crate::zkvm::stage8_program_openings_from_env;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use std::{
@@ -329,18 +328,6 @@ impl<
         candidates
     }
 
-    #[inline]
-    fn include_bytecode_in_stage8(&self) -> bool {
-        self.preprocessing.is_committed_mode()
-            && stage8_program_openings_from_env().includes_bytecode()
-    }
-
-    #[inline]
-    fn include_program_image_in_stage8(&self) -> bool {
-        self.preprocessing.is_committed_mode()
-            && stage8_program_openings_from_env().includes_program_image()
-    }
-
     fn stage8_opening_point(&self) -> OpeningPoint<BIG_ENDIAN, F> {
         let native_main_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
         let mut opening_candidates: Vec<(String, OpeningPoint<BIG_ENDIAN, F>)> = Vec::new();
@@ -356,7 +343,7 @@ impl<
         {
             opening_candidates.push(("untrusted_advice".to_string(), point));
         }
-        if self.include_bytecode_in_stage8() {
+        if self.preprocessing.is_committed_mode() {
             for chunk_idx in 0..self.preprocessing.shared.bytecode_chunk_count {
                 let (point, _) = self.opening_accumulator.get_committed_polynomial_opening(
                     CommittedPolynomial::BytecodeChunk(chunk_idx),
@@ -365,7 +352,7 @@ impl<
                 opening_candidates.push((format!("bytecode_chunk[{chunk_idx}]"), point));
             }
         }
-        if self.include_program_image_in_stage8() {
+        if self.preprocessing.is_committed_mode() {
             let (program_image_point, _) =
                 self.opening_accumulator.get_committed_polynomial_opening(
                     CommittedPolynomial::ProgramImageInit,
@@ -1329,10 +1316,11 @@ impl<
         print_current_memory_usage("Stage 6a baseline");
 
         let bytecode_read_raf_params = BytecodeReadRafSumcheckParams::gen(
-            &self.preprocessing.program,
+            Some(&self.preprocessing.program),
             self.trace.len().log_2(),
             &self.one_hot_params,
             self.preprocessing.is_committed_mode(),
+            None,
             &self.opening_accumulator,
             &mut self.transcript,
         );
@@ -1371,25 +1359,6 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage6a_start_flamechart.svg");
         tracing::info!("Stage 6a proving");
 
-        #[cfg(feature = "zk")]
-        let (sumcheck_proof, _r_stage6a, _initial_claim) = {
-            // Stage 6a input claims depend on hidden prior-stage outputs in ZK mode,
-            // so we prove it with a ZK sumcheck proof. We keep a local blindfold
-            // accumulator so this split-internal phase does not add a new global
-            // BlindFold stage.
-            let mut rng = rand::thread_rng();
-            let mut local_blindfold =
-                crate::subprotocols::blindfold::BlindFoldAccumulator::<F, C>::new();
-            BatchedSumcheck::prove_zk::<F, C, _, _>(
-                instances.iter_mut().map(|v| &mut **v as _).collect(),
-                &mut self.opening_accumulator,
-                &mut local_blindfold,
-                &mut self.transcript,
-                &self.pedersen_generators,
-                &mut rng,
-            )
-        };
-        #[cfg(not(feature = "zk"))]
         let (sumcheck_proof, _r_stage6a, _initial_claim) =
             self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
 
@@ -1650,8 +1619,8 @@ impl<
         let zk_stages = self.blindfold_accumulator.take_stage_data();
         assert_eq!(
             zk_stages.len(),
-            7,
-            "Expected 7 ZK stages, got {}",
+            8,
+            "Expected 8 ZK stages, got {}",
             zk_stages.len()
         );
 
@@ -2180,7 +2149,7 @@ impl<
 
         let mut polynomial_claims = Vec::new();
         let mut scaling_factors = Vec::new();
-        let mut extra_dense_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>> =
+        let mut precommitted_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>> =
             HashMap::new();
 
         let (ram_inc_point, ram_inc_claim) =
@@ -2274,7 +2243,7 @@ impl<
             }
         }
 
-        if self.include_bytecode_in_stage8() {
+        if self.preprocessing.is_committed_mode() {
             let chunk_count = self.preprocessing.shared.bytecode_chunk_count;
             let bytecode_chunks = build_committed_bytecode_chunk_polynomials::<F>(
                 &self.preprocessing.program.bytecode.bytecode,
@@ -2293,11 +2262,11 @@ impl<
                     chunk_claim * lagrange_factor,
                 ));
                 scaling_factors.push(lagrange_factor);
-                extra_dense_polys.insert(CommittedPolynomial::BytecodeChunk(chunk_idx), poly);
+                precommitted_polys.insert(CommittedPolynomial::BytecodeChunk(chunk_idx), poly);
             }
         }
 
-        if self.include_program_image_in_stage8() {
+        if self.preprocessing.is_committed_mode() {
             let mut program_image_words = self.preprocessing.program.ram.bytecode_words.clone();
             if program_image_words.is_empty() {
                 program_image_words.push(0);
@@ -2316,7 +2285,7 @@ impl<
                 program_claim * lagrange_factor,
             ));
             scaling_factors.push(lagrange_factor);
-            extra_dense_polys.insert(CommittedPolynomial::ProgramImageInit, program_image_poly);
+            precommitted_polys.insert(CommittedPolynomial::ProgramImageInit, program_image_poly);
         }
 
         // 2. Sample gamma and compute powers for RLC
@@ -2349,7 +2318,6 @@ impl<
                 ProgramMode::Full
             },
             self.preprocessing.shared.bytecode_chunk_count,
-            stage8_program_openings_from_env(),
         );
 
         // Build DoryOpeningState
@@ -2364,15 +2332,13 @@ impl<
             memory_layout: self.preprocessing.shared.memory_layout.clone(),
         });
 
-        // Build precommitted polynomials map for RLC
-        let mut precommitted_polys = HashMap::new();
+        // Add advice polynomials to precommitted polynomials map for RLC.
         if let Some(poly) = self.advice.trusted_advice_polynomial.take() {
             precommitted_polys.insert(CommittedPolynomial::TrustedAdvice, poly);
         }
         if let Some(poly) = self.advice.untrusted_advice_polynomial.take() {
             precommitted_polys.insert(CommittedPolynomial::UntrustedAdvice, poly);
         }
-        precommitted_polys.extend(extra_dense_polys);
 
         // Build streaming RLC polynomial directly (no witness poly regeneration!)
         // Use materialized trace (default, single pass) instead of lazy trace
@@ -3577,7 +3543,6 @@ mod tests {
         };
         use crate::subprotocols::sumcheck::SumcheckInstanceProof;
         use crate::transcripts::{KeccakTranscript, Transcript};
-        use crate::zkvm::verifier::JoltSharedPreprocessing;
         /// Helper to process a single stage's sumcheck proof.
         /// Returns a list of (RoundWitness, degree) for each round.
         /// For ZK proofs, creates synthetic witnesses with correct degrees to test R1CS structure.
