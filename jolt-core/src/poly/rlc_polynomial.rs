@@ -197,10 +197,8 @@ impl<F: JoltField> RLCPolynomial<F> {
                 | CommittedPolynomial::ProgramImageInit => {
                     // Precommitted polynomials are passed in directly (not streamed from trace).
                     if precommitted_poly_map.contains_key(poly_id) {
-                        precommitted_polys.push((
-                            *coeff,
-                            precommitted_poly_map.remove(poly_id).unwrap(),
-                        ));
+                        precommitted_polys
+                            .push((*coeff, precommitted_poly_map.remove(poly_id).unwrap()));
                     }
                 }
             }

@@ -58,7 +58,9 @@ impl<F: JoltField> OneHotPolynomial<F> {
     pub fn num_rows(&self) -> usize {
         match DoryGlobals::get_layout() {
             DoryLayout::AddressMajor => DoryGlobals::get_max_num_rows(),
-            DoryLayout::CycleMajor => (DoryGlobals::get_T() * self.K).div_ceil(DoryGlobals::get_num_columns()),
+            DoryLayout::CycleMajor => {
+                (DoryGlobals::get_T() * self.K).div_ceil(DoryGlobals::get_num_columns())
+            }
         }
     }
 

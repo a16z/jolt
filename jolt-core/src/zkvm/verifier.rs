@@ -1127,9 +1127,7 @@ impl<
             self.main_total_vars(),
             Some(self.proof.dory_layout),
         );
-        tracing::info!("stage6a");
         let (bytecode_read_raf_params, booleanity_params) = self.verify_stage6a()?;
-        tracing::info!("stage6b");
         self.verify_stage6b(bytecode_read_raf_params, booleanity_params)
     }
 
@@ -1172,20 +1170,6 @@ impl<
             &self.opening_accumulator,
             &mut self.transcript,
         ));
-        tracing::info!(
-            "Stage 6a verifier input claims: bytecode_read_raf={} booleanity={}",
-            <BytecodeReadRafAddressSumcheckVerifier<F> as SumcheckInstanceVerifier<
-                F,
-                ProofTranscript,
-            >>::get_params(&bytecode_read_raf)
-            .input_claim(&self.opening_accumulator),
-            <BooleanityAddressSumcheckVerifier<F> as SumcheckInstanceVerifier<
-                F,
-                ProofTranscript,
-            >>::get_params(&booleanity)
-            .input_claim(&self.opening_accumulator),
-        );
-
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
             vec![&bytecode_read_raf, &booleanity];
         BatchedSumcheck::verify(

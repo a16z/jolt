@@ -40,7 +40,7 @@ use crate::{
             commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment},
             dory::{DoryGlobals, DoryLayout},
         },
-        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+        multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
             compute_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningPoint,
             ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
@@ -56,7 +56,6 @@ use crate::{
         streaming_schedule::LinearOnlySchedule,
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
         sumcheck_prover::SumcheckInstanceProver,
-        sumcheck_verifier::SumcheckInstanceParams,
         univariate_skip::UniSkipFirstRoundProofVariant,
     },
     transcripts::Transcript,
@@ -176,50 +175,6 @@ use crate::zkvm::r1cs::constraints::{
 };
 #[cfg(feature = "zk")]
 use crate::zkvm::verifier::BlindfoldSetup;
-
-pub(crate) fn derive_poly_source_point_from_matrix_dims<F: JoltField>(
-    stage8_opening_point: &OpeningPoint<BIG_ENDIAN, F>,
-    poly_num_rows: usize,
-    poly_num_columns: usize,
-) -> OpeningPoint<BIG_ENDIAN, F> {
-    assert!(
-        poly_num_rows.is_power_of_two() && poly_num_columns.is_power_of_two(),
-        "polynomial matrix dimensions must be powers of two (rows={poly_num_rows}, cols={poly_num_columns})"
-    );
-    let nu_poly = poly_num_rows.log_2();
-    let sigma_poly = poly_num_columns.log_2();
-    let nu_full = DoryGlobals::get_max_num_rows().log_2();
-    let sigma_full = DoryGlobals::get_num_columns().log_2();
-    assert!(
-        sigma_poly <= sigma_full && nu_poly <= nu_full,
-        "top-left projection requires poly dims <= full dims (poly sigma/nu={sigma_poly}/{nu_poly}, full sigma/nu={sigma_full}/{nu_full})"
-    );
-
-    // Dimension-only projection:
-    // - Treat full point as [row_variables || column_variables]
-    // - For target dims (nu_poly rows, sigma_poly cols), take tails:
-    //   [last nu_poly row vars || last sigma_poly col vars]
-    let row_be = &stage8_opening_point.r[..nu_full];
-    let col_be = &stage8_opening_point.r[nu_full..nu_full + sigma_full];
-    let row_tail = &row_be[nu_full - nu_poly..];
-    let col_tail = &col_be[sigma_full - sigma_poly..];
-
-    let mut projected = Vec::with_capacity(nu_poly + sigma_poly);
-    projected.extend_from_slice(row_tail);
-    projected.extend_from_slice(col_tail);
-    OpeningPoint::<BIG_ENDIAN, F>::new(projected)
-}
-
-#[inline]
-pub(crate) fn derive_poly_source_point_from_dory_dims<F: JoltField>(
-    stage8_opening_point: &OpeningPoint<BIG_ENDIAN, F>,
-    poly_num_vars: usize,
-) -> OpeningPoint<BIG_ENDIAN, F> {
-    let (sigma_poly, nu_poly) = DoryGlobals::balanced_sigma_nu(poly_num_vars);
-    let poly_num_rows = 1usize << nu_poly;
-    let poly_num_columns = 1usize << sigma_poly;
-    derive_poly_source_point_from_matrix_dims(stage8_opening_point, poly_num_rows, poly_num_columns)
-}
 
 /// Jolt CPU prover for RV64IMAC.
 pub struct JoltCpuProver<
@@ -388,7 +343,6 @@ impl<
 
     fn stage8_opening_point(&self) -> OpeningPoint<BIG_ENDIAN, F> {
         let native_main_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
-        let debug_stage8_point = Self::stage8_debug_enabled();
         let mut opening_candidates: Vec<(String, OpeningPoint<BIG_ENDIAN, F>)> = Vec::new();
         if let Some((point, _)) = self
             .opening_accumulator
@@ -440,13 +394,6 @@ impl<
                     dominant.0, name, max_len
                 );
             }
-            if debug_stage8_point {
-                tracing::info!(
-                    "Stage8 opening point: dominant polynomial anchor = {} (len={})",
-                    dominant.0,
-                    max_len
-                );
-            }
             OpeningPoint::<BIG_ENDIAN, F>::new(dominant.1.r.clone())
         } else {
             let (hamming_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
@@ -488,360 +435,7 @@ impl<
             }
         };
 
-        if debug_stage8_point {
-            if max_len <= native_main_vars {
-                tracing::info!(
-                    "Stage8 opening point: no dominant precommitted polynomial (max_candidate_len={} <= native_main_vars={}); fallback anchor = hamming+stage6-cycle (with Dory layout ordering already encoded here)",
-                    max_len,
-                    native_main_vars
-                );
-            }
-            tracing::info!("Stage8 final Dory opening point (BE): {:?}", final_point.r);
-        }
-
         final_point
-    }
-
-    #[inline]
-    fn stage8_debug_enabled() -> bool {
-        let parse_env_bool = |key: &str| {
-            std::env::var(key).is_ok_and(|v| {
-                matches!(
-                    v.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on" | "all"
-                )
-            })
-        };
-        parse_env_bool("JOLT_DEBUG_STAGE8_POLY_CLAIMS") || parse_env_bool("JOLT_DEBUG_DORY_CLASSES")
-    }
-
-    fn stage8_sumcheck_opening(
-        &self,
-        poly: CommittedPolynomial,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
-        match poly {
-            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => self
-                .opening_accumulator
-                .get_committed_polynomial_opening(poly, SumcheckId::IncClaimReduction),
-            CommittedPolynomial::InstructionRa(_)
-            | CommittedPolynomial::BytecodeRa(_)
-            | CommittedPolynomial::RamRa(_) => self
-                .opening_accumulator
-                .get_committed_polynomial_opening(poly, SumcheckId::HammingWeightClaimReduction),
-            CommittedPolynomial::TrustedAdvice => self
-                .opening_accumulator
-                .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
-                .expect("missing trusted advice opening for Stage 8 debug"),
-            CommittedPolynomial::UntrustedAdvice => self
-                .opening_accumulator
-                .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
-                .expect("missing untrusted advice opening for Stage 8 debug"),
-            CommittedPolynomial::BytecodeChunk(_) => self
-                .opening_accumulator
-                .get_committed_polynomial_opening(poly, SumcheckId::BytecodeClaimReduction),
-            CommittedPolynomial::ProgramImageInit => self
-                .opening_accumulator
-                .get_committed_polynomial_opening(poly, SumcheckId::ProgramImageClaimReduction),
-        }
-    }
-
-    fn debug_verify_stage8_polynomial_claims(
-        &self,
-        stage8_opening_point: &OpeningPoint<BIG_ENDIAN, F>,
-        polynomial_claims: &[(CommittedPolynomial, F)],
-        direct_polys: &HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
-    ) {
-        let mut generated_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>> =
-            HashMap::new();
-
-        let eval_poly = |poly_id: CommittedPolynomial,
-                         point: &[F::Challenge],
-                         generated: &mut HashMap<CommittedPolynomial, MultilinearPolynomial<F>>|
-         -> F {
-            if let Some(poly) = direct_polys.get(&poly_id) {
-                return poly.evaluate(point);
-            }
-            let poly = generated.entry(poly_id).or_insert_with(|| {
-                poly_id.generate_witness(
-                    &self.preprocessing.program.bytecode,
-                    &self.preprocessing.shared.memory_layout,
-                    self.trace.as_slice(),
-                    Some(&self.one_hot_params),
-                )
-            });
-            poly.evaluate(point)
-        };
-
-        let poly_num_vars =
-            |poly_id: CommittedPolynomial,
-             generated: &mut HashMap<CommittedPolynomial, MultilinearPolynomial<F>>|
-             -> usize {
-                if let Some(poly) = direct_polys.get(&poly_id) {
-                    return poly.get_num_vars();
-                }
-                let poly = generated.entry(poly_id).or_insert_with(|| {
-                    poly_id.generate_witness(
-                        &self.preprocessing.program.bytecode,
-                        &self.preprocessing.shared.memory_layout,
-                        self.trace.as_slice(),
-                        Some(&self.one_hot_params),
-                    )
-                });
-                poly.get_num_vars()
-            };
-
-        let derive_from_prefix = |num_vars: usize| -> OpeningPoint<BIG_ENDIAN, F> {
-            assert!(
-                num_vars <= stage8_opening_point.r.len(),
-                "cannot derive source point of len {} from stage8 point len {}",
-                num_vars,
-                stage8_opening_point.r.len()
-            );
-            OpeningPoint::<BIG_ENDIAN, F>::new(stage8_opening_point.r[..num_vars].to_vec())
-        };
-        let derive_from_suffix = |num_vars: usize| -> OpeningPoint<BIG_ENDIAN, F> {
-            assert!(
-                num_vars <= stage8_opening_point.r.len(),
-                "cannot derive source point of len {} from stage8 point len {}",
-                num_vars,
-                stage8_opening_point.r.len()
-            );
-            let start = stage8_opening_point.r.len() - num_vars;
-            OpeningPoint::<BIG_ENDIAN, F>::new(stage8_opening_point.r[start..].to_vec())
-        };
-        let derive_ra_from_prefix_rotated = |num_vars: usize| -> OpeningPoint<BIG_ENDIAN, F> {
-            assert!(
-                num_vars <= stage8_opening_point.r.len(),
-                "cannot derive source point of len {} from stage8 point len {}",
-                num_vars,
-                stage8_opening_point.r.len()
-            );
-            let k = self.one_hot_params.log_k_chunk;
-            assert!(
-                k <= num_vars,
-                "ra opening point shorter than log_k_chunk (len={}, log_k_chunk={})",
-                num_vars,
-                k
-            );
-            let t = num_vars - k;
-            let prefix = &stage8_opening_point.r[..num_vars];
-            let mut rotated = Vec::with_capacity(num_vars);
-            // Move the last k address variables to the front: [t | k] -> [k | t].
-            rotated.extend_from_slice(&prefix[t..]);
-            rotated.extend_from_slice(&prefix[..t]);
-            OpeningPoint::<BIG_ENDIAN, F>::new(rotated)
-        };
-
-        for (poly_id, _) in polynomial_claims.iter() {
-            let (sumcheck_point, sumcheck_claim) = self.stage8_sumcheck_opening(*poly_id);
-            let num_vars = poly_num_vars(*poly_id, &mut generated_polys);
-            let projected_point = match poly_id {
-                CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => {
-                    match DoryGlobals::get_layout() {
-                        DoryLayout::AddressMajor => derive_from_prefix(num_vars),
-                        DoryLayout::CycleMajor => derive_from_suffix(num_vars),
-                    }
-                }
-                CommittedPolynomial::InstructionRa(_)
-                | CommittedPolynomial::BytecodeRa(_)
-                | CommittedPolynomial::RamRa(_) => match DoryGlobals::get_layout() {
-                    DoryLayout::AddressMajor => derive_ra_from_prefix_rotated(num_vars),
-                    DoryLayout::CycleMajor => derive_from_suffix(num_vars),
-                },
-                CommittedPolynomial::TrustedAdvice
-                | CommittedPolynomial::UntrustedAdvice
-                | CommittedPolynomial::BytecodeChunk(_)
-                | CommittedPolynomial::ProgramImageInit => {
-                    derive_poly_source_point_from_dory_dims(stage8_opening_point, num_vars)
-                }
-            };
-
-            let eval_at_sumcheck = eval_poly(*poly_id, &sumcheck_point.r, &mut generated_polys);
-            assert_eq!(
-                eval_at_sumcheck, sumcheck_claim,
-                "Stage8 debug mismatch for {poly_id:?}: sumcheck claim != direct eval at sumcheck point; sumcheck_point={:?}; projected_point={:?}",
-                sumcheck_point.r,
-                projected_point.r,
-            );
-
-            let eval_at_projected = eval_poly(*poly_id, &projected_point.r, &mut generated_polys);
-            assert_eq!(
-                eval_at_projected, sumcheck_claim,
-                "Stage8 debug mismatch for {poly_id:?}: sumcheck claim != direct eval at projected Dory point; sumcheck_point={:?}; projected_point={:?}",
-                sumcheck_point.r,
-                projected_point.r,
-            );
-        }
-
-        tracing::info!(
-            "Stage8 debug validated {} polynomial claims",
-            polynomial_claims.len()
-        );
-    }
-
-    fn stage8_debug_joint_commitment(
-        &self,
-        commitments: &[PCS::Commitment],
-        untrusted_advice_commitment: Option<&PCS::Commitment>,
-        state: &DoryOpeningState<F>,
-    ) -> PCS::Commitment {
-        let expected_polynomials = all_committed_polynomials(&self.one_hot_params);
-        assert_eq!(
-            expected_polynomials.len(),
-            commitments.len(),
-            "Stage8 debug: expected {} commitments but prover produced {}",
-            expected_polynomials.len(),
-            commitments.len()
-        );
-
-        let mut commitment_map: HashMap<CommittedPolynomial, PCS::Commitment> =
-            expected_polynomials
-                .into_iter()
-                .zip(commitments.iter().cloned())
-                .collect();
-
-        if let Some(commitment) = self.advice.trusted_advice_commitment.as_ref() {
-            if state
-                .polynomial_claims
-                .iter()
-                .any(|(p, _)| *p == CommittedPolynomial::TrustedAdvice)
-            {
-                commitment_map.insert(CommittedPolynomial::TrustedAdvice, commitment.clone());
-            }
-        }
-        if let Some(commitment) = untrusted_advice_commitment {
-            if state
-                .polynomial_claims
-                .iter()
-                .any(|(p, _)| *p == CommittedPolynomial::UntrustedAdvice)
-            {
-                commitment_map.insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
-            }
-        }
-        if let Some(bytecode_commitments) = &self.preprocessing.bytecode_commitments {
-            for (chunk_idx, commitment) in bytecode_commitments.commitments.iter().enumerate() {
-                if state
-                    .polynomial_claims
-                    .iter()
-                    .any(|(p, _)| *p == CommittedPolynomial::BytecodeChunk(chunk_idx))
-                {
-                    commitment_map.insert(
-                        CommittedPolynomial::BytecodeChunk(chunk_idx),
-                        commitment.clone(),
-                    );
-                }
-            }
-        }
-        if let Some(program_commitments) = &self.preprocessing.program_commitments {
-            if state
-                .polynomial_claims
-                .iter()
-                .any(|(p, _)| *p == CommittedPolynomial::ProgramImageInit)
-            {
-                commitment_map.insert(
-                    CommittedPolynomial::ProgramImageInit,
-                    program_commitments.program_image_commitment.clone(),
-                );
-            }
-        }
-
-        let mut rlc_map: HashMap<CommittedPolynomial, F> = HashMap::new();
-        for (gamma, (poly, _claim)) in state
-            .gamma_powers
-            .iter()
-            .zip(state.polynomial_claims.iter())
-        {
-            *rlc_map.entry(*poly).or_insert(F::zero()) += *gamma;
-        }
-
-        let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
-            .into_iter()
-            .map(|(poly, coeff)| {
-                let commitment = commitment_map.remove(&poly).unwrap_or_else(|| {
-                    panic!("Stage8 debug: missing commitment for {poly:?} in joint commitment map")
-                });
-                (coeff, commitment)
-            })
-            .unzip();
-
-        PCS::combine_commitments(&commitments, &coeffs)
-    }
-
-    fn debug_verify_stage8_dory_self(
-        &self,
-        proof: &PCS::Proof,
-        stage8_opening_point: &OpeningPoint<BIG_ENDIAN, F>,
-        state: &DoryOpeningState<F>,
-        joint_claim: F,
-        commitments: &[PCS::Commitment],
-        untrusted_advice_commitment: Option<&PCS::Commitment>,
-        mut transcript: ProofTranscript,
-    ) {
-        let joint_commitment =
-            self.stage8_debug_joint_commitment(commitments, untrusted_advice_commitment, state);
-
-        #[cfg(feature = "zk")]
-        let opening = F::zero();
-        #[cfg(not(feature = "zk"))]
-        let opening = joint_claim;
-        let verifier_setup = PCS::setup_verifier(&self.preprocessing.generators);
-
-        PCS::verify(
-            proof,
-            &verifier_setup,
-            &mut transcript,
-            &stage8_opening_point.r,
-            &opening,
-            &joint_commitment,
-        )
-        .unwrap_or_else(|e| panic!("Stage8 debug Dory self-verification failed: {e:?}"));
-
-        tracing::info!("Stage8 debug Dory self-verification passed");
-    }
-
-    fn debug_verify_omitted_program_openings(&self) {
-        if !self.preprocessing.is_committed_mode() {
-            return;
-        }
-
-        if !self.include_bytecode_in_stage8() {
-            let bytecode_chunk_polys = build_committed_bytecode_chunk_polynomials::<F>(
-                &self.preprocessing.program.bytecode.bytecode,
-                self.preprocessing.shared.bytecode_chunk_count,
-            );
-            for (chunk_idx, poly) in bytecode_chunk_polys.into_iter().enumerate() {
-                let (point, claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                    CommittedPolynomial::BytecodeChunk(chunk_idx),
-                    SumcheckId::BytecodeClaimReduction,
-                );
-                let eval = poly.evaluate(&point.r);
-                assert_eq!(
-                    eval, claim,
-                    "Stage8 debug mismatch for omitted bytecode chunk {chunk_idx}: direct evaluation does not match the cached opening claim"
-                );
-            }
-            tracing::info!("Stage8 debug validated omitted bytecode chunk openings directly");
-        }
-
-        if !self.include_program_image_in_stage8() {
-            let mut program_image_words = self.preprocessing.program.ram.bytecode_words.clone();
-            if program_image_words.is_empty() {
-                program_image_words.push(0);
-            }
-            let padded_len = program_image_words.len().next_power_of_two().max(2);
-            program_image_words.resize(padded_len, 0);
-            let program_image_poly = MultilinearPolynomial::from(program_image_words);
-            let (point, claim) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::ProgramImageInit,
-                SumcheckId::ProgramImageClaimReduction,
-            );
-            let eval = program_image_poly.evaluate(&point.r);
-            assert_eq!(
-                eval, claim,
-                "Stage8 debug mismatch for omitted program image: direct evaluation does not match the cached opening claim"
-            );
-            tracing::info!("Stage8 debug validated omitted program image opening directly");
-        }
     }
 
     pub fn gen_from_trace(
@@ -1035,11 +629,7 @@ impl<
             r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
         ];
 
-        let joint_opening_proof = self.prove_stage8(
-            opening_proof_hints,
-            &commitments,
-            untrusted_advice_commitment.as_ref(),
-        );
+        let joint_opening_proof = self.prove_stage8(opening_proof_hints);
         #[cfg(feature = "zk")]
         let blindfold_proof = self.prove_blindfold(&joint_opening_proof);
 
@@ -1753,12 +1343,6 @@ impl<
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        tracing::info!(
-            "Stage 6a prover input claims: bytecode_read_raf={} booleanity={}",
-            bytecode_read_raf_params.input_claim(&self.opening_accumulator),
-            booleanity_params.input_claim(&self.opening_accumulator),
-        );
-
         let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize(
             bytecode_read_raf_params.clone(),
             Arc::clone(&self.trace),
@@ -2589,8 +2173,6 @@ impl<
     fn prove_stage8(
         &mut self,
         opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        commitments: &[PCS::Commitment],
-        untrusted_advice_commitment: Option<&PCS::Commitment>,
     ) -> PCS::Proof {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
@@ -2755,9 +2337,6 @@ impl<
             .zip(claims.iter())
             .map(|(gamma, claim)| *gamma * claim)
             .sum();
-        if Self::stage8_debug_enabled() {
-            tracing::info!("Stage8 final Dory claim (joint_claim): {}", joint_claim);
-        }
 
         #[cfg(feature = "zk")]
         let opening_ids = stage8_opening_ids(
@@ -2794,13 +2373,6 @@ impl<
             precommitted_polys.insert(CommittedPolynomial::UntrustedAdvice, poly);
         }
         precommitted_polys.extend(extra_dense_polys);
-        let debug_stage8_polys = if Self::stage8_debug_enabled() {
-            Some(precommitted_polys.clone())
-        } else {
-            None
-        };
-        let mut debug_stage8_verify_transcript =
-            debug_stage8_polys.as_ref().map(|_| self.transcript.clone());
 
         // Build streaming RLC polynomial directly (no witness poly regeneration!)
         // Use materialized trace (default, single pass) instead of lazy trace
@@ -2835,26 +2407,6 @@ impl<
         #[cfg(not(feature = "zk"))]
         {
             bind_opening_inputs::<F, _>(&mut self.transcript, &opening_point.r, &joint_claim);
-        }
-        if let Some(ref direct_polys) = debug_stage8_polys {
-            self.debug_verify_stage8_polynomial_claims(
-                &opening_point,
-                &state.polynomial_claims,
-                direct_polys,
-            );
-            self.debug_verify_omitted_program_openings();
-            let verify_transcript = debug_stage8_verify_transcript
-                .take()
-                .expect("Stage8 debug transcript clone should exist");
-            self.debug_verify_stage8_dory_self(
-                &proof,
-                &opening_point,
-                &state,
-                joint_claim,
-                commitments,
-                untrusted_advice_commitment,
-                verify_transcript,
-            );
         }
 
         proof
