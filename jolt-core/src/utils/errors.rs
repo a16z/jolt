@@ -28,6 +28,8 @@ pub enum ProofVerifyError {
     InvalidReadWriteConfig(String),
     #[error("Invalid one-hot configuration: {0}")]
     InvalidOneHotConfig(String),
+    #[error("Invalid bytecode commitment configuration: {0}")]
+    InvalidBytecodeConfig(String),
     #[error("Invalid ram_K: got {0}, minimum required {1}")]
     InvalidRamK(usize, usize),
     #[error("Dory proof verification failed: {0}")]
@@ -42,4 +44,6 @@ pub enum ProofVerifyError {
     ZkFeatureRequired,
     #[error("BlindFold verification failed: {0}")]
     BlindFoldError(String),
+    #[error("Bytecode type mismatch: {0}")]
+    BytecodeTypeMismatch(String),
 }

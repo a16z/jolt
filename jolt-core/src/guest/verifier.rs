@@ -8,12 +8,14 @@ use crate::zkvm::verifier::BlindfoldSetup;
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::verifier::JoltVerifier;
 use crate::zkvm::verifier::JoltVerifierPreprocessing;
 use common::jolt_device::MemoryConfig;
 use common::jolt_device::MemoryLayout;
+use std::sync::Arc;
 
 pub fn preprocess(
     guest: &Program,
@@ -21,23 +23,22 @@ pub fn preprocess(
     verifier_setup: <DoryCommitmentScheme as CommitmentScheme>::VerifierSetup,
     blindfold_setup: Option<BlindfoldSetup<Bn254Curve>>,
 ) -> JoltVerifierPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme> {
-    let shared = preprocess_shared(guest, max_trace_length);
-    JoltVerifierPreprocessing::new(shared, verifier_setup, blindfold_setup)
+    let (shared, program) = preprocess_shared(guest, max_trace_length);
+    JoltVerifierPreprocessing::new_full(shared, verifier_setup, program, blindfold_setup)
 }
 
-fn preprocess_shared(guest: &Program, max_trace_length: usize) -> JoltSharedPreprocessing {
-    let (bytecode, memory_init, program_size, e_entry) = guest.decode();
+fn preprocess_shared(
+    guest: &Program,
+    max_trace_length: usize,
+) -> (JoltSharedPreprocessing, Arc<ProgramPreprocessing>) {
+    let (bytecode, memory_init, program_size, _e_entry) = guest.decode();
 
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    JoltSharedPreprocessing::new(
-        bytecode,
-        memory_layout,
-        memory_init,
-        max_trace_length,
-        e_entry,
-    )
+    let program = Arc::new(ProgramPreprocessing::preprocess(bytecode, memory_init));
+    let shared = JoltSharedPreprocessing::new(program.meta(), memory_layout, max_trace_length);
+    (shared, program)
 }
 
 pub fn verify<

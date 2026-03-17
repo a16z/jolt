@@ -81,12 +81,14 @@ pub struct RamValCheckSumcheckParams<F: JoltField> {
     /// Val_init(r_address) evaluation to subtract on both LHS terms.
     pub init_eval: F,
 
-    /// Public-only portion of init_eval (bytecode + inputs), used by BlindFold constraint.
+    /// Public constant portion of init_eval used by BlindFold constraints.
+    /// In committed-program mode this is inputs-only; program image is an opening.
     #[cfg(feature = "zk")]
     pub init_eval_public: F,
     /// Advice contributions decomposed for BlindFold: each is (-selector, opening_id).
     #[cfg(feature = "zk")]
     pub advice_contributions: Vec<(F, OpeningId)>,
+    pub include_program_image_claims: bool,
 }
 
 impl<F: JoltField> RamValCheckSumcheckParams<F> {
@@ -98,6 +100,8 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
         gamma: F,
         ram_preprocessing: &super::RAMPreprocessing,
         program_io: &JoltDevice,
+        _rw_config: &ReadWriteConfig,
+        include_program_image_claims: bool,
     ) -> Self {
         let K = one_hot_params.ram_k;
 
@@ -124,8 +128,11 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
         let init_eval = val_init.evaluate(&r_address.r);
 
         #[cfg(feature = "zk")]
-        let init_eval_public =
-            super::eval_initial_ram_mle::<F>(ram_preprocessing, program_io, &r_address.r);
+        let init_eval_public = if include_program_image_claims {
+            super::eval_inputs_mle::<F>(program_io, &r_address.r)
+        } else {
+            super::eval_initial_ram_mle::<F>(ram_preprocessing, program_io, &r_address.r)
+        };
 
         #[cfg(feature = "zk")]
         let advice_contributions = super::compute_advice_init_contributions(
@@ -151,6 +158,7 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
             init_eval_public,
             #[cfg(feature = "zk")]
             advice_contributions,
+            include_program_image_claims,
         }
     }
 
@@ -163,6 +171,7 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
         _rw_config: &ReadWriteConfig,
         gamma: F,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
+        include_program_image_claims: bool,
     ) -> Self {
         // (r_address, r_cycle) from RamVal/RamReadWriteChecking.
         let (r, _) = opening_accumulator.get_virtual_polynomial_opening(
@@ -183,8 +192,22 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
         }
 
         let n_memory_vars = ram_K.log_2();
-        let init_eval_public =
-            super::eval_initial_ram_mle::<F>(ram_preprocessing, program_io, &r_address.r);
+        let init_eval_public_base = if include_program_image_claims {
+            super::eval_inputs_mle::<F>(program_io, &r_address.r)
+        } else {
+            super::eval_initial_ram_mle::<F>(ram_preprocessing, program_io, &r_address.r)
+        };
+        let program_image_contribution = if include_program_image_claims {
+            opening_accumulator
+                .get_virtual_polynomial_opening(
+                    VirtualPolynomial::ProgramImageInitContributionRw,
+                    SumcheckId::RamValCheck,
+                )
+                .1
+        } else {
+            F::zero()
+        };
+        let init_eval_public = init_eval_public_base + program_image_contribution;
         let advice_contributions = super::compute_advice_init_contributions(
             opening_accumulator,
             &program_io.memory_layout,
@@ -199,7 +222,9 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
         );
 
         #[cfg(not(feature = "zk"))]
-        let _ = (init_eval_public, advice_contributions);
+        let _ = (init_eval_public_base, advice_contributions);
+        #[cfg(feature = "zk")]
+        let init_eval_public = init_eval_public_base;
 
         Self {
             T: trace_len,
@@ -212,6 +237,7 @@ impl<F: JoltField> RamValCheckSumcheckParams<F> {
             init_eval_public,
             #[cfg(feature = "zk")]
             advice_contributions,
+            include_program_image_claims,
         }
     }
 }
@@ -248,12 +274,17 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamValCheckSumcheckParams<F> {
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         // input_claim = (val_rw - init_eval) + γ*(val_final - init_eval)
         //             = val_rw + γ*val_final - (1+γ)*init_eval
-        //             = val_rw + γ*val_final - (1+γ)*(init_eval_public + Σ(sel_i * advice_i))
+        // where:
+        //   - in full-program mode:
+        //       init_eval = init_eval_public + Σ(sel_i * advice_i)
+        //   - in committed-program mode:
+        //       init_eval = init_eval_public + program_image_claim + Σ(sel_i * advice_i)
         //
         // Challenge layout:
         //   Challenge(0) = γ
         //   Challenge(1) = -(1+γ)*init_eval_public
-        //   Challenge(2..) = -(1+γ)*selector_i  (one per advice contribution)
+        //   Challenge(2) = -(1+γ)                      (program-image claim; committed mode only)
+        //   Challenge(next..) = -(1+γ)*selector_i      (one per advice contribution)
         let val_rw = OpeningId::virt(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
         let val_final = OpeningId::virt(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck);
 
@@ -265,11 +296,23 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamValCheckSumcheckParams<F> {
             ),
             ProductTerm::single(ValueSource::Challenge(1)),
         ];
-        for (i, (_, advice_opening_id)) in self.advice_contributions.iter().enumerate() {
+        let mut challenge_idx = 2;
+        if self.include_program_image_claims {
             terms.push(ProductTerm::product(vec![
-                ValueSource::Challenge(i + 2),
+                ValueSource::Challenge(challenge_idx),
+                ValueSource::Opening(OpeningId::virt(
+                    VirtualPolynomial::ProgramImageInitContributionRw,
+                    SumcheckId::RamValCheck,
+                )),
+            ]));
+            challenge_idx += 1;
+        }
+        for (_, advice_opening_id) in self.advice_contributions.iter() {
+            terms.push(ProductTerm::product(vec![
+                ValueSource::Challenge(challenge_idx),
                 ValueSource::Opening(*advice_opening_id),
             ]));
+            challenge_idx += 1;
         }
         InputClaimConstraint::sum_of_products(terms)
     }
@@ -278,6 +321,9 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamValCheckSumcheckParams<F> {
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
         let one_plus_gamma = F::one() + self.gamma;
         let mut values = vec![self.gamma, -one_plus_gamma * self.init_eval_public];
+        if self.include_program_image_claims {
+            values.push(-one_plus_gamma);
+        }
         for (neg_selector, _) in &self.advice_contributions {
             // neg_selector is already negative (-selector_i), scale by (1+γ)
             values.push(one_plus_gamma * *neg_selector);
@@ -474,6 +520,7 @@ impl<F: JoltField> RamValCheckSumcheckVerifier<F> {
         rw_config: &ReadWriteConfig,
         gamma: F,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
+        include_program_image_claims: bool,
     ) -> Self {
         let params = RamValCheckSumcheckParams::new_from_verifier(
             initial_ram_state,
@@ -484,6 +531,7 @@ impl<F: JoltField> RamValCheckSumcheckVerifier<F> {
             rw_config,
             gamma,
             opening_accumulator,
+            include_program_image_claims,
         );
         Self { params }
     }

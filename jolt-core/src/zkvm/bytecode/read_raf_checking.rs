@@ -30,15 +30,19 @@ use crate::{
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::{KeccakTranscript, Transcript},
-    utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
+    utils::{
+        errors::ProofVerifyError, math::Math, small_scalar::SmallScalar,
+        thread::unsafe_allocate_zero_vec,
+    },
     zkvm::{
         bytecode::BytecodePreprocessing,
-        config::OneHotParams,
+        config::{OneHotParams, ProgramMode},
         instruction::{
             CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
         },
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
+        program::ProgramPreprocessing,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
@@ -701,6 +705,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 pub struct BytecodeReadRafAddressSumcheckProver<F: JoltField> {
     inner: BytecodeReadRafSumcheckProver<F>,
     address_params: BytecodeReadRafAddressPhaseParams<F>,
+    staged_val_polys: Option<[MultilinearPolynomial<F>; N_STAGES]>,
 }
 
 impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
@@ -709,10 +714,16 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
         trace: Arc<Vec<Cycle>>,
         bytecode_preprocessing: Arc<BytecodePreprocessing>,
     ) -> Self {
+        let staged_val_polys = if params.use_staged_val_claims {
+            Some(params.val_polys.clone())
+        } else {
+            None
+        };
         let address_params = BytecodeReadRafAddressPhaseParams::new(params.clone());
         Self {
             inner: BytecodeReadRafSumcheckProver::initialize(params, trace, bytecode_preprocessing),
             address_params,
+            staged_val_polys,
         }
     }
 }
@@ -772,9 +783,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         accumulator.append_virtual(
             VirtualPolynomial::BytecodeReadRafAddrClaim,
             SumcheckId::BytecodeReadRafAddressPhase,
-            opening_point,
+            opening_point.clone(),
             address_claim,
         );
+        if self.inner.params.use_staged_val_claims {
+            let staged_val_polys = self
+                .staged_val_polys
+                .as_ref()
+                .expect("staged val polynomials must be present in committed mode");
+            for stage in 0..N_STAGES {
+                accumulator.append_virtual(
+                    VirtualPolynomial::BytecodeValStage(stage),
+                    SumcheckId::BytecodeReadRafAddressPhase,
+                    opening_point.clone(),
+                    staged_val_polys[stage].evaluate(&opening_point.r),
+                );
+            }
+        }
     }
 
     #[cfg(feature = "allocative")]
@@ -894,17 +919,19 @@ pub struct BytecodeReadRafSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
     pub fn gen(
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &ProgramPreprocessing,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
+        use_staged_val_claims: bool,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         Self {
             params: BytecodeReadRafSumcheckParams::gen(
-                bytecode_preprocessing,
+                program,
                 n_cycle_vars,
                 one_hot_params,
+                use_staged_val_claims,
                 opening_accumulator,
                 transcript,
             ),
@@ -930,14 +957,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
 
         let int_poly = self.params.int_poly.evaluate(&r_address_prime.r);
 
-        let ra_claims = (0..self.params.d).map(|i| {
-            accumulator
-                .get_committed_polynomial_opening(
-                    CommittedPolynomial::BytecodeRa(i),
-                    SumcheckId::BytecodeReadRaf,
-                )
-                .1
-        });
+        let ra_claims: Vec<F> = (0..self.params.d)
+            .map(|i| {
+                accumulator
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::BytecodeRa(i),
+                        SumcheckId::BytecodeReadRaf,
+                    )
+                    .1
+            })
+            .collect();
 
         // We have a separate Val polynomial for each stage
         // Additionally, for stages 1 and 3 we have an Int polynomial for RAF
@@ -949,29 +978,43 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         // Stage 5: gamma^4 * (Val_5)
         // Which matches with the input claim:
         // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^6 * raf_3
+        let stage_val_claim = |stage: usize| {
+            if self.params.use_staged_val_claims {
+                accumulator
+                    .get_virtual_polynomial_opening(
+                        VirtualPolynomial::BytecodeValStage(stage),
+                        SumcheckId::BytecodeReadRafAddressPhase,
+                    )
+                    .1
+            } else {
+                self.params.val_polys[stage].evaluate(&r_address_prime.r)
+            }
+        };
+        // Always add RAF-int terms here. In committed mode, staged Stage 6a BytecodeValStage
+        // openings carry val-only claims and the RAF contribution is reconstructed at verification.
+        let int_poly_contrib_by_stage = [
+            int_poly * self.params.gamma_powers[5], // RAF for Stage1
+            F::zero(),                              // There's no raf for Stage2
+            int_poly * self.params.gamma_powers[4], // RAF for Stage3
+            F::zero(),                              // There's no raf for Stage4
+            F::zero(),                              // There's no raf for Stage5
+        ];
+
         let val = self
             .params
-            .val_polys
+            .r_cycles
             .iter()
-            .zip(&self.params.r_cycles)
             .zip(&self.params.gamma_powers)
-            .zip([
-                int_poly * self.params.gamma_powers[5], // RAF for Stage1
-                F::zero(),                              // There's no raf for Stage2
-                int_poly * self.params.gamma_powers[4], // RAF for Stage3
-                F::zero(),                              // There's no raf for Stage4
-                F::zero(),                              // There's no raf for Stage5
-            ])
-            .map(|(((val, r_cycle), gamma), int_poly)| {
-                (val.evaluate(&r_address_prime.r) + int_poly)
+            .zip(int_poly_contrib_by_stage)
+            .enumerate()
+            .map(|(stage, ((r_cycle, gamma), int_poly))| {
+                (stage_val_claim(stage) + int_poly)
                     * EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime.r)
                     * gamma
             })
             .sum::<F>();
 
         // Entry constraint: γ_entry · eq(r_addr, entry_bits) · eq_zero(r_cycle).
-        // r_address_prime.r is MSB-first (after normalize_opening_point reversal),
-        // so entry_bits must also be MSB-first: entry_bits[j] = (e >> (log_K-1-j)) & 1.
         let entry_f_at_r_addr = {
             let log_k = self.params.log_K;
             let e = self.params.entry_bytecode_index;
@@ -985,7 +1028,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         let eq_zero_at_r_cycle = EqPolynomial::<F>::mle(&zeros, &r_cycle_prime.r);
         let entry_contrib = self.params.entry_gamma * entry_f_at_r_addr * eq_zero_at_r_cycle;
 
-        ra_claims.fold(val + entry_contrib, |running, ra_claim| running * ra_claim)
+        ra_claims
+            .iter()
+            .fold(val + entry_contrib, |running, ra_claim| running * *ra_claim)
     }
 
     fn cache_openings(
@@ -1020,24 +1065,40 @@ pub struct BytecodeReadRafAddressSumcheckVerifier<F: JoltField> {
 
 impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
     pub fn new(
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: Option<&ProgramPreprocessing>,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
         transcript: &mut impl Transcript,
-    ) -> Self {
-        let params = BytecodeReadRafSumcheckParams::gen(
-            bytecode_preprocessing,
-            n_cycle_vars,
-            one_hot_params,
-            opening_accumulator,
-            transcript,
-        );
+        program_mode: ProgramMode,
+        entry_bytecode_index: usize,
+    ) -> Result<Self, ProofVerifyError> {
+        let params = match program_mode {
+            ProgramMode::Committed => BytecodeReadRafSumcheckParams::gen_verifier(
+                n_cycle_vars,
+                one_hot_params,
+                entry_bytecode_index,
+                opening_accumulator,
+                transcript,
+            ),
+            ProgramMode::Full => BytecodeReadRafSumcheckParams::gen(
+                program.ok_or_else(|| {
+                    ProofVerifyError::BytecodeTypeMismatch(
+                        "expected Full program preprocessing, got Committed".to_string(),
+                    )
+                })?,
+                n_cycle_vars,
+                one_hot_params,
+                false,
+                opening_accumulator,
+                transcript,
+            ),
+        };
         let address_params = BytecodeReadRafAddressPhaseParams::new(params.clone());
-        Self {
+        Ok(Self {
             params,
             address_params,
-        }
+        })
     }
 
     pub fn into_params(self) -> BytecodeReadRafSumcheckParams<F> {
@@ -1087,8 +1148,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         accumulator.append_virtual(
             VirtualPolynomial::BytecodeReadRafAddrClaim,
             SumcheckId::BytecodeReadRafAddressPhase,
-            OpeningPoint::<BIG_ENDIAN, F>::new(r_address),
+            OpeningPoint::<BIG_ENDIAN, F>::new(r_address.clone()),
         );
+        if self.params.use_staged_val_claims {
+            for stage in 0..N_STAGES {
+                accumulator.append_virtual(
+                    VirtualPolynomial::BytecodeValStage(stage),
+                    SumcheckId::BytecodeReadRafAddressPhase,
+                    OpeningPoint::<BIG_ENDIAN, F>::new(r_address.clone()),
+                );
+            }
+        }
     }
 }
 
@@ -1325,6 +1395,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafAddressPhasePara
 
 #[derive(Allocative, Clone)]
 pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
+    /// Whether Stage 6a should stage per-stage Val claims for BytecodeClaimReduction.
+    pub use_staged_val_claims: bool,
     /// Index `i` stores `gamma^i`.
     pub gamma_powers: Vec<F>,
     /// Stage-specific gamma powers for input_claim_constraint
@@ -1367,15 +1439,57 @@ pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
 impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckParams::gen")]
     pub fn gen(
-        bytecode_preprocessing: &BytecodePreprocessing,
+        program: &ProgramPreprocessing,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
+        use_staged_val_claims: bool,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let gamma_powers = transcript.challenge_scalar_powers(8);
+        Self::gen_impl(
+            Some(program),
+            n_cycle_vars,
+            one_hot_params,
+            use_staged_val_claims,
+            Some(program.entry_bytecode_index()),
+            opening_accumulator,
+            transcript,
+            true,
+        )
+    }
 
-        let bytecode = &bytecode_preprocessing.bytecode;
+    #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckParams::gen_verifier")]
+    pub fn gen_verifier(
+        n_cycle_vars: usize,
+        one_hot_params: &OneHotParams,
+        entry_bytecode_index: usize,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+    ) -> Self {
+        Self::gen_impl(
+            None,
+            n_cycle_vars,
+            one_hot_params,
+            true,
+            Some(entry_bytecode_index),
+            opening_accumulator,
+            transcript,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn gen_impl(
+        program: Option<&ProgramPreprocessing>,
+        n_cycle_vars: usize,
+        one_hot_params: &OneHotParams,
+        use_staged_val_claims: bool,
+        entry_bytecode_index: Option<usize>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+        compute_val_polys: bool,
+    ) -> Self {
+        let gamma_powers = transcript.challenge_scalar_powers(8);
 
         // Generate all stage-specific gamma powers upfront (order must match verifier)
         let stage1_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
@@ -1414,16 +1528,25 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             EqPolynomial::<F>::evals(&r_register_5[..(REGISTER_COUNT as usize).log_2()]);
 
         // Fused pass: compute all val polynomials in a single parallel iteration
-        let val_polys = Self::compute_val_polys(
-            bytecode,
-            &eq_r_register_4,
-            &eq_r_register_5,
-            &stage1_gammas,
-            &stage2_gammas,
-            &stage3_gammas,
-            &stage4_gammas,
-            &stage5_gammas,
-        );
+        let val_polys = if compute_val_polys {
+            Self::compute_val_polys(
+                &program
+                    .expect("compute_val_polys requires program preprocessing")
+                    .bytecode
+                    .bytecode,
+                &eq_r_register_4,
+                &eq_r_register_5,
+                &stage1_gammas,
+                &stage2_gammas,
+                &stage3_gammas,
+                &stage4_gammas,
+                &stage5_gammas,
+            )
+        } else {
+            array::from_fn(|_| {
+                MultilinearPolynomial::from(vec![F::zero(); one_hot_params.bytecode_k])
+            })
+        };
 
         let int_poly = IdentityPolynomial::new(one_hot_params.bytecode_k.log_2());
 
@@ -1432,11 +1555,10 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         let (_, raf_shift_claim) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
         let entry_gamma = gamma_powers[7];
-        let entry_bytecode_index = bytecode_preprocessing.entry_bytecode_index();
-        // Both prover and verifier add entry_gamma unconditionally.
-        // The security comes from the sumcheck: if ra(entry_index, 0) != 1, the sum
-        // won't match input_claim and the sumcheck fails.
-        let input_claim: F = [
+        let entry_bytecode_index = entry_bytecode_index
+            .or_else(|| program.map(|program| program.entry_bytecode_index()))
+            .unwrap_or_default();
+        let mut input_claim: F = [
             rv_claim_1,
             rv_claim_2,
             rv_claim_3,
@@ -1448,8 +1570,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         .iter()
         .zip(&gamma_powers)
         .map(|(claim, g)| *claim * g)
-        .sum::<F>()
-            + entry_gamma;
+        .sum::<F>();
+        input_claim += entry_gamma;
 
         let (r_cycle_1, _) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
@@ -1480,6 +1602,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         ];
 
         Self {
+            use_staged_val_claims,
             gamma_powers,
             entry_gamma,
             entry_bytecode_index,
@@ -2241,8 +2364,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafSumcheckParams<F
                 .sum()
         };
 
-        // r_address_prime.r is MSB-first (after normalize_opening_point reversal),
-        // so entry_bits must also be MSB-first: entry_bits[j] = (e >> (log_K-1-j)) & 1.
         let f_entry_at_r_addr = if let Some(v) = self.bound_f_entry {
             v
         } else {

@@ -157,6 +157,10 @@ pub enum SumcheckId {
     Booleanity,
     AdviceClaimReductionCyclePhase,
     AdviceClaimReduction,
+    BytecodeClaimReductionCyclePhase,
+    BytecodeClaimReduction,
+    ProgramImageClaimReductionCyclePhase,
+    ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
 }
@@ -285,7 +289,7 @@ pub struct DoryOpeningState<F: JoltField> {
 impl<F: JoltField> DoryOpeningState<F> {
     /// Build streaming RLC polynomial from this state.
     /// Streams directly from trace - no witness regeneration needed.
-    /// Advice polynomials are passed separately (not streamed from trace).
+    /// Precommitted polynomials are passed separately (not streamed from trace).
     #[tracing::instrument(skip_all)]
     pub fn build_streaming_rlc<PCS: CommitmentScheme<Field = F>>(
         &self,
@@ -293,7 +297,7 @@ impl<F: JoltField> DoryOpeningState<F> {
         trace_source: TraceSource,
         rlc_streaming_data: Arc<RLCStreamingData>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        advice_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        precommitted_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
     ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
         // Accumulate gamma coefficients per polynomial
         let mut rlc_map = BTreeMap::new();
@@ -310,7 +314,7 @@ impl<F: JoltField> DoryOpeningState<F> {
             trace_source,
             poly_ids.clone(),
             &coeffs,
-            advice_polys,
+            precommitted_polys,
         ));
 
         let hints: Vec<PCS::OpeningProofHint> = rlc_map
@@ -579,6 +583,10 @@ where
     pub fn take_pending_claim_ids(&mut self) -> Vec<OpeningId> {
         std::mem::take(&mut self.pending_claim_ids)
     }
+
+    pub fn pending_claim_ids_debug(&self) -> &[OpeningId] {
+        &self.pending_claim_ids
+    }
 }
 
 impl<F> Default for VerifierOpeningAccumulator<F>
@@ -808,6 +816,10 @@ where
 
     pub fn take_pending_claim_ids(&mut self) -> Vec<OpeningId> {
         std::mem::take(&mut self.pending_claim_ids)
+    }
+
+    pub fn pending_claim_ids_debug(&self) -> &[OpeningId] {
+        &self.pending_claim_ids
     }
 }
 

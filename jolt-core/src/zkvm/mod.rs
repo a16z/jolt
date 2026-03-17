@@ -1,6 +1,6 @@
 use std::fs::File;
 
-use crate::zkvm::config::OneHotParams;
+use crate::zkvm::config::{OneHotParams, ProgramMode};
 use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
     curve::Bn254Curve,
@@ -30,6 +30,7 @@ pub mod config;
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod lookup_table;
+pub mod program;
 pub mod proof_serialization;
 #[cfg(feature = "prover")]
 pub mod prover;
@@ -40,10 +41,50 @@ pub mod spartan;
 pub mod verifier;
 pub mod witness;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stage8ProgramOpenings {
+    Both,
+    Bytecode,
+    ProgramImage,
+    None,
+}
+
+impl Stage8ProgramOpenings {
+    pub(crate) fn includes_bytecode(self) -> bool {
+        matches!(self, Self::Both | Self::Bytecode)
+    }
+
+    pub(crate) fn includes_program_image(self) -> bool {
+        matches!(self, Self::Both | Self::ProgramImage)
+    }
+}
+
+pub(crate) fn stage8_program_openings_from_env() -> Stage8ProgramOpenings {
+    let Ok(raw) = std::env::var("JOLT_STAGE8_PROGRAM_OPENINGS") else {
+        return Stage8ProgramOpenings::Both;
+    };
+
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "both" => Stage8ProgramOpenings::Both,
+        "bytecode" => Stage8ProgramOpenings::Bytecode,
+        "program_image" | "program-image" => Stage8ProgramOpenings::ProgramImage,
+        "none" => Stage8ProgramOpenings::None,
+        other => {
+            tracing::warn!(
+                "Unrecognized JOLT_STAGE8_PROGRAM_OPENINGS value `{other}`; defaulting to `both`"
+            );
+            Stage8ProgramOpenings::Both
+        }
+    }
+}
+
 pub(crate) fn stage8_opening_ids(
     one_hot_params: &OneHotParams,
     include_trusted_advice: bool,
     include_untrusted_advice: bool,
+    program_mode: ProgramMode,
+    bytecode_chunk_count: usize,
+    stage8_program_openings: Stage8ProgramOpenings,
 ) -> Vec<OpeningId> {
     let mut opening_ids = Vec::new();
 
@@ -80,6 +121,20 @@ pub(crate) fn stage8_opening_ids(
     }
     if include_untrusted_advice {
         opening_ids.push(OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReduction));
+    }
+    if program_mode == ProgramMode::Committed && stage8_program_openings.includes_bytecode() {
+        for i in 0..bytecode_chunk_count {
+            opening_ids.push(OpeningId::committed(
+                CommittedPolynomial::BytecodeChunk(i),
+                SumcheckId::BytecodeClaimReduction,
+            ));
+        }
+    }
+    if program_mode == ProgramMode::Committed && stage8_program_openings.includes_program_image() {
+        opening_ids.push(OpeningId::committed(
+            CommittedPolynomial::ProgramImageInit,
+            SumcheckId::ProgramImageClaimReduction,
+        ));
     }
 
     opening_ids

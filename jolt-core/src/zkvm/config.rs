@@ -1,5 +1,8 @@
 use allocative::Allocative;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
+use std::io::{Read, Write};
 
 use crate::field::JoltField;
 use crate::utils::math::Math;
@@ -17,6 +20,52 @@ pub fn get_instruction_sumcheck_phases(log_t: usize) -> usize {
         16
     } else {
         8
+    }
+}
+
+/// Controls how bytecode and program-image data are handled by the verifier.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Allocative, Default)]
+pub enum ProgramMode {
+    /// Verifier has full bytecode and program image available.
+    #[default]
+    Full = 0,
+    /// Verifier uses commitments for bytecode/program-image openings in Stage 8.
+    Committed = 1,
+}
+
+impl CanonicalSerialize for ProgramMode {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        (*self as u8).serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        (*self as u8).serialized_size(compress)
+    }
+}
+
+impl Valid for ProgramMode {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for ProgramMode {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = u8::deserialize_with_mode(reader, compress, validate)?;
+        match value {
+            0 => Ok(Self::Full),
+            1 => Ok(Self::Committed),
+            _ => Err(SerializationError::InvalidData),
+        }
     }
 }
 
@@ -90,15 +139,6 @@ impl ReadWriteConfig {
             ));
         }
         Ok(())
-    }
-
-    /// Returns true if all cycle variables are bound in phase 1.
-    ///
-    /// When this returns true, the advice opening points for `RamValCheck` and
-    /// `RamValCheck` are identical, so we only need one advice opening.
-    #[inline]
-    pub fn needs_single_advice_opening(&self, log_T: usize) -> bool {
-        self.ram_rw_phase1_num_rounds as usize == log_T
     }
 }
 
