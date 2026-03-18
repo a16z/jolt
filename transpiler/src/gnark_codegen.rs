@@ -201,6 +201,7 @@ impl<'a> GnarkCodeGen<'a> {
         var_names: &'a HashMap<u16, String>,
         constraint_idx: usize,
         cse_bindings: &[usize],
+        global_node_map: &HashMap<usize, usize>,
     ) -> Self {
         let mut ref_counts = HashMap::new();
 
@@ -211,6 +212,37 @@ impl<'a> GnarkCodeGen<'a> {
             ref_counts.insert(node_id, 2);
         }
 
+        // Pre-populate `generated` for global CSE nodes so they resolve to gcse[i]
+        let mut generated = HashMap::new();
+        for (&node_id, &gcse_idx) in global_node_map {
+            generated.insert(node_id, format!("gcse[{gcse_idx}]"));
+        }
+
+        Self {
+            nodes,
+            ref_counts,
+            generated,
+            bindings: Vec::new(),
+            cse_counter: 0,
+            var_names,
+            constraint_idx,
+            uses_poseidon: false,
+        }
+    }
+
+    /// Create a GnarkCodeGen for the global CSE block.
+    ///
+    /// Uses `gcse` naming: hoisted nodes become `gcse[i]`.
+    pub(crate) fn new_global(
+        nodes: &'a [Node],
+        var_names: &'a HashMap<u16, String>,
+        global_bindings: &[usize],
+    ) -> Self {
+        let mut ref_counts = HashMap::new();
+        for &node_id in global_bindings {
+            ref_counts.insert(node_id, 2);
+        }
+
         Self {
             nodes,
             ref_counts,
@@ -218,7 +250,7 @@ impl<'a> GnarkCodeGen<'a> {
             bindings: Vec::new(),
             cse_counter: 0,
             var_names,
-            constraint_idx,
+            constraint_idx: usize::MAX, // sentinel for global context
             uses_poseidon: false,
         }
     }
@@ -358,7 +390,13 @@ impl<'a> GnarkCodeGen<'a> {
             if ref_count > 1 || expr.len() > MAX_INLINE_EXPR_LEN {
                 let var_name = self.make_cse_name();
                 self.cse_counter += 1;
-                self.bindings.push(format!("\t{var_name} := {expr}\n"));
+                if self.constraint_idx == usize::MAX {
+                    // Global CSE: slice assignment (gcse[N] = expr)
+                    self.bindings.push(format!("\t{var_name} = {expr}\n"));
+                } else {
+                    // Per-constraint CSE: declaration (cse_K_N := expr)
+                    self.bindings.push(format!("\t{var_name} := {expr}\n"));
+                }
                 self.generated.insert(node_id, var_name);
             } else {
                 // Store the expression for single-use nodes too, so children can reference it
@@ -404,9 +442,15 @@ impl<'a> GnarkCodeGen<'a> {
 
     /// Generate a CSE variable name using the configured prefix
     fn make_cse_name(&self) -> String {
-        let constraint_idx = self.constraint_idx;
-        let cse_counter = self.cse_counter;
-        format!("cse_{constraint_idx}_{cse_counter}")
+        if self.constraint_idx == usize::MAX {
+            // Global CSE context
+            let cse_counter = self.cse_counter;
+            format!("gcse[{cse_counter}]")
+        } else {
+            let constraint_idx = self.constraint_idx;
+            let cse_counter = self.cse_counter;
+            format!("cse_{constraint_idx}_{cse_counter}")
+        }
     }
 
     /// Generate Gnark expression for an atom
@@ -555,11 +599,26 @@ pub fn generate_circuit_from_bundle_with_stats(
         );
     }
 
+    // Build global CSE node map: NodeId → index in gcse slice
+    let global_node_map: HashMap<usize, usize> = bundle
+        .global_cse
+        .bindings
+        .iter()
+        .enumerate()
+        .map(|(idx, &node_id)| (node_id, idx))
+        .collect();
+    let has_global_cse = !global_node_map.is_empty();
+
     for (constraint_idx, c) in bundle.constraints.iter().enumerate() {
         // Use pre-computed CSE bindings from AstBundle
         let cse_bindings = bundle.get_cse_bindings(constraint_idx).unwrap_or(&[]);
-        let mut codegen =
-            GnarkCodeGen::new(&bundle.nodes, &var_names, constraint_idx, cse_bindings);
+        let mut codegen = GnarkCodeGen::new(
+            &bundle.nodes,
+            &var_names,
+            constraint_idx,
+            cse_bindings,
+            &global_node_map,
+        );
 
         // Generate expression for this constraint
         let expr = codegen.generate_expr(c.root);
@@ -683,12 +742,103 @@ pub fn generate_circuit_from_bundle_with_stats(
     }
     output.push_str("}\n\n");
 
+    // Emit global CSE function if there are global bindings
+    if has_global_cse {
+        let global_bindings = &bundle.global_cse.bindings;
+        let num_global = global_bindings.len();
+        let mut global_codegen =
+            GnarkCodeGen::new_global(&bundle.nodes, &var_names, global_bindings);
+
+        // Generate expressions for all global nodes (in topological order)
+        for &node_id in global_bindings {
+            global_codegen.generate_expr(node_id);
+        }
+
+        if global_codegen.uses_poseidon() {
+            stats.uses_poseidon = true;
+        }
+
+        let global_bindings_code = global_codegen.bindings_code();
+
+        // Split into sub-functions if too large
+        let global_binding_lines: Vec<&str> = if global_bindings_code.is_empty() {
+            Vec::new()
+        } else {
+            global_bindings_code
+                .lines()
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
+
+        const MAX_GLOBAL_BINDING_LINES: usize = 2000;
+        let needs_global_splitting = global_binding_lines.len() > MAX_GLOBAL_BINDING_LINES;
+
+        if needs_global_splitting {
+            let num_parts = global_binding_lines.len().div_ceil(MAX_GLOBAL_BINDING_LINES);
+            for part in 0..num_parts {
+                let start = part * MAX_GLOBAL_BINDING_LINES;
+                let end =
+                    std::cmp::min(start + MAX_GLOBAL_BINDING_LINES, global_binding_lines.len());
+
+                output.push_str(&format!(
+                    "func (circuit *{circuit_name}) computeGlobalCsePart{part}(api frontend.API, gcse []frontend.Variable) {{\n"
+                ));
+                for line in &global_binding_lines[start..end] {
+                    output.push_str(line);
+                    output.push('\n');
+                }
+                output.push_str("}\n\n");
+            }
+
+            output.push_str(&format!(
+                "// computeGlobalCse computes {} nodes shared across multiple constraints.\n",
+                num_global
+            ));
+            output.push_str(&format!(
+                "func (circuit *{circuit_name}) computeGlobalCse(api frontend.API) []frontend.Variable {{\n"
+            ));
+            output.push_str(&format!(
+                "\tgcse := make([]frontend.Variable, {num_global})\n"
+            ));
+            for part in 0..num_parts {
+                output.push_str(&format!(
+                    "\tcircuit.computeGlobalCsePart{part}(api, gcse)\n"
+                ));
+            }
+            output.push_str("\treturn gcse\n");
+            output.push_str("}\n\n");
+        } else {
+            output.push_str(&format!(
+                "// computeGlobalCse computes {} nodes shared across multiple constraints.\n",
+                num_global
+            ));
+            output.push_str(&format!(
+                "func (circuit *{circuit_name}) computeGlobalCse(api frontend.API) []frontend.Variable {{\n"
+            ));
+            output.push_str(&format!(
+                "\tgcse := make([]frontend.Variable, {num_global})\n"
+            ));
+            if !global_bindings_code.is_empty() {
+                output.push_str(&global_bindings_code);
+            }
+            output.push_str("\treturn gcse\n");
+            output.push_str("}\n\n");
+        }
+    }
+
     // Emit per-constraint helper methods.
     // Each constraint gets its own function to avoid arm64 "branch too far" compiler
     // errors when the entire circuit is in a single Define() method.
     // Large constraints are further split into sub-functions (max ~2000 binding lines each).
     const MAX_BINDING_LINES: usize = 2000;
     let mut constraint_func_names: Vec<String> = Vec::new();
+
+    // Extra parameter for global CSE passthrough
+    let gcse_param = if has_global_cse {
+        ", gcse []frontend.Variable"
+    } else {
+        ""
+    };
 
     for (idx, pc) in processed_constraints.iter().enumerate() {
         // Static verification for constant EqualZero assertions
@@ -736,7 +886,7 @@ pub fn generate_circuit_from_bundle_with_stats(
                 let end = std::cmp::min(start + MAX_BINDING_LINES, num_bindings);
 
                 output.push_str(&format!(
-                    "func (circuit *{circuit_name}) {func_name}Bindings{part}(api frontend.API, cse []frontend.Variable) {{\n"
+                    "func (circuit *{circuit_name}) {func_name}Bindings{part}(api frontend.API, cse []frontend.Variable{gcse_param}) {{\n"
                 ));
 
                 for line in &binding_lines[start..end] {
@@ -751,16 +901,19 @@ pub fn generate_circuit_from_bundle_with_stats(
             }
 
             // Emit the main constraint function that calls sub-functions
+            let gcse_arg = if has_global_cse { ", gcse" } else { "" };
             output.push_str(&format!("// {func_name} verifies: {}\n", pc.name));
             output.push_str(&format!(
-                "func (circuit *{circuit_name}) {func_name}(api frontend.API) {{\n"
+                "func (circuit *{circuit_name}) {func_name}(api frontend.API{gcse_param}) {{\n"
             ));
             output.push_str(&format!(
                 "\tcse := make([]frontend.Variable, {num_bindings})\n"
             ));
 
             for part in 0..num_parts {
-                output.push_str(&format!("\tcircuit.{func_name}Bindings{part}(api, cse)\n"));
+                output.push_str(&format!(
+                    "\tcircuit.{func_name}Bindings{part}(api, cse{gcse_arg})\n"
+                ));
             }
 
             // Rewrite the final expression to use cse[N] references
@@ -770,7 +923,7 @@ pub fn generate_circuit_from_bundle_with_stats(
             // Small constraint: emit as a single function with named CSE variables
             output.push_str(&format!("// {func_name} verifies: {}\n", pc.name));
             output.push_str(&format!(
-                "func (circuit *{circuit_name}) {func_name}(api frontend.API) {{\n"
+                "func (circuit *{circuit_name}) {func_name}(api frontend.API{gcse_param}) {{\n"
             ));
 
             if !pc.bindings.is_empty() {
@@ -809,8 +962,15 @@ pub fn generate_circuit_from_bundle_with_stats(
         "func (circuit *{circuit_name}) Define(api frontend.API) error {{\n"
     ));
 
-    for func_name in &constraint_func_names {
-        output.push_str(&format!("\tcircuit.{func_name}(api)\n"));
+    if has_global_cse {
+        output.push_str("\tgcse := circuit.computeGlobalCse(api)\n");
+        for func_name in &constraint_func_names {
+            output.push_str(&format!("\tcircuit.{func_name}(api, gcse)\n"));
+        }
+    } else {
+        for func_name in &constraint_func_names {
+            output.push_str(&format!("\tcircuit.{func_name}(api)\n"));
+        }
     }
 
     output.push_str("\treturn nil\n");

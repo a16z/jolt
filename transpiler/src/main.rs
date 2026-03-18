@@ -331,12 +331,21 @@ fn main() {
     }
     println!("  Constraints: {}", bundle.constraints.len());
 
-    // Run CSE (Common Subexpression Elimination) at the AST level.
+    // Run global CSE: identify nodes shared across multiple constraints
+    // (primarily TranscriptHash chains) and hoist them to a single computation block.
+    bundle.run_global_cse();
+    println!(
+        "  Global CSE: {} nodes hoisted across constraints",
+        bundle.global_cse.bindings.len()
+    );
+
+    // Run per-constraint CSE (Common Subexpression Elimination) at the AST level.
     // This pre-computes which nodes should be hoisted to named variables,
     // making codegen simpler (just reads pre-computed decisions).
+    // Nodes already in global CSE are excluded.
     bundle.run_cse();
     println!(
-        "  CSE bindings: {} total across {} constraints",
+        "  Per-constraint CSE bindings: {} total across {} constraints",
         bundle
             .constraint_cse
             .iter()
