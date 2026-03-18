@@ -294,38 +294,14 @@ impl<
     fn main_total_vars(&self) -> usize {
         let trace_log_t = self.trace.len().log_2();
         let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let mut max_total_vars = trace_log_t + log_k_chunk;
-        for total_vars in self.precommitted_candidate_total_vars() {
-            max_total_vars = max_total_vars.max(total_vars);
-        }
-        max_total_vars
-    }
-
-    #[inline]
-    fn precommitted_candidate_total_vars(&self) -> Vec<usize> {
-        let mut candidates = Vec::new();
-        if self.preprocessing.is_committed_mode() {
-            let bytecode_t_full = self.preprocessing.shared.bytecode_size().log_2();
-            let chunk_log = self.preprocessing.shared.bytecode_chunk_count.log_2();
-            let chunk_cycle_log_t = bytecode_t_full.saturating_sub(chunk_log);
-            candidates.push(committed_lanes().log_2() + chunk_cycle_log_t);
-            let program_image_words = self.preprocessing.shared.program_image_len_words().max(1);
-            candidates.push(program_image_words.next_power_of_two().log_2());
-        }
-        if !self.program_io.trusted_advice.is_empty() {
-            let (sigma, nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
-                self.program_io.memory_layout.max_trusted_advice_size as usize,
-            );
-            candidates.push(sigma + nu);
-        }
-
-        if !self.program_io.untrusted_advice.is_empty() {
-            let (sigma, nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
-                self.program_io.memory_layout.max_untrusted_advice_size as usize,
-            );
-            candidates.push(sigma + nu);
-        }
-        candidates
+        JoltSharedPreprocessing::max_total_vars_from_candidates(
+            trace_log_t + log_k_chunk,
+            self.preprocessing.shared.precommitted_candidate_total_vars(
+                self.preprocessing.is_committed_mode(),
+                !self.program_io.trusted_advice.is_empty(),
+                !self.program_io.untrusted_advice.is_empty(),
+            ),
+        )
     }
 
     fn stage8_opening_point(&self) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -1400,7 +1376,11 @@ impl<
         );
 
         let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
-        let precommitted_candidates = self.precommitted_candidate_total_vars();
+        let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
+            self.preprocessing.is_committed_mode(),
+            self.advice.trusted_advice_polynomial.is_some(),
+            self.advice.untrusted_advice_polynomial.is_some(),
+        );
         let precommitted_scheduling_reference =
             PrecommittedClaimReduction::<F>::scheduling_reference(
                 main_total_vars,
@@ -2542,23 +2522,7 @@ where
 {
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::new")]
     pub fn new(shared: JoltSharedPreprocessing, program: Arc<ProgramPreprocessing>) -> Self {
-        use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
-        let max_T: usize = shared.max_padded_trace_length.next_power_of_two();
-        let max_log_T = max_T.log_2();
-        let max_log_k_chunk = if max_log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
-            4
-        } else {
-            8
-        };
-        let mut max_total_vars = max_log_k_chunk + max_log_T;
-        let (trusted_sigma, trusted_nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
-            shared.memory_layout.max_trusted_advice_size as usize,
-        );
-        max_total_vars = max_total_vars.max(trusted_sigma + trusted_nu);
-        let (untrusted_sigma, untrusted_nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
-            shared.memory_layout.max_untrusted_advice_size as usize,
-        );
-        max_total_vars = max_total_vars.max(untrusted_sigma + untrusted_nu);
+        let (max_total_vars, _) = shared.compute_max_total_vars();
         let generators = PCS::setup_prover(max_total_vars);
 
         JoltProverPreprocessing {
@@ -2578,32 +2542,7 @@ where
         shared: JoltSharedPreprocessing,
         program: Arc<ProgramPreprocessing>,
     ) -> Self {
-        use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
-        let max_t_any = shared
-            .max_padded_trace_length
-            .max(shared.bytecode_size())
-            .max(program.program_image_len_words_padded())
-            .next_power_of_two();
-        let max_log_t = max_t_any.log_2();
-        let max_log_k_chunk = if max_log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
-            4
-        } else {
-            8
-        };
-        let mut max_total_vars = max_log_k_chunk + max_log_t;
-        let (trusted_sigma, trusted_nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
-            shared.memory_layout.max_trusted_advice_size as usize,
-        );
-        max_total_vars = max_total_vars.max(trusted_sigma + trusted_nu);
-        let (untrusted_sigma, untrusted_nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
-            shared.memory_layout.max_untrusted_advice_size as usize,
-        );
-        max_total_vars = max_total_vars.max(untrusted_sigma + untrusted_nu);
-        let chunk_cycle_log_t = (shared.bytecode_size() / shared.bytecode_chunk_count)
-            .next_power_of_two()
-            .log_2();
-        max_total_vars = max_total_vars.max(committed_lanes().log_2() + chunk_cycle_log_t);
-        max_total_vars = max_total_vars.max(program.program_image_len_words_padded().log_2());
+        let (max_total_vars, max_log_k_chunk) = shared.compute_max_total_vars();
         let generators = PCS::setup_prover(max_total_vars);
         let (bytecode_commitments, bytecode_hints) = TrustedBytecodeCommitments::derive(
             &program.bytecode,
