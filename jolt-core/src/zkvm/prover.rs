@@ -61,9 +61,8 @@ use crate::{
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         bytecode::{
-            chunks::{build_committed_bytecode_chunk_polynomials, committed_lanes},
-            read_raf_checking::BytecodeReadRafSumcheckParams,
-            TrustedBytecodeCommitments,
+            chunks::build_committed_bytecode_chunk_polynomials,
+            read_raf_checking::BytecodeReadRafSumcheckParams, TrustedBytecodeCommitments,
         },
         claim_reductions::{
             AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceKind,
