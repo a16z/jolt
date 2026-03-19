@@ -310,34 +310,31 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
 
     pub fn initialize(
         params: BytecodeClaimReductionParams<F>,
-        raw_chunk_polys: &[MultilinearPolynomial<F>],
+        raw_chunk_coeffs: &[Vec<F>],
     ) -> Self {
         let eq_cycle = EqPolynomial::<F>::evals(&params.r_bc.r);
-        let eq_coeffs_template: Vec<F> = (0..raw_chunk_polys[0].len())
+        let eq_coeffs_template: Vec<F> = (0..raw_chunk_coeffs[0].len())
             .map(|idx| {
                 let (lane, cycle) = native_index_to_lane_cycle(&params, idx);
                 params.lane_weights[lane] * eq_cycle[cycle]
             })
             .collect();
 
-        let raw_value_coeffs: Vec<F> = (0..raw_chunk_polys[0].len())
+        let raw_value_coeffs: Vec<F> = (0..raw_chunk_coeffs[0].len())
             .into_par_iter()
             .map(|idx| {
-                raw_chunk_polys
+                raw_chunk_coeffs
                     .iter()
                     .zip(params.chunk_rbc_weights.iter())
-                    .map(|(poly, weight)| poly.get_coeff(idx) * *weight)
+                    .map(|(coeffs, weight)| coeffs[idx] * *weight)
                     .sum::<F>()
             })
             .collect();
-        let mut coeffs_by_poly = Vec::with_capacity(2 + raw_chunk_polys.len());
+        let mut coeffs_by_poly = Vec::with_capacity(2 + raw_chunk_coeffs.len());
         coeffs_by_poly.push(raw_value_coeffs);
         coeffs_by_poly.push(eq_coeffs_template);
-        for raw_chunk_poly in raw_chunk_polys.iter() {
-            let raw_chunk_coeffs: Vec<F> = (0..raw_chunk_poly.len())
-                .map(|idx| raw_chunk_poly.get_coeff(idx))
-                .collect();
-            coeffs_by_poly.push(raw_chunk_coeffs);
+        for coeffs in raw_chunk_coeffs.iter() {
+            coeffs_by_poly.push(coeffs.clone());
         }
         let mut permuted_polys =
             permute_precommitted_polys(coeffs_by_poly, &params.precommitted).into_iter();

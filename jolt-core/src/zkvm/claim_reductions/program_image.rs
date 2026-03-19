@@ -276,33 +276,23 @@ fn top_left_program_image_point_and_selector<F: JoltField>(
         padded_len_words.is_power_of_two() && padded_len_words > 0,
         "padded_len_words must be a non-zero power of two"
     );
-    assert_eq!(
-        start_index % padded_len_words,
-        0,
-        "program-image block must be aligned to padded_len_words for top-left embedding"
-    );
-
     let m = padded_len_words.log_2();
     assert!(
         m <= r_addr.len(),
         "program-image variable count exceeds RAM address variable count"
     );
+    assert!(
+        start_index < padded_len_words,
+        "committed program-image domain must cover the bytecode start index"
+    );
     let prefix_len = r_addr.len() - m;
-    let start_prefix = start_index / padded_len_words;
 
-    let mut selector = F::one();
-    for (i, r_i) in r_addr[..prefix_len].iter().enumerate() {
-        let bit_index = prefix_len - 1 - i;
-        let prefix_bit = (start_prefix >> bit_index) & 1;
-        let r_i_f: F = (*r_i).into();
-        selector *= if prefix_bit == 1 {
-            r_i_f
-        } else {
-            F::one() - r_i_f
-        };
-    }
-
-    (r_addr[prefix_len..].to_vec(), selector)
+    // The committed program-image polynomial is shifted into the RAM-relative domain
+    // before commitment, so it is always embedded at the top-left corner of RAM.
+    (
+        r_addr[prefix_len..].to_vec(),
+        EqPolynomial::zero_selector(&r_addr[..prefix_len]),
+    )
 }
 
 impl<F: JoltField> ProgramImageClaimReductionProver<F> {

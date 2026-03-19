@@ -1,9 +1,13 @@
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use clap::{Parser, Subcommand};
-use jolt_sdk::{JoltDevice, MemoryConfig, RV64IMACProof, Serializable};
+use jolt_sdk::{
+    JoltDevice, JoltProverPreprocessing, JoltSharedPreprocessing, MemoryConfig, MemoryLayout,
+    ProgramPreprocessing, RV64IMACProof, Serializable,
+};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{error, info};
 
@@ -17,8 +21,65 @@ fn get_guest_src_dir() -> PathBuf {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
+    #[arg(long, global = true, default_value_t = false)]
+    committed_bytecode: bool,
+    #[arg(
+        long,
+        global = true,
+        value_name = "COUNT",
+        requires = "committed_bytecode",
+        value_parser = parse_bytecode_chunk
+    )]
+    bytecode_chunk: Option<usize>,
     #[command(subcommand)]
     command: Option<Commands>,
+}
+
+#[derive(Clone, Copy)]
+struct BytecodeConfig {
+    committed_bytecode: bool,
+    bytecode_chunk: Option<usize>,
+}
+
+impl BytecodeConfig {
+    fn chunk_count(self) -> usize {
+        self.bytecode_chunk.unwrap_or(1)
+    }
+}
+
+fn parse_bytecode_chunk(value: &str) -> Result<usize, String> {
+    value
+        .parse::<usize>()
+        .map_err(|_| format!("invalid bytecode chunk count `{value}`"))
+}
+
+fn preprocess_guest_program(
+    guest: &jolt_sdk::guest::program::Program,
+    max_trace_length: usize,
+    bytecode_config: BytecodeConfig,
+) -> JoltProverPreprocessing<jolt_sdk::F, jolt_sdk::Curve, jolt_sdk::PCS> {
+    let (bytecode, memory_init, program_size, _e_entry) = guest.decode();
+
+    let mut memory_config = guest.memory_config;
+    memory_config.program_size = Some(program_size);
+    let memory_layout = MemoryLayout::new(&memory_config);
+    let program = Arc::new(ProgramPreprocessing::preprocess(bytecode, memory_init));
+    let shared_preprocessing = if bytecode_config.committed_bytecode {
+        JoltSharedPreprocessing::new_committed(
+            program.meta(),
+            memory_layout,
+            max_trace_length,
+            bytecode_config.chunk_count(),
+        )
+    } else {
+        JoltSharedPreprocessing::new(program.meta(), memory_layout, max_trace_length)
+    };
+
+    if bytecode_config.committed_bytecode {
+        JoltProverPreprocessing::new_committed(shared_preprocessing, program)
+    } else {
+        JoltProverPreprocessing::new(shared_preprocessing, program)
+    }
 }
 
 #[derive(Subcommand)]
@@ -268,7 +329,12 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
     (n, remaining_data.len() as u32)
 }
 
-fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) -> Vec<u8> {
+fn collect_guest_proofs(
+    guest: GuestProgram,
+    target_dir: &str,
+    use_embed: bool,
+    bytecode_config: BytecodeConfig,
+) -> Vec<u8> {
     info!("Starting collect_guest_proofs for {}", guest.name());
     let max_trace_length = guest.get_max_trace_length(use_embed);
 
@@ -293,7 +359,7 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
 
     info!("Preprocessing guest prover...");
     let guest_prover_preprocessing =
-        jolt_sdk::guest::prover::preprocess(&guest_prog, max_trace_length);
+        preprocess_guest_program(&guest_prog, max_trace_length, bytecode_config);
     info!("Preprocessing guest verifier...");
     let guest_verifier_preprocessing =
         jolt_sdk::JoltVerifierPreprocessing::from(&guest_prover_preprocessing);
@@ -449,13 +515,13 @@ fn load_proof_data(guest: GuestProgram, workdir: &Path) -> Vec<u8> {
     proof_data
 }
 
-fn generate_proofs(guest: GuestProgram, workdir: &Path) {
+fn generate_proofs(guest: GuestProgram, workdir: &Path, bytecode_config: BytecodeConfig) {
     info!("Generating proofs for {} guest program...", guest.name());
 
     let target_dir = "/tmp/jolt-guest-targets";
 
     // Collect guest proofs
-    let all_groups_data = collect_guest_proofs(guest, target_dir, false);
+    let all_groups_data = collect_guest_proofs(guest, target_dir, false, bytecode_config);
 
     // Save proof data
     save_proof_data(guest, &all_groups_data, workdir);
@@ -469,6 +535,7 @@ fn run_recursion_proof(
     input_bytes: Vec<u8>,
     memory_config: MemoryConfig,
     mut max_trace_length: usize,
+    bytecode_config: BytecodeConfig,
 ) {
     let target_dir = "/tmp/jolt-guest-targets";
 
@@ -486,7 +553,7 @@ fn run_recursion_proof(
         max_trace_length = 0;
     }
     let recursion_prover_preprocessing =
-        jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length);
+        preprocess_guest_program(&recursion, max_trace_length, bytecode_config);
     let recursion_verifier_preprocessing =
         jolt_sdk::JoltVerifierPreprocessing::from(&recursion_prover_preprocessing);
 
@@ -555,6 +622,7 @@ fn verify_proofs(
     workdir: &Path,
     output_dir: &Path,
     run_config: RunConfig,
+    bytecode_config: BytecodeConfig,
 ) {
     info!("Verifying proofs for {} guest program...", guest.name());
     info!("Using embed mode: {use_embed}");
@@ -581,6 +649,7 @@ fn verify_proofs(
             input_bytes,
             memory_config,
             guest.get_max_trace_length(use_embed),
+            bytecode_config,
         );
     } else {
         info!("Running {} recursion with input data...", guest.name());
@@ -610,6 +679,7 @@ fn verify_proofs(
             input_bytes,
             memory_config,
             guest.get_max_trace_length(use_embed),
+            bytecode_config,
         );
     }
 }
@@ -618,6 +688,10 @@ fn main() {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
+    let bytecode_config = BytecodeConfig {
+        committed_bytecode: cli.committed_bytecode,
+        bytecode_chunk: cli.bytecode_chunk,
+    };
 
     match &cli.command {
         Some(Commands::Generate { example, workdir }) => {
@@ -628,7 +702,7 @@ fn main() {
                     return;
                 }
             };
-            generate_proofs(guest, workdir);
+            generate_proofs(guest, workdir, bytecode_config);
         }
         Some(Commands::Verify {
             example,
@@ -653,6 +727,7 @@ fn main() {
                 workdir,
                 &output_dir,
                 RunConfig::Prove,
+                bytecode_config,
             );
         }
         Some(Commands::Trace {
@@ -678,7 +753,14 @@ fn main() {
             } else {
                 RunConfig::Trace
             };
-            verify_proofs(guest, embed.is_some(), workdir, &output_dir, run_config);
+            verify_proofs(
+                guest,
+                embed.is_some(),
+                workdir,
+                &output_dir,
+                run_config,
+                bytecode_config,
+            );
         }
         None => {
             info!("No subcommand specified. Available commands:");

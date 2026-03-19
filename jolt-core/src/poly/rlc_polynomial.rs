@@ -4,10 +4,17 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::accumulation::MedAccumS;
 use crate::utils::math::{s64_from_diff_u64s, Math};
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::zkvm::claim_reductions::PrecommittedPolynomial;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::ram::remap_address;
-use crate::zkvm::{bytecode::BytecodePreprocessing, witness::CommittedPolynomial};
+use crate::zkvm::{
+    bytecode::{
+        chunks::{committed_lanes, for_each_active_lane_value, ActiveLaneValue},
+        BytecodePreprocessing,
+    },
+    witness::CommittedPolynomial,
+};
 use allocative::Allocative;
 use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
@@ -58,7 +65,7 @@ pub struct StreamingRLCContext<F: JoltField> {
     pub onehot_polys: Vec<(CommittedPolynomial, F)>,
     /// Precommitted polynomials with their RLC coefficients.
     /// These are NOT streamed from trace - they're passed in directly.
-    pub precommitted_polys: Vec<(F, MultilinearPolynomial<F>)>,
+    pub precommitted_polys: Vec<(F, PrecommittedPolynomial<F>)>,
     pub trace_source: TraceSource,
     pub preprocessing: Arc<RLCStreamingData>,
     pub one_hot_params: OneHotParams,
@@ -173,7 +180,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         trace_source: TraceSource,
         poly_ids: Vec<CommittedPolynomial>,
         coefficients: &[F],
-        mut precommitted_poly_map: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        mut precommitted_poly_map: HashMap<CommittedPolynomial, PrecommittedPolynomial<F>>,
     ) -> Self {
         debug_assert_eq!(poly_ids.len(), coefficients.len());
 
@@ -369,47 +376,151 @@ impl<F: JoltField> RLCPolynomial<F> {
             .iter()
             .filter(|(_, precommitted_poly)| precommitted_poly.original_len() > 0)
             .for_each(|(coeff, precommitted_poly)| {
-                let precommitted_len = precommitted_poly.original_len();
-                let precommitted_vars = precommitted_len.log_2();
-                let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(precommitted_vars);
-                let precommitted_cols = 1usize << sigma_a;
-                let precommitted_rows = 1usize << nu_a;
+                match precommitted_poly {
+                    PrecommittedPolynomial::Dense(poly) => {
+                        let precommitted_len = poly.original_len();
+                        let precommitted_vars = precommitted_len.log_2();
+                        let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(precommitted_vars);
+                        let precommitted_cols = 1usize << sigma_a;
+                        let precommitted_rows = 1usize << nu_a;
 
-                debug_assert!(
-                    precommitted_cols <= num_columns,
-                    "Precommitted columns (2^{{sigma_a}}={precommitted_cols}) must fit in main num_columns={num_columns}; \
+                        debug_assert!(
+                            precommitted_cols <= num_columns,
+                            "Precommitted columns (2^{{sigma_a}}={precommitted_cols}) must fit in main num_columns={num_columns}; \
 guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
-                );
+                        );
 
-                // Only the top-left block contributes: rows [0..precommitted_rows), cols [0..precommitted_cols)
-                let effective_rows = precommitted_rows.min(left_vec.len());
-
-                // Compute column contributions: for each column, sum contributions from all rows
-                // Note: precommitted_len is always precommitted_cols * precommitted_rows (size must be power of 2)
-                let column_contributions: Vec<F> = (0..precommitted_cols)
-                    .into_par_iter()
-                    .map(|col_idx| {
-                        // For this column, sum contributions from all non-zero rows
-                        left_vec[..effective_rows]
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, &left)| !left.is_zero())
-                            .map(|(row_idx, &left)| {
-                                let coeff_idx = row_idx * precommitted_cols + col_idx;
-                                let precommitted_val = precommitted_poly.get_coeff(coeff_idx);
-                                left * *coeff * precommitted_val
+                        let effective_rows = precommitted_rows.min(left_vec.len());
+                        let column_contributions: Vec<F> = (0..precommitted_cols)
+                            .into_par_iter()
+                            .map(|col_idx| {
+                                left_vec[..effective_rows]
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, &left)| !left.is_zero())
+                                    .map(|(row_idx, &left)| {
+                                        let coeff_idx = row_idx * precommitted_cols + col_idx;
+                                        let precommitted_val = poly.get_coeff(coeff_idx);
+                                        left * *coeff * precommitted_val
+                                    })
+                                    .sum()
                             })
-                            .sum()
-                    })
-                    .collect();
+                            .collect();
 
-                // Add column contributions to result in parallel
-                result[..precommitted_cols]
-                    .par_iter_mut()
-                    .zip(column_contributions.par_iter())
-                    .for_each(|(res, &contrib)| {
-                        *res += contrib;
-                    });
+                        result[..precommitted_cols]
+                            .par_iter_mut()
+                            .zip(column_contributions.par_iter())
+                            .for_each(|(res, &contrib)| {
+                                *res += contrib;
+                            });
+                    }
+                    PrecommittedPolynomial::BytecodeChunk {
+                        chunk_index,
+                        chunk_cycle_len,
+                    } => {
+                        let precommitted_len = committed_lanes() * *chunk_cycle_len;
+                        let precommitted_vars = precommitted_len.log_2();
+                        let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(precommitted_vars);
+                        let precommitted_cols = 1usize << sigma_a;
+                        let effective_rows = (1usize << nu_a).min(left_vec.len());
+                        let chunk_start = chunk_index * chunk_cycle_len;
+                        let chunk_end = chunk_start + chunk_cycle_len;
+                        let layout = DoryGlobals::get_layout();
+                        let column_contributions = ctx.preprocessing.bytecode.bytecode
+                            [chunk_start..chunk_end]
+                            .par_iter()
+                            .enumerate()
+                            .fold(
+                                || unsafe_allocate_zero_vec(precommitted_cols),
+                                |mut acc, (chunk_cycle, instr)| {
+                                    for_each_active_lane_value::<F>(instr, |global_lane, lane_val| {
+                                        let coeff_idx = layout.address_cycle_to_index(
+                                            global_lane,
+                                            chunk_cycle,
+                                            committed_lanes(),
+                                            *chunk_cycle_len,
+                                        );
+                                        let row_idx = coeff_idx / precommitted_cols;
+                                        if row_idx >= effective_rows {
+                                            return;
+                                        }
+                                        let left = left_vec[row_idx];
+                                        if left.is_zero() {
+                                            return;
+                                        }
+                                        let lane_value = match lane_val {
+                                            ActiveLaneValue::One => F::one(),
+                                            ActiveLaneValue::Scalar(v) => v,
+                                        };
+                                        let col_idx = coeff_idx % precommitted_cols;
+                                        acc[col_idx] += left * *coeff * lane_value;
+                                    });
+                                    acc
+                                },
+                            )
+                            .reduce(
+                                || unsafe_allocate_zero_vec(precommitted_cols),
+                                |mut a, b| {
+                                    a.iter_mut().zip(b.iter()).for_each(|(x, y)| *x += *y);
+                                    a
+                                },
+                            );
+
+                        result[..precommitted_cols]
+                            .par_iter_mut()
+                            .zip(column_contributions.par_iter())
+                            .for_each(|(res, &contrib)| {
+                                *res += contrib;
+                            });
+                    }
+                    PrecommittedPolynomial::ProgramImage {
+                        words,
+                        start_index,
+                        padded_len,
+                    } => {
+                        let precommitted_vars = padded_len.log_2();
+                        let (sigma_a, nu_a) = DoryGlobals::balanced_sigma_nu(precommitted_vars);
+                        let precommitted_cols = 1usize << sigma_a;
+                        let effective_rows = (1usize << nu_a).min(left_vec.len());
+                        let column_contributions = words
+                            .par_iter()
+                            .enumerate()
+                            .fold(
+                                || unsafe_allocate_zero_vec(precommitted_cols),
+                                |mut acc, (offset, &word)| {
+                                    if word == 0 {
+                                        return acc;
+                                    }
+                                    let coeff_idx = start_index + offset;
+                                    let row_idx = coeff_idx / precommitted_cols;
+                                    if row_idx >= effective_rows {
+                                        return acc;
+                                    }
+                                    let left = left_vec[row_idx];
+                                    if left.is_zero() {
+                                        return acc;
+                                    }
+                                    let col_idx = coeff_idx % precommitted_cols;
+                                    acc[col_idx] += left * coeff.mul_u64(word);
+                                    acc
+                                },
+                            )
+                            .reduce(
+                                || unsafe_allocate_zero_vec(precommitted_cols),
+                                |mut a, b| {
+                                    a.iter_mut().zip(b.iter()).for_each(|(x, y)| *x += *y);
+                                    a
+                                },
+                            );
+
+                        result[..precommitted_cols]
+                            .par_iter_mut()
+                            .zip(column_contributions.par_iter())
+                            .for_each(|(res, &contrib)| {
+                                *res += contrib;
+                            });
+                    }
+                }
             });
     }
 

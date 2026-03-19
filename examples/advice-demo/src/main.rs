@@ -4,6 +4,10 @@ use tracing::info;
 // Demonstration of advice tape usage in a provable computation
 pub fn main() {
     tracing_subscriber::fmt::init();
+    let bytecode_chunk = std::env::args()
+        .skip_while(|arg| arg != "--committed-bytecode")
+        .nth(1)
+        .map(|arg| arg.parse().unwrap());
 
     let target_dir = "/tmp/jolt-guest-targets";
 
@@ -13,11 +17,21 @@ pub fn main() {
     let b = vec![0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
     let mut program = guest::compile_advice_demo(target_dir);
-    let shared_preprocessing = guest::preprocess_shared_advice_demo(&mut program);
-    let prover_preprocessing = guest::preprocess_prover_advice_demo(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
-    let verifier_preprocessing =
-        guest::preprocess_verifier_advice_demo(shared_preprocessing, verifier_setup, None);
+    let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
+        let prover_preprocessing =
+            guest::preprocess_committed_advice_demo(&mut program, chunk_count);
+        let verifier_preprocessing =
+            guest::verifier_preprocessing_from_prover_advice_demo(&prover_preprocessing);
+        (prover_preprocessing, verifier_preprocessing)
+    } else {
+        let shared_preprocessing = guest::preprocess_shared_advice_demo(&mut program);
+        let prover_preprocessing =
+            guest::preprocess_prover_advice_demo(shared_preprocessing.clone());
+        let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
+        let verifier_preprocessing =
+            guest::preprocess_verifier_advice_demo(shared_preprocessing, verifier_setup, None);
+        (prover_preprocessing, verifier_preprocessing)
+    };
     let prove_advice_demo = guest::build_prover_advice_demo(program, prover_preprocessing);
     let verify_advice_demo = guest::build_verifier_advice_demo(verifier_preprocessing);
 

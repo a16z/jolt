@@ -1,20 +1,36 @@
-use jolt_sdk::{TrustedAdvice, UntrustedAdvice};
+use jolt_sdk::{DoryContext, DoryGlobals, DoryLayout, TrustedAdvice, UntrustedAdvice};
 use std::time::Instant;
 use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
+    let bytecode_chunk = std::env::args()
+        .skip_while(|arg| arg != "--committed-bytecode")
+        .nth(1)
+        .map(|arg| arg.parse().unwrap());
+    DoryGlobals::initialize_context(1, 1, DoryContext::Main, Some(DoryLayout::CycleMajor))
+        .expect("failed to set Dory layout");
 
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_merkle_tree(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_merkle_tree(&mut program);
-    let prover_preprocessing = guest::preprocess_prover_merkle_tree(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_merkle_tree(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
+        let prover_preprocessing =
+            guest::preprocess_committed_merkle_tree(&mut program, chunk_count);
+        let verifier_preprocessing =
+            guest::verifier_preprocessing_from_prover_merkle_tree(&prover_preprocessing);
+        (prover_preprocessing, verifier_preprocessing)
+    } else {
+        let shared_preprocessing = guest::preprocess_shared_merkle_tree(&mut program);
+        let prover_preprocessing =
+            guest::preprocess_prover_merkle_tree(shared_preprocessing.clone());
+        let verifier_preprocessing = guest::preprocess_verifier_merkle_tree(
+            shared_preprocessing,
+            prover_preprocessing.generators.to_verifier_setup(),
+            None,
+        );
+        (prover_preprocessing, verifier_preprocessing)
+    };
 
     let leaf1: &[u8] = &[5u8; 32];
     let leaf2 = [6u8; 32];

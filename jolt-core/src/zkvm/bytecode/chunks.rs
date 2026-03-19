@@ -151,14 +151,11 @@ pub fn for_each_active_lane_value<F: JoltField>(
     }
 }
 
-#[tracing::instrument(
-    skip_all,
-    name = "bytecode::build_committed_bytecode_chunk_polynomials"
-)]
-pub fn build_committed_bytecode_chunk_polynomials<F: JoltField>(
+#[tracing::instrument(skip_all, name = "bytecode::build_committed_bytecode_chunk_coeffs")]
+pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     instructions: &[Instruction],
     chunk_count: usize,
-) -> Vec<MultilinearPolynomial<F>> {
+) -> Vec<Vec<F>> {
     let bytecode_len = instructions.len();
     validate_committed_bytecode_chunking_for_len(bytecode_len, chunk_count);
 
@@ -189,6 +186,17 @@ pub fn build_committed_bytecode_chunk_polynomials<F: JoltField>(
     }
 
     chunk_coeffs
+}
+
+#[tracing::instrument(
+    skip_all,
+    name = "bytecode::build_committed_bytecode_chunk_polynomials"
+)]
+pub fn build_committed_bytecode_chunk_polynomials<F: JoltField>(
+    instructions: &[Instruction],
+    chunk_count: usize,
+) -> Vec<MultilinearPolynomial<F>> {
+    build_committed_bytecode_chunk_coeffs::<F>(instructions, chunk_count)
         .into_iter()
         .map(MultilinearPolynomial::from)
         .collect()

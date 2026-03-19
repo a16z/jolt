@@ -1,5 +1,6 @@
 use allocative::Allocative;
 use rayon::prelude::*;
+use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
@@ -9,6 +10,33 @@ use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN, LITTLE_ENDIAN};
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 use crate::utils::math::Math;
+use crate::zkvm::bytecode::chunks::committed_lanes;
+
+#[derive(Clone, Debug)]
+pub enum PrecommittedPolynomial<F: JoltField> {
+    Dense(MultilinearPolynomial<F>),
+    BytecodeChunk {
+        chunk_index: usize,
+        chunk_cycle_len: usize,
+    },
+    ProgramImage {
+        words: Arc<Vec<u64>>,
+        start_index: usize,
+        padded_len: usize,
+    },
+}
+
+impl<F: JoltField> PrecommittedPolynomial<F> {
+    pub(crate) fn original_len(&self) -> usize {
+        match self {
+            Self::Dense(poly) => poly.original_len(),
+            Self::BytecodeChunk {
+                chunk_cycle_len, ..
+            } => committed_lanes() * *chunk_cycle_len,
+            Self::ProgramImage { padded_len, .. } => *padded_len,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Allocative)]
 pub enum PrecommittedEmbeddingMode {

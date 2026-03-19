@@ -1276,9 +1276,7 @@ impl<
                 .preprocessing
                 .shared
                 .program_meta
-                .program_image_len_words
-                .max(1)
-                .next_power_of_two();
+                .committed_program_image_num_words(&self.program_io.memory_layout);
             let program_image_reduction_params = ProgramImageClaimReductionParams::new(
                 &self.program_io,
                 self.preprocessing.shared.program_meta.min_bytecode_address,
@@ -2121,6 +2119,12 @@ impl JoltSharedPreprocessing {
     }
 
     #[inline]
+    pub fn committed_program_image_num_words(&self) -> usize {
+        self.program_meta
+            .committed_program_image_num_words(&self.memory_layout)
+    }
+
+    #[inline]
     pub(crate) fn precommitted_candidate_total_vars(
         &self,
         include_committed: bool,
@@ -2152,12 +2156,7 @@ impl JoltSharedPreprocessing {
                 .next_power_of_two()
                 .log_2();
             candidates.push(committed_lanes().log_2() + chunk_cycle_log_t);
-            candidates.push(
-                self.program_image_len_words()
-                    .max(1)
-                    .next_power_of_two()
-                    .log_2(),
-            );
+            candidates.push(self.committed_program_image_num_words().log_2());
         }
 
         candidates

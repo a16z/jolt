@@ -5,13 +5,20 @@ use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
+    let bytecode_chunk = std::env::args()
+        .skip_while(|arg| arg != "--committed-bytecode")
+        .nth(1)
+        .map(|arg| arg.parse().unwrap());
 
     // An overflowing stack should fail to prove.
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_overflow_stack(target_dir);
-    let shared_preprocessing = guest::preprocess_shared_overflow_stack(&mut program);
-    let prover_preprocessing =
-        guest::preprocess_prover_overflow_stack(shared_preprocessing.clone());
+    let prover_preprocessing = if let Some(chunk_count) = bytecode_chunk {
+        guest::preprocess_committed_overflow_stack(&mut program, chunk_count)
+    } else {
+        let shared_preprocessing = guest::preprocess_shared_overflow_stack(&mut program);
+        guest::preprocess_prover_overflow_stack(shared_preprocessing.clone())
+    };
     let prove_overflow_stack = guest::build_prover_overflow_stack(program, prover_preprocessing);
 
     let res = panic::catch_unwind(|| {
@@ -23,8 +30,12 @@ pub fn main() {
 
     // now lets try to overflow the heap, should also panic
     let mut program = guest::compile_overflow_heap(target_dir);
-    let shared_preprocessing = guest::preprocess_shared_overflow_heap(&mut program);
-    let prover_preprocessing = guest::preprocess_prover_overflow_heap(shared_preprocessing.clone());
+    let prover_preprocessing = if let Some(chunk_count) = bytecode_chunk {
+        guest::preprocess_committed_overflow_heap(&mut program, chunk_count)
+    } else {
+        let shared_preprocessing = guest::preprocess_shared_overflow_heap(&mut program);
+        guest::preprocess_prover_overflow_heap(shared_preprocessing.clone())
+    };
     let prove_overflow_heap = guest::build_prover_overflow_heap(program, prover_preprocessing);
 
     let res = panic::catch_unwind(|| {
@@ -36,15 +47,29 @@ pub fn main() {
     // but with stack_size=8192
     let mut program = guest::compile_allocate_stack_with_increased_size(target_dir);
 
-    let shared_preprocessing =
-        guest::preprocess_shared_allocate_stack_with_increased_size(&mut program);
-    let prover_preprocessing =
-        guest::preprocess_prover_allocate_stack_with_increased_size(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_allocate_stack_with_increased_size(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
+        let prover_preprocessing = guest::preprocess_committed_allocate_stack_with_increased_size(
+            &mut program,
+            chunk_count,
+        );
+        let verifier_preprocessing =
+            guest::verifier_preprocessing_from_prover_allocate_stack_with_increased_size(
+                &prover_preprocessing,
+            );
+        (prover_preprocessing, verifier_preprocessing)
+    } else {
+        let shared_preprocessing =
+            guest::preprocess_shared_allocate_stack_with_increased_size(&mut program);
+        let prover_preprocessing = guest::preprocess_prover_allocate_stack_with_increased_size(
+            shared_preprocessing.clone(),
+        );
+        let verifier_preprocessing = guest::preprocess_verifier_allocate_stack_with_increased_size(
+            shared_preprocessing,
+            prover_preprocessing.generators.to_verifier_setup(),
+            None,
+        );
+        (prover_preprocessing, verifier_preprocessing)
+    };
 
     let prove_allocate_stack_with_increased_size =
         guest::build_prover_allocate_stack_with_increased_size(program, prover_preprocessing);

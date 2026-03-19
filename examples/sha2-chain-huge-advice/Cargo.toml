@@ -1,5 +1,5 @@
 [package]
-name = "fibonacci"
+name = "sha2-chain-huge-advice"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,4 +7,4 @@ edition = "2021"
 jolt-sdk = { workspace = true, features = ["host"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
-guest = { package = "fibonacci-guest", path = "./guest" }
+guest = { package = "sha2-chain-huge-advice-guest", path = "./guest" }

@@ -3,19 +3,32 @@ use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
+    let bytecode_chunk = std::env::args()
+        .skip_while(|arg| arg != "--committed-bytecode")
+        .nth(1)
+        .map(|arg| arg.parse().unwrap());
 
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_secp256k1_ecdsa_verify(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_secp256k1_ecdsa_verify(&mut program);
-    let prover_preprocessing =
-        guest::preprocess_prover_secp256k1_ecdsa_verify(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
-    let verifier_preprocessing = guest::preprocess_verifier_secp256k1_ecdsa_verify(
-        shared_preprocessing,
-        verifier_setup,
-        None,
-    );
+    let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
+        let prover_preprocessing =
+            guest::preprocess_committed_secp256k1_ecdsa_verify(&mut program, chunk_count);
+        let verifier_preprocessing =
+            guest::verifier_preprocessing_from_prover_secp256k1_ecdsa_verify(&prover_preprocessing);
+        (prover_preprocessing, verifier_preprocessing)
+    } else {
+        let shared_preprocessing = guest::preprocess_shared_secp256k1_ecdsa_verify(&mut program);
+        let prover_preprocessing =
+            guest::preprocess_prover_secp256k1_ecdsa_verify(shared_preprocessing.clone());
+        let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
+        let verifier_preprocessing = guest::preprocess_verifier_secp256k1_ecdsa_verify(
+            shared_preprocessing,
+            verifier_setup,
+            None,
+        );
+        (prover_preprocessing, verifier_preprocessing)
+    };
 
     let prove_secp256k1_ecdsa_verify =
         guest::build_prover_secp256k1_ecdsa_verify(program, prover_preprocessing);

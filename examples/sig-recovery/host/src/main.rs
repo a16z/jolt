@@ -17,6 +17,10 @@ fn main() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+    let bytecode_chunk = std::env::args()
+        .skip_while(|arg| arg != "--committed-bytecode")
+        .nth(1)
+        .map(|arg| arg.parse().unwrap());
 
     info!("sig-recovery: zkVM ECDSA Signature Recovery");
     info!("=============================================\n");
@@ -42,11 +46,21 @@ fn main() {
 
     info!("\nPreprocessing...");
     let start = Instant::now();
-    let shared_preprocessing = guest::preprocess_shared_verify_txs(&mut program);
-    let prover_preprocessing = guest::preprocess_prover_verify_txs(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
-    let verifier_preprocessing =
-        guest::preprocess_verifier_verify_txs(shared_preprocessing, verifier_setup, None);
+    let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
+        let prover_preprocessing =
+            guest::preprocess_committed_verify_txs(&mut program, chunk_count);
+        let verifier_preprocessing =
+            guest::verifier_preprocessing_from_prover_verify_txs(&prover_preprocessing);
+        (prover_preprocessing, verifier_preprocessing)
+    } else {
+        let shared_preprocessing = guest::preprocess_shared_verify_txs(&mut program);
+        let prover_preprocessing =
+            guest::preprocess_prover_verify_txs(shared_preprocessing.clone());
+        let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
+        let verifier_preprocessing =
+            guest::preprocess_verifier_verify_txs(shared_preprocessing, verifier_setup, None);
+        (prover_preprocessing, verifier_preprocessing)
+    };
     info!("Preprocessing time: {:?}", start.elapsed());
 
     let prove_verify_txs = guest::build_prover_verify_txs(program, prover_preprocessing);

@@ -11,27 +11,40 @@ macro_rules! step {
 }
 
 pub fn btreemap() {
+    let bytecode_chunk = std::env::args()
+        .skip_while(|arg| arg != "--committed-bytecode")
+        .nth(1)
+        .map(|arg| arg.parse().unwrap());
     let target_dir = "/tmp/jolt-guest-targets";
 
     let mut program = step!("Compiling guest code", {
         guest::compile_btreemap(target_dir)
     });
 
-    let shared_preprocessing = step!("Preprocessing shared", {
-        guest::preprocess_shared_btreemap(&mut program)
-    });
-
-    let prover_preprocessing = step!("Preprocessing prover", {
-        guest::preprocess_prover_btreemap(shared_preprocessing.clone())
-    });
-
-    let verifier_preprocessing = step!("Preprocessing verifier", {
-        guest::preprocess_verifier_btreemap(
-            shared_preprocessing,
-            prover_preprocessing.generators.to_verifier_setup(),
-            None,
-        )
-    });
+    let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
+        let prover_preprocessing = step!("Preprocessing prover", {
+            guest::preprocess_committed_btreemap(&mut program, chunk_count)
+        });
+        let verifier_preprocessing = step!("Preprocessing verifier", {
+            guest::verifier_preprocessing_from_prover_btreemap(&prover_preprocessing)
+        });
+        (prover_preprocessing, verifier_preprocessing)
+    } else {
+        let shared_preprocessing = step!("Preprocessing shared", {
+            guest::preprocess_shared_btreemap(&mut program)
+        });
+        let prover_preprocessing = step!("Preprocessing prover", {
+            guest::preprocess_prover_btreemap(shared_preprocessing.clone())
+        });
+        let verifier_preprocessing = step!("Preprocessing verifier", {
+            guest::preprocess_verifier_btreemap(
+                shared_preprocessing,
+                prover_preprocessing.generators.to_verifier_setup(),
+                None,
+            )
+        });
+        (prover_preprocessing, verifier_preprocessing)
+    };
 
     let prove = step!("Building prover", {
         guest::build_prover_btreemap(program, prover_preprocessing)

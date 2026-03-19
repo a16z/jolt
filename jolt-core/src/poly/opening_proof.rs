@@ -7,7 +7,10 @@
 
 use crate::{
     poly::rlc_polynomial::{RLCPolynomial, RLCStreamingData, TraceSource},
-    zkvm::{claim_reductions::AdviceKind, config::OneHotParams},
+    zkvm::{
+        claim_reductions::{AdviceKind, PrecommittedPolynomial},
+        config::OneHotParams,
+    },
 };
 use allocative::Allocative;
 use num_derive::FromPrimitive;
@@ -297,7 +300,7 @@ impl<F: JoltField> DoryOpeningState<F> {
         trace_source: TraceSource,
         rlc_streaming_data: Arc<RLCStreamingData>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        precommitted_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        precommitted_polys: HashMap<CommittedPolynomial, PrecommittedPolynomial<F>>,
     ) -> (MultilinearPolynomial<F>, PCS::OpeningProofHint) {
         // Accumulate gamma coefficients per polynomial
         let mut rlc_map = BTreeMap::new();

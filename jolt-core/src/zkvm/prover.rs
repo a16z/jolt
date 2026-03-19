@@ -22,7 +22,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "zk")]
 use crate::zkvm::config::ProgramMode;
 use crate::zkvm::config::ReadWriteConfig;
-use crate::zkvm::program::{ProgramPreprocessing, TrustedProgramCommitments, TrustedProgramHints};
+use crate::zkvm::program::{
+    build_program_image_words_padded, ProgramPreprocessing, TrustedProgramCommitments,
+    TrustedProgramHints,
+};
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
@@ -44,7 +47,8 @@ use crate::{
             compute_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningPoint,
             ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
-        rlc_polynomial::{RLCStreamingData, TraceSource},
+        rlc_polynomial::{RLCStreamingData, TraceSource,
+        },
     },
     pprof_scope,
     subprotocols::{
@@ -61,8 +65,9 @@ use crate::{
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         bytecode::{
-            chunks::build_committed_bytecode_chunk_polynomials,
-            read_raf_checking::BytecodeReadRafSumcheckParams, TrustedBytecodeCommitments,
+            chunks::{build_committed_bytecode_chunk_coeffs, committed_bytecode_chunk_cycle_len},
+            read_raf_checking::BytecodeReadRafSumcheckParams,
+            TrustedBytecodeCommitments,
         },
         claim_reductions::{
             AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceKind,
@@ -71,9 +76,9 @@ use crate::{
             IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
             InstructionLookupsClaimReductionSumcheckParams,
             InstructionLookupsClaimReductionSumcheckProver, PrecommittedClaimReduction,
-            ProgramImageClaimReductionParams, ProgramImageClaimReductionProver, RaReductionParams,
-            RamRaClaimReductionSumcheckProver, RegistersClaimReductionSumcheckParams,
-            RegistersClaimReductionSumcheckProver,
+            PrecommittedPolynomial, ProgramImageClaimReductionParams,
+            ProgramImageClaimReductionProver, RaReductionParams, RamRaClaimReductionSumcheckProver,
+            RegistersClaimReductionSumcheckParams, RegistersClaimReductionSumcheckProver,
         },
         config::OneHotParams,
         instruction_lookups::{
@@ -1443,25 +1448,24 @@ impl<
                 &self.opening_accumulator,
                 &mut self.transcript,
             );
-            let bytecode_chunk_polys = build_committed_bytecode_chunk_polynomials(
+            let bytecode_chunk_coeffs = build_committed_bytecode_chunk_coeffs(
                 &self.preprocessing.program.bytecode.bytecode,
                 bytecode_chunk_count,
             );
             self.bytecode_reduction_prover = Some(BytecodeClaimReductionProver::initialize(
                 bytecode_reduction_params,
-                &bytecode_chunk_polys,
+                &bytecode_chunk_coeffs,
             ));
 
             let padded_len_words = self
                 .preprocessing
                 .program
-                .ram
-                .bytecode_words
-                .len()
-                .max(1)
-                .next_power_of_two();
-            let mut program_image_words = self.preprocessing.program.ram.bytecode_words.clone();
-            program_image_words.resize(padded_len_words, 0);
+                .committed_program_image_num_words(&self.program_io.memory_layout);
+            let program_image_words = build_program_image_words_padded(
+                &self.preprocessing.program,
+                &self.program_io.memory_layout,
+                padded_len_words,
+            );
             let program_image_reduction_params = ProgramImageClaimReductionParams::new(
                 &self.program_io,
                 self.preprocessing.shared.program_meta.min_bytecode_address,
@@ -2128,7 +2132,7 @@ impl<
 
         let mut polynomial_claims = Vec::new();
         let mut scaling_factors = Vec::new();
-        let mut precommitted_polys: HashMap<CommittedPolynomial, MultilinearPolynomial<F>> =
+        let mut precommitted_polys: HashMap<CommittedPolynomial, PrecommittedPolynomial<F>> =
             HashMap::new();
 
         let (ram_inc_point, ram_inc_claim) =
@@ -2224,11 +2228,11 @@ impl<
 
         if self.preprocessing.is_committed_mode() {
             let chunk_count = self.preprocessing.shared.bytecode_chunk_count;
-            let bytecode_chunks = build_committed_bytecode_chunk_polynomials::<F>(
-                &self.preprocessing.program.bytecode.bytecode,
+            let chunk_cycle_len = committed_bytecode_chunk_cycle_len(
+                self.preprocessing.program.bytecode.bytecode.len(),
                 chunk_count,
             );
-            for (chunk_idx, poly) in bytecode_chunks.into_iter().enumerate() {
+            for chunk_idx in 0..chunk_count {
                 let (chunk_point, chunk_claim) =
                     self.opening_accumulator.get_committed_polynomial_opening(
                         CommittedPolynomial::BytecodeChunk(chunk_idx),
@@ -2241,18 +2245,25 @@ impl<
                     chunk_claim * lagrange_factor,
                 ));
                 scaling_factors.push(lagrange_factor);
-                precommitted_polys.insert(CommittedPolynomial::BytecodeChunk(chunk_idx), poly);
+                precommitted_polys.insert(
+                    CommittedPolynomial::BytecodeChunk(chunk_idx),
+                    PrecommittedPolynomial::BytecodeChunk {
+                        chunk_index: chunk_idx,
+                        chunk_cycle_len,
+                    },
+                );
             }
         }
 
         if self.preprocessing.is_committed_mode() {
-            let mut program_image_words = self.preprocessing.program.ram.bytecode_words.clone();
-            if program_image_words.is_empty() {
-                program_image_words.push(0);
-            }
-            let padded_len = program_image_words.len().next_power_of_two().max(2);
-            program_image_words.resize(padded_len, 0);
-            let program_image_poly = MultilinearPolynomial::from(program_image_words);
+            let padded_len = self
+                .preprocessing
+                .program
+                .committed_program_image_num_words(&self.program_io.memory_layout);
+            let start_index = self
+                .preprocessing
+                .program
+                .committed_program_image_start_index(&self.program_io.memory_layout);
             let (program_point, program_claim) =
                 self.opening_accumulator.get_committed_polynomial_opening(
                     CommittedPolynomial::ProgramImageInit,
@@ -2264,7 +2275,14 @@ impl<
                 program_claim * lagrange_factor,
             ));
             scaling_factors.push(lagrange_factor);
-            precommitted_polys.insert(CommittedPolynomial::ProgramImageInit, program_image_poly);
+            precommitted_polys.insert(
+                CommittedPolynomial::ProgramImageInit,
+                PrecommittedPolynomial::ProgramImage {
+                    words: Arc::new(self.preprocessing.program.ram.bytecode_words.clone()),
+                    start_index,
+                    padded_len,
+                },
+            );
         }
 
         // 2. Sample gamma and compute powers for RLC
@@ -2313,10 +2331,16 @@ impl<
 
         // Add advice polynomials to precommitted polynomials map for RLC.
         if let Some(poly) = self.advice.trusted_advice_polynomial.take() {
-            precommitted_polys.insert(CommittedPolynomial::TrustedAdvice, poly);
+            precommitted_polys.insert(
+                CommittedPolynomial::TrustedAdvice,
+                PrecommittedPolynomial::Dense(poly),
+            );
         }
         if let Some(poly) = self.advice.untrusted_advice_polynomial.take() {
-            precommitted_polys.insert(CommittedPolynomial::UntrustedAdvice, poly);
+            precommitted_polys.insert(
+                CommittedPolynomial::UntrustedAdvice,
+                PrecommittedPolynomial::Dense(poly),
+            );
         }
 
         // Build streaming RLC polynomial directly (no witness poly regeneration!)
@@ -2550,7 +2574,7 @@ where
             shared.bytecode_chunk_count,
         );
         let (program_commitments, program_hints) =
-            TrustedProgramCommitments::derive(&program, &generators);
+            TrustedProgramCommitments::derive(&program, &shared.memory_layout, &generators);
 
         JoltProverPreprocessing {
             generators,

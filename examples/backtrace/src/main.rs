@@ -15,13 +15,18 @@ fn main() {
     #[cfg(any(feature = "nostd", feature = "std"))]
     let should_panic = env_flag("JOLT_BT_TRIGGER").unwrap_or(true);
     #[cfg(any(feature = "nostd", feature = "std"))]
+    let bytecode_chunk = std::env::args()
+        .skip_while(|arg| arg != "--committed-bytecode")
+        .nth(1)
+        .map(|arg| arg.parse().unwrap());
+    #[cfg(any(feature = "nostd", feature = "std"))]
     let target_dir = "/tmp/jolt-guest-targets";
 
     #[cfg(feature = "nostd")]
-    run_nostd(target_dir, should_panic);
+    run_nostd(target_dir, should_panic, bytecode_chunk);
 
     #[cfg(feature = "std")]
-    run_std(target_dir, should_panic);
+    run_std(target_dir, should_panic, bytecode_chunk);
 
     #[cfg(not(any(feature = "nostd", feature = "std")))]
     {
@@ -39,7 +44,7 @@ fn env_flag(key: &str) -> Option<bool> {
 }
 
 #[cfg(feature = "nostd")]
-fn run_nostd(target_dir: &str, should_panic: bool) {
+fn run_nostd(target_dir: &str, should_panic: bool, bytecode_chunk: Option<usize>) {
     info!("mode=nostd should_panic={}", should_panic);
 
     let trace_enabled = env_flag("JOLT_BACKTRACE").unwrap_or(false);
@@ -47,14 +52,26 @@ fn run_nostd(target_dir: &str, should_panic: bool) {
 
     let mut program = guest_nostd::compile_panic_backtrace_nostd(target_dir);
 
-    let shared_preprocessing = guest_nostd::preprocess_shared_panic_backtrace_nostd(&mut program);
-    let prover_preprocessing =
-        guest_nostd::preprocess_prover_panic_backtrace_nostd(shared_preprocessing.clone());
-    let verifier_preprocessing = guest_nostd::preprocess_verifier_panic_backtrace_nostd(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
+        let prover_preprocessing =
+            guest_nostd::preprocess_committed_panic_backtrace_nostd(&mut program, chunk_count);
+        let verifier_preprocessing =
+            guest_nostd::verifier_preprocessing_from_prover_panic_backtrace_nostd(
+                &prover_preprocessing,
+            );
+        (prover_preprocessing, verifier_preprocessing)
+    } else {
+        let shared_preprocessing =
+            guest_nostd::preprocess_shared_panic_backtrace_nostd(&mut program);
+        let prover_preprocessing =
+            guest_nostd::preprocess_prover_panic_backtrace_nostd(shared_preprocessing.clone());
+        let verifier_preprocessing = guest_nostd::preprocess_verifier_panic_backtrace_nostd(
+            shared_preprocessing,
+            prover_preprocessing.generators.to_verifier_setup(),
+            None,
+        );
+        (prover_preprocessing, verifier_preprocessing)
+    };
 
     let prove = guest_nostd::build_prover_panic_backtrace_nostd(program, prover_preprocessing);
     let verify = guest_nostd::build_verifier_panic_backtrace_nostd(verifier_preprocessing);
@@ -78,7 +95,7 @@ fn run_nostd(target_dir: &str, should_panic: bool) {
 }
 
 #[cfg(feature = "std")]
-fn run_std(target_dir: &str, should_panic: bool) {
+fn run_std(target_dir: &str, should_panic: bool, bytecode_chunk: Option<usize>) {
     info!("mode=std should_panic={}", should_panic);
 
     let trace_enabled = env_flag("JOLT_BACKTRACE").unwrap_or(false);
@@ -86,14 +103,25 @@ fn run_std(target_dir: &str, should_panic: bool) {
 
     let mut program = guest_std::compile_panic_backtrace_std(target_dir);
 
-    let shared_preprocessing = guest_std::preprocess_shared_panic_backtrace_std(&mut program);
-    let prover_preprocessing =
-        guest_std::preprocess_prover_panic_backtrace_std(shared_preprocessing.clone());
-    let verifier_preprocessing = guest_std::preprocess_verifier_panic_backtrace_std(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
+        let prover_preprocessing =
+            guest_std::preprocess_committed_panic_backtrace_std(&mut program, chunk_count);
+        let verifier_preprocessing =
+            guest_std::verifier_preprocessing_from_prover_panic_backtrace_std(
+                &prover_preprocessing,
+            );
+        (prover_preprocessing, verifier_preprocessing)
+    } else {
+        let shared_preprocessing = guest_std::preprocess_shared_panic_backtrace_std(&mut program);
+        let prover_preprocessing =
+            guest_std::preprocess_prover_panic_backtrace_std(shared_preprocessing.clone());
+        let verifier_preprocessing = guest_std::preprocess_verifier_panic_backtrace_std(
+            shared_preprocessing,
+            prover_preprocessing.generators.to_verifier_setup(),
+            None,
+        );
+        (prover_preprocessing, verifier_preprocessing)
+    };
 
     let prove = guest_std::build_prover_panic_backtrace_std(program, prover_preprocessing);
     let verify = guest_std::build_verifier_panic_backtrace_std(verifier_preprocessing);
