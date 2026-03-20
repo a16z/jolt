@@ -95,9 +95,7 @@ If some precommitted polynomial already has $D$ variables, we call it a **domina
 
 #### How Main Polynomials Sit In The Joint Matrix
 
-The main polynomials are embedded the way they are because this lets Stage 8 reuse the old sumcheck outputs unchanged.
-
-As a concrete example, take $D = 5$. Since Dory uses a balanced split, this means:
+The main polynomials are embedded depending on the dory layout. As a concrete example, take $D = 5$. Since Dory uses a balanced split, this means:
 
 $$
 \sigma_D = 3, \qquad \nu_D = 2,
@@ -143,8 +141,6 @@ row10   | a_100  |    .   |    .   |    .   | a_101  |    .   |    .   |    .   
 row11   | a_110  |    .   |    .   |    .   | a_111  |    .   |    .   |    .   |
 ```
 
-This is exactly what "the dense polynomial gets the highest $T$ bits" means in practice: the coefficient slots are those where the trailing $K+B$ bits are zero.
-
 The same idea applies to one-hot polynomials:
 
 - in `CycleMajor`, they use the lowest $T+K$ bits
@@ -186,14 +182,14 @@ row6  | a_11  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . |
 row7  |  .    .  .  .  .  .  .  .  .  .  .  .  .  .  .  . |
 ```
 
-So the logical embedding is unchanged, but it is no longer a convenient row-local chunking. That is why the implementation switches to explicit sparse row/column placement in this case.
+So the logical embedding is unchanged, but it is no longer a convenient row-local chunking. That is why the implementation switches to explicit sparse row/column placement in this case. Because polynomial lengths are powers of two, the placement still stays aligned: either the stride is a multiple of the row width, so the polynomial occupies the same column range in every row it touches, or the stride divides the row width, so it stays in a fixed column but appears only in every few rows, as in the example above.
 
 #### Final Dory Opening Point
 
 In summary
 - in `CycleMajor`, the main dense / one-hot geometry consumes the low bits of the final Dory point, so any extra precommitted variables must sit on the high side
 - in `AddressMajor`, the main geometry consumes the high bits, so any extra precommitted variables must sit on the low side
-- each block appears in reverse because Dory opening points are written in big-endian order, while the sumcheck challenges are accumulated round-by-round and then normalized into that order
+- each block appears in reverse because we always bind polynomials during claim reduction sumchecks from low to high bits
 
 Now we study two cases:
 If there **is** a dominant precommitted polynomial, let the raw Stage 6b challenges be
@@ -256,11 +252,9 @@ $$
 
 This is exactly the logic implemented in `stage8_opening_point()` in `prover.rs`.
 
-#### Embedding Smaller Precommitted Polynomials
+#### Embedding Precommitted Polynomials
 
-Now suppose there is **no dominant precommitted polynomial**, and we want to batch a smaller precommitted polynomial with the rest of the Stage 8 openings. The verifier's commitment to a precommitted polynomial already treats that polynomial as occupying the first rows and first columns of its balanced Dory matrix. Therefore, when we place that polynomial inside the larger joint matrix, we must continue to place it in the top-left corner; otherwise the verifier would be checking the Dory proof against a different geometry than the one used by the commitment.
-
-This is why smaller precommitted polynomials are placed in the **top-left corner** of the joint Dory matrix:
+The verifier already has the commitment to the precommitted polynomial. That commitment is computed under the convention that the polynomial occupies the top-left block of its balanced Dory matrix, meaning the earliest rows and earliest columns. So when we embed that polynomial into the larger joint matrix, we must preserve that same top-left placement; otherwise the verifier would be checking the Dory proof against a different geometry from the one encoded in the commitment.
 
 ```text
 Joint Dory matrix: 2^nu_D rows x 2^sigma_D columns
@@ -362,9 +356,7 @@ $$
 
 The precommitted sumchecks still bind variables low-to-high. But the final Dory point order is determined by the joint geometry, not by the order in which those rounds happen.
 
-So Jolt permutes the variables of each precommitted polynomial before running the sumcheck. This keeps the sumcheck code simple while ensuring the final claim corresponds to the original polynomial at the correct Stage 8 point.
-
-This is cheap: it is only a variable-position permutation, so on the coefficient table it is just a bit permutation of the $2^n$ Boolean-hypercube evaluations.
+So Jolt permutes the variables of each precommitted polynomial before running the sumcheck. This keeps the sumcheck code simple while ensuring the final claim corresponds to the original polynomial at the correct Stage 8 point. This permutation is cheap because it is only a variable-position movement, so on the coefficient table it is just a bit permutation of the $2^n$ Boolean-hypercube evaluations.
 
 Here is a concrete 3-variable example. Suppose the original polynomial is encoded by
 
