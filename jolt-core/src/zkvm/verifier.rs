@@ -2175,13 +2175,9 @@ impl JoltSharedPreprocessing {
     }
 
     #[inline]
-    pub(crate) fn compute_max_total_vars(&self) -> (usize, usize) {
+    pub(crate) fn compute_max_total_vars(&self, include_committed: bool) -> (usize, usize) {
         use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
-        let max_t_any = self
-            .max_padded_trace_length
-            .max(self.bytecode_size())
-            .max(self.program_image_len_words().max(1).next_power_of_two())
-            .next_power_of_two();
+        let max_t_any = self.max_padded_trace_length.next_power_of_two();
         let max_log_t = max_t_any.log_2();
         let max_log_k_chunk = if max_log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
             4
@@ -2191,7 +2187,7 @@ impl JoltSharedPreprocessing {
 
         let max_total_vars = Self::max_total_vars_from_candidates(
             max_log_k_chunk + max_log_t,
-            self.precommitted_candidate_total_vars(true, true, true),
+            self.precommitted_candidate_total_vars(include_committed, true, true),
         );
 
         (max_total_vars, max_log_k_chunk)

@@ -47,8 +47,7 @@ use crate::{
             compute_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningPoint,
             ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
-        rlc_polynomial::{RLCStreamingData, TraceSource,
-        },
+        rlc_polynomial::{RLCStreamingData, TraceSource},
     },
     pprof_scope,
     subprotocols::{
@@ -2545,7 +2544,7 @@ where
 {
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::new")]
     pub fn new(shared: JoltSharedPreprocessing, program: Arc<ProgramPreprocessing>) -> Self {
-        let (max_total_vars, _) = shared.compute_max_total_vars();
+        let (max_total_vars, _) = shared.compute_max_total_vars(false);
         let generators = PCS::setup_prover(max_total_vars);
 
         JoltProverPreprocessing {
@@ -2565,7 +2564,7 @@ where
         shared: JoltSharedPreprocessing,
         program: Arc<ProgramPreprocessing>,
     ) -> Self {
-        let (max_total_vars, max_log_k_chunk) = shared.compute_max_total_vars();
+        let (max_total_vars, max_log_k_chunk) = shared.compute_max_total_vars(true);
         let generators = PCS::setup_prover(max_total_vars);
         let (bytecode_commitments, bytecode_hints) = TrustedBytecodeCommitments::derive(
             &program.bytecode,
