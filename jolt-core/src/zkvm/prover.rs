@@ -355,20 +355,11 @@ impl<
         preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
         lazy_trace: LazyTraceIterator,
         mut trace: Vec<Cycle>,
-        mut program_io: JoltDevice,
+        program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
     ) -> Self {
-        // truncate trailing zeros on device outputs
-        program_io.outputs.truncate(
-            program_io
-                .outputs
-                .iter()
-                .rposition(|&b| b != 0)
-                .map_or(0, |pos| pos + 1),
-        );
-
         let unpadded_trace_len = trace.len();
         let padded_trace_len = if unpadded_trace_len < 256 {
             256 // ensures that T >= k^{1/D}
@@ -2245,7 +2236,7 @@ mod tests {
         prover::JoltProverPreprocessing,
         ram::populate_memory_states,
         verifier::{JoltVerifier, JoltVerifierPreprocessing},
-        RV64IMACProver, RV64IMACVerifier,
+        RV64IMACProver, RV64IMACVerifier, Serializable,
     };
     #[cfg(feature = "zk")]
     use crate::{curve::JoltCurve, field::JoltField};
@@ -3354,6 +3345,75 @@ mod tests {
             verifier.verify().is_err(),
             "verifier accepted proof: prover used entry_bytecode_index {original_entry_index}, \
              verifier expected {tampered_entry_index} — entry constraint not enforced"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn outputs_are_bound_with_exact_trailing_zero_length() {
+        DoryGlobals::reset();
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&9u8).unwrap();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (lazy_trace, trace, final_memory_state, mut program_io) =
+            program.trace(&inputs, &[], &[]);
+
+        assert!(
+            !program_io.outputs.is_empty(),
+            "expected fibonacci guest to produce a non-empty output"
+        );
+        program_io.outputs.push(0);
+
+        let shared_preprocessing = JoltSharedPreprocessing::new(
+            bytecode,
+            program_io.memory_layout.clone(),
+            init_memory_state,
+            1 << 16,
+            e_entry,
+        );
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
+        let prover = RV64IMACProver::gen_from_trace(
+            &prover_preprocessing,
+            lazy_trace,
+            trace,
+            program_io.clone(),
+            None,
+            None,
+            final_memory_state,
+        );
+        let (proof, _) = prover.prove();
+        let proof: crate::zkvm::RV64IMACProof = proof;
+        let proof_bytes = proof.serialize_to_bytes().unwrap();
+        let matching_proof =
+            crate::zkvm::RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
+        let mismatched_proof =
+            crate::zkvm::RV64IMACProof::deserialize_from_bytes(&proof_bytes).unwrap();
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+        RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            matching_proof,
+            program_io.clone(),
+            None,
+            None,
+        )
+        .unwrap()
+        .verify()
+        .unwrap();
+
+        let mut trimmed_program_io = program_io;
+        trimmed_program_io.outputs.pop();
+        let verifier = RV64IMACVerifier::new(
+            &verifier_preprocessing,
+            mismatched_proof,
+            trimmed_program_io,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(
+            verifier.verify().is_err(),
+            "verifier accepted proof after trimming a trailing zero output byte"
         );
     }
 

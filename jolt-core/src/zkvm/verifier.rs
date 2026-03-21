@@ -237,7 +237,7 @@ impl<
     pub fn new(
         preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
         proof: JoltProof<F, C, PCS, ProofTranscript>,
-        mut program_io: JoltDevice,
+        program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
         _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
     ) -> Result<Self, ProofVerifyError> {
@@ -251,15 +251,6 @@ impl<
         if program_io.outputs.len() > preprocessing.shared.memory_layout.max_output_size as usize {
             return Err(ProofVerifyError::OutputTooLarge);
         }
-
-        // truncate trailing zeros on device outputs
-        program_io.outputs.truncate(
-            program_io
-                .outputs
-                .iter()
-                .rposition(|&b| b != 0)
-                .map_or(0, |pos| pos + 1),
-        );
 
         let zk_mode = proof.stage1_sumcheck_proof.is_zk();
         #[cfg(test)]
