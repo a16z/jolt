@@ -2220,7 +2220,12 @@ impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>> Serial
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        ffi::OsString,
+        path::PathBuf,
+        sync::Arc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use ark_bn254::Fr;
     use serial_test::serial;
@@ -2249,6 +2254,56 @@ mod tests {
     };
     #[cfg(feature = "zk")]
     use crate::{curve::JoltCurve, field::JoltField};
+
+    struct TempDoryHomeGuard {
+        original_home: Option<OsString>,
+        original_local_app_data: Option<OsString>,
+        temp_home: PathBuf,
+    }
+
+    impl TempDoryHomeGuard {
+        fn new() -> Self {
+            let mut temp_home = std::env::temp_dir();
+            temp_home.push(format!(
+                "jolt-dory-test-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&temp_home).unwrap();
+
+            let original_home = std::env::var_os("HOME");
+            let original_local_app_data = std::env::var_os("LOCALAPPDATA");
+            unsafe {
+                std::env::set_var("HOME", &temp_home);
+                std::env::set_var("LOCALAPPDATA", &temp_home);
+            }
+
+            Self {
+                original_home,
+                original_local_app_data,
+                temp_home,
+            }
+        }
+    }
+
+    impl Drop for TempDoryHomeGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.original_home {
+                    Some(home) => std::env::set_var("HOME", home),
+                    None => std::env::remove_var("HOME"),
+                }
+                match &self.original_local_app_data {
+                    Some(path) => std::env::set_var("LOCALAPPDATA", path),
+                    None => std::env::remove_var("LOCALAPPDATA"),
+                }
+            }
+            let _ = std::fs::remove_dir_all(&self.temp_home);
+        }
+    }
 
     #[cfg(feature = "zk")]
     fn round_commitment_data<F: JoltField, C: JoltCurve<F = F>, R: rand_core::RngCore>(
@@ -3323,6 +3378,7 @@ mod tests {
     #[test]
     #[serial]
     fn initial_pc_is_constrained_to_entry_point() {
+        let _temp_dory_home = TempDoryHomeGuard::new();
         DoryGlobals::reset();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u8).unwrap();
