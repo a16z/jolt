@@ -42,7 +42,7 @@ fn main() {
 
     info!("\nPreprocessing...");
     let start = Instant::now();
-    let shared_preprocessing = guest::preprocess_shared_verify_txs(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_verify_txs(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_verify_txs(shared_preprocessing.clone());
     let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
     let verifier_preprocessing =

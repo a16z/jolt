@@ -8,7 +8,7 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_collatz_convergence(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_collatz_convergence(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_collatz_convergence(&mut program).unwrap();
     let prover_preprocessing =
         guest::preprocess_prover_collatz_convergence(shared_preprocessing.clone());
     let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
@@ -31,7 +31,8 @@ pub fn main() {
     // Prove/verify convergence for a range of numbers:
     let mut program = guest::compile_collatz_convergence_range(target_dir);
 
-    let shared_preprocessing = guest::preprocess_shared_collatz_convergence_range(&mut program);
+    let shared_preprocessing =
+        guest::preprocess_shared_collatz_convergence_range(&mut program).unwrap();
     let prover_preprocessing =
         guest::preprocess_prover_collatz_convergence_range(shared_preprocessing.clone());
     let verifier_setup = prover_preprocessing.generators.to_verifier_setup();

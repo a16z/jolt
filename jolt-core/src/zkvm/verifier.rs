@@ -25,7 +25,7 @@ use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 #[cfg(feature = "zk")]
 use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
-use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::bytecode::{BytecodePreprocessing, PreprocessingError};
 use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::OneHotParams;
@@ -1674,15 +1674,15 @@ impl JoltSharedPreprocessing {
         memory_init: Vec<(u64, u8)>,
         max_padded_trace_length: usize,
         entry_address: u64,
-    ) -> JoltSharedPreprocessing {
-        let bytecode = Arc::new(BytecodePreprocessing::preprocess(bytecode, entry_address));
+    ) -> Result<JoltSharedPreprocessing, PreprocessingError> {
+        let bytecode = Arc::new(BytecodePreprocessing::preprocess(bytecode, entry_address)?);
         let ram = RAMPreprocessing::preprocess(memory_init);
-        Self {
+        Ok(Self {
             bytecode,
             ram,
             memory_layout,
             max_padded_trace_length,
-        }
+        })
     }
 }
 

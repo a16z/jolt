@@ -2313,7 +2313,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents_opt = program.get_elf_contents();
@@ -2358,7 +2359,8 @@ mod tests {
             init_memory_state,
             8192,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -2418,7 +2420,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -2479,7 +2482,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -2541,7 +2545,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
@@ -2604,7 +2609,8 @@ mod tests {
             init_memory_state,
             4096,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         tracing::info!(
             "preprocessing.memory_layout.max_trusted_advice_size: {}",
@@ -2665,7 +2671,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
@@ -2730,7 +2737,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let (trusted_commitment, trusted_hint) =
             commit_trusted_advice_preprocessing_only(&prover_preprocessing, &trusted_advice);
@@ -2820,7 +2828,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -2865,7 +2874,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -2910,7 +2920,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -2959,7 +2970,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents_opt = program.get_elf_contents();
@@ -3111,7 +3123,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -3234,7 +3247,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
 
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
 
@@ -3273,7 +3287,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
 
         // change memory address of output & termination bit to the same address as input
@@ -3320,7 +3335,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared.clone());
         let prover = RV64IMACProver::gen_from_trace(
             &prover_preprocessing,
@@ -3493,7 +3509,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
         let prover = RV64IMACProver::gen_from_elf(
@@ -3541,7 +3558,8 @@ mod tests {
             init_memory_state,
             1 << 16,
             e_entry,
-        );
+        )
+        .unwrap();
         let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
