@@ -3012,6 +3012,8 @@ mod tests {
     #[test]
     #[serial]
     fn blindfold_r1cs_satisfaction() {
+        DoryGlobals::reset();
+
         use crate::curve::Bn254Curve;
         use crate::subprotocols::blindfold::{
             BakedPublicInputs, BlindFoldWitness, RoundWitness, StageConfig, StageWitness,
