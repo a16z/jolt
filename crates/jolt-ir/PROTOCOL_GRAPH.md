@@ -54,12 +54,21 @@ enum PolynomialKind {
     Virtual,
 }
 
-/// Num vars can be a concrete value or symbolic (resolved from config at build time).
-enum NumVars {
+/// Symbolic integer expression — resolved from config at graph build time.
+///
+/// Used for num_vars, gamma power counts, and any other config-dependent quantity.
+/// Keeps the graph parameterized until instantiation.
+enum SymbolicExpr {
     Concrete(usize),
-    /// `log_T` (cycle dimension), `log_k + log_T` (address + cycle), etc.
-    Symbolic(Symbol),
+    /// Named config value: `log_T`, `log_k`, `D_instr`, etc.
+    Symbol(Symbol),
+    /// Arithmetic: `3 * D_total`, `log_T + log_k`, etc.
+    Add(Box<SymbolicExpr>, Box<SymbolicExpr>),
+    Mul(Box<SymbolicExpr>, Box<SymbolicExpr>),
 }
+
+/// Number of variables in a polynomial or sumcheck instance.
+type NumVars = SymbolicExpr;
 ```
 
 ### Commitment groups
@@ -185,9 +194,8 @@ struct ClaimFormula {
 
 ### Vertices
 
-A vertex is an **atomic proof step**: one sumcheck instance proving one claim,
-or one PCS opening discharging one claim. Vertices are the nodes of the claim
-flow graph.
+A vertex is an **atomic proof step**: one sumcheck instance, one PCS opening,
+or one point normalization. Vertices are the nodes of the claim flow graph.
 
 ```rust
 enum Vertex {
@@ -205,25 +213,48 @@ enum Vertex {
 
 #### Sumcheck vertices
 
-A sumcheck vertex is the atomic unit: one sumcheck instance, one claim consumed,
-one set of leaf claims produced. It does NOT own a challenge point — that belongs
-to the stage (see below).
+A sumcheck vertex is the atomic unit: one sumcheck instance, one set of
+upstream dependencies, one set of leaf claims produced. It does NOT own a
+challenge point — that belongs to the stage (see below).
 
 ```rust
 struct SumcheckVertex {
     id: VertexId,
-    /// The input claim this sumcheck proves.
-    consumes: ClaimId,
+    /// Upstream claims whose eval values this vertex depends on.
+    ///
+    /// These determine the dependency edges for topological ordering.
+    /// A claim can appear in multiple vertices' deps — this is fan-out,
+    /// a structural property of the protocol (e.g., S1's rd_write_value
+    /// eval feeds both V_pv in S2 and V_registers_cr in S3).
+    deps: Vec<ClaimId>,
+    /// How the input claimed sum is derived from upstream evals.
+    input: InputClaim,
     /// The leaf claims produced (polynomial evaluations at the stage's
     /// challenge point). Fed to downstream vertices.
     produces: Vec<ClaimId>,
-    /// The claim formula (output claim expression).
+    /// The output claim formula (verifier check expression).
     formula: ClaimFormula,
     /// Degree of the sumcheck round polynomial.
     degree: usize,
     /// Number of sumcheck variables. May be less than the stage's num_vars
     /// — shorter instances are front-padded with dummy rounds when batched.
     num_vars: NumVars,
+}
+
+/// How the input claimed sum is derived.
+enum InputClaim {
+    /// claimed_sum = f(deps evals, challenges). The formula references
+    /// eval values from `deps` claims via `OpeningBinding`s.
+    Formula(ClaimFormula),
+    /// claimed_sum is computed directly from polynomial data, not from
+    /// upstream eval formulas. The vertex still depends on upstream claims
+    /// (listed in `deps`) for witness construction and eq table building,
+    /// but the claimed sum itself is brute-forced by the prover.
+    ///
+    /// The verifier recomputes the same value from the proof data.
+    BruteForce,
+    /// claimed_sum is a known constant (e.g., zero for booleanity checks).
+    Constant(i64),
 }
 ```
 
@@ -395,7 +426,7 @@ Mapping to our protocol:
 | DAG concept | Protocol concept |
 |---|---|
 | Vertex | Atomic sumcheck instance or PCS opening |
-| Edge (u, v) | Vertex v consumes a claim produced by vertex u |
+| Edge (u, v) | Vertex v depends on a claim produced by vertex u |
 | Layer L_i | Stage i — vertices sharing one Fiat-Shamir challenge point |
 | Antichain property | Vertices in a stage are independent (can execute simultaneously) |
 | Layering validity | Dependencies flow from earlier stages to later stages |
@@ -592,7 +623,7 @@ Prover                          Verifier (transcript)
 ```
 
 The stage ordering must be a valid topological sort of the stage graph: stage
-S_j comes after S_i if any vertex in S_j consumes a claim produced by a vertex
+S_j comes after S_i if any vertex in S_j depends on a claim produced by a vertex
 in S_i. This is the Fiat-Shamir sequencing constraint.
 
 **Key property**: The dimension of each challenge point is known statically
@@ -668,26 +699,34 @@ a distributed prover.
 
 #### Soundness: claim completeness
 
-Every claim produced by a vertex must be consumed by exactly one downstream vertex:
+Every claim produced by a vertex must be depended on by at least one
+downstream vertex:
 
 ```
 produced = ∪ { v.produces | v ∈ vertices }
-consumed = ∪ { v.consumes | v ∈ vertices }
+referenced = ∪ { v.deps | v ∈ sumcheck_vertices }
+           ∪ { v.consumes | v ∈ opening_vertices }
+           ∪ { v.consumes | v ∈ normalization_vertices }
 
-// Every produced claim is consumed (no dangling obligations)
-assert!(produced ⊆ consumed);
+// Every produced claim is referenced (no dangling obligations)
+assert!(produced ⊆ referenced);
 
-// No claim is consumed without being produced (except root claims from R1CS)
-assert!(consumed \ root_claims ⊆ produced);
+// No claim is referenced without being produced (except root claims from R1CS)
+assert!(referenced \ root_claims ⊆ produced);
 
-// No claim is consumed twice
-assert!(all consume lists are disjoint);
+// Each claim has exactly one producer
+assert!(all produce lists are disjoint);
 ```
 
-A dangling claim (produced but not consumed) means the SNARK has an unproven
-obligation. A missing claim (consumed but never produced) means the SNARK
-assumes something it didn't establish. Both are soundness bugs detectable by
-graph inspection.
+Note: a single claim CAN be in multiple vertices' `deps` — this is fan-out.
+For example, S1's `rd_write_value` eval feeds both V_pv (S2) and
+V_registers_cr (S3). Fan-out is a structural property of the protocol, not
+an error.
+
+A dangling claim (produced but never referenced) means the SNARK did
+unnecessary work. A missing claim (referenced but never produced) means
+the SNARK assumes something it didn't establish — a soundness bug detectable
+by graph inspection.
 
 ### Staging analyses (choice-dependent)
 
@@ -874,91 +913,741 @@ arity from config.
   structure. The graph says "this vertex proves these claims"; the backend decides
   how to evaluate the round polynomial efficiently.
 
-## Concrete Jolt graph structure
+## Concrete Jolt graph: full DAG
 
-The Jolt protocol graph (at the current pipeline) has the following shape.
-Vertex names correspond to current stage names for clarity.
+This section enumerates every polynomial, vertex, claim edge, and staging
+assignment in the current Jolt pipeline. Source references are to
+`jolt-zkvm/src/stages.rs` and `jolt-verifier/src/protocol/`.
 
-### Commitment phase (before any sumcheck)
+### Polynomials
 
-Current strategy: one group per committed polynomial.
+#### Committed
+
+| Id | Polynomial | num_vars | Size | CommitmentGroup |
+|---|---|---|---|---|
+| P0 | `ram_inc` | `log_T` | `2^log_T` | G0 (own) |
+| P1 | `rd_inc` | `log_T` | `2^log_T` | G1 (own) |
+| P2..P(2+D_i) | `instruction_ra[0..D_instr]` | `log_T + log_k` | `2^(log_T+log_k)` | G2..G(2+D_i) |
+| P(2+D_i)..P(2+D_i+D_b) | `bytecode_ra[0..D_bc]` | `log_T + log_k` | `2^(log_T+log_k)` | individual |
+| ... | `ram_ra[0..D_ram]` | `log_T + log_k` | `2^(log_T+log_k)` | individual |
+| P_W | `spartan_witness` | `log_M` | `2^log_M` | G_W (own) |
+
+Total committed: `2 + D_instr + D_bc + D_ram + 1`. For typical configs, D_total ≈ 16,
+so ~19 committed polynomials, each in its own commitment group.
+
+#### Virtual
+
+| Id | Polynomial | num_vars | Origin |
+|---|---|---|---|
+| V_rrv | `ram_read_value` | `log_T` | R1CS witness column |
+| V_rwv | `ram_write_value` | `log_T` | R1CS witness column |
+| V_ra | `ram_address` | `log_T` | R1CS witness column |
+| V_lo | `lookup_output` | `log_T` | R1CS witness column |
+| V_lop | `left_operand` | `log_T` | R1CS witness column |
+| V_rop | `right_operand` | `log_T` | R1CS witness column |
+| V_lii | `left_instruction_input` | `log_T` | R1CS witness column |
+| V_rii | `right_instruction_input` | `log_T` | R1CS witness column |
+| V_rdw | `rd_write_value` | `log_T` | R1CS witness column |
+| V_rs1 | `rs1_value` | `log_T` | R1CS witness column |
+| V_rs2 | `rs2_value` | `log_T` | R1CS witness column |
+| V_nin | `next_is_noop` | `log_T` | R1CS witness column |
+| V_irn | `is_rd_not_zero` | `log_T` | Trace flag |
+| V_wlf | `write_lookup_to_rd_flag` | `log_T` | R1CS witness column |
+| V_jmp | `jump_flag` | `log_T` | R1CS witness column |
+| V_br | `branch_flag` | `log_T` | R1CS witness column |
+| V_lr1 | `left_is_rs1` | `log_T` | Trace flag |
+| V_lpc | `left_is_pc` | `log_T` | Trace flag |
+| V_rr2 | `right_is_rs2` | `log_T` | Trace flag |
+| V_rim | `right_is_imm` | `log_T` | Trace flag |
+| V_upc | `unexpanded_pc` | `log_T` | R1CS witness column |
+| V_imm | `imm` | `log_T` | R1CS witness column |
+| V_r1a | `rs1_ra` | `log_T` | Trace |
+| V_r2a | `rs2_ra` | `log_T` | Trace |
+| V_rda | `rd_wa` | `log_T` | Trace |
+| V_nup | `next_unexpanded_pc` | `log_T` | R1CS witness column |
+| V_npc | `next_pc` | `log_T` | R1CS witness column |
+| V_niv | `next_is_virtual` | `log_T` | R1CS witness column |
+| V_nfs | `next_is_first_in_sequence` | `log_T` | R1CS witness column |
+| V_hw | `hamming_weight` | `log_T` | Derived (`flag_load + flag_store`) |
+| V_rv | `ram_val` | `log_T` | Virtual (deferred) |
+| V_rvf | `ram_val_final` | `log_T` | R1CS witness column |
+
+### Commitment phase
 
 ```
-CommitmentGroup 0: ram_inc          → transcript ← commitment_0
-CommitmentGroup 1: rd_inc           → transcript ← commitment_1
-CommitmentGroup 2..2+D_instr: instruction_ra[0..D_instr]
-CommitmentGroup 2+D_instr..2+D_instr+D_bc: bytecode_ra[0..D_bc]
-CommitmentGroup 2+D_instr+D_bc..2+D_instr+D_bc+D_ram: ram_ra[0..D_ram]
-CommitmentGroup last: spartan_witness → transcript ← commitment_last
+transcript ← program I/O, bytecode hash, entry point (preamble)
+transcript ← PCS::commit(spartan_witness)
+transcript ← PCS::commit(ram_inc)
+transcript ← PCS::commit(rd_inc)
+for i in 0..D_instr: transcript ← PCS::commit(instruction_ra[i])
+for i in 0..D_bc:    transcript ← PCS::commit(bytecode_ra[i])
+for i in 0..D_ram:   transcript ← PCS::commit(ram_ra[i])
 ```
 
-All commitments enter the transcript before S1 executes, binding the prover
-to the committed data. The claim graph is agnostic to this grouping — the
-same vertex DAG applies regardless of whether these are 2+D_instr+D_bc+D_ram+1
-separate commitments or one big table commitment.
+In the `CommitmentStrategy` model:
 
-### Claim flow
+```rust
+CommitmentStrategy {
+    groups: [
+        G_W:  { spartan_witness },
+        G0:   { ram_inc },
+        G1:   { rd_inc },
+        G2:   { instruction_ra[0] },
+        ...
+        G_last: { ram_ra[D_ram-1] },
+    ],
+    // One per polynomial, in the order above
+    transcript_order: [G_W, G0, G1, G2, ..., G_last],
+}
+```
+
+### Vertices and claims
+
+Below, each sumcheck vertex lists:
+- **deps**: upstream claims this vertex depends on (can fan out to multiple vertices)
+- **input**: how the claimed sum is derived (`Formula`, `BruteForce`, or `Constant`)
+- **Produces**: the leaf claims (polynomial evaluations at the stage challenge point)
+- **Degree**: round polynomial degree of the sumcheck
+- **num_vars**: number of sumcheck variables
+
+Notation: `P(r)` means "polynomial P evaluated at point r". Upstream references
+like `S1c.rd_write_value` mean "the virtual evaluation from that stage's output."
+
+---
+
+#### Spartan (Stages S1a, S1b, S1c)
+
+Spartan is decomposed into its constituent sumcheck instances. Each
+sub-sumcheck is a separate stage because they are sequential — the inner
+sumcheck depends on the outer's challenge.
+
+**Stage S1a: Outer sumcheck**
+
+**Vertex V_spartan_outer** — Proves `Σ_x eq(τ, x) · (Az·Bz - Cz)(x) = 0`.
+
+- **deps**: Root claim — R1CS satisfiability.
+- **input**: `InputClaim::Constant(0)` (the R1CS identity evaluates to zero).
+- **Degree**: 3 (eq · Az · Bz)
+- **num_vars**: `log_rows`
+- **Produces**: eval claims on the A/B/C virtual polynomials at `r_x`.
+- **Challenge point**: `Challenges(S1a)` with `num_vars = log_rows`.
+
+**Stage S1b: Product virtual sumcheck**
+
+**Vertex V_spartan_product** — Proves the virtual product decomposition:
+Az(r_x), Bz(r_x), Cz(r_x) are inner products of the R1CS matrices with
+the witness.
+
+- **deps**: Claims from V_spartan_outer (Az, Bz, Cz evals at r_x).
+- **input**: `InputClaim::Formula(...)` — derived from S1a evals.
+- **num_vars**: `log_cols`
+- **Produces**: intermediate reduction claims.
+- **Challenge point**: `Challenges(S1b)` with `num_vars = log_cols`.
+
+**Stage S1c: Inner sumcheck**
+
+**Vertex V_spartan_inner** — Reduces to a single evaluation of the witness
+polynomial at `r_y`.
+
+- **deps**: Claims from V_spartan_product.
+- **input**: `InputClaim::Formula(...)` — derived from S1b evals.
+- **num_vars**: `log_cols`
+- **Produces**:
+
+  | Claim id | Polynomial | Point | Type |
+  |---|---|---|---|
+  | C_s1_rrv | `ram_read_value` | `r_cycle = Slice(r_y, 0..log_T)` | Virtual |
+  | C_s1_rwv | `ram_write_value` | `r_cycle` | Virtual |
+  | C_s1_ra | `ram_address` | `r_cycle` | Virtual |
+  | C_s1_lo | `lookup_output` | `r_cycle` | Virtual |
+  | C_s1_lop | `left_operand` | `r_cycle` | Virtual |
+  | C_s1_rop | `right_operand` | `r_cycle` | Virtual |
+  | C_s1_lii | `left_instruction_input` | `r_cycle` | Virtual |
+  | C_s1_rii | `right_instruction_input` | `r_cycle` | Virtual |
+  | C_s1_rdw | `rd_write_value` | `r_cycle` | Virtual |
+  | C_s1_rs1 | `rs1_value` | `r_cycle` | Virtual |
+  | C_s1_rs2 | `rs2_value` | `r_cycle` | Virtual |
+  | C_s1_wit | `spartan_witness` | `r_y` | Committed |
+
+  where `r_cycle = Slice(Challenges(S1c), 0..log_T)` and
+  `r_y = Challenges(S1c)`.
+
+  The virtual column evals are derived from `witness_eval = P_W(r_y)` — the
+  witness is committed, and its eval claim (`C_s1_wit`) flows to the terminal
+  Opening stage for PCS discharge.
+
+- **Challenge point**: `Challenges(S1c)` with `num_vars = log_cols`.
+
+---
+
+#### Stage 2: Product Virtual
+
+**Vertex V_pv** — Product virtualization check: verifies that the R1CS
+virtual product columns (instruction input product, flag products, etc.)
+are correctly derived.
+
+(Ref: `stages.rs` lines 128–213, `claims.rs` lines 15–27)
+
+- **deps**: S1c virtual evals (`C_s1_rrv`, `C_s1_rwv`, `C_s1_lo`, `C_s1_lop`,
+  `C_s1_rop`, `C_s1_lii`, `C_s1_rii`). Fan-out: these claims are also deps
+  of V_registers_cr in S3.
+
+- **input**: `InputClaim::BruteForce` — the claimed sum is computed directly
+  from polynomial tables, not from an upstream eval formula. Conceptually it's
+  derived from S1c virtual evals:
+
+  ```
+  s2_ram_rw(s1, γ) = s1.ram_read_value + γ · s1.ram_write_value
+  s2_instruction_lookups_cr(s1, γ) = s1.lookup_output + γ · s1.left_operand
+      + γ² · s1.right_operand + γ³ · s1.left_instruction_input
+      + γ⁴ · s1.right_instruction_input
+  ```
+
+  The sumcheck witness is:
+
+  ```
+  w[j] = eq(r_cycle, j) · [
+      γ₀ · left_instr_input[j] · right_instr_input[j]
+    + γ₁ · is_rd_not_zero[j] · write_lookup_flag[j]
+    + γ₂ · is_rd_not_zero[j] · jump_flag[j]
+    + γ₃ · lookup_output[j] · branch_flag[j]
+    + γ₄ · jump_flag[j] · (1 - next_is_noop[j])
+  ]
+  ```
+
+  where `γ₀..γ₄` are derived from `gamma = transcript.challenge()`.
+
+- **Degree**: 3 (eq · factor · factor)
+- **num_vars**: `log_T`
+- **Produces** at `Challenges(S2)`:
+
+  | Claim id | Polynomial | Type |
+  |---|---|---|
+  | C_s2_rv | `ram_val` | Virtual |
+  | C_s2_ri | `ram_inc` | Committed |
+  | C_s2_nn | `next_is_noop` | Virtual |
+  | C_s2_li | `left_instr_input` | Virtual |
+  | C_s2_ri2 | `right_instr_input` | Virtual |
+  | C_s2_lo | `lookup_output` | Virtual |
+  | C_s2_lop | `left_operand` | Virtual |
+  | C_s2_rop | `right_operand` | Virtual |
+  | C_s2_raf | `ram_raf_eval` (= ram_address eval) | Virtual |
+  | C_s2_rvf | `ram_val_final` (= ram_write_value eval) | Virtual |
+
+  All at point `ep_s2 = Challenges(S2)`, dim `log_T`.
+
+---
+
+#### Stage 3: Shift + InstructionInput + RegistersCR
+
+Three sumcheck vertices batched into one stage. All share `Challenges(S3)`.
+
+(Ref: `stages.rs` lines 216–331, `claims.rs` lines 30–37)
+
+**Vertex V_shift** — Verifies next-cycle field consistency.
+- **deps**: S1c (for `r_cycle`) and S2 (for `ep_s2`) — point dependencies
+  for eq+1 weighting.
+- **input**: `InputClaim::BruteForce` — claimed sum computed from poly data
+  with eq+1 weighting:
+
+  ```
+  claimed_sum = Σ_j [
+      epo_outer(r_cycle, j) · (γ₀·next_upc[j] + γ₁·next_pc[j]
+          + γ₂·next_is_virtual[j] + γ₃·next_is_first[j])
+    + epo_product(ep_s2, j) · γ₄ · (1 - next_is_noop[j])
+  ]
+  ```
+
+- **Degree**: 2 (eq+1 · factor)
+- **num_vars**: `log_T`
+- **Produces**: virtual evals at `Challenges(S3)` (next_upc, next_pc, etc.)
+
+**Vertex V_instr_input** — Reduces instruction input claims from S2.
+- **deps**: `C_s2_li`, `C_s2_ri2`
+- **input**: `InputClaim::Formula` — `s3_instruction_input(s2, γ_instr)`:
+
+  ```
+  claimed_sum = s2.right_instr_input + γ · s2.left_instr_input
+  ```
+
+- **Degree**: 3 (eq · flag · value)
+- **num_vars**: `log_T`
+- **Produces**: virtual evals at `Challenges(S3)`
+
+**Vertex V_registers_cr** — Claim reduction for register values.
+- **deps**: `C_s1_rdw`, `C_s1_rs1`, `C_s1_rs2` (fan-out from S1c — also
+  deps of V_pv in S2)
+- **input**: `InputClaim::Formula` — `s3_registers_cr(s1, γ_reg)`:
+
+  ```
+  claimed_sum = s1.rd_write_value + γ · s1.rs1_value + γ² · s1.rs2_value
+  ```
+
+- **Degree**: 2 (eq · value)
+- **num_vars**: `log_T`
+- **Produces** at `Challenges(S3)`:
+
+  | Claim id | Polynomial | Type |
+  |---|---|---|
+  | C_s3_rs1 | `rs1_value` | Virtual |
+  | C_s3_rs2 | `rs2_value` | Virtual |
+  | C_s3_rdw | `rd_write_value` | Virtual |
+
+**Batching**: `[V_shift, V_instr_input, V_registers_cr]` in one `BatchGroup`.
+Maximum degree across batch = 3.
+
+---
+
+#### Stage 4: RegistersRW + RamValCheck
+
+Two sumcheck vertices batched into one stage.
+
+(Ref: `stages.rs` lines 334–401, `claims.rs` lines 40–47)
+
+**Vertex V_registers_rw** — Read-write checking for registers.
+- **deps**: `C_s3_rdw`, `C_s3_rs1`, `C_s3_rs2`
+- **input**: `InputClaim::Formula` — `s4_registers_rw(s3, γ_reg)`:
+
+  ```
+  claimed_sum = s3.rd_write_value + γ · (s3.rs1_value + γ · s3.rs2_value)
+  ```
+
+- **Degree**: 3 (eq · addr · value)
+- **num_vars**: `log_T`
+- **Produces**: `ram_inc(ep_s4)`, `rd_inc(ep_s4)` at `Challenges(S4)`
+
+**Vertex V_ram_val_check** — RAM value consistency check.
+- **deps**: `C_s2_rv`, `C_s2_rvf`
+- **input**: `InputClaim::Formula` — `s4_ram_val_check(s2, init_eval, γ_ram)`:
+
+  ```
+  claimed_sum = (s2.ram_val - init) + γ · (s2.ram_val_final - init)
+  ```
+
+- **Degree**: 3 (eq·(lt+γ) · inc · addr)
+- **num_vars**: `log_T`
+- **Produces** at `Challenges(S4)`:
+
+  | Claim id | Polynomial | Type |
+  |---|---|---|
+  | C_s4_ri | `ram_inc` | Committed |
+  | C_s4_di | `rd_inc` | Committed |
+
+**Batching**: `[V_registers_rw, V_ram_val_check]` in one `BatchGroup`.
+
+---
+
+#### Stage 5: RegistersValEval
+
+One sumcheck vertex.
+
+(Ref: `stages.rs` lines 404–450)
+
+**Vertex V_reg_val_eval** — Register value evaluation via LT polynomial.
+- **deps**: Implicit on S2/S4 for transcript state (challenge squeezing
+  keeps transcript in sync). Direct polynomial data is `rd_inc`, `rd_wa`
+  (tables, not upstream claims).
+- **input**: `InputClaim::BruteForce` — sum `Σ_j LT(r_val, j) · rd_inc[j] · rd_wa[j]`,
+  where `r_val` is a fresh challenge point from the transcript.
+
+- **Degree**: 3 (LT · inc · addr)
+- **num_vars**: `log_T`
+- **Produces** at `Challenges(S5)`:
+
+  | Claim id | Polynomial | Type |
+  |---|---|---|
+  | C_s5_di | `rd_inc` | Committed |
+
+---
+
+#### Stage 6: IncCR + HammingBooleanity
+
+Two sumcheck vertices batched into one stage.
+
+(Ref: `stages.rs` lines 453–533, `claims.rs` lines 50–57)
+
+**Vertex V_inc_cr** — Claim reduction: batches 4 committed polynomial
+evaluations from S2/S4/S5 into a single sumcheck.
+- **deps**: `C_s2_ri`, `C_s4_ri`, `C_s4_di`, `C_s5_di`
+- **input**: `InputClaim::Formula` — `s6_inc_cr(s2, s4, s5, γ_inc)`:
+
+  ```
+  claimed_sum = s2.ram_inc.eval
+              + γ · s4.ram_inc.eval
+              + γ² · s4.rd_inc.eval
+              + γ³ · s5.rd_inc.eval
+  ```
+
+  This is a **claim reduction** — it takes 4 evaluation claims at 4 distinct
+  points (`ep_s2`, `ep_s4`, `ep_s4`, `ep_s5`) and reduces them to evaluations
+  at a single new point. The witness is:
+
+  ```
+  w[j] = (eq(ep_s2, j) + γ · eq(ep_s4, j)) · ram_inc[j]
+       + (γ² · eq(ep_s4, j) + γ³ · eq(ep_s5, j)) · rd_inc[j]
+  ```
+
+- **Degree**: 2 (unit · weighted_sum)
+- **num_vars**: `log_T`
+- **Produces** at `Challenges(S6) = r_cycle`:
+
+  | Claim id | Polynomial | Type |
+  |---|---|---|
+  | C_s6_ri | `ram_inc` | Committed — eval at `r_cycle` |
+  | C_s6_di | `rd_inc` | Committed — eval at `r_cycle` |
+
+**Vertex V_hamming_bool** — Booleanity check for hamming weight polynomial.
+- **deps**: none (no upstream claim evals needed)
+- **input**: `InputClaim::Constant(0)` — booleanity identity evaluates to zero:
+
+  ```
+  0 = Σ_j eq(h_point, j) · hamming_weight[j] · (hamming_weight[j] - 1)
+  ```
+
+  where `h_point` is a fresh random point from the transcript.
+
+- **Degree**: 3 (eq · h · h)
+- **num_vars**: `log_T`
+- **Produces**: `hamming_weight(r_cycle)` eval at `Challenges(S6)`. This
+  is consumed by V_hamming_weight_cr in S7.
+
+**Batching**: `[V_inc_cr, V_hamming_bool]` in one `BatchGroup`. Max degree = 3.
+
+---
+
+#### Stage 7: HammingWeightCR
+
+One sumcheck vertex. This is the final claim reduction — it produces
+evaluations of all RA polynomials at the address dimension, which combine
+with `r_cycle` from S6 to form the **unified point**.
+
+(Ref: `stages.rs` lines 536–606)
+
+**Vertex V_hw_cr** — Hamming weight claim reduction over RA polynomials.
+- **deps**: `r_cycle` from S6 (`Challenges(S6)`), RA polynomial claims from
+  upstream stages, hamming_weight eval from V_hamming_bool (S6).
+- **input**: `InputClaim::Formula` — `s7_hamming_weight_cr(claims_hw, claims_bool, claims_virt, γ_powers)`:
+
+  ```
+  claimed_sum = Σ_i γ^(3i) · hw_claim_i + γ^(3i+1) · bool_claim_i + γ^(3i+2) · virt_claim_i
+  ```
+
+  Computed as a **pushforward** (cycle dimension contracted first):
+
+  ```
+  G_i(k) = Σ_j eq(r_cycle_s6, j) · ra_i(k, j)    // contract cycle dimension
+  claimed_sum = Σ_k Σ_i γ_i · G_i(k)              // sum over address dimension
+  ```
+
+- **Degree**: 2 (unit · linear combination of G_i)
+- **num_vars**: `log_k` (address dimension only — cycle dimension already
+  contracted by the pushforward)
+- **Produces** at `Challenges(S7) = r_addr`:
+
+  | Claim id | Polynomial | Point | Type |
+  |---|---|---|---|
+  | C_s7_ira[0] | `instruction_ra[0]` | `unified = (r_addr ‖ r_cycle)` | Committed |
+  | ... | ... | ... | ... |
+  | C_s7_ira[D_i-1] | `instruction_ra[D_i-1]` | `unified` | Committed |
+  | C_s7_bra[0] | `bytecode_ra[0]` | `unified` | Committed |
+  | ... | ... | ... | ... |
+  | C_s7_rra[D_r-1] | `ram_ra[D_r-1]` | `unified` | Committed |
+
+  All D_total RA polynomials evaluated at `unified_point = Concat(Challenges(S7), Challenges(S6))`,
+  dim = `log_k + log_T`.
+
+---
+
+#### PointNormalization
+
+**Vertex V_normalize** — Extends dense polynomial claims from `r_cycle`
+(dim `log_T`) to the `unified_point` (dim `log_k + log_T`).
+
+(Ref: `prover.rs` lines 128–129, 192–193)
+
+- **Consumes**:
+  - `C_s6_ri`: `ram_inc(r_cycle)` at dim `log_T`
+  - `C_s6_di`: `rd_inc(r_cycle)` at dim `log_T`
+
+- **Produces**:
+  - `C_norm_ri`: `ram_inc(unified)` = `C_s6_ri.eval × lagrange_zero_selector(r_addr)`
+  - `C_norm_di`: `rd_inc(unified)` = `C_s6_di.eval × lagrange_zero_selector(r_addr)`
+
+  where `lagrange_zero_selector(r_addr) = Π_i (1 - r_addr_i)`.
+
+  The mathematical identity: a polynomial of `log_T` variables, zero-padded
+  to `log_k + log_T` variables, evaluates at `(r_addr, r_cycle)` as
+  `p(r_cycle) × Π(1 - r_addr_i)`. This is NOT a proof step — the verifier
+  computes the same scaling.
+
+- **padding_source**: `Challenges(S7)` (the `r_addr` components)
+
+---
+
+#### Opening (terminal)
+
+**OpeningStage** — Discharges all committed polynomial claims via PCS.
+
+(Ref: `jolt-core/src/zkvm/prover.rs` Stage 8, lines 1900–2099)
+
+- **Consumes**:
+
+  | Claim | Point | Source | Normalization |
+  |---|---|---|---|
+  | `C_norm_ri` | `unified` | V_normalize | Lagrange-scaled from `r_cycle` |
+  | `C_norm_di` | `unified` | V_normalize | Lagrange-scaled from `r_cycle` |
+  | `C_s7_ira[0..D_i]` | `unified` | V_hw_cr | Already at unified (scaling = 1) |
+  | `C_s7_bra[0..D_b]` | `unified` | V_hw_cr | Already at unified (scaling = 1) |
+  | `C_s7_rra[0..D_r]` | `unified` | V_hw_cr | Already at unified (scaling = 1) |
+  | `C_s1_wit` | `r_y` | V_spartan_inner | Witness eval at Spartan's r_y |
+
+  The Spartan witness eval is at `r_y`, a different point from the unified
+  point. The Dory commitment matrix embeds the witness columns alongside
+  other committed polynomials, so the single Dory opening internalizes the
+  point difference — one PCS proof covers all claims.
+
+- **Reduction**: `ReductionStrategy::Rlc`
+
+  All claims are RLC'd (sample `γ` from transcript, combine as
+  `Σ γ^i · claim_i`) into a single joint polynomial, opened with one
+  `PCS::prove()` call. The PCS internally handles the witness at `r_y`
+  being embedded in the same matrix as polynomials at `unified_point`.
+
+- **Opening groups**:
+
+  ```
+  OpeningGroup {
+      vertices: [O_ram_inc, O_rd_inc, O_ira[0..D_i], O_bra[0..D_b],
+                 O_rra[0..D_r], O_witness],
+      source_groups: [G0, G1, G2, ..., G_(2+D_total), G_W],
+  }
+  ```
+
+  Total PCS proofs: **1**.
+
+---
+
+### Claim edge summary: the full dependency graph
 
 ```
-Spartan (S1)
-  produces: virtual evals at Slice(r_y, 0..log_T)
-    → ram_read_value, ram_write_value, ram_address,
-      lookup_output, left/right_operand, left/right_instruction_input,
-      rd_write_value, rs1_value, rs2_value
-
-ProductVirtual + RamRW + InstrLookupsCR + RamRafEval + OutputCheck (S2)
-  consumes: S1 virtual evals
-  produces: ram_val, ram_inc, next_is_noop, left/right_instr_input,
-            lookup_output, left/right_operand, ram_raf_eval, ram_val_final
-            at Challenges(S2)
-
-Shift + InstrInput + RegistersCR (S3)
-  consumes: S1 virtual evals, S2 evals
-  produces: rs1_value, rs2_value, rd_write_value
-            at Challenges(S3)
-
-RegistersRW + RamValCheck (S4)
-  consumes: S2 evals, S3 evals
-  produces: ram_inc, rd_inc
-            at Challenges(S4)
-
-RegistersValEval (S5)
-  consumes: S2 evals, S4 evals
-  produces: rd_inc
-            at Challenges(S5)
-
-IncCR + HammingBooleanity (S6)
-  consumes: S2.ram_inc, S4.ram_inc, S4.rd_inc, S5.rd_inc
-  produces: ram_inc_reduced, rd_inc_reduced
-            at Challenges(S6) = r_cycle
-
-HammingWeightCR (S7)
-  consumes: S6.r_cycle, RA poly claims from S5/S6
-  produces: instruction_ra[..], bytecode_ra[..], ram_ra[..]
-            at Challenges(S7) = r_addr
-  unified_point = Concat(Challenges(S7), Challenges(S6))
-
-PointNormalization
-  consumes: S6.ram_inc_reduced at Challenges(S6)
-            S6.rd_inc_reduced  at Challenges(S6)
-  produces: ram_inc at unified_point (scaled by Lagrange)
-            rd_inc  at unified_point (scaled by Lagrange)
-  padding_source: Challenges(S7)
-
-Opening (terminal)
-  consumes: all committed poly claims at unified_point
-    → ram_inc, rd_inc (via PointNormalization)
-    → instruction_ra[..], bytecode_ra[..], ram_ra[..] (from S7)
-    → spartan_witness at Slice(r_y, ...)
-  reduction: Rlc → single PCS proof
-  opening_groups: [{all vertices, all commitment groups}]
-    (current Jolt: one RLC across all commitment groups → one Dory proof)
+                    ┌──────────────┐
+                    │ V_spartan_   │ ← root claim (R1CS satisfiability)
+                    │  outer (S1a) │
+                    └──┬───────────┘
+                       │
+                    ┌──▼───────────┐
+                    │ V_spartan_   │
+                    │ product(S1b) │
+                    └──┬───────────┘
+                       │
+                    ┌──▼───────────┐
+                    │ V_spartan_   │
+                    │  inner (S1c) │
+                    └──┬──┬──┬────┘
+                       │  │  │
+       ┌───────────────┘  │  └──────── C_s1_wit ──────────┐
+       │                  │                                │
+  C_s1_{rrv,rwv,         │ C_s1_{rdw,rs1,rs2}             │
+  ra,lo,lop,rop,     C_s1_{lii,rii}                       │
+  lii,rii}                │                                │
+       │                  │                                │
+       ▼                  │                                │
+  ┌─────────┐             │                                │
+  │  V_pv   │◄────────────┘  (also deps S1c               │
+  │  (S2)   │                  virtual evals)              │
+  └──┬──┬───┘                                              │
+     │  │
+     │  └──────────┐
+     │             │
+  C_s2_{li,ri2}  C_s2_{rv,rvf}    C_s2_ri
+     │             │                 │
+     ▼             │                 │
+  ┌────────────┐   │                 │
+  │V_instr_inp │   │                 │
+  │   (S3)     │   │                 │
+  └────────────┘   │                 │
+                   │                 │
+  ┌────────────┐   │                 │
+  │V_registers │◄──┼── C_s1_{rdw,   │
+  │   _cr (S3) │   │    rs1,rs2}    │
+  └──┬─────────┘   │                │
+     │             │                │
+  C_s3_{rdw,       │                │
+   rs1,rs2}        │                │
+     │             │                │
+     ▼             ▼                │
+  ┌────────────┐ ┌──────────────┐   │
+  │V_registers │ │V_ram_val_    │   │
+  │  _rw (S4)  │ │  check (S4) │   │
+  └──┬─────────┘ └──┬───────────┘   │
+     │              │               │
+  C_s4_{ri,di}      │               │
+     │              │               │
+     ├──────────────┘               │
+     │                              │
+     ▼                              │
+  ┌──────────────┐                  │
+  │V_reg_val_    │                  │
+  │  eval (S5)   │                  │
+  └──┬───────────┘                  │
+     │                              │
+  C_s5_di                           │
+     │                              │
+     ▼                              │
+  ┌──────────────┐                  │
+  │ V_inc_cr     │◄── C_s2_ri ─────┘
+  │   (S6)       │◄── C_s4_{ri,di}
+  │              │◄── C_s5_di
+  └──┬───────────┘
+     │
+  C_s6_{ri,di}  (committed evals at r_cycle)
+     │
+     ├───────────────────┐
+     ▼                   ▼
+  ┌──────────────┐  ┌──────────────┐
+  │ V_normalize  │  │  V_hw_cr     │
+  │              │  │    (S7)      │
+  └──┬───────────┘  └──┬───────────┘
+     │                 │
+  C_norm_{ri,di}    C_s7_{ira,bra,rra}[..]
+     │                 │
+     └────────┬────────┘
+              │              C_s1_wit (from S1c) ─────────┐
+              ▼                                           │
+  ┌──────────────────────────────┐                        │
+  │       Opening (terminal)     │◄───────────────────────┘
+  │                              │
+  │  unified_point + r_y: Dory   │
+  │  1 PCS proof                 │
+  └──────────────────────────────┘
 ```
+
+Also in S3: `V_shift` deps on S1c's `r_cycle` and S2's `ep_s2` for eq+1
+weighting, but those are **point dependencies** (used to build the eq+1
+polynomial), not claim dependencies. In the graph model, the eq table is an
+implementation detail; V_shift's input is `InputClaim::BruteForce`.
+
+V_hamming_bool in S6 consumes the constant zero claim and produces an eval
+of `hamming_weight` at `r_cycle`. This eval feeds V_hw_cr in S7 (as one of
+the `claims_bool` terms). For simplicity the diagram omits this edge.
+
+### Staging: the topological layering
+
+The current Jolt pipeline assigns vertices to stages as follows:
+
+```
+Layer 1a (S1a): { V_spartan_outer }
+    challenge_point: log_rows vars
+    num_vars: log_rows
+
+Layer 1b (S1b): { V_spartan_product }
+    challenge_point: log_cols vars
+    num_vars: log_cols
+    depends on: S1a
+
+Layer 1c (S1c): { V_spartan_inner }
+    challenge_point: log_cols vars (this IS r_y)
+    num_vars: log_cols
+    depends on: S1b
+    produces: virtual column evals at r_cycle + C_s1_wit at r_y
+
+Layer 2 (S2): { V_pv }
+    challenge_point: log_T vars
+    num_vars: log_T
+    depends on: S1c
+
+Layer 3 (S3): { V_shift, V_instr_input, V_registers_cr }
+    challenge_point: log_T vars
+    num_vars: log_T
+    depends on: S1c, S2
+    batching: [V_shift, V_instr_input, V_registers_cr] (one batch, max deg 3)
+
+Layer 4 (S4): { V_registers_rw, V_ram_val_check }
+    challenge_point: log_T vars
+    num_vars: log_T
+    depends on: S2, S3
+    batching: [V_registers_rw, V_ram_val_check] (one batch, max deg 3)
+
+Layer 5 (S5): { V_reg_val_eval }
+    challenge_point: log_T vars
+    num_vars: log_T
+    depends on: S2, S4
+
+Layer 6 (S6): { V_inc_cr, V_hamming_bool }
+    challenge_point: log_T vars → this IS r_cycle
+    num_vars: log_T
+    depends on: S2, S4, S5
+    batching: [V_inc_cr, V_hamming_bool] (one batch, max deg 3)
+
+Layer 7 (S7): { V_hw_cr }
+    challenge_point: log_k vars → this IS r_addr
+    num_vars: log_k
+    depends on: S6
+
+PointNormalization: { V_normalize }
+    (between S7 and Opening — not a stage, no FS interaction)
+
+Opening: { O_ram_inc, O_rd_inc, O_ira[..], O_bra[..], O_rra[..], O_witness }
+    point: unified_point = Concat(Challenges(S7), Challenges(S6))
+    reduction: Rlc
+    C_s1_wit (witness at r_y) also discharged here — the PCS machinery
+    embeds the witness in the Dory commitment matrix, so the single
+    opening at unified_point covers it. The O_witness claim is at r_y,
+    a different point, but the Dory matrix layout internalizes this.
+    PCS proofs: 1
+```
+
+**Stage graph** (the quotient — one node per layer):
+
+```
+S1a → S1b → S1c → S2 → S3 → S4 → S5 → S6 → S7 → Opening
+                         ↗         ↗         ↗
+                       S1c        S2        S4
+```
+
+The critical path is `S1a → S1b → S1c → S2 → ... → S7 → Opening` — depth 10.
+This is the DAG height: 9 FS interactions (stages) + 1 opening.
+
+### Structural properties
+
+**Transcript length** (total FS challenges):
+
+```
+S1a: log_rows  (Spartan outer)
+S1b: log_cols  (Spartan product)
+S1c: log_cols  (Spartan inner)
+S2: log_T  + 1 gamma
+S3: log_T  + 3 gammas (shift, instr, reg)
+S4: log_T  + 2 gammas (reg, ram)
+S5: log_T  + 2 gammas + log_T random point (reg_val_r)
+S6: log_T  + 5+ gammas + log_T random point (h_eq_point)
+S7: log_k  + 1 gamma
+Opening: 1 gamma (RLC)
+Total ≈ log_rows + 2·log_cols + 5·log_T + log_k + 2·log_T + gammas
+```
+
+**Claim completeness check**:
+- Every produced claim (`C_s1_*`, `C_s2_*`, ..., `C_s7_*`, `C_norm_*`) is
+  referenced by at least one downstream vertex or opening vertex.
+- Fan-out is allowed (e.g., C_s1_rdw feeds both V_pv and V_registers_cr).
+- Every committed polynomial evaluation reaches the opening stage
+  (including `C_s1_wit` — the Spartan witness eval at `r_y`).
+
+**Point topology**:
+- S1a/S1b/S1c decompose Spartan. S1c produces `r_y` (dim `log_cols`), from
+  which `r_cycle` (dim `log_T`) is sliced.
+- S2–S6 each produce a `log_T`-dimensional challenge point.
+- S7 produces `r_addr` (dim `log_k`).
+- The unified point is `Concat(r_addr, r_cycle)` = `Concat(Challenges(S7), Challenges(S6))`.
+- PointNormalization scales dense poly evals from `log_T` to `log_k + log_T`.
+- The Spartan witness eval (`C_s1_wit`) is at `r_y` — a different point from
+  unified. The Dory matrix layout embeds the witness alongside other committed
+  polynomials, so the single opening proof covers both points internally.
 
 Note how the commitment strategy and opening structure are orthogonal to
 the claim flow above. An alternative commitment strategy (e.g., one big
 table for all RA polynomials) would change only the commitment groups and
-the `opening_groups` in the terminal — the Spartan vertex, sumcheck
+the `opening_groups` in the terminal — the Spartan stages, sumcheck
 vertices S2–S7, point normalization, and all claim dependencies remain
 identical.
 
@@ -1075,8 +1764,9 @@ RA polys (InstructionRa, BytecodeRa, RamRa):
   - Already at unified point from S7 HammingWeightCR
 
 Spartan witness:
-  - At r_y from Spartan (different point — separate PCS proof in jolt-zkvm,
-    or folded into the same RLC in jolt-core via point embedding)
+  - Committed to the transcript but NOT opened as a separate PCS claim.
+    Its columns are embedded in the Dory commitment matrix; the single
+    opening at unified_point covers the witness eval implicitly.
 ```
 
 All claims at the unified point are combined via random linear combination

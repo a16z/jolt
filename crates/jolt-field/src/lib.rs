@@ -7,6 +7,8 @@ mod field;
 pub use field::{Field, MaybeAllocative, OptimizedMul};
 mod accumulator;
 pub use accumulator::{FieldAccumulator, NaiveAccumulator};
+mod gpu_field;
+pub use gpu_field::GpuFieldConfig;
 
 pub mod limbs;
 pub use limbs::Limbs;

@@ -30,6 +30,10 @@ pub struct StageProof<F: Field> {
 pub struct JoltProof<F: Field, PCS: CommitmentScheme<Field = F>> {
     pub config: ProverConfig,
     pub spartan_proof: UniformSpartanProof<F>,
+    /// Virtual polynomial evaluations at r_cycle from S1 (Spartan).
+    /// These are needed by S2/S3 to compute input claims. Verified
+    /// indirectly through the Spartan witness opening proof.
+    pub spartan_evals: Vec<F>,
     pub stage_proofs: Vec<StageProof<F>>,
     pub opening_proofs: Vec<PCS::Proof>,
     pub witness_commitment: PCS::Output,

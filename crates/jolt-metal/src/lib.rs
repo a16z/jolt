@@ -3,16 +3,17 @@
 #![allow(clippy::missing_safety_doc, dead_code)]
 
 mod buffer;
-mod compiler;
+pub mod compiler;
 mod device;
 pub mod field;
+pub mod field_config;
+pub mod gpu_config;
 mod kernel;
+pub mod msl_field_gen;
 mod reduction;
-pub mod rns;
-pub mod rns_compiler;
 pub mod shaders;
 
 pub use buffer::MetalBuffer;
 pub use compiler::CompileMode;
-pub use device::{MetalBackend, RnsBuffer};
+pub use device::MetalBackend;
 pub use kernel::MetalKernel;

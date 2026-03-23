@@ -1,17 +1,16 @@
 //! Shader compilation utilities for the Metal backend.
 //!
-//! Provides shared infrastructure for compiling MSL source from embedded
-//! shader files, and pre-compiled pipeline bundles for element-wise operations.
+//! Provides shared infrastructure for compiling MSL source from generated
+//! field arithmetic and embedded shader files, and pre-compiled pipeline
+//! bundles for element-wise and interpolation operations.
 
 use metal::{CompileOptions, ComputePipelineState, Device, Library};
 
+use crate::field_config::FieldConfig;
+
 pub(crate) const SHADER_COMMON: &str = include_str!("shaders/common.metal");
-pub(crate) const SHADER_BN254_FR: &str = include_str!("shaders/bn254_fr.metal");
-pub(crate) const SHADER_WIDE_ACC: &str = include_str!("shaders/wide_accumulator.metal");
 pub(crate) const SHADER_ELEMENTWISE: &str = include_str!("shaders/elementwise.metal");
 pub(crate) const SHADER_INTERPOLATION: &str = include_str!("shaders/interpolation.metal");
-pub(crate) const SHADER_RNS: &str = include_str!("shaders/rns.metal");
-pub(crate) const SHADER_TEST_KERNELS: &str = include_str!("shaders/test_kernels.metal");
 
 /// Pre-compiled pipelines for element-wise Fr operations on Metal.
 pub(crate) struct ElementwiseKernels {
@@ -24,8 +23,9 @@ pub(crate) struct ElementwiseKernels {
 }
 
 impl ElementwiseKernels {
-    pub fn compile(device: &Device) -> Self {
-        let source = build_source(&[SHADER_BN254_FR, SHADER_WIDE_ACC, SHADER_ELEMENTWISE]);
+    pub fn compile(device: &Device, field_config: &FieldConfig) -> Self {
+        let source =
+            build_source_with_preamble(&field_config.msl_preamble, &[SHADER_ELEMENTWISE]);
         let options = CompileOptions::new();
         let library = device
             .new_library_with_source(&source, &options)
@@ -50,8 +50,9 @@ pub(crate) struct InterpolationKernels {
 }
 
 impl InterpolationKernels {
-    pub fn compile(device: &Device) -> Self {
-        let source = build_source(&[SHADER_BN254_FR, SHADER_INTERPOLATION]);
+    pub fn compile(device: &Device, field_config: &FieldConfig) -> Self {
+        let source =
+            build_source_with_preamble(&field_config.msl_preamble, &[SHADER_INTERPOLATION]);
         let options = CompileOptions::new();
         let library = device
             .new_library_with_source(&source, &options)
@@ -69,24 +70,22 @@ impl InterpolationKernels {
     }
 }
 
-/// Concatenate shader sources with `#include` directives stripped.
+/// Build MSL source from a generated preamble and additional shader fragments.
 ///
-/// Metal's runtime compiler doesn't support `#include` from string sources,
-/// so we prepend the common header and inline subsequent files, skipping
-/// any `#include` lines (already inlined by concatenation order).
+/// The preamble contains the complete field arithmetic (Fr, constants, ops, WideAcc).
+/// Additional shaders use Fr/WideAcc by name — they are field-agnostic.
 ///
-/// When `noinline` is true, prepends `#define FR_NOINLINE 1` which causes
-/// heavy field arithmetic functions to use `__attribute__((noinline))`,
-/// dramatically reducing LLVM compilation time for large kernels.
-pub(crate) fn build_source_with_mode(shaders: &[&str], noinline: bool) -> String {
-    let total: usize = SHADER_COMMON.len() + shaders.iter().map(|s| s.len()).sum::<usize>();
+/// `#include` lines in the shader fragments are stripped (already inlined via
+/// the preamble).
+pub fn build_source_with_preamble(preamble: &str, shaders: &[&str]) -> String {
+    let total: usize = SHADER_COMMON.len() + preamble.len() + shaders.iter().map(|s| s.len()).sum::<usize>();
     let mut src = String::with_capacity(total + 256);
 
-    if noinline {
-        src.push_str("#define FR_NOINLINE 1\n");
-    }
-
     src.push_str(SHADER_COMMON);
+    src.push('\n');
+
+    // FR_NOINLINE define if present in preamble is already baked in
+    src.push_str(preamble);
     src.push('\n');
 
     for shader in shaders {
@@ -101,13 +100,16 @@ pub(crate) fn build_source_with_mode(shaders: &[&str], noinline: bool) -> String
     src
 }
 
-/// Build MSL source in performance mode (full inlining).
-pub(crate) fn build_source(shaders: &[&str]) -> String {
-    build_source_with_mode(shaders, false)
+/// Build MSL source with noinline mode (for fast compilation).
+pub fn build_source_with_preamble_noinline(preamble: &str, shaders: &[&str]) -> String {
+    let mut src = String::with_capacity(preamble.len() + 4096);
+    src.push_str("#define FR_NOINLINE 1\n");
+    src.push_str(&build_source_with_preamble(preamble, shaders));
+    src
 }
 
 /// Create a compute pipeline from a named kernel function.
-pub(crate) fn make_pipeline(
+pub fn make_pipeline(
     device: &Device,
     library: &Library,
     name: &str,

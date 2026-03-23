@@ -236,6 +236,51 @@ impl BatchedSumcheckVerifier {
         )
     }
 
+    /// Like [`verify`](Self::verify) but also returns the batching coefficient α.
+    pub fn verify_with_alpha<F, T>(
+        claims: &[SumcheckClaim<F>],
+        proof: &SumcheckProof<F>,
+        transcript: &mut T,
+    ) -> Result<(F, Vec<F>, F), SumcheckError>
+    where
+        F: Field,
+        T: Transcript<Challenge = F>,
+    {
+        // Squeeze α from the transcript (must match prover's protocol)
+        for claim in claims {
+            claim.claimed_sum.append_to_transcript(transcript);
+        }
+        let alpha: F = transcript.challenge();
+
+        // Now verify the combined claim — but we've already consumed the
+        // α part of the transcript, so we need to pass a pre-combined claim.
+        let max_num_vars = claims.iter().map(|c| c.num_vars).max().unwrap();
+        let max_degree = claims.iter().map(|c| c.degree).max().unwrap();
+
+        let combined_sum: F = claims
+            .iter()
+            .enumerate()
+            .fold(F::zero(), |acc, (j, claim)| {
+                let scaled = claim.claimed_sum.mul_pow_2(max_num_vars - claim.num_vars);
+                acc + pow(alpha, j) * scaled
+            });
+
+        let combined_claim = SumcheckClaim {
+            num_vars: max_num_vars,
+            degree: max_degree,
+            claimed_sum: combined_sum,
+        };
+
+        let (final_eval, challenges) = crate::verifier::SumcheckVerifier::verify_with_handler(
+            &combined_claim,
+            &proof.round_polynomials,
+            transcript,
+            &ClearRoundVerifier,
+        )?;
+
+        Ok((final_eval, challenges, alpha))
+    }
+
     /// Verifies a batched sumcheck proof with cleartext verification.
     ///
     /// Convenience wrapper using [`ClearRoundVerifier`].

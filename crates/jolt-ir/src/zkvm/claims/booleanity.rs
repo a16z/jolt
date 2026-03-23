@@ -78,17 +78,11 @@ mod tests {
         let c1 = eq * gamma;
 
         // ra0=1, ra1=0: c0*(1-1) + c1*(0-0) = 0
-        let result = claim.evaluate::<Fr>(
-            &[Fr::from_u64(1), Fr::from_u64(0)],
-            &[c0, c1],
-        );
+        let result = claim.evaluate::<Fr>(&[Fr::from_u64(1), Fr::from_u64(0)], &[c0, c1]);
         assert_eq!(result, Fr::zero());
 
         // ra0=0, ra1=1: 0 + c1*(1-1) = 0
-        let result = claim.evaluate::<Fr>(
-            &[Fr::from_u64(0), Fr::from_u64(1)],
-            &[c0, c1],
-        );
+        let result = claim.evaluate::<Fr>(&[Fr::from_u64(0), Fr::from_u64(1)], &[c0, c1]);
         assert_eq!(result, Fr::zero());
     }
 

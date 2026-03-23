@@ -39,3 +39,7 @@ harness = false
 [[bench]]
 name = "threshold"
 harness = false
+
+[[bench]]
+name = "field128_throughput"
+harness = false

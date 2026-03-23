@@ -26,8 +26,11 @@ mod claim;
 mod expr;
 mod kernel;
 mod normalize;
+mod polynomial_id;
 mod visitor;
 
+#[allow(dead_code)]
+pub mod protocol;
 pub mod toom_cook;
 pub mod zkvm;
 
@@ -36,6 +39,7 @@ pub use claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBindi
 pub use expr::{Expr, ExprArena, ExprId, ExprNode, Var};
 pub use kernel::{KernelDescriptor, KernelShape, TensorSplit};
 pub use normalize::{SopTerm, SopValue, SumOfProducts};
+pub use polynomial_id::PolynomialId;
 pub use visitor::ExprVisitor;
 
 pub use backends::circuit::CircuitEmitter;

@@ -139,6 +139,55 @@ impl<F: Field> PolynomialTables<F> {
         self.instruction_ra.len() + self.bytecode_ra.len() + self.ram_ra.len()
     }
 
+    /// Looks up a polynomial table by its canonical ID.
+    ///
+    /// Panics if the ID references a parameterized polynomial (e.g.,
+    /// `InstructionRa(i)`) with an out-of-bounds index.
+    pub fn get(&self, id: jolt_ir::PolynomialId) -> &[F] {
+        use jolt_ir::PolynomialId as P;
+        match id {
+            P::RamInc => &self.ram_inc,
+            P::RdInc => &self.rd_inc,
+            P::InstructionRa(i) => &self.instruction_ra[i],
+            P::BytecodeRa(i) => &self.bytecode_ra[i],
+            P::RamRa(i) => &self.ram_ra[i],
+            P::RamReadValue => &self.ram_read_value,
+            P::RamWriteValue => &self.ram_write_value,
+            P::RamAddress => &self.ram_address,
+            P::HammingWeight => &self.hamming_weight,
+            P::RdWriteValue => &self.rd_write_value,
+            P::Rs1Value => &self.rs1_value,
+            P::Rs2Value => &self.rs2_value,
+            P::Rs1Ra => &self.rs1_ra,
+            P::Rs2Ra => &self.rs2_ra,
+            P::RdWa => &self.rd_wa,
+            P::LookupOutput => &self.lookup_output,
+            P::LeftInstructionInput => &self.left_instruction_input,
+            P::RightInstructionInput => &self.right_instruction_input,
+            P::IsRdNotZero => &self.is_rd_not_zero,
+            P::WriteLookupToRdFlag => &self.write_lookup_to_rd_flag,
+            P::JumpFlag => &self.jump_flag,
+            P::BranchFlag => &self.branch_flag,
+            P::NextIsNoop => &self.next_is_noop,
+            P::LeftIsRs1 => &self.left_is_rs1,
+            P::LeftIsPc => &self.left_is_pc,
+            P::RightIsRs2 => &self.right_is_rs2,
+            P::RightIsImm => &self.right_is_imm,
+            P::UnexpandedPc => &self.unexpanded_pc,
+            P::Imm => &self.imm,
+            P::NextUnexpandedPc => &self.next_unexpanded_pc,
+            P::NextPc => &self.next_pc,
+            P::NextIsVirtual => &self.next_is_virtual,
+            P::NextIsFirstInSequence => &self.next_is_first_in_sequence,
+            // These don't have dedicated table storage (derived at runtime)
+            P::SpartanWitness | P::RamVal | P::RamValFinal | P::RegistersVal
+            | P::LeftLookupOperand | P::RightLookupOperand
+            | P::TrustedAdvice | P::UntrustedAdvice => {
+                panic!("{id:?} has no stored evaluation table")
+            }
+        }
+    }
+
     /// Extracts all polynomial tables from witness generation outputs.
     ///
     /// This is the single conversion point between witness generation and

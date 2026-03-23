@@ -9,19 +9,23 @@
 use jolt_field::Field;
 use jolt_field::Fr;
 use jolt_metal::field::{
-    dispatch_binary, dispatch_fmadd, dispatch_from_u64, dispatch_unary, FrKernels, MetalFr,
+    dispatch_binary, dispatch_fmadd, dispatch_from_u64, dispatch_unary, FrKernels,
+    MetalFieldElement,
 };
 use num_traits::Zero;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
-fn to_metal(f: Fr) -> MetalFr {
-    MetalFr::from_u64_limbs(f.inner_limbs().0)
+type MFr = MetalFieldElement<8>;
+
+fn to_metal(f: Fr) -> MFr {
+    MFr::from_u64_limbs(&f.inner_limbs().0)
 }
 
-fn to_cpu(g: MetalFr) -> Fr {
+fn to_cpu(g: MFr) -> Fr {
     use jolt_field::Limbs;
-    Fr::from_bigint_unchecked(Limbs::new(g.to_u64_limbs())).unwrap()
+    let u64s: [u64; 4] = g.to_u64_limbs().try_into().unwrap();
+    Fr::from_bigint_unchecked(Limbs::new(u64s)).unwrap()
 }
 
 struct TestCtx {
@@ -56,8 +60,8 @@ fn mul_parity() {
     let a_cpu = random_elements(&mut rng, N);
     let b_cpu = random_elements(&mut rng, N);
 
-    let a_mtl: Vec<MetalFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
-    let b_mtl: Vec<MetalFr> = b_cpu.iter().map(|x| to_metal(*x)).collect();
+    let a_mtl: Vec<MFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
+    let b_mtl: Vec<MFr> = b_cpu.iter().map(|x| to_metal(*x)).collect();
 
     let result = dispatch_binary(&ctx.device, &ctx.queue, &ctx.kernels.mul, &a_mtl, &b_mtl);
 
@@ -75,8 +79,8 @@ fn add_parity() {
     let a_cpu = random_elements(&mut rng, N);
     let b_cpu = random_elements(&mut rng, N);
 
-    let a_mtl: Vec<MetalFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
-    let b_mtl: Vec<MetalFr> = b_cpu.iter().map(|x| to_metal(*x)).collect();
+    let a_mtl: Vec<MFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
+    let b_mtl: Vec<MFr> = b_cpu.iter().map(|x| to_metal(*x)).collect();
 
     let result = dispatch_binary(&ctx.device, &ctx.queue, &ctx.kernels.add, &a_mtl, &b_mtl);
 
@@ -94,8 +98,8 @@ fn sub_parity() {
     let a_cpu = random_elements(&mut rng, N);
     let b_cpu = random_elements(&mut rng, N);
 
-    let a_mtl: Vec<MetalFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
-    let b_mtl: Vec<MetalFr> = b_cpu.iter().map(|x| to_metal(*x)).collect();
+    let a_mtl: Vec<MFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
+    let b_mtl: Vec<MFr> = b_cpu.iter().map(|x| to_metal(*x)).collect();
 
     let result = dispatch_binary(&ctx.device, &ctx.queue, &ctx.kernels.sub, &a_mtl, &b_mtl);
 
@@ -112,7 +116,7 @@ fn sqr_parity() {
     let mut rng = StdRng::seed_from_u64(0xf00d);
     let a_cpu = random_elements(&mut rng, N);
 
-    let a_mtl: Vec<MetalFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
+    let a_mtl: Vec<MFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
 
     let result = dispatch_unary(&ctx.device, &ctx.queue, &ctx.kernels.sqr, &a_mtl);
 
@@ -129,7 +133,7 @@ fn neg_parity() {
     let mut rng = StdRng::seed_from_u64(0xbad0);
     let a_cpu = random_elements(&mut rng, N);
 
-    let a_mtl: Vec<MetalFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
+    let a_mtl: Vec<MFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
 
     let result = dispatch_unary(&ctx.device, &ctx.queue, &ctx.kernels.neg, &a_mtl);
 
@@ -145,7 +149,7 @@ fn from_u64_parity() {
     let ctx = TestCtx::new();
     let vals: Vec<u64> = (0..N as u64).collect();
 
-    let result = dispatch_from_u64(&ctx.device, &ctx.queue, &ctx.kernels.from_u64, &vals);
+    let result: Vec<MFr> = dispatch_from_u64(&ctx.device, &ctx.queue, &ctx.kernels.from_u64, &vals);
 
     for i in 0..N {
         let expected = Fr::from_u64(vals[i]);
@@ -168,7 +172,7 @@ fn from_u64_large_values() {
         (1 << 32) - 1,
     ];
 
-    let result = dispatch_from_u64(&ctx.device, &ctx.queue, &ctx.kernels.from_u64, &vals);
+    let result: Vec<MFr> = dispatch_from_u64(&ctx.device, &ctx.queue, &ctx.kernels.from_u64, &vals);
 
     for i in 0..vals.len() {
         let expected = Fr::from_u64(vals[i]);
@@ -204,8 +208,8 @@ fn fmadd_parity() {
         })
         .collect();
 
-    let a_mtl: Vec<MetalFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
-    let b_mtl: Vec<MetalFr> = b_cpu.iter().map(|x| to_metal(*x)).collect();
+    let a_mtl: Vec<MFr> = a_cpu.iter().map(|x| to_metal(*x)).collect();
+    let b_mtl: Vec<MFr> = b_cpu.iter().map(|x| to_metal(*x)).collect();
 
     let result = dispatch_fmadd(
         &ctx.device,

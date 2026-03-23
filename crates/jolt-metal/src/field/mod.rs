@@ -1,55 +1,50 @@
-//! Metal dispatch for BN254 Fr field arithmetic.
+//! Metal dispatch for field arithmetic over arbitrary limb counts.
 //!
 //! Compiles the MSL shaders at runtime and provides a typed dispatch API
-//! for element-wise Fr operations. On little-endian ARM64, the CPU's
-//! `[u64; 4]` and Metal's `[u32; 8]` Montgomery representations have
+//! for element-wise field operations. On little-endian ARM64, the CPU's
+//! `[u64; N/2]` and Metal's `[u32; N]` Montgomery representations have
 //! identical byte layout, so raw buffer uploads work without conversion.
-//! [`MetalFr`] provides explicit limb conversion for test and benchmark
-//! code that constructs values outside the `ComputeBackend` path.
+//! [`MetalFieldElement`] provides explicit limb conversion for test and
+//! benchmark code that constructs values outside the `ComputeBackend` path.
 
 use std::ffi::c_void;
 
 use metal::{ComputePipelineState, Device, MTLResourceOptions, MTLSize};
 
-use crate::shaders::{
-    build_source, make_pipeline, SHADER_BN254_FR, SHADER_TEST_KERNELS, SHADER_WIDE_ACC,
-};
+use crate::field_config::FieldConfig;
+use crate::shaders::{build_source_with_preamble, make_pipeline};
 
-/// 8×u32 limbs matching the Metal Fr struct layout.
+/// N×u32 limbs matching the Metal Fr struct layout.
 /// Both CPU and Metal store Montgomery-form values in little-endian limb order.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MetalFr {
-    pub limbs: [u32; 8],
+pub struct MetalFieldElement<const N: usize> {
+    pub limbs: [u32; N],
 }
 
-impl MetalFr {
-    /// Convert from the CPU's 4×u64 Montgomery limbs.
+impl<const N: usize> MetalFieldElement<N> {
+    /// Convert from the CPU's (N/2)×u64 Montgomery limbs.
+    ///
+    /// # Panics
+    /// Panics if `limbs.len() * 2 != N`.
     #[inline]
-    pub fn from_u64_limbs(limbs: [u64; 4]) -> Self {
-        Self {
-            limbs: [
-                limbs[0] as u32,
-                (limbs[0] >> 32) as u32,
-                limbs[1] as u32,
-                (limbs[1] >> 32) as u32,
-                limbs[2] as u32,
-                (limbs[2] >> 32) as u32,
-                limbs[3] as u32,
-                (limbs[3] >> 32) as u32,
-            ],
+    pub fn from_u64_limbs(limbs: &[u64]) -> Self {
+        assert_eq!(limbs.len() * 2, N, "expected {} u64 limbs, got {}", N / 2, limbs.len());
+        let mut out = [0u32; N];
+        for (i, &v) in limbs.iter().enumerate() {
+            out[2 * i] = v as u32;
+            out[2 * i + 1] = (v >> 32) as u32;
         }
+        Self { limbs: out }
     }
 
-    /// Convert back to 4×u64 Montgomery limbs.
+    /// Convert back to (N/2)×u64 Montgomery limbs.
     #[inline]
-    pub fn to_u64_limbs(self) -> [u64; 4] {
-        [
-            u64::from(self.limbs[0]) | (u64::from(self.limbs[1]) << 32),
-            u64::from(self.limbs[2]) | (u64::from(self.limbs[3]) << 32),
-            u64::from(self.limbs[4]) | (u64::from(self.limbs[5]) << 32),
-            u64::from(self.limbs[6]) | (u64::from(self.limbs[7]) << 32),
-        ]
+    pub fn to_u64_limbs(self) -> Vec<u64> {
+        assert_eq!(N % 2, 0, "N must be even for u64 conversion");
+        (0..N / 2)
+            .map(|i| u64::from(self.limbs[2 * i]) | (u64::from(self.limbs[2 * i + 1]) << 32))
+            .collect()
     }
 }
 
@@ -65,9 +60,13 @@ pub struct FrKernels {
 }
 
 impl FrKernels {
-    /// Compile all Fr test/benchmark kernels from MSL source.
+    /// Compile all Fr test/benchmark kernels from generated MSL source.
     pub fn new(device: &Device) -> Self {
-        let source = build_source(&[SHADER_BN254_FR, SHADER_WIDE_ACC, SHADER_TEST_KERNELS]);
+        let field_config = FieldConfig::from_gpu_field::<jolt_field::Fr>();
+        let source = build_source_with_preamble(
+            &field_config.msl_preamble,
+            &[&field_config.msl_test_kernels],
+        );
         let options = metal::CompileOptions::new();
         let library = device
             .new_library_with_source(&source, &options)
@@ -120,23 +119,23 @@ fn dispatch_and_wait(
     cmd.wait_until_completed();
 }
 
-fn read_buffer(buf: &metal::Buffer, n: usize) -> Vec<MetalFr> {
+fn read_buffer<const N: usize>(buf: &metal::Buffer, n: usize) -> Vec<MetalFieldElement<N>> {
     // SAFETY: buffer was allocated with StorageModeShared and the command
     // buffer has completed, so the contents pointer is valid and coherent.
     unsafe {
-        let ptr = buf.contents().cast::<MetalFr>();
+        let ptr = buf.contents().cast::<MetalFieldElement<N>>();
         std::slice::from_raw_parts(ptr, n).to_vec()
     }
 }
 
 /// Dispatch a binary element-wise kernel (a op b → result).
-pub fn dispatch_binary(
+pub fn dispatch_binary<const N: usize>(
     device: &Device,
     queue: &metal::CommandQueue,
     pipeline: &ComputePipelineState,
-    a: &[MetalFr],
-    b: &[MetalFr],
-) -> Vec<MetalFr> {
+    a: &[MetalFieldElement<N>],
+    b: &[MetalFieldElement<N>],
+) -> Vec<MetalFieldElement<N>> {
     assert_eq!(a.len(), b.len());
     let n = a.len();
 
@@ -149,12 +148,12 @@ pub fn dispatch_binary(
 }
 
 /// Dispatch a unary element-wise kernel (a → result).
-pub fn dispatch_unary(
+pub fn dispatch_unary<const N: usize>(
     device: &Device,
     queue: &metal::CommandQueue,
     pipeline: &ComputePipelineState,
-    a: &[MetalFr],
-) -> Vec<MetalFr> {
+    a: &[MetalFieldElement<N>],
+) -> Vec<MetalFieldElement<N>> {
     let n = a.len();
 
     let buf_a = upload_slice(device, a);
@@ -168,20 +167,20 @@ pub fn dispatch_unary(
 ///
 /// Each of `n_threads` threads accumulates 256 products from `a` and `b`
 /// (which have `stride` elements, indexed cyclically).
-pub fn dispatch_fmadd(
+pub fn dispatch_fmadd<const N: usize>(
     device: &Device,
     queue: &metal::CommandQueue,
     pipeline: &ComputePipelineState,
-    a: &[MetalFr],
-    b: &[MetalFr],
+    a: &[MetalFieldElement<N>],
+    b: &[MetalFieldElement<N>],
     n_threads: usize,
-) -> Vec<MetalFr> {
+) -> Vec<MetalFieldElement<N>> {
     assert_eq!(a.len(), b.len());
     let stride = a.len() as u32;
 
     let buf_a = upload_slice(device, a);
     let buf_b = upload_slice(device, b);
-    let buf_out = alloc_buffer(device, (n_threads * std::mem::size_of::<MetalFr>()) as u64);
+    let buf_out = alloc_buffer(device, (n_threads * std::mem::size_of::<MetalFieldElement<N>>()) as u64);
     let buf_params = upload_slice(device, &[stride]);
 
     dispatch_and_wait(
@@ -194,16 +193,16 @@ pub fn dispatch_fmadd(
 }
 
 /// Dispatch the fr_from_u64 conversion kernel.
-pub fn dispatch_from_u64(
+pub fn dispatch_from_u64<const N: usize>(
     device: &Device,
     queue: &metal::CommandQueue,
     pipeline: &ComputePipelineState,
     vals: &[u64],
-) -> Vec<MetalFr> {
+) -> Vec<MetalFieldElement<N>> {
     let n = vals.len();
 
     let buf_vals = upload_slice(device, vals);
-    let buf_out = alloc_buffer(device, (n * std::mem::size_of::<MetalFr>()) as u64);
+    let buf_out = alloc_buffer(device, (n * std::mem::size_of::<MetalFieldElement<N>>()) as u64);
 
     dispatch_and_wait(queue, pipeline, &[&buf_vals, &buf_out], n);
     read_buffer(&buf_out, n)
@@ -214,14 +213,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn metal_fr_roundtrip() {
+    fn metal_field_element_roundtrip() {
         let limbs = [
             0x0123_4567_89ab_cdef_u64,
             0xfedc_ba98_7654_3210,
             0x1111_2222_3333_4444,
             0x5555_6666_7777_8888,
         ];
-        let metal = MetalFr::from_u64_limbs(limbs);
+        let metal = MetalFieldElement::<8>::from_u64_limbs(&limbs);
+        assert_eq!(metal.to_u64_limbs(), limbs);
+    }
+
+    #[test]
+    fn metal_field_element_4_limb_roundtrip() {
+        let limbs = [0xdead_beef_cafe_babe_u64, 0x1234_5678_9abc_def0];
+        let metal = MetalFieldElement::<4>::from_u64_limbs(&limbs);
         assert_eq!(metal.to_u64_limbs(), limbs);
     }
 

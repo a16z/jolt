@@ -33,8 +33,9 @@ use std::sync::Arc;
 use jolt_ir::{Expr, ExprVisitor, KernelDescriptor, KernelShape, Var};
 use metal::CompileOptions;
 
+use crate::field_config::FieldConfig;
 use crate::kernel::CachedPipelines;
-use crate::shaders::{build_source_with_mode, make_pipeline, SHADER_BN254_FR, SHADER_WIDE_ACC};
+use crate::shaders::{build_source_with_preamble, build_source_with_preamble_noinline, make_pipeline};
 
 /// Controls Metal shader compilation strategy.
 #[derive(Clone, Copy, Debug, Default)]
@@ -47,17 +48,7 @@ pub enum CompileMode {
     FastCompile,
 }
 
-/// Threadgroup size for reduce kernels. Power of 2.
-pub(crate) const REDUCE_GROUP_SIZE: usize = 256;
 
-/// Maximum threadgroups per reduce dispatch.
-pub(crate) const MAX_REDUCE_GROUPS: usize = 256;
-
-/// Apple GPU SIMD width (32 threads per simdgroup on M-series).
-const SIMD_SIZE: usize = 32;
-
-/// WideAcc limb count (18 × u32 = 576 bits). Must match `ACC_LIMBS` in wide_accumulator.metal.
-const ACC_LIMBS: usize = 18;
 
 /// ProductSum D threshold for split-pass kernel generation. Kernels with
 /// `num_inputs_per_product >= SPLIT_PASS_THRESHOLD` use multi-pass streaming
@@ -96,7 +87,7 @@ impl KernelVariant {
 }
 
 /// Output of MSL generation — the full source string plus kernel metadata.
-pub(crate) struct GeneratedMsl {
+pub struct GeneratedMsl {
     pub source: String,
     pub num_inputs: usize,
     pub num_evals: usize,
@@ -108,14 +99,19 @@ pub(crate) struct GeneratedMsl {
 ///
 /// This is the deterministic, challenge-independent MSL generation. The
 /// returned source can be hashed to produce a cache key.
-pub(crate) fn generate_msl(descriptor: &KernelDescriptor, mode: CompileMode) -> GeneratedMsl {
+pub fn generate_msl(
+    descriptor: &KernelDescriptor,
+    mode: CompileMode,
+    field_config: &FieldConfig,
+    gpu_config: &crate::gpu_config::GpuConfig,
+) -> GeneratedMsl {
     let num_inputs = descriptor.num_inputs();
     let num_evals = descriptor.num_evals();
 
     let use_split_pass = matches!(
         &descriptor.shape,
         KernelShape::ProductSum { num_inputs_per_product, .. }
-            if *num_inputs_per_product >= SPLIT_PASS_THRESHOLD
+            if *num_inputs_per_product >= gpu_config.split_pass_threshold
     );
 
     let mut msl = String::with_capacity(65536);
@@ -130,19 +126,20 @@ pub(crate) fn generate_msl(descriptor: &KernelDescriptor, mode: CompileMode) -> 
             _ => unreachable!(),
         };
 
+        let acc_limbs = field_config.acc_limbs;
         for variant in [
             KernelVariant::LowToHigh,
             KernelVariant::HighToLow,
             KernelVariant::Tensor,
         ] {
             msl.push_str(&generate_split_pass_reduce_kernel(
-                num_inputs, num_evals, d, p, variant, true,
+                num_inputs, num_evals, d, p, variant, true, acc_limbs, gpu_config,
             ));
             msl.push('\n');
         }
         for variant in [KernelVariant::LowToHigh, KernelVariant::HighToLow] {
             msl.push_str(&generate_split_pass_reduce_kernel(
-                num_inputs, num_evals, d, p, variant, false,
+                num_inputs, num_evals, d, p, variant, false, acc_limbs, gpu_config,
             ));
             msl.push('\n');
         }
@@ -205,6 +202,7 @@ pub(crate) fn generate_msl(descriptor: &KernelDescriptor, mode: CompileMode) -> 
         // Custom kernels without Var::Challenge nodes don't need the buffer.
         has_challenges = eval_body_weighted.contains("challenges[");
 
+        let acc_limbs = field_config.acc_limbs;
         for variant in [
             KernelVariant::LowToHigh,
             KernelVariant::HighToLow,
@@ -218,6 +216,8 @@ pub(crate) fn generate_msl(descriptor: &KernelDescriptor, mode: CompileMode) -> 
                 weight_folded,
                 true,
                 has_challenges,
+                acc_limbs,
+                gpu_config,
             ));
             msl.push('\n');
         }
@@ -230,13 +230,19 @@ pub(crate) fn generate_msl(descriptor: &KernelDescriptor, mode: CompileMode) -> 
                 false,
                 false,
                 has_challenges,
+                acc_limbs,
+                gpu_config,
             ));
             msl.push('\n');
         }
     }
 
     let noinline = matches!(mode, CompileMode::FastCompile);
-    let source = build_source_with_mode(&[SHADER_BN254_FR, SHADER_WIDE_ACC, &msl], noinline);
+    let source = if noinline {
+        build_source_with_preamble_noinline(&field_config.msl_preamble, &[&msl])
+    } else {
+        build_source_with_preamble(&field_config.msl_preamble, &[&msl])
+    };
 
     GeneratedMsl {
         source,
@@ -285,6 +291,7 @@ enum AccumulationStrategy {
 /// - Pair reading pattern (interleaved vs split-half)
 /// - Weight computation (single buffer, tensor product, or none)
 /// - Accumulation strategy (WideAcc fmadd vs WideAcc add)
+#[allow(clippy::too_many_arguments)]
 fn generate_reduce_kernel(
     num_inputs: usize,
     num_evals: usize,
@@ -293,9 +300,11 @@ fn generate_reduce_kernel(
     weight_folded: bool,
     weighted: bool,
     has_challenges: bool,
+    acc_limbs: usize,
+    gpu_config: &crate::gpu_config::GpuConfig,
 ) -> String {
-    let gs = REDUCE_GROUP_SIZE;
-    let num_simdgroups = gs / SIMD_SIZE;
+    let gs = gpu_config.reduce_group_size;
+    let num_simdgroups = gpu_config.num_simdgroups();
     let fname = variant.function_name(weighted);
     let is_tensor = matches!(variant, KernelVariant::Tensor);
 
@@ -435,14 +444,14 @@ fn generate_reduce_kernel(
     // Only lane 0 of each simdgroup calls the expensive acc_reduce (8 CIOS
     // rounds). This saves 31 acc_reduce calls per simdgroup (248 per
     // threadgroup of 256 threads).
-    let half_simd = SIMD_SIZE / 2;
+    let half_simd = gpu_config.simd_size / 2;
     let _ = writeln!(
         s,
         "    for (ushort _off = {half_simd}u; _off > 0u; _off >>= 1u) {{"
     );
     for d in 0..num_evals {
         let _ = writeln!(s, "        {{ WideAcc _o;");
-        for l in 0..ACC_LIMBS {
+        for l in 0..acc_limbs {
             let _ = writeln!(
                 s,
                 "        _o.limbs[{l}] = simd_shuffle_down(wide_acc[{d}].limbs[{l}], _off);"
@@ -529,6 +538,7 @@ fn generate_reduce_kernel(
 /// Tradeoff: each factor's lo/hi is re-loaded once per pass (D/chunk passes
 /// total). For D=8, this is 4× the bandwidth. Since D=8 is compute-bound,
 /// the occupancy improvement dominates.
+#[allow(clippy::too_many_arguments)]
 fn generate_split_pass_reduce_kernel(
     num_inputs: usize,
     num_evals: usize,
@@ -536,9 +546,11 @@ fn generate_split_pass_reduce_kernel(
     p: usize,
     variant: KernelVariant,
     weighted: bool,
+    acc_limbs: usize,
+    gpu_config: &crate::gpu_config::GpuConfig,
 ) -> String {
-    let gs = REDUCE_GROUP_SIZE;
-    let num_simdgroups = gs / SIMD_SIZE;
+    let gs = gpu_config.reduce_group_size;
+    let num_simdgroups = gpu_config.num_simdgroups();
     let fname = variant.function_name(weighted);
     let is_tensor = matches!(variant, KernelVariant::Tensor);
     let chunk = SPLIT_PASS_CHUNK;
@@ -731,14 +743,14 @@ fn generate_split_pass_reduce_kernel(
         s.push('\n');
 
         // Simdgroup WideAcc reduction (same as single-pass)
-        let half_simd = SIMD_SIZE / 2;
+        let half_simd = gpu_config.simd_size / 2;
         let _ = writeln!(
             s,
             "    for (ushort _off = {half_simd}u; _off > 0u; _off >>= 1u) {{"
         );
         for c in 0..chunk_size {
             let _ = writeln!(s, "        {{ WideAcc _o;");
-            for l in 0..ACC_LIMBS {
+            for l in 0..acc_limbs {
                 let _ = writeln!(
                     s,
                     "        _o.limbs[{l}] = simd_shuffle_down(wa_{c}.limbs[{l}], _off);"
@@ -952,10 +964,10 @@ fn generate_toom_cook_d4(p: usize) -> String {
 
         // Point-wise multiply
         if p == 1 {
-            let _ = writeln!(s, "        evals[0] = fr_mul(a_1, b_1);");
-            let _ = writeln!(s, "        evals[1] = fr_mul(a_2, b_2);");
-            let _ = writeln!(s, "        evals[2] = fr_mul(a_3, b_3);");
-            let _ = writeln!(s, "        evals[3] = fr_mul(a_inf, b_inf);");
+            let _ = writeln!(s, "        evals[0] = fr_mul_unreduced(a_1, b_1);");
+            let _ = writeln!(s, "        evals[1] = fr_mul_unreduced(a_2, b_2);");
+            let _ = writeln!(s, "        evals[2] = fr_mul_unreduced(a_3, b_3);");
+            let _ = writeln!(s, "        evals[3] = fr_mul_unreduced(a_inf, b_inf);");
         } else {
             let _ = writeln!(s, "        evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
             let _ = writeln!(s, "        evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");
@@ -1072,14 +1084,14 @@ fn generate_toom_cook_d8(p: usize) -> String {
 
         // ---- Final point-wise multiply ----
         if p == 1 {
-            let _ = writeln!(s, "        evals[0] = fr_mul(a_1, b_1);");
-            let _ = writeln!(s, "        evals[1] = fr_mul(a_2, b_2);");
-            let _ = writeln!(s, "        evals[2] = fr_mul(a_3, b_3);");
-            let _ = writeln!(s, "        evals[3] = fr_mul(a_4, b_4);");
-            let _ = writeln!(s, "        evals[4] = fr_mul(a_5, b_5);");
-            let _ = writeln!(s, "        evals[5] = fr_mul(a_6, b_6);");
-            let _ = writeln!(s, "        evals[6] = fr_mul(a_7, b_7);");
-            let _ = writeln!(s, "        evals[7] = fr_mul(a_inf, b_inf);");
+            let _ = writeln!(s, "        evals[0] = fr_mul_unreduced(a_1, b_1);");
+            let _ = writeln!(s, "        evals[1] = fr_mul_unreduced(a_2, b_2);");
+            let _ = writeln!(s, "        evals[2] = fr_mul_unreduced(a_3, b_3);");
+            let _ = writeln!(s, "        evals[3] = fr_mul_unreduced(a_4, b_4);");
+            let _ = writeln!(s, "        evals[4] = fr_mul_unreduced(a_5, b_5);");
+            let _ = writeln!(s, "        evals[5] = fr_mul_unreduced(a_6, b_6);");
+            let _ = writeln!(s, "        evals[6] = fr_mul_unreduced(a_7, b_7);");
+            let _ = writeln!(s, "        evals[7] = fr_mul_unreduced(a_inf, b_inf);");
         } else {
             let _ = writeln!(s, "        evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
             let _ = writeln!(s, "        evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");

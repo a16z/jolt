@@ -37,11 +37,14 @@ Theoretical: **~96ns per fr_mul per thread** (single-threaded) or **~0.1ns throu
 | reduce D=8 | 2^14 | 2.02ms | 1.82ms | 0.90x (CPU) |
 | reduce D=8 | 2^20 | 64.2ms | 89.3ms | **1.39x** |
 | reduce D=8 unw | 2^20 | 52.7ms | 91.8ms | **1.74x** |
-| sumcheck D=4 2^20 | 84.6ms | 82.9ms | 1.02x |
-| sumcheck D=8 2^20 | 167ms | 228ms | **1.37x** |
+| sumcheck D=4 L2H 2^20 | 90ms | 93ms | 0.97x |
+| sumcheck D=4 H2L 2^20 | 60ms | 88ms | **1.47x** |
+| sumcheck D=8 L2H 2^20 | 168ms | 240ms | **1.43x** |
+| sumcheck D=8 H2L 2^20 | 161ms | 243ms | **1.51x** |
 
 D=8 improved dramatically from Toom-Cook (OPT-7): 30 fr_mul vs 58 naive.
 D=4 uses naive weight-folded approach (Toom-Cook regressed due to lost weight folding).
+H2L in-place binding avoids buffer allocation — massive win for D=4 sumcheck (1.47× vs 0.97×).
 
 ## Register Pressure Problem
 
@@ -194,6 +197,25 @@ Balanced binary splitting for ProductSum evaluation: O(D log D) multiplies inste
 
 Pre-allocate `reduce_partials` (256 KB) and `reduce_params` (16 B) on `MetalBackend` construction. `dispatch_reduce` and `reduce` write params via `contents()` pointer instead of creating new buffers. Eliminates 2 `MTLBuffer` allocations per dispatch.
 
+### OPT-11: H2L in-place binding for sumcheck rounds ✅
+
+**Impact: 4-33% sumcheck round improvement** | Effort: Low | **Status: IMPLEMENTED (benchmark + backend)**
+
+The L2H interpolation path allocates a new output buffer per polynomial per round (can't write in-place due to GPU race condition). The H2L path writes in-place (`buf[i] = lo + r*(hi-lo)` where `lo=buf[i]`, `hi=buf[i+half]`) — zero allocation.
+
+**Measured sumcheck round improvement (2^20, 4 rounds):**
+
+| Benchmark | L2H Metal | H2L Metal | Improvement |
+|-----------|-----------|-----------|-------------|
+| D=4 | 90 ms | 60 ms | **33%** |
+| D=8 | 168 ms | 161 ms | **4%** |
+
+The D=4 improvement is massive because reduce is fast and bind allocation dominates. D=8 improve is modest since reduce dominates.
+
+**Prover integration**: Switching from L2H to H2L requires setting `BindingOrder::HighToLow` in the stage pipeline and `reverse_challenges: false` in `StageDescriptor`. The mathematical result is identical — only the memory layout convention changes.
+
+Also optimized H2L batch path to reuse pre-allocated `reduce_params` buffer (zero per-dispatch allocation for uniform-length batches).
+
 ## Test Compilation Speedup: `CompileMode::FastCompile`
 
 **Problem**: D=8 kernel generates ~5000 lines of MSL across 5 variants. Apple's LLVM
@@ -232,5 +254,6 @@ After each optimization, validate:
 4. ✅ OPT-5 (Karatsuba acc_fmadd) — 25% fewer muls, big win at small sizes
 5. ✅ OPT-7 (Toom-Cook D=8) — 30 vs 56 muls, 20-29% improvement
 6. ✅ OPT-10 (pre-allocated buffers) — eliminates per-dispatch allocation overhead
-7. OPT-4 (command batching) — needs trait/API change, remaining low-hanging fruit
-8. OPT-6 (fr_sqr) — deferred, not used in ProductSum hot path
+7. ✅ OPT-11 (H2L in-place binding) — 4-33% sumcheck round improvement
+8. OPT-4 (command batching) — needs trait/API change, remaining low-hanging fruit
+9. OPT-6 (fr_sqr) — deferred, not used in ProductSum hot path

@@ -209,10 +209,7 @@ impl ClaimDefinition {
     ///
     /// The kernel expression is `Opening(0) * inner` where `inner` has the
     /// claim's `Opening(i)` shifted to `Opening(i+1)`.
-    fn build_custom_descriptor(
-        sop: &SumOfProducts,
-        num_claim_openings: usize,
-    ) -> KernelDescriptor {
+    fn build_custom_descriptor(sop: &SumOfProducts, num_claim_openings: usize) -> KernelDescriptor {
         let b = ExprBuilder::new();
         let eq = b.opening(0);
 
