@@ -17,9 +17,6 @@ use build_wasm::{build_wasm, modify_cargo_toml};
 use zeroos_build::cmds::{build::BacktraceMode, BuildArgs, StdMode};
 use zeroos_build::spec::TargetRenderOptions;
 
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 /// Linker script template embedded at compile time.
 /// This linker script is for Jolt zkVM guests.
 static LINKER_TEMPLATE: &str = include_str!("linker.ld.template");
