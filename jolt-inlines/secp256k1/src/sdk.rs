@@ -155,6 +155,11 @@ pub enum Secp256k1Error {
 }
 
 #[inline(always)]
+#[cfg(any(
+    all(test, feature = "host"),
+    target_arch = "riscv32",
+    target_arch = "riscv64"
+))]
 pub(crate) fn decode_glv_sign_word(sign: u64) -> Result<bool, Secp256k1Error> {
     match sign {
         0 => Ok(false),
@@ -1006,8 +1011,7 @@ impl Secp256k1Point {
         let k2 = &beta_1 * &b1 - &beta_2 * &a1;
         // return as (sign, abs_value) pairs
         let to_sign_abs = |n: NBigInt| -> (bool, u128) {
-            let sign = decode_glv_sign_word(if n.sign() == Sign::Minus { 1u64 } else { 0u64 })
-                .expect("host GLV decomposition produced an invalid sign word");
+            let sign = n.sign() == Sign::Minus;
             let abs_value = if sign { -n } else { n };
             let bytes = abs_value.to_bytes_le().1;
             let mut bytes_padded = bytes.clone();

@@ -572,7 +572,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
     fn init_suffix_polys(&mut self, phase: usize) {
         /// Maximum number of suffixes any lookup table can have.
         /// Keep this in sync with the lookup-table implementations.
-        const MAX_SUFFIXES: usize = 5;
+        const MAX_SUFFIXES: usize = 4;
 
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
