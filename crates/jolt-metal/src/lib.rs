@@ -8,9 +8,11 @@ mod device;
 pub mod field;
 mod kernel;
 mod reduction;
-pub(crate) mod shaders;
+pub mod rns;
+pub mod rns_compiler;
+pub mod shaders;
 
 pub use buffer::MetalBuffer;
 pub use compiler::CompileMode;
-pub use device::MetalBackend;
+pub use device::{MetalBackend, RnsBuffer};
 pub use kernel::MetalKernel;

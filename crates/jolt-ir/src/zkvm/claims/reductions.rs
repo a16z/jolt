@@ -8,6 +8,9 @@ use crate::builder::ExprBuilder;
 use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
 use crate::zkvm::tags::{poly, sumcheck};
 
+// Verified against jolt-core/src/zkvm/claim_reductions/registers.rs
+// Formula: Σ eq(r,j) · (rd_wv(j) + γ·rs1_v(j) + γ²·rs2_v(j))
+// Degree: 2 (challenge × opening)
 /// Registers claim reduction output claim.
 ///
 /// Reduces rd_write_value, rs1_value, and rs2_value claims from
@@ -63,6 +66,9 @@ pub fn registers_claim_reduction() -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/claim_reductions/instruction_lookups.rs
+// Formula: Σ eq(r,j) · (lookup + γ·left_op + γ²·right_op + γ³·left_input + γ⁴·right_input)
+// Degree: 2 (challenge × opening)
 /// Instruction lookups claim reduction output claim.
 ///
 /// Reduces lookup output, left/right operands, and left/right instruction
@@ -126,6 +132,9 @@ pub fn instruction_lookups_claim_reduction() -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/claim_reductions/ram_ra.rs
+// Formula: Σ (eq_raf(c) + γ·eq_rw(c) + γ²·eq_val(c)) · ra(r_addr, c)
+// Degree: 2 (challenge × opening)
 /// RAM RA claim reduction output claim.
 ///
 /// Reduces RA claims from three sources (RAF evaluation, RW checking,
@@ -155,6 +164,9 @@ pub fn ram_ra_claim_reduction() -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/claim_reductions/increments.rs
+// Formula: Σ ram_inc·(eq(r2,·) + γ·eq(r4,·)) + γ²·rd_inc·(eq(s4,·) + γ·eq(s5,·))
+// Degree: 2 (challenge × opening)
 /// Increment claim reduction output claim.
 ///
 /// Reduces RAM inc and Rd inc claims from multiple sumcheck instances
@@ -199,19 +211,30 @@ pub fn increment_claim_reduction() -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/claim_reductions/hamming_weight.rs
+// Formula: Σ_i G_i(k) · (γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k))
+// Degree: 2 (challenge × opening)
 /// Hamming weight claim reduction output claim.
 ///
-/// Reduces Hamming weight polynomials from multiple chunk types into
-/// a single opening point. `n_poly_types` is the number of polynomial types.
+/// Reduces all RA polynomial opening claims from Booleanity, RA virtual, and
+/// Hamming weight sumchecks into a single (address) opening point.
+///
+/// `poly_tags` maps each polynomial index to its tag (e.g., `instruction_ra(i)`,
+/// `bytecode_ra(j)`, `ram_ra_committed(k)`).
 ///
 /// Output claim: `Σ_i c_i · poly_i`
 ///
-/// Challenge layout: `[c_0, ..., c_{n-1}]` with combined eq·γ-power weights.
-pub fn hamming_weight_claim_reduction(n_poly_types: usize) -> ClaimDefinition {
+/// Challenge layout: `[c_0, ..., c_{n-1}]` where each `c_i` encodes
+/// `γ^{3i}·1 + γ^{3i+1}·eq_bool + γ^{3i+2}·eq_virt` (three claim types
+/// per RA polynomial, combined into one coefficient).
+///
+/// Verified against jolt-core/src/zkvm/claim_reductions/hamming_weight.rs.
+pub fn hamming_weight_claim_reduction(poly_tags: &[u64]) -> ClaimDefinition {
+    let n = poly_tags.len();
     let b = ExprBuilder::new();
 
     let mut terms = b.zero();
-    for i in 0..n_poly_types {
+    for i in 0..n {
         let poly_i = b.opening(i as u32);
         let c_i = b.challenge(i as u32);
         terms = terms + c_i * poly_i;
@@ -219,15 +242,15 @@ pub fn hamming_weight_claim_reduction(n_poly_types: usize) -> ClaimDefinition {
 
     let expr = b.build(terms);
 
-    let opening_bindings = (0..n_poly_types)
+    let opening_bindings = (0..n)
         .map(|i| OpeningBinding {
             var_id: i as u32,
-            polynomial_tag: 0,
+            polynomial_tag: poly_tags[i],
             sumcheck_tag: sumcheck::HAMMING_WEIGHT_CLAIM_REDUCTION,
         })
         .collect();
 
-    let challenge_bindings = (0..n_poly_types)
+    let challenge_bindings = (0..n)
         .map(|i| ChallengeBinding {
             var_id: i as u32,
             source: ChallengeSource::Derived,
@@ -241,6 +264,9 @@ pub fn hamming_weight_claim_reduction(n_poly_types: usize) -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/claim_reductions/advice.rs
+// Formula: Σ advice(y) · eq(r_val, y) → output: eq_combined · advice
+// Degree: 2 (challenge × opening)
 /// Advice claim reduction output claim (address phase).
 ///
 /// The advice two-phase reduction has two stages:
@@ -332,7 +358,12 @@ mod tests {
 
     #[test]
     fn hamming_weight_reduction_formula() {
-        let claim = hamming_weight_claim_reduction(3);
+        let tags = vec![
+            poly::instruction_ra(0),
+            poly::bytecode_ra(0),
+            poly::ram_ra_committed(0),
+        ];
+        let claim = hamming_weight_claim_reduction(&tags);
         let polys: Vec<Fr> = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
         let challenges: Vec<Fr> = vec![Fr::from_u64(7), Fr::from_u64(11), Fr::from_u64(13)];
 
@@ -357,7 +388,13 @@ mod tests {
 
     #[test]
     fn sop_equivalence_hamming_weight_reduction() {
-        let claim = hamming_weight_claim_reduction(4);
+        let tags = vec![
+            poly::instruction_ra(0),
+            poly::instruction_ra(1),
+            poly::bytecode_ra(0),
+            poly::ram_ra_committed(0),
+        ];
+        let claim = hamming_weight_claim_reduction(&tags);
         let openings: Vec<Fr> = (1..=4).map(Fr::from_u64).collect();
         let challenges: Vec<Fr> = (10..=13).map(Fr::from_u64).collect();
 

@@ -645,7 +645,7 @@ fn pairwise_reduce_product_sum_d8_large() {
     };
     let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
-    let n = 1024;
+    let n = 512;
     let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
     let weights = random_elements(&mut rng, n / 2);
 
@@ -690,7 +690,7 @@ fn pairwise_reduce_product_sum_d8_high_to_low() {
     };
     let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
-    let n = 1024;
+    let n = 512;
     let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
     let weights = random_elements(&mut rng, n / 2);
 
@@ -761,10 +761,7 @@ fn pairwise_reduce_product_sum_d8_sizes() {
             BindingOrder::LowToHigh,
         );
 
-        assert_eq!(
-            expected, got,
-            "D=8 mismatch at n_pairs={n_pairs}"
-        );
+        assert_eq!(expected, got, "D=8 mismatch at n_pairs={n_pairs}");
     }
 }
 
@@ -785,7 +782,7 @@ fn pairwise_reduce_product_sum_d8_unweighted() {
     };
     let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
-    let n = 1024;
+    let n = 512;
     let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
 
     let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();

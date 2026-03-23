@@ -22,7 +22,7 @@ impl<const XLEN: usize> LookupTable<XLEN> for EqualTable<XLEN> {
         C: ChallengeOps<F>,
         F: Field + FieldOps<C>,
     {
-        debug_assert!(r.len() % 2 == 0);
+        debug_assert!(r.len().is_multiple_of(2));
         let mut result = F::one();
         for i in (0..r.len()).step_by(2) {
             let x_i = r[i];

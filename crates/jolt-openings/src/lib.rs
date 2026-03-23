@@ -30,7 +30,7 @@ pub mod mock;
 mod reduction;
 mod traits;
 
-pub use claims::{ProverClaim, VerifierClaim};
+pub use claims::{CommittedEval, ProverClaim, VerifierClaim, VirtualEval};
 pub use error::OpeningsError;
 pub use reduction::{rlc_combine, rlc_combine_scalars, OpeningReduction, RlcReduction};
 pub mod transcript;

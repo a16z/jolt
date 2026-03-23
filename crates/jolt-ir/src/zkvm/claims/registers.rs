@@ -7,6 +7,9 @@ use crate::builder::ExprBuilder;
 use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
 use crate::zkvm::tags::{poly, sumcheck};
 
+// Verified against jolt-core/src/zkvm/registers/read_write_checking.rs
+// Formula: Σ eq(r,j) · (rd_wa·(inc+val) + γ·rs1_ra·val + γ²·rs2_ra·val)
+// Degree: 3 (challenge × opening × opening)
 /// Register read-write checking output claim.
 ///
 /// Batches rd write, rs1 read, and rs2 read into a single sumcheck via γ.
@@ -82,6 +85,9 @@ pub fn registers_read_write_checking() -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/registers/val_evaluation.rs
+// Formula: Σ inc(j) · wa(r_addr,j) · LT(r_cycle,j) → output: inc · wa · lt_eval
+// Degree: 3 (challenge × opening × opening, via Toom-Cook at {0,1,2,∞})
 /// Register value evaluation output claim.
 ///
 /// Output claim: `c0·inc·wa`

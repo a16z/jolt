@@ -89,6 +89,7 @@ pub fn generate_witnesses<F: Field>(trace: &[Cycle]) -> WitnessOutput<F> {
     let config = ProverConfig {
         trace_length: padded_len,
         ram_k,
+        bytecode_k,
         one_hot_config,
         rw_config: ReadWriteConfig::new(log_t, log_k_ram),
     };

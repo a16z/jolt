@@ -308,7 +308,7 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
         );
         let n = backend.len(&inputs[0]);
         assert!(
-            n > 0 && n % 2 == 0,
+            n > 0 && n.is_multiple_of(2),
             "input buffer length must be positive and even"
         );
         for (i, buf) in inputs.iter().enumerate().skip(1) {
@@ -844,8 +844,8 @@ mod tests {
         // Pre-scale first poly of each group by γ^t
         let mut scaled_polys = polys;
         for t in 0..n_virtual {
-            for j in 0..n {
-                scaled_polys[t * d][j] *= gamma_powers[t];
+            for val in &mut scaled_polys[t * d] {
+                *val *= gamma_powers[t];
             }
         }
 

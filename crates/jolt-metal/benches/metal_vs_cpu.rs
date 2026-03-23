@@ -250,19 +250,145 @@ fn bench_interpolate(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(n as u64));
 
-        group.bench_with_input(BenchmarkId::new(format!("metal/{label}"), n), &n, |bench, _| {
-            bench.iter(|| {
-                let buf = metal.upload(&data);
-                metal.interpolate_pairs(buf, scalar)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new(format!("metal/{label}"), n),
+            &n,
+            |bench, _| {
+                bench.iter(|| {
+                    let buf = metal.upload(&data);
+                    metal.interpolate_pairs(buf, scalar)
+                });
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new(format!("cpu/{label}"), n), &n, |bench, _| {
-            bench.iter(|| {
-                let buf = cpu.upload(&data);
-                cpu.interpolate_pairs(buf, scalar)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new(format!("cpu/{label}"), n),
+            &n,
+            |bench, _| {
+                bench.iter(|| {
+                    let buf = cpu.upload(&data);
+                    cpu.interpolate_pairs(buf, scalar)
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_rns_vs_cios(c: &mut Criterion) {
+    let metal = MetalBackend::new();
+    let mut group = c.benchmark_group("rns_vs_cios");
+
+    for &d in &[2usize, 4] {
+        let desc = KernelDescriptor {
+            shape: KernelShape::ProductSum {
+                num_inputs_per_product: d,
+                num_products: 1,
+            },
+            degree: d,
+            tensor_split: None,
+        };
+
+        let cios_k = metal.compile_kernel::<Fr>(&desc);
+        let rns_k = metal.compile_rns_reduce(&desc);
+        let rns_bind_k = metal.compile_rns_bind();
+
+        for &n in &[SMALL, LARGE] {
+            let mut rng = StdRng::seed_from_u64(900 + n as u64 + d as u64);
+            let inputs: Vec<Vec<Fr>> = (0..d).map(|_| random_fr(&mut rng, n)).collect();
+            let weights = random_fr(&mut rng, n / 2);
+            let scalar = Fr::random(&mut rng);
+
+            let label = format!("D{d}/2^{}", n.trailing_zeros());
+            group.throughput(Throughput::Elements((n / 2) as u64));
+
+            // CIOS reduce only
+            let cios_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+            let cios_w = metal.upload(&weights);
+            let cios_refs: Vec<_> = cios_bufs.iter().collect();
+            group.bench_with_input(
+                BenchmarkId::new(format!("cios_reduce/{label}"), n),
+                &n,
+                |bench, _| {
+                    bench.iter(|| {
+                        metal.pairwise_reduce(
+                            &cios_refs,
+                            &cios_w,
+                            &cios_k,
+                            desc.num_evals(),
+                            BindingOrder::LowToHigh,
+                        )
+                    });
+                },
+            );
+
+            // RNS reduce only (without upload cost)
+            let rns_bufs: Vec<_> = inputs.iter().map(|v| metal.upload_rns(v)).collect();
+            let rns_w = metal.upload_rns(&weights);
+            let rns_refs: Vec<_> = rns_bufs.iter().collect();
+            group.bench_with_input(
+                BenchmarkId::new(format!("rns_reduce/{label}"), n),
+                &n,
+                |bench, _| {
+                    bench.iter(|| {
+                        metal.rns_pairwise_reduce(
+                            &rns_refs,
+                            &rns_w,
+                            &rns_k,
+                            BindingOrder::LowToHigh,
+                        )
+                    });
+                },
+            );
+
+            // Full sumcheck round: CIOS (reduce + bind)
+            group.bench_with_input(
+                BenchmarkId::new(format!("cios_round/{label}"), n),
+                &n,
+                |bench, _| {
+                    bench.iter(|| {
+                        let mut bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+                        let refs: Vec<_> = bufs.iter().collect();
+                        let _evals = metal.pairwise_reduce(
+                            &refs,
+                            &cios_w,
+                            &cios_k,
+                            desc.num_evals(),
+                            BindingOrder::LowToHigh,
+                        );
+                        bufs = metal.interpolate_pairs_batch(bufs, scalar);
+                        bufs
+                    });
+                },
+            );
+
+            // Full sumcheck round: RNS (reduce + bind)
+            group.bench_with_input(
+                BenchmarkId::new(format!("rns_round/{label}"), n),
+                &n,
+                |bench, _| {
+                    bench.iter(|| {
+                        let mut bufs: Vec<_> = inputs.iter().map(|v| metal.upload_rns(v)).collect();
+                        let refs: Vec<_> = bufs.iter().collect();
+                        let _evals = metal.rns_pairwise_reduce(
+                            &refs,
+                            &rns_w,
+                            &rns_k,
+                            BindingOrder::LowToHigh,
+                        );
+                        for buf in &mut bufs {
+                            metal.rns_bind_inplace(
+                                buf,
+                                scalar,
+                                &rns_bind_k,
+                                BindingOrder::LowToHigh,
+                            );
+                        }
+                        bufs
+                    });
+                },
+            );
+        }
     }
     group.finish();
 }
@@ -275,5 +401,6 @@ criterion_group! {
         bench_pairwise_reduce_unweighted,
         bench_sumcheck_round,
         bench_interpolate,
+        bench_rns_vs_cios,
 }
 criterion_main!(benches);

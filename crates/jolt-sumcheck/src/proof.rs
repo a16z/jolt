@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// The proof is complete when all $n$ round polynomials have been sent;
 /// the verifier is left with a single evaluation claim at the point
 /// $(r_1, \ldots, r_n)$.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct SumcheckProof<F: Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.

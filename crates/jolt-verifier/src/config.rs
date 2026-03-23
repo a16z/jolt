@@ -48,7 +48,7 @@ impl OneHotConfig {
         }
         let log_k = self.log_k_chunk as usize;
         let ra_log_k = self.lookups_ra_virtual_log_k_chunk as usize;
-        if ra_log_k % log_k != 0 {
+        if !ra_log_k.is_multiple_of(log_k) {
             return Err(format!(
                 "lookups_ra_virtual_log_k_chunk ({ra_log_k}) must be divisible by log_k_chunk ({log_k})"
             ));
@@ -195,6 +195,8 @@ pub struct ProverConfig {
     /// RAM address space size (power of 2).
     #[serde(rename = "ram_K")]
     pub ram_k: usize,
+    /// Bytecode address space size (power of 2).
+    pub bytecode_k: usize,
     /// One-hot decomposition configuration.
     pub one_hot_config: OneHotConfig,
     /// Read-write checking phase configuration.
@@ -229,6 +231,11 @@ impl ProverConfig {
     /// `bytecode_k` comes from the verifying key / preprocessing, not the proof.
     pub fn one_hot_params(&self, bytecode_k: usize) -> OneHotParams {
         OneHotParams::from_config(&self.one_hot_config, bytecode_k, self.ram_k)
+    }
+
+    /// Compute [`OneHotParams`] using the `bytecode_k` stored in the config.
+    pub fn one_hot_params_from_config(&self) -> OneHotParams {
+        OneHotParams::from_config(&self.one_hot_config, self.bytecode_k, self.ram_k)
     }
 }
 
@@ -276,6 +283,7 @@ mod tests {
         let config = ProverConfig {
             trace_length: 1 << 20,
             ram_k: 1 << 16,
+            bytecode_k: 1 << 10,
             one_hot_config: OneHotConfig::new(20),
             rw_config: ReadWriteConfig::new(20, 16),
         };
@@ -287,6 +295,7 @@ mod tests {
         let config = ProverConfig {
             trace_length: 100,
             ram_k: 1 << 16,
+            bytecode_k: 1 << 10,
             one_hot_config: OneHotConfig::new(20),
             rw_config: ReadWriteConfig::new(20, 16),
         };

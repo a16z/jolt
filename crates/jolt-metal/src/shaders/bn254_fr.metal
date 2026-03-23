@@ -173,7 +173,11 @@ FR_FUNC_ATTR Fr fr_neg(Fr a) {
     }                                                                        \
 }
 
-FR_FUNC_ATTR Fr fr_mul(Fr a, Fr b) {
+// Montgomery multiply without final reduction. Output is in [0, 2r).
+// Safe as input to another fr_mul/fr_mul_unreduced (CIOS handles inputs < 2r).
+// NOT safe as input to fr_add/fr_sub (which assume [0, r)).
+// Use in product chains where only the final result needs reduction.
+FR_FUNC_ATTR Fr fr_mul_unreduced(Fr a, Fr b) {
     uint T[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     uint T9;
     FR_CIOS_ROUND(T, a, b.limbs[0], T9);
@@ -186,7 +190,11 @@ FR_FUNC_ATTR Fr fr_mul(Fr a, Fr b) {
     FR_CIOS_ROUND(T, a, b.limbs[7], T9);
     Fr result;
     for (int i = 0; i < 8; i++) result.limbs[i] = T[i];
-    return fr_reduce(result);
+    return result;
+}
+
+FR_FUNC_ATTR Fr fr_mul(Fr a, Fr b) {
+    return fr_reduce(fr_mul_unreduced(a, b));
 }
 
 FR_FUNC_ATTR Fr fr_sqr(Fr a) {

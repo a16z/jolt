@@ -60,7 +60,7 @@ define_instruction!(
 define_instruction!(
     /// Virtual ASSERT_WORD_ALIGNMENT: checks value is 4-byte aligned.
     AssertWordAlignment, opcodes::VIRTUAL_ASSERT_WORD_ALIGNMENT, "ASSERT_WORD_ALIGNMENT",
-    |x, _y| u64::from(x % 4 == 0),
+    |x, _y| u64::from(x.is_multiple_of(4)),
     circuit: [Assert],
     instruction: [LeftOperandIsRs1Value],
     table: WordAlignment,
@@ -69,7 +69,7 @@ define_instruction!(
 define_instruction!(
     /// Virtual ASSERT_HALFWORD_ALIGNMENT: checks value is 2-byte aligned.
     AssertHalfwordAlignment, opcodes::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT, "ASSERT_HALFWORD_ALIGNMENT",
-    |x, _y| u64::from(x % 2 == 0),
+    |x, _y| u64::from(x.is_multiple_of(2)),
     circuit: [Assert],
     instruction: [LeftOperandIsRs1Value],
     table: HalfwordAlignment,

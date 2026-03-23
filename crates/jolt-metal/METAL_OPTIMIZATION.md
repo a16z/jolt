@@ -27,20 +27,21 @@ Theoretical: **~96ns per fr_mul per thread** (single-threaded) or **~0.1ns throu
 | EqProduct | 128 B + weight | 3 fr_mul + 3 fr_add | Bandwidth-bound |
 | HammingBooleanity | 128 B + weight | 5 fr_mul + 7 fr_add | Balanced |
 
-### Current performance (post-OPT-1)
+### Current performance (post-OPT-7/OPT-10)
 
 | Op | Size | Metal | CPU | Speedup |
 |----|------|-------|-----|---------|
-| reduce D=4 | 2^14 | 947μs | 642μs | 0.68x (CPU) |
-| reduce D=4 | 2^20 | 18.1ms | 37.8ms | **2.09x** |
-| reduce D=8 | 2^14 | 2.37ms | 2.72ms | 1.15x |
-| reduce D=8 | 2^20 | 85.8ms | 243ms | **2.84x** |
-| reduce D=8 unw | 2^20 | 75.8ms | 92.9ms | **1.23x** |
-| sumcheck D=4 (4r) | 2^20 | 67.2ms | 98.8ms | **1.47x** |
-| sumcheck D=8 (4r) | 2^20 | 210ms | 229ms | **1.09x** |
-| interpolate | 2^20 | 6.2ms | 3.6ms | 0.58x (CPU) |
+| reduce D=4 | 2^14 | 1.09ms | 569μs | 0.52x (CPU) |
+| reduce D=4 | 2^20 | 17.8ms | 28.7ms | **1.61x** |
+| reduce D=4 unw | 2^20 | 15.5ms | 27.1ms | **1.75x** |
+| reduce D=8 | 2^14 | 2.02ms | 1.82ms | 0.90x (CPU) |
+| reduce D=8 | 2^20 | 64.2ms | 89.3ms | **1.39x** |
+| reduce D=8 unw | 2^20 | 52.7ms | 91.8ms | **1.74x** |
+| sumcheck D=4 2^20 | 84.6ms | 82.9ms | 1.02x |
+| sumcheck D=8 2^20 | 167ms | 228ms | **1.37x** |
 
-D=8 barely beats CPU (1.09x for full sumcheck). Root cause: **register pressure**.
+D=8 improved dramatically from Toom-Cook (OPT-7): 30 fr_mul vs 58 naive.
+D=4 uses naive weight-folded approach (Toom-Cook regressed due to lost weight folding).
 
 ## Register Pressure Problem
 
@@ -82,43 +83,39 @@ Simd_shuffle the 18-limb WideAcc *before* `acc_reduce`. Only lane 0 of each simd
 
 Big win at small sizes (acc_reduce dominates). Marginal at large sizes (grid-stride loop dominates).
 
-### OPT-2: Streaming pair loading (D≥8 occupancy fix)
+### OPT-2: Streaming pair loading (D≥8 occupancy fix) ❌
 
-**Impact: 2-4x for D=8** | Effort: Medium
+**Impact: Negative (−6%)** | Effort: Medium | **Status: ABANDONED**
 
-**Root cause**: Loading `lo[D]` + `hi[D]` + `diff[D]` + `cur[D]` all at once requires ~256 registers (D=8). This kills occupancy.
+**Hypothesis**: Loading `lo[D]` + `hi[D]` + `diff[D]` + `cur[D]` all at once requires ~256 registers (D=8), killing occupancy. Split-pass streaming (processing 2 grid points per pass, re-reading inputs 4×) would drop register pressure from ~500 to ~130, improving occupancy ~4×.
 
-**Fix**: Load one pair at a time, compute incrementally:
+**Implementation**: `generate_split_pass_reduce_kernel` in compiler.rs — complete, correct, tested. Enabled at `SPLIT_PASS_THRESHOLD >= 8`.
 
-```metal
-// For each grid point t:
-Fr prod = fr_one();
-for (int k = 0; k < 8; k++) {
-    Fr lo_k = input_k[2*i];
-    Fr hi_k = input_k[2*i+1];
-    Fr val = fr_add(lo_k, fr_mul(t_scaled, fr_sub(hi_k, lo_k)));
-    prod = fr_mul(prod, val);
-}
-```
+**Result**: −6% regression (90.8ms vs 85.8ms at D=8 2^20). The 4× bandwidth re-read cost outweighs the occupancy improvement. D=8 is more compute-bound than bandwidth-bound — the extra memory traffic is not free.
 
-Register usage drops from ~500 to ~100 (just prod + lo_k + hi_k + val + acc + CIOS temps).
-Expected occupancy: ~80 threads/EU → 2.5 simdgroups → **4x improvement for D=8**.
+**Kept**: The split-pass codegen infrastructure remains in compiler.rs (threshold set to 1024, effectively disabled). The barrier correctness fix discovered during this work was applied to both single-pass and split-pass tree reductions.
 
-**Tradeoff**: Loses incremental interpolation — pays `D` extra fr_mul per grid point (for the `t * diff` term). But 4x occupancy improvement should dominate.
+**Bug found & fixed**: `threadgroup_barrier` inside `if (lid < num_simdgroups)` is undefined behavior in Metal (not all threads reach the barrier). This caused incorrect results when n_pairs > 32 (2+ simdgroups active). Fix: remove the outer `if` guard, let all 256 threads reach every barrier. Applied to both single-pass and split-pass kernels.
 
-**Also**: For D=4, streaming doesn't help much (already near occupancy limit due to WideAcc). Keep the current unrolled body for D=4 and only stream for D≥8.
+### OPT-3: Deferred fr_reduce in eval body ✅
 
-### OPT-3: Deferred fr_reduce in eval body
+**Impact: -4% D=8 weighted, -7% D=4 unweighted** | Effort: Low | **Status: IMPLEMENTED**
 
-**Impact: 5-10%** | Effort: Low
+`fr_mul` calls `fr_reduce` after every multiply (conditional subtraction, ~40 ops). Intermediate products are immediately reduced only to be multiplied again.
 
-`fr_mul` calls `fr_reduce` after every multiply (conditional subtraction, ~32 ops). Intermediate products are immediately reduced only to be multiplied again.
+**Key insight**: CIOS with unreduced inputs (< 2r) still produces output < 2r, because BN254's 4r²/R < 2r. So `fr_mul_unreduced` chains are safe. Only reduce before `fr_add` (which assumes [0, r) inputs).
 
-BN254 Fr is 254 bits. An unreduced CIOS output is at most 256 bits. Two unreduced values multiplied: product ≤ 512 bits → fits in CIOS's 9-limb accumulator.
+**Implementation**: Added `fr_mul_unreduced` to `bn254_fr.metal` (same CIOS, skips final `fr_reduce`). Refactored `fr_mul` to call `fr_mul_unreduced` + `fr_reduce`. In `emit_product_sum`, product chains use `fr_mul_unreduced`; explicit `fr_reduce` before `fr_add(sum, prod)`. Saves `(D-2)` reduces per product group per grid point.
 
-**Fix**: Add `fr_mul_unreduced` that skips the final `fr_reduce`. Use it for intermediate products. Only reduce before writing to WideAcc or before the final fr_add.
+**Measured results (post-OPT-1 → post-OPT-3):**
 
-Saves ~`(D-2)` × 32 ops per grid point per pair. For D=8: ~192 ops/pair.
+| Benchmark | Before | After | Change |
+|-----------|--------|-------|--------|
+| reduce D=8 2^20 weighted | 85.8ms | 82.6ms | **-3.7%** |
+| reduce D=8 2^20 unweighted | 75.8ms | 76.2ms | ~0% |
+| reduce D=4 2^20 unweighted | 15.9ms | 14.8ms | **-6.9%** |
+
+Modest improvement. The unweighted D=8 kernel is more bandwidth-bound than compute-bound, so removing compute doesn't help there. The WideAcc accumulator (acc_fmadd/acc_add_fr) also accepts unreduced values safely — no reduce needed before accumulation.
 
 ### OPT-4: Multi-round command batching
 
@@ -136,19 +133,66 @@ One commit + wait for the entire sumcheck. Saves `2 × log₂(n) - 1` command bu
 
 For n=2^20, that's ~39 command buffers → 1. At 50μs each = **~2ms saved**.
 
-### OPT-5: Karatsuba acc_fmadd
+### OPT-5: Karatsuba acc_fmadd ✅
 
-**Impact: ~15% on compute-bound kernels** | Effort: High
+**Impact: -26% at small sizes (2^14), ~0% at 2^20** | Effort: High | **Status: IMPLEMENTED**
 
-`acc_fmadd` does schoolbook 8×8 = 64 mul+mulhi. Karatsuba on 4-limb halves: 3 × (4×4) = 48 muls (25% reduction).
+Replaced schoolbook 8×8 (64 mul+mulhi) with Karatsuba on 4-limb halves: 3 × (4×4) = 48 mul+mulhi (25% reduction). The cross-term P1 = (aL+aH)*(bL+bH) - aL*bL - aH*bH is always non-negative (equals aH*bL + aL*bH).
 
-Complicated by signed intermediates in the accumulator. Defer to later.
+**Implementation details:**
+- `schoolbook_4x4` / `schoolbook_4x4_wide` helpers in wide_accumulator.metal
+- `acc_add_limbs` helper for accumulating N-limb arrays at arbitrary WideAcc offsets
+- Carry bits from 4-limb sums (aL+aH, bL+bH) handled branchlessly via bitmask
+- Operation sequence minimizes peak register pressure (~17 temp regs vs ~26 for schoolbook)
+- P0 and P2 computed, subtracted from Pm, accumulated, and freed sequentially
+
+**Measured results:**
+
+| Benchmark | Before | After | Change |
+|-----------|--------|-------|--------|
+| reduce D=4 2^14 weighted | 998μs | 735μs | **-26%** |
+| reduce D=4 2^20 weighted | 18.5ms | 19.1ms | ~0% |
+| reduce D=8 2^14 weighted | 2.35ms | 2.30ms | -2% |
+| reduce D=8 2^20 weighted | 82.6ms | 83.2ms | ~0% |
+
+Big win at small sizes where acc_fmadd dominates. At 2^20, the eval body's fr_mul chain dominates accumulation cost, so fewer acc_fmadd muls don't help. Later sumcheck rounds (small buffers) benefit most.
 
 ### OPT-6: fr_sqr specialization
 
 **Impact: ~30% faster for squarings** | Effort: Medium
 
 CIOS squaring exploits `a[i]*a[j] = a[j]*a[i]` symmetry, halving cross-terms. Used in Toom-Cook grid evaluation when `t² * x` patterns appear. Not currently exploited in the eval body.
+
+### OPT-7: Toom-Cook kernel codegen (D=8) ✅
+
+**Impact: -20% weighted, -29% unweighted at 2^20** | Effort: High | **Status: IMPLEMENTED (D=8 only)**
+
+Balanced binary splitting for ProductSum evaluation: O(D log D) multiplies instead of O(D²).
+
+**Algorithm (D=8, P=1):**
+1. Split 8 inputs into two groups of 4
+2. Each group: two sub-pairs evaluated at {1,2,∞} via `emit_eval_linear_prod_2` (3 fr_mul each)
+3. Extrapolate both sub-pairs to {3,4} via `emit_ex2` (adds only)
+4. Point-wise multiply → 5 fr_mul per half-product (11 total per half)
+5. Extrapolate half-products to {5,6,7} via `emit_ex4_2` + `emit_ex4` (adds only)
+6. Final point-wise multiply at 8 points → 8 fr_mul
+7. **Total: 30 fr_mul** (vs 56 naive fr_mul_unreduced)
+
+**D=4 not used:** Toom-Cook D=4 (10 fr_mul) regressed because losing weight folding adds 4 `acc_fmadd` (192 widening muls) that outweigh the 4 fewer `fr_mul`. Naive weight-folded D=4 (14 fr_mul, `acc_add_fr`) is faster.
+
+**Measured results (D=8 2^20):**
+
+| Benchmark | Before | After | Change |
+|-----------|--------|-------|--------|
+| weighted | 80 ms | 64 ms | **-20%** |
+| unweighted | 74 ms | 53 ms | **-29%** |
+| sumcheck_round 4r | 202 ms | 167 ms | **-17%** |
+
+### OPT-10: Pre-allocated reduce buffers ✅
+
+**Impact: eliminates per-dispatch allocation** | Effort: Low | **Status: IMPLEMENTED**
+
+Pre-allocate `reduce_partials` (256 KB) and `reduce_params` (16 B) on `MetalBackend` construction. `dispatch_reduce` and `reduce` write params via `contents()` pointer instead of creating new buffers. Eliminates 2 `MTLBuffer` allocations per dispatch.
 
 ## Test Compilation Speedup: `CompileMode::FastCompile`
 
@@ -182,8 +226,11 @@ After each optimization, validate:
 
 ## Implementation Order
 
-1. OPT-1 (simdgroup WideAcc) — standalone shader change, low risk
-2. OPT-3 (deferred fr_reduce) — small shader change, compounds with everything
-3. OPT-2 (streaming for D≥8) — compiler.rs refactor, big occupancy win
-4. OPT-4 (command batching) — needs trait/API change, deferred
-5. OPT-5/6 — deferred, diminishing returns
+1. ✅ OPT-1 (simdgroup WideAcc) — standalone shader change, low risk
+2. ❌ OPT-2 (streaming for D≥8) — bandwidth cost outweighed occupancy gain
+3. ✅ OPT-3 (deferred fr_reduce) — small shader change, compounds with everything
+4. ✅ OPT-5 (Karatsuba acc_fmadd) — 25% fewer muls, big win at small sizes
+5. ✅ OPT-7 (Toom-Cook D=8) — 30 vs 56 muls, 20-29% improvement
+6. ✅ OPT-10 (pre-allocated buffers) — eliminates per-dispatch allocation overhead
+7. OPT-4 (command batching) — needs trait/API change, remaining low-hanging fruit
+8. OPT-6 (fr_sqr) — deferred, not used in ProductSum hot path

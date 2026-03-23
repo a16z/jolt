@@ -9,6 +9,9 @@ use crate::builder::ExprBuilder;
 use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
 use crate::zkvm::tags::{poly, sumcheck};
 
+// Verified against jolt-core/src/zkvm/ram/hamming_booleanity (via booleanity.rs pattern)
+// Formula: eq · (H² − H)
+// Degree: 3 (challenge × opening × opening)
 /// Hamming booleanity: `H² − H`, scaled by eq evaluation challenges.
 ///
 /// Proves that the Hamming weight polynomial H is boolean (0 or 1) at every
@@ -46,6 +49,10 @@ pub fn hamming_booleanity() -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/ram/read_write_checking.rs
+// Formula: Σ eq(r,x) · ra(x) · (val(x) + γ·(inc(x) + val(x)))
+//        = eq·(1+γ)·ra·val + eq·γ·ra·inc
+// Degree: 3 (challenge × opening × opening)
 /// RAM read-write checking output claim.
 ///
 /// Verifies consistency between read values, write values, and increments
@@ -96,6 +103,9 @@ pub fn ram_read_write_checking() -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/ram/output_check.rs
+// Formula: Σ eq(r,k) · io_mask(k) · (val_final(k) − val_io(k))
+// Degree: 3 in jolt-core (eq × io_mask × val), but 2 in IR since eq·io_mask is pre-combined
 /// RAM output check.
 ///
 /// Verifies that final RAM values match expected I/O values in the
@@ -132,6 +142,9 @@ pub fn ram_output_check() -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/ram/val_check.rs
+// Formula: Σ inc(j) · wa(r_addr, j) · (LT(j, r_cycle) + γ)
+// Degree: 3 (challenge × opening × opening, via Toom-Cook at {0,1,2,∞})
 /// RAM value check output claim.
 ///
 /// Relates increment polynomials, write-address polynomials, and a
@@ -169,6 +182,10 @@ pub fn ram_val_check() -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/ram/val_check.rs (input_claim + input_claim_constraint)
+// Formula: (val_rw − init_eval) + γ·(val_final − init_eval)
+//   where init_eval = init_eval_public + Σ(selector_i · advice_i)
+// Degree: 2 (challenge × opening)
 /// RAM value check input claim.
 ///
 /// The input claim for the RAM value check sumcheck has a complex structure
@@ -239,6 +256,9 @@ pub fn ram_val_check_input(n_advice: usize) -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/ram/ (uses same pattern as instruction RA virtual)
+// Formula: eq · Π_{i=0}^{d-1} ra_committed_i
+// Degree: d + 1 (challenge × d openings)
 /// RAM RA virtual sumcheck output claim.
 ///
 /// The virtual RAM RA polynomial is decomposed into `d` committed chunks.
@@ -278,6 +298,9 @@ pub fn ram_ra_virtual(d: usize) -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/ram/raf_evaluation.rs
+// Formula: Σ ra(k) · unmap(k) → output: unmap_eval · ra(r)
+// Degree: 2 (challenge × opening)
 /// RAM RAF evaluation output claim.
 ///
 /// Relates the read-address polynomial to the address unmapping polynomial.

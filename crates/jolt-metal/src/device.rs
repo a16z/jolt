@@ -1,4 +1,7 @@
+use std::collections::HashMap;
 use std::ffi::c_void;
+use std::marker::PhantomData;
+use std::sync::{Arc, Mutex};
 
 use jolt_compute::{BindingOrder, ComputeBackend, Scalar};
 use jolt_field::Field;
@@ -7,7 +10,8 @@ use metal::{Device, MTLResourceOptions, MTLSize};
 
 use crate::buffer::MetalBuffer;
 use crate::compiler::{self, CompileMode};
-use crate::kernel::MetalKernel;
+use crate::kernel::{CachedPipelines, MetalKernel};
+use crate::rns_compiler;
 use crate::shaders::{ElementwiseKernels, InterpolationKernels};
 
 /// Must match `SUM_GROUP_SIZE` in elementwise.metal.
@@ -37,6 +41,15 @@ pub struct MetalBackend {
     elementwise: ElementwiseKernels,
     interpolation: InterpolationKernels,
     compile_mode: CompileMode,
+    /// Pipeline cache keyed on MSL source hash. Since challenges are no longer
+    /// baked into the shader, the MSL is deterministic per kernel shape —
+    /// subsequent calls with different challenges reuse cached pipelines.
+    pipeline_cache: Mutex<HashMap<u64, Arc<CachedPipelines>>>,
+    /// Pre-allocated partials buffer for reduce dispatches.
+    /// Sized for worst case: MAX_REDUCE_GROUPS × max_evals(32) × 32 bytes.
+    reduce_partials: metal::Buffer,
+    /// Pre-allocated params buffer for reduce dispatches. 16 bytes (4 × u32).
+    reduce_params: metal::Buffer,
 }
 
 impl MetalBackend {
@@ -66,12 +79,25 @@ impl MetalBackend {
         let queue = device.new_command_queue();
         let elementwise = ElementwiseKernels::compile(&device);
         let interpolation = InterpolationKernels::compile(&device);
+
+        // Pre-allocate reusable buffers for reduce dispatches.
+        // Partials: 256 groups × 32 evals × 32 bytes = 256 KB
+        let reduce_partials = device.new_buffer(
+            (compiler::MAX_REDUCE_GROUPS * 32 * 32) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        // Params: 4 × u32 = 16 bytes (enough for [n_pairs, inner_log, inner_mask, spare])
+        let reduce_params = device.new_buffer(16, MTLResourceOptions::StorageModeShared);
+
         Self {
             device,
             queue,
             elementwise,
             interpolation,
             compile_mode,
+            pipeline_cache: Mutex::new(HashMap::new()),
+            reduce_partials,
+            reduce_params,
         }
     }
 
@@ -86,30 +112,81 @@ impl MetalBackend {
     }
 
     /// Compile a `KernelDescriptor` into a Metal compute pipeline.
+    ///
+    /// Uses the pipeline cache — subsequent calls with the same descriptor
+    /// shape return cached pipelines without recompilation.
     pub fn compile_kernel<F: Field>(&self, descriptor: &KernelDescriptor) -> MetalKernel<F> {
-        compiler::compile_with_mode(&self.device, descriptor, &[], self.compile_mode)
+        MetalKernel {
+            pipelines: self.get_or_compile(descriptor),
+            challenges_buf: None,
+            _marker: PhantomData,
+        }
     }
 
-    /// Compile with baked challenge values for Custom expression kernels.
+    /// Compile a kernel and upload challenge values for dispatch-time binding.
+    ///
+    /// Pipelines are cached per kernel shape. For Custom kernels, challenges
+    /// are uploaded to a Metal buffer and bound at dispatch time (not baked
+    /// into the shader). Repeated calls with the same descriptor but different
+    /// challenges skip shader compilation entirely.
     pub fn compile_kernel_with_challenges<F: Field>(
         &self,
         descriptor: &KernelDescriptor,
         challenges: &[F],
     ) -> MetalKernel<F> {
-        compiler::compile_with_mode(&self.device, descriptor, challenges, self.compile_mode)
+        let challenges_buf = if challenges.is_empty() {
+            None
+        } else {
+            Some(self.upload_field_buffer(challenges))
+        };
+        MetalKernel {
+            pipelines: self.get_or_compile(descriptor),
+            challenges_buf,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Get cached pipelines or compile and cache them.
+    fn get_or_compile(&self, descriptor: &KernelDescriptor) -> Arc<CachedPipelines> {
+        use std::hash::{Hash, Hasher};
+        let msl = compiler::generate_msl(descriptor, self.compile_mode);
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        msl.source.hash(&mut hasher);
+        let key = hasher.finish();
+
+        let mut cache = self.pipeline_cache.lock().unwrap();
+        if let Some(cached) = cache.get(&key) {
+            return Arc::clone(cached);
+        }
+
+        let pipelines = compiler::compile_msl(&self.device, &msl);
+        cache.insert(key, Arc::clone(&pipelines));
+        pipelines
+    }
+
+    /// Upload a slice of field elements to a shared Metal buffer.
+    fn upload_field_buffer<F: Field>(&self, data: &[F]) -> metal::Buffer {
+        debug_assert_eq!(std::mem::size_of::<F>(), 32);
+        self.device.new_buffer_with_data(
+            data.as_ptr().cast::<std::ffi::c_void>(),
+            std::mem::size_of_val(data) as u64,
+            MTLResourceOptions::StorageModeShared,
+        )
     }
 
     /// Dispatch a reduce kernel and finish partial sums on CPU.
     ///
-    /// Generic over buffer layout: binds inputs at indices `0..K-1`, then
-    /// `weight_buffers` at `K..K+W-1`, partials at `K+W`, params at `K+W+1`.
-    /// This handles both standard (1 weight buffer) and tensor (2 weight buffers).
+    /// Buffer binding layout: `input_0..K-1`, then `weight_buffers` (0–2),
+    /// then optional `challenges_buf`, then `partials`, then `params`.
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_reduce<F: Field>(
         &self,
         pipeline: &metal::ComputePipelineState,
         num_evals: usize,
         inputs: &[&MetalBuffer<F>],
         weight_buffers: &[&metal::Buffer],
+        challenges_buf: Option<&metal::Buffer>,
         params: &[u32],
         n_pairs: usize,
     ) -> Vec<F> {
@@ -121,11 +198,15 @@ impl MetalBackend {
             .div_ceil(compiler::REDUCE_GROUP_SIZE)
             .min(compiler::MAX_REDUCE_GROUPS);
 
-        let partials_buf = self.device.new_buffer(
-            (num_groups * num_evals * std::mem::size_of::<F>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let params_buf = self.upload_params(params);
+        // SAFETY: `reduce_params` is a 16-byte shared buffer (4 × u32). `params`
+        // has at most 3 entries (n_pairs, inner_log, inner_mask). No Metal commands
+        // are in flight — previous command buffer completed before this call.
+        unsafe {
+            let ptr = self.reduce_params.contents().cast::<u32>();
+            for (i, &p) in params.iter().enumerate() {
+                ptr.add(i).write(p);
+            }
+        }
 
         let cmd = self.queue.new_command_buffer();
         let enc = cmd.new_compute_command_encoder();
@@ -139,8 +220,12 @@ impl MetalBackend {
             enc.set_buffer(idx, Some(wbuf), 0);
             idx += 1;
         }
-        enc.set_buffer(idx, Some(&partials_buf), 0);
-        enc.set_buffer(idx + 1, Some(&params_buf), 0);
+        if let Some(chal_buf) = challenges_buf {
+            enc.set_buffer(idx, Some(chal_buf), 0);
+            idx += 1;
+        }
+        enc.set_buffer(idx, Some(&self.reduce_partials), 0);
+        enc.set_buffer(idx + 1, Some(&self.reduce_params), 0);
 
         enc.dispatch_thread_groups(
             MTLSize::new(num_groups as u64, 1, 1),
@@ -152,7 +237,7 @@ impl MetalBackend {
 
         // SAFETY: shared memory is coherent after command buffer completion.
         let partials: &[F] = unsafe {
-            let ptr = partials_buf.contents().cast::<F>();
+            let ptr = self.reduce_partials.contents().cast::<F>();
             std::slice::from_raw_parts(ptr, num_groups * num_evals)
         };
 
@@ -229,11 +314,14 @@ impl MetalBackend {
 
         let num_groups = n.div_ceil(REDUCTION_GROUP_SIZE).min(MAX_REDUCTION_GROUPS);
 
-        let partials_buf = self.device.new_buffer(
-            (num_groups * std::mem::size_of::<F>()) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let params_buf = self.upload_params(&[n as u32, num_groups as u32]);
+        // SAFETY: `reduce_params` is a 16-byte shared buffer (4 × u32). We write
+        // exactly 2 entries. No Metal commands are in flight — previous command
+        // buffer completed before this call.
+        unsafe {
+            let ptr = self.reduce_params.contents().cast::<u32>();
+            ptr.write(n as u32);
+            ptr.add(1).write(num_groups as u32);
+        }
 
         let cmd = self.queue.new_command_buffer();
         let enc = cmd.new_compute_command_encoder();
@@ -243,8 +331,8 @@ impl MetalBackend {
             enc.set_buffer(i as u64, Some(buf), 0);
         }
         let k = input_buffers.len() as u64;
-        enc.set_buffer(k, Some(&partials_buf), 0);
-        enc.set_buffer(k + 1, Some(&params_buf), 0);
+        enc.set_buffer(k, Some(&self.reduce_partials), 0);
+        enc.set_buffer(k + 1, Some(&self.reduce_params), 0);
 
         enc.dispatch_thread_groups(
             MTLSize::new(num_groups as u64, 1, 1),
@@ -256,10 +344,218 @@ impl MetalBackend {
 
         // SAFETY: shared memory is coherent after command buffer completion.
         unsafe {
-            let ptr = partials_buf.contents().cast::<F>();
+            let ptr = self.reduce_partials.contents().cast::<F>();
             let partials = std::slice::from_raw_parts(ptr, num_groups);
             partials.iter().copied().fold(F::zero(), |acc, x| acc + x)
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RNS-Montgomery buffer and dispatch
+// ---------------------------------------------------------------------------
+
+/// Buffer of field elements in RNS-Montgomery SoA format.
+///
+/// Layout: `[B_0: n u32s | B_1: | ... | B_8: | B'_0: | ... | B'_8: ]`
+/// where each element is decomposed into 18 pseudo-Mersenne residues.
+///
+/// Total buffer size: `NUM_PRIMES × n_elements × 4` bytes.
+pub struct RnsBuffer {
+    pub(crate) raw: metal::Buffer,
+    pub(crate) n_elements: usize,
+}
+
+/// SAFETY: Metal buffers are refcounted and safe to share across threads.
+unsafe impl Send for RnsBuffer {}
+/// SAFETY: See above.
+unsafe impl Sync for RnsBuffer {}
+
+impl RnsBuffer {
+    pub fn n_elements(&self) -> usize {
+        self.n_elements
+    }
+
+    pub fn raw(&self) -> &metal::Buffer {
+        &self.raw
+    }
+}
+
+impl MetalBackend {
+    /// Upload field elements as an RNS-Montgomery SoA buffer.
+    ///
+    /// Performs CPU-side conversion from Montgomery form to RNS residues.
+    pub fn upload_rns(&self, data: &[jolt_field::Fr]) -> RnsBuffer {
+        use crate::rns;
+        let soa = rns::batch_fr_to_rns_mont(data);
+        let raw = self.device.new_buffer_with_data(
+            soa.as_ptr().cast::<c_void>(),
+            (soa.len() * 4) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        RnsBuffer {
+            raw,
+            n_elements: data.len(),
+        }
+    }
+
+    /// Compile an RNS-Montgomery reduce kernel.
+    pub fn compile_rns_reduce(
+        &self,
+        descriptor: &KernelDescriptor,
+    ) -> rns_compiler::RnsKernel<jolt_field::Fr> {
+        rns_compiler::compile_rns(&self.device, descriptor)
+    }
+
+    /// Compile the RNS-Montgomery bind kernel.
+    pub fn compile_rns_bind(&self) -> rns_compiler::RnsBindKernel {
+        rns_compiler::compile_rns_bind(&self.device)
+    }
+
+    /// Pairwise reduce in RNS-Montgomery form.
+    ///
+    /// Returns `num_evals` field elements — the sumcheck round polynomial
+    /// evaluations computed entirely on GPU.
+    pub fn rns_pairwise_reduce(
+        &self,
+        inputs: &[&RnsBuffer],
+        weights: &RnsBuffer,
+        kernel: &rns_compiler::RnsKernel<jolt_field::Fr>,
+        order: BindingOrder,
+    ) -> Vec<jolt_field::Fr> {
+        use crate::rns::{self, BASIS_SIZE, SECONDARY_C, SECONDARY_PRIMES};
+        use jolt_field::Fr;
+
+        debug_assert!(!inputs.is_empty());
+        let n = inputs[0].n_elements;
+        let n_pairs = n / 2;
+
+        if n_pairs == 0 {
+            return vec![Fr::from_u64(0); kernel.num_evals];
+        }
+
+        let num_groups = n_pairs
+            .div_ceil(rns_compiler::RNS_REDUCE_GROUP_SIZE)
+            .min(rns_compiler::RNS_MAX_REDUCE_GROUPS);
+
+        let num_evals = kernel.num_evals;
+        let partials_size = BASIS_SIZE * num_groups * num_evals;
+        let partials_buf = self.device.new_buffer(
+            (partials_size * 4) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let params = [n_pairs as u32];
+        let params_buf = self.upload_params(&params);
+
+        let pipeline = match order {
+            BindingOrder::LowToHigh => &kernel.pipeline_l2h,
+            BindingOrder::HighToLow => &kernel.pipeline_h2l,
+        };
+
+        let cmd = self.queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(pipeline);
+
+        for (k, buf) in inputs.iter().enumerate() {
+            enc.set_buffer(k as u64, Some(&buf.raw), 0);
+        }
+        let mut idx = inputs.len() as u64;
+        enc.set_buffer(idx, Some(&weights.raw), 0);
+        idx += 1;
+        enc.set_buffer(idx, Some(&partials_buf), 0);
+        enc.set_buffer(idx + 1, Some(&params_buf), 0);
+
+        enc.dispatch_thread_groups(
+            MTLSize::new(num_groups as u64, 1, 1),
+            MTLSize::new(rns_compiler::RNS_REDUCE_GROUP_SIZE as u64, 1, 1),
+        );
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+
+        // SAFETY: shared memory is coherent after command buffer completion.
+        let partials: &[u32] = unsafe {
+            let ptr = partials_buf.contents().cast::<u32>();
+            std::slice::from_raw_parts(ptr, partials_size)
+        };
+
+        let mut evals = Vec::with_capacity(num_evals);
+        for d_idx in 0..num_evals {
+            let mut bp_residues = [0u32; BASIS_SIZE];
+            for j in 0..BASIS_SIZE {
+                let base = j * num_groups * num_evals;
+                let mut acc = 0u64;
+                for g in 0..num_groups {
+                    acc += partials[base + g * num_evals + d_idx] as u64;
+                    if g % 4 == 3 {
+                        acc = rns::reduce_mod(acc, SECONDARY_PRIMES[j], SECONDARY_C[j]) as u64;
+                    }
+                }
+                bp_residues[j] = rns::reduce_mod(acc, SECONDARY_PRIMES[j], SECONDARY_C[j]);
+            }
+            evals.push(rns::bp_residues_to_fr(&bp_residues));
+        }
+        evals
+    }
+
+    /// In-place bind (pairwise interpolation) in RNS-Montgomery form.
+    ///
+    /// Computes `buf[i] = lo[i] + challenge × (hi[i] - lo[i])` for each pair,
+    /// halving the buffer length.
+    pub fn rns_bind_inplace(
+        &self,
+        buf: &mut RnsBuffer,
+        challenge: jolt_field::Fr,
+        kernel: &rns_compiler::RnsBindKernel,
+        order: BindingOrder,
+    ) {
+        use crate::rns::{self, NUM_PRIMES};
+
+        let n = buf.n_elements;
+        let n_pairs = n / 2;
+        if n_pairs == 0 {
+            buf.n_elements = 0;
+            return;
+        }
+
+        let ch_residues = rns::fr_to_rns_mont(&challenge);
+        let ch_buf = self.device.new_buffer_with_data(
+            ch_residues.as_ptr().cast::<c_void>(),
+            (NUM_PRIMES * 4) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let out_raw = self.device.new_buffer(
+            (NUM_PRIMES * n_pairs * 4) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let params = [n_pairs as u32];
+        let params_buf = self.upload_params(&params);
+
+        let pipeline = match order {
+            BindingOrder::LowToHigh => &kernel.pipeline_l2h,
+            BindingOrder::HighToLow => &kernel.pipeline_h2l,
+        };
+
+        let cmd = self.queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(pipeline);
+        enc.set_buffer(0, Some(&buf.raw), 0);
+        enc.set_buffer(1, Some(&ch_buf), 0);
+        enc.set_buffer(2, Some(&out_raw), 0);
+        enc.set_buffer(3, Some(&params_buf), 0);
+
+        let tpg = pipeline
+            .max_total_threads_per_threadgroup()
+            .min(n_pairs as u64);
+        enc.dispatch_threads(MTLSize::new(n_pairs as u64, 1, 1), MTLSize::new(tpg, 1, 1));
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+
+        buf.raw = out_raw;
+        buf.n_elements = n_pairs;
     }
 }
 
@@ -286,7 +582,7 @@ impl ComputeBackend for MetalBackend {
         desc: &KernelDescriptor,
         challenges: &[F],
     ) -> MetalKernel<F> {
-        compiler::compile_with_mode(&self.device, desc, challenges, self.compile_mode)
+        self.compile_kernel_with_challenges(desc, challenges)
     }
 
     fn upload<T: Scalar>(&self, data: &[T]) -> Self::Buffer<T> {
@@ -349,7 +645,7 @@ impl ComputeBackend for MetalBackend {
         F: Field + From<T>,
     {
         let n = buf.len();
-        debug_assert!(n % 2 == 0 || n == 0);
+        debug_assert!(n.is_multiple_of(2) || n == 0);
         let half = n / 2;
 
         if std::mem::size_of::<T>() == std::mem::size_of::<F>() && std::mem::size_of::<F>() == 32 {
@@ -383,7 +679,7 @@ impl ComputeBackend for MetalBackend {
         order: BindingOrder,
     ) {
         let n = buf.len();
-        debug_assert!(n % 2 == 0 || n == 0);
+        debug_assert!(n.is_multiple_of(2) || n == 0);
         let half = n / 2;
 
         match order {
@@ -494,14 +790,15 @@ impl ComputeBackend for MetalBackend {
         let n = inputs[0].len();
         let n_pairs = n / 2;
         let pipeline = match order {
-            BindingOrder::LowToHigh => &kernel.pipeline_l2h,
-            BindingOrder::HighToLow => &kernel.pipeline_h2l,
+            BindingOrder::LowToHigh => kernel.pipeline_l2h(),
+            BindingOrder::HighToLow => kernel.pipeline_h2l(),
         };
         self.dispatch_reduce(
             pipeline,
-            kernel.num_evals,
+            kernel.num_evals(),
             inputs,
             &[&weights.raw],
+            kernel.active_challenges_buf(),
             &[n_pairs as u32],
             n_pairs,
         )
@@ -518,16 +815,15 @@ impl ComputeBackend for MetalBackend {
         let n = inputs[0].len();
         let n_pairs = n / 2;
         let pipeline = match order {
-            BindingOrder::LowToHigh => &kernel.pipeline_l2h_unw,
-            BindingOrder::HighToLow => &kernel.pipeline_h2l_unw,
+            BindingOrder::LowToHigh => kernel.pipeline_l2h_unw(),
+            BindingOrder::HighToLow => kernel.pipeline_h2l_unw(),
         };
-        // Empty weight_buffers — unweighted kernels don't bind a weight buffer,
-        // so partials lands at buffer(K) and params at buffer(K+1).
         self.dispatch_reduce(
             pipeline,
-            kernel.num_evals,
+            kernel.num_evals(),
             inputs,
             &[],
+            kernel.active_challenges_buf(),
             &[n_pairs as u32],
             n_pairs,
         )
@@ -549,7 +845,7 @@ impl ComputeBackend for MetalBackend {
             .iter()
             .map(|buf| {
                 let n = buf.len();
-                debug_assert!(n % 2 == 0 || n == 0);
+                debug_assert!(n.is_multiple_of(2) || n == 0);
                 let half = n / 2;
                 let out: MetalBuffer<F> = MetalBuffer::zeroed(&self.device, half);
 
@@ -677,10 +973,11 @@ impl ComputeBackend for MetalBackend {
         let inner_log = inner_len.trailing_zeros();
         let inner_mask = (inner_len - 1) as u32;
         self.dispatch_reduce(
-            &kernel.pipeline_tensor,
-            kernel.num_evals,
+            kernel.pipeline_tensor(),
+            kernel.num_evals(),
             inputs,
             &[&outer_weights.raw, &inner_weights.raw],
+            kernel.active_challenges_buf(),
             &[n_pairs as u32, inner_log, inner_mask],
             n_pairs,
         )

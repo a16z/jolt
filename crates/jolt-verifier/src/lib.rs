@@ -1,31 +1,35 @@
-//! Lightweight Jolt proof verification.
+//! Jolt proof verification and shared protocol types.
 //!
-//! This crate defines the canonical proof types, verification key, configuration
-//! types, and top-level [`verify`] function. External consumers import this
-//! crate to verify Jolt proofs — no prover dependencies, no rayon, no compute
-//! backend.
+//! This crate contains everything needed to verify Jolt proofs — no prover
+//! dependencies, no rayon, no compute backend. It also owns the protocol
+//! types and input claim formulas shared by prover and verifier.
 //!
 //! # Crate structure
 //!
 //! | Module | Purpose |
 //! |--------|---------|
-//! | [`config`] | `ProverConfig`, `OneHotConfig`, `ReadWriteConfig`, `OneHotParams` |
-//! | [`proof`] | `JoltProof`, `SumcheckStageProof` |
+//! | [`protocol`] | Stage evaluation types, input claim formulas |
+//! | [`verify`] | `verify_proof()` — stateless proof verification |
+//! | [`proof`] | `JoltProof`, `StageProof` |
+//! | [`config`] | `ProverConfig`, `OneHotConfig`, `ReadWriteConfig` |
 //! | [`key`] | `JoltVerifyingKey` |
 //! | [`error`] | `JoltError` |
-//! | [`stage`] | `StageDescriptor` — config-driven stage verification |
-//! | [`verifier`] | `verify()` — top-level verification pipeline |
 
 pub mod config;
 pub mod error;
 pub mod key;
 pub mod proof;
-pub mod stage;
+pub mod protocol;
+pub mod verify;
+
+// Legacy descriptor-driven verifier (used by existing tests, will be removed)
+#[doc(hidden)]
 pub mod verifier;
 
 pub use config::{OneHotConfig, OneHotParams, ProverConfig, ReadWriteConfig};
 pub use error::JoltError;
 pub use key::JoltVerifyingKey;
-pub use proof::{JoltProof, SumcheckStageProof};
-pub use stage::StageDescriptor;
-pub use verifier::{verify, verify_openings, verify_spartan};
+pub use proof::{JoltProof, StageProof};
+pub use protocol::*;
+pub use verify::verify_proof;
+pub use verifier::{verify_openings, verify_spartan};

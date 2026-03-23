@@ -329,7 +329,7 @@ mod tests {
             factors: vec![0],
         }];
 
-        let claimed_sum = brute_force_formula(&eq_table, &[g.clone()], &terms);
+        let claimed_sum = brute_force_formula(&eq_table, std::slice::from_ref(&g), &terms);
 
         let claim = SumcheckClaim {
             num_vars,
@@ -372,7 +372,7 @@ mod tests {
             },
         ];
 
-        let claimed_sum = brute_force_formula(&eq_table, &[h.clone()], &terms);
+        let claimed_sum = brute_force_formula(&eq_table, std::slice::from_ref(&h), &terms);
 
         let claim = SumcheckClaim {
             num_vars,

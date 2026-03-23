@@ -122,6 +122,62 @@ pub trait RoundVerifier<F: Field> {
     fn next_running_sum(&self, proof: &Self::RoundProof, challenge: F) -> F;
 }
 
+/// Cleartext handler that also captures per-round challenges.
+///
+/// Wraps [`ClearRoundHandler`] behavior but stores the challenge vector
+/// alongside the proof so the prover can extract evaluation points.
+pub struct CaptureHandler<F: Field> {
+    inner: ClearRoundHandler<F>,
+    challenges: Vec<F>,
+}
+
+impl<F: Field> CaptureHandler<F> {
+    pub fn new() -> Self {
+        Self {
+            inner: ClearRoundHandler::new(),
+            challenges: Vec::new(),
+        }
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            inner: ClearRoundHandler::with_capacity(capacity),
+            challenges: Vec::with_capacity(capacity),
+        }
+    }
+}
+
+impl<F: Field> Default for CaptureHandler<F> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Proof + challenge vector produced by [`CaptureHandler`].
+pub struct CapturedProof<F: Field> {
+    pub proof: SumcheckProof<F>,
+    pub challenges: Vec<F>,
+}
+
+impl<F: Field> RoundHandler<F> for CaptureHandler<F> {
+    type Proof = CapturedProof<F>;
+
+    fn absorb_round_poly(&mut self, poly: &UnivariatePoly<F>, transcript: &mut impl Transcript) {
+        self.inner.absorb_round_poly(poly, transcript);
+    }
+
+    fn on_challenge(&mut self, challenge: F) {
+        self.challenges.push(challenge);
+    }
+
+    fn finalize(self) -> CapturedProof<F> {
+        CapturedProof {
+            proof: self.inner.finalize(),
+            challenges: self.challenges,
+        }
+    }
+}
+
 /// Cleartext verifier: checks polynomial consistency and evaluates.
 ///
 /// Pairs with [`ClearRoundHandler`] on the prover side.

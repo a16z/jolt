@@ -12,7 +12,7 @@ pub struct HalfwordAlignmentTable<const XLEN: usize>;
 
 impl<const XLEN: usize> LookupTable<XLEN> for HalfwordAlignmentTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        (index % 2 == 0).into()
+        (index.is_multiple_of(2)).into()
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F

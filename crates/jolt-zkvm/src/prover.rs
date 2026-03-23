@@ -1,68 +1,43 @@
-//! Top-level proving and verification API.
+//! Top-level proving API.
 //!
-//! [`prove`] is the main entry point: it takes a RISC-V execution trace
-//! and produces a complete Jolt proof. [`verify`] checks a proof against
-//! its verifying key.
-//!
-//! For lower-level control, [`prove_pipeline`] accepts pre-processed keys
-//! and a stage factory closure.
+//! [`prove`] takes a RISC-V execution trace and produces a complete Jolt proof
+//! by running the typed DAG pipeline: S1 (Spartan) → S2–S7 (sumcheck stages)
+//! → S8 (PCS opening).
 
 use std::sync::Arc;
 
 use jolt_compute::ComputeBackend;
 use jolt_field::Field;
+use jolt_instructions::flags::InstructionFlags;
 use jolt_ir::zkvm::tags::poly;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningReduction, RlcReduction};
-use jolt_poly::EqPolynomial;
+use jolt_openings::{
+    AdditivelyHomomorphic, CommitmentScheme, OpeningReduction, ProverClaim, RlcReduction,
+};
 use jolt_spartan::SpartanError;
+use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
 use tracer::instruction::Cycle;
 
-use crate::pipeline::prove_stages;
-use crate::preprocessing::{interleave_witnesses, preprocess, JoltConfig};
-use crate::proof::{JoltProof, JoltProvingKey};
-use crate::stage::ProverStage;
-use crate::stages::s1_spartan::UniformSpartanStage;
-use crate::stages::s3_claim_reductions::ClaimReductionStage;
+use crate::preprocessing::{preprocess, JoltConfig};
+use crate::proof::JoltProvingKey;
+use crate::tables::PolynomialTables;
 use crate::witness::generate::generate_witnesses;
-use jolt_verifier::{ProverConfig, StageDescriptor};
 
-/// Output of [`prove`]: a proof and the verifying key needed to check it.
-pub struct ProveOutput<F: Field, PCS: CommitmentScheme<Field = F>> {
-    /// The complete Jolt proof.
-    pub proof: JoltProof<F, PCS>,
-    /// Verifying key (Spartan key + PCS verifier setup).
-    pub verifying_key: jolt_verifier::JoltVerifyingKey<F, PCS>,
-    /// Committed polynomial evaluation tables.
-    /// Needed by the verifier descriptor builder in tests; in production
-    /// the verifier derives claimed sums from the claim threading chain.
-    pub committed_tables: CommittedTables<F>,
-}
-
-/// Committed polynomial evaluation tables carried alongside the proof
-/// so the verifier (in tests) can reconstruct claimed sums.
-pub struct CommittedTables<F: Field> {
-    pub rd_inc: Vec<F>,
-    pub ram_inc: Vec<F>,
-}
-
-/// Errors that can occur during proving.
 #[derive(Debug)]
 pub enum ProveError {
-    /// Spartan R1CS proving failed (constraint violation or sumcheck error).
     Spartan(SpartanError),
 }
 
 impl From<SpartanError> for ProveError {
     fn from(e: SpartanError) -> Self {
-        ProveError::Spartan(e)
+        Self::Spartan(e)
     }
 }
 
 impl std::fmt::Display for ProveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ProveError::Spartan(e) => write!(f, "spartan: {e}"),
+            Self::Spartan(e) => write!(f, "spartan: {e}"),
         }
     }
 }
@@ -70,21 +45,17 @@ impl std::fmt::Display for ProveError {
 impl std::error::Error for ProveError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            ProveError::Spartan(e) => Some(e),
+            Self::Spartan(e) => Some(e),
         }
     }
 }
 
-/// Proves a RISC-V execution trace through the full Jolt pipeline.
-///
-/// Orchestrates: trace → witness gen → preprocess → commit → prove.
-///
-/// The `backend` parameter controls which compute backend is used for
-/// sumcheck kernel evaluation. Pass `Arc::new(CpuBackend)` for CPU-only
-/// or a hybrid backend for GPU-accelerated proving.
-///
-/// Currently wires S3 (increment claim reduction) as the sole sumcheck
-/// stage. Additional stages (S2, S4–S7) will be wired incrementally.
+pub struct ProveOutput<F: Field, PCS: CommitmentScheme<Field = F>> {
+    pub proof: crate::proof::JoltProof<F, PCS>,
+    pub verifying_key: jolt_verifier::JoltVerifyingKey<F, PCS>,
+    pub tables: PolynomialTables<F>,
+}
+
 #[tracing::instrument(skip_all, name = "prove")]
 pub fn prove<PCS, B>(
     trace: &[Cycle],
@@ -96,231 +67,221 @@ where
     B: ComputeBackend,
 {
     let output = generate_witnesses::<PCS::Field>(trace);
+    let config = output.config.clone();
+    let ohp = config.one_hot_params_from_config();
+    let jolt_config = JoltConfig { num_cycles: output.cycle_witnesses.len() };
+    let key: JoltProvingKey<PCS::Field, PCS> = preprocess(&jolt_config, pcs_setup);
 
-    let config = JoltConfig {
-        num_cycles: output.cycle_witnesses.len(),
-    };
-    let key: JoltProvingKey<PCS::Field, PCS> = preprocess(&config, pcs_setup);
-
-    let rd_inc = output.witness_store.get(poly::RD_INC).to_vec();
-    let ram_inc = output.witness_store.get(poly::RAM_INC).to_vec();
-
-    let (com_ram_inc, _) = PCS::commit(&ram_inc, &key.pcs_prover_setup);
-    let (com_rd_inc, _) = PCS::commit(&rd_inc, &key.pcs_prover_setup);
-    let poly_commitments = vec![com_ram_inc, com_rd_inc];
+    let tables = build_tables::<PCS::Field>(trace, &output, &ohp);
 
     let mut transcript = jolt_transcript::Blake2bTranscript::<PCS::Field>::new(b"jolt-v2");
 
-    let proof = prove_pipeline::<PCS, jolt_transcript::Blake2bTranscript<PCS::Field>>(
-        &key,
-        &output.cycle_witnesses,
-        poly_commitments,
-        |_r_x, r_y, transcript| {
-            build_prover_stages(&rd_inc, &ram_inc, r_y, transcript, Arc::clone(&backend))
-        },
-        &mut transcript,
-    )?;
+    // S0: commit witness
+    let flat_witness =
+        crate::preprocessing::interleave_witnesses(&key.spartan_key, &output.cycle_witnesses);
+    let (witness_commitment, _) = PCS::commit(&flat_witness, &key.pcs_prover_setup);
+    transcript.append_bytes(format!("{witness_commitment:?}").as_bytes());
 
-    let verifying_key = jolt_verifier::JoltVerifyingKey {
-        spartan_key: key.spartan_key,
-        pcs_setup: key.pcs_verifier_setup,
+    // S1–S7: typed DAG stages.
+    // After each stage, append evaluations to the transcript for Fiat-Shamir
+    // binding. The verifier must do the same between verify_sumcheck calls.
+    use jolt_transcript::AppendToTranscript;
+    use jolt_verifier::protocol::types::PackEvals;
+
+    let flush = |evals: &[PCS::Field], t: &mut jolt_transcript::Blake2bTranscript<PCS::Field>| {
+        for &e in evals { e.append_to_transcript(t); }
     };
+
+    let s1 = crate::stages::prove_spartan(&tables, &config, &key.spartan_key, &flat_witness, &mut transcript, &backend)?;
+
+    let s2 = crate::stages::prove_stage2(&s1, &tables, &config, &mut transcript, &backend);
+    flush(&s2.evals.pack(), &mut transcript);
+
+    let s3 = crate::stages::prove_stage3(&s1, &s2.evals, &tables, &config, &mut transcript, &backend);
+    flush(&s3.evals.pack(), &mut transcript);
+
+    let s4 = crate::stages::prove_stage4(&s2.evals, &s3.evals, &tables, &config, &mut transcript, &backend);
+    flush(&s4.evals.pack(), &mut transcript);
+
+    let s5 = crate::stages::prove_stage5(&s2.evals, &s4.evals, &tables, &config, &mut transcript, &backend);
+    flush(&s5.evals.pack(), &mut transcript);
+
+    let s6 = crate::stages::prove_stage6(&s2.evals, &s4.evals, &s5.evals, &tables, &config, &mut transcript, &backend);
+    flush(&s6.evals.pack(), &mut transcript);
+
+    let s7 = crate::stages::prove_stage7(&s5.evals, &s6.evals, &tables, &config, &mut transcript, &backend);
+    flush(&s7.evals.pack(), &mut transcript);
+
+    let sp = |proof: &SumcheckProof<PCS::Field>, evals: Vec<PCS::Field>| {
+        jolt_verifier::StageProof { round_polys: proof.clone(), evals }
+    };
+    let stage_proofs = vec![
+        sp(&s2.proof, s2.evals.pack()),
+        sp(&s3.proof, s3.evals.pack()),
+        sp(&s4.proof, s4.evals.pack()),
+        sp(&s5.proof, s5.evals.pack()),
+        sp(&s6.proof, s6.evals.pack()),
+        sp(&s7.proof, s7.evals.pack()),
+    ];
+
+    // S8: PCS opening
+    let unified = &s7.evals.unified_point;
+    let lagrange = lagrange_zero_selector(&unified[..ohp.log_k_chunk]);
+
+    let commitments = commit_polynomials::<PCS>(&tables, &key.pcs_prover_setup);
+    let pcs_claims = build_pcs_claims(&tables, &s1, &s6.evals, &s7.evals, unified, lagrange, &flat_witness);
+    let (reduced, ()) =
+        <RlcReduction as OpeningReduction<PCS>>::reduce_prover(pcs_claims, &mut transcript);
+
+    let opening_proofs = reduced
+        .into_iter()
+        .map(|c| {
+            let poly: PCS::Polynomial = c.evaluations.into();
+            PCS::open(&poly, &c.point, c.eval, &key.pcs_prover_setup, None, &mut transcript)
+        })
+        .collect();
 
     Ok(ProveOutput {
-        proof,
-        verifying_key,
-        committed_tables: CommittedTables { rd_inc, ram_inc },
+        proof: crate::proof::JoltProof {
+            config,
+            spartan_proof: s1.proof,
+            stage_proofs,
+            opening_proofs,
+            witness_commitment,
+            commitments,
+        },
+        verifying_key: jolt_verifier::JoltVerifyingKey {
+            spartan_key: key.spartan_key,
+            pcs_setup: key.pcs_verifier_setup,
+        },
+        tables,
     })
 }
 
-/// Verifies a proof produced by [`prove`].
-///
-/// The `committed_tables` are needed to reconstruct claimed sums for
-/// the verifier stage descriptors. In production, these would be derived
-/// from the claim threading chain instead.
-pub fn verify<PCS>(output: &ProveOutput<PCS::Field, PCS>) -> Result<(), jolt_verifier::JoltError>
-where
-    PCS: AdditivelyHomomorphic,
-{
-    let mut transcript = jolt_transcript::Blake2bTranscript::<PCS::Field>::new(b"jolt-v2");
-
-    let tables = &output.committed_tables;
-
-    let _ = jolt_verifier::verify::<PCS, jolt_transcript::Blake2bTranscript<PCS::Field>>(
-        &output.proof,
-        &output.verifying_key,
-        |_r_x, r_y, transcript| {
-            build_verifier_descriptors(&tables.rd_inc, &tables.ram_inc, r_y, transcript)
-        },
-        &mut transcript,
-    )?;
-
-    Ok(())
+fn lagrange_zero_selector<F: Field>(r: &[F]) -> F {
+    r.iter().fold(F::one(), |acc, &ri| acc * (F::one() - ri))
 }
 
-/// Runs the Jolt proving pipeline from pre-processed inputs.
-///
-/// This is the lower-level entry point used by [`prove`] and by tests
-/// that construct their own witness data. It orchestrates:
-///
-/// 1. Interleave per-cycle witnesses into the flat R1CS witness
-/// 2. Commit the witness and append commitment to transcript
-/// 3. Run uniform Spartan (S1) to produce the R1CS proof
-/// 4. Build sumcheck stages via `build_stages(r_x, r_y)`
-/// 5. Run S2–S7 sumcheck stages
-/// 6. Collect all opening claims (stages + Spartan witness)
-/// 7. RLC-reduce and produce batch PCS opening proofs (S8)
-pub fn prove_pipeline<PCS, T>(
-    key: &JoltProvingKey<PCS::Field, PCS>,
-    cycle_witnesses: &[Vec<PCS::Field>],
-    poly_commitments: Vec<PCS::Output>,
-    build_stages: impl FnOnce(
-        &[PCS::Field],
-        &[PCS::Field],
-        &mut T,
-    ) -> Vec<Box<dyn ProverStage<PCS::Field, T>>>,
-    transcript: &mut T,
-) -> Result<JoltProof<PCS::Field, PCS>, ProveError>
-where
-    PCS: AdditivelyHomomorphic,
-    T: Transcript<Challenge = PCS::Field>,
-{
-    // S0: Interleave per-cycle witnesses and commit.
-    let (flat_witness, witness_commitment) = {
-        let _span = tracing::info_span!("S0_witness_commit").entered();
-        let flat_witness = interleave_witnesses(&key.spartan_key, cycle_witnesses);
-        let (witness_commitment, _) = PCS::commit(&flat_witness, &key.pcs_prover_setup);
-        transcript.append_bytes(format!("{witness_commitment:?}").as_bytes());
-        tracing::info!(
-            num_cycles = key.spartan_key.num_cycles,
-            witness_len = flat_witness.len(),
-            "witness committed"
-        );
-        (flat_witness, witness_commitment)
-    };
-
-    // S1: Uniform Spartan PIOP.
-    let spartan_result = {
-        let _span = tracing::info_span!("S1_spartan").entered();
-        UniformSpartanStage::prove(&key.spartan_key, &flat_witness, &flat_witness, transcript)?
-    };
-
-    // Build stages using Spartan challenge vectors. Transcript is passed so
-    // the factory can squeeze batching challenges at the correct Fiat-Shamir state.
-    let mut stages = build_stages(&spartan_result.r_x, &spartan_result.r_y, transcript);
-
-    // S2–S7: Sumcheck stages.
-    let (stage_proofs, mut opening_claims) = prove_stages(&mut stages, transcript);
-
-    // Spartan witness opening claim — added last to match verifier ordering.
-    opening_claims.push(spartan_result.witness_opening_claim);
-
-    // S8: RLC reduction + PCS opening proofs.
-    let proofs = {
-        let _span = tracing::info_span!("S8_opening_proofs").entered();
-        tracing::info!(total_claims = opening_claims.len(), "reducing and opening");
-
-        let (reduced, ()) =
-            <RlcReduction as OpeningReduction<PCS>>::reduce_prover(opening_claims, transcript);
-
-        tracing::info!(reduced_claims = reduced.len(), "opening PCS proofs");
-
-        reduced
-            .into_iter()
-            .map(|claim| {
-                let poly: PCS::Polynomial = claim.evaluations.into();
-                PCS::open(
-                    &poly,
-                    &claim.point,
-                    claim.eval,
-                    &key.pcs_prover_setup,
-                    None,
-                    transcript,
-                )
-            })
-            .collect()
-    };
-
-    Ok(JoltProof {
-        config: ProverConfig {
-            trace_length: key.spartan_key.num_cycles,
-            ram_k: 0,
-            one_hot_config: jolt_verifier::OneHotConfig::new(
-                key.spartan_key.num_cycles.trailing_zeros() as usize,
-            ),
-            rw_config: jolt_verifier::ReadWriteConfig::new(
-                key.spartan_key.num_cycles.trailing_zeros() as usize,
-                0,
-            ),
-        },
-        spartan_proof: spartan_result.proof,
-        stage_proofs,
-        opening_proofs: proofs,
-        witness_commitment,
-        commitments: poly_commitments,
-    })
+fn commit_polynomials<PCS: AdditivelyHomomorphic>(
+    tables: &PolynomialTables<PCS::Field>,
+    setup: &PCS::ProverSetup,
+) -> Vec<PCS::Output> {
+    let mut out = Vec::new();
+    let commit = |data: &[PCS::Field]| PCS::commit(data, setup).0;
+    out.push(commit(&tables.ram_inc));
+    out.push(commit(&tables.rd_inc));
+    for ra in &tables.instruction_ra { out.push(commit(ra)); }
+    for ra in &tables.bytecode_ra { out.push(commit(ra)); }
+    for ra in &tables.ram_ra { out.push(commit(ra)); }
+    out
 }
 
-/// Builds prover stages for S2–S7.
-///
-/// Currently implements S3 increment reduction only.
-fn build_prover_stages<F, T, B>(
-    rd_inc: &[F],
-    ram_inc: &[F],
-    r_y: &[F],
-    transcript: &mut T,
-    backend: Arc<B>,
-) -> Vec<Box<dyn ProverStage<F, T>>>
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-    B: ComputeBackend,
-{
-    let c0: F = transcript.challenge();
-    let c1: F = transcript.challenge();
+fn build_pcs_claims<F: Field>(
+    tables: &PolynomialTables<F>,
+    s1: &jolt_verifier::protocol::types::SpartanOutput<F>,
+    s6: &jolt_verifier::protocol::types::S6Evals<F>,
+    s7: &jolt_verifier::protocol::types::S7Evals<F>,
+    unified: &[F],
+    lagrange: F,
+    flat_witness: &[F],
+) -> Vec<ProverClaim<F>> {
+    let mut claims = Vec::new();
+    let pcs = |table: Vec<F>, point: Vec<F>, eval: F| ProverClaim { evaluations: table, point, eval };
 
-    let num_cycle_vars = rd_inc.len().trailing_zeros() as usize;
-    let r_cycle = &r_y[..num_cycle_vars];
+    // Dense: Lagrange-normalized to unified point
+    claims.push(pcs(tables.ram_inc.clone(), unified.to_vec(), s6.ram_inc_reduced.eval * lagrange));
+    claims.push(pcs(tables.rd_inc.clone(), unified.to_vec(), s6.rd_inc_reduced.eval * lagrange));
 
-    let inc_stage = ClaimReductionStage::increment(
-        ram_inc.to_vec(),
-        rd_inc.to_vec(),
-        r_cycle.to_vec(),
-        c0,
-        c1,
-        backend,
-    );
+    // RA polys at unified point
+    for (i, e) in s7.instruction_ra.iter().enumerate() {
+        claims.push(pcs(tables.instruction_ra[i].clone(), unified.to_vec(), e.eval));
+    }
+    for (i, e) in s7.bytecode_ra.iter().enumerate() {
+        claims.push(pcs(tables.bytecode_ra[i].clone(), unified.to_vec(), e.eval));
+    }
+    for (i, e) in s7.ram_ra.iter().enumerate() {
+        claims.push(pcs(tables.ram_ra[i].clone(), unified.to_vec(), e.eval));
+    }
 
-    vec![Box::new(inc_stage)]
+    // Spartan witness
+    claims.push(pcs(flat_witness.to_vec(), s1.r_y.clone(), s1.proof.witness_eval));
+    claims
 }
 
-/// Builds verifier stage descriptors matching [`build_prover_stages`].
-fn build_verifier_descriptors<F, T>(
-    rd_inc: &[F],
-    ram_inc: &[F],
-    r_y: &[F],
-    transcript: &mut T,
-) -> Vec<StageDescriptor<F>>
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    let c0: F = transcript.challenge();
-    let c1: F = transcript.challenge();
+fn build_tables<F: Field>(
+    trace: &[Cycle],
+    output: &crate::witness::generate::WitnessOutput<F>,
+    ohp: &jolt_verifier::OneHotParams,
+) -> PolynomialTables<F> {
+    let cw = &output.cycle_witnesses;
+    let n = cw.len();
+    let col = |idx: usize| -> Vec<F> { cw.iter().map(|w| w[idx]).collect() };
+    let flag = |f: InstructionFlags| extract_instruction_flag_poly(trace, n, f as usize);
 
-    let num_cycle_vars = rd_inc.len().trailing_zeros() as usize;
-    let r_cycle = &r_y[..num_cycle_vars];
+    PolynomialTables {
+        ram_inc: output.witness_store.get(poly::RAM_INC).to_vec(),
+        rd_inc: output.witness_store.get(poly::RD_INC).to_vec(),
+        instruction_ra: (0..ohp.instruction_d).map(|i| output.witness_store.get(poly::instruction_ra(i)).to_vec()).collect(),
+        bytecode_ra: (0..ohp.bytecode_d).map(|i| output.witness_store.get(poly::bytecode_ra(i)).to_vec()).collect(),
+        ram_ra: (0..ohp.ram_d).map(|i| output.witness_store.get(poly::ram_ra_committed(i)).to_vec()).collect(),
+        rd_write_value: col(crate::r1cs::V_RD_WRITE_VALUE),
+        rs1_value: col(crate::r1cs::V_RS1_VALUE),
+        rs2_value: col(crate::r1cs::V_RS2_VALUE),
+        hamming_weight: cw.iter().map(|w| w[crate::r1cs::V_FLAG_LOAD] + w[crate::r1cs::V_FLAG_STORE]).collect(),
+        ram_address: col(crate::r1cs::V_RAM_ADDRESS),
+        ram_read_value: col(crate::r1cs::V_RAM_READ_VALUE),
+        ram_write_value: col(crate::r1cs::V_RAM_WRITE_VALUE),
+        lookup_output: col(crate::r1cs::V_LOOKUP_OUTPUT),
+        left_instruction_input: col(crate::r1cs::V_LEFT_INSTRUCTION_INPUT),
+        right_instruction_input: col(crate::r1cs::V_RIGHT_INSTRUCTION_INPUT),
+        is_rd_not_zero: flag(InstructionFlags::IsRdNotZero),
+        write_lookup_to_rd_flag: col(crate::r1cs::V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD),
+        jump_flag: col(crate::r1cs::V_FLAG_JUMP),
+        branch_flag: col(crate::r1cs::V_BRANCH),
+        next_is_noop: col(crate::r1cs::V_NEXT_IS_NOOP),
+        left_is_rs1: flag(InstructionFlags::LeftOperandIsRs1Value),
+        left_is_pc: flag(InstructionFlags::LeftOperandIsPC),
+        right_is_rs2: flag(InstructionFlags::RightOperandIsRs2Value),
+        right_is_imm: flag(InstructionFlags::RightOperandIsImm),
+        unexpanded_pc: col(crate::r1cs::V_UNEXPANDED_PC),
+        imm: col(crate::r1cs::V_IMM),
+        rs1_ra: extract_register_addr(trace, n, |c| c.rs1_read().map(|(a, _)| a as usize)),
+        rs2_ra: extract_register_addr(trace, n, |c| c.rs2_read().map(|(a, _)| a as usize)),
+        rd_wa: extract_register_addr(trace, n, |c| c.rd_write().map(|(a, _, _)| a as usize)),
+        next_unexpanded_pc: col(crate::r1cs::V_NEXT_UNEXPANDED_PC),
+        next_pc: col(crate::r1cs::V_NEXT_PC),
+        next_is_virtual: col(crate::r1cs::V_NEXT_IS_VIRTUAL),
+        next_is_first_in_sequence: col(crate::r1cs::V_NEXT_IS_FIRST_IN_SEQUENCE),
+    }
+}
 
-    let n = rd_inc.len();
-    let eq_table = EqPolynomial::new(r_cycle.to_vec()).evaluations();
+fn extract_register_addr<F: Field>(
+    trace: &[Cycle],
+    padded_len: usize,
+    accessor: impl Fn(&Cycle) -> Option<usize>,
+) -> Vec<F> {
+    let mut poly: Vec<F> = trace
+        .iter()
+        .map(|c| accessor(c).map_or(F::zero(), |a| F::from_u64(a as u64)))
+        .collect();
+    poly.resize(padded_len, F::zero());
+    poly
+}
 
-    let claimed_sum: F = (0..n)
-        .map(|j| eq_table[j] * (c0 * ram_inc[j] + c1 * rd_inc[j]))
-        .sum();
+fn extract_instruction_flag_poly<F: Field>(
+    trace: &[Cycle],
+    padded_len: usize,
+    flag_idx: usize,
+) -> Vec<F> {
+    let noop_flags =
+        crate::witness::flags::instruction_flags(&tracer::instruction::Instruction::NoOp);
+    let pad = if noop_flags[flag_idx] { F::one() } else { F::zero() };
+    let bool_to_f = |b: bool| if b { F::one() } else { F::zero() };
 
-    let desc =
-        StageDescriptor::claim_reduction(r_cycle.to_vec(), vec![c0, c1], claimed_sum, vec![0, 1])
-            .with_reverse_challenges();
-
-    vec![desc]
+    let mut poly: Vec<F> = trace
+        .iter()
+        .map(|c| bool_to_f(crate::witness::flags::instruction_flags(&c.instruction())[flag_idx]))
+        .collect();
+    poly.resize(padded_len, pad);
+    poly
 }

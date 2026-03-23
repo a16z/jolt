@@ -249,7 +249,7 @@ mod tests {
 
         // Full table: f(x0, x1) = g(x0) · h(x1)
         let eq_full = EqPolynomial::new(r.clone()).evaluations();
-        let claimed_sum: Fr = (0..n)
+        let _claimed_sum: Fr = (0..n)
             .map(|idx| {
                 let x0 = idx >> k;
                 let x1 = idx & ((1 << k) - 1);
@@ -350,7 +350,7 @@ mod tests {
             })
             .sum();
 
-        let claim = SumcheckClaim {
+        let _claim = SumcheckClaim {
             num_vars,
             degree: d + 2, // eq × g × Π p_j => degree d+2 in the full thing
             // Actually, address phase has degree 2 (eq · g) and cycle phase
@@ -518,7 +518,7 @@ mod tests {
 
         let hook: RoundHook<Fr, CpuBackend> =
             Box::new(move |_round, _challenge, _eval| {
-                hook_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let _ = hook_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             });
 
         // Single segment with all rounds + a hook, no actual transitions.
@@ -664,14 +664,14 @@ mod tests {
         // We build the full polynomial table for address phase: each position
         // in the full table = g(x0) * Π p_j(x1).
         let mut full_table = vec![Fr::zero(); n];
-        for idx in 0..n {
+        for (idx, entry) in full_table.iter_mut().enumerate() {
             let x0 = idx >> k;
             let x1 = idx & ((1 << k) - 1);
             let mut prod = g_evals[x0];
             for pj in &p_evals {
                 prod *= pj[x1];
             }
-            full_table[idx] = prod;
+            *entry = prod;
         }
 
         // Address phase claim — degree is only 2 because it's eq · full_table.
@@ -723,7 +723,7 @@ mod tests {
                 let eq_inner = EqPolynomial::new(r_clone[m..].to_vec()).evaluations();
 
                 // Scale the first p poly by g_scalar.
-                let mut p0_scaled: Vec<Fr> = p_evals_clone[0]
+                let p0_scaled: Vec<Fr> = p_evals_clone[0]
                     .iter()
                     .map(|&v| v * g_scalar)
                     .collect();
@@ -732,8 +732,8 @@ mod tests {
                 let inner_claimed_sum: Fr = (0..(1 << k))
                     .map(|x1| {
                         let mut prod = p0_scaled[x1];
-                        for j in 1..d {
-                            prod *= p_evals_clone[j][x1];
+                        for pj in p_evals_clone.iter().skip(1) {
+                            prod *= pj[x1];
                         }
                         eq_inner[x1] * prod
                     })
@@ -744,8 +744,8 @@ mod tests {
 
                 let mut inputs: Vec<Vec<Fr>> = Vec::with_capacity(d);
                 inputs.push(p0_scaled);
-                for j in 1..d {
-                    inputs.push(p_evals_clone[j].clone());
+                for pj in p_evals_clone.iter().skip(1) {
+                    inputs.push(pj.clone());
                 }
                 let input_bufs: Vec<_> = inputs.iter().map(|p| backend.upload(p)).collect();
 

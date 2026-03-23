@@ -9,6 +9,10 @@ use crate::builder::ExprBuilder;
 use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
 use crate::zkvm::tags::{poly, sumcheck};
 
+// Verified against jolt-core/src/zkvm/spartan/shift.rs
+// Formula: Σ EqPlusOne(r,j) · (unexpanded_pc + γ·pc + γ²·is_virtual + γ³·is_first)
+//        + γ⁴ · EqPlusOne(r_prod,j) · (1 − is_noop)
+// Degree: 2 (challenge × opening)
 /// Shift sumcheck output claim.
 ///
 /// Verifies PC, unexpanded PC, is_virtual, is_first_in_sequence, and is_noop
@@ -84,33 +88,88 @@ pub fn shift() -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/spartan/instruction_input.rs
+// Formula: eq(r,x) · ((ris2·rs2 + rimm·imm) + γ·(lrs1·rs1 + lpc·pc))
+// Degree: 3 (challenge × opening × opening)
 /// Instruction input virtualization output claim.
 ///
-/// Batches left and right instruction inputs via γ.
+/// Proves that the virtual instruction input polynomials decompose correctly
+/// into their flag×value sub-polynomials:
 ///
-/// Output claim: `eq·(right_input + γ·left_input)`
+/// ```text
+///   LeftInstructionInput  = left_is_rs1 · rs1_value + left_is_pc · unexpanded_pc
+///   RightInstructionInput = right_is_rs2 · rs2_value + right_is_imm · imm
+/// ```
 ///
-/// Challenge layout: `[eq_eval, γ]`
+/// Output claim:
+/// ```text
+///   c_right · (ris2·rs2 + rimm·imm) + c_left · (lrs1·rs1 + lpc·pc)
+/// ```
+///
+/// Challenge layout: `[c_right, c_left]` where `c_right = eq_eval`,
+/// `c_left = eq_eval·γ`.
 pub fn instruction_input() -> ClaimDefinition {
     let b = ExprBuilder::new();
-    let right = b.opening(0);
-    let left = b.opening(1);
-    let eq = b.challenge(0);
-    let gamma = b.challenge(1);
+    let right_is_rs2 = b.opening(0);
+    let rs2_value = b.opening(1);
+    let right_is_imm = b.opening(2);
+    let imm = b.opening(3);
+    let left_is_rs1 = b.opening(4);
+    let rs1_value = b.opening(5);
+    let left_is_pc = b.opening(6);
+    let unexpanded_pc = b.opening(7);
 
-    let expr = b.build(eq * (right + gamma * left));
+    let c_right = b.challenge(0);
+    let c_left = b.challenge(1);
+
+    let expr = b.build(
+        c_right * right_is_rs2 * rs2_value
+            + c_right * right_is_imm * imm
+            + c_left * left_is_rs1 * rs1_value
+            + c_left * left_is_pc * unexpanded_pc,
+    );
 
     ClaimDefinition {
         expr,
         opening_bindings: vec![
             OpeningBinding {
                 var_id: 0,
-                polynomial_tag: poly::RIGHT_INSTRUCTION_INPUT,
+                polynomial_tag: poly::RIGHT_IS_RS2,
                 sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
             },
             OpeningBinding {
                 var_id: 1,
-                polynomial_tag: poly::LEFT_INSTRUCTION_INPUT,
+                polynomial_tag: poly::RS2_VALUE,
+                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+            },
+            OpeningBinding {
+                var_id: 2,
+                polynomial_tag: poly::RIGHT_IS_IMM,
+                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+            },
+            OpeningBinding {
+                var_id: 3,
+                polynomial_tag: poly::IMM,
+                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+            },
+            OpeningBinding {
+                var_id: 4,
+                polynomial_tag: poly::LEFT_IS_RS1,
+                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+            },
+            OpeningBinding {
+                var_id: 5,
+                polynomial_tag: poly::RS1_VALUE,
+                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+            },
+            OpeningBinding {
+                var_id: 6,
+                polynomial_tag: poly::LEFT_IS_PC,
+                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+            },
+            OpeningBinding {
+                var_id: 7,
+                polynomial_tag: poly::UNEXPANDED_PC,
                 sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
             },
         ],
@@ -127,6 +186,10 @@ pub fn instruction_input() -> ClaimDefinition {
     }
 }
 
+// Verified against jolt-core/src/zkvm/spartan/product.rs
+// Formula: Σ L(τ_high,y) · eq(τ_low,x) · Left(x,y) · Right(x,y)
+// Output after binding: Σ_i γ^i · left_i · right_i (5 product constraints)
+// Degree: 3 (challenge × opening × opening)
 /// Product virtual remainder output claim.
 ///
 /// Batches five R1CS product-virtual constraints via γ-power coefficients:
@@ -253,14 +316,27 @@ mod tests {
     #[test]
     fn instruction_input_formula() {
         let claim = instruction_input();
-        let right = Fr::from_u64(3);
-        let left = Fr::from_u64(5);
-        let eq = Fr::from_u64(7);
-        let gamma = Fr::from_u64(11);
+        // openings: [ris2, rs2, rimm, imm, lrs1, rs1, lpc, pc]
+        let ris2 = Fr::from_u64(1);
+        let rs2 = Fr::from_u64(10);
+        let rimm = Fr::from_u64(0);
+        let imm = Fr::from_u64(20);
+        let lrs1 = Fr::from_u64(1);
+        let rs1 = Fr::from_u64(30);
+        let lpc = Fr::from_u64(0);
+        let pc = Fr::from_u64(40);
+        let openings = vec![ris2, rs2, rimm, imm, lrs1, rs1, lpc, pc];
 
-        // eq*(right + γ*left) = 7*(3 + 11*5) = 7*58 = 406
-        let result = claim.evaluate::<Fr>(&[right, left], &[eq, gamma]);
-        assert_eq!(result, Fr::from_u64(406));
+        let eq_eval = Fr::from_u64(7);
+        let gamma = Fr::from_u64(11);
+        let c_right = eq_eval;
+        let c_left = eq_eval * gamma;
+        let challenges = vec![c_right, c_left];
+
+        // c_right*(1*10 + 0*20) + c_left*(1*30 + 0*40)
+        // = 7*10 + 77*30 = 70 + 2310 = 2380
+        let result = claim.evaluate::<Fr>(&openings, &challenges);
+        assert_eq!(result, Fr::from_u64(2380));
     }
 
     #[test]

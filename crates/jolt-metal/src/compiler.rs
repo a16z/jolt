@@ -8,7 +8,10 @@
 //!   expensive `fr_mul` for small integer grid scalars.
 //!
 //! - **Custom**: Walks the `jolt-ir::Expr` DAG via `ExprVisitor`, emitting
-//!   MSL assignments in SSA form. Challenge values are baked as constants.
+//!   MSL assignments in SSA form. Challenge values are read from a runtime
+//!   `device const Fr* challenges` buffer — not baked as MSL constants. This
+//!   makes pipeline compilation deterministic per kernel shape, enabling AOT
+//!   caching.
 //!   Uses incremental interpolation for the standard grid `{0, 2, ..., degree}`
 //!   (skipping `t=1`, which is derived from the sumcheck claim).
 //!
@@ -25,13 +28,12 @@
 //! The simdgroup + shared-memory tree reduction then operates on `Fr` values.
 
 use std::fmt::Write;
-use std::marker::PhantomData;
+use std::sync::Arc;
 
-use jolt_field::Field;
 use jolt_ir::{Expr, ExprVisitor, KernelDescriptor, KernelShape, Var};
 use metal::CompileOptions;
 
-use crate::kernel::MetalKernel;
+use crate::kernel::CachedPipelines;
 use crate::shaders::{build_source_with_mode, make_pipeline, SHADER_BN254_FR, SHADER_WIDE_ACC};
 
 /// Controls Metal shader compilation strategy.
@@ -60,7 +62,10 @@ const ACC_LIMBS: usize = 18;
 /// ProductSum D threshold for split-pass kernel generation. Kernels with
 /// `num_inputs_per_product >= SPLIT_PASS_THRESHOLD` use multi-pass streaming
 /// to reduce register pressure and improve GPU occupancy.
-const SPLIT_PASS_THRESHOLD: usize = 8;
+///
+/// Currently disabled (set above any realistic D). Benchmarking showed the 4×
+/// bandwidth re-read cost outweighs occupancy gains — single-pass is faster.
+const SPLIT_PASS_THRESHOLD: usize = 1024;
 
 /// Grid points processed per pass in split-pass mode. Each pass only needs
 /// `chunk * 18` registers for WideAcc instead of `D * 18`.
@@ -90,31 +95,23 @@ impl KernelVariant {
     }
 }
 
-/// Compile a `KernelDescriptor` into five Metal compute pipelines.
-pub fn compile<F: Field>(device: &metal::Device, descriptor: &KernelDescriptor) -> MetalKernel<F> {
-    compile_with_challenges(device, descriptor, &[])
+/// Output of MSL generation — the full source string plus kernel metadata.
+pub(crate) struct GeneratedMsl {
+    pub source: String,
+    pub num_inputs: usize,
+    pub num_evals: usize,
+    /// Whether the kernel signature includes a `challenges` buffer parameter.
+    pub has_challenges: bool,
 }
 
-/// Compile with baked challenge values for Custom expression kernels.
-pub fn compile_with_challenges<F: Field>(
-    device: &metal::Device,
-    descriptor: &KernelDescriptor,
-    challenges: &[F],
-) -> MetalKernel<F> {
-    compile_with_mode(device, descriptor, challenges, CompileMode::Performance)
-}
-
-/// Compile with explicit compile mode and optional challenge values.
-pub fn compile_with_mode<F: Field>(
-    device: &metal::Device,
-    descriptor: &KernelDescriptor,
-    challenges: &[F],
-    mode: CompileMode,
-) -> MetalKernel<F> {
+/// Generate the full MSL source for a kernel descriptor.
+///
+/// This is the deterministic, challenge-independent MSL generation. The
+/// returned source can be hashed to produce a cache key.
+pub(crate) fn generate_msl(descriptor: &KernelDescriptor, mode: CompileMode) -> GeneratedMsl {
     let num_inputs = descriptor.num_inputs();
     let num_evals = descriptor.num_evals();
 
-    // Check if this ProductSum should use split-pass streaming for occupancy.
     let use_split_pass = matches!(
         &descriptor.shape,
         KernelShape::ProductSum { num_inputs_per_product, .. }
@@ -122,6 +119,7 @@ pub fn compile_with_mode<F: Field>(
     );
 
     let mut msl = String::with_capacity(65536);
+    let mut has_challenges = false;
 
     if use_split_pass {
         let (d, p) = match &descriptor.shape {
@@ -150,14 +148,20 @@ pub fn compile_with_mode<F: Field>(
         }
     } else {
         // Single-pass path for small D and non-ProductSum shapes.
-        let (eval_body_weighted, eval_body_unweighted, weight_folded) =
-            match &descriptor.shape {
-                KernelShape::ProductSum {
-                    num_inputs_per_product,
-                    num_products,
-                } => {
-                    let d = *num_inputs_per_product;
-                    let p = *num_products;
+        let (eval_body_weighted, eval_body_unweighted, weight_folded) = match &descriptor.shape {
+            KernelShape::ProductSum {
+                num_inputs_per_product,
+                num_products,
+            } => {
+                let d = *num_inputs_per_product;
+                let p = *num_products;
+                if d == 8 {
+                    // Toom-Cook balanced binary splitting: 30 fr_mul vs 58
+                    // naive. No weight folding — same body for weighted
+                    // and unweighted variants.
+                    let body = generate_toom_cook_body(d, p);
+                    (body.clone(), body, false)
+                } else {
                     let fold = d > 2 * p;
                     let body = generate_product_sum_body(d, p, fold);
                     let body_unw = if fold {
@@ -167,17 +171,18 @@ pub fn compile_with_mode<F: Field>(
                     };
                     (body, body_unw, fold)
                 }
-                KernelShape::EqProduct => {
-                    let body = r"
+            }
+            KernelShape::EqProduct => {
+                let body = r"
         evals[0] = fr_mul(lo[0], lo[1]);
         Fr a2 = fr_sub(fr_add(hi[0], hi[0]), lo[0]);
         Fr b2 = fr_sub(fr_add(hi[1], hi[1]), lo[1]);
         evals[1] = fr_mul(a2, b2);"
-                        .to_string();
-                    (body.clone(), body, false)
-                }
-                KernelShape::HammingBooleanity => {
-                    let body = r"
+                    .to_string();
+                (body.clone(), body, false)
+            }
+            KernelShape::HammingBooleanity => {
+                let body = r"
         Fr d_eq = fr_sub(hi[0], lo[0]);
         Fr d_h = fr_sub(hi[1], lo[1]);
         evals[0] = fr_mul(fr_mul(lo[0], lo[1]), fr_sub(lo[1], fr_one()));
@@ -187,15 +192,18 @@ pub fn compile_with_mode<F: Field>(
         eq_val = fr_add(eq_val, d_eq);
         h_val = fr_add(h_val, d_h);
         evals[2] = fr_mul(fr_mul(eq_val, h_val), fr_sub(h_val, fr_one()));"
-                        .to_string();
-                    (body.clone(), body, false)
-                }
-                KernelShape::Custom { expr, num_inputs } => {
-                    let body =
-                        generate_custom_body::<F>(expr, *num_inputs, descriptor.degree, challenges);
-                    (body.clone(), body, false)
-                }
-            };
+                    .to_string();
+                (body.clone(), body, false)
+            }
+            KernelShape::Custom { expr, num_inputs } => {
+                let body = generate_custom_body(expr, *num_inputs, descriptor.degree);
+                (body.clone(), body, false)
+            }
+        };
+
+        // Only emit the challenges buffer parameter if the eval body references it.
+        // Custom kernels without Var::Challenge nodes don't need the buffer.
+        has_challenges = eval_body_weighted.contains("challenges[");
 
         for variant in [
             KernelVariant::LowToHigh,
@@ -209,6 +217,7 @@ pub fn compile_with_mode<F: Field>(
                 variant,
                 weight_folded,
                 true,
+                has_challenges,
             ));
             msl.push('\n');
         }
@@ -220,6 +229,7 @@ pub fn compile_with_mode<F: Field>(
                 variant,
                 false,
                 false,
+                has_challenges,
             ));
             msl.push('\n');
         }
@@ -227,49 +237,32 @@ pub fn compile_with_mode<F: Field>(
 
     let noinline = matches!(mode, CompileMode::FastCompile);
     let source = build_source_with_mode(&[SHADER_BN254_FR, SHADER_WIDE_ACC, &msl], noinline);
+
+    GeneratedMsl {
+        source,
+        num_inputs,
+        num_evals,
+        has_challenges,
+    }
+}
+
+/// Compile a generated MSL source into pipeline states.
+pub(crate) fn compile_msl(device: &metal::Device, msl: &GeneratedMsl) -> Arc<CachedPipelines> {
     let options = CompileOptions::new();
     let library = device
-        .new_library_with_source(&source, &options)
+        .new_library_with_source(&msl.source, &options)
         .unwrap_or_else(|e| panic!("reduce kernel MSL compilation failed: {e}"));
 
-    MetalKernel {
+    Arc::new(CachedPipelines {
         pipeline_l2h: make_pipeline(device, &library, "reduce_kernel_l2h"),
         pipeline_h2l: make_pipeline(device, &library, "reduce_kernel_h2l"),
         pipeline_tensor: make_pipeline(device, &library, "reduce_kernel_tensor"),
         pipeline_l2h_unw: make_pipeline(device, &library, "reduce_kernel_l2h_unw"),
         pipeline_h2l_unw: make_pipeline(device, &library, "reduce_kernel_h2l_unw"),
-        num_evals,
-        num_inputs,
-        _marker: PhantomData,
-    }
-}
-
-/// Convert a field element to an MSL `Fr` aggregate initializer.
-///
-/// Produces `{ { l0u, l1u, ..., l7u } }` matching the `struct Fr { uint limbs[8]; }` layout.
-/// SAFETY: Relies on identical byte layout between CPU `[u64; 4]` and Metal `[u32; 8]`
-/// on little-endian ARM64.
-fn field_to_msl_literal<F: Field>(val: &F) -> String {
-    debug_assert_eq!(std::mem::size_of::<F>(), 32);
-    // SAFETY: F is 32 bytes (BN254 Fr in Montgomery form). On LE ARM64,
-    // [u64; 4] and [u32; 8] have identical byte layout.
-    let limbs: [u32; 8] = unsafe { std::ptr::read(std::ptr::from_ref(val).cast()) };
-    format!(
-        "{{ {{ {} }} }}",
-        limbs
-            .iter()
-            .map(|l| format!("{l}u"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
-fn i128_to_field<F: Field>(val: i128) -> F {
-    if val >= 0 {
-        F::from_u64(val as u64)
-    } else {
-        -F::from_u64((-val) as u64)
-    }
+        num_evals: msl.num_evals,
+        num_inputs: msl.num_inputs,
+        has_challenges: msl.has_challenges,
+    })
 }
 
 /// How the per-thread accumulation works for a given kernel configuration.
@@ -299,6 +292,7 @@ fn generate_reduce_kernel(
     variant: KernelVariant,
     weight_folded: bool,
     weighted: bool,
+    has_challenges: bool,
 ) -> String {
     let gs = REDUCE_GROUP_SIZE;
     let num_simdgroups = gs / SIMD_SIZE;
@@ -340,6 +334,10 @@ fn generate_reduce_kernel(
             let _ = writeln!(s, "    device const Fr* weights [[buffer({next_buf})]],",);
             next_buf += 1;
         }
+    }
+    if has_challenges {
+        let _ = writeln!(s, "    device const Fr* challenges [[buffer({next_buf})]],",);
+        next_buf += 1;
     }
     let _ = writeln!(s, "    device Fr* partials [[buffer({next_buf})]],");
     next_buf += 1;
@@ -494,10 +492,7 @@ fn generate_reduce_kernel(
         }
         let _ = writeln!(s, "    }}");
         if stride > 1 {
-            let _ = writeln!(
-                s,
-                "    threadgroup_barrier(mem_flags::mem_threadgroup);"
-            );
+            let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
         }
         stride /= 2;
     }
@@ -559,7 +554,7 @@ fn generate_split_pass_reduce_kernel(
 
     let mut s = String::with_capacity(65536);
 
-    // ── Kernel signature (identical to single-pass) ──────────────────
+    // Kernel signature (identical to single-pass)
     let _ = writeln!(s, "kernel void {fname}(");
     for k in 0..num_inputs {
         let _ = writeln!(s, "    device const Fr* input_{k} [[buffer({k})]],");
@@ -604,7 +599,7 @@ fn generate_split_pass_reduce_kernel(
     let _ = writeln!(s, "    threadgroup Fr sh[{sh_size}];");
     s.push('\n');
 
-    // ── Per-pass codegen ─────────────────────────────────────────────
+    // Per-pass codegen
     for pass_idx in 0..num_passes {
         let base = pass_idx * chunk;
         let chunk_size = chunk.min(num_evals - base);
@@ -665,16 +660,10 @@ fn generate_split_pass_reduce_kernel(
                 // Load pair
                 if matches!(variant, KernelVariant::HighToLow) {
                     let _ = writeln!(s, "            Fr lo = input_{input_idx}[i];");
-                    let _ = writeln!(
-                        s,
-                        "            Fr hi = input_{input_idx}[i + n_pairs];"
-                    );
+                    let _ = writeln!(s, "            Fr hi = input_{input_idx}[i + n_pairs];");
                 } else {
                     let _ = writeln!(s, "            Fr lo = input_{input_idx}[2u * i];");
-                    let _ = writeln!(
-                        s,
-                        "            Fr hi = input_{input_idx}[2u * i + 1u];"
-                    );
+                    let _ = writeln!(s, "            Fr hi = input_{input_idx}[2u * i + 1u];");
                 }
                 let _ = writeln!(s, "            Fr diff = fr_sub(hi, lo);");
 
@@ -689,31 +678,25 @@ fn generate_split_pass_reduce_kernel(
                         let _ = writeln!(s, "            Fr val_{c} = hi;");
                     } else if c > 0 && (base + c - 1) < d - 1 {
                         // Incremental: val_c = val_{c-1} + diff
-                        let _ = writeln!(
-                            s,
-                            "            Fr val_{c} = fr_add(val_{}, diff);",
-                            c - 1
-                        );
+                        let _ =
+                            writeln!(s, "            Fr val_{c} = fr_add(val_{}, diff);", c - 1);
                     } else {
                         // From scratch: hi + eval_idx * diff
                         let _ = writeln!(s, "            Fr val_{c} = hi;");
                         for _ in 0..eval_idx {
-                            let _ = writeln!(
-                                s,
-                                "            val_{c} = fr_add(val_{c}, diff);"
-                            );
+                            let _ = writeln!(s, "            val_{c} = fr_add(val_{c}, diff);");
                         }
                     }
                 }
 
-                // First factor: assign. Subsequent factors: multiply.
+                // First factor: assign. Subsequent: unreduced multiply.
                 for c in 0..chunk_size {
                     if j == 0 {
                         let _ = writeln!(s, "            prod_{c} = val_{c};");
                     } else {
                         let _ = writeln!(
                             s,
-                            "            prod_{c} = fr_mul(prod_{c}, val_{c});"
+                            "            prod_{c} = fr_mul_unreduced(prod_{c}, val_{c});"
                         );
                     }
                 }
@@ -721,10 +704,10 @@ fn generate_split_pass_reduce_kernel(
                 let _ = writeln!(s, "        }}");
             }
 
-            // Accumulate product into sum (P > 1)
+            // Accumulate product into sum (P > 1) — reduce before fr_add
             if p > 1 {
                 for c in 0..chunk_size {
-                    let _ = writeln!(s, "        sum_{c} = fr_add(sum_{c}, prod_{c});");
+                    let _ = writeln!(s, "        sum_{c} = fr_add(sum_{c}, fr_reduce(prod_{c}));");
                 }
                 let _ = writeln!(s, "        }}");
             }
@@ -735,8 +718,7 @@ fn generate_split_pass_reduce_kernel(
         match strategy {
             AccumulationStrategy::WeightedFmadd => {
                 for c in 0..chunk_size {
-                    let _ =
-                        writeln!(s, "        acc_fmadd(wa_{c}, w, {acc_var}_{c});");
+                    let _ = writeln!(s, "        acc_fmadd(wa_{c}, w, {acc_var}_{c});");
                 }
             }
             AccumulationStrategy::DirectAdd => {
@@ -748,7 +730,7 @@ fn generate_split_pass_reduce_kernel(
         let _ = writeln!(s, "    }}"); // close grid-stride loop
         s.push('\n');
 
-        // ── Simdgroup WideAcc reduction (same as single-pass) ────────
+        // Simdgroup WideAcc reduction (same as single-pass)
         let half_simd = SIMD_SIZE / 2;
         let _ = writeln!(
             s,
@@ -777,10 +759,7 @@ fn generate_split_pass_reduce_kernel(
                     "        sh[{sh_base}u + simd_id] = fr_to_mont(acc_reduce(wa_{c}));",
                 );
             } else {
-                let _ = writeln!(
-                    s,
-                    "        sh[{sh_base}u + simd_id] = acc_reduce(wa_{c});",
-                );
+                let _ = writeln!(s, "        sh[{sh_base}u + simd_id] = acc_reduce(wa_{c});",);
             }
         }
         let _ = writeln!(s, "    }}");
@@ -801,10 +780,7 @@ fn generate_split_pass_reduce_kernel(
             }
             let _ = writeln!(s, "    }}");
             if stride > 1 {
-                let _ = writeln!(
-                    s,
-                    "    threadgroup_barrier(mem_flags::mem_threadgroup);"
-                );
+                let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
             }
             stride /= 2;
         }
@@ -832,6 +808,293 @@ fn generate_split_pass_reduce_kernel(
     }
 
     let _ = writeln!(s, "}}");
+
+    s
+}
+
+/// Generate Toom-Cook MSL evaluation body for ProductSum D=4 or D=8.
+///
+/// Uses balanced binary splitting to reduce field multiplications:
+/// - D=4: 2x2 split → 10 fr_mul (vs 12 naive)
+/// - D=8: 4x4 split → 30 fr_mul (vs 56 naive)
+///
+/// Extrapolation uses only fr_add/fr_sub (no mul_u64 needed on GPU).
+/// Weight is NOT folded into the eval body — the caller uses
+/// `AccumulationStrategy::WeightedFmadd` for weighted kernels.
+fn generate_toom_cook_body(d: usize, p: usize) -> String {
+    match d {
+        4 => generate_toom_cook_d4(p),
+        8 => generate_toom_cook_d8(p),
+        _ => unreachable!("Toom-Cook only implemented for D=4 and D=8"),
+    }
+}
+
+/// Emit MSL for the degree-2 sub-product of two linear polynomials.
+///
+/// Given inputs at indices `i0` and `i1` in the `lo`/`hi` arrays, produces
+/// three sub-product evaluations `{prefix}_1`, `{prefix}_2`, `{prefix}_inf`
+/// at points {1, 2, ∞}. Uses 3 fr_mul.
+fn emit_eval_linear_prod_2(
+    s: &mut String,
+    prefix: &str,
+    lo0: &str,
+    hi0: &str,
+    lo1: &str,
+    hi1: &str,
+) {
+    let _ = writeln!(s, "        Fr {prefix}_s0 = fr_sub({hi0}, {lo0});");
+    let _ = writeln!(s, "        Fr {prefix}_v2_0 = fr_add({prefix}_s0, {hi0});");
+    let _ = writeln!(s, "        Fr {prefix}_s1 = fr_sub({hi1}, {lo1});");
+    let _ = writeln!(s, "        Fr {prefix}_v2_1 = fr_add({prefix}_s1, {hi1});");
+    let _ = writeln!(s, "        Fr {prefix}_1 = fr_mul({hi0}, {hi1});");
+    let _ = writeln!(
+        s,
+        "        Fr {prefix}_2 = fr_mul({prefix}_v2_0, {prefix}_v2_1);"
+    );
+    let _ = writeln!(
+        s,
+        "        Fr {prefix}_inf = fr_mul({prefix}_s0, {prefix}_s1);"
+    );
+}
+
+/// Emit MSL for `ex2` extrapolation: `result = 2*(f1 + finf) - f0`.
+fn emit_ex2(s: &mut String, result: &str, f0: &str, f1: &str, finf: &str) {
+    let _ = writeln!(s, "        Fr {result}_sum = fr_add({f1}, {finf});");
+    let _ = writeln!(
+        s,
+        "        Fr {result} = fr_sub(fr_add({result}_sum, {result}_sum), {f0});"
+    );
+}
+
+/// Emit MSL for `ex4_2`: returns two extrapolated values (f4, f5) from
+/// 4 consecutive evaluations `f[0..4]` and `6*f_inf`.
+fn emit_ex4_2(s: &mut String, r4: &str, r5: &str, f: [&str; 4], finf6: &str) {
+    // f4 = 2*(2*(finf6 + f[3] - f[2] + f[1]) - f[2]) - f[0]
+    let _ = writeln!(s, "        Fr {r4}_f3m2 = fr_sub({}, {});", f[3], f[2]);
+    let _ = writeln!(
+        s,
+        "        Fr {r4}_t = fr_add(fr_add({finf6}, {r4}_f3m2), {});",
+        f[1]
+    );
+    let _ = writeln!(s, "        {r4}_t = fr_add({r4}_t, {r4}_t);");
+    let _ = writeln!(s, "        {r4}_t = fr_sub({r4}_t, {});", f[2]);
+    let _ = writeln!(s, "        {r4}_t = fr_add({r4}_t, {r4}_t);");
+    let _ = writeln!(s, "        Fr {r4} = fr_sub({r4}_t, {});", f[0]);
+
+    // f5 = 2*(2*(f4 - f3m2 + finf6) - f[3]) - f[1]
+    let _ = writeln!(
+        s,
+        "        Fr {r5}_t = fr_add(fr_sub({r4}, {r4}_f3m2), {finf6});"
+    );
+    let _ = writeln!(s, "        {r5}_t = fr_add({r5}_t, {r5}_t);");
+    let _ = writeln!(s, "        {r5}_t = fr_sub({r5}_t, {});", f[3]);
+    let _ = writeln!(s, "        {r5}_t = fr_add({r5}_t, {r5}_t);");
+    let _ = writeln!(s, "        Fr {r5} = fr_sub({r5}_t, {});", f[1]);
+}
+
+/// Emit MSL for `ex4`: returns one extrapolated value from
+/// 4 consecutive evaluations and `6*f_inf`.
+fn emit_ex4(s: &mut String, result: &str, f0: &str, f1: &str, f2: &str, f3: &str, finf6: &str) {
+    // result = 2*(2*(finf6 + f3 - f2 + f1) - f2) - f0
+    let _ = writeln!(
+        s,
+        "        Fr {result}_t = fr_add(fr_add({finf6}, fr_sub({f3}, {f2})), {f1});"
+    );
+    let _ = writeln!(s, "        {result}_t = fr_add({result}_t, {result}_t);");
+    let _ = writeln!(s, "        {result}_t = fr_sub({result}_t, {f2});");
+    let _ = writeln!(s, "        {result}_t = fr_add({result}_t, {result}_t);");
+    let _ = writeln!(s, "        Fr {result} = fr_sub({result}_t, {f0});");
+}
+
+/// Generate Toom-Cook D=4 MSL eval body for P product groups.
+///
+/// Algorithm (per product group of 4 inputs):
+/// 1. Split into (input0, input1) and (input2, input3)
+/// 2. Evaluate each pair-product at {1, 2, ∞} — 3 fr_mul each
+/// 3. Extrapolate both to point 3 via ex2 — 0 fr_mul
+/// 4. Point-wise multiply — 4 fr_mul
+///
+/// Total: 10 fr_mul per group (vs 12 naive).
+fn generate_toom_cook_d4(p: usize) -> String {
+    let mut s = String::with_capacity(4096);
+
+    if p > 1 {
+        for d in 0..4 {
+            let _ = writeln!(s, "        evals[{d}] = fr_zero();");
+        }
+    }
+
+    for g in 0..p {
+        let base = g * 4;
+        let _ = writeln!(s, "        {{ // Product group {g}");
+
+        // Half A: sub-product of inputs [base+0, base+1]
+        emit_eval_linear_prod_2(
+            &mut s,
+            "a",
+            &format!("lo[{base}]"),
+            &format!("hi[{base}]"),
+            &format!("lo[{}]", base + 1),
+            &format!("hi[{}]", base + 1),
+        );
+        emit_ex2(&mut s, "a_3", "a_1", "a_2", "a_inf");
+
+        // Half B: sub-product of inputs [base+2, base+3]
+        emit_eval_linear_prod_2(
+            &mut s,
+            "b",
+            &format!("lo[{}]", base + 2),
+            &format!("hi[{}]", base + 2),
+            &format!("lo[{}]", base + 3),
+            &format!("hi[{}]", base + 3),
+        );
+        emit_ex2(&mut s, "b_3", "b_1", "b_2", "b_inf");
+
+        // Point-wise multiply
+        if p == 1 {
+            let _ = writeln!(s, "        evals[0] = fr_mul(a_1, b_1);");
+            let _ = writeln!(s, "        evals[1] = fr_mul(a_2, b_2);");
+            let _ = writeln!(s, "        evals[2] = fr_mul(a_3, b_3);");
+            let _ = writeln!(s, "        evals[3] = fr_mul(a_inf, b_inf);");
+        } else {
+            let _ = writeln!(s, "        evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
+            let _ = writeln!(s, "        evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");
+            let _ = writeln!(s, "        evals[2] = fr_add(evals[2], fr_mul(a_3, b_3));");
+            let _ = writeln!(
+                s,
+                "        evals[3] = fr_add(evals[3], fr_mul(a_inf, b_inf));"
+            );
+        }
+        let _ = writeln!(s, "        }}");
+    }
+
+    s
+}
+
+/// Generate Toom-Cook D=8 MSL eval body for P product groups.
+///
+/// Algorithm (per product group of 8 inputs):
+/// 1. `eval_linear_prod_4_internal(inputs[0..4])` → (a1..a4, a_inf) — 11 fr_mul
+/// 2. Extrapolate a to {5, 6, 7} via ex4_2 + ex4 — 0 fr_mul
+/// 3. Same for inputs[4..8] → (b1..b7, b_inf) — 11 fr_mul
+/// 4. Point-wise multiply — 8 fr_mul
+///
+/// Total: 30 fr_mul per group (vs 56 naive).
+fn generate_toom_cook_d8(p: usize) -> String {
+    let mut s = String::with_capacity(16384);
+
+    if p > 1 {
+        for d in 0..8 {
+            let _ = writeln!(s, "        evals[{d}] = fr_zero();");
+        }
+    }
+
+    for g in 0..p {
+        let base = g * 8;
+        let _ = writeln!(s, "        {{ // Product group {g}");
+
+        // ---- Half A: eval_linear_prod_4_internal(inputs[base..base+4]) ----
+        // Sub-pair (input0, input1) → (ar1, ar2, ar_inf)
+        emit_eval_linear_prod_2(
+            &mut s,
+            "ar",
+            &format!("lo[{base}]"),
+            &format!("hi[{base}]"),
+            &format!("lo[{}]", base + 1),
+            &format!("hi[{}]", base + 1),
+        );
+        // Extrapolate: ar3 = ex2([ar1, ar2], ar_inf), ar4 = ex2([ar2, ar3], ar_inf)
+        emit_ex2(&mut s, "ar_3", "ar_1", "ar_2", "ar_inf");
+        emit_ex2(&mut s, "ar_4", "ar_2", "ar_3", "ar_inf");
+
+        // Sub-pair (input2, input3) → (br1, br2, br_inf)
+        emit_eval_linear_prod_2(
+            &mut s,
+            "br",
+            &format!("lo[{}]", base + 2),
+            &format!("hi[{}]", base + 2),
+            &format!("lo[{}]", base + 3),
+            &format!("hi[{}]", base + 3),
+        );
+        emit_ex2(&mut s, "br_3", "br_1", "br_2", "br_inf");
+        emit_ex2(&mut s, "br_4", "br_2", "br_3", "br_inf");
+
+        // Point-wise: a_k = ar_k * br_k for k in {1,2,3,4,inf}
+        let _ = writeln!(s, "        Fr a_1 = fr_mul(ar_1, br_1);");
+        let _ = writeln!(s, "        Fr a_2 = fr_mul(ar_2, br_2);");
+        let _ = writeln!(s, "        Fr a_3 = fr_mul(ar_3, br_3);");
+        let _ = writeln!(s, "        Fr a_4 = fr_mul(ar_4, br_4);");
+        let _ = writeln!(s, "        Fr a_inf = fr_mul(ar_inf, br_inf);");
+
+        // Extrapolate a to {5, 6, 7}: a_inf6 = 6*a_inf via adds
+        let _ = writeln!(s, "        Fr a_inf2 = fr_add(a_inf, a_inf);");
+        let _ = writeln!(s, "        Fr a_inf3 = fr_add(a_inf2, a_inf);");
+        let _ = writeln!(s, "        Fr a_inf6 = fr_add(a_inf3, a_inf3);");
+        emit_ex4_2(&mut s, "a_5", "a_6", ["a_1", "a_2", "a_3", "a_4"], "a_inf6");
+        emit_ex4(&mut s, "a_7", "a_3", "a_4", "a_5", "a_6", "a_inf6");
+
+        // ---- Half B: eval_linear_prod_4_internal(inputs[base+4..base+8]) ----
+        emit_eval_linear_prod_2(
+            &mut s,
+            "cr",
+            &format!("lo[{}]", base + 4),
+            &format!("hi[{}]", base + 4),
+            &format!("lo[{}]", base + 5),
+            &format!("hi[{}]", base + 5),
+        );
+        emit_ex2(&mut s, "cr_3", "cr_1", "cr_2", "cr_inf");
+        emit_ex2(&mut s, "cr_4", "cr_2", "cr_3", "cr_inf");
+
+        emit_eval_linear_prod_2(
+            &mut s,
+            "dr",
+            &format!("lo[{}]", base + 6),
+            &format!("hi[{}]", base + 6),
+            &format!("lo[{}]", base + 7),
+            &format!("hi[{}]", base + 7),
+        );
+        emit_ex2(&mut s, "dr_3", "dr_1", "dr_2", "dr_inf");
+        emit_ex2(&mut s, "dr_4", "dr_2", "dr_3", "dr_inf");
+
+        // Point-wise: b_k = cr_k * dr_k for k in {1,2,3,4,inf}
+        let _ = writeln!(s, "        Fr b_1 = fr_mul(cr_1, dr_1);");
+        let _ = writeln!(s, "        Fr b_2 = fr_mul(cr_2, dr_2);");
+        let _ = writeln!(s, "        Fr b_3 = fr_mul(cr_3, dr_3);");
+        let _ = writeln!(s, "        Fr b_4 = fr_mul(cr_4, dr_4);");
+        let _ = writeln!(s, "        Fr b_inf = fr_mul(cr_inf, dr_inf);");
+
+        // Extrapolate b to {5, 6, 7}
+        let _ = writeln!(s, "        Fr b_inf2 = fr_add(b_inf, b_inf);");
+        let _ = writeln!(s, "        Fr b_inf3 = fr_add(b_inf2, b_inf);");
+        let _ = writeln!(s, "        Fr b_inf6 = fr_add(b_inf3, b_inf3);");
+        emit_ex4_2(&mut s, "b_5", "b_6", ["b_1", "b_2", "b_3", "b_4"], "b_inf6");
+        emit_ex4(&mut s, "b_7", "b_3", "b_4", "b_5", "b_6", "b_inf6");
+
+        // ---- Final point-wise multiply ----
+        if p == 1 {
+            let _ = writeln!(s, "        evals[0] = fr_mul(a_1, b_1);");
+            let _ = writeln!(s, "        evals[1] = fr_mul(a_2, b_2);");
+            let _ = writeln!(s, "        evals[2] = fr_mul(a_3, b_3);");
+            let _ = writeln!(s, "        evals[3] = fr_mul(a_4, b_4);");
+            let _ = writeln!(s, "        evals[4] = fr_mul(a_5, b_5);");
+            let _ = writeln!(s, "        evals[5] = fr_mul(a_6, b_6);");
+            let _ = writeln!(s, "        evals[6] = fr_mul(a_7, b_7);");
+            let _ = writeln!(s, "        evals[7] = fr_mul(a_inf, b_inf);");
+        } else {
+            let _ = writeln!(s, "        evals[0] = fr_add(evals[0], fr_mul(a_1, b_1));");
+            let _ = writeln!(s, "        evals[1] = fr_add(evals[1], fr_mul(a_2, b_2));");
+            let _ = writeln!(s, "        evals[2] = fr_add(evals[2], fr_mul(a_3, b_3));");
+            let _ = writeln!(s, "        evals[3] = fr_add(evals[3], fr_mul(a_4, b_4));");
+            let _ = writeln!(s, "        evals[4] = fr_add(evals[4], fr_mul(a_5, b_5));");
+            let _ = writeln!(s, "        evals[5] = fr_add(evals[5], fr_mul(a_6, b_6));");
+            let _ = writeln!(s, "        evals[6] = fr_add(evals[6], fr_mul(a_7, b_7));");
+            let _ = writeln!(
+                s,
+                "        evals[7] = fr_add(evals[7], fr_mul(a_inf, b_inf));"
+            );
+        }
+        let _ = writeln!(s, "        }}");
+    }
 
     s
 }
@@ -905,15 +1168,25 @@ fn generate_product_sum_body(
 }
 
 /// Emit `evals[idx] = Σ_g Π_j arr[g*D+j]` where `arr` is "cur", "hi", or "diff".
+///
+/// Uses `fr_mul_unreduced` for intermediate products in the chain (skips the
+/// conditional modulus subtraction after each CIOS). The unreduced result
+/// (in [0, 2r)) is safe as CIOS input since BN254's 4r²/R < 2r. An explicit
+/// `fr_reduce` before `fr_add` brings the final product back to [0, r).
+/// Saves `(D-2)` `fr_reduce` calls per product group per grid point.
 fn emit_product_sum(s: &mut String, d: usize, p: usize, arr: &str, eval_idx: usize) {
     let _ = writeln!(s, "        {{ Fr sum = fr_zero();");
     for g in 0..p {
         let base = g * d;
         let _ = writeln!(s, "          {{ Fr prod = {arr}[{base}];");
         for j in 1..d {
-            let _ = writeln!(s, "            prod = fr_mul(prod, {arr}[{}]);", base + j);
+            let _ = writeln!(
+                s,
+                "            prod = fr_mul_unreduced(prod, {arr}[{}]);",
+                base + j
+            );
         }
-        let _ = writeln!(s, "            sum = fr_add(sum, prod); }}");
+        let _ = writeln!(s, "            sum = fr_add(sum, fr_reduce(prod)); }}");
     }
     let _ = writeln!(s, "          evals[{eval_idx}] = sum; }}");
 }
@@ -923,12 +1196,11 @@ fn emit_product_sum(s: &mut String, d: usize, p: usize, arr: &str, eval_idx: usi
 /// Uses incremental interpolation: maintains `cur_k` starting at `lo[k]` and
 /// adding `diff_k` for each successive grid point. Grid is `{0, 2, 3, ..., degree}`
 /// (skipping `t=1`), so slot 0 maps to `t=0` and slot `k>=1` maps to `t=k+1`.
-fn generate_custom_body<F: Field>(
-    expr: &Expr,
-    num_inputs: usize,
-    degree: usize,
-    challenges: &[F],
-) -> String {
+///
+/// Challenge values are read from a `device const Fr* challenges` buffer at
+/// runtime rather than baked as MSL constants. This makes the kernel shape
+/// deterministic at compile time, enabling AOT pipeline caching.
+fn generate_custom_body(expr: &Expr, num_inputs: usize, degree: usize) -> String {
     // Grid: {0, 2, 3, ..., degree} — `degree` evaluations, skipping t=1
     let num_evals = degree;
     let mut s = String::with_capacity(2048);
@@ -936,12 +1208,6 @@ fn generate_custom_body<F: Field>(
     // Precompute diffs
     for k in 0..num_inputs {
         let _ = writeln!(s, "        Fr diff_{k} = fr_sub(hi[{k}], lo[{k}]);");
-    }
-
-    // Baked challenge constants
-    for (id, val) in challenges.iter().enumerate() {
-        let literal = field_to_msl_literal(val);
-        let _ = writeln!(s, "        Fr chal_{id} = {literal};");
     }
 
     // Running interpolated values: start at lo, add diff each step
@@ -968,11 +1234,10 @@ fn generate_custom_body<F: Field>(
 
         let _ = writeln!(s, "        {{ // t = {t}");
 
-        // Walk expression tree (visitor emits cur_{id} for openings)
+        // Walk expression tree — challenges read from buffer at runtime
         let mut visitor = MslCodeGen {
             code: String::new(),
             next_id: 0,
-            _marker: PhantomData::<F>,
         };
         let root_name = expr.visit(&mut visitor);
         let _ = write!(s, "{}", visitor.code);
@@ -984,13 +1249,15 @@ fn generate_custom_body<F: Field>(
 }
 
 /// ExprVisitor that emits MSL assignments in SSA form.
-struct MslCodeGen<F: Field> {
+///
+/// Challenge variables emit `challenges[id]` (buffer reads), not baked constants.
+/// This makes generated MSL deterministic per kernel shape, enabling AOT compilation.
+struct MslCodeGen {
     code: String,
     next_id: usize,
-    _marker: PhantomData<F>,
 }
 
-impl<F: Field> MslCodeGen<F> {
+impl MslCodeGen {
     fn fresh_var(&mut self) -> String {
         let name = format!("e{}", self.next_id);
         self.next_id += 1;
@@ -998,21 +1265,52 @@ impl<F: Field> MslCodeGen<F> {
     }
 }
 
-impl<F: Field> ExprVisitor for MslCodeGen<F> {
+impl ExprVisitor for MslCodeGen {
     type Output = String;
 
     fn visit_constant(&mut self, val: i128) -> String {
         let name = self.fresh_var();
-        let f_val = i128_to_field::<F>(val);
-        let literal = field_to_msl_literal(&f_val);
-        let _ = writeln!(self.code, "            Fr {name} = {literal};");
+        // SoP coefficients in Jolt are always in {-1, 0, 1}. We fast-path
+        // those and fall back to fr_from_u64 for small positive/negative values.
+        match val {
+            0 => {
+                let _ = writeln!(self.code, "            Fr {name} = fr_zero();");
+            }
+            1 => {
+                let _ = writeln!(self.code, "            Fr {name} = fr_one();");
+            }
+            -1 => {
+                let _ = writeln!(self.code, "            Fr {name} = fr_neg(fr_one());");
+            }
+            v if v > 0 => {
+                assert!(
+                    v <= i128::from(u64::MAX),
+                    "MSL constant {v} exceeds u64 range"
+                );
+                let _ = writeln!(
+                    self.code,
+                    "            Fr {name} = fr_from_u64((ulong){v});"
+                );
+            }
+            v => {
+                let abs = -v;
+                assert!(
+                    abs <= i128::from(u64::MAX),
+                    "MSL constant {v} exceeds u64 range"
+                );
+                let _ = writeln!(
+                    self.code,
+                    "            Fr {name} = fr_neg(fr_from_u64((ulong){abs}));"
+                );
+            }
+        }
         name
     }
 
     fn visit_var(&mut self, var: Var) -> String {
         match var {
             Var::Opening(id) => format!("cur_{id}"),
-            Var::Challenge(id) => format!("chal_{id}"),
+            Var::Challenge(id) => format!("challenges[{id}]"),
         }
     }
 

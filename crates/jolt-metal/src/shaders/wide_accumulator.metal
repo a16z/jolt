@@ -50,31 +50,171 @@ FR_FUNC_ATTR void acc_add_fr(thread WideAcc &acc, Fr a) {
     }
 }
 
-// Fused multiply-add: acc += a * b (schoolbook, 8×8 → 16 limbs, accumulated into 18).
-// Pure 32-bit: uses mul + mulhi instead of ulong emulation.
-FR_FUNC_ATTR void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {
-    for (int j = 0; j < 8; j++) {
+// 4×4 schoolbook multiply: out[0..7] += a[0..3] * b[0..3].
+// `out` must be zero-initialized before the first call.
+inline void schoolbook_4x4(thread uint (&out)[8], const thread uint *a, const thread uint *b) {
+    for (int j = 0; j < 4; j++) {
         uint carry = 0;
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 4; i++) {
             int idx = i + j;
-            uint p_lo = a.limbs[i] * b.limbs[j];
-            uint p_hi = mulhi(a.limbs[i], b.limbs[j]);
-            uint s1 = acc.limbs[idx] + p_lo;
-            uint c1 = uint(s1 < acc.limbs[idx]);
+            uint p_lo = a[i] * b[j];
+            uint p_hi = mulhi(a[i], b[j]);
+            uint s1 = out[idx] + p_lo;
+            uint c1 = uint(s1 < out[idx]);
             uint s2 = s1 + carry;
             uint c2 = uint(s2 < s1);
-            acc.limbs[idx] = s2;
+            out[idx] = s2;
             carry = p_hi + c1 + c2;
         }
-        int k = j + 8;
-        while (carry != 0 && k < ACC_LIMBS) {
-            uint old = acc.limbs[k];
-            uint s = old + carry;
-            carry = uint(s < old);
-            acc.limbs[k] = s;
-            k++;
+        // Propagate carry through remaining limbs
+        for (int k = j + 4; carry != 0 && k < 8; k++) {
+            uint old = out[k];
+            out[k] = old + carry;
+            carry = uint(out[k] < old);
         }
     }
+}
+
+// 4×4 schoolbook multiply into 9-limb output (for sums that may have a carry bit).
+inline void schoolbook_4x4_wide(thread uint (&out)[9], const thread uint *a, const thread uint *b) {
+    for (int j = 0; j < 4; j++) {
+        uint carry = 0;
+        for (int i = 0; i < 4; i++) {
+            int idx = i + j;
+            uint p_lo = a[i] * b[j];
+            uint p_hi = mulhi(a[i], b[j]);
+            uint s1 = out[idx] + p_lo;
+            uint c1 = uint(s1 < out[idx]);
+            uint s2 = s1 + carry;
+            uint c2 = uint(s2 < s1);
+            out[idx] = s2;
+            carry = p_hi + c1 + c2;
+        }
+        for (int k = j + 4; carry != 0 && k < 9; k++) {
+            uint old = out[k];
+            out[k] = old + carry;
+            carry = uint(out[k] < old);
+        }
+    }
+}
+
+// Add N limbs from `src` into WideAcc at `offset`, with carry propagation.
+inline void acc_add_limbs(thread WideAcc &acc, const thread uint *src, int n, int offset) {
+    uint carry = 0;
+    for (int i = 0; i < n; i++) {
+        uint2 r = adc(acc.limbs[offset + i], src[i], carry);
+        acc.limbs[offset + i] = r.x;
+        carry = r.y;
+    }
+    for (int i = offset + n; carry != 0 && i < ACC_LIMBS; i++) {
+        uint2 r = adc(acc.limbs[i], 0u, carry);
+        acc.limbs[i] = r.x;
+        carry = r.y;
+    }
+}
+
+// Fused multiply-add: acc += a * b.
+//
+// Uses Karatsuba on 4-limb halves: 3 × (4×4) = 48 mul+mulhi instead of
+// schoolbook's 64. The cross-term P1 = (aL+aH)*(bL+bH) - aL*bL - aH*bH
+// is always non-negative (it equals aH*bL + aL*bH).
+//
+// Operation sequence minimizes peak register pressure:
+// 1. aS = aL+aH, bS = bL+bH (10 regs, freed after step 2)
+// 2. Pm = aS * bS (9 regs)
+// 3. P0 = aL * bL (8 regs), Pm -= P0, accumulate P0, free P0
+// 4. P2 = aH * bH (8 regs), Pm -= P2, accumulate P2, free P2
+// 5. Accumulate Pm (the cross-term P1)
+FR_FUNC_ATTR void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {
+    // Step 1: aS = aL + aH, bS = bL + bH (4 limbs + carry bit each)
+    uint aS[4], bS[4];
+    uint aC, bC; // carry bits (0 or 1)
+    {
+        uint carry = 0;
+        for (int i = 0; i < 4; i++) {
+            uint2 r = adc(a.limbs[i], a.limbs[i + 4], carry);
+            aS[i] = r.x;
+            carry = r.y;
+        }
+        aC = carry;
+    }
+    {
+        uint carry = 0;
+        for (int i = 0; i < 4; i++) {
+            uint2 r = adc(b.limbs[i], b.limbs[i + 4], carry);
+            bS[i] = r.x;
+            carry = r.y;
+        }
+        bC = carry;
+    }
+
+    // Step 2: Pm = aS[0..3] * bS[0..3] (4x4 into 9 limbs)
+    // Then handle carry bits branchlessly.
+    uint Pm[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    schoolbook_4x4_wide(Pm, aS, bS);
+
+    // Pm += aC * bS at offset 4 (branchless: mask is 0xFFFFFFFF or 0)
+    {
+        uint mask = uint(-int(aC));
+        uint carry = 0;
+        for (int i = 0; i < 4; i++) {
+            uint2 r = adc(Pm[i + 4], bS[i] & mask, carry);
+            Pm[i + 4] = r.x;
+            carry = r.y;
+        }
+        Pm[8] += carry;
+    }
+    // Pm += bC * aS at offset 4
+    {
+        uint mask = uint(-int(bC));
+        uint carry = 0;
+        for (int i = 0; i < 4; i++) {
+            uint2 r = adc(Pm[i + 4], aS[i] & mask, carry);
+            Pm[i + 4] = r.x;
+            carry = r.y;
+        }
+        Pm[8] += carry;
+    }
+    // Pm[8] += aC & bC (branchless)
+    Pm[8] += aC & bC;
+    // aS, bS, aC, bC are now dead.
+
+    // Step 3: P0 = aL * bL, subtract from Pm, accumulate at offset 0
+    {
+        uint P0[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        schoolbook_4x4(P0, a.limbs, b.limbs);
+
+        // Pm -= P0 (safe: Pm = P0 + P2 + cross >= P0)
+        uint borrow = 0;
+        for (int i = 0; i < 8; i++) {
+            uint2 d = sbb(Pm[i], P0[i], borrow);
+            Pm[i] = d.x;
+            borrow = d.y;
+        }
+        Pm[8] -= borrow;
+
+        acc_add_limbs(acc, P0, 8, 0);
+    } // P0 freed
+
+    // Step 4: P2 = aH * bH, subtract from Pm, accumulate at offset 8
+    {
+        uint P2[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        schoolbook_4x4(P2, &a.limbs[4], &b.limbs[4]);
+
+        // Pm -= P2 (safe: Pm now holds cross + P2 >= P2)
+        uint borrow = 0;
+        for (int i = 0; i < 8; i++) {
+            uint2 d = sbb(Pm[i], P2[i], borrow);
+            Pm[i] = d.x;
+            borrow = d.y;
+        }
+        Pm[8] -= borrow;
+
+        acc_add_limbs(acc, P2, 8, 8);
+    } // P2 freed
+
+    // Step 5: Pm now holds P1 = aH*bL + aL*bH. Accumulate at offset 4.
+    acc_add_limbs(acc, Pm, 9, 4);
 }
 
 // Merge two accumulators: dst += src.

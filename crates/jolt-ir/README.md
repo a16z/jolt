@@ -24,6 +24,24 @@ let sop = expr.to_sum_of_products();
 assert_eq!(sop.len(), 2); // gamma*H*H and -gamma*H
 ```
 
+## Two consumer paths
+
+`jolt-ir` serves two fundamentally different kinds of consumer:
+
+**Protocol consumers** (verifier, BlindFold R1CS, Lean4, circuit transpilation) consume `Expr` directly via `ExprVisitor`. They care about *what* the formula means -- symbolic structure for constraint emission, formal verification, or evaluation at a single point.
+
+**Compute backends** (CPU, Metal, CUDA) consume `KernelDescriptor`, not `Expr`. A `KernelDescriptor` wraps the symbolic formula with operational metadata needed to evaluate it efficiently over million-element buffers: polynomial degree (grid size), tensor split (thread mapping), and recognized fast-path patterns. `Expr` only reaches compute backends inside `KernelShape::Custom`; the `ProductSum`, `EqProduct`, and `HammingBooleanity` shapes bypass it entirely with hand-optimized codegen.
+
+```
+Expr ──→ ExprVisitor(Evaluate)    → F values
+     ──→ ExprVisitor(R1CS)        → constraints
+     ──→ ExprVisitor(Circuit)     → circuit gates
+     ──→ ExprVisitor(Lean)        → Lean4 terms
+
+KernelDescriptor ──→ jolt-cpu   → CpuKernel<F> (Rust closures)
+                 ──→ jolt-metal → MetalKernel   (MSL source)
+```
+
 ## Architecture
 
 ### Arena-allocated expression DAG
@@ -44,8 +62,8 @@ The `ExprVisitor` trait provides bottom-up traversal. Each backend implements 6 
 
 ### Kernel descriptors
 
-- **`KernelDescriptor`** -- Describes a compute kernel for sumcheck evaluation.
-- **`KernelShape`** -- Shape metadata for kernel dispatch: `ProductSum` (Toom-Cook grid), `EqProduct` (eq * g), `HammingBooleanity` (eq * h * (h-1)), `Custom` (arbitrary `Expr`).
+- **`KernelDescriptor`** -- The codegen unit for compute backends. Carries shape, degree, and optional tensor split.
+- **`KernelShape`** -- Dispatch discriminant: `ProductSum` (Toom-Cook grid), `EqProduct` (eq * g), `HammingBooleanity` (eq * h * (h-1)), `Custom` (arbitrary `Expr`). The first three are recognized patterns compiled into hand-optimized code; `Custom` is the escape hatch where the `Expr` is walked for codegen.
 - **`TensorSplit`** -- Split-eq sqrt decomposition for GPU thread hierarchy.
 
 ### R1CS exports

@@ -266,7 +266,7 @@ impl ComputeBackend for CpuBackend {
         order: BindingOrder,
     ) -> [F; D] {
         let n = inputs[0].len();
-        debug_assert!(n % 2 == 0, "buffer length must be even");
+        debug_assert!(n.is_multiple_of(2), "buffer length must be even");
         let half = n / 2;
         let num_inputs = inputs.len();
 
@@ -527,7 +527,7 @@ impl ComputeBackend for CpuBackend {
         order: BindingOrder,
     ) -> Vec<Vec<F>> {
         let n = inputs[0].len();
-        debug_assert!(n % 2 == 0, "buffer length must be even");
+        debug_assert!(n.is_multiple_of(2), "buffer length must be even");
         let half = n / 2;
         let num_inputs = inputs.len();
         let num_kernels = kernels.len();
@@ -633,7 +633,7 @@ impl ComputeBackend for CpuBackend {
         order: BindingOrder,
     ) -> Vec<F> {
         let n = inputs[0].len();
-        debug_assert!(n % 2 == 0, "buffer length must be even");
+        debug_assert!(n.is_multiple_of(2), "buffer length must be even");
         let half = n / 2;
         let num_inputs = inputs.len();
 
@@ -720,7 +720,7 @@ impl ComputeBackend for CpuBackend {
         order: BindingOrder,
     ) -> Vec<F> {
         let n = inputs[0].len();
-        debug_assert!(n % 2 == 0, "buffer length must be even");
+        debug_assert!(n.is_multiple_of(2), "buffer length must be even");
         let half = n / 2;
         let num_inputs = inputs.len();
         let one = F::one();

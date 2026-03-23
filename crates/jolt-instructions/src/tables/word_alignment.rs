@@ -12,7 +12,7 @@ pub struct WordAlignmentTable<const XLEN: usize>;
 
 impl<const XLEN: usize> LookupTable<XLEN> for WordAlignmentTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        (index % 4 == 0).into()
+        (index.is_multiple_of(4)).into()
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F

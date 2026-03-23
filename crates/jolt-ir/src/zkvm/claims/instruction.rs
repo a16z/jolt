@@ -7,6 +7,9 @@ use crate::builder::ExprBuilder;
 use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
 use crate::zkvm::tags::{poly, sumcheck};
 
+// Verified against jolt-core/src/zkvm/instruction_lookups/ra_virtual.rs
+// Formula: Σ_x eq(r_cycle,x) · Σ_i γ^i · Π_{j=0}^{m-1} ra_{i·m+j}(x)
+// Degree: n_committed_per_virtual + 1 (challenge × m openings)
 /// Instruction RA virtual sumcheck output claim.
 ///
 /// Each virtual RA polynomial is decomposed into `m` committed chunks.

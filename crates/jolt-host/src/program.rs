@@ -116,7 +116,7 @@ impl Program {
 
         if let Some(mode) = &self.backtrace {
             args.push("--backtrace".to_string());
-            args.push(mode.to_string());
+            args.push(mode.clone());
         }
 
         args.push("--stack-size".to_string());

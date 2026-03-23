@@ -475,6 +475,7 @@ fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
         for j in i..size - 1 {
             if matrix[i][i] != F::zero() {
                 let factor = matrix[j + 1][i] / matrix[i][i];
+                #[allow(clippy::needless_range_loop)]
                 for k in i..=size {
                     let tmp = matrix[i][k];
                     matrix[j + 1][k] -= factor * tmp;

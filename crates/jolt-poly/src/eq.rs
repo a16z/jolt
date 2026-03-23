@@ -19,6 +19,7 @@ use crate::thread::unsafe_allocate_zero_vec;
 /// $$f(r) = \sum_{x \in \{0,1\}^n} f(x) \cdot \widetilde{eq}(x, r)$$
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
+#[allow(clippy::unsafe_derive_deserialize)]
 pub struct EqPolynomial<F: Field> {
     point: Vec<F>,
 }

@@ -45,7 +45,10 @@ pub mod verifier;
 pub use batched::{BatchedSumcheckProver, BatchedSumcheckVerifier};
 pub use claim::SumcheckClaim;
 pub use error::SumcheckError;
-pub use handler::{ClearRoundHandler, ClearRoundVerifier, RoundHandler, RoundVerifier};
+pub use handler::{
+    CaptureHandler, CapturedProof, ClearRoundHandler, ClearRoundVerifier, RoundHandler,
+    RoundVerifier,
+};
 pub use prefix_suffix::{PrefixSuffixEvaluator, PrefixSuffixTransition};
 pub use proof::SumcheckProof;
 pub use prover::{SumcheckCompute, SumcheckProver};

@@ -52,6 +52,14 @@ pub mod poly {
     pub const JUMP_FLAG: u64 = 1207;
     pub const BRANCH_FLAG: u64 = 1208;
 
+    // Instruction input decomposition (sub-polynomials of LEFT/RIGHT_INSTRUCTION_INPUT).
+    pub const LEFT_IS_RS1: u64 = 1209;
+    pub const LEFT_IS_PC: u64 = 1210;
+    pub const RIGHT_IS_RS2: u64 = 1211;
+    pub const RIGHT_IS_IMM: u64 = 1212;
+    pub const UNEXPANDED_PC: u64 = 1213;
+    pub const IMM: u64 = 1214;
+
     pub const NEXT_PC: u64 = 1300;
     pub const NEXT_UNEXPANDED_PC: u64 = 1301;
     pub const NEXT_IS_VIRTUAL: u64 = 1302;
@@ -107,4 +115,7 @@ pub mod sumcheck {
     pub const RAM_RA_CLAIM_REDUCTION: u64 = 42;
     pub const ADVICE_CLAIM_REDUCTION: u64 = 50;
     pub const ADVICE_CLAIM_REDUCTION_CYCLE_PHASE: u64 = 51;
+    pub const BYTECODE_READ_RAF: u64 = 34;
+    pub const BYTECODE_RA_VIRTUAL: u64 = 35;
+    pub const BOOLEANITY: u64 = 60;
 }

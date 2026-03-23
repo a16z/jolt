@@ -10,6 +10,7 @@ pub(crate) const SHADER_BN254_FR: &str = include_str!("shaders/bn254_fr.metal");
 pub(crate) const SHADER_WIDE_ACC: &str = include_str!("shaders/wide_accumulator.metal");
 pub(crate) const SHADER_ELEMENTWISE: &str = include_str!("shaders/elementwise.metal");
 pub(crate) const SHADER_INTERPOLATION: &str = include_str!("shaders/interpolation.metal");
+pub(crate) const SHADER_RNS: &str = include_str!("shaders/rns.metal");
 pub(crate) const SHADER_TEST_KERNELS: &str = include_str!("shaders/test_kernels.metal");
 
 /// Pre-compiled pipelines for element-wise Fr operations on Metal.

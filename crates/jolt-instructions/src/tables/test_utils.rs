@@ -105,7 +105,7 @@ where
 
             for _ in 0..ROUNDS_PER_PHASE {
                 let mut eval_point = r.clone();
-                let c = if rng.next_u64() % 2 == 0 { 0 } else { 2 };
+                let c = if rng.next_u64().is_multiple_of(2) { 0 } else { 2 };
                 eval_point.push(F::from_u32(c));
                 let _ = prefix_bits.pop_msb();
 
@@ -142,7 +142,7 @@ where
 
                 r.push(F::from_u64(rng.next_u64()));
 
-                if r.len() % 2 == 0 {
+                if r.len().is_multiple_of(2) {
                     Prefixes::update_checkpoints::<XLEN, F, F>(
                         &mut prefix_checkpoints,
                         r[r.len() - 2],

@@ -190,7 +190,7 @@ mod tests {
         let n_rows = 8;
         let indices: Vec<Option<u8>> = (0..n_rows)
             .map(|i| {
-                if i % 3 == 0 {
+                if i.is_multiple_of(3) {
                     None
                 } else {
                     Some((rng.next_u32() % k as u32) as u8)
