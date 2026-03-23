@@ -47,7 +47,8 @@ fn run_nostd(target_dir: &str, should_panic: bool) {
 
     let mut program = guest_nostd::compile_panic_backtrace_nostd(target_dir);
 
-    let shared_preprocessing = guest_nostd::preprocess_shared_panic_backtrace_nostd(&mut program);
+    let shared_preprocessing =
+        guest_nostd::preprocess_shared_panic_backtrace_nostd(&mut program).unwrap();
     let prover_preprocessing =
         guest_nostd::preprocess_prover_panic_backtrace_nostd(shared_preprocessing.clone());
     let verifier_preprocessing = guest_nostd::preprocess_verifier_panic_backtrace_nostd(
@@ -86,7 +87,8 @@ fn run_std(target_dir: &str, should_panic: bool) {
 
     let mut program = guest_std::compile_panic_backtrace_std(target_dir);
 
-    let shared_preprocessing = guest_std::preprocess_shared_panic_backtrace_std(&mut program);
+    let shared_preprocessing =
+        guest_std::preprocess_shared_panic_backtrace_std(&mut program).unwrap();
     let prover_preprocessing =
         guest_std::preprocess_prover_panic_backtrace_std(shared_preprocessing.clone());
     let verifier_preprocessing = guest_std::preprocess_verifier_panic_backtrace_std(
