@@ -173,7 +173,7 @@ pub struct JoltCpuProver<
 > {
     pub preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
     pub program_io: JoltDevice,
-    pub lazy_trace: LazyTraceIterator,
+    pub lazy_trace: Option<LazyTraceIterator>,
     pub trace: Arc<Vec<Cycle>>,
     pub advice: JoltAdvice<F, PCS>,
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
@@ -449,7 +449,7 @@ impl<
         Self {
             preprocessing,
             program_io,
-            lazy_trace,
+            lazy_trace: Some(lazy_trace),
             trace: trace.into(),
             advice: JoltAdvice {
                 untrusted_advice_polynomial: None,
@@ -504,6 +504,8 @@ impl<
         );
 
         let (commitments, mut opening_proof_hints) = self.generate_and_commit_witness_polynomials();
+        // Free emulator memory — lazy_trace only needed for streaming commit
+        self.lazy_trace.take();
         let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
         self.generate_and_commit_trusted_advice();
 
@@ -680,9 +682,10 @@ impl<
                 polys.len()
             );
 
-            // Materialize the trace for non-streaming commit
             let trace: Vec<Cycle> = self
                 .lazy_trace
+                .as_ref()
+                .expect("lazy_trace consumed")
                 .clone()
                 .pad_using(T, |_| Cycle::NoOp)
                 .collect();
@@ -720,6 +723,8 @@ impl<
             let mut row_commitments: Vec<Vec<PCS::ChunkState>> = vec![vec![]; num_rows];
 
             self.lazy_trace
+                .as_ref()
+                .expect("lazy_trace consumed")
                 .clone()
                 .pad_using(T, |_| Cycle::NoOp)
                 .iter_chunks(row_len)
@@ -1304,7 +1309,7 @@ impl<
         let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
 
-        let mut booleanity = BooleanitySumcheckProver::initialize(
+        let (mut booleanity, shared_ra_indices) = BooleanitySumcheckProver::initialize(
             booleanity_params,
             &self.trace,
             &self.preprocessing.shared.bytecode,
@@ -1313,12 +1318,11 @@ impl<
 
         let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
             ram_ra_virtual_params,
-            &self.trace,
-            &self.program_io.memory_layout,
+            &shared_ra_indices,
             &self.one_hot_params,
         );
         let mut lookups_ra_virtual =
-            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
+            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &shared_ra_indices);
         let mut inc_reduction =
             IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
 

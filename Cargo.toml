@@ -211,6 +211,7 @@ num-traits = { version = "0.2.19", default-features = false }
 sysinfo = "0.38"
 memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
 mimalloc = "0.1"
+tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_supported_platforms"] }
 
 # Parallel Processing
 rayon = { version = "^1.8.0" }

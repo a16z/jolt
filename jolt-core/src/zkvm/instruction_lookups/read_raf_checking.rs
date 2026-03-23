@@ -26,6 +26,7 @@ use crate::{
             VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
+        ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
@@ -352,8 +353,10 @@ pub struct InstructionReadRafSumcheckProver<F: JoltField> {
     /// Gruen-split equality polynomial over cycle vars. Present only in the last log(T) rounds.
     eq_r_reduction: GruenSplitEqPolynomial<F>,
 
-    /// Materialized `ra_i(k_i, j)` polynomials. Present only in the last log(T) rounds.
-    ra_polys: Option<Vec<MultilinearPolynomial<F>>>,
+    /// Lazy `ra_i(k_i, j)` polynomials using combined expanding-table lookups.
+    /// Starts as RaPolynomial<u16, F> (compact: 4 bytes/cycle + 2MB table per poly),
+    /// automatically materializes to dense after 3 cycle rounds.
+    ra_polys: Option<Vec<RaPolynomial<u16, F>>>,
 
     /// Materialized Val_j(k) + γ · RafVal_j(k) over (address, cycle) for final log T rounds.
     /// Combines lookup table values with γ-weighted RAF operand contributions.
@@ -713,55 +716,97 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
         let m = 1 << log_m;
         let m_mask = m - 1;
         let num_cycles = self.lookup_indices.len();
-        // Drop stuff that's no longer needed
         drop_in_background_thread(std::mem::take(&mut self.u_evals));
 
-        let ra_polys: Vec<MultilinearPolynomial<F>> = {
-            let span = tracing::span!(tracing::Level::INFO, "Materialize ra polynomials");
+        let n = LOG_K / self.params.ra_virtual_log_k_chunk;
+        let chunk_size = self.v.len() / n;
+        // Combined table size K^chunk_size. Only use lazy path when it fits in u16.
+        let combined_table_bits = log_m * chunk_size;
+
+        let ra_polys: Vec<RaPolynomial<u16, F>> = if combined_table_bits <= 16 {
+            let span = tracing::span!(tracing::Level::INFO, "Build lazy ra polynomials");
             let _guard = span.enter();
             assert!(self.v.len().is_power_of_two());
-            let n = LOG_K / self.params.ra_virtual_log_k_chunk;
-            let chunk_size = self.v.len() / n;
+            let combined_size = 1usize << combined_table_bits;
+
             self.v
                 .chunks(chunk_size)
                 .enumerate()
                 .map(|(chunk_i, v_chunk)| {
                     let phase_offset = chunk_i * chunk_size;
-                    let res = self
+
+                    // Build combined eq table: combined_table[key] = ∏ v[phase][chunk_val]
+                    let combined_table: Vec<F> = (0..combined_size)
+                        .map(|combined_idx| {
+                            let mut product = F::one();
+                            let mut remaining = combined_idx;
+                            for table in v_chunk.iter().rev() {
+                                product *= table[remaining & m_mask];
+                                remaining >>= log_m;
+                            }
+                            product
+                        })
+                        .collect();
+
+                    // Extract combined keys per cycle
+                    let combined_keys: Vec<Option<u16>> = self
+                        .lookup_indices
+                        .par_iter()
+                        .with_min_len(1024)
+                        .map(|bits| {
+                            let v: u128 = (*bits).into();
+                            let mut key: usize = 0;
+                            let mut shift = (self.params.phases - 1 - phase_offset) * log_m;
+                            for p in 0..chunk_size {
+                                let chunk_val = ((v >> shift) as usize) & m_mask;
+                                key = (key << log_m) | chunk_val;
+                                if p + 1 < chunk_size {
+                                    shift -= log_m;
+                                }
+                            }
+                            Some(key as u16)
+                        })
+                        .collect();
+
+                    RaPolynomial::new(Arc::new(combined_keys), combined_table)
+                })
+                .collect()
+        } else {
+            // Fallback: dense materialization for large combined tables
+            let span = tracing::span!(tracing::Level::INFO, "Materialize ra polynomials (dense)");
+            let _guard = span.enter();
+            assert!(self.v.len().is_power_of_two());
+
+            self.v
+                .chunks(chunk_size)
+                .enumerate()
+                .map(|(chunk_i, v_chunk)| {
+                    let phase_offset = chunk_i * chunk_size;
+                    let res: Vec<F> = self
                         .lookup_indices
                         .par_iter()
                         .with_min_len(1024)
                         .map(|i| {
-                            // Hot path: compute ra_i(k_i, j) as a product of per-phase expanding-table
-                            // values. This is performance sensitive, so we:
-                            // - Convert `LookupBits` -> `u128` once per cycle
-                            // - Use a decrementing shift instead of recomputing `(phases-1-phase)*log_m`
-                            // - Avoid an initial multiply-by-one by seeding `acc` with the first term
                             let v: u128 = (*i).into();
-
                             if v_chunk.is_empty() {
                                 return F::one();
                             }
-
-                            // shift(phase) = (phases - 1 - phase) * log_m
-                            // For consecutive phases, this decreases by `log_m` each step.
                             let mut shift = (self.params.phases - 1 - phase_offset) * log_m;
-
                             let mut iter = v_chunk.iter();
                             let first = iter.next().unwrap();
                             let first_idx = ((v >> shift) as usize) & m_mask;
                             let mut acc = first[first_idx];
-
                             for table in iter {
                                 shift -= log_m;
                                 let idx = ((v >> shift) as usize) & m_mask;
                                 acc *= table[idx];
                             }
-
                             acc
                         })
-                        .collect::<Vec<F>>();
-                    res.into()
+                        .collect();
+                    // Wrap dense vec in RaPolynomial::RoundN so the type matches
+                    let poly: MultilinearPolynomial<F> = res.into();
+                    RaPolynomial::RoundN(poly)
                 })
                 .collect()
         };
