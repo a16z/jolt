@@ -250,8 +250,8 @@ impl<F: JoltField> OutputSumcheckProver<F> {
         // When io_mask[2g] == io_mask[2g+1] for all g, the fold produces q_constant = 0
         // (because val_final == val_io on the I/O region) and q_quadratic = 0 (because
         // io1 - io0 = 0). This lets us skip the expensive par_fold_out_in_unreduced.
-        let num_zero_address_vars = (io_start.trailing_zeros().min(io_end.trailing_zeros()) as usize)
-            .min(K.log_2());
+        let num_zero_address_vars =
+            (io_start.trailing_zeros().min(io_end.trailing_zeros()) as usize).min(K.log_2());
 
         Self {
             val_final: final_ram_state.to_vec().into(),
@@ -307,7 +307,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
             let e = (io1 - io0) * (v1 - v0);
             [c0, e]
         });
-        
+
         eq_r_address.gruen_poly_deg_3(q_constant, q_quadratic, previous_claim)
     }
 
