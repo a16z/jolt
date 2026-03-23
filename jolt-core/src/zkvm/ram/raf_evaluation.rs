@@ -152,7 +152,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RafEvaluationSumcheckParams<F> 
     #[cfg(feature = "zk")]
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         let opening = OpeningId::virt(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter);
-        InputClaimConstraint::direct(opening)
+        let scale = 1i128 << self.phase3_cycle_rounds();
+        InputClaimConstraint::new(
+            vec![ProductTerm::scaled(
+                ValueSource::Constant(scale),
+                vec![ValueSource::Opening(opening)],
+            )],
+            vec![opening],
+        )
     }
 
     #[cfg(feature = "zk")]
