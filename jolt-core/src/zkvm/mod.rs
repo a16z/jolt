@@ -1,15 +1,14 @@
 use std::fs::File;
 
-use crate::zkvm::config::OneHotParams;
+use crate::zkvm::config::{OneHotConfig, OneHotParams, ReadWriteConfig};
 use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
     curve::Bn254Curve,
     field::JoltField,
+    poly::commitment::commitment_scheme::CommitmentScheme,
+    poly::commitment::dory::{DoryCommitmentScheme, DoryLayout},
     poly::opening_proof::ProverOpeningAccumulator,
     poly::opening_proof::{OpeningId, SumcheckId},
-    poly::{
-        commitment::commitment_scheme::CommitmentScheme, commitment::dory::DoryCommitmentScheme,
-    },
     transcripts::Blake2bTranscript,
     transcripts::Transcript,
 };
@@ -166,11 +165,15 @@ where
 }
 
 /// Absorb public instance data into the transcript for Fiat-Shamir.
+#[allow(clippy::too_many_arguments)]
 pub fn fiat_shamir_preamble(
     program_io: &JoltDevice,
     ram_K: usize,
     trace_length: usize,
     entry_address: u64,
+    rw_config: &ReadWriteConfig,
+    one_hot_config: &OneHotConfig,
+    dory_layout: DoryLayout,
     transcript: &mut impl Transcript,
 ) {
     transcript.append_u64(b"max_input_size", program_io.memory_layout.max_input_size);
@@ -182,6 +185,13 @@ pub fn fiat_shamir_preamble(
     transcript.append_u64(b"ram_K", ram_K as u64);
     transcript.append_u64(b"trace_length", trace_length as u64);
     transcript.append_u64(b"entry_address", entry_address);
+    transcript.append_u64(b"ram_rw_phase1_num_rounds", rw_config.ram_rw_phase1_num_rounds as u64);
+    transcript.append_u64(b"ram_rw_phase2_num_rounds", rw_config.ram_rw_phase2_num_rounds as u64);
+    transcript.append_u64(b"registers_rw_phase1_num_rounds", rw_config.registers_rw_phase1_num_rounds as u64);
+    transcript.append_u64(b"registers_rw_phase2_num_rounds", rw_config.registers_rw_phase2_num_rounds as u64);
+    transcript.append_u64(b"log_k_chunk", one_hot_config.log_k_chunk as u64);
+    transcript.append_u64(b"lookups_ra_virtual_log_k_chunk", one_hot_config.lookups_ra_virtual_log_k_chunk as u64);
+    transcript.append_u64(b"dory_layout", dory_layout as u64);
 }
 
 #[cfg(feature = "prover")]
