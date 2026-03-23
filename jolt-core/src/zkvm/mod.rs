@@ -185,12 +185,27 @@ pub fn fiat_shamir_preamble(
     transcript.append_u64(b"ram_K", ram_K as u64);
     transcript.append_u64(b"trace_length", trace_length as u64);
     transcript.append_u64(b"entry_address", entry_address);
-    transcript.append_u64(b"ram_rw_phase1_num_rounds", rw_config.ram_rw_phase1_num_rounds as u64);
-    transcript.append_u64(b"ram_rw_phase2_num_rounds", rw_config.ram_rw_phase2_num_rounds as u64);
-    transcript.append_u64(b"registers_rw_phase1_num_rounds", rw_config.registers_rw_phase1_num_rounds as u64);
-    transcript.append_u64(b"registers_rw_phase2_num_rounds", rw_config.registers_rw_phase2_num_rounds as u64);
+    transcript.append_u64(
+        b"ram_rw_phase1_num_rounds",
+        rw_config.ram_rw_phase1_num_rounds as u64,
+    );
+    transcript.append_u64(
+        b"ram_rw_phase2_num_rounds",
+        rw_config.ram_rw_phase2_num_rounds as u64,
+    );
+    transcript.append_u64(
+        b"registers_rw_phase1_num_rounds",
+        rw_config.registers_rw_phase1_num_rounds as u64,
+    );
+    transcript.append_u64(
+        b"registers_rw_phase2_num_rounds",
+        rw_config.registers_rw_phase2_num_rounds as u64,
+    );
     transcript.append_u64(b"log_k_chunk", one_hot_config.log_k_chunk as u64);
-    transcript.append_u64(b"lookups_ra_virtual_log_k_chunk", one_hot_config.lookups_ra_virtual_log_k_chunk as u64);
+    transcript.append_u64(
+        b"lookups_ra_virtual_log_k_chunk",
+        one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
+    );
     transcript.append_u64(b"dory_layout", dory_layout as u64);
 }
 
