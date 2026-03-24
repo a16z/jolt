@@ -7,6 +7,11 @@ use std::sync::{
     atomic::{AtomicU8, Ordering},
     RwLock,
 };
+#[cfg(test)]
+use std::{
+    sync::OnceLock,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 /// Dory matrix layout for OneHot polynomials.
 ///
@@ -190,6 +195,28 @@ impl Drop for DoryContextGuard {
 pub struct DoryGlobals;
 
 impl DoryGlobals {
+    #[cfg(test)]
+    pub(crate) fn configure_test_cache_root() {
+        static TEST_CACHE_ROOT: OnceLock<()> = OnceLock::new();
+
+        TEST_CACHE_ROOT.get_or_init(|| {
+            let mut temp_cache_root = std::env::temp_dir();
+            temp_cache_root.push(format!(
+                "jolt-dory-test-cache-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&temp_cache_root).unwrap();
+
+            unsafe {
+                std::env::set_var("LOCALAPPDATA", &temp_cache_root);
+            }
+        });
+    }
+
     /// Split `total_vars` into a *balanced* pair `(sigma, nu)` where:
     /// - **sigma** is the number of **column** variables
     /// - **nu** is the number of **row** variables
@@ -422,6 +449,9 @@ impl DoryGlobals {
         context: DoryContext,
         layout: Option<DoryLayout>,
     ) -> Option<()> {
+        #[cfg(test)]
+        Self::configure_test_cache_root();
+
         let (num_columns, num_rows, t) = Self::calculate_dimensions(K, T);
         Self::set_num_columns_for_context(num_columns, context);
         Self::set_T_for_context(t, context);
@@ -441,6 +471,8 @@ impl DoryGlobals {
     /// Reset global state
     #[cfg(test)]
     pub fn reset() {
+        Self::configure_test_cache_root();
+
         // Reset main globals
         *GLOBAL_T.write().unwrap() = None;
         *MAX_NUM_ROWS.write().unwrap() = None;
