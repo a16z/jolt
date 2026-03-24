@@ -29,7 +29,8 @@ mod normalize;
 mod polynomial_id;
 mod visitor;
 
-#[allow(dead_code)]
+// TODO: protocol module has unresolved references (register_all_polynomials, build_spartan)
+// #[allow(dead_code)]
 pub mod protocol;
 pub mod toom_cook;
 pub mod zkvm;

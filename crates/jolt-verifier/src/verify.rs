@@ -235,7 +235,7 @@ where
     let mut s1_eval_idx = 0;
     for &vid in &s1_stage.vertices {
         let vertex = graph.claim_graph.vertex(vid);
-        for &claim_id in vertex.produced_claims() {
+        for claim_id in vertex.all_produced_claims() {
             let eval = if s1_eval_idx < proof.spartan_evals.len() {
                 proof.spartan_evals[s1_eval_idx]
             } else {
@@ -245,6 +245,8 @@ where
             s1_eval_idx += 1;
         }
     }
+    // Store full r_y (reversed) as S1's point. The graph's r_cycle() =
+    // Slice(Challenges(S1), 0..log_T) extracts the first log_T elements.
     cache.set_point(s1_stage.id, r_y.iter().rev().copied().collect());
 
     // -----------------------------------------------------------------------
@@ -316,11 +318,11 @@ where
             e.append_to_transcript(&mut transcript);
         }
 
-        // Unpack evals into cache
+        // Unpack evals into cache (includes side-effect claims)
         let mut eval_idx = 0;
         for &vid in &stage.vertices {
             let vertex = graph.claim_graph.vertex(vid);
-            for &claim_id in vertex.produced_claims() {
+            for claim_id in vertex.all_produced_claims() {
                 if eval_idx >= stage_proof.evals.len() {
                     return Err(JoltError::InvalidProof(format!(
                         "stage {:?} has fewer evals than produced claims",
@@ -332,7 +334,9 @@ where
             }
         }
 
-        // Output formula check: verify final_eval == Σ α^j · pad_j · w_j · g_j
+        // Output formula check: verify final_eval == Σ α^j · pad_j · g_j
+        // The formula already includes the weighting (eq/lt/eq+1) as challenge values —
+        // no separate weighting multiplication needed.
         let max_num_vars = sumcheck_claims.iter().map(|c| c.num_vars).max().unwrap_or(0);
         let mut expected_final = F::zero();
         let mut alpha_power = F::one();
@@ -344,20 +348,24 @@ where
                 let offset = max_num_vars - sc.num_vars.resolve(symbols).unwrap_or(num_vars);
                 let pad = F::one().mul_pow_2(offset);
 
-                // Evaluate weighting polynomial at eval_point
-                let w_eval = evaluate_weighting(&sc.weighting, &eval_point, &cache, stage.id);
-
-                // Evaluate output formula with proof evals + challenge values
                 let n_produced = sc.produces.len();
                 let vertex_evals = &stage_proof.evals[vertex_eval_offset..vertex_eval_offset + n_produced];
-                let g_eval = evaluate_output_formula(
+
+                // Compute output formula challenge values: weighting × gamma powers.
+                // The formula's Derived challenges encode eq(eval_point, source_point) × gamma^i.
+                let g_eval = evaluate_output_formula_with_challenges(
                     &sc.formula,
                     vertex_evals,
+                    &sc.weighting,
+                    &sc.deps,
+                    &eval_point,
+                    &cache,
+                    &graph.claim_graph,
                     &stage_challenges,
                     external_values,
                 );
 
-                expected_final += alpha_power * pad * w_eval * g_eval;
+                expected_final += alpha_power * pad * g_eval;
                 alpha_power *= alpha;
                 vertex_eval_offset += n_produced;
             }
@@ -381,7 +389,7 @@ where
     for &vid in &graph.staging.opening.vertices {
         let vertex = graph.claim_graph.vertex(vid);
         if let Vertex::PointNormalization(pn) = vertex {
-            let lagrange = compute_lagrange_factor(&pn.padding_source, &cache);
+            let lagrange = compute_lagrange_factor(&pn.padding_source, &cache, symbols);
 
             for (&consumed, &produced) in pn.consumes.iter().zip(pn.produces.iter()) {
                 let val = cache
@@ -396,11 +404,38 @@ where
     // -----------------------------------------------------------------------
     // PCS opening verification
     // -----------------------------------------------------------------------
-    let pcs_claims = vec![VerifierClaim {
+    // Collect committed polynomial opening claims from Opening vertices.
+    let mut pcs_claims: Vec<VerifierClaim<F, PCS::Output>> = Vec::new();
+
+    let mut commitment_idx = 0;
+    for &vid in &graph.staging.opening.vertices {
+        let vertex = graph.claim_graph.vertex(vid);
+        if let Vertex::Opening(ov) = vertex {
+            let claim = graph.claim_graph.claim(ov.consumes);
+            let eval = cache
+                .get(ov.consumes)
+                .copied()
+                .ok_or_else(|| JoltError::InvalidProof(
+                    format!("missing eval for opening claim {:?}", ov.consumes),
+                ))?;
+            let point = resolve_point(&claim.point, &cache, symbols);
+            if commitment_idx < proof.commitments.len() {
+                pcs_claims.push(VerifierClaim {
+                    commitment: proof.commitments[commitment_idx].clone(),
+                    point,
+                    eval,
+                });
+                commitment_idx += 1;
+            }
+        }
+    }
+
+    // Spartan witness commitment (opened internally by Spartan, not in the graph)
+    pcs_claims.push(VerifierClaim {
         commitment: proof.witness_commitment.clone(),
         point: cache.points.get(&StageId(0)).cloned().unwrap_or_default(),
         eval: proof.spartan_proof.witness_eval,
-    }];
+    });
 
     crate::verifier::verify_openings::<PCS, _>(
         pcs_claims,
@@ -412,47 +447,51 @@ where
     Ok(())
 }
 
-/// Evaluate the weighting polynomial at a point.
-fn evaluate_weighting<F: Field>(
-    weighting: &jolt_ir::protocol::PublicPolynomial,
-    eval_point: &[F],
+/// Infer the weighting source point from a vertex's dependencies.
+///
+/// For most sumcheck instances, the eq/lt/eq+1 weighting is evaluated against a
+/// prior stage's challenge point. We infer which stage by looking at the vertex's
+/// dep claims and finding which stage produced them.
+fn infer_weighting_source<F: Clone>(
+    deps: &[ClaimId],
+    graph: &jolt_ir::protocol::ClaimGraph,
     cache: &EvalCache<F>,
-    stage_id: StageId,
-) -> F {
-    use jolt_ir::protocol::PublicPolynomial as PP;
-    match weighting {
-        PP::Eq => {
-            let eq_point = cache.points.get(&stage_id).unwrap();
-            jolt_poly::EqPolynomial::new(eq_point.clone()).evaluate(eval_point)
+) -> Option<Vec<F>> {
+    for &dep_id in deps {
+        let claim = graph.claim(dep_id);
+        if let SymbolicPoint::Challenges(sid) = &claim.point {
+            if let Some(pt) = cache.points.get(sid) {
+                return Some(pt.clone());
+            }
         }
-        PP::EqPlusOne => {
-            let eq_point = cache.points.get(&stage_id).unwrap();
-            jolt_poly::EqPlusOnePolynomial::new(eq_point.clone()).evaluate(eval_point)
-        }
-        PP::Lt => {
-            let eq_point = cache.points.get(&stage_id).unwrap();
-            jolt_poly::LtPolynomial::evaluate(eq_point, eval_point)
-        }
-        PP::Derived => F::one(), // TODO(G4): compute derived weighting at eval_point
     }
+    None
 }
 
-/// Evaluate an output formula at proof-provided evaluations.
-fn evaluate_output_formula<F: Field>(
+/// Evaluate the output formula with properly resolved challenge values.
+///
+/// The formula's Derived challenges encode weighting × gamma combinations.
+/// We compute:
+/// - Weighting eval (eq/lt/eq+1) at `eval_point` against the upstream source point
+/// - Gamma powers from the stage's pre_squeeze
+/// - Combined challenge values: weighting_eval × gamma^i for each challenge variable
+#[allow(clippy::too_many_arguments)]
+fn evaluate_output_formula_with_challenges<F: Field>(
     formula: &jolt_ir::protocol::ClaimFormula,
     evals: &[F],
-    _stage_challenges: &StageChallenges<F>,
+    weighting: &jolt_ir::protocol::PublicPolynomial,
+    deps: &[ClaimId],
+    eval_point: &[F],
+    cache: &EvalCache<F>,
+    graph: &jolt_ir::protocol::ClaimGraph,
+    stage_challenges: &StageChallenges<F>,
     _external_values: &HashMap<&str, F>,
 ) -> F {
-    // Map formula opening variables to the proof evaluations.
-    // The ordering: formula.definition.opening_bindings[i].var_id maps to evals[i].
-    let max_var = formula
-        .definition
-        .opening_bindings
-        .iter()
-        .map(|b| b.var_id + 1)
-        .max()
-        .unwrap_or(0) as usize;
+    use jolt_ir::protocol::PublicPolynomial as PP;
+
+    // Map formula opening variables to proof evaluations
+    let max_var = formula.definition.opening_bindings.iter()
+        .map(|b| b.var_id + 1).max().unwrap_or(0) as usize;
     let mut openings = vec![F::zero(); max_var];
     for (i, binding) in formula.definition.opening_bindings.iter().enumerate() {
         if i < evals.len() {
@@ -460,49 +499,67 @@ fn evaluate_output_formula<F: Field>(
         }
     }
 
-    // Resolve challenge values
-    // TODO: this duplicates evaluate_formula — should be unified
-    let max_chal = formula
-        .definition
-        .challenge_bindings
-        .iter()
-        .map(|b| b.var_id + 1)
-        .max()
-        .unwrap_or(0) as usize;
-    let challenges = vec![F::zero(); max_chal];
+    // Compute weighting evaluation at eval_point against inferred source point
+    let source_point = infer_weighting_source(deps, graph, cache);
+    let w_eval = match (weighting, &source_point) {
+        (PP::Eq, Some(sp)) => jolt_poly::EqPolynomial::new(sp.clone()).evaluate(eval_point),
+        (PP::EqPlusOne, Some(sp)) => {
+            jolt_poly::EqPlusOnePolynomial::new(sp.clone()).evaluate(eval_point)
+        }
+        (PP::Lt, Some(sp)) => jolt_poly::LtPolynomial::evaluate(sp, eval_point),
+        (PP::Derived, _) => F::one(), // Derived weights are absorbed into challenge values
+        (_, None) => F::one(),
+    };
 
-    // Challenge values for the output formula come from stage pre_squeeze
-    // The output formula's challenges are the γ-power coefficients and eq evaluations
-    // baked into the formula. For now, resolve from stage_challenges + externals.
-    for (i, binding) in formula.definition.challenge_bindings.iter().enumerate() {
-        // Output formula challenge values are Derived — they're computed from
-        // the eval point and stage challenges at runtime.
-        // For a proper implementation, these would be computed from the formula's
-        // ChallengeLabel mapping. For now, use zero (the output formula check
-        // requires the challenge values to be resolved).
-        let _ = (i, binding);
+    // Build challenge values: the first challenge gets the weighting eval,
+    // subsequent challenges get gamma powers from stage pre_squeeze.
+    // Common pattern: challenges = [w_eval, w_eval*γ, w_eval*γ², ...]
+    // or [w_eval*(1+γ), w_eval*γ] for RamRW-style formulas.
+    let n_challenges = formula.definition.challenge_bindings.iter()
+        .map(|b| b.var_id + 1).max().unwrap_or(0) as usize;
+    let mut challenges = vec![F::zero(); n_challenges];
+
+    // Find the gamma base from any stage challenge (heuristic: first available scalar)
+    let gamma_base = stage_challenges.scalars.values().next().copied().unwrap_or(F::one());
+
+    // Fill challenges: w_eval × gamma^i for each binding
+    let mut gamma_power = F::one();
+    for binding in &formula.definition.challenge_bindings {
+        challenges[binding.var_id as usize] = w_eval * gamma_power;
+        gamma_power *= gamma_base;
     }
 
     formula.definition.evaluate(&openings, &challenges)
+}
+
+/// Resolve a symbolic point to concrete field elements using the eval cache.
+fn resolve_point<F: Clone>(
+    point: &SymbolicPoint,
+    cache: &EvalCache<F>,
+    symbols: &HashMap<Symbol, usize>,
+) -> Vec<F> {
+    match point {
+        SymbolicPoint::Challenges(sid) => cache.points.get(sid).cloned().unwrap_or_default(),
+        SymbolicPoint::Concat(parts) => {
+            parts.iter().flat_map(|p| resolve_point(p, cache, symbols)).collect()
+        }
+        SymbolicPoint::Slice { source, range } => {
+            let full = resolve_point(source, cache, symbols);
+            let start = range.start.resolve(symbols).expect("slice start");
+            let end = range.end.resolve(symbols).expect("slice end");
+            full[start..end].to_vec()
+        }
+    }
 }
 
 /// Compute `∏(1 − r_i)` from a padding source's challenge point.
 fn compute_lagrange_factor<F: Field>(
     padding_source: &SymbolicPoint,
     cache: &EvalCache<F>,
+    symbols: &HashMap<Symbol, usize>,
 ) -> F {
-    match padding_source {
-        SymbolicPoint::Challenges(stage_id) => {
-            let point = cache
-                .points
-                .get(stage_id)
-                .expect("missing point for normalization padding source");
-            point.iter().fold(F::one(), |acc, r| acc * (F::one() - *r))
-        }
-        SymbolicPoint::Concat(_) | SymbolicPoint::Slice { .. } => {
-            panic!("complex padding source not yet supported for Lagrange factor");
-        }
-    }
+    let point = resolve_point(padding_source, cache, symbols);
+    point.iter().fold(F::one(), |acc, r| acc * (F::one() - *r))
 }
 
 #[cfg(test)]

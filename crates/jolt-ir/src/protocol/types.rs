@@ -157,12 +157,25 @@ impl Vertex {
         }
     }
 
-    /// All claims this vertex produces (outgoing edges).
+    /// Formula-produced claims (outgoing edges verified by the output formula).
     pub fn produced_claims(&self) -> &[ClaimId] {
         match self {
             Self::Sumcheck(v) => &v.produces,
             Self::PointNormalization(v) => &v.produces,
             Self::Opening(_) => &[],
+        }
+    }
+
+    /// All claims this vertex produces, including side-effect evaluations.
+    pub fn all_produced_claims(&self) -> Vec<ClaimId> {
+        match self {
+            Self::Sumcheck(v) => {
+                let mut all = v.produces.clone();
+                all.extend_from_slice(&v.side_effect_claims);
+                all
+            }
+            Self::PointNormalization(v) => v.produces.clone(),
+            Self::Opening(_) => vec![],
         }
     }
 }
@@ -182,7 +195,20 @@ pub struct SumcheckVertex {
     /// How the input claimed sum is derived from upstream evals.
     pub input: InputClaim,
     /// Leaf claims produced at the stage's challenge point.
+    ///
+    /// These are the polynomials referenced by the output formula — the
+    /// verifier checks the output claim against their evaluations.
     pub produces: Vec<ClaimId>,
+    /// Additional polynomial evaluations available at the stage's challenge
+    /// point as a byproduct of the sumcheck.
+    ///
+    /// In jolt-core, the opening accumulator stores evaluations of ALL
+    /// virtual polynomials at each sumcheck's challenge point (via
+    /// `bind_opening_inputs`). The output formula only references a subset.
+    /// Side-effect claims capture the rest — they're not verified by the
+    /// output formula but are available for downstream consumption
+    /// (e.g., BytecodeReadRaf's multi-stage RLC input).
+    pub side_effect_claims: Vec<ClaimId>,
     /// The output claim formula (verifier check expression).
     pub formula: ClaimFormula,
     /// Degree of the sumcheck round polynomial.
@@ -194,6 +220,32 @@ pub struct SumcheckVertex {
     /// Variable-binding phases (e.g., address then cycle for multi-phase sumchecks).
     /// Single-phase vertices have one entry.
     pub phases: Vec<Phase>,
+    /// How to derive output formula challenge values from the eval point
+    /// and stage pre_squeeze. The verifier uses this to reconstruct the
+    /// exact challenge values that the prover used during witness construction.
+    pub output_challenge_spec: OutputChallengeSpec,
+}
+
+/// Specifies how the verifier computes output formula challenge values.
+///
+/// For each challenge variable in the output formula, the value is typically
+/// `weighting_eval × gamma^power` where the weighting is eq/lt/eq+1 evaluated
+/// at the sumcheck's result point against an upstream stage's challenge point.
+#[derive(Clone, Debug)]
+pub enum OutputChallengeSpec {
+    /// `challenges[i] = w(eval_point, source_point) × gamma^i`
+    ///
+    /// The most common pattern: claim reductions and standard sumchecks where
+    /// each challenge is the weighting evaluation times a gamma power.
+    /// `gamma_label` names the pre_squeeze scalar; the weighting type comes
+    /// from the vertex's `PublicPolynomial` field.
+    WeightedGammaPowers { gamma_label: &'static str },
+    /// Challenges are independent (not gamma-power structured).
+    /// Each label maps to a pre_squeeze or external value.
+    /// Weighting is already included in the challenge values.
+    Explicit(Vec<ChallengeLabel>),
+    /// No challenges needed (zero-check formulas like Booleanity).
+    None,
 }
 
 /// How the input claimed sum is derived.

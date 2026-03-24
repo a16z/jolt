@@ -182,7 +182,10 @@ impl<F: Field> PolynomialTables<F> {
             // These don't have dedicated table storage (derived at runtime)
             P::SpartanWitness | P::RamVal | P::RamValFinal | P::RegistersVal
             | P::LeftLookupOperand | P::RightLookupOperand
-            | P::TrustedAdvice | P::UntrustedAdvice => {
+            | P::TrustedAdvice | P::UntrustedAdvice
+            | P::BytecodeReadRafVal(_) | P::InstructionReadRafVal(_)
+            | P::OpFlag(_) | P::ExpandedPc | P::InstructionRafFlag
+            | P::LookupTableFlag(_) => {
                 panic!("{id:?} has no stored evaluation table")
             }
         }

@@ -309,7 +309,10 @@ impl MetalBackend {
             return F::zero();
         }
 
-        let num_groups = n.div_ceil(self.gpu_config.reduce_group_size).min(self.gpu_config.max_reduce_groups);
+        // Elementwise kernels (sum, dot_product) use their own group size
+        // matching the hardcoded SUM_GROUP_SIZE in elementwise.metal.
+        let gs = self.gpu_config.elementwise_group_size;
+        let num_groups = n.div_ceil(gs).min(self.gpu_config.max_reduce_groups);
 
         // SAFETY: `reduce_params` is a 16-byte shared buffer (4 × u32). We write
         // exactly 2 entries. No Metal commands are in flight — previous command
@@ -333,7 +336,7 @@ impl MetalBackend {
 
         enc.dispatch_thread_groups(
             MTLSize::new(num_groups as u64, 1, 1),
-            MTLSize::new(self.gpu_config.reduce_group_size as u64, 1, 1),
+            MTLSize::new(gs as u64, 1, 1),
         );
         enc.end_encoding();
         cmd.commit();

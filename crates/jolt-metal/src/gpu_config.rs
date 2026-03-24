@@ -9,8 +9,15 @@ use metal::Device;
 /// GPU-specific tuning parameters for kernel dispatch.
 #[derive(Clone, Debug)]
 pub struct GpuConfig {
-    /// Threadgroup size for reduce kernels. Power of 2.
+    /// Threadgroup size for pairwise_reduce (sumcheck) kernels. Power of 2.
+    /// Set to 128 by default — smaller groups improve GPU scheduling
+    /// for register-heavy kernels (D>=8). Benchmarks show +9% for BN254 D=8.
     pub reduce_group_size: usize,
+    /// Threadgroup size for elementwise sum/dot_product kernels.
+    /// These are lightweight kernels with low register pressure, so the
+    /// full 256-thread groups work well and match the hardcoded
+    /// `SUM_GROUP_SIZE` in elementwise.metal.
+    pub elementwise_group_size: usize,
     /// Maximum threadgroups per reduce dispatch.
     pub max_reduce_groups: usize,
     /// SIMD width (threads per simdgroup).
@@ -24,7 +31,11 @@ pub struct GpuConfig {
 impl Default for GpuConfig {
     fn default() -> Self {
         Self {
-            reduce_group_size: 256,
+            // 128 threads = 4 simdgroups per threadgroup. Smaller groups
+            // give the GPU more scheduling flexibility for register-heavy
+            // kernels (D>=8). Benchmarks show +9% for BN254 D=8 vs 256.
+            reduce_group_size: 128,
+            elementwise_group_size: 256,
             max_reduce_groups: 256,
             simd_size: 32,
             split_pass_threshold: 1024,
@@ -46,7 +57,8 @@ impl GpuConfig {
             // M4+: dynamic caching increases effective register file.
             // Split-pass threshold could be lowered once benchmarked.
             Self {
-                reduce_group_size: 256,
+                reduce_group_size: 128,
+                elementwise_group_size: 256,
                 max_reduce_groups: 256,
                 simd_size: 32,
                 split_pass_threshold: 1024,
@@ -73,6 +85,7 @@ mod tests {
         let config = GpuConfig::default();
         assert_eq!(config.reduce_group_size % config.simd_size, 0);
         assert!(config.reduce_group_size.is_power_of_two());
+        assert!(config.elementwise_group_size.is_power_of_two());
         assert!(config.max_reduce_groups > 0);
     }
 

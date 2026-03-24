@@ -20,5 +20,5 @@ pub use symbolic::{Symbol, SymbolicExpr};
 pub use types::*;
 pub use validate::{
     ChallengeSpecError, ClaimFlowError, CommitmentError, EvalOrderingError, GraphError,
-    StagingError,
+    PointConvergenceError, StagingError,
 };

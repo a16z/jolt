@@ -152,13 +152,16 @@ pub enum ChallengeSpecError {
 
 #[derive(Debug)]
 pub enum ClaimFlowError {
-    /// A committed polynomial has no Opening vertex consuming one of its claims.
     NoOpening(PolynomialId),
-    /// A committed polynomial is opened by multiple Opening vertices.
-    DuplicateOpening {
-        polynomial: PolynomialId,
-        count: usize,
-    },
+    DuplicateOpening { polynomial: PolynomialId, count: usize },
+}
+
+/// All Opening vertices must consume claims at the same symbolic point.
+#[derive(Debug)]
+pub struct PointConvergenceError {
+    pub expected: SymbolicPoint,
+    pub got: SymbolicPoint,
+    pub polynomial: PolynomialId,
 }
 
 impl fmt::Display for ChallengeSpecError {
@@ -244,7 +247,7 @@ impl ClaimGraph {
         // Build producer map: ClaimId → producing VertexId
         let mut producers: HashMap<ClaimId, Vec<VertexId>> = HashMap::new();
         for vertex in &self.vertices {
-            for &claim_id in vertex.produced_claims() {
+            for claim_id in vertex.all_produced_claims() {
                 producers.entry(claim_id).or_default().push(vertex.id());
             }
         }
@@ -284,7 +287,7 @@ impl ClaimGraph {
 
         // Check: no self-loops
         for vertex in &self.vertices {
-            let produced_set: HashSet<ClaimId> = vertex.produced_claims().iter().copied().collect();
+            let produced_set: HashSet<ClaimId> = vertex.all_produced_claims().into_iter().collect();
             for &dep in vertex.dep_claims() {
                 if produced_set.contains(&dep) {
                     errors.push(GraphError::SelfLoop(vertex.id()));
@@ -358,7 +361,7 @@ impl ClaimGraph {
     pub fn topological_order(&self) -> Option<Vec<VertexId>> {
         let mut producers: HashMap<ClaimId, Vec<VertexId>> = HashMap::new();
         for vertex in &self.vertices {
-            for &claim_id in vertex.produced_claims() {
+            for claim_id in vertex.all_produced_claims() {
                 producers.entry(claim_id).or_default().push(vertex.id());
             }
         }
@@ -461,7 +464,7 @@ impl ProtocolGraph {
         // Build claim → producer vertex map
         let mut claim_producer: HashMap<ClaimId, VertexId> = HashMap::new();
         for vertex in &self.claim_graph.vertices {
-            for &claim_id in vertex.produced_claims() {
+            for claim_id in vertex.all_produced_claims() {
                 let _ = claim_producer.insert(claim_id, vertex.id());
             }
         }
@@ -682,8 +685,11 @@ impl ProtocolGraph {
         }
 
         // Every committed polynomial must have exactly one Opening
+        // (except SpartanWitness which is opened by Spartan's inner sumcheck)
         for poly in &self.claim_graph.polynomials {
-            if matches!(poly.kind, PolynomialKind::Committed { .. }) {
+            if matches!(poly.kind, PolynomialKind::Committed { .. })
+                && poly.id != PolynomialId::SpartanWitness
+            {
                 match opening_count.get(&poly.id).copied().unwrap_or(0) {
                     0 => errors.push(ClaimFlowError::NoOpening(poly.id)),
                     1 => {} // correct
@@ -696,6 +702,41 @@ impl ProtocolGraph {
         }
 
         errors
+    }
+
+    /// Validates that all Opening vertices consume claims at the same symbolic point.
+    ///
+    /// This is the terminal invariant: all committed polynomial claims converge
+    /// to a single evaluation point via claim reduction + normalization. If any
+    /// Opening vertex has a different point, it means the RLC reduction would
+    /// produce multiple PCS proofs instead of one.
+    pub fn validate_point_convergence(&self) -> Option<PointConvergenceError> {
+        let mut opening_points: Vec<(PolynomialId, &SymbolicPoint)> = Vec::new();
+
+        for vertex in &self.claim_graph.vertices {
+            if let Vertex::Opening(o) = vertex {
+                let claim = self.claim_graph.claim(o.consumes);
+                opening_points.push((claim.polynomial, &claim.point));
+            }
+        }
+
+        if opening_points.len() <= 1 {
+            return None;
+        }
+
+        // All points should be structurally equal
+        let first_point = opening_points[0].1;
+        for &(poly_id, point) in &opening_points[1..] {
+            if point != first_point {
+                return Some(PointConvergenceError {
+                    expected: first_point.clone(),
+                    got: point.clone(),
+                    polynomial: poly_id,
+                });
+            }
+        }
+
+        None
     }
 }
 
@@ -791,6 +832,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)],
+            side_effect_claims: vec![],
             formula: dummy_formula.clone(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -805,6 +847,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)], // same claim produced by v0
+            side_effect_claims: vec![],
             formula: dummy_formula,
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -856,6 +899,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)],
+            side_effect_claims: vec![],
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -867,6 +911,7 @@ mod tests {
             deps: vec![ClaimId(0)],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(1)],
+            side_effect_claims: vec![],
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -1084,6 +1129,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)],
+            side_effect_claims: vec![],
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -1095,6 +1141,7 @@ mod tests {
             deps: vec![ClaimId(0)],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(1)],
+            side_effect_claims: vec![],
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -1106,6 +1153,7 @@ mod tests {
             deps: vec![ClaimId(0)], // fan-out: same claim as v1
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(2)],
+            side_effect_claims: vec![],
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -1143,6 +1191,9 @@ mod tests {
             d_instr: 8,
             d_bc: 4,
             d_ram: 3,
+            d_instr_chunks_per_virtual: 2,
+            n_lookup_tables: 41,
+            n_circuit_flags: 14,
             n_advice: 0,
         });
         let errors = graph.validate_challenge_specs();
@@ -1157,10 +1208,33 @@ mod tests {
             d_instr: 8,
             d_bc: 4,
             d_ram: 3,
+            d_instr_chunks_per_virtual: 2,
+            n_lookup_tables: 41,
+            n_circuit_flags: 14,
             n_advice: 0,
         });
         let errors = graph.validate_claim_flow();
         assert!(errors.is_empty(), "claim flow errors: {:?}", errors);
+    }
+
+    #[test]
+    fn full_graph_single_opening_point() {
+        use crate::protocol::build::{build_jolt_protocol, ProtocolConfig};
+
+        let graph = build_jolt_protocol(ProtocolConfig {
+            d_instr: 8,
+            d_bc: 4,
+            d_ram: 3,
+            d_instr_chunks_per_virtual: 2,
+            n_lookup_tables: 41,
+            n_circuit_flags: 14,
+            n_advice: 0,
+        });
+        let error = graph.validate_point_convergence();
+        assert!(
+            error.is_none(),
+            "all opening claims should converge to single point: {error:?}"
+        );
     }
 
     #[test]
@@ -1225,6 +1299,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)],
+            side_effect_claims: vec![],
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -1236,6 +1311,7 @@ mod tests {
             deps: vec![],
             input: InputClaim::Constant(0),
             produces: vec![ClaimId(0)],
+            side_effect_claims: vec![],
             formula: formula(),
             degree: 2,
             num_vars: SymbolicExpr::Concrete(10),
@@ -1289,6 +1365,9 @@ mod tests {
             d_instr: 8,
             d_bc: 4,
             d_ram: 3,
+            d_instr_chunks_per_virtual: 2,
+            n_lookup_tables: 41,
+            n_circuit_flags: 14,
             n_advice: 0,
         });
         let errors = graph.validate_eval_ordering();

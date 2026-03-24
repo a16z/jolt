@@ -67,6 +67,26 @@ pub enum PolynomialId {
     NextIsVirtual,
     NextIsFirstInSequence,
     NextIsNoop,
+
+    // Virtual: circuit flags not already covered by named variants above.
+    // Index matches jolt-core CircuitFlags enum order (0..14).
+    // Indices 5(Jump), 6(WriteLookupOutputToRD), 7(VirtualInstruction),
+    // 12(IsFirstInSequence) are covered by named variants.
+    OpFlag(usize),
+
+    // Virtual: expanded program counter (bytecode array index).
+    ExpandedPc,
+
+    // Virtual: instruction RAF flag (non-interleaved operand selector).
+    InstructionRafFlag,
+
+    // Virtual: per-instruction-table lookup selector flags (0..NUM_LOOKUP_TABLES).
+    LookupTableFlag(usize),
+
+    // Virtual: per-stage bytecode RAF value polynomials
+    BytecodeReadRafVal(usize),
+    // Virtual: instruction read-RAF value polynomials
+    InstructionReadRafVal(usize),
 }
 
 impl PolynomialId {

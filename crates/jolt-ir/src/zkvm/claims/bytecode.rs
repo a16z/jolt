@@ -82,8 +82,7 @@ pub fn bytecode_read_raf(n_stages: usize) -> ClaimDefinition {
     let opening_bindings = (0..n_stages)
         .map(|s| OpeningBinding {
             var_id: s as u32,
-            // Bytecode value polynomials are virtual (per-stage address factors)
-            polynomial_tag: 0, // Tags assigned at runtime per-stage
+            polynomial_tag: poly::bytecode_read_raf_val(s),
             sumcheck_tag: sumcheck::BYTECODE_READ_RAF,
         })
         .collect();

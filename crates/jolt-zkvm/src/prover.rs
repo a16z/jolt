@@ -44,11 +44,12 @@ impl std::error::Error for ProveError {}
 struct EvalCache<F> {
     evals: Vec<Option<F>>,
     points: HashMap<StageId, Vec<F>>,
+    symbols: HashMap<Symbol, usize>,
 }
 
 impl<F: Copy> EvalCache<F> {
-    fn new(n: usize) -> Self {
-        Self { evals: vec![None; n], points: HashMap::new() }
+    fn new(n: usize, symbols: &HashMap<Symbol, usize>) -> Self {
+        Self { evals: vec![None; n], points: HashMap::new(), symbols: symbols.clone() }
     }
 
     fn set(&mut self, id: ClaimId, val: F) {
@@ -66,8 +67,15 @@ impl<F: Copy> EvalCache<F> {
     fn resolve_point(&self, sp: &SymbolicPoint) -> Vec<F> {
         match sp {
             SymbolicPoint::Challenges(sid) => self.points[sid].clone(),
-            SymbolicPoint::Concat(parts) => parts.iter().flat_map(|p| self.resolve_point(p)).collect(),
-            SymbolicPoint::Slice { source, .. } => self.resolve_point(source), // TODO: range
+            SymbolicPoint::Concat(parts) => {
+                parts.iter().flat_map(|p| self.resolve_point(p)).collect()
+            }
+            SymbolicPoint::Slice { source, range } => {
+                let full = self.resolve_point(source);
+                let start = range.start.resolve(&self.symbols).expect("slice start");
+                let end = range.end.resolve(&self.symbols).expect("slice end");
+                full[start..end].to_vec()
+            }
         }
     }
 }
@@ -182,7 +190,7 @@ where
 
     let commitments = commit_polys::<PCS>(tables, pcs_setup);
 
-    let mut cache = EvalCache::new(graph.claim_graph.claims.len());
+    let mut cache = EvalCache::new(graph.claim_graph.claims.len(), symbols);
 
     // S1: Spartan
     let (spartan_proof, _r_x, r_y) =
@@ -191,14 +199,19 @@ where
         )?;
 
     let s1 = &graph.staging.stages[0];
-    let r_cycle: Vec<F> = r_y.iter().rev().copied().collect();
+    // Store the full r_y (reversed) as S1's point. The graph's r_cycle() is
+    // Slice(Challenges(S1), 0..log_T), so resolve_point will extract the first
+    // log_T elements. Virtual poly evaluations use this truncated r_cycle.
+    let r_y_rev: Vec<F> = r_y.iter().rev().copied().collect();
+    let log_t = symbols[&Symbol::LOG_T];
+    let r_cycle = &r_y_rev[..log_t];
     for &vid in &s1.vertices {
-        for &cid in graph.claim_graph.vertex(vid).produced_claims() {
+        for cid in graph.claim_graph.vertex(vid).all_produced_claims() {
             let poly_id = graph.claim_graph.claim(cid).polynomial;
-            cache.set(cid, eval_produced_claim(poly_id, tables, &r_cycle));
+            cache.set(cid, eval_produced_claim(poly_id, tables, r_cycle));
         }
     }
-    cache.set_point(s1.id, r_cycle);
+    cache.set_point(s1.id, r_y_rev);
 
     // S2–S7: generic loop
     let mut stage_proofs = Vec::new();
@@ -230,7 +243,7 @@ where
 
         let mut evals = Vec::new();
         for &vid in &stage.vertices {
-            for &cid in graph.claim_graph.vertex(vid).produced_claims() {
+            for cid in graph.claim_graph.vertex(vid).all_produced_claims() {
                 let poly_id = graph.claim_graph.claim(cid).polynomial;
                 let eval = eval_produced_claim(poly_id, tables, &ep);
                 cache.set(cid, eval);
@@ -286,8 +299,8 @@ where
 
     // Collect S1 virtual evals for the proof
     let spartan_evals: Vec<F> = s1.vertices.iter()
-        .flat_map(|&vid| graph.claim_graph.vertex(vid).produced_claims())
-        .map(|&cid| cache.get(cid))
+        .flat_map(|&vid| graph.claim_graph.vertex(vid).all_produced_claims())
+        .map(|cid| cache.get(cid))
         .collect();
 
     let proof = jolt_verifier::JoltProof {

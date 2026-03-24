@@ -67,30 +67,29 @@ impl FieldKernels {
 
 struct ReduceKernels {
     l2h_unw: ComputePipelineState,
+    l2h: ComputePipelineState,
     num_evals: usize,
 }
 
 impl ReduceKernels {
-    fn compile<F: GpuFieldConfig>(device: &Device) -> Self {
+    fn compile_product_sum<F: GpuFieldConfig>(device: &Device, d: usize, p: usize) -> Self {
         let field_config = FieldConfig::from_gpu_field::<F>();
         let gpu_config = GpuConfig::detect(device);
         let descriptor = jolt_ir::KernelDescriptor {
             shape: jolt_ir::KernelShape::ProductSum {
-                num_inputs_per_product: 4,
-                num_products: 1,
+                num_inputs_per_product: d,
+                num_products: p,
             },
-            degree: 4,
+            degree: d,
             tensor_split: None,
         };
 
-        // generate_msl returns a complete MSL source (preamble + kernels)
         let generated: GeneratedMsl = jolt_metal::compiler::generate_msl(
             &descriptor,
             CompileMode::FastCompile,
             &field_config,
             &gpu_config,
         );
-        let num_evals = generated.num_evals;
 
         let opts = metal::CompileOptions::new();
         let lib = device
@@ -99,7 +98,8 @@ impl ReduceKernels {
 
         Self {
             l2h_unw: make_pipeline(device, &lib, "reduce_kernel_l2h_unw"),
-            num_evals,
+            l2h: make_pipeline(device, &lib, "reduce_kernel_l2h"),
+            num_evals: generated.num_evals,
         }
     }
 }
@@ -159,6 +159,43 @@ fn dispatch_fmadd(
     enc.dispatch_threads(
         MTLSize::new(n_threads as u64, 1, 1),
         MTLSize::new(tpg, 1, 1),
+    );
+    enc.end_encoding();
+    cmd.commit();
+    cmd.wait_until_completed();
+}
+
+/// Dispatch a weighted reduce kernel (threadgroup-based).
+///
+/// Buffer layout: [input_0, ..., input_{D-1}, weights, partials, params].
+#[allow(clippy::too_many_arguments)]
+fn dispatch_reduce_weighted(
+    queue: &metal::CommandQueue,
+    pipeline: &ComputePipelineState,
+    input_bufs: &[&metal::Buffer],
+    weights: &metal::Buffer,
+    partials: &metal::Buffer,
+    params: &metal::Buffer,
+    n_pairs: usize,
+    gpu_config: &GpuConfig,
+) {
+    let gs = gpu_config.reduce_group_size;
+    let max_groups = gpu_config.max_reduce_groups;
+    let n_groups = n_pairs.div_ceil(gs).min(max_groups);
+
+    let cmd = queue.new_command_buffer();
+    let enc = cmd.new_compute_command_encoder();
+    enc.set_compute_pipeline_state(pipeline);
+    for (i, buf) in input_bufs.iter().enumerate() {
+        enc.set_buffer(i as u64, Some(buf), 0);
+    }
+    let next = input_bufs.len() as u64;
+    enc.set_buffer(next, Some(weights), 0);
+    enc.set_buffer(next + 1, Some(partials), 0);
+    enc.set_buffer(next + 2, Some(params), 0);
+    enc.dispatch_thread_groups(
+        MTLSize::new(n_groups as u64, 1, 1),
+        MTLSize::new(gs as u64, 1, 1),
     );
     enc.end_encoding();
     cmd.commit();
@@ -304,31 +341,61 @@ fn cpu_fmadd_fr(a: &[Fr], b: &[Fr], n_fmadd: usize, n_threads: usize) -> Vec<Fr>
         .collect()
 }
 
-/// CPU pairwise_reduce reference: ProductSum D=4 P=1 unweighted.
-/// Evaluates Σ_i Π_{k=0}^{3} p_k(t) at Toom-Cook grid points {1, 2, 3, ∞}
-/// for n_pairs = n/2 pair positions.
-fn cpu_reduce_d4_fr(inputs: &[Vec<Fr>], n_pairs: usize) -> Vec<Fr> {
-    let mut evals = vec![Fr::zero(); 4];
+/// CPU pairwise_reduce reference: ProductSum D P=1 weighted.
+fn cpu_reduce_fr_weighted(
+    inputs: &[Vec<Fr>],
+    weights: &[Fr],
+    n_pairs: usize,
+    d: usize,
+) -> Vec<Fr> {
+    let mut evals = vec![Fr::zero(); d];
     for i in 0..n_pairs {
-        let lo: Vec<Fr> = (0..4).map(|k| inputs[k][2 * i]).collect();
-        let hi: Vec<Fr> = (0..4).map(|k| inputs[k][2 * i + 1]).collect();
+        let w = weights[i];
+        let lo: Vec<Fr> = (0..d).map(|k| inputs[k][2 * i]).collect();
+        let hi: Vec<Fr> = (0..d).map(|k| inputs[k][2 * i + 1]).collect();
+        let diff: Vec<Fr> = (0..d).map(|k| hi[k] - lo[k]).collect();
 
-        // diff[k] = hi[k] - lo[k]
-        let diff: Vec<Fr> = (0..4).map(|k| hi[k] - lo[k]).collect();
+        let mut cur = lo.clone();
 
-        // t=1: Π lo[k]
-        evals[0] += lo.iter().copied().reduce(|a, b| a * b).unwrap();
+        evals[0] += w * cur.iter().copied().reduce(|a, b| a * b).unwrap();
 
-        // t=2: Π (lo[k] + diff[k]) = Π hi[k]
-        let cur1: Vec<Fr> = (0..4).map(|k| lo[k] + diff[k]).collect();
-        evals[1] += cur1.iter().copied().reduce(|a, b| a * b).unwrap();
+        for eval in evals.iter_mut().take(d - 1).skip(1) {
+            for (c, d) in cur.iter_mut().zip(diff.iter()) {
+                *c += *d;
+            }
+            *eval += w * cur.iter().copied().reduce(|a, b| a * b).unwrap();
+        }
 
-        // t=3: Π (lo[k] + 2*diff[k])
-        let cur2: Vec<Fr> = (0..4).map(|k| cur1[k] + diff[k]).collect();
-        evals[2] += cur2.iter().copied().reduce(|a, b| a * b).unwrap();
+        evals[d - 1] += w * diff.iter().copied().reduce(|a, b| a * b).unwrap();
+    }
+    evals
+}
+
+/// CPU pairwise_reduce reference: ProductSum D P=1 unweighted.
+/// Evaluates Σ_i Π_{k=0}^{D-1} p_k(t) at grid points {1, ..., D-1, ∞}
+fn cpu_reduce_fr(inputs: &[Vec<Fr>], n_pairs: usize, d: usize) -> Vec<Fr> {
+    let mut evals = vec![Fr::zero(); d];
+    for i in 0..n_pairs {
+        let lo: Vec<Fr> = (0..d).map(|k| inputs[k][2 * i]).collect();
+        let hi: Vec<Fr> = (0..d).map(|k| inputs[k][2 * i + 1]).collect();
+        let diff: Vec<Fr> = (0..d).map(|k| hi[k] - lo[k]).collect();
+
+        // Incremental grid evaluation: cur starts at lo, steps by diff
+        let mut cur = lo.clone();
+
+        // t=1: Π cur[k] (= Π lo[k])
+        evals[0] += cur.iter().copied().reduce(|a, b| a * b).unwrap();
+
+        // t=2..D-1
+        for eval in evals.iter_mut().take(d - 1).skip(1) {
+            for (c, d) in cur.iter_mut().zip(diff.iter()) {
+                *c += *d;
+            }
+            *eval += cur.iter().copied().reduce(|a, b| a * b).unwrap();
+        }
 
         // t=∞: Π diff[k]
-        evals[3] += diff.iter().copied().reduce(|a, b| a * b).unwrap();
+        evals[d - 1] += diff.iter().copied().reduce(|a, b| a * b).unwrap();
     }
     evals
 }
@@ -685,26 +752,33 @@ fn bench_fmadd_depth(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Pairwise reduce D=4 P=1 (the actual sumcheck hot path)
+// 6. Pairwise reduce (the actual sumcheck hot path)
 // ---------------------------------------------------------------------------
 
-fn bench_reduce_d4(c: &mut Criterion) {
+fn bench_reduce(
+    c: &mut Criterion,
+    group_name: &str,
+    d: usize,
+    p: usize,
+) {
     let device = Device::system_default().expect("no Metal device");
     let queue = device.new_command_queue();
     let gpu_config = GpuConfig::detect(&device);
-    let rk128 = ReduceKernels::compile::<F128Config>(&device);
-    let rk256 = ReduceKernels::compile::<Fr>(&device);
+    let rk128 = ReduceKernels::compile_product_sum::<F128Config>(&device, d, p);
+    let rk256 = ReduceKernels::compile_product_sum::<Fr>(&device, d, p);
+    let num_inputs = d * p;
 
-    let mut group = c.benchmark_group("reduce_d4");
+    let mut group = c.benchmark_group(group_name);
 
     for &n in &SIZES {
         let n_pairs = n / 2;
-        let mut rng = Xorshift64(0xd4d4_0001 + n as u64);
+        let mut rng = Xorshift64(0xd400_0001 + n as u64 + d as u64);
         let label = format!("2^{}", n.trailing_zeros());
         group.throughput(Throughput::Elements(n_pairs as u64));
 
         // GPU 128
-        let inputs_128: Vec<Vec<MF128>> = (0..4).map(|_| rng.random_mf128_vec(n)).collect();
+        let inputs_128: Vec<Vec<MF128>> =
+            (0..num_inputs).map(|_| rng.random_mf128_vec(n)).collect();
         let bufs_128: Vec<_> = inputs_128.iter().map(|v| upload(&device, v)).collect();
         let max_groups = gpu_config.max_reduce_groups;
         let partials_128 = device.new_buffer(
@@ -732,7 +806,8 @@ fn bench_reduce_d4(c: &mut Criterion) {
         );
 
         // GPU 256
-        let inputs_256: Vec<Vec<MF256>> = (0..4).map(|_| rng.random_mf256_vec(n)).collect();
+        let inputs_256: Vec<Vec<MF256>> =
+            (0..num_inputs).map(|_| rng.random_mf256_vec(n)).collect();
         let bufs_256: Vec<_> = inputs_256.iter().map(|v| upload(&device, v)).collect();
         let partials_256 = device.new_buffer(
             (max_groups * rk256.num_evals * std::mem::size_of::<MF256>()) as u64,
@@ -757,15 +832,177 @@ fn bench_reduce_d4(c: &mut Criterion) {
             },
         );
 
-        // CPU 256 (arkworks, single-threaded reduce)
-        let cpu_inputs_256: Vec<Vec<Fr>> = (0..4).map(|_| rng.random_fr_vec(n)).collect();
+        // CPU 256 (arkworks, single-threaded)
+        let cpu_inputs_256: Vec<Vec<Fr>> =
+            (0..num_inputs).map(|_| rng.random_fr_vec(n)).collect();
         group.bench_with_input(
             BenchmarkId::new(format!("cpu_256/{label}"), n),
             &n,
             |bench, _| {
-                bench.iter(|| cpu_reduce_d4_fr(&cpu_inputs_256, n_pairs));
+                bench.iter(|| cpu_reduce_fr(&cpu_inputs_256, n_pairs, d));
             },
         );
+    }
+    group.finish();
+}
+
+fn bench_reduce_d4(c: &mut Criterion) {
+    bench_reduce(c, "reduce_d4", 4, 1);
+}
+
+fn bench_reduce_d8(c: &mut Criterion) {
+    bench_reduce(c, "reduce_d8", 8, 1);
+}
+
+// ---------------------------------------------------------------------------
+// 7. Weighted pairwise reduce (the sumcheck hot path with eq-weight)
+// ---------------------------------------------------------------------------
+
+fn bench_reduce_weighted(c: &mut Criterion, group_name: &str, d: usize, p: usize) {
+    let device = Device::system_default().expect("no Metal device");
+    let queue = device.new_command_queue();
+    let gpu_config = GpuConfig::detect(&device);
+    let rk256 = ReduceKernels::compile_product_sum::<Fr>(&device, d, p);
+    let num_inputs = d * p;
+
+    let mut group = c.benchmark_group(group_name);
+
+    for &n in &SIZES {
+        let n_pairs = n / 2;
+        let mut rng = Xorshift64(0xe400_0001 + n as u64 + d as u64);
+        let label = format!("2^{}", n.trailing_zeros());
+        group.throughput(Throughput::Elements(n_pairs as u64));
+
+        // GPU 256 weighted
+        let inputs_256: Vec<Vec<MF256>> =
+            (0..num_inputs).map(|_| rng.random_mf256_vec(n)).collect();
+        let weights_256 = rng.random_mf256_vec(n_pairs);
+        let bufs_256: Vec<_> = inputs_256.iter().map(|v| upload(&device, v)).collect();
+        let buf_weights = upload(&device, &weights_256);
+        let max_groups = gpu_config.max_reduce_groups;
+        let partials_256 = device.new_buffer(
+            (max_groups * rk256.num_evals * std::mem::size_of::<MF256>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let params = upload(&device, &[n_pairs as u32]);
+        let buf_refs_256: Vec<&metal::Buffer> = bufs_256.iter().collect();
+        group.bench_with_input(
+            BenchmarkId::new(format!("gpu_256_w/{label}"), n),
+            &n,
+            |bench, _| {
+                bench.iter(|| {
+                    dispatch_reduce_weighted(
+                        &queue,
+                        &rk256.l2h,
+                        &buf_refs_256,
+                        &buf_weights,
+                        &partials_256,
+                        &params,
+                        n_pairs,
+                        &gpu_config,
+                    );
+                });
+            },
+        );
+
+        // CPU 256 weighted (single-threaded)
+        let cpu_inputs_256: Vec<Vec<Fr>> =
+            (0..num_inputs).map(|_| rng.random_fr_vec(n)).collect();
+        let cpu_weights_256 = rng.random_fr_vec(n_pairs);
+        group.bench_with_input(
+            BenchmarkId::new(format!("cpu_256_w/{label}"), n),
+            &n,
+            |bench, _| {
+                bench.iter(|| {
+                    cpu_reduce_fr_weighted(&cpu_inputs_256, &cpu_weights_256, n_pairs, d)
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_reduce_weighted_d4(c: &mut Criterion) {
+    bench_reduce_weighted(c, "reduce_w_d4", 4, 1);
+}
+
+fn bench_reduce_weighted_d8(c: &mut Criterion) {
+    bench_reduce_weighted(c, "reduce_w_d8", 8, 1);
+}
+
+// ---------------------------------------------------------------------------
+// 8. Threadgroup size sweep for BN254 D=8
+// ---------------------------------------------------------------------------
+
+fn bench_reduce_d8_groupsize(c: &mut Criterion) {
+    let device = Device::system_default().expect("no Metal device");
+    let queue = device.new_command_queue();
+    let d: usize = 8;
+    let p: usize = 1;
+    let num_inputs = d * p;
+
+    let mut group = c.benchmark_group("reduce_d8_gs");
+
+    for &gs in &[64usize, 128, 256] {
+        let gpu_config = GpuConfig {
+            reduce_group_size: gs,
+            ..GpuConfig::detect(&device)
+        };
+        let field_config = FieldConfig::from_gpu_field::<Fr>();
+        let descriptor = jolt_ir::KernelDescriptor {
+            shape: jolt_ir::KernelShape::ProductSum {
+                num_inputs_per_product: d,
+                num_products: p,
+            },
+            degree: d,
+            tensor_split: None,
+        };
+        let generated: GeneratedMsl = jolt_metal::compiler::generate_msl(
+            &descriptor,
+            CompileMode::FastCompile,
+            &field_config,
+            &gpu_config,
+        );
+        let opts = metal::CompileOptions::new();
+        let lib = device
+            .new_library_with_source(&generated.source, &opts)
+            .expect("gs sweep MSL compilation failed");
+        let pipeline = make_pipeline(&device, &lib, "reduce_kernel_l2h_unw");
+
+        for &n in &[1usize << 18, 1 << 20] {
+            let n_pairs = n / 2;
+            let mut rng = Xorshift64(0xf800_0001 + n as u64 + gs as u64);
+            let label = format!("gs{gs}/2^{}", n.trailing_zeros());
+            group.throughput(Throughput::Elements(n_pairs as u64));
+
+            let inputs: Vec<Vec<MF256>> =
+                (0..num_inputs).map(|_| rng.random_mf256_vec(n)).collect();
+            let bufs: Vec<_> = inputs.iter().map(|v| upload(&device, v)).collect();
+            let max_groups = gpu_config.max_reduce_groups;
+            let partials = device.new_buffer(
+                (max_groups * generated.num_evals * std::mem::size_of::<MF256>()) as u64,
+                MTLResourceOptions::StorageModeShared,
+            );
+            let params = upload(&device, &[n_pairs as u32]);
+            let buf_refs: Vec<&metal::Buffer> = bufs.iter().collect();
+            group.bench_with_input(
+                BenchmarkId::new(&label, n),
+                &n,
+                |bench, _| {
+                    bench.iter(|| {
+                        dispatch_reduce(
+                            &queue,
+                            &pipeline,
+                            &buf_refs,
+                            &partials,
+                            &params,
+                            n_pairs,
+                            &gpu_config,
+                        );
+                    });
+                },
+            );
+        }
     }
     group.finish();
 }
@@ -784,5 +1021,9 @@ criterion_group! {
         bench_fmadd,
         bench_fmadd_depth,
         bench_reduce_d4,
+        bench_reduce_d8,
+        bench_reduce_weighted_d4,
+        bench_reduce_weighted_d8,
+        bench_reduce_d8_groupsize,
 }
 criterion_main!(benches);

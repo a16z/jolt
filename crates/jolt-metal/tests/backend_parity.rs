@@ -782,27 +782,29 @@ fn pairwise_reduce_product_sum_d8_unweighted() {
     };
     let (cpu_k, mtl_k) = compile_kernels(&cpu, metal, &desc);
 
-    let n = 512;
-    let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
+    for n_pairs in [32, 33, 64, 256] {
+        let n = n_pairs * 2;
+        let inputs: Vec<Vec<Fr>> = (0..8).map(|_| random_elements(&mut rng, n)).collect();
 
-    let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
-    let expected = cpu.pairwise_reduce_unweighted(
-        &cpu_refs,
-        &cpu_k,
-        desc.num_evals(),
-        BindingOrder::LowToHigh,
-    );
+        let cpu_refs: Vec<&Vec<Fr>> = inputs.iter().collect();
+        let expected = cpu.pairwise_reduce_unweighted(
+            &cpu_refs,
+            &cpu_k,
+            desc.num_evals(),
+            BindingOrder::LowToHigh,
+        );
 
-    let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
-    let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
-    let got = metal.pairwise_reduce_unweighted(
-        &mtl_refs,
-        &mtl_k,
-        desc.num_evals(),
-        BindingOrder::LowToHigh,
-    );
+        let mtl_bufs: Vec<_> = inputs.iter().map(|v| metal.upload(v)).collect();
+        let mtl_refs: Vec<_> = mtl_bufs.iter().collect();
+        let got = metal.pairwise_reduce_unweighted(
+            &mtl_refs,
+            &mtl_k,
+            desc.num_evals(),
+            BindingOrder::LowToHigh,
+        );
 
-    assert_eq!(expected, got, "pairwise_reduce D=8 unweighted mismatch");
+        assert_eq!(expected, got, "pairwise_reduce D=8 unweighted mismatch at n_pairs={n_pairs}");
+    }
 }
 
 /// HighToLow binding order.

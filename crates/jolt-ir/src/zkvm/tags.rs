@@ -69,6 +69,38 @@ pub mod poly {
     pub const UNIVARIATE_SKIP: u64 = 1400;
     pub const IO_MASK: u64 = 1401;
 
+    // Circuit operation flags (0..14), indexed by CircuitFlags enum order.
+    pub const OP_FLAG: u64 = 1700;
+    /// Expanded program counter (bytecode array index).
+    pub const EXPANDED_PC: u64 = 1710;
+    /// Instruction RAF flag.
+    pub const INSTRUCTION_RAF_FLAG: u64 = 1711;
+    // Lookup table selection flags (0..NUM_LOOKUP_TABLES).
+    pub const LOOKUP_TABLE_FLAG: u64 = 1750;
+
+    #[inline]
+    pub const fn op_flag(index: usize) -> u64 {
+        OP_FLAG + index as u64
+    }
+
+    #[inline]
+    pub const fn lookup_table_flag(index: usize) -> u64 {
+        LOOKUP_TABLE_FLAG + index as u64
+    }
+
+    pub const BYTECODE_READ_RAF_VAL: u64 = 1500;
+    pub const INSTRUCTION_READ_RAF_VAL: u64 = 1600;
+
+    #[inline]
+    pub const fn bytecode_read_raf_val(index: usize) -> u64 {
+        BYTECODE_READ_RAF_VAL + index as u64
+    }
+
+    #[inline]
+    pub const fn instruction_read_raf_val(index: usize) -> u64 {
+        INSTRUCTION_READ_RAF_VAL + index as u64
+    }
+
     /// Parameterized instruction RA polynomial: `INSTRUCTION_RA + index`.
     #[inline]
     pub const fn instruction_ra(index: usize) -> u64 {
