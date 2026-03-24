@@ -30,8 +30,8 @@ mod spoil;
 pub use spoil::UnwrapOrSpoilProof;
 
 /// Halt-and-catch-fire: makes proof unsatisfiable.
-/// On RISC-V guest builds, emits a VirtualAssertEQ(0, 1) that the prover cannot satisfy.
-/// On all other targets, panics.
+/// On RISC-V, emits a VirtualAssertEQ(0, 1) that the prover cannot satisfy, then panics.
+/// On all other targets, panics directly.
 #[inline(always)]
 pub fn hcf() -> ! {
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
@@ -44,10 +44,9 @@ pub fn hcf() -> ! {
             funct3 = const FUNCT3_VIRTUAL_ASSERT_EQ,
             rs1 = in(reg) u,
             rs2 = in(reg) v,
-            options(nostack, noreturn)
+            options(nostack)
         );
     }
-    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
     panic!("hcf: proof spoiled");
 }
 

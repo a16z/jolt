@@ -1,12 +1,9 @@
 /// Halt-and-catch-fire: makes proof unsatisfiable.
-/// On RISC-V guest builds, emits an illegal branch that the prover cannot satisfy.
-/// On all other targets, panics.
-#[cfg(all(
-    not(feature = "host"),
-    any(target_arch = "riscv32", target_arch = "riscv64")
-))]
+/// On RISC-V, emits a VirtualAssertEQ(0, 1) that the prover cannot satisfy, then panics.
+/// On all other targets, panics directly.
 #[inline(always)]
 pub fn hcf() -> ! {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     unsafe {
         let u = 0u64;
         let v = 1u64;
@@ -16,20 +13,8 @@ pub fn hcf() -> ! {
             funct3 = const 0b001,
             rs1 = in(reg) u,
             rs2 = in(reg) v,
-            options(nostack, noreturn)
+            options(nostack)
         );
     }
-}
-
-#[cfg(all(
-    not(feature = "host"),
-    not(any(target_arch = "riscv32", target_arch = "riscv64"))
-))]
-pub fn hcf() -> ! {
-    panic!("hcf called on non-RISC-V target without host feature");
-}
-
-#[cfg(feature = "host")]
-pub fn hcf() -> ! {
-    panic!("explicit host code panic function called");
+    panic!("hcf: proof spoiled");
 }
