@@ -33,15 +33,6 @@ use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use tracer::JoltDevice;
 
-fn debug_program_image_reduction_enabled() -> bool {
-    std::env::var("JOLT_DEBUG_PROGRAM_IMAGE_REDUCTION")
-        .map(|v| {
-            let value = v.trim().to_ascii_lowercase();
-            !matches!(value.as_str(), "" | "0" | "false" | "off")
-        })
-        .unwrap_or(false)
-}
-
 #[derive(Clone, Allocative)]
 pub struct ProgramImageClaimReductionParams<F: JoltField> {
     pub phase: PrecommittedPhase,
@@ -134,7 +125,7 @@ impl<F: JoltField> ProgramImageClaimReductionParams<F> {
 
 impl<F: JoltField> SumcheckInstanceParams<F> for ProgramImageClaimReductionParams<F> {
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        let claim = match self.phase {
+        match self.phase {
             PrecommittedPhase::CycleVariables => {
                 // Scalar claims were staged in Stage 4 as virtual openings.
                 accumulator
@@ -152,19 +143,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProgramImageClaimReductionParam
                     )
                     .1
             }
-        };
-        if debug_program_image_reduction_enabled() {
-            tracing::info!(
-                "ProgramImageClaimReduction input_claim phase={} claim={}",
-                if self.phase == PrecommittedPhase::CycleVariables {
-                    "cycle"
-                } else {
-                    "address"
-                },
-                claim
-            );
         }
-        claim
     }
 
     fn degree(&self) -> usize {
@@ -364,20 +343,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let params = self.core.params();
         let opening_point = params.normalize_opening_point(sumcheck_challenges);
         if params.phase == PrecommittedPhase::CycleVariables {
-            let c_mid = self.core.cycle_intermediate_claim();
-            if debug_program_image_reduction_enabled() {
-                tracing::info!(
-                    "ProgramImageClaimReduction prover cycle output claim={}",
-                    c_mid
-                );
-            }
             accumulator.append_dense(
                 CommittedPolynomial::ProgramImageInit,
                 SumcheckId::ProgramImageClaimReductionCyclePhase,
                 // This is a phase-boundary intermediate claim, not a real program-image opening.
                 // Keep a sentinel point so it cannot alias with the final opening claim.
                 vec![],
-                c_mid,
+                self.core.cycle_intermediate_claim(),
             );
         }
 
@@ -427,7 +399,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
         sumcheck_challenges: &[F::Challenge],
     ) -> F {
         let params = self.params.borrow();
-        let claim = match params.phase {
+        match params.phase {
             PrecommittedPhase::CycleVariables => {
                 accumulator
                     .get_committed_polynomial_opening(
@@ -450,19 +422,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
                 let scale: F = precommitted_skip_round_scale(&params.precommitted);
                 pw_eval * eq_combined * scale
             }
-        };
-        if debug_program_image_reduction_enabled() {
-            tracing::info!(
-                "ProgramImageClaimReduction verifier expected_output phase={} claim={}",
-                if params.phase == PrecommittedPhase::CycleVariables {
-                    "cycle"
-                } else {
-                    "address"
-                },
-                claim
-            );
         }
-        claim
     }
 
     fn cache_openings(

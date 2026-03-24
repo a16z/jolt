@@ -38,15 +38,6 @@ use strum::EnumCount;
 
 const NUM_VAL_STAGES: usize = 5;
 
-fn debug_bytecode_reduction_enabled() -> bool {
-    std::env::var("JOLT_DEBUG_BYTECODE_REDUCTION")
-        .map(|v| {
-            let value = v.trim().to_ascii_lowercase();
-            !matches!(value.as_str(), "" | "0" | "false" | "off")
-        })
-        .unwrap_or(false)
-}
-
 #[derive(Clone, Allocative)]
 pub struct BytecodeClaimReductionParams<F: JoltField> {
     pub phase: PrecommittedPhase,
@@ -295,8 +286,6 @@ pub struct BytecodeClaimReductionProver<F: JoltField> {
     eq_poly: MultilinearPolynomial<F>,
     scale: F,
     chunk_value_polys: Vec<MultilinearPolynomial<F>>,
-    pending_round_poly: Option<UniPoly<F>>,
-    running_claim: Option<F>,
 }
 
 impl<F: JoltField> BytecodeClaimReductionProver<F> {
@@ -346,26 +335,12 @@ impl<F: JoltField> BytecodeClaimReductionProver<F> {
             .expect("expected permuted bytecode eq polynomial");
         let chunk_value_polys: Vec<MultilinearPolynomial<F>> = permuted_polys.collect();
 
-        if debug_bytecode_reduction_enabled() {
-            let initial_true_claim: F = (0..value_poly.len())
-                .map(|i| value_poly.get_bound_coeff(i) * eq_poly.get_bound_coeff(i))
-                .sum();
-            tracing::info!(
-                "BytecodeClaimReduction initialize value_len={} eq_len={} initial_true_claim={}",
-                value_poly.len(),
-                eq_poly.len(),
-                initial_true_claim
-            );
-        }
-
         Self {
             params,
             value_poly,
             eq_poly,
             scale: F::one(),
             chunk_value_polys,
-            pending_round_poly: None,
-            running_claim: None,
         }
     }
 
@@ -437,10 +412,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeClaim
             self.params.is_address_phase_round(round)
         };
         if !is_active_round {
-            let round_poly =
-                UniPoly::from_coeff(vec![previous_claim * F::from_u64(2).inverse().unwrap()]);
-            self.pending_round_poly = Some(round_poly.clone());
-            return round_poly;
+            return UniPoly::from_coeff(vec![previous_claim * F::from_u64(2).inverse().unwrap()]);
         }
 
         let trailing_cap = if self.params.is_cycle_phase() {
@@ -453,15 +425,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeClaim
         let scaling_factor = self.scale * F::one().mul_pow_2(num_trailing_variables);
         let prev_unscaled = previous_claim * scaling_factor.inverse().unwrap();
         let poly_unscaled = self.compute_message_unscaled(prev_unscaled);
-        let round_poly = poly_unscaled * scaling_factor;
-        self.pending_round_poly = Some(round_poly.clone());
-        round_poly
+        poly_unscaled * scaling_factor
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        if let Some(round_poly) = self.pending_round_poly.take() {
-            self.running_claim = Some(round_poly.evaluate(&r_j));
-        }
         let is_active_round = if self.params.is_cycle_phase() {
             self.params.is_cycle_phase_round(round)
         } else {
@@ -489,24 +456,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BytecodeClaim
         let opening_point = params.normalize_opening_point(sumcheck_challenges);
 
         if params.phase == PrecommittedPhase::CycleVariables {
-            let c_mid = self.cycle_intermediate_claim();
-            let synced_cycle_claim = self.running_claim.unwrap_or(c_mid);
-            if debug_bytecode_reduction_enabled() {
-                tracing::info!(
-                    "BytecodeClaimReduction cache cycle len={} bound_value={} bound_eq={} scale={} cycle_claim={} synced_cycle_claim={}",
-                    self.value_poly.len(),
-                    self.value_poly.get_bound_coeff(0),
-                    self.eq_poly.get_bound_coeff(0),
-                    self.scale,
-                    c_mid,
-                    synced_cycle_claim,
-                );
-            }
             accumulator.append_virtual(
                 VirtualPolynomial::BytecodeClaimReductionIntermediate,
                 SumcheckId::BytecodeClaimReductionCyclePhase,
                 opening_point.clone(),
-                synced_cycle_claim,
+                self.cycle_intermediate_claim(),
             );
         }
 
