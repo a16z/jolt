@@ -140,7 +140,7 @@ dependencies = [
  "auto_impl",
  "borsh",
  "c-kzg",
- "derive_more 2.1.1",
+ "derive_more",
  "either",
  "k256",
  "once_cell",
@@ -233,7 +233,7 @@ dependencies = [
  "auto_impl",
  "borsh",
  "c-kzg",
- "derive_more 2.1.1",
+ "derive_more",
  "either",
  "serde",
  "serde_with",
@@ -291,7 +291,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "const-hex",
- "derive_more 2.1.1",
+ "derive_more",
  "foldhash",
  "hashbrown 0.16.1",
  "indexmap 2.13.0",
@@ -441,7 +441,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "arrayvec",
- "derive_more 2.1.1",
+ "derive_more",
  "nybbles",
  "serde",
  "smallvec",
@@ -1088,11 +1088,11 @@ dependencies = [
 
 [[package]]
 name = "build-fs-tree"
-version = "0.7.1"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "790713a24ee86ed258a0894a564f5ffd729b9d191c4960309926561173da7cf6"
+checksum = "e498c7ccbdde9f82e90826b8ffa37853d63c25ae75435a26ffcdb6ea8b9922ea"
 dependencies = [
- "derive_more 1.0.0",
+ "derive_more",
  "pipe-trait",
  "serde",
  "serde_yaml",
@@ -1639,32 +1639,11 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a9b99b9cbbe49445b21764dc0625032a89b145a2642e67603e1c936f5458d05"
-dependencies = [
- "derive_more-impl 1.0.0",
-]
-
-[[package]]
-name = "derive_more"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d751e9e49156b02b44f9c1815bcb94b984cdcc4396ecc32521c739452808b134"
 dependencies = [
- "derive_more-impl 2.1.1",
-]
-
-[[package]]
-name = "derive_more-impl"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb7330aeadfbe296029522e6c40f315320aba36fc43a5b3632f3795348f3bd22"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
- "unicode-xid",
+ "derive_more-impl",
 ]
 
 [[package]]
@@ -2439,7 +2418,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b1e4910d3a9137442723dfb772c32dc10674c4181ca078d2fd227cd5dce9db0"
 dependencies = [
  "bincode 1.3.3",
- "derive_more 2.1.1",
+ "derive_more",
  "iai-callgrind-macros",
  "iai-callgrind-runner",
 ]
@@ -2450,7 +2429,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d03775318d3f9f01b39ac6612b01464006dc397a654a89dd57df2fd34fb68c3"
 dependencies = [
- "derive_more 2.1.1",
+ "derive_more",
  "proc-macro-error2",
  "proc-macro2",
  "quote",
@@ -2844,7 +2823,7 @@ dependencies = [
  "clap",
  "common",
  "criterion",
- "derive_more 2.1.1",
+ "derive_more",
  "dory-pcs",
  "eyre",
  "fixedbitset 0.5.7",
@@ -3640,7 +3619,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-eth",
  "alloy-serde",
- "derive_more 2.1.1",
+ "derive_more",
  "serde",
  "serde_with",
  "thiserror 2.0.18",
@@ -4544,7 +4523,7 @@ dependencies = [
  "auto_impl",
  "bytes",
  "dashmap",
- "derive_more 2.1.1",
+ "derive_more",
  "once_cell",
  "op-alloy-consensus",
  "quanta",
@@ -5542,9 +5521,9 @@ dependencies = [
 
 [[package]]
 name = "text-block-macros"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f8b59b4da1c1717deaf1de80f0179a9d8b4ac91c986d5fd9f4a8ff177b84049"
+checksum = "f1ecd6317fa97541e6cfcdf79c1917ccb8f7a10ec9ece27aaadf5b2b6ccad3e8"
 
 [[package]]
 name = "thiserror"
@@ -5784,7 +5763,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "clap",
  "common",
- "derive_more 2.1.1",
+ "derive_more",
  "fnv",
  "inventory",
  "itertools 0.14.0",
