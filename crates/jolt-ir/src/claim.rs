@@ -84,6 +84,34 @@ impl ClaimDefinition {
         Self::build_custom_descriptor(&sop, self.opening_bindings.len())
     }
 
+    /// Compile the claim into a kernel descriptor with materialized challenge values.
+    ///
+    /// Returns `(descriptor, materialized_values)` where the interpretation of
+    /// `materialized_values` depends on the kernel shape:
+    /// - **EqProduct**: per-opening pre-combination weights for `g = Σ w_i · poly_i`
+    /// - **HammingBooleanity**: `[eq_scale]` — scale factor for the eq buffer
+    /// - **Custom**: challenge values indexed by slot for expression baking
+    pub fn compile_descriptor<F: Field>(&self, challenges: &[F]) -> (KernelDescriptor, Vec<F>) {
+        let sop = self.expr.to_sum_of_products();
+
+        if let Some(desc) = Self::try_hamming_booleanity(&sop) {
+            let scale = Self::extract_hamming_eq_scale::<F>(&sop, challenges);
+            return (desc, vec![scale]);
+        }
+        if let Some(desc) = Self::try_eq_product(&sop) {
+            let weights = Self::extract_eq_product_coefficients::<F>(
+                &sop,
+                challenges,
+                self.opening_bindings.len(),
+            );
+            return (desc, weights);
+        }
+
+        let challenge_values = Self::extract_custom_challenges::<F>(&sop, challenges);
+        let desc = Self::build_custom_descriptor(&sop, self.opening_bindings.len());
+        (desc, challenge_values)
+    }
+
     /// Detect HammingBooleanity: `eq · h · (h − 1)`.
     ///
     /// Pattern in SoP form: exactly 2 terms, 1 distinct opening variable,
@@ -151,11 +179,12 @@ impl ClaimDefinition {
     /// least 1 challenge factor. The caller pre-computes `g = Σ c_i · p_i`
     /// into a single buffer, then uses the EqProduct kernel.
     fn try_eq_product(sop: &SumOfProducts) -> Option<KernelDescriptor> {
-        if sop.terms.is_empty() {
-            return None;
-        }
-
+        let mut has_nonzero = false;
         for term in &sop.terms {
+            if term.coefficient == 0 {
+                continue;
+            }
+            has_nonzero = true;
             let n_openings = term
                 .factors
                 .iter()
@@ -169,6 +198,10 @@ impl ClaimDefinition {
             if n_openings != 1 || n_challenges < 1 {
                 return None;
             }
+        }
+
+        if !has_nonzero {
+            return None;
         }
 
         Some(KernelDescriptor {
@@ -229,6 +262,87 @@ impl ClaimDefinition {
             tensor_split: None,
         }
     }
+
+    /// Per-opening pre-combination weights for EqProduct claims.
+    ///
+    /// For each SoP term (exactly 1 opening factor), computes
+    /// `coefficient × Π challenges[c_id]` and accumulates by opening index.
+    fn extract_eq_product_coefficients<F: Field>(
+        sop: &SumOfProducts,
+        challenges: &[F],
+        num_openings: usize,
+    ) -> Vec<F> {
+        let mut weights = vec![F::zero(); num_openings];
+        for term in &sop.terms {
+            if term.coefficient == 0 {
+                continue;
+            }
+            let opening_id = term
+                .factors
+                .iter()
+                .find_map(|f| match f {
+                    SopValue::Opening(id) => Some(*id as usize),
+                    _ => None,
+                })
+                .expect("EqProduct term must have an opening factor");
+
+            let mut w = F::from_i128(term.coefficient);
+            for factor in &term.factors {
+                if let SopValue::Challenge(id) = factor {
+                    w *= challenges[*id as usize];
+                }
+            }
+            weights[opening_id] += w;
+        }
+        weights
+    }
+
+    /// Eq scale factor from HammingBooleanity's squared term.
+    ///
+    /// The `H²` term carries the positive eq factor:
+    /// `coefficient × Π challenges[c_id]`.
+    fn extract_hamming_eq_scale<F: Field>(sop: &SumOfProducts, challenges: &[F]) -> F {
+        let sq_term = sop
+            .terms
+            .iter()
+            .find(|t| {
+                t.factors
+                    .iter()
+                    .filter(|f| matches!(f, SopValue::Opening(_)))
+                    .count()
+                    == 2
+            })
+            .expect("HammingBooleanity must have a squared term");
+
+        let mut scale = F::from_i128(sq_term.coefficient);
+        for factor in &sq_term.factors {
+            if let SopValue::Challenge(id) = factor {
+                scale *= challenges[*id as usize];
+            }
+        }
+        scale
+    }
+
+    /// Challenge values by slot index for Custom kernels.
+    ///
+    /// Scans SoP terms for `Challenge(id)` references and returns
+    /// concrete values indexed `[0, 1, ..., max_id]`.
+    fn extract_custom_challenges<F: Field>(sop: &SumOfProducts, challenges: &[F]) -> Vec<F> {
+        let max_id = sop
+            .terms
+            .iter()
+            .flat_map(|t| t.factors.iter())
+            .filter_map(|f| match f {
+                SopValue::Challenge(id) => Some(*id),
+                _ => None,
+            })
+            .max();
+
+        match max_id {
+            Some(max) => (0..=max).map(|i| challenges[i as usize]).collect(),
+            None => Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -236,6 +350,7 @@ mod tests {
     use super::*;
     use crate::builder::ExprBuilder;
     use crate::kernel::KernelShape;
+    use jolt_field::{Field, Fr};
 
     #[test]
     fn to_kernel_hamming_booleanity() {
@@ -358,5 +473,142 @@ mod tests {
         };
 
         assert_eq!(claim.num_challenges, 0);
+    }
+
+    #[test]
+    fn compile_hamming_booleanity_scale() {
+        let claim = crate::zkvm::claims::ram::hamming_booleanity();
+        let eq_eval = Fr::from_u64(7);
+        let challenges = vec![eq_eval, -eq_eval];
+
+        let (desc, values) = claim.compile_descriptor::<Fr>(&challenges);
+        assert!(matches!(desc.shape, KernelShape::HammingBooleanity));
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0], eq_eval);
+
+        // scale * (H² - H) must match direct evaluation
+        let h = Fr::from_u64(5);
+        let direct = claim.evaluate::<Fr>(&[h], &challenges);
+        let via_compile = values[0] * (h * h - h);
+        assert_eq!(direct, via_compile);
+    }
+
+    #[test]
+    fn compile_registers_eq_product_weights() {
+        let claim = crate::zkvm::claims::reductions::registers_claim_reduction();
+        let eq_eval = Fr::from_u64(7);
+        let gamma = Fr::from_u64(11);
+        let gamma_sq = gamma * gamma;
+        let challenges = vec![eq_eval, gamma, gamma_sq];
+
+        let (desc, weights) = claim.compile_descriptor::<Fr>(&challenges);
+        assert!(matches!(desc.shape, KernelShape::EqProduct));
+        assert_eq!(weights.len(), 3);
+        assert_eq!(weights[0], eq_eval);
+        assert_eq!(weights[1], eq_eval * gamma);
+        assert_eq!(weights[2], eq_eval * gamma_sq);
+
+        // Σ w_i * o_i must match direct evaluation
+        let openings = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
+        let direct = claim.evaluate::<Fr>(&openings, &challenges);
+        let via_compile: Fr = weights.iter().zip(openings.iter()).map(|(w, o)| *w * *o).sum();
+        assert_eq!(direct, via_compile);
+    }
+
+    #[test]
+    fn compile_increment_eq_product_weights() {
+        let claim = crate::zkvm::claims::reductions::increment_claim_reduction();
+        let c0 = Fr::from_u64(11);
+        let c1 = Fr::from_u64(13);
+        let challenges = vec![c0, c1];
+
+        let (desc, weights) = claim.compile_descriptor::<Fr>(&challenges);
+        assert!(matches!(desc.shape, KernelShape::EqProduct));
+        assert_eq!(weights.len(), 2);
+        assert_eq!(weights[0], c0);
+        assert_eq!(weights[1], c1);
+
+        let openings = vec![Fr::from_u64(3), Fr::from_u64(7)];
+        let direct = claim.evaluate::<Fr>(&openings, &challenges);
+        let via_compile: Fr = weights.iter().zip(openings.iter()).map(|(w, o)| *w * *o).sum();
+        assert_eq!(direct, via_compile);
+    }
+
+    #[test]
+    fn compile_raf_evaluation_eq_product() {
+        let claim = crate::zkvm::claims::ram::ram_raf_evaluation();
+        let unmap = Fr::from_u64(13);
+        let challenges = vec![unmap];
+
+        let (desc, weights) = claim.compile_descriptor::<Fr>(&challenges);
+        assert!(matches!(desc.shape, KernelShape::EqProduct));
+        assert_eq!(weights.len(), 1);
+        assert_eq!(weights[0], unmap);
+    }
+
+    #[test]
+    fn compile_ram_rw_custom_challenges() {
+        let claim = crate::zkvm::claims::ram::ram_read_write_checking();
+        let c0 = Fr::from_u64(13);
+        let c1 = Fr::from_u64(17);
+        let challenges = vec![c0, c1];
+
+        let (desc, values) = claim.compile_descriptor::<Fr>(&challenges);
+        assert!(matches!(desc.shape, KernelShape::Custom { .. }));
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0], c0);
+        assert_eq!(values[1], c1);
+    }
+
+    #[test]
+    fn compile_ram_ra_virtual_custom() {
+        let claim = crate::zkvm::claims::ram::ram_ra_virtual(4);
+        let eq_eval = Fr::from_u64(7);
+        let challenges = vec![eq_eval];
+
+        let (desc, values) = claim.compile_descriptor::<Fr>(&challenges);
+        assert!(matches!(desc.shape, KernelShape::Custom { .. }));
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0], eq_eval);
+    }
+
+    #[test]
+    fn compile_instruction_lookups_eq_product() {
+        let claim = crate::zkvm::claims::reductions::instruction_lookups_claim_reduction();
+        let challenges: Vec<Fr> = (10..=14).map(Fr::from_u64).collect();
+
+        let (desc, weights) = claim.compile_descriptor::<Fr>(&challenges);
+        assert!(matches!(desc.shape, KernelShape::EqProduct));
+        assert_eq!(weights.len(), 5);
+
+        // Each term: c_i * opening_i → weight[i] = c_i
+        for (i, w) in weights.iter().enumerate() {
+            assert_eq!(*w, challenges[i]);
+        }
+
+        let openings: Vec<Fr> = (1..=5).map(Fr::from_u64).collect();
+        let direct = claim.evaluate::<Fr>(&openings, &challenges);
+        let via_compile: Fr = weights.iter().zip(openings.iter()).map(|(w, o)| *w * *o).sum();
+        assert_eq!(direct, via_compile);
+    }
+
+    #[test]
+    fn compile_hamming_weight_reduction_eq_product() {
+        let polynomials = vec![
+            PolynomialId::InstructionRa(0),
+            PolynomialId::BytecodeRa(0),
+            PolynomialId::RamRa(0),
+        ];
+        let claim = crate::zkvm::claims::reductions::hamming_weight_claim_reduction(&polynomials);
+        let challenges: Vec<Fr> = vec![Fr::from_u64(7), Fr::from_u64(11), Fr::from_u64(13)];
+
+        let (desc, weights) = claim.compile_descriptor::<Fr>(&challenges);
+        assert!(matches!(desc.shape, KernelShape::EqProduct));
+        assert_eq!(weights.len(), 3);
+
+        let openings: Vec<Fr> = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
+        let direct = claim.evaluate::<Fr>(&openings, &challenges);
+        let via_compile: Fr = weights.iter().zip(openings.iter()).map(|(w, o)| *w * *o).sum();
+        assert_eq!(direct, via_compile);
     }
 }

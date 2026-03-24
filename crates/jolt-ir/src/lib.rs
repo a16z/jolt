@@ -36,7 +36,7 @@ pub mod zkvm;
 pub use builder::{ExprBuilder, ExprHandle};
 pub use claim::{ClaimDefinition, OpeningBinding};
 pub use expr::{Expr, ExprArena, ExprId, ExprNode, Var};
-pub use kernel::{KernelDescriptor, KernelShape, TensorSplit};
+pub use kernel::{EqHandling, EvalGrid, KernelDescriptor, KernelShape, TensorSplit};
 pub use normalize::{SopTerm, SopValue, SumOfProducts};
 pub use polynomial_id::PolynomialId;
 pub use visitor::ExprVisitor;

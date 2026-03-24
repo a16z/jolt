@@ -8,7 +8,7 @@ Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 This crate provides hash-based Fiat-Shamir transcripts that convert interactive proof protocols into non-interactive ones. The transcript maintains a 256-bit running state, absorbs prover messages via hashing, and squeezes deterministic challenges for the verifier.
 
-Two hash backends are provided. Both produce 128-bit challenges (drawn from `u128`) and use a `state || round_counter` domain separation scheme.
+Three hash backends are provided. All produce 128-bit challenges (drawn from `u128`) and use a `state || round_counter` domain separation scheme.
 
 ## Public API
 
@@ -21,6 +21,7 @@ Two hash backends are provided. Both produce 128-bit challenges (drawn from `u12
 
 - **`Blake2bTranscript`** -- Uses Blake2b-256. Default choice for Jolt proofs.
 - **`KeccakTranscript`** -- Uses Keccak-256. EVM-compatible for on-chain verification.
+- **`PoseidonTranscript`** -- Uses Poseidon over BN254. SNARK-friendly for recursive verification.
 
 ## Dependency Position
 

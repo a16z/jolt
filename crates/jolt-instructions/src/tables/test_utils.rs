@@ -4,7 +4,7 @@ use rand::prelude::*;
 use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::interleave::interleave_bits;
 use crate::lookup_bits::LookupBits;
-use crate::tables::prefixes::{PrefixCheckpoint, Prefixes, NUM_PREFIXES};
+use crate::tables::prefixes::{PrefixCheckpoint, Prefixes, ALL_PREFIXES, NUM_PREFIXES};
 use crate::tables::suffixes::SuffixEval;
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
@@ -124,10 +124,9 @@ where
                     None
                 };
 
-                let prefix_evals: Vec<_> = (0..NUM_PREFIXES)
-                    .map(|i| {
-                        // SAFETY: repr(u8) enum with NUM_PREFIXES contiguous variants
-                        let prefix: Prefixes = unsafe { std::mem::transmute(i as u8) };
+                let prefix_evals: Vec<_> = ALL_PREFIXES
+                    .iter()
+                    .map(|prefix| {
                         prefix.prefix_mle::<XLEN, F, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
                     })
                     .collect();

@@ -11,7 +11,7 @@ Developers write each claim formula once as an `Expr`. All backends -- evaluatio
 ## Quick start
 
 ```rust
-use jolt_ir::{ExprBuilder, ClaimDefinition, OpeningBinding, ChallengeBinding, ChallengeSource};
+use jolt_ir::{ExprBuilder, ClaimDefinition, OpeningBinding, PolynomialId};
 
 // Define a booleanity check: gamma * (H^2 - H)
 let b = ExprBuilder::new();
@@ -71,10 +71,24 @@ The `ExprVisitor` trait provides bottom-up traversal. Each backend implements 6 
 - **`R1csEmission<F>`** -- Emitted R1CS constraints from sum-of-products normalization.
 - **`R1csConstraint`** / **`LinearCombination`** / **`LcTerm`** / **`R1csVar`** -- R1CS constraint primitives.
 
+### Expression core types
+
+- **`Expr`** / **`ExprArena`** / **`ExprId`** / **`ExprNode`** / **`Var`** -- Arena-allocated expression DAG and node types.
+- **`ExprBuilder`** / **`ExprHandle`** -- Builder with operator overloading for constructing expressions.
+- **`ExprVisitor`** -- Trait for bottom-up traversal of expression DAGs.
+- **`PolynomialId`** -- Unique identifier for polynomials in the protocol.
+
 ### Additional types
 
 - **`SumOfProducts`** / **`SopTerm`** / **`SopValue`** -- Normalized sum-of-products representation.
 - **`ClaimDefinition`** -- Associates an expression with its opening and challenge bindings.
+- **`CircuitEmitter`** -- Visitor-based backend for circuit gate emission.
+
+### Public modules
+
+- **`protocol`** -- Protocol graph: claim-level IR for SNARK structure, capturing the full claim dependency DAG.
+- **`toom_cook`** -- Toom-Cook evaluation point constants and interpolation matrices.
+- **`zkvm`** -- Concrete claim definitions and polynomial identifiers for the Jolt zkVM pipeline.
 
 ## Crate boundaries
 

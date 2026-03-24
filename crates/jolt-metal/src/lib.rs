@@ -4,6 +4,7 @@
 
 mod buffer;
 pub mod compiler;
+pub mod coop_field_gen;
 mod device;
 pub mod field;
 pub mod field_config;

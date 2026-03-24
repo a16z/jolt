@@ -13,29 +13,8 @@ use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::SumcheckCompute;
 
-/// A sparse matrix entry for read-write checking.
-///
-/// Represents one non-zero position in the (address, cycle) matrix.
-/// The `ra` coefficient is the address selector (1 at the correct address),
-/// and `val` is the memory/register value at this position.
-///
-/// `prev_val` and `next_val` carry boundary values for checkpoint threading
-/// in address-major binding (where missing entries need default values).
-#[derive(Clone, Debug)]
-pub struct RwEntry<F> {
-    /// Position in the binding dimension (row for cycle-major, col for address-major).
-    pub bind_pos: usize,
-    /// Position in the free dimension (col for cycle-major, row for address-major).
-    pub free_pos: usize,
-    /// Address selector coefficient.
-    pub ra: F,
-    /// Value coefficient (memory/register value at this entry).
-    pub val: F,
-    /// Boundary value before this entry (used in address-major checkpoint threading).
-    pub prev_val: F,
-    /// Boundary value after this entry.
-    pub next_val: F,
-}
+// Re-export the canonical RwEntry from jolt-witness.
+pub use jolt_witness::RwEntry;
 
 /// Formula that computes a sumcheck contribution from an entry pair.
 ///
@@ -317,50 +296,6 @@ impl<F: Field, Fm: RwFormula<F>> SparseRwEvaluator<F, Fm> {
     pub fn inc(&self) -> &[F] {
         &self.inc
     }
-}
-
-/// Builds cycle-major sparse entries for RAM read-write checking from a trace.
-///
-/// Each cycle with a RAM access produces one entry. Entries are sorted by
-/// `bind_pos` (= cycle index) for cycle-major binding.
-///
-/// `padded_len` is the next power of 2 ≥ trace length.
-pub fn ram_entries_from_trace<F: Field>(
-    trace: &[tracer::instruction::Cycle],
-    padded_len: usize,
-) -> Vec<RwEntry<F>> {
-    use tracer::instruction::RAMAccess;
-
-    let mut entries = Vec::new();
-    for (j, cycle) in trace.iter().enumerate() {
-        let access = cycle.ram_access();
-        match &access {
-            RAMAccess::Read(read) => {
-                entries.push(RwEntry {
-                    bind_pos: j,
-                    free_pos: read.address as usize,
-                    ra: F::one(),
-                    val: F::from_u64(read.value),
-                    prev_val: F::from_u64(read.value),
-                    next_val: F::from_u64(read.value),
-                });
-            }
-            RAMAccess::Write(write) => {
-                entries.push(RwEntry {
-                    bind_pos: j,
-                    free_pos: write.address as usize,
-                    ra: F::one(),
-                    val: F::from_u64(write.pre_value),
-                    prev_val: F::from_u64(write.pre_value),
-                    next_val: F::from_u64(write.post_value),
-                });
-            }
-            RAMAccess::NoOp => {}
-        }
-    }
-    // Pad positions are within [trace.len()..padded_len) — no entries (implicit zeros)
-    let _ = padded_len;
-    entries
 }
 
 /// Converts cycle-major entries to address-major entries.

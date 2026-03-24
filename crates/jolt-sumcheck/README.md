@@ -53,6 +53,8 @@ This crate implements the sumcheck interactive proof protocol for multilinear po
 - **`RoundHandler<F>`** -- Prover-side strategy for absorbing round polynomials into the transcript.
 - **`RoundVerifier<F>`** -- Verifier-side strategy for checking round data.
 - **`ClearRoundHandler`** / **`ClearRoundVerifier`** -- Cleartext implementations. Committed-mode implementations live in `jolt-blindfold`.
+- **`CaptureHandler`** -- Cleartext handler that also captures per-round challenges for evaluation point extraction.
+- **`CapturedProof<F>`** -- Proof + challenge vector produced by `CaptureHandler`.
 
 ### Errors
 

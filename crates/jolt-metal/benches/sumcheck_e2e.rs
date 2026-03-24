@@ -30,6 +30,26 @@ use jolt_zkvm::evaluators::{catalog, kernel::KernelEvaluator};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
+/// When `JOLT_TRACE=1`, writes a Chrome trace to `target/trace-sumcheck-e2e.json`.
+/// View with `chrome://tracing` or Perfetto UI.
+fn init_tracing() -> Option<tracing_chrome::FlushGuard> {
+    if std::env::var("JOLT_TRACE").as_deref() != Ok("1") {
+        return None;
+    }
+    let trace_path = std::env::var("JOLT_TRACE_FILE")
+        .unwrap_or_else(|_| "/tmp/trace-sumcheck-e2e.json".to_string());
+    eprintln!("Writing Chrome trace to {trace_path}");
+    let (layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+        .file(trace_path)
+        .include_args(true)
+        .build();
+    use tracing_subscriber::layer::SubscriberExt;
+    let subscriber = tracing_subscriber::registry().with(layer);
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("failed to set tracing subscriber");
+    Some(guard)
+}
+
 /// Fixed switchover: buffers migrate from Metal to CPU at 4K elements.
 /// Below this size, GPU dispatch overhead dominates the actual compute.
 const HYBRID_THRESHOLD: usize = 1 << 12;
@@ -40,8 +60,6 @@ const NUM_VARS: usize = 20;
 fn random_fr(rng: &mut StdRng, n: usize) -> Vec<Fr> {
     (0..n).map(|_| Fr::random(rng)).collect()
 }
-
-// ── Toom-Cook setup ──────────────────────────────────────────────
 
 struct ToomCookData {
     polys: Vec<Vec<Fr>>,
@@ -90,8 +108,6 @@ fn build_toom_cook_witness<B: ComputeBackend>(
     };
     (witness, claim)
 }
-
-// ── StandardGrid setup ───────────────────────────────────────────
 
 struct StandardGridData {
     eq_table: Vec<Fr>,
@@ -144,8 +160,6 @@ fn build_standard_grid_witness<B: ComputeBackend>(
     };
     (witness, claim)
 }
-
-// ── Timing + benchmark driver ────────────────────────────────────
 
 fn time_prove<B: ComputeBackend>(
     witness: &mut KernelEvaluator<Fr, B>,
@@ -233,8 +247,6 @@ fn bench_standard_grid(
     group.finish();
 }
 
-// ── Scenarios ────────────────────────────────────────────────────
-
 fn bench_toom_d4_p1(c: &mut Criterion) {
     bench_toom_cook(c, "toom_D4_P1", 4, 1);
 }
@@ -255,6 +267,39 @@ fn bench_hamming(c: &mut Criterion) {
     bench_standard_grid(c, "hamming", catalog::hamming_booleanity(), 1, vec![]);
 }
 
+/// Single-iteration tracing run: `JOLT_TRACE=1 cargo bench -p jolt-metal --bench sumcheck_e2e -q -- --profile-time=5`
+/// produces `target/trace-sumcheck-e2e.json` viewable in Perfetto.
+static TRACE_GUARD: std::sync::Mutex<Option<tracing_chrome::FlushGuard>> =
+    std::sync::Mutex::new(None);
+
+fn ensure_tracing() {
+    let mut guard = TRACE_GUARD.lock().unwrap();
+    if guard.is_none() {
+        *guard = init_tracing();
+    }
+}
+
+fn bench_toom_d4_p1_traced(c: &mut Criterion) {
+    ensure_tracing();
+    bench_toom_d4_p1(c);
+}
+fn bench_toom_d4_p3_traced(c: &mut Criterion) {
+    ensure_tracing();
+    bench_toom_d4_p3(c);
+}
+fn bench_toom_d8_p1_traced(c: &mut Criterion) {
+    ensure_tracing();
+    bench_toom_d8_p1(c);
+}
+fn bench_eq_product_traced(c: &mut Criterion) {
+    ensure_tracing();
+    bench_eq_product(c);
+}
+fn bench_hamming_traced(c: &mut Criterion) {
+    ensure_tracing();
+    bench_hamming(c);
+}
+
 criterion_group! {
     name = sumcheck_e2e;
     config = Criterion::default()
@@ -262,10 +307,10 @@ criterion_group! {
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(10));
     targets =
-        bench_toom_d4_p1,
-        bench_toom_d4_p3,
-        bench_toom_d8_p1,
-        bench_eq_product,
-        bench_hamming,
+        bench_toom_d4_p1_traced,
+        bench_toom_d4_p3_traced,
+        bench_toom_d8_p1_traced,
+        bench_eq_product_traced,
+        bench_hamming_traced,
 }
 criterion_main!(sumcheck_e2e);

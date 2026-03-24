@@ -177,7 +177,7 @@ pub enum LookupTableKind {
 
 impl LookupTableKind {
     /// Total number of distinct lookup table types.
-    pub const COUNT: usize = 40;
+    pub const COUNT: usize = 41;
 
     /// Returns the discriminant as a `usize`, suitable for array indexing.
     #[inline]
@@ -185,6 +185,8 @@ impl LookupTableKind {
         self as usize
     }
 }
+
+const _: () = assert!(LookupTableKind::VirtualXORROTW7 as usize + 1 == LookupTableKind::COUNT);
 
 /// Prefix/suffix decomposition for sub-linear MLE evaluation.
 ///
@@ -447,55 +449,57 @@ macro_rules! dispatch_table {
     };
 }
 
-impl<const XLEN: usize> LookupTables<XLEN> {
-    /// Returns the corresponding [`LookupTableKind`] identifier.
-    #[inline]
-    pub fn kind(self) -> LookupTableKind {
-        match self {
-            Self::RangeCheck => LookupTableKind::RangeCheck,
-            Self::RangeCheckAligned => LookupTableKind::RangeCheckAligned,
-            Self::And => LookupTableKind::And,
-            Self::Andn => LookupTableKind::Andn,
-            Self::Or => LookupTableKind::Or,
-            Self::Xor => LookupTableKind::Xor,
-            Self::Equal => LookupTableKind::Equal,
-            Self::NotEqual => LookupTableKind::NotEqual,
-            Self::SignedLessThan => LookupTableKind::SignedLessThan,
-            Self::UnsignedLessThan => LookupTableKind::UnsignedLessThan,
-            Self::SignedGreaterThanEqual => LookupTableKind::SignedGreaterThanEqual,
-            Self::UnsignedGreaterThanEqual => LookupTableKind::UnsignedGreaterThanEqual,
-            Self::UnsignedLessThanEqual => LookupTableKind::UnsignedLessThanEqual,
-            Self::UpperWord => LookupTableKind::UpperWord,
-            Self::LowerHalfWord => LookupTableKind::LowerHalfWord,
-            Self::SignExtendHalfWord => LookupTableKind::SignExtendHalfWord,
-            Self::Movsign => LookupTableKind::Movsign,
-            Self::Pow2 => LookupTableKind::Pow2,
-            Self::Pow2W => LookupTableKind::Pow2W,
-            Self::ShiftRightBitmask => LookupTableKind::ShiftRightBitmask,
-            Self::VirtualSRL => LookupTableKind::VirtualSRL,
-            Self::VirtualSRA => LookupTableKind::VirtualSRA,
-            Self::VirtualROTR => LookupTableKind::VirtualROTR,
-            Self::VirtualROTRW => LookupTableKind::VirtualROTRW,
-            Self::ValidDiv0 => LookupTableKind::ValidDiv0,
-            Self::ValidUnsignedRemainder => LookupTableKind::ValidUnsignedRemainder,
-            Self::ValidSignedRemainder => LookupTableKind::ValidSignedRemainder,
-            Self::VirtualChangeDivisor => LookupTableKind::VirtualChangeDivisor,
-            Self::VirtualChangeDivisorW => LookupTableKind::VirtualChangeDivisorW,
-            Self::HalfwordAlignment => LookupTableKind::HalfwordAlignment,
-            Self::WordAlignment => LookupTableKind::WordAlignment,
-            Self::MulUNoOverflow => LookupTableKind::MulUNoOverflow,
-            Self::VirtualRev8W => LookupTableKind::VirtualRev8W,
-            Self::VirtualXORROT32 => LookupTableKind::VirtualXORROT32,
-            Self::VirtualXORROT24 => LookupTableKind::VirtualXORROT24,
-            Self::VirtualXORROT16 => LookupTableKind::VirtualXORROT16,
-            Self::VirtualXORROT63 => LookupTableKind::VirtualXORROT63,
-            Self::VirtualXORROTW16 => LookupTableKind::VirtualXORROTW16,
-            Self::VirtualXORROTW12 => LookupTableKind::VirtualXORROTW12,
-            Self::VirtualXORROTW8 => LookupTableKind::VirtualXORROTW8,
-            Self::VirtualXORROTW7 => LookupTableKind::VirtualXORROTW7,
+/// Generates identity mappings between `LookupTableKind` and `LookupTables` variants.
+macro_rules! kind_table_identity {
+    ($($variant:ident),* $(,)?) => {
+        impl<const XLEN: usize> LookupTables<XLEN> {
+            /// Returns the corresponding [`LookupTableKind`] identifier.
+            #[inline]
+            pub fn kind(self) -> LookupTableKind {
+                match self {
+                    $(Self::$variant => LookupTableKind::$variant,)*
+                }
+            }
         }
-    }
 
+        impl<const XLEN: usize> From<LookupTableKind> for LookupTables<XLEN> {
+            #[inline]
+            fn from(kind: LookupTableKind) -> Self {
+                match kind {
+                    $(LookupTableKind::$variant => Self::$variant,)*
+                }
+            }
+        }
+
+        impl<const XLEN: usize> From<LookupTables<XLEN>> for LookupTableKind {
+            #[inline]
+            fn from(table: LookupTables<XLEN>) -> Self {
+                table.kind()
+            }
+        }
+    };
+}
+
+kind_table_identity! {
+    RangeCheck, RangeCheckAligned,
+    And, Andn, Or, Xor,
+    Equal, NotEqual,
+    SignedLessThan, UnsignedLessThan, SignedGreaterThanEqual,
+    UnsignedGreaterThanEqual, UnsignedLessThanEqual,
+    UpperWord, LowerHalfWord, SignExtendHalfWord,
+    Movsign,
+    Pow2, Pow2W,
+    ShiftRightBitmask, VirtualSRL, VirtualSRA, VirtualROTR, VirtualROTRW,
+    ValidDiv0, ValidUnsignedRemainder, ValidSignedRemainder,
+    VirtualChangeDivisor, VirtualChangeDivisorW,
+    HalfwordAlignment, WordAlignment,
+    MulUNoOverflow,
+    VirtualRev8W,
+    VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
+    VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+}
+
+impl<const XLEN: usize> LookupTables<XLEN> {
     /// The suffix types used in this table's prefix/suffix decomposition.
     pub fn suffixes(&self) -> Vec<Suffixes> {
         dispatch_table!(self, |t| PrefixSuffixDecomposition::<XLEN>::suffixes(&t))
@@ -522,61 +526,5 @@ impl<const XLEN: usize> LookupTable<XLEN> for LookupTables<XLEN> {
         F: Field + FieldOps<C>,
     {
         dispatch_table!(self, |t| t.evaluate_mle(r))
-    }
-}
-
-impl<const XLEN: usize> From<LookupTableKind> for LookupTables<XLEN> {
-    #[inline]
-    fn from(kind: LookupTableKind) -> Self {
-        match kind {
-            LookupTableKind::RangeCheck => Self::RangeCheck,
-            LookupTableKind::RangeCheckAligned => Self::RangeCheckAligned,
-            LookupTableKind::And => Self::And,
-            LookupTableKind::Andn => Self::Andn,
-            LookupTableKind::Or => Self::Or,
-            LookupTableKind::Xor => Self::Xor,
-            LookupTableKind::Equal => Self::Equal,
-            LookupTableKind::NotEqual => Self::NotEqual,
-            LookupTableKind::SignedLessThan => Self::SignedLessThan,
-            LookupTableKind::UnsignedLessThan => Self::UnsignedLessThan,
-            LookupTableKind::SignedGreaterThanEqual => Self::SignedGreaterThanEqual,
-            LookupTableKind::UnsignedGreaterThanEqual => Self::UnsignedGreaterThanEqual,
-            LookupTableKind::UnsignedLessThanEqual => Self::UnsignedLessThanEqual,
-            LookupTableKind::UpperWord => Self::UpperWord,
-            LookupTableKind::LowerHalfWord => Self::LowerHalfWord,
-            LookupTableKind::SignExtendHalfWord => Self::SignExtendHalfWord,
-            LookupTableKind::Movsign => Self::Movsign,
-            LookupTableKind::Pow2 => Self::Pow2,
-            LookupTableKind::Pow2W => Self::Pow2W,
-            LookupTableKind::ShiftRightBitmask => Self::ShiftRightBitmask,
-            LookupTableKind::VirtualSRL => Self::VirtualSRL,
-            LookupTableKind::VirtualSRA => Self::VirtualSRA,
-            LookupTableKind::VirtualROTR => Self::VirtualROTR,
-            LookupTableKind::VirtualROTRW => Self::VirtualROTRW,
-            LookupTableKind::ValidDiv0 => Self::ValidDiv0,
-            LookupTableKind::ValidUnsignedRemainder => Self::ValidUnsignedRemainder,
-            LookupTableKind::ValidSignedRemainder => Self::ValidSignedRemainder,
-            LookupTableKind::VirtualChangeDivisor => Self::VirtualChangeDivisor,
-            LookupTableKind::VirtualChangeDivisorW => Self::VirtualChangeDivisorW,
-            LookupTableKind::HalfwordAlignment => Self::HalfwordAlignment,
-            LookupTableKind::WordAlignment => Self::WordAlignment,
-            LookupTableKind::MulUNoOverflow => Self::MulUNoOverflow,
-            LookupTableKind::VirtualRev8W => Self::VirtualRev8W,
-            LookupTableKind::VirtualXORROT32 => Self::VirtualXORROT32,
-            LookupTableKind::VirtualXORROT24 => Self::VirtualXORROT24,
-            LookupTableKind::VirtualXORROT16 => Self::VirtualXORROT16,
-            LookupTableKind::VirtualXORROT63 => Self::VirtualXORROT63,
-            LookupTableKind::VirtualXORROTW16 => Self::VirtualXORROTW16,
-            LookupTableKind::VirtualXORROTW12 => Self::VirtualXORROTW12,
-            LookupTableKind::VirtualXORROTW8 => Self::VirtualXORROTW8,
-            LookupTableKind::VirtualXORROTW7 => Self::VirtualXORROTW7,
-        }
-    }
-}
-
-impl<const XLEN: usize> From<LookupTables<XLEN>> for LookupTableKind {
-    #[inline]
-    fn from(table: LookupTables<XLEN>) -> Self {
-        table.kind()
     }
 }

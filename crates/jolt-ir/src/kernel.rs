@@ -146,6 +146,55 @@ impl TensorSplit {
     }
 }
 
+/// Evaluation grid on which the kernel computes composition values.
+///
+/// Determines which `t` values the kernel evaluates during each sumcheck
+/// round, and whether specialized evaluation routines are used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvalGrid {
+    /// Standard grid `{0, 2, 3, ..., degree}`, skipping `t=1`.
+    ///
+    /// The value at `t=1` is derived from the sumcheck claimed sum.
+    /// Used by EqProduct, HammingBooleanity, and Custom kernels.
+    Standard {
+        /// Composition degree. The grid has `degree` points.
+        degree: usize,
+    },
+
+    /// Toom-Cook grid `{1, 2, ..., D-1, ∞}` for product-of-interpolants.
+    ///
+    /// Evaluated via specialized `eval_prod_D` routines using balanced
+    /// binary splitting with extrapolation. Used by ProductSum kernels.
+    ToomCook {
+        /// Number of interpolants per product ($D$).
+        d: usize,
+    },
+}
+
+impl EvalGrid {
+    /// Number of evaluation values produced.
+    #[inline]
+    pub fn num_evals(&self) -> usize {
+        match self {
+            Self::Standard { degree } => *degree,
+            Self::ToomCook { d } => *d,
+        }
+    }
+}
+
+/// How the eq polynomial weight buffer is managed by the evaluator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EqHandling {
+    /// Eq buffer is tensor-decomposed into outer × inner factors.
+    ///
+    /// Maps to GPU thread hierarchy (outer → thread groups, inner → threads).
+    /// On CPU, enables cache-friendly blocking.
+    TensorSplit(TensorSplit),
+
+    /// Eq buffer is a flat vector of length $2^{n}$.
+    Flat,
+}
+
 /// Complete description of a composition-reduce kernel.
 ///
 /// Constructed from sumcheck instance definitions at setup time.
@@ -239,6 +288,37 @@ impl KernelDescriptor {
             KernelShape::Custom { num_inputs, .. } => *num_inputs > 0 && self.degree > 0,
         };
         shape_ok && self.tensor_split.is_none_or(|ts| ts.total_vars() > 0)
+    }
+
+    /// Evaluation grid for this kernel.
+    ///
+    /// Determines the set of `t` values at which the composition is evaluated
+    /// during each sumcheck round, and whether Toom-Cook routines are used.
+    #[inline]
+    pub fn eval_grid(&self) -> EvalGrid {
+        match &self.shape {
+            KernelShape::ProductSum {
+                num_inputs_per_product,
+                ..
+            } => EvalGrid::ToomCook {
+                d: *num_inputs_per_product,
+            },
+            _ => EvalGrid::Standard {
+                degree: self.degree,
+            },
+        }
+    }
+
+    /// How the eq polynomial weight buffer should be managed.
+    ///
+    /// `TensorSplit` enables the split-eq optimization for both GPU and CPU.
+    /// `Flat` uses a standard flat buffer.
+    #[inline]
+    pub fn eq_handling(&self) -> EqHandling {
+        match self.tensor_split {
+            Some(ts) => EqHandling::TensorSplit(ts),
+            None => EqHandling::Flat,
+        }
     }
 }
 
@@ -397,5 +477,107 @@ mod tests {
         assert!(desc.is_valid());
         // Custom: num_evals = degree (standard grid, skipping t=1)
         assert_eq!(desc.num_evals(), 2);
+    }
+
+    #[test]
+    fn eval_grid_product_sum_is_toom_cook() {
+        let desc = KernelDescriptor {
+            shape: KernelShape::ProductSum {
+                num_inputs_per_product: 8,
+                num_products: 2,
+            },
+            degree: 8,
+            tensor_split: None,
+        };
+        assert_eq!(desc.eval_grid(), EvalGrid::ToomCook { d: 8 });
+        assert_eq!(desc.eval_grid().num_evals(), 8);
+    }
+
+    #[test]
+    fn eval_grid_eq_product_is_standard() {
+        let desc = KernelDescriptor {
+            shape: KernelShape::EqProduct,
+            degree: 2,
+            tensor_split: None,
+        };
+        assert_eq!(desc.eval_grid(), EvalGrid::Standard { degree: 2 });
+        assert_eq!(desc.eval_grid().num_evals(), 2);
+    }
+
+    #[test]
+    fn eval_grid_hamming_is_standard() {
+        let desc = KernelDescriptor {
+            shape: KernelShape::HammingBooleanity,
+            degree: 3,
+            tensor_split: None,
+        };
+        assert_eq!(desc.eval_grid(), EvalGrid::Standard { degree: 3 });
+        assert_eq!(desc.eval_grid().num_evals(), 3);
+    }
+
+    #[test]
+    fn eval_grid_custom_is_standard() {
+        let b = ExprBuilder::new();
+        let a = b.opening(0);
+        let desc = KernelDescriptor {
+            shape: KernelShape::Custom {
+                expr: b.build(a * a * a),
+                num_inputs: 1,
+            },
+            degree: 3,
+            tensor_split: None,
+        };
+        assert_eq!(desc.eval_grid(), EvalGrid::Standard { degree: 3 });
+    }
+
+    #[test]
+    fn eval_grid_num_evals_matches_descriptor() {
+        let shapes: Vec<KernelDescriptor> = vec![
+            KernelDescriptor {
+                shape: KernelShape::ProductSum {
+                    num_inputs_per_product: 4,
+                    num_products: 3,
+                },
+                degree: 4,
+                tensor_split: None,
+            },
+            KernelDescriptor {
+                shape: KernelShape::EqProduct,
+                degree: 2,
+                tensor_split: None,
+            },
+            KernelDescriptor {
+                shape: KernelShape::HammingBooleanity,
+                degree: 3,
+                tensor_split: None,
+            },
+        ];
+        for desc in &shapes {
+            assert_eq!(desc.eval_grid().num_evals(), desc.num_evals());
+        }
+    }
+
+    #[test]
+    fn eq_handling_flat_when_no_split() {
+        let desc = KernelDescriptor {
+            shape: KernelShape::EqProduct,
+            degree: 2,
+            tensor_split: None,
+        };
+        assert_eq!(desc.eq_handling(), EqHandling::Flat);
+    }
+
+    #[test]
+    fn eq_handling_tensor_when_split() {
+        let ts = TensorSplit::balanced(20);
+        let desc = KernelDescriptor {
+            shape: KernelShape::ProductSum {
+                num_inputs_per_product: 4,
+                num_products: 3,
+            },
+            degree: 4,
+            tensor_split: Some(ts),
+        };
+        assert_eq!(desc.eq_handling(), EqHandling::TensorSplit(ts));
     }
 }

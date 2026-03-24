@@ -193,6 +193,15 @@ Every criterion has a specific ID (e.g., `CQ-1`) for traceability in findings.
 - [ ] No `[patch]` section in the crate's own Cargo.toml (workspace-level only)
 - [ ] Semver-compatible versioning (0.x is fine, but API should be stable within a version)
 
+#### CD-6: Downstream Usage Fitness
+
+- [ ] Every downstream crate's `use` of this crate's public API examined
+- [ ] No type leakage: downstream crates don't re-export or pattern-match on types that should be abstracted away
+- [ ] No missing abstractions: downstream crates don't duplicate logic that belongs in this crate's API
+- [ ] Trait coverage: every downstream call site's needs are served by the trait/API surface (no workarounds)
+- [ ] No forced re-imports: downstream crates don't need to add this crate's transitive deps to use its API
+- [ ] The API enables the intended usage pattern — not just today's code, but the design goal of the abstraction boundary
+
 ---
 
 ## Review Process
@@ -224,6 +233,7 @@ Each review spawns parallel subagents per criterion group:
 | `test-check` | CQ-8 | Run tests, measure coverage gaps, check test quality |
 | `nits-check` | NIT-1 to NIT-4 | Fully qualified paths, separators, naming, formatting aesthetics |
 | `design-check` | CD-1 to CD-5 | Crate scope, API surface, deps, boundaries, publishability |
+| `downstream-check` | CD-6 | Examine how downstream crates actually use the API; flag leaky abstractions, misused types, missing trait coverage |
 
 ### Finding Format
 
@@ -265,11 +275,11 @@ Severities:
 | Crate | Level | LOC | Status | Review Doc | Findings | Date |
 |-------|-------|-----|--------|------------|----------|------|
 | jolt-field | 0 | 3982 | **DONE** | [REVIEW.md](jolt-field/REVIEW.md) | 32 (all resolved) | 2026-03-24 |
-| jolt-profiling | 0 | 475 | PENDING | | | |
-| jolt-host | 0 | 547 | PENDING | | | |
-| jolt-transcript | 1 | 672 | PENDING | | | |
+| jolt-profiling | 0 | 475 | **DONE** | [REVIEW.md](jolt-profiling/REVIEW.md) | 22 (18 resolved, 4 pass/wontfix) | 2026-03-24 |
+| jolt-host | 0 | 547 | **DONE** | [REVIEW.md](jolt-host/REVIEW.md) | 29 (22 resolved, 6 pass/wontfix, 1 deferred: CycleRow) | 2026-03-24 |
+| jolt-transcript | 1 | 672 | **DONE** | [REVIEW.md](jolt-transcript/REVIEW.md) | 13 (10 resolved, 3 pass) | 2026-03-24 |
 | jolt-ir | 1 | 12389 | PENDING | | | |
-| jolt-instructions | 1 | 10672 | PENDING | | | |
+| jolt-instructions | 1 | 10280 | **DONE** | [REVIEW.md](jolt-instructions/REVIEW.md) | 12 (5 resolved, 7 pass/wontfix) | 2026-03-24 |
 | jolt-crypto | 2 | 5070 | PENDING | | | |
 | jolt-poly | 2 | 4841 | PENDING | | | |
 | jolt-compute | 2 | 1480 | PENDING | | | |

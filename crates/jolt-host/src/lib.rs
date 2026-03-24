@@ -8,7 +8,11 @@
 //! `common` (memory config), `tracer` (RISC-V emulation), and standard I/O.
 
 mod analyze;
+mod cycle_row;
+mod cycle_row_impl;
 mod program;
+
+pub use cycle_row::CycleRow;
 
 use std::path::{Path, PathBuf};
 

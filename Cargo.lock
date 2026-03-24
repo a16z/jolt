@@ -3104,6 +3104,7 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "common",
+ "jolt-instructions",
  "serde",
  "tracer",
  "tracing",
@@ -3254,6 +3255,8 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "tracing",
+ "tracing-chrome",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3404,11 +3407,14 @@ dependencies = [
 name = "jolt-transcript"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
  "blake2",
  "criterion",
  "digest 0.10.7",
- "hex",
  "jolt-field",
+ "light-poseidon",
  "num-traits",
  "sha3",
 ]
@@ -3440,7 +3446,10 @@ name = "jolt-witness"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-host",
+ "jolt-instructions",
  "jolt-ir",
+ "jolt-poly",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
@@ -3592,6 +3601,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1744e39d1d6a9948f4f388969627434e31128196de472883b39f148769bfe30a"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "light-poseidon"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47a1ccadd0bb5a32c196da536fd72c59183de24a055f6bf0513bf845fefab862"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "num-bigint",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

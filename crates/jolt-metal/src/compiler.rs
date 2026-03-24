@@ -1278,7 +1278,7 @@ fn generate_toom_cook_d8_deferred(p: usize, weighted: bool, h2l: bool, tg_spill:
         let _ = writeln!(s, "        hi_0 = fr_mul(w, hi_0);");
     }
 
-    // ---- Half A: inputs 0-3 ----
+    // Half A: inputs 0-3
     // Sub-pair (input0, input1) → (ar1, ar2, ar_inf)
     emit_eval_linear_prod_2(&mut s, "ar", "lo_0", "hi_0", "lo_1", "hi_1");
     emit_ex2(&mut s, "ar_3", "ar_1", "ar_2", "ar_inf");
@@ -1315,13 +1315,13 @@ fn generate_toom_cook_d8_deferred(p: usize, weighted: bool, h2l: bool, tg_spill:
         s.push('\n');
     }
 
-    // ---- Deferred read: half B inputs (4-7) ----
+    // Deferred read: half B inputs (4-7)
     // lo_0..lo_3, hi_0..hi_3 are dead — their registers are available.
     for k in 4..8 {
         read(&mut s, k);
     }
 
-    // ---- Half B: inputs 4-7 ----
+    // Half B: inputs 4-7
     emit_eval_linear_prod_2(&mut s, "cr", "lo_4", "hi_4", "lo_5", "hi_5");
     emit_ex2(&mut s, "cr_3", "cr_1", "cr_2", "cr_inf");
     emit_ex2(&mut s, "cr_4", "cr_2", "cr_3", "cr_inf");
@@ -1551,7 +1551,7 @@ fn generate_toom_cook_d8(p: usize) -> String {
         let base = g * 8;
         let _ = writeln!(s, "        {{ // Product group {g}");
 
-        // ---- Half A: eval_linear_prod_4_internal(inputs[base..base+4]) ----
+        // Half A: eval_linear_prod_4_internal(inputs[base..base+4])
         // Sub-pair (input0, input1) → (ar1, ar2, ar_inf)
         emit_eval_linear_prod_2(
             &mut s,
@@ -1591,7 +1591,7 @@ fn generate_toom_cook_d8(p: usize) -> String {
         emit_ex4_2(&mut s, "a_5", "a_6", ["a_1", "a_2", "a_3", "a_4"], "a_inf6");
         emit_ex4(&mut s, "a_7", "a_3", "a_4", "a_5", "a_6", "a_inf6");
 
-        // ---- Half B: eval_linear_prod_4_internal(inputs[base+4..base+8]) ----
+        // Half B: eval_linear_prod_4_internal(inputs[base+4..base+8])
         emit_eval_linear_prod_2(
             &mut s,
             "cr",
@@ -1628,7 +1628,7 @@ fn generate_toom_cook_d8(p: usize) -> String {
         emit_ex4_2(&mut s, "b_5", "b_6", ["b_1", "b_2", "b_3", "b_4"], "b_inf6");
         emit_ex4(&mut s, "b_7", "b_3", "b_4", "b_5", "b_6", "b_inf6");
 
-        // ---- Final point-wise multiply ----
+        // Final point-wise multiply
         if p == 1 {
             let _ = writeln!(s, "        evals[0] = fr_mul_unreduced(a_1, b_1);");
             let _ = writeln!(s, "        evals[1] = fr_mul_unreduced(a_2, b_2);");

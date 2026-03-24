@@ -45,6 +45,7 @@ mod config;
 mod cycle;
 mod sink;
 mod source;
+pub mod trace_polys;
 
 pub use builder::{StreamingSession, WitnessBuilder};
 pub use config::WitnessConfig;
@@ -54,6 +55,7 @@ pub use sink::{ChunkData, PolynomialKind, WitnessSink};
 #[cfg(any(test, feature = "test-utils"))]
 pub use sink::{CollectedPoly, CollectingSink};
 pub use source::TraceSource;
+pub use trace_polys::{RwEntry, TracePolynomials};
 
 /// Re-export canonical polynomial identifiers from jolt-ir.
 pub use jolt_ir::PolynomialId;

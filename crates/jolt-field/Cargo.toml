@@ -3,8 +3,11 @@ name = "jolt-field"
 version = "0.1.0"
 authors = ["Jolt Contributors"]
 edition = "2021"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 description = "Field abstractions for the Jolt zkVM"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "cryptography", "finite-fields", "BN254"]
+categories = ["cryptography"]
 
 [lints]
 workspace = true

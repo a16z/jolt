@@ -4,7 +4,6 @@ mod common;
 
 use jolt_field::Fr;
 use jolt_transcript::KeccakTranscript;
-#[allow(unused_imports)]
 use num_traits::Zero;
 
 type Kec = KeccakTranscript<Fr>;

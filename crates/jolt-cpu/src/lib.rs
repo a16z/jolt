@@ -6,7 +6,7 @@
 //!
 //! # Kernel compilation strategies
 //!
-//! - **`ProductSum` D∈{4,8,16}** — hand-optimized closures with fully unrolled
+//! - **`ProductSum` D∈{4,8,16,32}** — hand-optimized closures with fully unrolled
 //!   product evaluation. These cover ~80% of prover time (instruction RA
 //!   sumchecks and claim reductions).
 //!

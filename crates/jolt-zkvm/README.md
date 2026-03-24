@@ -10,30 +10,24 @@ This crate composes all Jolt sub-crates into a complete proving system for RISC-
 
 ## Modules
 
-- **`evaluators`** -- `SumcheckCompute` implementations and kernel descriptor catalog.
-- **`pipeline`** -- `prove_stages` driver that runs the batched sumcheck pipeline.
+- **`evaluators`** -- `SumcheckCompute` implementations and kernel descriptor catalog:
+  - `catalog` -- Kernel descriptor constructors for every sumcheck composition.
+  - `kernel` -- Generic `KernelEvaluator` backed by compiled kernels.
+  - `mles_product_sum` -- MLE product-sum evaluator.
+  - `ra_poly` -- RA polynomial evaluator.
+  - `ra_virtual` -- RA virtual sumcheck evaluator.
+  - `segmented` -- Segmented evaluator for multi-segment polynomials.
 - **`preprocessing`** -- Circuit key construction and PCS setup.
 - **`proof`** -- Proof and key data structures.
 - **`prover`** -- Top-level prover orchestration.
 - **`r1cs`** -- Jolt R1CS constraint definitions and `UniformSpartanKey` construction.
-- **`stage`** -- `ProverStage` trait and `StageBatch` batching abstraction.
-- **`stages`** -- Concrete `ProverStage` implementations:
-  - `s1_spartan` -- Spartan R1CS stage.
-  - `s2_ra_virtual` -- RA virtual sumcheck.
-  - `s2_product_virtual` -- Product virtual remainder sumcheck.
-  - `s3_claim_reductions` -- Claim reduction sumchecks.
-  - `s3_shift` -- Shift sumcheck (PC-shift invariant via EqPlusOne).
-  - `s3_instruction_input` -- Instruction input virtualization sumcheck.
-  - `s4_ram_rw` / `s4_rw_checking` -- RAM read-write checking.
-  - `s5_ram_checking` -- RAM checking.
-  - `s5_registers_val_eval` -- Registers value evaluation sumcheck.
-  - `s6_booleanity` -- Hamming booleanity checks.
-  - `s6_ra_booleanity` -- RA polynomial booleanity checks.
-  - `s7_hamming_reduction` -- Hamming weight reduction.
-  - `s8_opening` -- Opening proof stage.
-  - `s_bytecode_read_raf` -- Bytecode read-RAF checking.
-  - `s_instruction_read_raf` -- Instruction read-RAF checking.
-- **`witness`** -- `WitnessStore` for polynomial evaluation table storage, plus trace-to-witness conversion.
+- **`tables`** -- Polynomial table layout and indexing.
+- **`witness`** -- Witness generation from execution traces:
+  - `generate` -- `generate_witnesses` and `WitnessOutput`.
+  - `store` -- `WitnessStore` for polynomial evaluation table storage.
+  - `store_sink` -- Streaming witness sink for incremental commitment.
+  - `cycle_data` / `r1cs_inputs` / `flags` / `bytecode` -- Per-cycle witness decomposition.
+- **`witness_builder`** -- Witness builder utilities.
 
 ## Feature Flags
 
@@ -45,7 +39,7 @@ This crate composes all Jolt sub-crates into a complete proving system for RISC-
 
 ```
 jolt-compute ─┐
-jolt-cpu-kernels ─┤
+jolt-cpu ─┤
 jolt-field ─┤
 jolt-ir ─┤
 jolt-openings ─┼─> jolt-zkvm

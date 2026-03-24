@@ -45,5 +45,6 @@ pub use flags::{
 pub use instruction_set::JoltInstructionSet;
 pub use interleave::{interleave_bits, uninterleave_bits};
 pub use lookup_bits::LookupBits;
+pub use tables::prefixes::ALL_PREFIXES;
 pub use tables::{LookupTableKind, LookupTables};
 pub use traits::{Instruction, LookupTable};

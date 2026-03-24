@@ -2,6 +2,10 @@
 //!
 //! Walks the [`ProtocolGraph`] stage by stage, executing sumcheck vertices
 //! with the appropriate witness builders and collecting proofs.
+//!
+//! Virtual polynomial data is computed on-the-fly from `CycleRow` during
+//! sumcheck witness construction — no pre-materialized tables. Committed
+//! polynomial tables (for PCS opening) come from `WitnessStore`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,12 +17,13 @@ use jolt_ir::protocol::{
     SymbolicPoint, Vertex,
 };
 use jolt_ir::PolynomialId;
+use jolt_witness::TracePolynomials;
 use jolt_openings::{AdditivelyHomomorphic, OpeningReduction, ProverClaim, RlcReduction};
 use jolt_sumcheck::{BatchedSumcheckProver, CaptureHandler, SumcheckClaim};
 use jolt_transcript::{AppendToTranscript, Transcript};
 
-use crate::tables::PolynomialTables;
-use crate::witness_builder;
+use crate::evaluators::kernel::KernelEvaluator;
+use crate::witness::store::WitnessStore;
 
 #[derive(Debug)]
 pub enum ProveError {
@@ -150,27 +155,13 @@ fn evaluate_input_claim<F: Field>(
     }
 }
 
-fn eval_produced_claim<F: Field>(
-    poly_id: PolynomialId,
-    tables: &PolynomialTables<F>,
-    eval_point: &[F],
-) -> F {
-    let table = tables.get(poly_id);
-    // If the table is shorter than the eval point (1D poly in a multi-dim stage),
-    // evaluate at the trailing coordinates only.
-    let n = table.len().trailing_zeros() as usize;
-    let point = if eval_point.len() > n {
-        &eval_point[eval_point.len() - n..]
-    } else {
-        eval_point
-    };
-    witness_builder::eval_poly(table, point)
-}
-
 /// Input bundle for [`prove_from_graph`].
-pub struct GraphProverInput<'a, F: Field, PCS: jolt_openings::CommitmentScheme<Field = F>, B> {
+pub struct GraphProverInput<'a, F: Field, PCS: jolt_openings::CommitmentScheme<Field = F>, B, R> {
     pub graph: &'a ProtocolGraph,
-    pub tables: &'a PolynomialTables<F>,
+    /// Lazy polynomial data — computes virtual poly values on-the-fly from trace.
+    pub trace_polys: &'a TracePolynomials<'a, R>,
+    /// Committed polynomial tables (for PCS opening proofs).
+    pub committed_store: &'a WitnessStore<F>,
     pub symbols: &'a HashMap<Symbol, usize>,
     pub external: &'a HashMap<&'a str, F>,
     pub spartan_key: &'a jolt_spartan::UniformSpartanKey<F>,
@@ -181,24 +172,25 @@ pub struct GraphProverInput<'a, F: Field, PCS: jolt_openings::CommitmentScheme<F
     pub backend: Arc<B>,
 }
 
-/// Proves a trace using the protocol graph.
 /// Output of [`prove_from_graph`].
 pub type GraphProveOutput<F, PCS> = (
     jolt_verifier::JoltProof<F, PCS>,
     jolt_verifier::JoltVerifyingKey<F, PCS>,
 );
 
-pub fn prove_from_graph<F, PCS, B>(
-    input: GraphProverInput<'_, F, PCS, B>,
+pub fn prove_from_graph<F, PCS, B, R>(
+    input: GraphProverInput<'_, F, PCS, B, R>,
 ) -> Result<GraphProveOutput<F, PCS>, ProveError>
 where
     F: Field,
     PCS: AdditivelyHomomorphic<Field = F>,
     B: ComputeBackend,
+    R: jolt_host::CycleRow,
 {
     let GraphProverInput {
         graph,
-        tables,
+        trace_polys,
+        committed_store,
         symbols,
         external,
         spartan_key,
@@ -213,7 +205,7 @@ where
     let (witness_commitment, _) = PCS::commit(flat_witness, pcs_setup);
     transcript.append_bytes(format!("{witness_commitment:?}").as_bytes());
 
-    let commitments = commit_polys::<PCS>(tables, pcs_setup);
+    let commitments = commit_committed_polys::<PCS>(committed_store, &config, pcs_setup);
 
     let mut cache = EvalCache::new(graph.claim_graph.claims.len(), symbols);
 
@@ -226,16 +218,15 @@ where
         )?;
 
     let s1 = &graph.staging.stages[0];
-    // Store the full r_y (reversed) as S1's point. The graph's r_cycle() is
-    // Slice(Challenges(S1), 0..log_T), so resolve_point will extract the first
-    // log_T elements. Virtual poly evaluations use this truncated r_cycle.
     let r_y_rev: Vec<F> = r_y.iter().rev().copied().collect();
     let log_t = symbols[&Symbol::LOG_T];
     let r_cycle = &r_y_rev[..log_t];
+
+    // S1 claim evaluations: computed lazily from trace via TracePolynomials.
     for &vid in &s1.vertices {
-        for cid in graph.claim_graph.vertex(vid).all_produced_claims() {
+        for &cid in graph.claim_graph.vertex(vid).produced_claims() {
             let poly_id = graph.claim_graph.claim(cid).polynomial;
-            cache.set(cid, eval_produced_claim(poly_id, tables, r_cycle));
+            cache.set(cid, trace_polys.eval_at_point(poly_id, r_cycle));
         }
     }
     cache.set_point(s1.id, r_y_rev);
@@ -256,20 +247,14 @@ where
         for &vid in &stage.vertices {
             if let Vertex::Sumcheck(sv) = graph.claim_graph.vertex(vid) {
                 let claimed_sum = evaluate_input_claim(&sv.input, &cache, &sc, external);
-                // Eq source: the upstream dep's challenge point, not the current stage.
-                let eq_source = sv.deps.first()
+                let eq_source = sv
+                    .deps
+                    .first()
                     .map(|&dep_id| graph.claim_graph.claim(dep_id).point.clone())
                     .unwrap_or(SymbolicPoint::Challenges(stage.id));
                 let witness = build_witness(
-                    sv,
-                    tables,
-                    &cache,
-                    symbols,
-                    &backend,
-                    &graph.claim_graph,
-                    &eq_source,
-                    &sc,
-                    external,
+                    sv, trace_polys, &cache, symbols, &backend, &graph.claim_graph, &eq_source,
+                    &sc, external,
                 );
                 claims.push(SumcheckClaim {
                     num_vars,
@@ -288,13 +273,35 @@ where
         );
         let ep: Vec<F> = captured.challenges.iter().rev().copied().collect();
 
+        // Collect evaluations: first from witness produced_evaluations (2D polys),
+        // then compute remaining from trace on-the-fly.
+        let witness_evals: HashMap<PolynomialId, F> = HashMap::new();
+        // TODO: populate from witness.produced_evaluations() once PhasedEvaluator
+        // is wired for 2D polys. For now, all evals come from trace on-the-fly.
+
         let mut evals = Vec::new();
         for &vid in &stage.vertices {
-            for cid in graph.claim_graph.vertex(vid).all_produced_claims() {
+            for &cid in graph.claim_graph.vertex(vid).produced_claims() {
                 let poly_id = graph.claim_graph.claim(cid).polynomial;
-                let eval = eval_produced_claim(poly_id, tables, &ep);
+                let eval = if let Some(&we) = witness_evals.get(&poly_id) {
+                    we
+                } else {
+                    trace_polys.eval_at_point(poly_id, &ep)
+                };
                 cache.set(cid, eval);
                 evals.push(eval);
+            }
+        }
+
+        // Side-effect claim evaluations
+        for &vid in &stage.vertices {
+            if let Vertex::Sumcheck(sv) = graph.claim_graph.vertex(vid) {
+                for &cid in &sv.side_effect_claims {
+                    let poly_id = graph.claim_graph.claim(cid).polynomial;
+                    let eval = trace_polys.eval_at_point(poly_id, &ep);
+                    cache.set(cid, eval);
+                    evals.push(eval);
+                }
             }
         }
 
@@ -322,14 +329,18 @@ where
         }
     }
 
-    // PCS opening
+    // PCS opening: committed polys from WitnessStore
     let mut pcs_claims: Vec<ProverClaim<F>> = Vec::new();
     for v in &graph.claim_graph.vertices {
         if let Vertex::Opening(ov) = v {
             let claim = graph.claim_graph.claim(ov.consumes);
+            let poly_id = claim.polynomial;
+            if poly_id == PolynomialId::SpartanWitness {
+                continue; // Opened by Spartan internally
+            }
             let eval = cache.get(ov.consumes);
             let point = cache.resolve_point(&claim.point);
-            let table = tables.get(claim.polynomial);
+            let table = committed_store.get(poly_id);
             pcs_claims.push(ProverClaim {
                 evaluations: table.to_vec(),
                 point,
@@ -353,12 +364,12 @@ where
         })
         .collect();
 
-    // Collect S1 virtual evals for the proof
+    // S1 evals for proof
     let spartan_evals: Vec<F> = s1
         .vertices
         .iter()
-        .flat_map(|&vid| graph.claim_graph.vertex(vid).all_produced_claims())
-        .map(|cid| cache.get(cid))
+        .flat_map(|&vid| graph.claim_graph.vertex(vid).produced_claims())
+        .map(|&cid| cache.get(cid))
         .collect();
 
     let proof = jolt_verifier::JoltProof {
@@ -378,33 +389,33 @@ where
     Ok((proof, vk))
 }
 
-fn commit_polys<PCS: AdditivelyHomomorphic>(
-    tables: &PolynomialTables<PCS::Field>,
+/// Commit all committed polynomials from the WitnessStore.
+fn commit_committed_polys<PCS: AdditivelyHomomorphic>(
+    store: &WitnessStore<PCS::Field>,
+    config: &jolt_verifier::ProverConfig,
     setup: &PCS::ProverSetup,
 ) -> Vec<PCS::Output> {
-    let c = |d: &[PCS::Field]| PCS::commit(d, setup).0;
-    let mut out = vec![c(&tables.ram_inc), c(&tables.rd_inc)];
-    for ra in &tables.instruction_ra {
-        out.push(c(ra));
+    let c = |id: PolynomialId| PCS::commit(store.get(id), setup).0;
+    let params = config.one_hot_params_from_config();
+    let mut out = vec![c(PolynomialId::RamInc), c(PolynomialId::RdInc)];
+    for i in 0..params.instruction_d {
+        out.push(c(PolynomialId::InstructionRa(i)));
     }
-    for ra in &tables.bytecode_ra {
-        out.push(c(ra));
+    for i in 0..params.bytecode_d {
+        out.push(c(PolynomialId::BytecodeRa(i)));
     }
-    for ra in &tables.ram_ra {
-        out.push(c(ra));
+    for i in 0..params.ram_d {
+        out.push(c(PolynomialId::RamRa(i)));
     }
     out
 }
 
-/// Builds a sumcheck witness for a vertex.
-///
-/// Resolves the weighting polynomial, collects polynomial tables for the
-/// formula's opening variables, evaluates challenge variables from the
-/// stage's squeezed values, and delegates to `witness_builder::formula_witness`.
+/// Builds a sumcheck witness for a vertex, computing polynomial values
+/// on-the-fly from the trace.
 #[allow(clippy::too_many_arguments)]
-fn build_witness<F: Field, B: ComputeBackend>(
+fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
     sv: &jolt_ir::protocol::SumcheckVertex,
-    tables: &PolynomialTables<F>,
+    trace_polys: &TracePolynomials<'_, R>,
     cache: &EvalCache<F>,
     _symbols: &HashMap<Symbol, usize>,
     backend: &Arc<B>,
@@ -414,7 +425,6 @@ fn build_witness<F: Field, B: ComputeBackend>(
     external: &HashMap<&str, F>,
 ) -> Box<dyn jolt_sumcheck::SumcheckCompute<F>> {
     use jolt_ir::protocol::PublicPolynomial as PP;
-    use jolt_ir::SopValue;
 
     let eq_point = cache.resolve_point(stage_point);
     let w_table: Vec<F> = match &sv.weighting {
@@ -424,87 +434,98 @@ fn build_witness<F: Field, B: ComputeBackend>(
         PP::Derived => vec![F::one(); 1 << eq_point.len()],
     };
 
-    // Map formula opening var_ids → polynomial table slices.
-    // Deduplicate: if the same poly appears in multiple bindings, reuse.
+    // Materialize polynomial evaluation tables on-demand from trace.
     let formula = &sv.formula;
-    let mut opening_var_to_poly_idx: HashMap<u32, usize> = HashMap::new();
-    let mut poly_tables: Vec<&[F]> = Vec::new();
+    let mut poly_tables: Vec<Vec<F>> = Vec::new();
 
     for binding in &formula.definition.opening_bindings {
         let claim_id = formula.opening_claims[&binding.var_id];
         let poly_id = graph.claim(claim_id).polynomial;
-        let table = tables.get(poly_id);
-        let idx = poly_tables.len();
-        poly_tables.push(table);
-        let _ = opening_var_to_poly_idx.insert(binding.var_id, idx);
+        poly_tables.push(trace_polys.materialize(poly_id));
     }
 
-    // Resolve challenge values for this formula.
+    // Resolve challenge values for compile_descriptor
     let challenge_labels = match &sv.input {
-        InputClaim::Formula {
-            challenge_labels, ..
-        } => challenge_labels,
+        InputClaim::Formula { challenge_labels, .. } => challenge_labels,
         InputClaim::Constant(_) => &[] as &[_],
     };
-    let mut challenge_values: HashMap<u32, F> = HashMap::new();
+    let num_challenges = formula.definition.num_challenges as usize;
+    let mut challenges = vec![F::zero(); num_challenges];
     for (i, label) in challenge_labels.iter().enumerate() {
-        let val = match label {
-            jolt_ir::protocol::ChallengeLabel::PreSqueeze(name) => stage_challenges
-                .scalars
-                .get(name)
-                .copied()
-                .unwrap_or(F::zero()),
-            jolt_ir::protocol::ChallengeLabel::External(name) => {
-                external.get(name).copied().unwrap_or(F::zero())
-            }
-        };
-        let _ = challenge_values.insert(i as u32, val);
-    }
-
-    // Convert SoP terms into catalog::Term for formula_descriptor.
-    // Each SoP term: coefficient × Π(opening_factors) × Π(challenge_factors)
-    // Challenge factors fold into the term coefficient.
-    let sop = formula.definition.expr.to_sum_of_products();
-    let mut terms = Vec::new();
-
-    for sop_term in &sop.terms {
-        let mut coeff = F::from_i128(sop_term.coefficient);
-        let mut factors = Vec::new();
-
-        for factor in &sop_term.factors {
-            match factor {
-                SopValue::Opening(var_id) => {
-                    let idx = opening_var_to_poly_idx[var_id];
-                    factors.push(idx);
+        if i < num_challenges {
+            challenges[i] = match label {
+                ChallengeLabel::PreSqueeze(name) => {
+                    stage_challenges.scalars.get(name).copied().unwrap_or_else(F::zero)
                 }
-                SopValue::Challenge(var_id) => {
-                    coeff *= challenge_values.get(var_id).copied().unwrap_or(F::one());
+                ChallengeLabel::External(name) => {
+                    external.get(name).copied().unwrap_or_else(F::zero)
                 }
-                SopValue::Constant(c) => {
-                    coeff *= F::from_i128(*c);
-                }
-            }
-        }
-
-        if !factors.is_empty() || coeff != F::zero() {
-            terms.push(crate::evaluators::catalog::Term { coeff, factors });
+            };
         }
     }
 
-    if terms.is_empty() || poly_tables.is_empty() {
-        let n = w_table.len();
-        let zero = vec![F::zero(); n];
-        return witness_builder::formula_witness(
-            &w_table,
-            &[&zero],
-            &[crate::evaluators::catalog::Term {
-                coeff: F::one(),
-                factors: vec![0],
-            }],
-            sv.degree + 1,
-            backend,
-        );
-    }
+    // Compile the formula into a kernel descriptor + materialized challenge coefficients.
+    let (desc, materialized) = formula.definition.compile_descriptor::<F>(&challenges);
+    let order = binding_order_for(sv);
 
-    witness_builder::formula_witness(&w_table, &poly_tables, &terms, sv.degree + 1, backend)
+    // Upload polynomial tables to backend buffers.
+    let buffers: Vec<B::Buffer<F>> = poly_tables
+        .iter()
+        .map(|table| backend.upload(table))
+        .collect();
+
+    use jolt_ir::KernelShape;
+    match &desc.shape {
+        KernelShape::EqProduct => {
+            // Pre-combine: g[i] = Σ_j materialized[j] * poly_tables[j][i]
+            let n = w_table.len();
+            let mut combined = vec![F::zero(); n];
+            for (j, (table, &weight)) in poly_tables.iter().zip(materialized.iter()).enumerate() {
+                for (i, c) in combined.iter_mut().enumerate() {
+                    if i < table.len() {
+                        *c += weight * table[i];
+                    }
+                }
+                let _ = j;
+            }
+            let eq_buf = backend.upload(&w_table);
+            let g_buf = backend.upload(&combined);
+            let kernel = backend.compile_kernel(&desc);
+            Box::new(
+                KernelEvaluator::from_descriptor(&desc, vec![eq_buf, g_buf], kernel, backend.clone())
+                    .with_binding_order(order),
+            )
+        }
+        KernelShape::HammingBooleanity => {
+            // Scale the weighting table by the materialized eq scale factor.
+            let scale = materialized.first().copied().unwrap_or(F::one());
+            let scaled_w: Vec<F> = w_table.iter().map(|&w| w * scale).collect();
+            let w_buf = backend.upload(&scaled_w);
+            let h_buf = buffers.into_iter().next().unwrap_or_else(|| backend.upload(&vec![F::zero(); scaled_w.len()]));
+            let kernel = backend.compile_kernel(&desc);
+            Box::new(
+                KernelEvaluator::from_descriptor(&desc, vec![w_buf, h_buf], kernel, backend.clone())
+                    .with_binding_order(order),
+            )
+        }
+        KernelShape::Custom { .. } | KernelShape::ProductSum { .. } => {
+            // General path: compile kernel with baked-in challenge values, use all poly buffers.
+            let kernel = backend.compile_kernel(&desc);
+            let mut inputs = vec![backend.upload(&w_table)];
+            inputs.extend(buffers);
+            Box::new(
+                KernelEvaluator::from_descriptor(&desc, inputs, kernel, backend.clone())
+                    .with_binding_order(order),
+            )
+        }
+    }
+}
+
+/// Derives the variable binding order from the vertex's first phase.
+fn binding_order_for(sv: &jolt_ir::protocol::SumcheckVertex) -> jolt_compute::BindingOrder {
+    use jolt_ir::protocol::VariableGroup;
+    match sv.phases.first().map(|p| p.variable_group) {
+        Some(VariableGroup::Address) => jolt_compute::BindingOrder::HighToLow,
+        _ => jolt_compute::BindingOrder::LowToHigh,
+    }
 }

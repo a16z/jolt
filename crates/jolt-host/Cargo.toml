@@ -1,10 +1,13 @@
 [package]
 name = "jolt-host"
 version = "0.1.0"
+authors = ["Jolt Contributors"]
 edition = "2021"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 description = "Host-side guest program compilation, decoding, and tracing for Jolt"
 repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "zkvm", "risc-v", "compilation"]
+categories = ["cryptography"]
 
 [lints]
 workspace = true
@@ -12,6 +15,7 @@ workspace = true
 [dependencies]
 bincode.workspace = true
 common = { workspace = true }
+jolt-instructions = { path = "../jolt-instructions" }
 serde.workspace = true
 tracer = { workspace = true, features = ["std"] }
 tracing.workspace = true

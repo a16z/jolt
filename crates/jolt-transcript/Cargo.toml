@@ -1,6 +1,7 @@
 [package]
 name = "jolt-transcript"
 version = "0.1.0"
+authors = ["Jolt Contributors"]
 edition = "2021"
 description = "Fiat-Shamir transcript implementations for Jolt"
 repository = "https://github.com/a16z/jolt"
@@ -12,9 +13,12 @@ categories = ["cryptography", "no-std"]
 workspace = true
 
 [dependencies]
+ark-bn254.workspace = true
+ark-ff.workspace = true
+ark-serialize.workspace = true
 blake2.workspace = true
 digest = "0.10"
-hex = "0.4"
+light-poseidon = "0.4"
 sha3.workspace = true
 jolt-field = { path = "../jolt-field" }
 

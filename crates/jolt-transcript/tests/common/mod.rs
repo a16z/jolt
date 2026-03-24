@@ -233,7 +233,7 @@ macro_rules! transcript_tests {
         }
 
         #[test]
-        #[should_panic(expected = "label must be less than 33 bytes")]
+        #[should_panic(expected = "label must be at most 32 bytes")]
         fn test_label_too_long() {
             let long_label: &[u8; 33] = &[b'x'; 33];
             let _ = <$transcript_type>::new(long_label);

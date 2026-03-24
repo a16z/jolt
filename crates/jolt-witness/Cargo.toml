@@ -13,7 +13,10 @@ test-utils = []
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
+jolt-host = { path = "../jolt-host" }
+jolt-instructions = { path = "../jolt-instructions" }
 jolt-ir = { path = "../jolt-ir" }
+jolt-poly = { path = "../jolt-poly" }
 tracing.workspace = true
 
 [dev-dependencies]

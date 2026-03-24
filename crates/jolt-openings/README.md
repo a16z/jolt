@@ -40,6 +40,8 @@ This crate defines abstract interfaces for polynomial commitment schemes (PCS) a
 
 - **`ProverClaim<F>`** -- Leaf claim with polynomial evaluations, point, and claimed value.
 - **`VerifierClaim<F, C>`** -- Leaf claim with commitment, point, and claimed value.
+- **`CommittedEval<F>`** -- Evaluation of a committed polynomial at a point (point + eval, no table).
+- **`VirtualEval<F>`** -- Zero-cost newtype for evaluations of virtual (non-committed) polynomials.
 
 ### Reduction
 

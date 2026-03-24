@@ -238,7 +238,7 @@ impl ProverConfig {
         OneHotParams::from_config(&self.one_hot_config, self.bytecode_k, self.ram_k)
     }
 
-    /// Convert to a [`ProtocolConfig`] for graph construction.
+    /// Convert to a [`jolt_ir::protocol::ProtocolConfig`] for graph construction.
     pub fn to_protocol_config(&self) -> jolt_ir::protocol::ProtocolConfig {
         let params = self.one_hot_params_from_config();
         let cpv = params.lookups_ra_virtual_log_k_chunk / params.log_k_chunk;

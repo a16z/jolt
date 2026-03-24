@@ -656,6 +656,7 @@ impl ComputeBackend for MetalBackend {
         table
     }
 
+    #[tracing::instrument(skip_all, name = "MetalBackend::pairwise_reduce", fields(n = inputs[0].len()))]
     fn pairwise_reduce<F: Field>(
         &self,
         inputs: &[&Self::Buffer<F>],
@@ -682,6 +683,7 @@ impl ComputeBackend for MetalBackend {
         )
     }
 
+    #[tracing::instrument(skip_all, name = "MetalBackend::pairwise_reduce_unweighted", fields(n = inputs[0].len()))]
     fn pairwise_reduce_unweighted<F: Field>(
         &self,
         inputs: &[&Self::Buffer<F>],
@@ -707,6 +709,7 @@ impl ComputeBackend for MetalBackend {
         )
     }
 
+    #[tracing::instrument(skip_all, name = "MetalBackend::interpolate_pairs_batch", fields(n_bufs = bufs.len()))]
     fn interpolate_pairs_batch<F: Field>(
         &self,
         bufs: Vec<Self::Buffer<F>>,
@@ -753,6 +756,7 @@ impl ComputeBackend for MetalBackend {
         outputs
     }
 
+    #[tracing::instrument(skip_all, fields(n_bufs = bufs.len()))]
     fn interpolate_pairs_batch_inplace<F: Field>(
         &self,
         bufs: &mut [Self::Buffer<F>],
@@ -900,6 +904,7 @@ impl ComputeBackend for MetalBackend {
         )
     }
 
+    #[tracing::instrument(skip_all, fields(n = inputs.first().map_or(0, |b| b.len())))]
     fn fused_interpolate_reduce<F: Field>(
         &self,
         inputs: &mut [Self::Buffer<F>],

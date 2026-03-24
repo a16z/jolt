@@ -137,7 +137,7 @@ impl Vertex {
         }
     }
 
-    /// Formula-produced claims (outgoing edges verified by the output formula).
+    /// All claims this vertex produces (outgoing edges).
     pub fn produced_claims(&self) -> &[ClaimId] {
         match self {
             Self::Sumcheck(v) => &v.produces,
@@ -146,7 +146,7 @@ impl Vertex {
         }
     }
 
-    /// All claims this vertex produces, including side-effect evaluations.
+    /// All claims this vertex produces, including side-effect claims.
     pub fn all_produced_claims(&self) -> Vec<ClaimId> {
         match self {
             Self::Sumcheck(v) => {
@@ -179,16 +179,6 @@ pub struct SumcheckVertex {
     /// These are the polynomials referenced by the output formula — the
     /// verifier checks the output claim against their evaluations.
     pub produces: Vec<ClaimId>,
-    /// Additional polynomial evaluations available at the stage's challenge
-    /// point as a byproduct of the sumcheck.
-    ///
-    /// In jolt-core, the opening accumulator stores evaluations of ALL
-    /// virtual polynomials at each sumcheck's challenge point (via
-    /// `bind_opening_inputs`). The output formula only references a subset.
-    /// Side-effect claims capture the rest — they're not verified by the
-    /// output formula but are available for downstream consumption
-    /// (e.g., BytecodeReadRaf's multi-stage RLC input).
-    pub side_effect_claims: Vec<ClaimId>,
     /// The output claim formula (verifier check expression).
     pub formula: ClaimFormula,
     /// Degree of the sumcheck round polynomial.
@@ -200,6 +190,10 @@ pub struct SumcheckVertex {
     /// Variable-binding phases (e.g., address then cycle for multi-phase sumchecks).
     /// Single-phase vertices have one entry.
     pub phases: Vec<Phase>,
+    /// Claims produced as side effects (e.g., phased evaluator state polys).
+    /// These are produced at the same point as `produces` but are not part of
+    /// the output formula — they feed downstream vertices only.
+    pub side_effect_claims: Vec<ClaimId>,
     /// How to derive output formula challenge values from the eval point
     /// and stage pre_squeeze. The verifier uses this to reconstruct the
     /// exact challenge values that the prover used during witness construction.

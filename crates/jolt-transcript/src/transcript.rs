@@ -70,6 +70,9 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     fn compare_to(&mut self, other: &Self);
 }
 
+/// Maximum label length in bytes. Labels are padded to this size before hashing.
+pub const MAX_LABEL_LEN: usize = 32;
+
 /// Implement this trait to define how your type serializes into transcript bytes.
 /// This keeps the [`Transcript`] trait decoupled from specific serialization formats.
 pub trait AppendToTranscript {

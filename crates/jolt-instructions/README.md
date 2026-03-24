@@ -6,7 +6,9 @@ Part of the [Jolt](https://github.com/a16z/jolt) zkVM.
 
 ## Overview
 
-This crate defines the instruction abstraction layer for the Jolt lookup argument. Each RISC-V instruction is decomposed into lookup queries against small tables, which are then verified via the Twist/Shout protocol. The crate covers the full RV64IMAC instruction set.
+This crate defines the instruction abstraction layer for the Jolt lookup argument. Each RISC-V instruction is decomposed into lookup queries against small tables, which are then verified via the Twist/Shout protocol. The crate covers the full RV64IMAC instruction set plus virtual instructions for operations that require multi-step decomposition (shifts, rotates, division validation, byte manipulation, SHA XOR-rotate).
+
+105 instructions map to 41 lookup tables, each with a prefix/suffix sparse-dense MLE decomposition that enables sub-linear evaluation during sumcheck.
 
 ## Public API
 
@@ -15,27 +17,35 @@ This crate defines the instruction abstraction layer for the Jolt lookup argumen
 - **`Instruction: Flags`** -- A RISC-V instruction. Methods: `opcode()`, `name()`, `execute(x, y) -> u64`, `lookup_table() -> Option<LookupTableKind>`.
 - **`LookupTable<XLEN>`** -- A small evaluation table. Methods: `materialize_entry(index) -> u64`, `evaluate_mle(r) -> F`.
 - **`Flags`** -- Static flag configuration. Methods: `circuit_flags() -> [bool; NUM_CIRCUIT_FLAGS]`, `instruction_flags() -> [bool; NUM_INSTRUCTION_FLAGS]`.
-- **`ChallengeOps<F>`** -- Arithmetic bounds for challenge-field operations in prefix/suffix evaluation.
-- **`FieldOps<C>`** -- Field-side bounds for challenge arithmetic.
+- **`PrefixSuffixDecomposition<XLEN>`** -- Sub-linear MLE evaluation via `table_mle(r) = Sum prefix_i(r_high) * suffix_i(r_low)`.
+- **`ChallengeOps<F>`** / **`FieldOps<C>`** -- Arithmetic bounds for challenge-field operations in prefix/suffix evaluation.
 
 ### Types
 
-- **`LookupTableKind`** -- `#[repr(u8)]` enum identifying one of 40 distinct lookup table types.
-- **`LookupTables<XLEN>`** -- Runtime dispatch enum over all concrete table implementations. Constructed from `LookupTableKind` via `From`.
+- **`LookupTableKind`** -- `#[repr(u8)]` enum identifying one of 41 distinct lookup table types. Compact serialization for wire format.
+- **`LookupTables<XLEN>`** -- Runtime dispatch enum over all concrete table implementations. Constructed from `LookupTableKind` via `From`. The `XLEN` const generic selects word size (8 for tests, 64 for production).
 - **`LookupBits`** -- Compact 17-byte bitvector for lookup index substrings (prefix/suffix decomposition).
 - **`CircuitFlags`** -- R1CS-relevant boolean flags (14 variants: `AddOperands`, `Load`, `Store`, `Jump`, etc.).
 - **`InstructionFlags`** -- Non-R1CS flags for witness generation (7 variants: `LeftOperandIsPC`, `RightOperandIsImm`, `Branch`, etc.).
-- **`JoltInstructionSet`** -- Registry of all RV64IMAC instructions with opcode-indexed dispatch.
+- **`JoltInstructionSet`** -- Registry of all 105 RV64IMAC instructions with opcode-indexed dispatch.
+- **`Prefixes`** / **`Suffixes`** -- Enum dispatch over 46 prefix and 13 suffix polynomial types.
+
+### Utilities
+
+- **`interleave_bits`** / **`uninterleave_bits`** -- Bit-interleaving (Morton/Z-order) for two-operand lookup indices.
+- **`ALL_PREFIXES`** -- Const array of all 46 prefix variants for safe iteration.
+- **`NUM_CIRCUIT_FLAGS`** / **`NUM_INSTRUCTION_FLAGS`** -- Constant counts for flag arrays.
 
 ### Modules
 
 - **`rv`** -- Concrete RISC-V instruction implementations (arithmetic, arithmetic_w, branch, compare, jump, load, logic, shift, shift_w, store, system).
 - **`virtual_`** -- Virtual instructions (advice, arithmetic, assert, bitwise, byte, division, extension, shift, xor-rotate).
 - **`tables`** -- Lookup table implementations with prefix/suffix sparse-dense decomposition.
+- **`opcodes`** -- Opcode constants and encoding.
 
 ## Dependency Position
 
-`jolt-instructions` depends only on `jolt-field` and `serde`. It is used by `jolt-zkvm`.
+`jolt-instructions` depends only on `jolt-field` and `serde`. It is used by `jolt-host` and `jolt-zkvm`.
 
 ## Feature Flags
 
@@ -43,4 +53,4 @@ This crate has no feature flags.
 
 ## License
 
-MIT
+MIT OR Apache-2.0

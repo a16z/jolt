@@ -1,10 +1,8 @@
 //! Graph-driven proof verification.
 //!
 //! [`verify_from_graph`] verifies a Jolt proof by walking the [`ProtocolGraph`]
-//! — no per-stage hand-coded logic. Challenge squeezing, sumcheck verification,
+//! -- no per-stage hand-coded logic. Challenge squeezing, sumcheck verification,
 //! formula evaluation, and PCS opening checks are all driven by the graph.
-//!
-//! Coexists with [`crate::verify::verify_proof`] — both are independently callable.
 
 use std::collections::HashMap;
 
@@ -174,8 +172,7 @@ fn evaluate_formula<F: Field>(
 
 /// Verify a Jolt proof by walking the protocol graph.
 ///
-/// This is the graph-driven counterpart to [`crate::verify::verify_proof`].
-/// All stage logic is derived from the graph — no per-stage hand-coded formulas.
+/// All stage logic is derived from the graph -- no per-stage hand-coded formulas.
 ///
 /// # Parameters
 ///

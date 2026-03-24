@@ -72,7 +72,7 @@ impl<F: jolt_field::Field> Default for PoseidonTranscript<F> {
 impl<F: jolt_field::Field> std::fmt::Debug for PoseidonTranscript<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PoseidonTranscript")
-            .field("state", &hex::encode(self.state))
+            .field("state", &format_args!("{:02x?}", self.state))
             .field("n_rounds", &self.n_rounds)
             .finish_non_exhaustive()
     }
@@ -147,7 +147,11 @@ impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
     type Challenge = F;
 
     fn new(label: &'static [u8]) -> Self {
-        assert!(label.len() < 33, "label must be less than 33 bytes");
+        use crate::transcript::MAX_LABEL_LEN;
+        assert!(
+            label.len() <= MAX_LABEL_LEN,
+            "label must be at most {MAX_LABEL_LEN} bytes",
+        );
 
         let mut poseidon = Self::hasher();
         let label_f = Fr::from_le_bytes_mod_order(label);
@@ -224,7 +228,6 @@ impl<F: jolt_field::Field> Transcript for PoseidonTranscript<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Field;
 
     type Poseidon = PoseidonTranscript<jolt_field::Fr>;
 

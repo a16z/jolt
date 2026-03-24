@@ -16,6 +16,7 @@ The crate also provides optimized arithmetic primitives -- wide accumulators and
 
 - **`Field`** -- Prime field element abstraction. Elements are `Copy`, thread-safe, serializable. Provides conversions from integer types, random sampling, square, inverse, and bit-width queries.
 - **`OptimizedMul<Rhs, Output>`** -- Multiplication with fast-path short-circuits for zero and one.
+- **`MontgomeryConstants`** -- Trait providing Montgomery form constants (modulus limbs, R^2, inverse) for wide arithmetic backends.
 
 ### Accumulation
 
@@ -46,4 +47,4 @@ The `signed` module provides fixed-width signed big integers (`S64`, `S128`, `S1
 
 ## License
 
-MIT
+MIT OR Apache-2.0

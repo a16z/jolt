@@ -358,6 +358,54 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
         }
     }
 
+    /// Creates an evaluator from a [`KernelDescriptor`] for standard-grid kernels.
+    ///
+    /// Derives `num_evals` from `desc.num_evals()`. Asserts the descriptor uses
+    /// a standard evaluation grid (EqProduct, HammingBooleanity, or Custom).
+    ///
+    /// For standard-grid kernels, the eq polynomial is always an input buffer
+    /// (typically `inputs[0]`), so weights are unit.
+    pub fn from_descriptor(
+        desc: &jolt_ir::KernelDescriptor,
+        inputs: Vec<B::Buffer<F>>,
+        kernel: B::CompiledKernel<F>,
+        backend: Arc<B>,
+    ) -> Self {
+        debug_assert!(
+            matches!(desc.eval_grid(), jolt_ir::EvalGrid::Standard { .. }),
+            "from_descriptor is for standard-grid kernels; use from_descriptor_toom_cook for ProductSum"
+        );
+        Self::with_unit_weights(inputs, kernel, desc.num_evals(), backend)
+    }
+
+    /// Creates an evaluator from a [`KernelDescriptor`] for Toom-Cook kernels.
+    ///
+    /// Derives `num_evals` from `desc.num_evals()`. Asserts the descriptor uses
+    /// a Toom-Cook evaluation grid (ProductSum).
+    pub fn from_descriptor_toom_cook(
+        desc: &jolt_ir::KernelDescriptor,
+        inputs: Vec<B::Buffer<F>>,
+        kernel: B::CompiledKernel<F>,
+        eq_w: Vec<F>,
+        claimed_sum: F,
+        binding_order: BindingOrder,
+        backend: Arc<B>,
+    ) -> Self {
+        debug_assert!(
+            matches!(desc.eval_grid(), jolt_ir::EvalGrid::ToomCook { .. }),
+            "from_descriptor_toom_cook is for Toom-Cook kernels; use from_descriptor for standard grid"
+        );
+        Self::with_toom_cook_eq(
+            inputs,
+            kernel,
+            desc.num_evals(),
+            eq_w,
+            claimed_sum,
+            backend,
+            binding_order,
+        )
+    }
+
     /// Sets a precomputed first-round polynomial for univariate skip.
     ///
     /// The caller computes $t_1(2)$ using formula-specific logic (e.g., by
@@ -441,12 +489,15 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
     }
 
     fn round_polynomial(&self) -> UnivariatePoly<F> {
-        let raw_evals = self
-            .cached_reduce
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap_or_else(|| self.reduce_raw());
+        let raw_evals = {
+            let _span = tracing::debug_span!("reduce").entered();
+            self.cached_reduce
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or_else(|| self.reduce_raw())
+        };
+        let _span = tracing::debug_span!("reconstruct").entered();
         match &self.mode {
             InterpolationMode::StandardGrid { claim } => {
                 // raw_evals = [P(0), P(2), P(3), ..., P(d)]
@@ -962,6 +1013,147 @@ mod tests {
         let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
 
         let mut vt = Blake2bTranscript::new(b"tc_d8");
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
+        assert!(result.is_ok(), "verification failed: {result:?}");
+    }
+
+    #[test]
+    fn from_descriptor_eq_product_prove_verify() {
+        let backend = cpu();
+        let num_vars = 5;
+        let n = 1usize << num_vars;
+        let mut rng = ChaCha20Rng::seed_from_u64(200);
+
+        let claim_def = jolt_ir::zkvm::claims::reductions::increment_claim_reduction();
+        let eq_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+        let ram_inc: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let rd_inc: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let c0 = Fr::random(&mut rng);
+        let c1 = Fr::random(&mut rng);
+        let challenges = vec![c0, c1];
+
+        let (desc, weights) = claim_def.compile_descriptor::<Fr>(&challenges);
+        assert!(matches!(desc.shape, KernelShape::EqProduct));
+
+        // Pre-combine: g = w0*ram_inc + w1*rd_inc
+        let g: Vec<Fr> = (0..n)
+            .map(|i| weights[0] * ram_inc[i] + weights[1] * rd_inc[i])
+            .collect();
+
+        let eq_table = EqPolynomial::new(eq_point).evaluations();
+        let claimed_sum: Fr = (0..n).map(|i| eq_table[i] * g[i]).sum();
+
+        let eq_desc = catalog::eq_product();
+        let kernel = jolt_cpu::compile::<Fr>(&eq_desc);
+        let inputs = vec![backend.upload(&eq_table), backend.upload(&g)];
+
+        let mut witness =
+            KernelEvaluator::from_descriptor(&eq_desc, inputs, kernel, Arc::clone(&backend));
+
+        let claim = SumcheckClaim {
+            num_vars,
+            degree: 3,
+            claimed_sum,
+        };
+
+        let mut pt = Blake2bTranscript::new(b"from_desc_eq");
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
+
+        let mut vt = Blake2bTranscript::new(b"from_desc_eq");
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
+        assert!(result.is_ok(), "verification failed: {result:?}");
+    }
+
+    #[test]
+    fn from_descriptor_hamming_prove_verify() {
+        let backend = cpu();
+        let num_vars = 5;
+        let n = 1usize << num_vars;
+        let mut rng = ChaCha20Rng::seed_from_u64(201);
+
+        let claim_def = jolt_ir::zkvm::claims::ram::hamming_booleanity();
+        let eq_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+        // Boolean-valued H → sum is zero
+        let h: Vec<Fr> = (0..n).map(|i| Fr::from_u64((i % 2) as u64)).collect();
+        let eq_eval = Fr::random(&mut rng);
+        let challenges = vec![eq_eval, -eq_eval];
+
+        let (desc, values) = claim_def.compile_descriptor::<Fr>(&challenges);
+        assert!(matches!(desc.shape, KernelShape::HammingBooleanity));
+
+        // Scale eq by eq_scale
+        let eq_table = EqPolynomial::new(eq_point).evaluations();
+        let scaled_eq: Vec<Fr> = eq_table.iter().map(|&e| e * values[0]).collect();
+        let claimed_sum: Fr = (0..n).map(|i| scaled_eq[i] * h[i] * (h[i] - Fr::one())).sum();
+        assert_eq!(claimed_sum, Fr::zero());
+
+        let ham_desc = catalog::hamming_booleanity();
+        let kernel = jolt_cpu::compile::<Fr>(&ham_desc);
+        let inputs = vec![backend.upload(&scaled_eq), backend.upload(&h)];
+
+        let mut witness =
+            KernelEvaluator::from_descriptor(&ham_desc, inputs, kernel, Arc::clone(&backend));
+
+        let claim = SumcheckClaim {
+            num_vars,
+            degree: 4,
+            claimed_sum,
+        };
+
+        let mut pt = Blake2bTranscript::new(b"from_desc_ham");
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
+
+        let mut vt = Blake2bTranscript::new(b"from_desc_ham");
+        let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
+        assert!(result.is_ok(), "verification failed: {result:?}");
+    }
+
+    #[test]
+    fn from_descriptor_toom_cook_prove_verify() {
+        let backend = cpu();
+        let d = 4;
+        let num_vars = 5;
+        let n = 1usize << num_vars;
+        let mut rng = ChaCha20Rng::seed_from_u64(202);
+
+        let polys: Vec<Vec<Fr>> = (0..d).map(|_| (0..n).map(|_| Fr::random(&mut rng)).collect()).collect();
+        let eq_w: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+        let eq_table = EqPolynomial::new(eq_w.clone()).evaluations();
+
+        let claimed_sum: Fr = (0..n)
+            .map(|x| {
+                let mut product = Fr::one();
+                for poly in &polys {
+                    product *= poly[x];
+                }
+                eq_table[x] * product
+            })
+            .sum();
+
+        let desc = catalog::product_sum(d, 1);
+        let kernel = jolt_cpu::compile::<Fr>(&desc);
+        let inputs: Vec<_> = polys.iter().map(|p| backend.upload(p)).collect();
+
+        let mut witness = KernelEvaluator::from_descriptor_toom_cook(
+            &desc,
+            inputs,
+            kernel,
+            eq_w,
+            claimed_sum,
+            BindingOrder::LowToHigh,
+            Arc::clone(&backend),
+        );
+
+        let claim = SumcheckClaim {
+            num_vars,
+            degree: d + 1,
+            claimed_sum,
+        };
+
+        let mut pt = Blake2bTranscript::new(b"from_desc_tc");
+        let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
+
+        let mut vt = Blake2bTranscript::new(b"from_desc_tc");
         let result = SumcheckVerifier::verify(&claim, &proof, &mut vt);
         assert!(result.is_ok(), "verification failed: {result:?}");
     }

@@ -14,6 +14,7 @@
 //!
 //! - [`Blake2bTranscript`]: Uses Blake2b-256 hash function
 //! - [`KeccakTranscript`]: Ethereum/EVM-compatible, uses Keccak-256
+//! - [`PoseidonTranscript`]: SNARK-friendly, uses Poseidon over BN254
 //!
 //! # Example
 //!
@@ -23,11 +24,11 @@
 //!
 //! let mut transcript = Blake2bTranscript::<Fr>::new(b"my_protocol");
 //!
-//! // Absorb data using append (for types implementing AppendToTranscript)
-//! transcript.append(&42u64);
-//! transcript.append(&[1u8, 2, 3, 4]);
+//! // Absorb field elements using append (AppendToTranscript)
+//! let value = Fr::from_u64(42);
+//! transcript.append(&value);
 //!
-//! // Or use append_bytes directly
+//! // Absorb raw bytes directly
 //! transcript.append_bytes(b"raw bytes");
 //!
 //! // Squeeze a challenge — returns Fr directly
@@ -43,8 +44,10 @@ mod blake2b;
 mod blanket;
 mod impl_transcript;
 mod keccak;
+mod poseidon;
 mod transcript;
 
 pub use blake2b::Blake2bTranscript;
 pub use keccak::KeccakTranscript;
+pub use poseidon::PoseidonTranscript;
 pub use transcript::{AppendToTranscript, Transcript};

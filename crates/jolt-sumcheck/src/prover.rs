@@ -59,6 +59,24 @@ pub trait SumcheckCompute<F: Field>: Send + Sync {
     fn first_round_polynomial(&self) -> Option<UnivariatePoly<F>> {
         None
     }
+
+    /// Per-polynomial evaluations at the fully-bound challenge point.
+    ///
+    /// Called by the prover AFTER all rounds complete. Returns `(index, eval)`
+    /// pairs where `index` identifies the polynomial within this witness
+    /// (matched to `PolynomialId` by the prover via the vertex's formula
+    /// bindings).
+    ///
+    /// **Default:** empty — the prover evaluates polynomials from stored tables.
+    ///
+    /// **Override for multi-phase witnesses** (e.g., `PhasedEvaluator`): returns
+    /// evaluations of 2D state polynomials (RamVal, RegistersVal) that were
+    /// materialized and fully bound during the sumcheck. These evaluations
+    /// cannot be obtained from stored tables because the polynomials are
+    /// too large to pre-materialize (K×T entries).
+    fn produced_evaluations(&self) -> Vec<(usize, F)> {
+        vec![]
+    }
 }
 
 /// Stateless sumcheck prover engine.
@@ -96,18 +114,28 @@ impl SumcheckProver {
         let mut running_claim = claim.claimed_sum;
         for round in 0..claim.num_vars {
             witness.set_claim(running_claim);
-            let round_poly = if round == 0 {
-                witness
-                    .first_round_polynomial()
-                    .unwrap_or_else(|| witness.round_polynomial())
-            } else {
-                witness.round_polynomial()
+            let round_poly = {
+                let _span = tracing::debug_span!("round_polynomial", round).entered();
+                if round == 0 {
+                    witness
+                        .first_round_polynomial()
+                        .unwrap_or_else(|| witness.round_polynomial())
+                } else {
+                    witness.round_polynomial()
+                }
             };
-            handler.absorb_round_poly(&round_poly, transcript);
-            let challenge: F = transcript.challenge();
-            handler.on_challenge(challenge);
-            running_claim = round_poly.evaluate(challenge);
-            witness.bind(challenge);
+            let challenge = {
+                let _span = tracing::debug_span!("transcript", round).entered();
+                handler.absorb_round_poly(&round_poly, transcript);
+                let c: F = transcript.challenge();
+                handler.on_challenge(c);
+                running_claim = round_poly.evaluate(c);
+                c
+            };
+            {
+                let _span = tracing::debug_span!("bind", round).entered();
+                witness.bind(challenge);
+            }
         }
         handler.finalize()
     }

@@ -1,29 +1,22 @@
 //! End-to-end test: compile guest → trace → witness → prove → verify
 //! using the graph-driven pipeline.
 //!
-//! Uses MockCommitmentScheme for fast iteration. Can be switched to Dory
-//! for production soundness testing.
+//! Uses MockCommitmentScheme for fast iteration. Virtual polynomial data
+//! is computed on-the-fly from the trace via `CycleRow` — no pre-materialized tables.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use jolt_field::Fr;
-use jolt_ir::protocol::{build_jolt_protocol, ProtocolConfig, Symbol};
+use jolt_ir::protocol::{build_jolt_protocol, Symbol};
 use jolt_openings::mock::MockCommitmentScheme;
 use jolt_verifier::verify::build_symbol_table;
 use jolt_zkvm::preprocessing::{interleave_witnesses, preprocess, JoltConfig};
-use jolt_zkvm::prover::{prove_from_graph, GraphProverInput};
-use jolt_zkvm::tables::PolynomialTables;
+use jolt_zkvm::prover::GraphProverInput;
 use jolt_zkvm::witness::generate::generate_witnesses;
 
 type MockPCS = MockCommitmentScheme<Fr>;
 
-/// Build a ProtocolConfig from a ProverConfig.
-fn protocol_config(config: &jolt_verifier::ProverConfig) -> ProtocolConfig {
-    config.to_protocol_config()
-}
-
-/// Build the symbol table from config + Spartan key dimensions.
 fn symbols(
     config: &jolt_verifier::ProverConfig,
     spartan_key: &jolt_spartan::UniformSpartanKey<Fr>,
@@ -41,47 +34,41 @@ fn symbols(
 }
 
 #[test]
+#[ignore] // Requires guest ELF compilation
 fn graph_driven_muldiv_mock_pcs() {
-    // 1. Compile and trace the muldiv guest program
+    // 1. Compile and trace
     let mut program = jolt_host::Program::new("muldiv-guest");
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
     let (_lazy, trace, _memory, _device) = program.trace(&inputs, &[], &[]);
 
-    // 2. Generate witnesses + polynomial tables
+    // 2. Generate committed polynomial witnesses
     let witness_output = generate_witnesses::<Fr>(&trace);
     let config = &witness_output.config;
-    let tables = PolynomialTables::from_witness(
-        &witness_output.witness_store,
-        &witness_output.cycle_witnesses,
-        &trace,
-        config,
-    );
 
-    // 3. Preprocessing: Spartan key + PCS setup
-    let jolt_config = JoltConfig {
-        num_cycles: config.trace_length,
-    };
-    let proving_key = preprocess::<Fr, MockPCS>(&jolt_config, |_vars| ((), ()));
+    // 3. Preprocessing
+    let jolt_config = JoltConfig { num_cycles: config.trace_length };
+    let proving_key = preprocess::<Fr, MockPCS>(&jolt_config, |_| ((), ()));
 
-    // 4. Build interleaved R1CS witness
+    // 4. R1CS witness
     let flat_witness =
         interleave_witnesses(&proving_key.spartan_key, &witness_output.cycle_witnesses);
 
-    // 5. Build protocol graph
-    let proto_config = protocol_config(config);
-    let graph = build_jolt_protocol(proto_config);
+    // 5. Protocol graph
+    let graph = build_jolt_protocol(config.to_protocol_config());
 
-    // 6. Build symbol table
+    // 6. Symbol table
     let syms = symbols(config, &proving_key.spartan_key);
 
-    // 7. External values (none needed for muldiv — no RAM init, no advice)
+    // 7. External values
     let external: HashMap<&str, Fr> = HashMap::new();
 
-    // 8. Prove
+    // 8. Prove — trace provides virtual poly data on-the-fly via TracePolynomials
+    let trace_polys = jolt_witness::TracePolynomials::new(&trace);
     let backend = Arc::new(jolt_cpu::CpuBackend);
     let input = GraphProverInput {
         graph: &graph,
-        tables: &tables,
+        trace_polys: &trace_polys,
+        committed_store: &witness_output.witness_store,
         symbols: &syms,
         external: &external,
         spartan_key: &proving_key.spartan_key,
@@ -91,16 +78,12 @@ fn graph_driven_muldiv_mock_pcs() {
         config: config.clone(),
         backend,
     };
-    eprintln!("=== Starting prove_from_graph (graph has {} stages, {} claims) ===",
-        graph.staging.stages.len(), graph.claim_graph.claims.len());
-    let (proof, vk) = prove_from_graph::<Fr, MockPCS, _>(input).expect("proving should succeed");
-    eprintln!(
-        "=== prove_from_graph succeeded, {} stage proofs ===",
-        proof.stage_proofs.len()
-    );
+    eprintln!("=== prove_from_graph ===");
+    let (proof, vk) = jolt_zkvm::prover::prove_from_graph(input).expect("proving should succeed");
+    eprintln!("=== proved, {} stage proofs ===", proof.stage_proofs.len());
 
     // 9. Verify
-    let graph2 = build_jolt_protocol(protocol_config(config));
+    let graph2 = build_jolt_protocol(config.to_protocol_config());
     let syms2 = symbols(config, &vk.spartan_key);
     jolt_verifier::verify::verify_from_graph::<Fr, MockPCS>(
         &graph2, &proof, &vk, &syms2, &external,

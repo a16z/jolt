@@ -101,6 +101,10 @@ impl<F: Field> SumcheckCompute<F> for PhasedEvaluator<F> {
     fn first_round_polynomial(&self) -> Option<UnivariatePoly<F>> {
         self.active.first_round_polynomial()
     }
+
+    fn produced_evaluations(&self) -> Vec<(usize, F)> {
+        self.active.produced_evaluations()
+    }
 }
 
 /// Builder for [`PhasedEvaluator`].

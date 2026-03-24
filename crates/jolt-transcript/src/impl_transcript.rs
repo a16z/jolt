@@ -47,7 +47,7 @@ macro_rules! impl_transcript {
         impl<F: jolt_field::Field> std::fmt::Debug for $name<F> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.debug_struct(stringify!($name))
-                    .field("state", &hex::encode(self.state))
+                    .field("state", &format_args!("{:02x?}", self.state))
                     .field("n_rounds", &self.n_rounds)
                     .finish()
             }
@@ -112,9 +112,13 @@ macro_rules! impl_transcript {
             type Challenge = F;
 
             fn new(label: &'static [u8]) -> Self {
-                assert!(label.len() < 33, "label must be less than 33 bytes");
+                assert!(
+                    label.len() <= $crate::transcript::MAX_LABEL_LEN,
+                    "label must be at most {} bytes",
+                    $crate::transcript::MAX_LABEL_LEN,
+                );
 
-                let mut padded = [0u8; 32];
+                let mut padded = [0u8; $crate::transcript::MAX_LABEL_LEN];
                 padded[..label.len()].copy_from_slice(label);
 
                 let hash: [u8; 32] = <$hasher as Digest>::new()
