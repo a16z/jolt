@@ -151,6 +151,21 @@ pub enum Secp256k1Error {
     QAtInfinity,      // public key is point at infinity
     ROrSZero,         // one of the signature components is zero
     RxMismatch,       // computed R.x does not match r
+    InvalidGlvSignWord(u64),
+}
+
+#[inline(always)]
+#[cfg(any(
+    all(test, feature = "host"),
+    target_arch = "riscv32",
+    target_arch = "riscv64"
+))]
+pub(crate) fn decode_glv_sign_word(sign: u64) -> Result<bool, Secp256k1Error> {
+    match sign {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(Secp256k1Error::InvalidGlvSignWord(sign)),
+    }
 }
 
 /// secp256k1 base field element
@@ -916,6 +931,8 @@ impl Secp256k1Point {
         }
         // check that decomposition is correct
         // check that k1 + k2 * lambda == k (mod r)
+        let k1_sign = decode_glv_sign_word(out[0]).unwrap_or_spoil_proof();
+        let k2_sign = decode_glv_sign_word(out[3]).unwrap_or_spoil_proof();
         let lambda = Secp256k1Fr::from_u64_arr_unchecked(&[
             0xdf02967c1b23bd72,
             0x122e22ea20816678,
@@ -923,11 +940,11 @@ impl Secp256k1Point {
             0x5363ad4cc05c30e0,
         ]);
         let mut k1 = Secp256k1Fr::from_u64_arr_unchecked(&[out[1], out[2], 0u64, 0u64]);
-        if out[0] == 1u64 {
+        if k1_sign {
             k1 = k1.neg();
         }
         let mut k2 = Secp256k1Fr::from_u64_arr_unchecked(&[out[4], out[5], 0u64, 0u64]);
-        if out[3] == 1u64 {
+        if k2_sign {
             k2 = k2.neg();
         }
         let recomposed_k = k1.add(&k2.mul(&lambda));
@@ -936,8 +953,8 @@ impl Secp256k1Point {
         }
         // return as (sign, abs_value) pairs
         [
-            (out[0] == 1u64, (out[1] as u128) | ((out[2] as u128) << 64)),
-            (out[3] == 1u64, (out[4] as u128) | ((out[5] as u128) << 64)),
+            (k1_sign, (out[1] as u128) | ((out[2] as u128) << 64)),
+            (k2_sign, (out[4] as u128) | ((out[5] as u128) << 64)),
         ]
     }
     #[cfg(all(
@@ -994,14 +1011,15 @@ impl Secp256k1Point {
         let k2 = &beta_1 * &b1 - &beta_2 * &a1;
         // return as (sign, abs_value) pairs
         let to_sign_abs = |n: NBigInt| -> (bool, u128) {
-            let (sign, bytes) = n.to_bytes_le();
-            // pad bytes to 16 bytes
+            let sign = n.sign() == Sign::Minus;
+            let abs_value = if sign { -n } else { n };
+            let bytes = abs_value.to_bytes_le().1;
             let mut bytes_padded = bytes.clone();
             while bytes_padded.len() < 16 {
                 bytes_padded.push(0u8);
             }
             let abs_value = u128::from_le_bytes(bytes_padded[..16].try_into().unwrap());
-            (sign == Sign::Minus, abs_value)
+            (sign, abs_value)
         };
         [to_sign_abs(k1), to_sign_abs(k2)]
     }
