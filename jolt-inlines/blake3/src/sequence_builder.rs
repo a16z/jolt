@@ -22,7 +22,7 @@ use jolt_inlines_sdk::host::{
         virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
         virtual_zero_extend_word::VirtualZeroExtendWord,
     },
-    FormatInline, InlineOp, InstrAssembler, Instruction,
+    FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     Value::{Imm, Reg},
     VirtualRegisterGuard,
 };

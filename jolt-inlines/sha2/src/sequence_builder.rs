@@ -2,7 +2,7 @@ use core::array;
 
 use jolt_inlines_sdk::host::{
     instruction::{andn::ANDN, lw::LW, sw::SW},
-    FormatInline, InlineOp, InstrAssembler, Instruction,
+    FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     Value::{self, Imm, Reg},
     VirtualRegisterGuard, Xlen,
 };
