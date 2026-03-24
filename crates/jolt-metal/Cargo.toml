@@ -21,6 +21,11 @@ tracing.workspace = true
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 jolt-compute = { path = "../jolt-compute" }
 jolt-cpu = { path = "../jolt-cpu" }
+jolt-ir = { path = "../jolt-ir" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-sumcheck = { path = "../jolt-sumcheck" }
+jolt-transcript = { path = "../jolt-transcript" }
+jolt-zkvm = { path = "../jolt-zkvm" }
 rand = { workspace = true }
 rand_core = { workspace = true }
 rand_chacha = { workspace = true }
@@ -42,4 +47,8 @@ harness = false
 
 [[bench]]
 name = "field128_throughput"
+harness = false
+
+[[bench]]
+name = "sumcheck_e2e"
 harness = false

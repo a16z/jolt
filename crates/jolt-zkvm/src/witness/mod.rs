@@ -19,4 +19,4 @@ pub mod store;
 pub mod store_sink;
 
 pub use generate::{generate_witnesses, WitnessOutput};
-pub use store::{PolynomialTag, WitnessStore};
+pub use store::WitnessStore;

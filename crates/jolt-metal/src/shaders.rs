@@ -6,7 +6,7 @@
 
 use metal::{CompileOptions, ComputePipelineState, Device, Library};
 
-use crate::field_config::FieldConfig;
+use crate::field_config::MslFieldParams;
 
 pub(crate) const SHADER_COMMON: &str = include_str!("shaders/common.metal");
 pub(crate) const SHADER_ELEMENTWISE: &str = include_str!("shaders/elementwise.metal");
@@ -23,9 +23,8 @@ pub(crate) struct ElementwiseKernels {
 }
 
 impl ElementwiseKernels {
-    pub fn compile(device: &Device, field_config: &FieldConfig) -> Self {
-        let source =
-            build_source_with_preamble(&field_config.msl_preamble, &[SHADER_ELEMENTWISE]);
+    pub fn compile(device: &Device, field_config: &MslFieldParams) -> Self {
+        let source = build_source_with_preamble(&field_config.msl_preamble, &[SHADER_ELEMENTWISE]);
         let options = CompileOptions::new();
         let library = device
             .new_library_with_source(&source, &options)
@@ -50,7 +49,7 @@ pub(crate) struct InterpolationKernels {
 }
 
 impl InterpolationKernels {
-    pub fn compile(device: &Device, field_config: &FieldConfig) -> Self {
+    pub fn compile(device: &Device, field_config: &MslFieldParams) -> Self {
         let source =
             build_source_with_preamble(&field_config.msl_preamble, &[SHADER_INTERPOLATION]);
         let options = CompileOptions::new();
@@ -78,7 +77,8 @@ impl InterpolationKernels {
 /// `#include` lines in the shader fragments are stripped (already inlined via
 /// the preamble).
 pub fn build_source_with_preamble(preamble: &str, shaders: &[&str]) -> String {
-    let total: usize = SHADER_COMMON.len() + preamble.len() + shaders.iter().map(|s| s.len()).sum::<usize>();
+    let total: usize =
+        SHADER_COMMON.len() + preamble.len() + shaders.iter().map(|s| s.len()).sum::<usize>();
     let mut src = String::with_capacity(total + 256);
 
     src.push_str(SHADER_COMMON);
@@ -109,11 +109,7 @@ pub fn build_source_with_preamble_noinline(preamble: &str, shaders: &[&str]) -> 
 }
 
 /// Create a compute pipeline from a named kernel function.
-pub fn make_pipeline(
-    device: &Device,
-    library: &Library,
-    name: &str,
-) -> ComputePipelineState {
+pub fn make_pipeline(device: &Device, library: &Library, name: &str) -> ComputePipelineState {
     let func = library
         .get_function(name, None)
         .unwrap_or_else(|e| panic!("kernel function '{name}' not found: {e}"));

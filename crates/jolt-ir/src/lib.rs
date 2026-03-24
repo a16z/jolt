@@ -8,7 +8,7 @@
 //! # Quick start
 //!
 //! ```
-//! use jolt_ir::{ExprBuilder, ClaimDefinition, OpeningBinding, ChallengeBinding, ChallengeSource};
+//! use jolt_ir::{ExprBuilder, ClaimDefinition, OpeningBinding, PolynomialId};
 //!
 //! // Booleanity check: γ · (H² − H)
 //! let b = ExprBuilder::new();
@@ -29,14 +29,12 @@ mod normalize;
 mod polynomial_id;
 mod visitor;
 
-// TODO: protocol module has unresolved references (register_all_polynomials, build_spartan)
-// #[allow(dead_code)]
 pub mod protocol;
 pub mod toom_cook;
 pub mod zkvm;
 
 pub use builder::{ExprBuilder, ExprHandle};
-pub use claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
+pub use claim::{ClaimDefinition, OpeningBinding};
 pub use expr::{Expr, ExprArena, ExprId, ExprNode, Var};
 pub use kernel::{KernelDescriptor, KernelShape, TensorSplit};
 pub use normalize::{SopTerm, SopValue, SumOfProducts};

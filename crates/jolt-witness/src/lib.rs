@@ -55,5 +55,5 @@ pub use sink::{ChunkData, PolynomialKind, WitnessSink};
 pub use sink::{CollectedPoly, CollectingSink};
 pub use source::TraceSource;
 
-/// Re-export polynomial tags from jolt-ir for convenience.
-pub use jolt_ir::zkvm::tags::poly as PolynomialTag;
+/// Re-export canonical polynomial identifiers from jolt-ir.
+pub use jolt_ir::PolynomialId;

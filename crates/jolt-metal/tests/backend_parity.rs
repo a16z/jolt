@@ -803,7 +803,10 @@ fn pairwise_reduce_product_sum_d8_unweighted() {
             BindingOrder::LowToHigh,
         );
 
-        assert_eq!(expected, got, "pairwise_reduce D=8 unweighted mismatch at n_pairs={n_pairs}");
+        assert_eq!(
+            expected, got,
+            "pairwise_reduce D=8 unweighted mismatch at n_pairs={n_pairs}"
+        );
     }
 }
 

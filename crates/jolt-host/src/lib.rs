@@ -10,20 +10,25 @@
 mod analyze;
 mod program;
 
-pub use analyze::ProgramSummary;
-pub use program::{decode, trace, trace_to_file};
+use std::path::{Path, PathBuf};
 
-// Re-export types that callers need
+pub use analyze::ProgramSummary;
+pub use program::decode;
+
 pub use common::jolt_device::{JoltDevice, MemoryConfig};
 pub use tracer::emulator::memory::Memory;
 pub use tracer::instruction::{Cycle, Instruction};
 pub use tracer::LazyTraceIterator;
 
-use std::path::PathBuf;
-
 pub const DEFAULT_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
 
-#[derive(Clone)]
+/// Host-side builder for guest RISC-V programs.
+///
+/// Provides methods to configure, compile, decode, and trace guest ELF binaries.
+/// Call [`Program::new`] with the guest crate name, optionally configure via
+/// `set_*` methods, then use [`Program::build`], [`Program::decode`], or
+/// [`Program::trace`] to compile and execute the guest program.
+#[derive(Clone, Debug)]
 pub struct Program {
     guest: String,
     func: Option<String>,
@@ -36,6 +41,18 @@ pub struct Program {
     max_output_size: u64,
     std: bool,
     backtrace: Option<String>,
-    pub elf: Option<PathBuf>,
-    pub elf_compute_advice: Option<PathBuf>,
+    elf: Option<PathBuf>,
+    elf_compute_advice: Option<PathBuf>,
+}
+
+impl Program {
+    /// Returns the path to the built guest ELF, if available.
+    pub fn elf_path(&self) -> Option<&Path> {
+        self.elf.as_deref()
+    }
+
+    /// Returns the path to the built compute-advice ELF, if available.
+    pub fn elf_compute_advice_path(&self) -> Option<&Path> {
+        self.elf_compute_advice.as_deref()
+    }
 }

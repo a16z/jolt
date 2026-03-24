@@ -32,7 +32,7 @@
 //!   reconstructed by recovering `h(0)` from the claim, interpolating via
 //!   `from_evals_toom`, and multiplying by the leading eq factor.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use jolt_compute::{BindingOrder, ComputeBackend};
 use jolt_field::Field;
@@ -189,6 +189,12 @@ pub struct KernelEvaluator<F: Field, B: ComputeBackend> {
     /// instead of `None`, and the sumcheck prover uses it for round 0.
     /// Consumed on first access (set to `None` after returning).
     first_round_override: Option<UnivariatePoly<F>>,
+
+    /// Cached reduce result from a fused interpolate+reduce in the previous
+    /// `bind()`. Consumed by the next `round_polynomial()`. Uses `Mutex` for
+    /// interior mutability (`round_polynomial` takes `&self`) — uncontended
+    /// in practice since the prover loop is sequential.
+    cached_reduce: Mutex<Option<Vec<F>>>,
 }
 
 impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
@@ -270,10 +276,19 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
         eq_w: Vec<F>,
         claimed_sum: F,
         backend: Arc<B>,
+        binding_order: BindingOrder,
     ) -> Self {
         assert!(!eq_w.is_empty(), "eq_w must have at least one element");
 
-        let partial_eq = EqPolynomial::new(eq_w[1..].to_vec()).evaluations();
+        // For H2L binding, the MSB of the evaluation table index maps to the
+        // LAST variable in the EqPolynomial's variable list. Since H2L binds
+        // MSB first, we need the last variable to be eq_w[1] (the first weight
+        // variable to bind). Reversing eq_w[1..] achieves this.
+        let partial_vars: Vec<F> = match binding_order {
+            BindingOrder::HighToLow => eq_w[1..].iter().rev().copied().collect(),
+            BindingOrder::LowToHigh => eq_w[1..].to_vec(),
+        };
+        let partial_eq = EqPolynomial::new(partial_vars).evaluations();
         let weights = backend.upload(&partial_eq);
 
         let state = ToomCookState {
@@ -284,14 +299,16 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
             weight_scalar: F::one(),
         };
 
-        Self::new_with_mode(
+        let mut this = Self::new_with_mode(
             inputs,
             Some(weights),
             kernel,
             num_evals,
             backend,
             InterpolationMode::ToomCook(state),
-        )
+        );
+        this.binding_order = binding_order;
+        this
     }
 
     fn new_with_mode(
@@ -337,6 +354,7 @@ impl<F: Field, B: ComputeBackend> KernelEvaluator<F, B> {
             mode,
             binding_order: BindingOrder::LowToHigh,
             first_round_override: None,
+            cached_reduce: Mutex::new(None),
         }
     }
 
@@ -423,7 +441,12 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
     }
 
     fn round_polynomial(&self) -> UnivariatePoly<F> {
-        let raw_evals = self.reduce_raw();
+        let raw_evals = self
+            .cached_reduce
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or_else(|| self.reduce_raw());
         match &self.mode {
             InterpolationMode::StandardGrid { claim } => {
                 // raw_evals = [P(0), P(2), P(3), ..., P(d)]
@@ -472,14 +495,28 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
                 }
             }
             BindingOrder::HighToLow => {
-                self.backend.interpolate_pairs_batch_inplace(
-                    &mut self.inputs,
-                    c,
-                    BindingOrder::HighToLow,
-                );
-                if let Some(ref mut w) = self.weights {
-                    self.backend
-                        .interpolate_pairs_inplace(w, c, BindingOrder::HighToLow);
+                let can_fuse = self.weights.is_some()
+                    && self.backend.len(&self.inputs[0]) >= 4;
+                if can_fuse {
+                    let w = self.weights.as_mut().unwrap();
+                    let result = self.backend.fused_interpolate_reduce(
+                        &mut self.inputs,
+                        w,
+                        c,
+                        &self.kernel,
+                        self.num_evals,
+                    );
+                    *self.cached_reduce.lock().unwrap() = Some(result);
+                } else {
+                    self.backend.interpolate_pairs_batch_inplace(
+                        &mut self.inputs,
+                        c,
+                        BindingOrder::HighToLow,
+                    );
+                    if let Some(ref mut w) = self.weights {
+                        self.backend
+                            .interpolate_pairs_inplace(w, c, BindingOrder::HighToLow);
+                    }
                 }
             }
         }
@@ -781,6 +818,7 @@ mod tests {
             eq_w,
             claimed_sum,
             Arc::clone(&backend),
+            BindingOrder::LowToHigh,
         );
 
         let claim = SumcheckClaim {
@@ -859,6 +897,7 @@ mod tests {
             eq_w,
             claimed_sum,
             Arc::clone(&backend),
+            BindingOrder::LowToHigh,
         );
 
         let claim = SumcheckClaim {
@@ -910,6 +949,7 @@ mod tests {
             eq_w,
             claimed_sum,
             Arc::clone(&backend),
+            BindingOrder::LowToHigh,
         );
 
         let claim = SumcheckClaim {

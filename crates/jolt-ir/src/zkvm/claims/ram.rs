@@ -3,11 +3,11 @@
 //! These encode the output claim formulas for the five RAM-related sumcheck
 //! instances. Each function returns a [`ClaimDefinition`]
 //! whose expression captures the exact polynomial identity, and whose bindings
-//! map symbolic variables to concrete Jolt polynomials and sumcheck stages.
+//! map symbolic variables to concrete Jolt polynomials.
 
 use crate::builder::ExprBuilder;
-use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
-use crate::zkvm::tags::{poly, sumcheck};
+use crate::claim::{ClaimDefinition, OpeningBinding};
+use crate::PolynomialId;
 
 // Verified against jolt-core/src/zkvm/ram/hamming_booleanity (via booleanity.rs pattern)
 // Formula: eq · (H² − H)
@@ -33,19 +33,9 @@ pub fn hamming_booleanity() -> ClaimDefinition {
         expr,
         opening_bindings: vec![OpeningBinding {
             var_id: 0,
-            polynomial_tag: poly::RAM_HAMMING_WEIGHT,
-            sumcheck_tag: sumcheck::RAM_HAMMING_BOOLEANITY,
+            polynomial: PolynomialId::HammingWeight,
         }],
-        challenge_bindings: vec![
-            ChallengeBinding {
-                var_id: 0,
-                source: ChallengeSource::Derived,
-            },
-            ChallengeBinding {
-                var_id: 1,
-                source: ChallengeSource::Derived,
-            },
-        ],
+        num_challenges: 2,
     }
 }
 
@@ -76,30 +66,18 @@ pub fn ram_read_write_checking() -> ClaimDefinition {
         opening_bindings: vec![
             OpeningBinding {
                 var_id: 0,
-                polynomial_tag: poly::RAM_RA,
-                sumcheck_tag: sumcheck::RAM_READ_WRITE_CHECKING,
+                polynomial: PolynomialId::RamAddress,
             },
             OpeningBinding {
                 var_id: 1,
-                polynomial_tag: poly::RAM_VAL,
-                sumcheck_tag: sumcheck::RAM_READ_WRITE_CHECKING,
+                polynomial: PolynomialId::RamVal,
             },
             OpeningBinding {
                 var_id: 2,
-                polynomial_tag: poly::RAM_INC,
-                sumcheck_tag: sumcheck::RAM_READ_WRITE_CHECKING,
+                polynomial: PolynomialId::RamInc,
             },
         ],
-        challenge_bindings: vec![
-            ChallengeBinding {
-                var_id: 0,
-                source: ChallengeSource::Derived,
-            },
-            ChallengeBinding {
-                var_id: 1,
-                source: ChallengeSource::Derived,
-            },
-        ],
+        num_challenges: 2,
     }
 }
 
@@ -126,19 +104,9 @@ pub fn ram_output_check() -> ClaimDefinition {
         expr,
         opening_bindings: vec![OpeningBinding {
             var_id: 0,
-            polynomial_tag: poly::RAM_VAL_FINAL,
-            sumcheck_tag: sumcheck::RAM_OUTPUT_CHECK,
+            polynomial: PolynomialId::RamValFinal,
         }],
-        challenge_bindings: vec![
-            ChallengeBinding {
-                var_id: 0,
-                source: ChallengeSource::Derived,
-            },
-            ChallengeBinding {
-                var_id: 1,
-                source: ChallengeSource::Derived,
-            },
-        ],
+        num_challenges: 2,
     }
 }
 
@@ -166,19 +134,14 @@ pub fn ram_val_check() -> ClaimDefinition {
         opening_bindings: vec![
             OpeningBinding {
                 var_id: 0,
-                polynomial_tag: poly::RAM_INC,
-                sumcheck_tag: sumcheck::RAM_VAL_CHECK,
+                polynomial: PolynomialId::RamInc,
             },
             OpeningBinding {
                 var_id: 1,
-                polynomial_tag: poly::RAM_RA,
-                sumcheck_tag: sumcheck::RAM_VAL_CHECK,
+                polynomial: PolynomialId::RamAddress,
             },
         ],
-        challenge_bindings: vec![ChallengeBinding {
-            var_id: 0,
-            source: ChallengeSource::Derived,
-        }],
+        num_challenges: 1,
     }
 }
 
@@ -216,43 +179,25 @@ pub fn ram_val_check_input(n_advice: usize) -> ClaimDefinition {
     let mut opening_bindings = vec![
         OpeningBinding {
             var_id: 0,
-            polynomial_tag: poly::RAM_VAL,
-            sumcheck_tag: sumcheck::RAM_READ_WRITE_CHECKING,
+            polynomial: PolynomialId::RamVal,
         },
         OpeningBinding {
             var_id: 1,
-            polynomial_tag: poly::RAM_VAL_FINAL,
-            sumcheck_tag: sumcheck::RAM_OUTPUT_CHECK,
-        },
-    ];
-
-    let mut challenge_bindings = vec![
-        ChallengeBinding {
-            var_id: 0,
-            source: ChallengeSource::Derived,
-        },
-        ChallengeBinding {
-            var_id: 1,
-            source: ChallengeSource::Derived,
+            polynomial: PolynomialId::RamValFinal,
         },
     ];
 
     for i in 0..n_advice {
         opening_bindings.push(OpeningBinding {
             var_id: 2 + i as u32,
-            polynomial_tag: 0,
-            sumcheck_tag: sumcheck::RAM_VAL_CHECK,
-        });
-        challenge_bindings.push(ChallengeBinding {
-            var_id: 2 + i as u32,
-            source: ChallengeSource::Derived,
+            polynomial: PolynomialId::TrustedAdvice,
         });
     }
 
     ClaimDefinition {
         expr,
         opening_bindings,
-        challenge_bindings,
+        num_challenges: 2 + n_advice as u32,
     }
 }
 
@@ -283,18 +228,14 @@ pub fn ram_ra_virtual(d: usize) -> ClaimDefinition {
     let opening_bindings = (0..d)
         .map(|idx| OpeningBinding {
             var_id: idx as u32,
-            polynomial_tag: poly::ram_ra_committed(idx),
-            sumcheck_tag: sumcheck::RAM_RA_VIRTUAL,
+            polynomial: PolynomialId::RamRa(idx),
         })
         .collect();
 
     ClaimDefinition {
         expr,
         opening_bindings,
-        challenge_bindings: vec![ChallengeBinding {
-            var_id: 0,
-            source: ChallengeSource::Derived,
-        }],
+        num_challenges: 1,
     }
 }
 
@@ -319,13 +260,9 @@ pub fn ram_raf_evaluation() -> ClaimDefinition {
         expr,
         opening_bindings: vec![OpeningBinding {
             var_id: 0,
-            polynomial_tag: poly::RAM_RA,
-            sumcheck_tag: sumcheck::RAM_RAF_EVALUATION,
+            polynomial: PolynomialId::RamAddress,
         }],
-        challenge_bindings: vec![ChallengeBinding {
-            var_id: 0,
-            source: ChallengeSource::Derived,
-        }],
+        num_challenges: 1,
     }
 }
 

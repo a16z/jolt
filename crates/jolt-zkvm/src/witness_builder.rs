@@ -64,7 +64,10 @@ pub fn claim_reduction_witness<F: Field, B: ComputeBackend>(
     let terms: Vec<Term<F>> = coefficients
         .iter()
         .enumerate()
-        .map(|(i, &c)| Term { coeff: c, factors: vec![i] })
+        .map(|(i, &c)| Term {
+            coeff: c,
+            factors: vec![i],
+        })
         .collect();
     formula_witness(&eq, polys, &terms, 3, backend)
 }
@@ -79,8 +82,14 @@ pub fn booleanity_witness<F: Field, B: ComputeBackend>(
 ) -> Box<dyn SumcheckCompute<F>> {
     let eq = EqPolynomial::new(eq_point.to_vec()).evaluations();
     let terms = vec![
-        Term { coeff: F::one(), factors: vec![0, 0] },
-        Term { coeff: -F::one(), factors: vec![0] },
+        Term {
+            coeff: F::one(),
+            factors: vec![0, 0],
+        },
+        Term {
+            coeff: -F::one(),
+            factors: vec![0],
+        },
     ];
     formula_witness(&eq, &[h_poly], &terms, 4, backend)
 }
@@ -113,7 +122,10 @@ pub fn shift_witness<F: Field, B: ComputeBackend>(
     let terms: Vec<Term<F>> = gamma_powers
         .iter()
         .enumerate()
-        .map(|(i, &c)| Term { coeff: c, factors: vec![i] })
+        .map(|(i, &c)| Term {
+            coeff: c,
+            factors: vec![i],
+        })
         .collect();
     formula_witness(eq_plus_one_combined, shift_polys, &terms, 3, backend)
 }
@@ -135,7 +147,10 @@ pub fn instruction_input_witness<F: Field, B: ComputeBackend>(
         let base = i * 2;
         polys.push(flag);
         polys.push(value);
-        terms.push(Term { coeff, factors: vec![base, base + 1] });
+        terms.push(Term {
+            coeff,
+            factors: vec![base, base + 1],
+        });
     }
     let poly_refs: Vec<&[F]> = polys;
     formula_witness(&eq, &poly_refs, &terms, 4, backend)
@@ -151,7 +166,10 @@ pub fn weighted_product_witness<F: Field, B: ComputeBackend>(
     backend: &Arc<B>,
 ) -> Box<dyn SumcheckCompute<F>> {
     let factors: Vec<usize> = (0..polys.len()).collect();
-    let terms = vec![Term { coeff: F::one(), factors }];
+    let terms = vec![Term {
+        coeff: F::one(),
+        factors,
+    }];
     formula_witness(w, polys, &terms, polys.len() + 2, backend)
 }
 
@@ -171,10 +189,28 @@ pub fn registers_rw_witness<F: Field, B: ComputeBackend>(
     let eq = EqPolynomial::new(eq_point.to_vec()).evaluations();
     let g2 = gamma * gamma;
     let terms = vec![
-        Term { coeff: F::one(), factors: vec![0, 1] },
-        Term { coeff: F::one(), factors: vec![0, 2] },
-        Term { coeff: gamma, factors: vec![3, 2] },
-        Term { coeff: g2, factors: vec![4, 2] },
+        Term {
+            coeff: F::one(),
+            factors: vec![0, 1],
+        },
+        Term {
+            coeff: F::one(),
+            factors: vec![0, 2],
+        },
+        Term {
+            coeff: gamma,
+            factors: vec![3, 2],
+        },
+        Term {
+            coeff: g2,
+            factors: vec![4, 2],
+        },
     ];
-    formula_witness(&eq, &[rd_wa, rd_inc, val, rs1_ra, rs2_ra], &terms, 4, backend)
+    formula_witness(
+        &eq,
+        &[rd_wa, rd_inc, val, rs1_ra, rs2_ra],
+        &terms,
+        4,
+        backend,
+    )
 }

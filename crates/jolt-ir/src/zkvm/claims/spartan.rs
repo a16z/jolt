@@ -6,8 +6,8 @@
 //! sumchecks are standard.
 
 use crate::builder::ExprBuilder;
-use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
-use crate::zkvm::tags::{poly, sumcheck};
+use crate::claim::{ClaimDefinition, OpeningBinding};
+use crate::PolynomialId;
 
 // Verified against jolt-core/src/zkvm/spartan/shift.rs
 // Formula: Σ EqPlusOne(r,j) · (unexpanded_pc + γ·pc + γ²·is_virtual + γ³·is_first)
@@ -55,36 +55,26 @@ pub fn shift() -> ClaimDefinition {
         opening_bindings: vec![
             OpeningBinding {
                 var_id: 0,
-                polynomial_tag: poly::NEXT_UNEXPANDED_PC,
-                sumcheck_tag: sumcheck::SHIFT,
+                polynomial: PolynomialId::NextUnexpandedPc,
             },
             OpeningBinding {
                 var_id: 1,
-                polynomial_tag: poly::NEXT_PC,
-                sumcheck_tag: sumcheck::SHIFT,
+                polynomial: PolynomialId::NextPc,
             },
             OpeningBinding {
                 var_id: 2,
-                polynomial_tag: poly::NEXT_IS_VIRTUAL,
-                sumcheck_tag: sumcheck::SHIFT,
+                polynomial: PolynomialId::NextIsVirtual,
             },
             OpeningBinding {
                 var_id: 3,
-                polynomial_tag: poly::NEXT_IS_FIRST_IN_SEQUENCE,
-                sumcheck_tag: sumcheck::SHIFT,
+                polynomial: PolynomialId::NextIsFirstInSequence,
             },
             OpeningBinding {
                 var_id: 4,
-                polynomial_tag: poly::NEXT_IS_NOOP,
-                sumcheck_tag: sumcheck::SHIFT,
+                polynomial: PolynomialId::NextIsNoop,
             },
         ],
-        challenge_bindings: (0..=5)
-            .map(|i| ChallengeBinding {
-                var_id: i,
-                source: ChallengeSource::Derived,
-            })
-            .collect(),
+        num_challenges: 6,
     }
 }
 
@@ -134,55 +124,38 @@ pub fn instruction_input() -> ClaimDefinition {
         opening_bindings: vec![
             OpeningBinding {
                 var_id: 0,
-                polynomial_tag: poly::RIGHT_IS_RS2,
-                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+                polynomial: PolynomialId::RightIsRs2,
             },
             OpeningBinding {
                 var_id: 1,
-                polynomial_tag: poly::RS2_VALUE,
-                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+                polynomial: PolynomialId::Rs2Value,
             },
             OpeningBinding {
                 var_id: 2,
-                polynomial_tag: poly::RIGHT_IS_IMM,
-                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+                polynomial: PolynomialId::RightIsImm,
             },
             OpeningBinding {
                 var_id: 3,
-                polynomial_tag: poly::IMM,
-                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+                polynomial: PolynomialId::Imm,
             },
             OpeningBinding {
                 var_id: 4,
-                polynomial_tag: poly::LEFT_IS_RS1,
-                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+                polynomial: PolynomialId::LeftIsRs1,
             },
             OpeningBinding {
                 var_id: 5,
-                polynomial_tag: poly::RS1_VALUE,
-                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+                polynomial: PolynomialId::Rs1Value,
             },
             OpeningBinding {
                 var_id: 6,
-                polynomial_tag: poly::LEFT_IS_PC,
-                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+                polynomial: PolynomialId::LeftIsPc,
             },
             OpeningBinding {
                 var_id: 7,
-                polynomial_tag: poly::UNEXPANDED_PC,
-                sumcheck_tag: sumcheck::INSTRUCTION_INPUT_VIRTUAL,
+                polynomial: PolynomialId::UnexpandedPc,
             },
         ],
-        challenge_bindings: vec![
-            ChallengeBinding {
-                var_id: 0,
-                source: ChallengeSource::Derived,
-            },
-            ChallengeBinding {
-                var_id: 1,
-                source: ChallengeSource::Derived,
-            },
-        ],
+        num_challenges: 2,
     }
 }
 
@@ -243,51 +216,38 @@ pub fn product_virtual_remainder() -> ClaimDefinition {
         opening_bindings: vec![
             OpeningBinding {
                 var_id: 0,
-                polynomial_tag: poly::LEFT_INSTRUCTION_INPUT,
-                sumcheck_tag: sumcheck::SPARTAN_PRODUCT_VIRTUAL,
+                polynomial: PolynomialId::LeftInstructionInput,
             },
             OpeningBinding {
                 var_id: 1,
-                polynomial_tag: poly::RIGHT_INSTRUCTION_INPUT,
-                sumcheck_tag: sumcheck::SPARTAN_PRODUCT_VIRTUAL,
+                polynomial: PolynomialId::RightInstructionInput,
             },
             OpeningBinding {
                 var_id: 2,
-                polynomial_tag: poly::IS_RD_NOT_ZERO,
-                sumcheck_tag: sumcheck::SPARTAN_PRODUCT_VIRTUAL,
+                polynomial: PolynomialId::IsRdNotZero,
             },
             OpeningBinding {
                 var_id: 3,
-                polynomial_tag: poly::WRITE_LOOKUP_OUTPUT_TO_RD_FLAG,
-                sumcheck_tag: sumcheck::SPARTAN_PRODUCT_VIRTUAL,
+                polynomial: PolynomialId::WriteLookupToRdFlag,
             },
             OpeningBinding {
                 var_id: 4,
-                polynomial_tag: poly::JUMP_FLAG,
-                sumcheck_tag: sumcheck::SPARTAN_PRODUCT_VIRTUAL,
+                polynomial: PolynomialId::JumpFlag,
             },
             OpeningBinding {
                 var_id: 5,
-                polynomial_tag: poly::LOOKUP_OUTPUT,
-                sumcheck_tag: sumcheck::SPARTAN_PRODUCT_VIRTUAL,
+                polynomial: PolynomialId::LookupOutput,
             },
             OpeningBinding {
                 var_id: 6,
-                polynomial_tag: poly::BRANCH_FLAG,
-                sumcheck_tag: sumcheck::SPARTAN_PRODUCT_VIRTUAL,
+                polynomial: PolynomialId::BranchFlag,
             },
             OpeningBinding {
                 var_id: 7,
-                polynomial_tag: poly::NEXT_IS_NOOP,
-                sumcheck_tag: sumcheck::SPARTAN_PRODUCT_VIRTUAL,
+                polynomial: PolynomialId::NextIsNoop,
             },
         ],
-        challenge_bindings: (0..=5)
-            .map(|i| ChallengeBinding {
-                var_id: i,
-                source: ChallengeSource::Derived,
-            })
-            .collect(),
+        num_challenges: 6,
     }
 }
 

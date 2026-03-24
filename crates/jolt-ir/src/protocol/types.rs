@@ -12,10 +12,6 @@ use crate::PolynomialId;
 
 use super::symbolic::{NumVars, SymbolicExpr};
 
-// ---------------------------------------------------------------------------
-// Identifiers
-// ---------------------------------------------------------------------------
-
 macro_rules! id_type {
     ($name:ident, $doc:expr) => {
         #[doc = $doc]
@@ -44,10 +40,6 @@ id_type!(
     "Unique identifier for a commitment group."
 );
 
-// ---------------------------------------------------------------------------
-// Polynomials
-// ---------------------------------------------------------------------------
-
 /// A polynomial in the protocol.
 ///
 /// Committed polynomials have PCS data; virtual polynomials are derived during
@@ -71,10 +63,6 @@ pub enum PolynomialKind {
     Virtual,
 }
 
-// ---------------------------------------------------------------------------
-// Commitment groups
-// ---------------------------------------------------------------------------
-
 /// A set of polynomials committed together as a single prover message.
 ///
 /// Grouping is a choice — it affects proof structure and opening batch
@@ -84,10 +72,6 @@ pub struct CommitmentGroup {
     pub id: CommitmentGroupId,
     pub polynomials: Vec<PolynomialId>,
 }
-
-// ---------------------------------------------------------------------------
-// Claims
-// ---------------------------------------------------------------------------
 
 /// A claim: "polynomial P evaluates to v at point r."
 ///
@@ -126,10 +110,6 @@ pub struct VarRange {
     pub start: SymbolicExpr,
     pub end: SymbolicExpr,
 }
-
-// ---------------------------------------------------------------------------
-// Vertices
-// ---------------------------------------------------------------------------
 
 /// A vertex in the protocol graph — an atomic proof step.
 #[derive(Clone, Debug)]
@@ -279,8 +259,8 @@ pub enum ChallengeLabel {
 /// Wraps a [`ClaimDefinition`] with graph-level binding metadata.
 ///
 /// The `opening_claims` map formula variable indices to [`ClaimId`]s,
-/// replacing the opaque `(polynomial_tag, sumcheck_tag)` pairs in the
-/// underlying `ClaimDefinition`.
+/// replacing the `PolynomialId` references in the underlying
+/// `ClaimDefinition` with concrete graph-level claim identifiers.
 #[derive(Clone, Debug)]
 pub struct ClaimFormula {
     pub definition: ClaimDefinition,
@@ -340,10 +320,6 @@ pub struct OpeningVertex {
     pub id: VertexId,
     pub consumes: ClaimId,
 }
-
-// ---------------------------------------------------------------------------
-// Stages
-// ---------------------------------------------------------------------------
 
 /// A stage: a partition of vertices sharing a single Fiat-Shamir interaction.
 ///
@@ -415,10 +391,6 @@ pub enum ReductionStrategy {
     /// Random linear combination — standard when all claims share the same point.
     Rlc,
 }
-
-// ---------------------------------------------------------------------------
-// Top-level graph types
-// ---------------------------------------------------------------------------
 
 /// The invariant claim dependency structure — what must be proven.
 ///

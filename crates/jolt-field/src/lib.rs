@@ -7,8 +7,8 @@ mod field;
 pub use field::{Field, MaybeAllocative, OptimizedMul};
 mod accumulator;
 pub use accumulator::{FieldAccumulator, NaiveAccumulator};
-mod gpu_field;
-pub use gpu_field::GpuFieldConfig;
+mod montgomery_constants;
+pub use montgomery_constants::MontgomeryConstants;
 
 pub mod limbs;
 pub use limbs::Limbs;

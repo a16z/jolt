@@ -49,7 +49,11 @@ struct EvalCache<F> {
 
 impl<F: Copy> EvalCache<F> {
     fn new(n: usize, symbols: &HashMap<Symbol, usize>) -> Self {
-        Self { evals: vec![None; n], points: HashMap::new(), symbols: symbols.clone() }
+        Self {
+            evals: vec![None; n],
+            points: HashMap::new(),
+            symbols: symbols.clone(),
+        }
     }
 
     fn set(&mut self, id: ClaimId, val: F) {
@@ -116,16 +120,23 @@ fn evaluate_input_claim<F: Field>(
 ) -> F {
     match input {
         InputClaim::Constant(c) => F::from_i64(*c),
-        InputClaim::Formula { formula, challenge_labels } => {
-            let max_o = formula.definition.opening_bindings.iter()
-                .map(|b| b.var_id + 1).max().unwrap_or(0) as usize;
+        InputClaim::Formula {
+            formula,
+            challenge_labels,
+        } => {
+            let max_o = formula
+                .definition
+                .opening_bindings
+                .iter()
+                .map(|b| b.var_id + 1)
+                .max()
+                .unwrap_or(0) as usize;
             let mut openings = vec![F::zero(); max_o];
             for b in &formula.definition.opening_bindings {
                 openings[b.var_id as usize] = cache.get(formula.opening_claims[&b.var_id]);
             }
 
-            let max_c = formula.definition.challenge_bindings.iter()
-                .map(|b| b.var_id + 1).max().unwrap_or(0) as usize;
+            let max_c = formula.definition.num_challenges as usize;
             let mut challenges = vec![F::zero(); max_c];
             for (i, label) in challenge_labels.iter().enumerate() {
                 challenges[i] = match label {
@@ -144,12 +155,16 @@ fn eval_produced_claim<F: Field>(
     tables: &PolynomialTables<F>,
     eval_point: &[F],
 ) -> F {
-    // Try to look up the polynomial table; return zero for virtual polys
-    // that don't have stored tables.
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        witness_builder::eval_poly(tables.get(poly_id), eval_point)
-    }))
-    .unwrap_or(F::zero())
+    let table = tables.get(poly_id);
+    // If the table is shorter than the eval point (1D poly in a multi-dim stage),
+    // evaluate at the trailing coordinates only.
+    let n = table.len().trailing_zeros() as usize;
+    let point = if eval_point.len() > n {
+        &eval_point[eval_point.len() - n..]
+    } else {
+        eval_point
+    };
+    witness_builder::eval_poly(table, point)
 }
 
 /// Input bundle for [`prove_from_graph`].
@@ -168,8 +183,10 @@ pub struct GraphProverInput<'a, F: Field, PCS: jolt_openings::CommitmentScheme<F
 
 /// Proves a trace using the protocol graph.
 /// Output of [`prove_from_graph`].
-pub type GraphProveOutput<F, PCS> =
-    (jolt_verifier::JoltProof<F, PCS>, jolt_verifier::JoltVerifyingKey<F, PCS>);
+pub type GraphProveOutput<F, PCS> = (
+    jolt_verifier::JoltProof<F, PCS>,
+    jolt_verifier::JoltVerifyingKey<F, PCS>,
+);
 
 pub fn prove_from_graph<F, PCS, B>(
     input: GraphProverInput<'_, F, PCS, B>,
@@ -180,8 +197,16 @@ where
     B: ComputeBackend,
 {
     let GraphProverInput {
-        graph, tables, symbols, external, spartan_key, flat_witness,
-        pcs_setup, pcs_verifier_setup, config, backend,
+        graph,
+        tables,
+        symbols,
+        external,
+        spartan_key,
+        flat_witness,
+        pcs_setup,
+        pcs_verifier_setup,
+        config,
+        backend,
     } = input;
     let mut transcript = jolt_transcript::Blake2bTranscript::<F>::new(b"jolt-v2");
 
@@ -195,7 +220,9 @@ where
     // S1: Spartan
     let (spartan_proof, _r_x, r_y) =
         jolt_spartan::UniformSpartanProver::prove_dense_with_challenges(
-            spartan_key, flat_witness, &mut transcript,
+            spartan_key,
+            flat_witness,
+            &mut transcript,
         )?;
 
     let s1 = &graph.staging.stages[0];
@@ -217,7 +244,11 @@ where
     let mut stage_proofs = Vec::new();
     for stage in graph.staging.stages.iter().skip(1) {
         let sc = squeeze_challenges(&stage.pre_squeeze, symbols, &mut transcript);
-        let num_vars = stage.challenge_point.num_vars.resolve(symbols).expect("num_vars");
+        let num_vars = stage
+            .challenge_point
+            .num_vars
+            .resolve(symbols)
+            .expect("num_vars");
 
         let mut claims = Vec::new();
         let mut witnesses: Vec<Box<dyn jolt_sumcheck::SumcheckCompute<F>>> = Vec::new();
@@ -225,18 +256,34 @@ where
         for &vid in &stage.vertices {
             if let Vertex::Sumcheck(sv) = graph.claim_graph.vertex(vid) {
                 let claimed_sum = evaluate_input_claim(&sv.input, &cache, &sc, external);
+                // Eq source: the upstream dep's challenge point, not the current stage.
+                let eq_source = sv.deps.first()
+                    .map(|&dep_id| graph.claim_graph.claim(dep_id).point.clone())
+                    .unwrap_or(SymbolicPoint::Challenges(stage.id));
                 let witness = build_witness(
-                    sv, tables, &cache, symbols, &backend,
-                    &graph.claim_graph, &SymbolicPoint::Challenges(stage.id),
-                    &sc, external,
+                    sv,
+                    tables,
+                    &cache,
+                    symbols,
+                    &backend,
+                    &graph.claim_graph,
+                    &eq_source,
+                    &sc,
+                    external,
                 );
-                claims.push(SumcheckClaim { num_vars, degree: sv.degree, claimed_sum });
+                claims.push(SumcheckClaim {
+                    num_vars,
+                    degree: sv.degree,
+                    claimed_sum,
+                });
                 witnesses.push(witness);
             }
         }
 
         let captured = BatchedSumcheckProver::prove_with_handler(
-            &claims, &mut witnesses, &mut transcript,
+            &claims,
+            &mut witnesses,
+            &mut transcript,
             CaptureHandler::with_capacity(num_vars),
         );
         let ep: Vec<F> = captured.challenges.iter().rev().copied().collect();
@@ -256,14 +303,19 @@ where
         }
         cache.set_point(stage.id, ep);
 
-        stage_proofs.push(jolt_verifier::StageProof { round_polys: captured.proof, evals });
+        stage_proofs.push(jolt_verifier::StageProof {
+            round_polys: captured.proof,
+            evals,
+        });
     }
 
     // Point normalization
     for v in &graph.claim_graph.vertices {
         if let Vertex::PointNormalization(pn) = v {
             let padding = cache.resolve_point(&pn.padding_source);
-            let lagrange = padding.iter().fold(F::one(), |acc, r| acc * (F::one() - *r));
+            let lagrange = padding
+                .iter()
+                .fold(F::one(), |acc, r| acc * (F::one() - *r));
             for (&c, &p) in pn.consumes.iter().zip(pn.produces.iter()) {
                 cache.set(p, cache.get(c) * lagrange);
             }
@@ -277,11 +329,12 @@ where
             let claim = graph.claim_graph.claim(ov.consumes);
             let eval = cache.get(ov.consumes);
             let point = cache.resolve_point(&claim.point);
-            if let Ok(table) = std::panic::catch_unwind(
-                std::panic::AssertUnwindSafe(|| tables.get(claim.polynomial)),
-            ) {
-                pcs_claims.push(ProverClaim { evaluations: table.to_vec(), point, eval });
-            }
+            let table = tables.get(claim.polynomial);
+            pcs_claims.push(ProverClaim {
+                evaluations: table.to_vec(),
+                point,
+                eval,
+            });
         }
     }
     pcs_claims.push(ProverClaim {
@@ -292,20 +345,30 @@ where
 
     let (reduced, ()) =
         <RlcReduction as OpeningReduction<PCS>>::reduce_prover(pcs_claims, &mut transcript);
-    let opening_proofs = reduced.into_iter().map(|c| {
-        let poly: PCS::Polynomial = c.evaluations.into();
-        PCS::open(&poly, &c.point, c.eval, pcs_setup, None, &mut transcript)
-    }).collect();
+    let opening_proofs = reduced
+        .into_iter()
+        .map(|c| {
+            let poly: PCS::Polynomial = c.evaluations.into();
+            PCS::open(&poly, &c.point, c.eval, pcs_setup, None, &mut transcript)
+        })
+        .collect();
 
     // Collect S1 virtual evals for the proof
-    let spartan_evals: Vec<F> = s1.vertices.iter()
+    let spartan_evals: Vec<F> = s1
+        .vertices
+        .iter()
         .flat_map(|&vid| graph.claim_graph.vertex(vid).all_produced_claims())
         .map(|cid| cache.get(cid))
         .collect();
 
     let proof = jolt_verifier::JoltProof {
-        config, spartan_proof, spartan_evals, stage_proofs,
-        opening_proofs, witness_commitment, commitments,
+        config,
+        spartan_proof,
+        spartan_evals,
+        stage_proofs,
+        opening_proofs,
+        witness_commitment,
+        commitments,
     };
     let vk = jolt_verifier::JoltVerifyingKey {
         spartan_key: spartan_key.clone(),
@@ -321,9 +384,15 @@ fn commit_polys<PCS: AdditivelyHomomorphic>(
 ) -> Vec<PCS::Output> {
     let c = |d: &[PCS::Field]| PCS::commit(d, setup).0;
     let mut out = vec![c(&tables.ram_inc), c(&tables.rd_inc)];
-    for ra in &tables.instruction_ra { out.push(c(ra)); }
-    for ra in &tables.bytecode_ra { out.push(c(ra)); }
-    for ra in &tables.ram_ra { out.push(c(ra)); }
+    for ra in &tables.instruction_ra {
+        out.push(c(ra));
+    }
+    for ra in &tables.bytecode_ra {
+        out.push(c(ra));
+    }
+    for ra in &tables.ram_ra {
+        out.push(c(ra));
+    }
     out
 }
 
@@ -364,26 +433,27 @@ fn build_witness<F: Field, B: ComputeBackend>(
     for binding in &formula.definition.opening_bindings {
         let claim_id = formula.opening_claims[&binding.var_id];
         let poly_id = graph.claim(claim_id).polynomial;
-        if let Ok(table) = std::panic::catch_unwind(
-            std::panic::AssertUnwindSafe(|| tables.get(poly_id)),
-        ) {
-            let idx = poly_tables.len();
-            poly_tables.push(table);
-            let _ = opening_var_to_poly_idx.insert(binding.var_id, idx);
-        }
+        let table = tables.get(poly_id);
+        let idx = poly_tables.len();
+        poly_tables.push(table);
+        let _ = opening_var_to_poly_idx.insert(binding.var_id, idx);
     }
 
     // Resolve challenge values for this formula.
     let challenge_labels = match &sv.input {
-        InputClaim::Formula { challenge_labels, .. } => challenge_labels,
+        InputClaim::Formula {
+            challenge_labels, ..
+        } => challenge_labels,
         InputClaim::Constant(_) => &[] as &[_],
     };
     let mut challenge_values: HashMap<u32, F> = HashMap::new();
     for (i, label) in challenge_labels.iter().enumerate() {
         let val = match label {
-            jolt_ir::protocol::ChallengeLabel::PreSqueeze(name) => {
-                stage_challenges.scalars.get(name).copied().unwrap_or(F::zero())
-            }
+            jolt_ir::protocol::ChallengeLabel::PreSqueeze(name) => stage_challenges
+                .scalars
+                .get(name)
+                .copied()
+                .unwrap_or(F::zero()),
             jolt_ir::protocol::ChallengeLabel::External(name) => {
                 external.get(name).copied().unwrap_or(F::zero())
             }
@@ -404,9 +474,8 @@ fn build_witness<F: Field, B: ComputeBackend>(
         for factor in &sop_term.factors {
             match factor {
                 SopValue::Opening(var_id) => {
-                    if let Some(&idx) = opening_var_to_poly_idx.get(var_id) {
-                        factors.push(idx);
-                    }
+                    let idx = opening_var_to_poly_idx[var_id];
+                    factors.push(idx);
                 }
                 SopValue::Challenge(var_id) => {
                     coeff *= challenge_values.get(var_id).copied().unwrap_or(F::one());
@@ -426,9 +495,14 @@ fn build_witness<F: Field, B: ComputeBackend>(
         let n = w_table.len();
         let zero = vec![F::zero(); n];
         return witness_builder::formula_witness(
-            &w_table, &[&zero],
-            &[crate::evaluators::catalog::Term { coeff: F::one(), factors: vec![0] }],
-            sv.degree + 1, backend,
+            &w_table,
+            &[&zero],
+            &[crate::evaluators::catalog::Term {
+                coeff: F::one(),
+                factors: vec![0],
+            }],
+            sv.degree + 1,
+            backend,
         );
     }
 

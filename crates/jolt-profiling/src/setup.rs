@@ -1,13 +1,20 @@
 //! Tracing subscriber configuration for Perfetto and console output.
 //!
-//! Call [`setup_tracing`] once at binary startup. The returned guards must be
-//! held alive for the duration of the program — dropping them flushes and
-//! closes trace files.
+//! Call [`setup_tracing`] once at binary startup. The returned [`TracingGuards`]
+//! must be held alive for the duration of the program — dropping them flushes
+//! and closes trace files.
 
 use std::any::Any;
+use std::sync::OnceLock;
 
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
+
+/// Thread-safe storage for the pprof output prefix.
+///
+/// Initialized once during [`setup_tracing`] and read by [`PprofGuard`](crate::PprofGuard)
+/// on drop. Avoids `std::env::set_var` which is unsound in multi-threaded contexts.
+pub(crate) static PPROF_PREFIX: OnceLock<String> = OnceLock::new();
 
 /// Output format for tracing subscribers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,13 +25,20 @@ pub enum TracingFormat {
     Chrome,
 }
 
+/// Opaque container for tracing flush guards.
+///
+/// Must be held alive for the duration of profiling. Dropping this flushes
+/// all pending trace data and stops background monitors.
+#[must_use = "guards must be held alive for the duration of profiling"]
+pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
+
 /// Initializes the global tracing subscriber with the requested output formats.
 ///
 /// Always installs a minimal log layer that respects `RUST_LOG`. Additional
 /// layers are added based on the `formats` slice.
 ///
-/// Returns a `Vec<Box<dyn Any>>` of flush guards that **must be kept alive**
-/// until the program exits. Dropping the guards flushes pending trace data.
+/// Returns a [`TracingGuards`] value that **must be kept alive** until the
+/// program exits. Dropping the guards flushes pending trace data.
 ///
 /// # Chrome format
 ///
@@ -34,13 +48,11 @@ pub enum TracingFormat {
 /// # Panics
 ///
 /// Panics if called more than once (the global subscriber can only be set once).
-pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> Vec<Box<dyn Any>> {
-    if std::env::var("PPROF_PREFIX").is_err() {
-        std::env::set_var(
-            "PPROF_PREFIX",
-            format!("benchmark-runs/pprof/{trace_name}_"),
-        );
-    }
+pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuards {
+    PPROF_PREFIX.get_or_init(|| {
+        std::env::var("PPROF_PREFIX")
+            .unwrap_or_else(|_| format!("benchmark-runs/pprof/{trace_name}_"))
+    });
 
     let mut layers = Vec::new();
 
@@ -98,5 +110,30 @@ pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> Vec<Box<dyn
         )
     }));
 
-    guards
+    TracingGuards(guards)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tracing_format_is_copy() {
+        let fmt = TracingFormat::Chrome;
+        let fmt2 = fmt;
+        assert_eq!(fmt, fmt2);
+    }
+
+    #[test]
+    fn tracing_format_debug() {
+        let fmt = TracingFormat::Default;
+        let s = format!("{fmt:?}");
+        assert_eq!(s, "Default");
+    }
+
+    #[test]
+    fn tracing_format_eq() {
+        assert_eq!(TracingFormat::Chrome, TracingFormat::Chrome);
+        assert_ne!(TracingFormat::Chrome, TracingFormat::Default);
+    }
 }

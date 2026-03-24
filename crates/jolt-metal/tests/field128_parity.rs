@@ -8,11 +8,11 @@
 mod test_field128;
 
 use jolt_metal::field::MetalFieldElement;
-use jolt_metal::field_config::FieldConfig;
+use jolt_metal::field_config::MslFieldParams;
 use jolt_metal::shaders::{build_source_with_preamble, make_pipeline};
 use metal::{ComputePipelineState, Device, MTLResourceOptions, MTLSize};
 use std::ffi::c_void;
-use test_field128::{F128, F128Config};
+use test_field128::{F128Config, F128};
 
 type MF128 = MetalFieldElement<4>;
 
@@ -36,7 +36,7 @@ struct F128Kernels {
 
 impl F128Kernels {
     fn new(device: &Device) -> Self {
-        let field_config = FieldConfig::from_gpu_field::<F128Config>();
+        let field_config = MslFieldParams::new::<F128Config>();
         let source = build_source_with_preamble(
             &field_config.msl_preamble,
             &[&field_config.msl_test_kernels],
@@ -132,11 +132,7 @@ fn dispatch_binary(
     read_buffer(&buf_out, n)
 }
 
-fn dispatch_unary(
-    ctx: &TestCtx,
-    pipeline: &ComputePipelineState,
-    a: &[MF128],
-) -> Vec<MF128> {
+fn dispatch_unary(ctx: &TestCtx, pipeline: &ComputePipelineState, a: &[MF128]) -> Vec<MF128> {
     let n = a.len();
     let buf_a = upload_slice(&ctx.device, a);
     let buf_out = alloc_buffer(&ctx.device, std::mem::size_of_val(a) as u64);
@@ -164,7 +160,9 @@ impl Xorshift64 {
         // Already in [0, 2^127), and p = 2^127 - 1, so all values are < p
         // except when all limbs are max. Convert to Montgomery form via R^2 = 4.
         let raw = F128 { limbs };
-        raw.mul(F128 { limbs: [4, 0, 0, 0] })
+        raw.mul(F128 {
+            limbs: [4, 0, 0, 0],
+        })
     }
 }
 
@@ -268,12 +266,7 @@ fn f128_from_u64_parity() {
 
     let buf_vals = upload_slice(&ctx.device, &vals);
     let buf_out = alloc_buffer(&ctx.device, (N * std::mem::size_of::<MF128>()) as u64);
-    dispatch_and_wait(
-        &ctx.queue,
-        &ctx.kernels.from_u64,
-        &[&buf_vals, &buf_out],
-        N,
-    );
+    dispatch_and_wait(&ctx.queue, &ctx.kernels.from_u64, &[&buf_vals, &buf_out], N);
     let result = read_buffer(&buf_out, N);
 
     for i in 0..N {
@@ -325,7 +318,11 @@ fn f128_fmadd_parity() {
     let result = read_buffer(&buf_out, n_threads);
 
     for i in 0..n_threads {
-        assert_eq!(expected[i], to_cpu(result[i]), "fmadd mismatch at thread {i}");
+        assert_eq!(
+            expected[i],
+            to_cpu(result[i]),
+            "fmadd mismatch at thread {i}"
+        );
     }
 }
 

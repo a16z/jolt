@@ -1,25 +1,31 @@
 //! Guest program building, decoding, and tracing.
 
+use std::io;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use tracing::info;
+
 use common::constants::{
     DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE,
     DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
     RAM_START_ADDRESS,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use std::io;
-use std::io::Write;
-use std::path::PathBuf;
-use std::process::Command;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
 use tracer::utils::virtual_registers::VirtualRegisterAllocator;
 use tracer::LazyTraceIterator;
-use tracing::info;
 
 use crate::analyze::ProgramSummary;
 use crate::{Program, DEFAULT_TARGET_DIR};
 
 impl Program {
+    /// Create a new `Program` targeting the given guest crate name.
+    ///
+    /// All memory sizes are initialized to the defaults from `common::constants`.
+    /// The guest is compiled with `--release` unless overridden via [`Self::set_profile`].
     pub fn new(guest: &str) -> Self {
         Self {
             guest: guest.to_string(),
@@ -38,65 +44,93 @@ impl Program {
         }
     }
 
-    pub fn set_std(&mut self, std: bool) {
+    /// Enable or disable linking against the Rust standard library.
+    pub fn set_std(&mut self, std: bool) -> &mut Self {
         self.std = std;
+        self
     }
 
-    pub fn set_func(&mut self, func: &str) {
+    /// Set the guest function name (passed as `JOLT_FUNC_NAME` env var during build).
+    pub fn set_func(&mut self, func: &str) -> &mut Self {
         self.func = Some(func.to_string());
+        self
     }
 
     /// Set the cargo profile used to compile the guest.
     ///
     /// If unset, guest builds default to `--release`.
-    pub fn set_profile(&mut self, profile: &str) {
+    pub fn set_profile(&mut self, profile: &str) -> &mut Self {
         self.profile = Some(profile.to_string());
+        self
     }
 
     /// Set backtrace mode for the guest build.
     ///
     /// Valid modes: "off", "dwarf", "frame-pointers".
-    pub fn set_backtrace(&mut self, mode: &str) {
+    pub fn set_backtrace(&mut self, mode: &str) -> &mut Self {
         self.backtrace = Some(mode.to_string());
+        self
     }
 
-    pub fn set_memory_config(&mut self, memory_config: MemoryConfig) {
-        self.set_heap_size(memory_config.heap_size);
-        self.set_stack_size(memory_config.stack_size);
-        self.set_max_input_size(memory_config.max_input_size);
-        self.set_max_trusted_advice_size(memory_config.max_trusted_advice_size);
-        self.set_max_untrusted_advice_size(memory_config.max_untrusted_advice_size);
-        self.set_max_output_size(memory_config.max_output_size);
+    /// Apply all fields from a [`MemoryConfig`] to this program's settings.
+    pub fn set_memory_config(&mut self, memory_config: MemoryConfig) -> &mut Self {
+        self.heap_size = memory_config.heap_size;
+        self.stack_size = memory_config.stack_size;
+        self.max_input_size = memory_config.max_input_size;
+        self.max_trusted_advice_size = memory_config.max_trusted_advice_size;
+        self.max_untrusted_advice_size = memory_config.max_untrusted_advice_size;
+        self.max_output_size = memory_config.max_output_size;
+        self
     }
 
-    pub fn set_heap_size(&mut self, len: u64) {
-        self.heap_size = len;
+    /// Set the guest heap size in bytes.
+    pub fn set_heap_size(&mut self, size: u64) -> &mut Self {
+        self.heap_size = size;
+        self
     }
 
-    pub fn set_stack_size(&mut self, len: u64) {
-        self.stack_size = len;
+    /// Set the guest stack size in bytes.
+    pub fn set_stack_size(&mut self, size: u64) -> &mut Self {
+        self.stack_size = size;
+        self
     }
 
-    pub fn set_max_input_size(&mut self, size: u64) {
+    /// Set the maximum input buffer size in bytes.
+    pub fn set_max_input_size(&mut self, size: u64) -> &mut Self {
         self.max_input_size = size;
+        self
     }
 
-    pub fn set_max_trusted_advice_size(&mut self, size: u64) {
+    /// Set the maximum trusted advice buffer size in bytes.
+    pub fn set_max_trusted_advice_size(&mut self, size: u64) -> &mut Self {
         self.max_trusted_advice_size = size;
+        self
     }
 
-    pub fn set_max_untrusted_advice_size(&mut self, size: u64) {
+    /// Set the maximum untrusted advice buffer size in bytes.
+    pub fn set_max_untrusted_advice_size(&mut self, size: u64) -> &mut Self {
         self.max_untrusted_advice_size = size;
+        self
     }
 
-    pub fn set_max_output_size(&mut self, size: u64) {
+    /// Set the maximum output buffer size in bytes.
+    pub fn set_max_output_size(&mut self, size: u64) -> &mut Self {
         self.max_output_size = size;
+        self
     }
 
+    /// Compile the guest program with default features.
+    ///
+    /// Uses [`Self::build_with_features`] with an empty feature set.
+    /// No-op if the ELF has already been built.
     pub fn build(&mut self, target_dir: &str) {
         self.build_with_features(target_dir, &[]);
     }
 
+    /// Compile the guest program via the `jolt` CLI with the given extra Cargo features.
+    ///
+    /// No-op if the ELF has already been built (unless `extra_features` contains
+    /// `"compute_advice"`, which produces a separate ELF).
     #[tracing::instrument(skip_all, name = "Program::build_with_features")]
     pub fn build_with_features(&mut self, target_dir: &str, extra_features: &[&str]) {
         if self.elf.is_some() {
@@ -104,58 +138,9 @@ impl Program {
         }
 
         let jolt_cmd = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
-        let mut args = vec!["build".to_string()];
-
-        args.push("-p".to_string());
-        args.push(self.guest.clone());
-
-        if self.std {
-            args.push("--mode".to_string());
-            args.push("std".to_string());
-        }
-
-        if let Some(mode) = &self.backtrace {
-            args.push("--backtrace".to_string());
-            args.push(mode.clone());
-        }
-
-        args.push("--stack-size".to_string());
-        args.push(self.stack_size.to_string());
-        args.push("--heap-size".to_string());
-        args.push(self.heap_size.to_string());
-
-        let guest_target_dir = if extra_features.contains(&"compute_advice") {
-            format!(
-                "{}/{}-{}-compute-advice",
-                target_dir,
-                self.guest,
-                self.func.as_deref().unwrap_or("")
-            )
-        } else {
-            format!(
-                "{}/{}-{}",
-                target_dir,
-                self.guest,
-                self.func.as_deref().unwrap_or("")
-            )
-        };
-
-        args.push("--".to_string());
-
-        if let Some(profile) = &self.profile {
-            args.push("--profile".to_string());
-            args.push(profile.clone());
-        } else {
-            args.push("--release".to_string());
-        }
-
-        args.push("--target-dir".to_string());
-        args.push(guest_target_dir.clone());
-
-        args.push("--features".to_string());
-        let mut features = vec!["guest".to_string()];
-        features.extend(extra_features.iter().map(|&s| s.to_string()));
-        args.push(features.join(","));
+        let is_compute_advice = extra_features.contains(&"compute_advice");
+        let guest_target_dir = self.guest_target_dir(target_dir, is_compute_advice);
+        let args = self.build_args(extra_features, &guest_target_dir);
 
         let cmd_line = compose_command_line(
             &jolt_cmd,
@@ -187,72 +172,45 @@ impl Program {
             panic!("failed to compile guest with jolt");
         }
 
-        let target_triple = if self.std {
-            "riscv64imac-zero-linux-musl"
-        } else {
-            "riscv64imac-unknown-none-elf"
-        };
-
-        let out_profile = self.profile.as_deref().unwrap_or("release");
-        let elf_path = PathBuf::from(&guest_target_dir)
-            .join(target_triple)
-            .join(out_profile)
-            .join(&self.guest);
-
+        let elf_path = self.resolve_elf_path(&guest_target_dir);
         assert!(
             elf_path.exists(),
             "Built ELF not found at expected location: {}",
             elf_path.display()
         );
 
-        if extra_features.contains(&"compute_advice") {
-            self.elf_compute_advice = Some(elf_path.clone());
+        if is_compute_advice {
             info!("Built compute_advice guest binary: {}", elf_path.display());
+            self.elf_compute_advice = Some(elf_path);
         } else {
-            self.elf = Some(elf_path.clone());
             info!("Built guest binary with jolt: {}", elf_path.display());
+            self.elf = Some(elf_path);
         }
     }
 
+    /// Returns the contents of the built guest ELF, or `None` if not yet built.
     pub fn get_elf_contents(&self) -> Option<Vec<u8>> {
-        self.elf.as_ref().map(|elf| {
-            std::fs::read(elf)
-                .unwrap_or_else(|_| panic!("could not read elf file: {}", elf.display()))
-        })
+        self.elf.as_ref().map(|path| read_elf_at(path))
     }
 
+    /// Returns the contents of the built compute-advice ELF, or `None` if not yet built.
     pub fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>> {
-        self.elf_compute_advice.as_ref().map(|elf| {
-            std::fs::read(elf)
-                .unwrap_or_else(|_| panic!("could not read elf file: {}", elf.display()))
-        })
-    }
-
-    fn read_elf(&self) -> Vec<u8> {
-        let elf = self
-            .elf
+        self.elf_compute_advice
             .as_ref()
-            .expect("ELF not built yet — call build() first");
-        std::fs::read(elf).unwrap_or_else(|_| panic!("could not read elf file: {}", elf.display()))
+            .map(|path| read_elf_at(path))
     }
 
-    fn memory_config(&self, program_size: u64) -> MemoryConfig {
-        MemoryConfig {
-            heap_size: self.heap_size,
-            stack_size: self.stack_size,
-            max_input_size: self.max_input_size,
-            max_untrusted_advice_size: self.max_untrusted_advice_size,
-            max_trusted_advice_size: self.max_trusted_advice_size,
-            max_output_size: self.max_output_size,
-            program_size: Some(program_size),
-        }
-    }
-
+    /// Compile (if needed) and decode the guest ELF into instructions and memory init data.
+    ///
+    /// Returns `(instructions, memory_init_bytes, program_size)`.
     pub fn decode(&mut self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
         self.build(DEFAULT_TARGET_DIR);
         decode(&self.read_elf())
     }
 
+    /// Compile (if needed) and trace the guest program with the given I/O buffers.
+    ///
+    /// Returns the lazy trace iterator, materialized trace, final memory state, and I/O device.
     #[tracing::instrument(skip_all, name = "Program::trace")]
     pub fn trace(
         &mut self,
@@ -262,13 +220,12 @@ impl Program {
     ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf_contents = self.read_elf();
-        let (_, _, program_end, _, _) = tracer::decode(&elf_contents);
-        let program_size = program_end - RAM_START_ADDRESS;
+        let program_size = compute_program_size(&elf_contents);
         let memory_config = self.memory_config(program_size);
 
-        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape) = trace(
+        let (lazy_trace, trace_vec, memory, jolt_device, _advice_tape) = tracer::trace(
             &elf_contents,
-            self.elf.as_ref(),
+            self.elf.as_ref().map(|p| p as &PathBuf),
             inputs,
             untrusted_advice,
             trusted_advice,
@@ -278,31 +235,35 @@ impl Program {
         (lazy_trace, trace_vec, memory, jolt_device)
     }
 
+    /// Compile (if needed) and trace the guest program, writing the trace to a file.
+    ///
+    /// Returns the final memory state and I/O device (the trace itself is written to `trace_file`).
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]
     pub fn trace_to_file(
         &mut self,
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
-        trace_file: &PathBuf,
+        trace_file: &Path,
     ) -> (Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf_contents = self.read_elf();
-        let (_, _, program_end, _, _) = tracer::decode(&elf_contents);
-        let program_size = program_end - RAM_START_ADDRESS;
+        let program_size = compute_program_size(&elf_contents);
         let memory_config = self.memory_config(program_size);
 
-        trace_to_file(
+        let trace_pathbuf = trace_file.to_path_buf();
+        tracer::trace_to_file(
             &elf_contents,
-            self.elf.as_ref(),
+            self.elf.as_ref().map(|p| p as &PathBuf),
             inputs,
             untrusted_advice,
             trusted_advice,
             &memory_config,
-            trace_file,
+            &trace_pathbuf,
         )
     }
 
+    /// Compile, decode, and trace the guest, returning a [`ProgramSummary`] for analysis.
     pub fn trace_analyze(
         mut self,
         inputs: &[u8],
@@ -319,6 +280,97 @@ impl Program {
             io_device,
         }
     }
+
+    fn read_elf(&self) -> Vec<u8> {
+        self.get_elf_contents()
+            .expect("ELF not built yet — call build() first")
+    }
+
+    fn memory_config(&self, program_size: u64) -> MemoryConfig {
+        MemoryConfig {
+            heap_size: self.heap_size,
+            stack_size: self.stack_size,
+            max_input_size: self.max_input_size,
+            max_untrusted_advice_size: self.max_untrusted_advice_size,
+            max_trusted_advice_size: self.max_trusted_advice_size,
+            max_output_size: self.max_output_size,
+            program_size: Some(program_size),
+        }
+    }
+
+    fn guest_target_dir(&self, target_dir: &str, is_compute_advice: bool) -> String {
+        let func_suffix = self.func.as_deref().unwrap_or("");
+        if is_compute_advice {
+            format!("{target_dir}/{}-{func_suffix}-compute-advice", self.guest)
+        } else {
+            format!("{target_dir}/{}-{func_suffix}", self.guest)
+        }
+    }
+
+    fn build_args(&self, extra_features: &[&str], guest_target_dir: &str) -> Vec<String> {
+        let mut args = Vec::with_capacity(16);
+        args.push("build".to_string());
+
+        args.push("-p".to_string());
+        args.push(self.guest.clone());
+
+        if self.std {
+            args.push("--mode".to_string());
+            args.push("std".to_string());
+        }
+
+        if let Some(mode) = &self.backtrace {
+            args.push("--backtrace".to_string());
+            args.push(mode.clone());
+        }
+
+        args.push("--stack-size".to_string());
+        args.push(self.stack_size.to_string());
+        args.push("--heap-size".to_string());
+        args.push(self.heap_size.to_string());
+
+        args.push("--".to_string());
+
+        if let Some(profile) = &self.profile {
+            args.push("--profile".to_string());
+            args.push(profile.clone());
+        } else {
+            args.push("--release".to_string());
+        }
+
+        args.push("--target-dir".to_string());
+        args.push(guest_target_dir.to_string());
+
+        args.push("--features".to_string());
+        let mut features = vec!["guest".to_string()];
+        features.extend(extra_features.iter().map(|&s| s.to_string()));
+        args.push(features.join(","));
+
+        args
+    }
+
+    fn resolve_elf_path(&self, guest_target_dir: &str) -> PathBuf {
+        let target_triple = if self.std {
+            "riscv64imac-zero-linux-musl"
+        } else {
+            "riscv64imac-unknown-none-elf"
+        };
+        let out_profile = self.profile.as_deref().unwrap_or("release");
+
+        PathBuf::from(guest_target_dir)
+            .join(target_triple)
+            .join(out_profile)
+            .join(&self.guest)
+    }
+}
+
+fn read_elf_at(path: &Path) -> Vec<u8> {
+    std::fs::read(path).unwrap_or_else(|_| panic!("could not read elf file: {}", path.display()))
+}
+
+fn compute_program_size(elf_contents: &[u8]) -> u64 {
+    let (_, _, program_end, _, _) = tracer::decode(elf_contents);
+    program_end - RAM_START_ADDRESS
 }
 
 /// Decode an ELF into instructions and memory initialization data.
@@ -337,55 +389,6 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
         .collect();
 
     (instructions, raw_bytes, program_size)
-}
-
-/// Trace a guest program, returning the full execution trace.
-#[allow(clippy::type_complexity)]
-pub fn trace(
-    elf_contents: &[u8],
-    elf_path: Option<&PathBuf>,
-    inputs: &[u8],
-    untrusted_advice: &[u8],
-    trusted_advice: &[u8],
-    memory_config: &MemoryConfig,
-    advice_tape: Option<tracer::AdviceTape>,
-) -> (
-    LazyTraceIterator,
-    Vec<Cycle>,
-    Memory,
-    JoltDevice,
-    tracer::AdviceTape,
-) {
-    tracer::trace(
-        elf_contents,
-        elf_path,
-        inputs,
-        untrusted_advice,
-        trusted_advice,
-        memory_config,
-        advice_tape,
-    )
-}
-
-/// Trace a guest program and write the trace to a file.
-pub fn trace_to_file(
-    elf_contents: &[u8],
-    elf_path: Option<&PathBuf>,
-    inputs: &[u8],
-    untrusted_advice: &[u8],
-    trusted_advice: &[u8],
-    memory_config: &MemoryConfig,
-    trace_file: &PathBuf,
-) -> (Memory, JoltDevice) {
-    tracer::trace_to_file(
-        elf_contents,
-        elf_path,
-        inputs,
-        untrusted_advice,
-        trusted_advice,
-        memory_config,
-        trace_file,
-    )
 }
 
 fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -> String {
@@ -460,4 +463,231 @@ fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -
     }));
 
     parts.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Program;
+
+    #[test]
+    fn compose_command_line_simple() {
+        let result = compose_command_line("jolt", &[], &["build", "-p", "guest"]);
+        assert_eq!(result, "jolt build -p guest");
+    }
+
+    #[test]
+    fn compose_command_line_empty_args() {
+        let result = compose_command_line("jolt", &[], &[]);
+        assert_eq!(result, "jolt");
+    }
+
+    #[test]
+    fn compose_command_line_quotes_spaces() {
+        let result = compose_command_line("jolt", &[], &["--path", "my dir/file"]);
+        assert_eq!(result, "jolt --path 'my dir/file'");
+    }
+
+    #[test]
+    fn compose_command_line_quotes_empty_arg() {
+        let result = compose_command_line("jolt", &[], &[""]);
+        assert_eq!(result, "jolt ''");
+    }
+
+    #[test]
+    fn compose_command_line_escapes_single_quotes() {
+        let result = compose_command_line("jolt", &[], &["it's"]);
+        assert_eq!(result, "jolt 'it'\\''s'");
+    }
+
+    #[test]
+    fn compose_command_line_escapes_control_chars() {
+        let result = compose_command_line("jolt", &[], &["a\x01b"]);
+        assert_eq!(result, "jolt $'a\\x01b'");
+    }
+
+    #[test]
+    fn compose_command_line_with_envs() {
+        let envs = vec![("FOO", "bar".to_string())];
+        let result = compose_command_line("jolt", &envs, &["build"]);
+        assert_eq!(result, "env FOO=bar jolt build");
+    }
+
+    #[test]
+    fn compose_command_line_env_with_spaces() {
+        let envs = vec![("MY_VAR", "hello world".to_string())];
+        let result = compose_command_line("jolt", &envs, &[]);
+        assert_eq!(result, "env MY_VAR='hello world' jolt");
+    }
+
+    #[test]
+    fn compose_command_line_env_with_control_chars() {
+        let envs = vec![("VAR", "val\x02ue".to_string())];
+        let result = compose_command_line("jolt", &envs, &["run"]);
+        assert_eq!(result, "env VAR=$'val\\x02ue' jolt run");
+    }
+
+    #[test]
+    fn compose_command_line_preserves_safe_special_chars() {
+        let result = compose_command_line("jolt", &[], &["/tmp/path_@:,.+-/file"]);
+        assert_eq!(result, "jolt /tmp/path_@:,.+-/file");
+    }
+
+    #[test]
+    fn builder_new_defaults() {
+        let p = Program::new("test-guest");
+        assert_eq!(p.guest, "test-guest");
+        assert!(p.elf.is_none());
+        assert!(p.elf_compute_advice.is_none());
+        assert!(!p.std);
+        assert_eq!(p.heap_size, DEFAULT_HEAP_SIZE);
+        assert_eq!(p.stack_size, DEFAULT_STACK_SIZE);
+    }
+
+    #[test]
+    fn builder_chaining() {
+        let mut p = Program::new("guest");
+        let _ = p
+            .set_std(true)
+            .set_func("main")
+            .set_heap_size(1024)
+            .set_stack_size(2048)
+            .set_max_input_size(512)
+            .set_max_output_size(256)
+            .set_max_trusted_advice_size(128)
+            .set_max_untrusted_advice_size(64);
+
+        assert!(p.std);
+        assert_eq!(p.func.as_deref(), Some("main"));
+        assert_eq!(p.heap_size, 1024);
+        assert_eq!(p.stack_size, 2048);
+        assert_eq!(p.max_input_size, 512);
+        assert_eq!(p.max_output_size, 256);
+        assert_eq!(p.max_trusted_advice_size, 128);
+        assert_eq!(p.max_untrusted_advice_size, 64);
+    }
+
+    #[test]
+    fn builder_set_memory_config() {
+        let config = MemoryConfig {
+            heap_size: 100,
+            stack_size: 200,
+            max_input_size: 300,
+            max_untrusted_advice_size: 400,
+            max_trusted_advice_size: 500,
+            max_output_size: 600,
+            program_size: None,
+        };
+        let mut p = Program::new("guest");
+        let _ = p.set_memory_config(config);
+
+        assert_eq!(p.heap_size, 100);
+        assert_eq!(p.stack_size, 200);
+        assert_eq!(p.max_input_size, 300);
+        assert_eq!(p.max_untrusted_advice_size, 400);
+        assert_eq!(p.max_trusted_advice_size, 500);
+        assert_eq!(p.max_output_size, 600);
+    }
+
+    #[test]
+    fn builder_set_profile_and_backtrace() {
+        let mut p = Program::new("guest");
+        let _ = p.set_profile("dev").set_backtrace("dwarf");
+        assert_eq!(p.profile.as_deref(), Some("dev"));
+        assert_eq!(p.backtrace.as_deref(), Some("dwarf"));
+    }
+
+    #[test]
+    fn elf_path_accessors_none_before_build() {
+        let p = Program::new("guest");
+        assert!(p.elf_path().is_none());
+        assert!(p.elf_compute_advice_path().is_none());
+    }
+
+    #[test]
+    fn guest_target_dir_regular() {
+        let p = Program::new("myguest");
+        let dir = p.guest_target_dir("/tmp/targets", false);
+        assert_eq!(dir, "/tmp/targets/myguest-");
+    }
+
+    #[test]
+    fn guest_target_dir_compute_advice() {
+        let mut p = Program::new("myguest");
+        let _ = p.set_func("entry");
+        let dir = p.guest_target_dir("/tmp/targets", true);
+        assert_eq!(dir, "/tmp/targets/myguest-entry-compute-advice");
+    }
+
+    #[test]
+    fn resolve_elf_path_release() {
+        let p = Program::new("myguest");
+        let path = p.resolve_elf_path("/tmp/targets/myguest-");
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/targets/myguest-/riscv64imac-unknown-none-elf/release/myguest")
+        );
+    }
+
+    #[test]
+    fn resolve_elf_path_std_custom_profile() {
+        let mut p = Program::new("myguest");
+        let _ = p.set_std(true).set_profile("dev");
+        let path = p.resolve_elf_path("/tmp/dir");
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/dir/riscv64imac-zero-linux-musl/dev/myguest")
+        );
+    }
+
+    #[test]
+    fn build_args_default() {
+        let p = Program::new("myguest");
+        let args = p.build_args(&[], "/tmp/target-dir");
+        assert!(args.contains(&"build".to_string()));
+        assert!(args.contains(&"-p".to_string()));
+        assert!(args.contains(&"myguest".to_string()));
+        assert!(args.contains(&"--release".to_string()));
+        assert!(args.contains(&"/tmp/target-dir".to_string()));
+        assert!(args.contains(&"guest".to_string()));
+    }
+
+    #[test]
+    fn build_args_with_features() {
+        let p = Program::new("myguest");
+        let args = p.build_args(&["compute_advice", "extra"], "/tmp/dir");
+        let features_arg = args
+            .iter()
+            .skip_while(|a| a.as_str() != "--features")
+            .nth(1)
+            .unwrap();
+        assert_eq!(features_arg, "guest,compute_advice,extra");
+    }
+
+    #[test]
+    fn build_args_std_mode() {
+        let mut p = Program::new("myguest");
+        let _ = p.set_std(true);
+        let args = p.build_args(&[], "/tmp/dir");
+        assert!(args.contains(&"--mode".to_string()));
+        assert!(args.contains(&"std".to_string()));
+    }
+
+    #[test]
+    fn build_args_custom_profile() {
+        let mut p = Program::new("myguest");
+        let _ = p.set_profile("dev");
+        let args = p.build_args(&[], "/tmp/dir");
+        assert!(args.contains(&"--profile".to_string()));
+        assert!(args.contains(&"dev".to_string()));
+        assert!(!args.contains(&"--release".to_string()));
+    }
+
+    #[test]
+    fn program_debug_impl() {
+        let p = Program::new("test");
+        let debug_str = format!("{p:?}");
+        assert!(debug_str.contains("test"));
+        assert!(debug_str.contains("Program"));
+    }
 }

@@ -1,8 +1,8 @@
-/// Montgomery field parameters for GPU kernel generation.
+/// Montgomery field constants
 ///
-/// Provides the constants needed to generate field-arithmetic MSL shaders
-/// for any Montgomery-form prime field. Values are in little-endian u32 limbs
-/// matching the GPU representation.
+/// Provides the constants needed to generate field-arithmetic shaders for any
+/// Montgomery-form prime field. Values are in little-endian u32 limbs matching
+/// the shader representation.
 ///
 /// # Safety invariants
 ///
@@ -10,7 +10,7 @@
 /// `4 * r^2 / R < 2r` where `R = 2^(32 * NUM_U32_LIMBS)`. This ensures that
 /// intermediate products from `fr_mul_unreduced` remain in `[0, 2r)` and can
 /// be safely fed into the next CIOS multiplication without explicit reduction.
-pub trait GpuFieldConfig: 'static {
+pub trait MontgomeryConstants: 'static {
     /// Number of 32-bit limbs in the Montgomery representation.
     /// 4 for 128-bit fields, 8 for BN254 (256-bit).
     const NUM_U32_LIMBS: usize;

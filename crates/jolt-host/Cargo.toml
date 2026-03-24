@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Host-side guest program compilation, decoding, and tracing for Jolt"
+repository = "https://github.com/a16z/jolt"
 
 [lints]
 workspace = true
@@ -11,6 +12,6 @@ workspace = true
 [dependencies]
 bincode.workspace = true
 common = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-tracer = { path = "../../tracer" }
+serde.workspace = true
+tracer = { workspace = true, features = ["std"] }
 tracing.workspace = true

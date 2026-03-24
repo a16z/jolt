@@ -661,6 +661,102 @@ impl<P: ComputeBackend, Fb: ComputeBackend> ComputeBackend for HybridBackend<P, 
             self.scale(buf, scalar);
         }
     }
+
+    fn fused_interpolate_reduce<Fld: Field>(
+        &self,
+        inputs: &mut [Self::Buffer<Fld>],
+        weights: &mut Self::Buffer<Fld>,
+        interpolation_scalar: Fld,
+        kernel: &Self::CompiledKernel<Fld>,
+        num_evals: usize,
+    ) -> Vec<Fld> {
+        if inputs.is_empty() {
+            return vec![Fld::zero(); num_evals];
+        }
+
+        let is_primary = matches!(inputs[0], HybridBuffer::Primary(_));
+
+        if is_primary {
+            // Temporarily move inner buffers out to form a contiguous slice.
+            // alloc(0) creates a zero-sized placeholder — no real allocation.
+            let mut p_bufs: Vec<P::Buffer<Fld>> = inputs
+                .iter_mut()
+                .map(|b| match b {
+                    HybridBuffer::Primary(inner) => {
+                        std::mem::replace(inner, self.primary.alloc(0))
+                    }
+                    HybridBuffer::Fallback(_) => {
+                        panic!("mixed buffer backends in fused_interpolate_reduce")
+                    }
+                })
+                .collect();
+            let mut p_weights = match weights {
+                HybridBuffer::Primary(w) => std::mem::replace(w, self.primary.alloc(0)),
+                HybridBuffer::Fallback(_) => {
+                    panic!("weight buffer backend mismatch in fused_interpolate_reduce")
+                }
+            };
+
+            let result = self.primary.fused_interpolate_reduce(
+                &mut p_bufs,
+                &mut p_weights,
+                interpolation_scalar,
+                &kernel.primary,
+                num_evals,
+            );
+
+            // Check migration before putting buffers back
+            let new_len = self.primary.len(&p_bufs[0]);
+            if self.should_migrate(new_len) {
+                for (slot, p_buf) in inputs.iter_mut().zip(p_bufs) {
+                    let data = self.primary.download(&p_buf);
+                    *slot = HybridBuffer::Fallback(self.fallback.upload(&data));
+                }
+                let w_data = self.primary.download(&p_weights);
+                *weights = HybridBuffer::Fallback(self.fallback.upload(&w_data));
+            } else {
+                for (slot, p_buf) in inputs.iter_mut().zip(p_bufs) {
+                    *slot = HybridBuffer::Primary(p_buf);
+                }
+                *weights = HybridBuffer::Primary(p_weights);
+            }
+
+            result
+        } else {
+            let mut f_bufs: Vec<Fb::Buffer<Fld>> = inputs
+                .iter_mut()
+                .map(|b| match b {
+                    HybridBuffer::Fallback(inner) => {
+                        std::mem::replace(inner, self.fallback.alloc(0))
+                    }
+                    HybridBuffer::Primary(_) => {
+                        panic!("mixed buffer backends in fused_interpolate_reduce")
+                    }
+                })
+                .collect();
+            let mut f_weights = match weights {
+                HybridBuffer::Fallback(w) => std::mem::replace(w, self.fallback.alloc(0)),
+                HybridBuffer::Primary(_) => {
+                    panic!("weight buffer backend mismatch in fused_interpolate_reduce")
+                }
+            };
+
+            let result = self.fallback.fused_interpolate_reduce(
+                &mut f_bufs,
+                &mut f_weights,
+                interpolation_scalar,
+                &kernel.fallback,
+                num_evals,
+            );
+
+            for (slot, f_buf) in inputs.iter_mut().zip(f_bufs) {
+                *slot = HybridBuffer::Fallback(f_buf);
+            }
+            *weights = HybridBuffer::Fallback(f_weights);
+
+            result
+        }
+    }
 }
 
 #[cfg(test)]

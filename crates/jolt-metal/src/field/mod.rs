@@ -11,7 +11,7 @@ use std::ffi::c_void;
 
 use metal::{ComputePipelineState, Device, MTLResourceOptions, MTLSize};
 
-use crate::field_config::FieldConfig;
+use crate::field_config::MslFieldParams;
 use crate::shaders::{build_source_with_preamble, make_pipeline};
 
 /// N×u32 limbs matching the Metal Fr struct layout.
@@ -29,7 +29,13 @@ impl<const N: usize> MetalFieldElement<N> {
     /// Panics if `limbs.len() * 2 != N`.
     #[inline]
     pub fn from_u64_limbs(limbs: &[u64]) -> Self {
-        assert_eq!(limbs.len() * 2, N, "expected {} u64 limbs, got {}", N / 2, limbs.len());
+        assert_eq!(
+            limbs.len() * 2,
+            N,
+            "expected {} u64 limbs, got {}",
+            N / 2,
+            limbs.len()
+        );
         let mut out = [0u32; N];
         for (i, &v) in limbs.iter().enumerate() {
             out[2 * i] = v as u32;
@@ -62,7 +68,7 @@ pub struct FrKernels {
 impl FrKernels {
     /// Compile all Fr test/benchmark kernels from generated MSL source.
     pub fn new(device: &Device) -> Self {
-        let field_config = FieldConfig::from_gpu_field::<jolt_field::Fr>();
+        let field_config = MslFieldParams::new::<jolt_field::Fr>();
         let source = build_source_with_preamble(
             &field_config.msl_preamble,
             &[&field_config.msl_test_kernels],
@@ -180,7 +186,10 @@ pub fn dispatch_fmadd<const N: usize>(
 
     let buf_a = upload_slice(device, a);
     let buf_b = upload_slice(device, b);
-    let buf_out = alloc_buffer(device, (n_threads * std::mem::size_of::<MetalFieldElement<N>>()) as u64);
+    let buf_out = alloc_buffer(
+        device,
+        (n_threads * std::mem::size_of::<MetalFieldElement<N>>()) as u64,
+    );
     let buf_params = upload_slice(device, &[stride]);
 
     dispatch_and_wait(
@@ -202,7 +211,10 @@ pub fn dispatch_from_u64<const N: usize>(
     let n = vals.len();
 
     let buf_vals = upload_slice(device, vals);
-    let buf_out = alloc_buffer(device, (n * std::mem::size_of::<MetalFieldElement<N>>()) as u64);
+    let buf_out = alloc_buffer(
+        device,
+        (n * std::mem::size_of::<MetalFieldElement<N>>()) as u64,
+    );
 
     dispatch_and_wait(queue, pipeline, &[&buf_vals, &buf_out], n);
     read_buffer(&buf_out, n)

@@ -10,7 +10,7 @@
 use std::marker::PhantomData;
 
 use jolt_field::Field;
-use jolt_ir::zkvm::tags::poly;
+use jolt_ir::PolynomialId;
 
 use crate::config::WitnessConfig;
 use crate::cycle::CycleData;
@@ -32,11 +32,11 @@ use crate::sink::{ChunkData, PolynomialKind, WitnessSink};
 ///
 /// | Tag | Kind | Description |
 /// |-----|------|-------------|
-/// | `RD_INC` | Dense | Register write increments (i128 → F) |
-/// | `RAM_INC` | Dense | RAM write increments (i128 → F) |
-/// | `instruction_ra(0..d)` | OneHot | Instruction lookup index chunks |
-/// | `bytecode_ra(0..d)` | OneHot | Bytecode PC chunks |
-/// | `ram_ra_committed(0..d)` | OneHot | RAM address chunks |
+/// | `RdInc` | Dense | Register write increments (i128 -> F) |
+/// | `RamInc` | Dense | RAM write increments (i128 -> F) |
+/// | `InstructionRa(0..d)` | OneHot | Instruction lookup index chunks |
+/// | `BytecodeRa(0..d)` | OneHot | Bytecode PC chunks |
+/// | `RamRa(0..d)` | OneHot | RAM address chunks |
 pub struct WitnessBuilder {
     config: WitnessConfig,
 }
@@ -94,17 +94,17 @@ impl WitnessBuilder {
 // Free functions to avoid generic parameter issues on `self` methods.
 
 fn emit_rd_inc<F: Field>(trace: &[CycleData], len: usize, sink: &mut impl WitnessSink<F>) {
-    sink.on_polynomial_start(poly::RD_INC, len, PolynomialKind::Dense);
+    sink.on_polynomial_start(PolynomialId::RdInc, len, PolynomialKind::Dense);
     let values: Vec<F> = trace.iter().map(|c| F::from_i128(c.rd_inc)).collect();
-    sink.on_chunk(poly::RD_INC, ChunkData::Dense(&values));
-    sink.on_polynomial_end(poly::RD_INC);
+    sink.on_chunk(PolynomialId::RdInc, ChunkData::Dense(&values));
+    sink.on_polynomial_end(PolynomialId::RdInc);
 }
 
 fn emit_ram_inc<F: Field>(trace: &[CycleData], len: usize, sink: &mut impl WitnessSink<F>) {
-    sink.on_polynomial_start(poly::RAM_INC, len, PolynomialKind::Dense);
+    sink.on_polynomial_start(PolynomialId::RamInc, len, PolynomialKind::Dense);
     let values: Vec<F> = trace.iter().map(|c| F::from_i128(c.ram_inc)).collect();
-    sink.on_chunk(poly::RAM_INC, ChunkData::Dense(&values));
-    sink.on_polynomial_end(poly::RAM_INC);
+    sink.on_chunk(PolynomialId::RamInc, ChunkData::Dense(&values));
+    sink.on_polynomial_end(PolynomialId::RamInc);
 }
 
 fn emit_instruction_ra<F: Field>(
@@ -114,15 +114,15 @@ fn emit_instruction_ra<F: Field>(
     len: usize,
     sink: &mut impl WitnessSink<F>,
 ) {
-    let tag = poly::instruction_ra(idx);
+    let id = PolynomialId::InstructionRa(idx);
     let k = config.k_chunk;
-    sink.on_polynomial_start(tag, len, PolynomialKind::OneHot { k });
+    sink.on_polynomial_start(id, len, PolynomialKind::OneHot { k });
     let indices: Vec<Option<u8>> = trace
         .iter()
         .map(|c| Some(config.lookup_index_chunk(c.lookup_index, idx)))
         .collect();
-    sink.on_chunk(tag, ChunkData::OneHot(&indices));
-    sink.on_polynomial_end(tag);
+    sink.on_chunk(id, ChunkData::OneHot(&indices));
+    sink.on_polynomial_end(id);
 }
 
 fn emit_bytecode_ra<F: Field>(
@@ -132,15 +132,15 @@ fn emit_bytecode_ra<F: Field>(
     len: usize,
     sink: &mut impl WitnessSink<F>,
 ) {
-    let tag = poly::bytecode_ra(idx);
+    let id = PolynomialId::BytecodeRa(idx);
     let k = config.k_chunk;
-    sink.on_polynomial_start(tag, len, PolynomialKind::OneHot { k });
+    sink.on_polynomial_start(id, len, PolynomialKind::OneHot { k });
     let indices: Vec<Option<u8>> = trace
         .iter()
         .map(|c| Some(config.bytecode_pc_chunk(c.pc_index, idx)))
         .collect();
-    sink.on_chunk(tag, ChunkData::OneHot(&indices));
-    sink.on_polynomial_end(tag);
+    sink.on_chunk(id, ChunkData::OneHot(&indices));
+    sink.on_polynomial_end(id);
 }
 
 fn emit_ram_ra<F: Field>(
@@ -150,9 +150,9 @@ fn emit_ram_ra<F: Field>(
     len: usize,
     sink: &mut impl WitnessSink<F>,
 ) {
-    let tag = poly::ram_ra_committed(idx);
+    let id = PolynomialId::RamRa(idx);
     let k = config.k_chunk;
-    sink.on_polynomial_start(tag, len, PolynomialKind::OneHot { k });
+    sink.on_polynomial_start(id, len, PolynomialKind::OneHot { k });
     let indices: Vec<Option<u8>> = trace
         .iter()
         .map(|c| {
@@ -160,8 +160,8 @@ fn emit_ram_ra<F: Field>(
                 .map(|addr| config.ram_address_chunk(addr, idx))
         })
         .collect();
-    sink.on_chunk(tag, ChunkData::OneHot(&indices));
-    sink.on_polynomial_end(tag);
+    sink.on_chunk(id, ChunkData::OneHot(&indices));
+    sink.on_polynomial_end(id);
 }
 
 /// Emit all polynomial chunks for a single chunk of cycles (streaming helper).
@@ -172,10 +172,10 @@ fn emit_chunk_all<F: Field>(
 ) {
     // Dense polynomials
     let rd_inc: Vec<F> = chunk.iter().map(|c| F::from_i128(c.rd_inc)).collect();
-    sink.on_chunk(poly::RD_INC, ChunkData::Dense(&rd_inc));
+    sink.on_chunk(PolynomialId::RdInc, ChunkData::Dense(&rd_inc));
 
     let ram_inc: Vec<F> = chunk.iter().map(|c| F::from_i128(c.ram_inc)).collect();
-    sink.on_chunk(poly::RAM_INC, ChunkData::Dense(&ram_inc));
+    sink.on_chunk(PolynomialId::RamInc, ChunkData::Dense(&ram_inc));
 
     // One-hot: instruction RA
     for i in 0..config.instruction_d {
@@ -183,7 +183,7 @@ fn emit_chunk_all<F: Field>(
             .iter()
             .map(|c| Some(config.lookup_index_chunk(c.lookup_index, i)))
             .collect();
-        sink.on_chunk(poly::instruction_ra(i), ChunkData::OneHot(&indices));
+        sink.on_chunk(PolynomialId::InstructionRa(i), ChunkData::OneHot(&indices));
     }
 
     // One-hot: bytecode RA
@@ -192,7 +192,7 @@ fn emit_chunk_all<F: Field>(
             .iter()
             .map(|c| Some(config.bytecode_pc_chunk(c.pc_index, i)))
             .collect();
-        sink.on_chunk(poly::bytecode_ra(i), ChunkData::OneHot(&indices));
+        sink.on_chunk(PolynomialId::BytecodeRa(i), ChunkData::OneHot(&indices));
     }
 
     // One-hot: RAM RA
@@ -201,7 +201,7 @@ fn emit_chunk_all<F: Field>(
             .iter()
             .map(|c| c.ram_address.map(|addr| config.ram_address_chunk(addr, i)))
             .collect();
-        sink.on_chunk(poly::ram_ra_committed(i), ChunkData::OneHot(&indices));
+        sink.on_chunk(PolynomialId::RamRa(i), ChunkData::OneHot(&indices));
     }
 }
 
@@ -227,26 +227,26 @@ impl<'a, F: Field, S: WitnessSink<F>> StreamingSession<'a, F, S> {
     fn new(config: &'a WitnessConfig, total_len: usize, sink: &'a mut S) -> Self {
         let k = config.k_chunk;
 
-        sink.on_polynomial_start(poly::RD_INC, total_len, PolynomialKind::Dense);
-        sink.on_polynomial_start(poly::RAM_INC, total_len, PolynomialKind::Dense);
+        sink.on_polynomial_start(PolynomialId::RdInc, total_len, PolynomialKind::Dense);
+        sink.on_polynomial_start(PolynomialId::RamInc, total_len, PolynomialKind::Dense);
 
         for i in 0..config.instruction_d {
             sink.on_polynomial_start(
-                poly::instruction_ra(i),
+                PolynomialId::InstructionRa(i),
                 total_len,
                 PolynomialKind::OneHot { k },
             );
         }
         for i in 0..config.bytecode_d {
             sink.on_polynomial_start(
-                poly::bytecode_ra(i),
+                PolynomialId::BytecodeRa(i),
                 total_len,
                 PolynomialKind::OneHot { k },
             );
         }
         for i in 0..config.ram_d {
             sink.on_polynomial_start(
-                poly::ram_ra_committed(i),
+                PolynomialId::RamRa(i),
                 total_len,
                 PolynomialKind::OneHot { k },
             );
@@ -272,16 +272,16 @@ impl<'a, F: Field, S: WitnessSink<F>> StreamingSession<'a, F, S> {
         // Move into self so Drop doesn't double-finish
         let Self { config, sink, .. } = self;
 
-        sink.on_polynomial_end(poly::RD_INC);
-        sink.on_polynomial_end(poly::RAM_INC);
+        sink.on_polynomial_end(PolynomialId::RdInc);
+        sink.on_polynomial_end(PolynomialId::RamInc);
         for i in 0..config.instruction_d {
-            sink.on_polynomial_end(poly::instruction_ra(i));
+            sink.on_polynomial_end(PolynomialId::InstructionRa(i));
         }
         for i in 0..config.bytecode_d {
-            sink.on_polynomial_end(poly::bytecode_ra(i));
+            sink.on_polynomial_end(PolynomialId::BytecodeRa(i));
         }
         for i in 0..config.ram_d {
-            sink.on_polynomial_end(poly::ram_ra_committed(i));
+            sink.on_polynomial_end(PolynomialId::RamRa(i));
         }
         sink.finish();
     }
@@ -328,13 +328,13 @@ mod tests {
 
         builder.build(&trace, &mut sink);
 
-        let rd = sink.dense_table(poly::RD_INC).unwrap();
+        let rd = sink.dense_table(PolynomialId::RdInc).unwrap();
         assert_eq!(rd.len(), 4);
         assert_eq!(rd[0], Fr::from_i128(5));
         assert_eq!(rd[1], Fr::from_i128(-1));
         assert_eq!(rd[2], Fr::from_i128(0));
 
-        let ram = sink.dense_table(poly::RAM_INC).unwrap();
+        let ram = sink.dense_table(PolynomialId::RamInc).unwrap();
         assert_eq!(ram[0], Fr::from_i128(-3));
         assert_eq!(ram[1], Fr::from_i128(0));
     }
@@ -348,16 +348,16 @@ mod tests {
 
         builder.build(&trace, &mut sink);
 
-        // 8-bit instruction, 4-bit chunks → 2 polynomials
-        // lookup_index 0xAB → chunk 0 = 0xA, chunk 1 = 0xB
-        let (k, idx0) = sink.onehot_table(poly::instruction_ra(0)).unwrap();
+        // 8-bit instruction, 4-bit chunks -> 2 polynomials
+        // lookup_index 0xAB -> chunk 0 = 0xA, chunk 1 = 0xB
+        let (k, idx0) = sink.onehot_table(PolynomialId::InstructionRa(0)).unwrap();
         assert_eq!(k, 16);
         assert_eq!(idx0[0], Some(0xA));
-        assert_eq!(idx0[1], Some(0x1)); // 0x12 → chunk 0 = 0x1
+        assert_eq!(idx0[1], Some(0x1)); // 0x12 -> chunk 0 = 0x1
 
-        let (_, idx1) = sink.onehot_table(poly::instruction_ra(1)).unwrap();
+        let (_, idx1) = sink.onehot_table(PolynomialId::InstructionRa(1)).unwrap();
         assert_eq!(idx1[0], Some(0xB));
-        assert_eq!(idx1[1], Some(0x2)); // 0x12 → chunk 1 = 0x2
+        assert_eq!(idx1[1], Some(0x2)); // 0x12 -> chunk 1 = 0x2
     }
 
     #[test]
@@ -369,8 +369,8 @@ mod tests {
 
         builder.build(&trace, &mut sink);
 
-        let (_, indices) = sink.onehot_table(poly::ram_ra_committed(0)).unwrap();
-        // Cycle 0: ram_address = Some(0xD) → chunk 0 = 0xD (4-bit, d=1, shift=0)
+        let (_, indices) = sink.onehot_table(PolynomialId::RamRa(0)).unwrap();
+        // Cycle 0: ram_address = Some(0xD) -> chunk 0 = 0xD (4-bit, d=1, shift=0)
         assert_eq!(indices[0], Some(0xD));
         // Cycle 1: ram_address = None
         assert_eq!(indices[1], None);
@@ -396,32 +396,32 @@ mod tests {
         session.finish();
 
         // Compare all dense polynomials
-        for tag in [poly::RD_INC, poly::RAM_INC] {
-            let batch = batch_sink.dense_table(tag).unwrap();
-            let stream = stream_sink.dense_table(tag).unwrap();
-            assert_eq!(batch, stream, "mismatch for dense poly {tag}");
+        for id in [PolynomialId::RdInc, PolynomialId::RamInc] {
+            let batch = batch_sink.dense_table(id).unwrap();
+            let stream = stream_sink.dense_table(id).unwrap();
+            assert_eq!(batch, stream, "mismatch for dense poly {id:?}");
         }
 
         // Compare all one-hot polynomials
         let cfg = builder.config();
         for i in 0..cfg.instruction_d {
-            let tag = poly::instruction_ra(i);
-            let (bk, bi) = batch_sink.onehot_table(tag).unwrap();
-            let (sk, si) = stream_sink.onehot_table(tag).unwrap();
+            let id = PolynomialId::InstructionRa(i);
+            let (bk, bi) = batch_sink.onehot_table(id).unwrap();
+            let (sk, si) = stream_sink.onehot_table(id).unwrap();
             assert_eq!(bk, sk);
-            assert_eq!(bi, si, "mismatch for instruction_ra({i})");
+            assert_eq!(bi, si, "mismatch for InstructionRa({i})");
         }
         for i in 0..cfg.bytecode_d {
-            let tag = poly::bytecode_ra(i);
-            let (_, bi) = batch_sink.onehot_table(tag).unwrap();
-            let (_, si) = stream_sink.onehot_table(tag).unwrap();
-            assert_eq!(bi, si, "mismatch for bytecode_ra({i})");
+            let id = PolynomialId::BytecodeRa(i);
+            let (_, bi) = batch_sink.onehot_table(id).unwrap();
+            let (_, si) = stream_sink.onehot_table(id).unwrap();
+            assert_eq!(bi, si, "mismatch for BytecodeRa({i})");
         }
         for i in 0..cfg.ram_d {
-            let tag = poly::ram_ra_committed(i);
-            let (_, bi) = batch_sink.onehot_table(tag).unwrap();
-            let (_, si) = stream_sink.onehot_table(tag).unwrap();
-            assert_eq!(bi, si, "mismatch for ram_ra({i})");
+            let id = PolynomialId::RamRa(i);
+            let (_, bi) = batch_sink.onehot_table(id).unwrap();
+            let (_, si) = stream_sink.onehot_table(id).unwrap();
+            assert_eq!(bi, si, "mismatch for RamRa({i})");
         }
     }
 
@@ -438,7 +438,7 @@ mod tests {
         }
         session.finish();
 
-        let rd = sink.dense_table(poly::RD_INC).unwrap();
+        let rd = sink.dense_table(PolynomialId::RdInc).unwrap();
         assert_eq!(rd.len(), 4);
         assert_eq!(rd[0], Fr::from_i128(5));
     }

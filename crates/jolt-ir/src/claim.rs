@@ -4,39 +4,15 @@ use crate::builder::ExprBuilder;
 use crate::expr::Expr;
 use crate::kernel::{KernelDescriptor, KernelShape};
 use crate::normalize::{SopValue, SumOfProducts};
-
-/// Where a challenge value originates.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ChallengeSource {
-    /// A batching coefficient (α_i for combining multiple instances).
-    BatchingCoefficient(usize),
-    /// A sumcheck challenge round value.
-    SumcheckChallenge(usize),
-    /// Derived from other values (e.g., eq polynomial evaluation, gamma power).
-    Derived,
-}
-
-/// Maps a challenge variable index to its semantic origin.
-///
-/// `var_id` matches `Var::Challenge(id)` in the expression. Downstream code
-/// uses `source` to resolve the variable to a concrete field value at
-/// evaluation time.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChallengeBinding {
-    pub var_id: u32,
-    pub source: ChallengeSource,
-}
+use crate::polynomial_id::PolynomialId;
 
 /// Maps an opening variable index to a concrete polynomial identity.
 ///
-/// `var_id` matches `Var::Opening(id)` in the expression. Tags are opaque
-/// `u64` so `jolt-ir` never depends on `jolt-zkvm` types — the downstream
-/// consumer interprets them.
+/// `var_id` matches `Var::Opening(id)` in the expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpeningBinding {
     pub var_id: u32,
-    pub polynomial_tag: u64,
-    pub sumcheck_tag: u64,
+    pub polynomial: PolynomialId,
 }
 
 /// A complete claim definition: expression + binding metadata.
@@ -47,7 +23,7 @@ pub struct OpeningBinding {
 /// # Example
 ///
 /// ```
-/// use jolt_ir::{ExprBuilder, ClaimDefinition, OpeningBinding, ChallengeBinding, ChallengeSource};
+/// use jolt_ir::{ExprBuilder, ClaimDefinition, OpeningBinding, PolynomialId};
 ///
 /// let b = ExprBuilder::new();
 /// let h = b.opening(0);
@@ -57,11 +33,9 @@ pub struct OpeningBinding {
 /// let claim = ClaimDefinition {
 ///     expr,
 ///     opening_bindings: vec![
-///         OpeningBinding { var_id: 0, polynomial_tag: 1, sumcheck_tag: 2 },
+///         OpeningBinding { var_id: 0, polynomial: PolynomialId::HammingWeight },
 ///     ],
-///     challenge_bindings: vec![
-///         ChallengeBinding { var_id: 0, source: ChallengeSource::Derived },
-///     ],
+///     num_challenges: 1,
 /// };
 ///
 /// assert_eq!(claim.opening_bindings.len(), 1);
@@ -70,7 +44,7 @@ pub struct OpeningBinding {
 pub struct ClaimDefinition {
     pub expr: Expr,
     pub opening_bindings: Vec<OpeningBinding>,
-    pub challenge_bindings: Vec<ChallengeBinding>,
+    pub num_challenges: u32,
 }
 
 impl ClaimDefinition {
@@ -91,8 +65,7 @@ impl ClaimDefinition {
     /// The returned descriptor uses `Opening(0)` for the eq buffer and shifts
     /// the claim's `Opening(i)` to `Opening(i+1)`. Challenge variables are
     /// preserved as-is — the caller supplies concrete values (with the eq
-    /// factor removed) at kernel compile time via
-    /// [`compile_with_challenges`](jolt_cpu::compile_with_challenges).
+    /// factor removed) at kernel compile time via `compile_with_challenges`.
     ///
     /// Recognizes the following fast-path patterns:
     /// - [`HammingBooleanity`](KernelShape::HammingBooleanity): `eq · h · (h − 1)`
@@ -334,19 +307,13 @@ mod tests {
             expr,
             opening_bindings: vec![OpeningBinding {
                 var_id: 0,
-                polynomial_tag: 100,
-                sumcheck_tag: 200,
+                polynomial: PolynomialId::HammingWeight,
             }],
-            challenge_bindings: vec![ChallengeBinding {
-                var_id: 0,
-                source: ChallengeSource::Derived,
-            }],
+            num_challenges: 1,
         };
 
         assert_eq!(claim.opening_bindings.len(), 1);
-        assert_eq!(claim.opening_bindings[0].polynomial_tag, 100);
-        assert_eq!(claim.challenge_bindings.len(), 1);
-        assert_eq!(claim.challenge_bindings[0].source, ChallengeSource::Derived);
+        assert_eq!(claim.num_challenges, 1);
     }
 
     #[test]
@@ -362,26 +329,17 @@ mod tests {
             opening_bindings: vec![
                 OpeningBinding {
                     var_id: 0,
-                    polynomial_tag: 1,
-                    sumcheck_tag: 10,
+                    polynomial: PolynomialId::RamInc,
                 },
                 OpeningBinding {
                     var_id: 1,
-                    polynomial_tag: 2,
-                    sumcheck_tag: 10,
+                    polynomial: PolynomialId::RdInc,
                 },
             ],
-            challenge_bindings: vec![ChallengeBinding {
-                var_id: 0,
-                source: ChallengeSource::BatchingCoefficient(0),
-            }],
+            num_challenges: 1,
         };
 
         assert_eq!(claim.opening_bindings.len(), 2);
-        assert_eq!(
-            claim.challenge_bindings[0].source,
-            ChallengeSource::BatchingCoefficient(0)
-        );
     }
 
     #[test]
@@ -394,12 +352,11 @@ mod tests {
             expr,
             opening_bindings: vec![OpeningBinding {
                 var_id: 0,
-                polynomial_tag: 1,
-                sumcheck_tag: 1,
+                polynomial: PolynomialId::RamInc,
             }],
-            challenge_bindings: vec![],
+            num_challenges: 0,
         };
 
-        assert!(claim.challenge_bindings.is_empty());
+        assert_eq!(claim.num_challenges, 0);
     }
 }

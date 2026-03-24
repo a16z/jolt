@@ -6,6 +6,7 @@
 //! [`OneHotPolynomial`] for sparse PCS commit (generator lookup instead of MSM).
 
 use jolt_field::Field;
+use jolt_ir::PolynomialId;
 use jolt_poly::OneHotPolynomial;
 use jolt_witness::{ChunkData, PolynomialKind, WitnessSink};
 
@@ -18,7 +19,7 @@ use crate::witness::store::WitnessStore;
 /// - Stored as [`OneHotPolynomial`] (for sparse PCS commit via generator lookup)
 pub struct StoreSink<'a, F: Field> {
     store: &'a mut WitnessStore<F>,
-    pending: std::collections::BTreeMap<u64, PendingPoly<F>>,
+    pending: std::collections::BTreeMap<PolynomialId, PendingPoly<F>>,
 }
 
 enum PendingPoly<F: Field> {
@@ -36,7 +37,12 @@ impl<'a, F: Field> StoreSink<'a, F> {
 }
 
 impl<F: Field> WitnessSink<F> for StoreSink<'_, F> {
-    fn on_polynomial_start(&mut self, poly_id: u64, total_len: usize, kind: PolynomialKind) {
+    fn on_polynomial_start(
+        &mut self,
+        poly_id: PolynomialId,
+        total_len: usize,
+        kind: PolynomialKind,
+    ) {
         let _ = self.pending.entry(poly_id).or_insert_with(|| match kind {
             PolynomialKind::Dense => PendingPoly::Dense(Vec::with_capacity(total_len)),
             PolynomialKind::OneHot { k } => PendingPoly::OneHot {
@@ -46,7 +52,7 @@ impl<F: Field> WitnessSink<F> for StoreSink<'_, F> {
         });
     }
 
-    fn on_chunk(&mut self, poly_id: u64, data: ChunkData<'_, F>) {
+    fn on_chunk(&mut self, poly_id: PolynomialId, data: ChunkData<'_, F>) {
         match (self.pending.get_mut(&poly_id), data) {
             (Some(PendingPoly::Dense(v)), ChunkData::Dense(chunk)) => {
                 v.extend_from_slice(chunk);
@@ -54,11 +60,11 @@ impl<F: Field> WitnessSink<F> for StoreSink<'_, F> {
             (Some(PendingPoly::OneHot { indices, .. }), ChunkData::OneHot(chunk)) => {
                 indices.extend_from_slice(chunk);
             }
-            _ => panic!("chunk type mismatch or unknown polynomial {poly_id}"),
+            _ => panic!("chunk type mismatch or unknown polynomial {poly_id:?}"),
         }
     }
 
-    fn on_polynomial_end(&mut self, poly_id: u64) {
+    fn on_polynomial_end(&mut self, poly_id: PolynomialId) {
         if let Some(pending) = self.pending.remove(&poly_id) {
             match pending {
                 PendingPoly::Dense(v) => {
@@ -105,18 +111,18 @@ mod tests {
         let mut store = WitnessStore::<Fr>::new();
         {
             let mut sink = StoreSink::new(&mut store);
-            sink.on_polynomial_start(100, 3, PolynomialKind::Dense);
+            sink.on_polynomial_start(PolynomialId::RamInc, 3, PolynomialKind::Dense);
             sink.on_chunk(
-                100,
+                PolynomialId::RamInc,
                 ChunkData::Dense(&[Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3)]),
             );
-            sink.on_polynomial_end(100);
+            sink.on_polynomial_end(PolynomialId::RamInc);
             sink.finish();
         }
-        assert_eq!(store.get(100).len(), 3);
-        assert_eq!(store.get(100)[0], Fr::from_u64(1));
+        assert_eq!(store.get(PolynomialId::RamInc).len(), 3);
+        assert_eq!(store.get(PolynomialId::RamInc)[0], Fr::from_u64(1));
         assert!(
-            store.get_one_hot(100).is_none(),
+            store.get_one_hot(PolynomialId::RamInc).is_none(),
             "dense poly should not have one-hot repr"
         );
     }
@@ -126,24 +132,31 @@ mod tests {
         let mut store = WitnessStore::<Fr>::new();
         {
             let mut sink = StoreSink::new(&mut store);
-            sink.on_polynomial_start(200, 2, PolynomialKind::OneHot { k: 4 });
-            sink.on_chunk(200, ChunkData::OneHot(&[Some(1), Some(3)]));
-            sink.on_polynomial_end(200);
+            sink.on_polynomial_start(
+                PolynomialId::InstructionRa(0),
+                2,
+                PolynomialKind::OneHot { k: 4 },
+            );
+            sink.on_chunk(
+                PolynomialId::InstructionRa(0),
+                ChunkData::OneHot(&[Some(1), Some(3)]),
+            );
+            sink.on_polynomial_end(PolynomialId::InstructionRa(0));
             sink.finish();
         }
-        // Dense expansion: 2 cycles × 4 positions = 8 elements
-        let table = store.get(200);
+        // Dense expansion: 2 cycles x 4 positions = 8 elements
+        let table = store.get(PolynomialId::InstructionRa(0));
         assert_eq!(table.len(), 8);
-        // Cycle 0: index 1 → position 1 is hot
+        // Cycle 0: index 1 -> position 1 is hot
         assert_eq!(table[1], Fr::one());
         assert_eq!(table[0], Fr::zero());
-        // Cycle 1: index 3 → position 4+3=7 is hot
+        // Cycle 1: index 3 -> position 4+3=7 is hot
         assert_eq!(table[7], Fr::one());
         assert_eq!(table[4], Fr::zero());
 
         // Sparse representation also stored
         let oh = store
-            .get_one_hot(200)
+            .get_one_hot(PolynomialId::InstructionRa(0))
             .expect("one-hot representation must be stored");
         assert!(jolt_poly::MultilinearPoly::<Fr>::is_sparse(oh));
     }
@@ -153,12 +166,12 @@ mod tests {
         let mut store = WitnessStore::<Fr>::new();
         {
             let mut sink = StoreSink::new(&mut store);
-            sink.on_polynomial_start(300, 1, PolynomialKind::OneHot { k: 4 });
-            sink.on_chunk(300, ChunkData::OneHot(&[None]));
-            sink.on_polynomial_end(300);
+            sink.on_polynomial_start(PolynomialId::RamRa(0), 1, PolynomialKind::OneHot { k: 4 });
+            sink.on_chunk(PolynomialId::RamRa(0), ChunkData::OneHot(&[None]));
+            sink.on_polynomial_end(PolynomialId::RamRa(0));
             sink.finish();
         }
-        let table = store.get(300);
+        let table = store.get(PolynomialId::RamRa(0));
         assert_eq!(table.len(), 4);
         assert!(table.iter().all(|&v| v == Fr::zero()));
     }

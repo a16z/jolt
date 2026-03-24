@@ -13,6 +13,7 @@
 //! touches commitment schemes.
 
 use jolt_field::Field;
+use jolt_ir::PolynomialId;
 
 /// Describes the representation of a polynomial's evaluation data.
 ///
@@ -64,20 +65,25 @@ pub enum ChunkData<'a, F> {
 pub trait WitnessSink<F: Field> {
     /// Called when a new polynomial begins emission.
     ///
-    /// `poly_id` is the opaque tag from [`jolt_ir::zkvm::tags::poly`].
+    /// `poly_id` identifies the polynomial via [`PolynomialId`].
     /// `total_len` is the number of cycles (for one-hot) or field elements
     /// (for dense) that will be emitted across all chunks.
     /// `kind` describes the polynomial's representation.
-    fn on_polynomial_start(&mut self, poly_id: u64, total_len: usize, kind: PolynomialKind);
+    fn on_polynomial_start(
+        &mut self,
+        poly_id: PolynomialId,
+        total_len: usize,
+        kind: PolynomialKind,
+    );
 
     /// Called with a chunk of evaluation data for a polynomial.
     ///
     /// The chunk variant (Dense or OneHot) matches the `kind` passed to
     /// [`on_polynomial_start`](Self::on_polynomial_start).
-    fn on_chunk(&mut self, poly_id: u64, data: ChunkData<'_, F>);
+    fn on_chunk(&mut self, poly_id: PolynomialId, data: ChunkData<'_, F>);
 
     /// Called when all chunks for a polynomial have been emitted.
-    fn on_polynomial_end(&mut self, poly_id: u64);
+    fn on_polynomial_end(&mut self, poly_id: PolynomialId);
 
     /// Called after all polynomials have been emitted.
     fn finish(&mut self);
@@ -93,11 +99,11 @@ pub enum CollectedPoly<F: Field> {
 
 /// A sink that collects evaluation tables for testing.
 ///
-/// Stores complete polynomial data keyed by tag, preserving the
+/// Stores complete polynomial data keyed by [`PolynomialId`], preserving the
 /// dense vs one-hot representation.
 #[cfg(any(test, feature = "test-utils"))]
 pub struct CollectingSink<F: Field> {
-    polys: std::collections::BTreeMap<u64, CollectedPoly<F>>,
+    polys: std::collections::BTreeMap<PolynomialId, CollectedPoly<F>>,
 }
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -111,25 +117,25 @@ impl<F: Field> CollectingSink<F> {
     /// Returns the dense evaluation table for a polynomial, or `None`.
     ///
     /// Panics if the polynomial was emitted as one-hot.
-    pub fn dense_table(&self, poly_id: u64) -> Option<&[F]> {
+    pub fn dense_table(&self, poly_id: PolynomialId) -> Option<&[F]> {
         self.polys.get(&poly_id).map(|p| match p {
             CollectedPoly::Dense(v) => v.as_slice(),
-            CollectedPoly::OneHot { .. } => panic!("poly {poly_id} is one-hot, not dense"),
+            CollectedPoly::OneHot { .. } => panic!("poly {poly_id:?} is one-hot, not dense"),
         })
     }
 
     /// Returns the one-hot indices for a polynomial, or `None`.
     ///
     /// Panics if the polynomial was emitted as dense.
-    pub fn onehot_table(&self, poly_id: u64) -> Option<(usize, &[Option<u8>])> {
+    pub fn onehot_table(&self, poly_id: PolynomialId) -> Option<(usize, &[Option<u8>])> {
         self.polys.get(&poly_id).map(|p| match p {
             CollectedPoly::OneHot { k, indices } => (*k, indices.as_slice()),
-            CollectedPoly::Dense(_) => panic!("poly {poly_id} is dense, not one-hot"),
+            CollectedPoly::Dense(_) => panic!("poly {poly_id:?} is dense, not one-hot"),
         })
     }
 
     /// Consumes the sink and returns all collected polynomial data.
-    pub fn into_polys(self) -> std::collections::BTreeMap<u64, CollectedPoly<F>> {
+    pub fn into_polys(self) -> std::collections::BTreeMap<PolynomialId, CollectedPoly<F>> {
         self.polys
     }
 }
@@ -143,7 +149,12 @@ impl<F: Field> Default for CollectingSink<F> {
 
 #[cfg(any(test, feature = "test-utils"))]
 impl<F: Field> WitnessSink<F> for CollectingSink<F> {
-    fn on_polynomial_start(&mut self, poly_id: u64, total_len: usize, kind: PolynomialKind) {
+    fn on_polynomial_start(
+        &mut self,
+        poly_id: PolynomialId,
+        total_len: usize,
+        kind: PolynomialKind,
+    ) {
         let _ = self.polys.entry(poly_id).or_insert_with(|| match kind {
             PolynomialKind::Dense => CollectedPoly::Dense(Vec::with_capacity(total_len)),
             PolynomialKind::OneHot { k } => CollectedPoly::OneHot {
@@ -153,7 +164,7 @@ impl<F: Field> WitnessSink<F> for CollectingSink<F> {
         });
     }
 
-    fn on_chunk(&mut self, poly_id: u64, data: ChunkData<'_, F>) {
+    fn on_chunk(&mut self, poly_id: PolynomialId, data: ChunkData<'_, F>) {
         match (self.polys.get_mut(&poly_id), data) {
             (Some(CollectedPoly::Dense(v)), ChunkData::Dense(chunk)) => {
                 v.extend_from_slice(chunk);
@@ -175,11 +186,11 @@ impl<F: Field> WitnessSink<F> for CollectingSink<F> {
                     },
                 );
             }
-            _ => panic!("chunk type mismatch for poly {poly_id}"),
+            _ => panic!("chunk type mismatch for poly {poly_id:?}"),
         }
     }
 
-    fn on_polynomial_end(&mut self, _poly_id: u64) {}
+    fn on_polynomial_end(&mut self, _poly_id: PolynomialId) {}
 
     fn finish(&mut self) {}
 }
@@ -192,14 +203,15 @@ mod tests {
     #[test]
     fn collecting_sink_dense_chunks() {
         let mut sink = CollectingSink::<Fr>::new();
+        let id = PolynomialId::RamInc;
 
-        sink.on_polynomial_start(100, 4, PolynomialKind::Dense);
-        sink.on_chunk(100, ChunkData::Dense(&[Fr::from_u64(1), Fr::from_u64(2)]));
-        sink.on_chunk(100, ChunkData::Dense(&[Fr::from_u64(3), Fr::from_u64(4)]));
-        sink.on_polynomial_end(100);
+        sink.on_polynomial_start(id, 4, PolynomialKind::Dense);
+        sink.on_chunk(id, ChunkData::Dense(&[Fr::from_u64(1), Fr::from_u64(2)]));
+        sink.on_chunk(id, ChunkData::Dense(&[Fr::from_u64(3), Fr::from_u64(4)]));
+        sink.on_polynomial_end(id);
         sink.finish();
 
-        let table = sink.dense_table(100).unwrap();
+        let table = sink.dense_table(id).unwrap();
         assert_eq!(table.len(), 4);
         assert_eq!(table[0], Fr::from_u64(1));
         assert_eq!(table[3], Fr::from_u64(4));
@@ -208,14 +220,15 @@ mod tests {
     #[test]
     fn collecting_sink_onehot_chunks() {
         let mut sink = CollectingSink::<Fr>::new();
+        let id = PolynomialId::RamReadValue;
 
-        sink.on_polynomial_start(200, 4, PolynomialKind::OneHot { k: 16 });
-        sink.on_chunk(200, ChunkData::OneHot(&[Some(3), Some(15)]));
-        sink.on_chunk(200, ChunkData::OneHot(&[None, Some(0)]));
-        sink.on_polynomial_end(200);
+        sink.on_polynomial_start(id, 4, PolynomialKind::OneHot { k: 16 });
+        sink.on_chunk(id, ChunkData::OneHot(&[Some(3), Some(15)]));
+        sink.on_chunk(id, ChunkData::OneHot(&[None, Some(0)]));
+        sink.on_polynomial_end(id);
         sink.finish();
 
-        let (k, indices) = sink.onehot_table(200).unwrap();
+        let (k, indices) = sink.onehot_table(id).unwrap();
         assert_eq!(k, 16);
         assert_eq!(indices.len(), 4);
         assert_eq!(indices[0], Some(3));
@@ -225,19 +238,24 @@ mod tests {
     #[test]
     fn collecting_sink_mixed_polynomials() {
         let mut sink = CollectingSink::<Fr>::new();
+        let dense_id = PolynomialId::RamInc;
+        let onehot_id = PolynomialId::RamReadValue;
 
-        sink.on_polynomial_start(100, 2, PolynomialKind::Dense);
-        sink.on_chunk(100, ChunkData::Dense(&[Fr::from_u64(10), Fr::from_u64(20)]));
-        sink.on_polynomial_end(100);
+        sink.on_polynomial_start(dense_id, 2, PolynomialKind::Dense);
+        sink.on_chunk(
+            dense_id,
+            ChunkData::Dense(&[Fr::from_u64(10), Fr::from_u64(20)]),
+        );
+        sink.on_polynomial_end(dense_id);
 
-        sink.on_polynomial_start(200, 3, PolynomialKind::OneHot { k: 256 });
-        sink.on_chunk(200, ChunkData::OneHot(&[Some(1), Some(2), Some(3)]));
-        sink.on_polynomial_end(200);
+        sink.on_polynomial_start(onehot_id, 3, PolynomialKind::OneHot { k: 256 });
+        sink.on_chunk(onehot_id, ChunkData::OneHot(&[Some(1), Some(2), Some(3)]));
+        sink.on_polynomial_end(onehot_id);
 
         sink.finish();
 
-        assert_eq!(sink.dense_table(100).unwrap().len(), 2);
-        let (k, indices) = sink.onehot_table(200).unwrap();
+        assert_eq!(sink.dense_table(dense_id).unwrap().len(), 2);
+        let (k, indices) = sink.onehot_table(onehot_id).unwrap();
         assert_eq!(k, 256);
         assert_eq!(indices.len(), 3);
     }
@@ -245,14 +263,15 @@ mod tests {
     #[test]
     fn collecting_sink_into_polys() {
         let mut sink = CollectingSink::<Fr>::new();
+        let id = PolynomialId::LookupOutput;
 
-        sink.on_polynomial_start(42, 1, PolynomialKind::Dense);
-        sink.on_chunk(42, ChunkData::Dense(&[Fr::from_u64(7)]));
-        sink.on_polynomial_end(42);
+        sink.on_polynomial_start(id, 1, PolynomialKind::Dense);
+        sink.on_chunk(id, ChunkData::Dense(&[Fr::from_u64(7)]));
+        sink.on_polynomial_end(id);
         sink.finish();
 
         let polys = sink.into_polys();
         assert_eq!(polys.len(), 1);
-        assert!(polys.contains_key(&42));
+        assert!(polys.contains_key(&id));
     }
 }

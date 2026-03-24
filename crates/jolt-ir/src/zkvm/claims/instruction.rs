@@ -4,8 +4,8 @@
 //! RA polynomial is decomposed into a product of committed RA chunks.
 
 use crate::builder::ExprBuilder;
-use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
-use crate::zkvm::tags::{poly, sumcheck};
+use crate::claim::{ClaimDefinition, OpeningBinding};
+use crate::PolynomialId;
 
 // Verified against jolt-core/src/zkvm/instruction_lookups/ra_virtual.rs
 // Formula: Σ_x eq(r_cycle,x) · Σ_i γ^i · Π_{j=0}^{m-1} ra_{i·m+j}(x)
@@ -41,22 +41,14 @@ pub fn instruction_ra_virtual(n_virtual: usize, n_committed_per_virtual: usize) 
     let opening_bindings = (0..n_virtual * m)
         .map(|idx| OpeningBinding {
             var_id: idx as u32,
-            polynomial_tag: poly::instruction_ra(idx),
-            sumcheck_tag: sumcheck::INSTRUCTION_RA_VIRTUAL,
-        })
-        .collect();
-
-    let challenge_bindings = (0..n_virtual)
-        .map(|i| ChallengeBinding {
-            var_id: i as u32,
-            source: ChallengeSource::Derived,
+            polynomial: PolynomialId::InstructionRa(idx),
         })
         .collect();
 
     ClaimDefinition {
         expr,
         opening_bindings,
-        challenge_bindings,
+        num_challenges: n_virtual as u32,
     }
 }
 

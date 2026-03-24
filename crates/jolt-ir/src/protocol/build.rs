@@ -11,12 +11,7 @@ use super::symbolic::{NumVars, Symbol, SymbolicExpr};
 use super::types::*;
 use crate::claim::ClaimDefinition;
 use crate::zkvm::claims;
-use crate::zkvm::tags::poly as ptag;
-use crate::{ExprBuilder, PolynomialId};
-
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
+use crate::{ExprBuilder, OpeningBinding, PolynomialId};
 
 /// Structural parameters that determine the graph's shape.
 ///
@@ -58,7 +53,6 @@ impl ProtocolConfig {
     }
 
     /// All committed RA polynomial IDs, in order: instruction, bytecode, RAM.
-    #[allow(dead_code)]
     fn all_ra_poly_ids(&self) -> Vec<PolynomialId> {
         (0..self.d_instr)
             .map(PolynomialId::InstructionRa)
@@ -66,20 +60,7 @@ impl ProtocolConfig {
             .chain((0..self.d_ram).map(PolynomialId::RamRa))
             .collect()
     }
-
-    /// All committed RA polynomial tags (old u64 system), matching `all_ra_poly_ids` order.
-    fn all_ra_tags(&self) -> Vec<u64> {
-        (0..self.d_instr)
-            .map(ptag::instruction_ra)
-            .chain((0..self.d_bc).map(ptag::bytecode_ra))
-            .chain((0..self.d_ram).map(ptag::ram_ra_committed))
-            .collect()
-    }
 }
-
-// ---------------------------------------------------------------------------
-// Stage IDs (fixed layout)
-// ---------------------------------------------------------------------------
 
 const S1: StageId = StageId(0);
 const S2: StageId = StageId(1);
@@ -88,10 +69,6 @@ const S4: StageId = StageId(3);
 const S5: StageId = StageId(4);
 const S6: StageId = StageId(5);
 const S7: StageId = StageId(6);
-
-// ---------------------------------------------------------------------------
-// Symbolic points
-// ---------------------------------------------------------------------------
 
 fn r_cycle() -> SymbolicPoint {
     SymbolicPoint::Slice {
@@ -114,10 +91,6 @@ fn unified_point() -> SymbolicPoint {
     ])
 }
 
-// ---------------------------------------------------------------------------
-// Per-stage claim tables
-// ---------------------------------------------------------------------------
-
 type StageClaims = HashMap<PolynomialId, ClaimId>;
 
 struct StageOutput {
@@ -133,10 +106,6 @@ impl StageOutput {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Builder state
-// ---------------------------------------------------------------------------
 
 struct GraphBuilder {
     next_claim: u32,
@@ -183,89 +152,14 @@ impl GraphBuilder {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tag → PolynomialId bridge
-// ---------------------------------------------------------------------------
-
-fn poly_id_from_tag(tag: u64) -> PolynomialId {
-    match tag {
-        ptag::RAM_INC => PolynomialId::RamInc,
-        ptag::RD_INC => PolynomialId::RdInc,
-        ptag::TRUSTED_ADVICE => PolynomialId::TrustedAdvice,
-        ptag::UNTRUSTED_ADVICE => PolynomialId::UntrustedAdvice,
-        ptag::RAM_READ_VALUE => PolynomialId::RamReadValue,
-        ptag::RAM_WRITE_VALUE => PolynomialId::RamWriteValue,
-        ptag::RAM_RA => PolynomialId::RamAddress, // virtual RA decomposition
-        ptag::RAM_VAL => PolynomialId::RamVal,
-        ptag::RAM_VAL_FINAL => PolynomialId::RamValFinal,
-        ptag::RAM_ADDRESS => PolynomialId::RamAddress,
-        ptag::RAM_HAMMING_WEIGHT => PolynomialId::HammingWeight,
-        ptag::RD_WRITE_VALUE => PolynomialId::RdWriteValue,
-        ptag::RS1_VALUE => PolynomialId::Rs1Value,
-        ptag::RS2_VALUE => PolynomialId::Rs2Value,
-        ptag::REGISTERS_VAL => PolynomialId::RegistersVal,
-        ptag::RD_WA => PolynomialId::RdWa,
-        ptag::RS1_RA => PolynomialId::Rs1Ra,
-        ptag::RS2_RA => PolynomialId::Rs2Ra,
-        ptag::LOOKUP_OUTPUT => PolynomialId::LookupOutput,
-        ptag::LEFT_LOOKUP_OPERAND => PolynomialId::LeftLookupOperand,
-        ptag::RIGHT_LOOKUP_OPERAND => PolynomialId::RightLookupOperand,
-        ptag::LEFT_INSTRUCTION_INPUT => PolynomialId::LeftInstructionInput,
-        ptag::RIGHT_INSTRUCTION_INPUT => PolynomialId::RightInstructionInput,
-        ptag::IS_RD_NOT_ZERO => PolynomialId::IsRdNotZero,
-        ptag::WRITE_LOOKUP_OUTPUT_TO_RD_FLAG => PolynomialId::WriteLookupToRdFlag,
-        ptag::JUMP_FLAG => PolynomialId::JumpFlag,
-        ptag::BRANCH_FLAG => PolynomialId::BranchFlag,
-        ptag::LEFT_IS_RS1 => PolynomialId::LeftIsRs1,
-        ptag::LEFT_IS_PC => PolynomialId::LeftIsPc,
-        ptag::RIGHT_IS_RS2 => PolynomialId::RightIsRs2,
-        ptag::RIGHT_IS_IMM => PolynomialId::RightIsImm,
-        ptag::UNEXPANDED_PC => PolynomialId::UnexpandedPc,
-        ptag::IMM => PolynomialId::Imm,
-        ptag::NEXT_PC => PolynomialId::NextPc,
-        ptag::NEXT_UNEXPANDED_PC => PolynomialId::NextUnexpandedPc,
-        ptag::NEXT_IS_VIRTUAL => PolynomialId::NextIsVirtual,
-        ptag::NEXT_IS_FIRST_IN_SEQUENCE => PolynomialId::NextIsFirstInSequence,
-        ptag::NEXT_IS_NOOP => PolynomialId::NextIsNoop,
-        t if (ptag::INSTRUCTION_RA..ptag::BYTECODE_RA).contains(&t) => {
-            PolynomialId::InstructionRa((t - ptag::INSTRUCTION_RA) as usize)
-        }
-        t if (ptag::BYTECODE_RA..ptag::RAM_RA_COMMITTED).contains(&t) => {
-            PolynomialId::BytecodeRa((t - ptag::BYTECODE_RA) as usize)
-        }
-        t if (ptag::RAM_RA_COMMITTED..ptag::TRUSTED_ADVICE).contains(&t) => {
-            PolynomialId::RamRa((t - ptag::RAM_RA_COMMITTED) as usize)
-        }
-        t if (ptag::BYTECODE_READ_RAF_VAL..ptag::INSTRUCTION_READ_RAF_VAL).contains(&t) => {
-            PolynomialId::BytecodeReadRafVal((t - ptag::BYTECODE_READ_RAF_VAL) as usize)
-        }
-        t if (ptag::INSTRUCTION_READ_RAF_VAL..ptag::INSTRUCTION_READ_RAF_VAL + 100).contains(&t) => {
-            PolynomialId::InstructionReadRafVal((t - ptag::INSTRUCTION_READ_RAF_VAL) as usize)
-        }
-        t if (ptag::OP_FLAG..ptag::OP_FLAG + 14).contains(&t) => {
-            PolynomialId::OpFlag((t - ptag::OP_FLAG) as usize)
-        }
-        ptag::EXPANDED_PC => PolynomialId::ExpandedPc,
-        ptag::INSTRUCTION_RAF_FLAG => PolynomialId::InstructionRafFlag,
-        t if (ptag::LOOKUP_TABLE_FLAG..ptag::LOOKUP_TABLE_FLAG + 50).contains(&t) => {
-            PolynomialId::LookupTableFlag((t - ptag::LOOKUP_TABLE_FLAG) as usize)
-        }
-        _ => panic!("unknown polynomial tag: {tag}"),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Formula binding helpers
-// ---------------------------------------------------------------------------
-
 /// Bind a ClaimDefinition's opening variables to concrete ClaimIds.
 ///
-/// `tag_to_claim` maps `polynomial_tag` → `ClaimId` for each opening binding.
-fn bind_formula(def: ClaimDefinition, tag_to_claim: &HashMap<u64, ClaimId>) -> ClaimFormula {
+/// `poly_to_claim` maps `PolynomialId` → `ClaimId` for each opening binding.
+fn bind_formula(def: ClaimDefinition, poly_to_claim: &StageClaims) -> ClaimFormula {
     let opening_claims = def
         .opening_bindings
         .iter()
-        .map(|b| (b.var_id, tag_to_claim[&b.polynomial_tag]))
+        .map(|b| (b.var_id, poly_to_claim[&b.polynomial]))
         .collect();
     ClaimFormula {
         definition: def,
@@ -273,72 +167,6 @@ fn bind_formula(def: ClaimDefinition, tag_to_claim: &HashMap<u64, ClaimId>) -> C
     }
 }
 
-/// Build a tag → ClaimId map from a StageClaims table, for binding formulas.
-fn tag_map_from_claims(claims: &StageClaims) -> HashMap<u64, ClaimId> {
-    claims
-        .iter()
-        .flat_map(|(&poly_id, &claim_id)| {
-            poly_id_to_tags(poly_id)
-                .into_iter()
-                .map(move |tag| (tag, claim_id))
-        })
-        .collect()
-}
-
-/// PolynomialId → possible u64 tags (inverse of poly_id_from_tag).
-fn poly_id_to_tags(id: PolynomialId) -> Vec<u64> {
-    match id {
-        PolynomialId::RamInc => vec![ptag::RAM_INC],
-        PolynomialId::RdInc => vec![ptag::RD_INC],
-        PolynomialId::TrustedAdvice => vec![ptag::TRUSTED_ADVICE],
-        PolynomialId::UntrustedAdvice => vec![ptag::UNTRUSTED_ADVICE],
-        PolynomialId::RamReadValue => vec![ptag::RAM_READ_VALUE],
-        PolynomialId::RamWriteValue => vec![ptag::RAM_WRITE_VALUE],
-        PolynomialId::RamAddress => vec![ptag::RAM_ADDRESS, ptag::RAM_RA],
-        PolynomialId::RamVal => vec![ptag::RAM_VAL],
-        PolynomialId::RamValFinal => vec![ptag::RAM_VAL_FINAL],
-        PolynomialId::HammingWeight => vec![ptag::RAM_HAMMING_WEIGHT],
-        PolynomialId::RdWriteValue => vec![ptag::RD_WRITE_VALUE],
-        PolynomialId::Rs1Value => vec![ptag::RS1_VALUE],
-        PolynomialId::Rs2Value => vec![ptag::RS2_VALUE],
-        PolynomialId::RegistersVal => vec![ptag::REGISTERS_VAL],
-        PolynomialId::RdWa => vec![ptag::RD_WA],
-        PolynomialId::Rs1Ra => vec![ptag::RS1_RA],
-        PolynomialId::Rs2Ra => vec![ptag::RS2_RA],
-        PolynomialId::LookupOutput => vec![ptag::LOOKUP_OUTPUT],
-        PolynomialId::LeftLookupOperand => vec![ptag::LEFT_LOOKUP_OPERAND],
-        PolynomialId::RightLookupOperand => vec![ptag::RIGHT_LOOKUP_OPERAND],
-        PolynomialId::LeftInstructionInput => vec![ptag::LEFT_INSTRUCTION_INPUT],
-        PolynomialId::RightInstructionInput => vec![ptag::RIGHT_INSTRUCTION_INPUT],
-        PolynomialId::IsRdNotZero => vec![ptag::IS_RD_NOT_ZERO],
-        PolynomialId::WriteLookupToRdFlag => vec![ptag::WRITE_LOOKUP_OUTPUT_TO_RD_FLAG],
-        PolynomialId::JumpFlag => vec![ptag::JUMP_FLAG],
-        PolynomialId::BranchFlag => vec![ptag::BRANCH_FLAG],
-        PolynomialId::LeftIsRs1 => vec![ptag::LEFT_IS_RS1],
-        PolynomialId::LeftIsPc => vec![ptag::LEFT_IS_PC],
-        PolynomialId::RightIsRs2 => vec![ptag::RIGHT_IS_RS2],
-        PolynomialId::RightIsImm => vec![ptag::RIGHT_IS_IMM],
-        PolynomialId::UnexpandedPc => vec![ptag::UNEXPANDED_PC],
-        PolynomialId::Imm => vec![ptag::IMM],
-        PolynomialId::NextPc => vec![ptag::NEXT_PC],
-        PolynomialId::NextUnexpandedPc => vec![ptag::NEXT_UNEXPANDED_PC],
-        PolynomialId::NextIsVirtual => vec![ptag::NEXT_IS_VIRTUAL],
-        PolynomialId::NextIsFirstInSequence => vec![ptag::NEXT_IS_FIRST_IN_SEQUENCE],
-        PolynomialId::NextIsNoop => vec![ptag::NEXT_IS_NOOP],
-        PolynomialId::InstructionRa(i) => vec![ptag::instruction_ra(i)],
-        PolynomialId::BytecodeRa(i) => vec![ptag::bytecode_ra(i)],
-        PolynomialId::RamRa(i) => vec![ptag::ram_ra_committed(i)],
-        PolynomialId::SpartanWitness => vec![],
-        PolynomialId::BytecodeReadRafVal(i) => vec![ptag::bytecode_read_raf_val(i)],
-        PolynomialId::InstructionReadRafVal(i) => vec![ptag::instruction_read_raf_val(i)],
-        PolynomialId::OpFlag(i) => vec![ptag::op_flag(i)],
-        PolynomialId::ExpandedPc => vec![ptag::EXPANDED_PC],
-        PolynomialId::InstructionRafFlag => vec![ptag::INSTRUCTION_RAF_FLAG],
-        PolynomialId::LookupTableFlag(i) => vec![ptag::lookup_table_flag(i)],
-    }
-}
-
-// ---------------------------------------------------------------------------
 fn log_t() -> NumVars {
     SymbolicExpr::symbol(Symbol::LOG_T)
 }
@@ -458,10 +286,6 @@ fn register_all_polynomials(b: &mut GraphBuilder, config: &ProtocolConfig) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// S1: Spartan (composite — outer + product + inner)
-// ---------------------------------------------------------------------------
-
 /// All virtual polynomials produced by Spartan at r_cycle.
 const SPARTAN_VIRTUAL_OUTPUTS: &[PolynomialId] = &[
     PolynomialId::RamReadValue,
@@ -557,7 +381,7 @@ fn build_spartan(b: &mut GraphBuilder, config: &ProtocolConfig) -> StageOutput {
             definition: ClaimDefinition {
                 expr,
                 opening_bindings: vec![],
-                challenge_bindings: vec![],
+                num_challenges: 0,
             },
             opening_claims: HashMap::new(),
         }
@@ -591,10 +415,6 @@ fn build_spartan(b: &mut GraphBuilder, config: &ProtocolConfig) -> StageOutput {
         claims,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Vertex construction
-// ---------------------------------------------------------------------------
 
 /// Input claim specification.
 #[allow(dead_code)]
@@ -631,34 +451,26 @@ fn add_vertex(
 
     let mut produced = StageClaims::new();
     let mut produced_ids = Vec::new();
-    let mut produced_tag_map = HashMap::new();
     for binding in &output_def.opening_bindings {
-        let poly_id = poly_id_from_tag(binding.polynomial_tag);
-        let cid = b.alloc_claim(poly_id, point.clone());
-        let _ = produced.insert(poly_id, cid);
+        let cid = b.alloc_claim(binding.polynomial, point.clone());
+        let _ = produced.insert(binding.polynomial, cid);
         produced_ids.push(cid);
-        let _ = produced_tag_map.insert(binding.polynomial_tag, cid);
     }
 
-    let output_formula = bind_formula(output_def.clone(), &produced_tag_map);
+    let output_formula = bind_formula(output_def.clone(), &produced);
 
     let (input, output_challenge_spec) = match input_spec {
         InputSpec::Constant(c) => (InputClaim::Constant(c), OutputChallengeSpec::None),
         InputSpec::SameFormula { upstream, gamma_label } => {
-            let upstream_tag_map = tag_map_from_claims(&upstream);
-            let input_formula = bind_formula(output_def, &upstream_tag_map);
-            let challenge_labels = input_formula
-                .definition
-                .challenge_bindings
-                .iter()
+            let input_formula = bind_formula(output_def.clone(), &upstream);
+            let challenge_labels = (0..output_def.num_challenges)
                 .map(|_| ChallengeLabel::PreSqueeze(gamma_label))
                 .collect();
             (InputClaim::Formula { formula: input_formula, challenge_labels },
              OutputChallengeSpec::WeightedGammaPowers { gamma_label })
         }
         InputSpec::Formula { def, upstream, challenge_labels } => {
-            let upstream_tag_map = tag_map_from_claims(&upstream);
-            let input_formula = bind_formula(def, &upstream_tag_map);
+            let input_formula = bind_formula(def, &upstream);
             // For explicit formulas, the output challenge spec defaults to
             // WeightedGammaPowers using the first challenge label's pre_squeeze name.
             let spec = challenge_labels
@@ -667,7 +479,7 @@ fn add_vertex(
                     ChallengeLabel::PreSqueeze(name) => {
                         Some(OutputChallengeSpec::WeightedGammaPowers { gamma_label: name })
                     }
-                    _ => None,
+                    ChallengeLabel::External(_) => None,
                 })
                 .unwrap_or(OutputChallengeSpec::None);
             (InputClaim::Formula { formula: input_formula, challenge_labels }, spec)
@@ -726,12 +538,9 @@ fn add_vertex_cr(
     weighting: PublicPolynomial,
     gamma_label: &'static str,
 ) -> (VertexId, StageClaims) {
-    let deps: Vec<ClaimId> = {
-        let tag_map = tag_map_from_claims(upstream);
-        def.opening_bindings.iter()
-            .filter_map(|b| tag_map.get(&b.polynomial_tag).copied())
-            .collect()
-    };
+    let deps: Vec<ClaimId> = def.opening_bindings.iter()
+        .filter_map(|b| upstream.get(&b.polynomial).copied())
+        .collect();
     add_vertex(
         b, def, deps, point,
         InputSpec::SameFormula { upstream: upstream.clone(), gamma_label },
@@ -770,23 +579,6 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
     {
         let output_def = claims::ram::ram_read_write_checking();
         // Input claim reads RamReadValue, RamWriteValue from S1
-        let input_upstream = filter_claims(s1, &{
-            // Build a dummy def that references the input polynomials
-            let b2 = ExprBuilder::new();
-            let rv = b2.opening(0);
-            let wv = b2.opening(1);
-            let gamma = b2.challenge(0);
-            ClaimDefinition {
-                expr: b2.build(rv + gamma * wv),
-                opening_bindings: vec![
-                    crate::OpeningBinding { var_id: 0, polynomial_tag: ptag::RAM_READ_VALUE, sumcheck_tag: 0 },
-                    crate::OpeningBinding { var_id: 1, polynomial_tag: ptag::RAM_WRITE_VALUE, sumcheck_tag: 0 },
-                ],
-                challenge_bindings: vec![
-                    crate::ChallengeBinding { var_id: 0, source: crate::ChallengeSource::Derived },
-                ],
-            }
-        });
         let input_def = {
             let b2 = ExprBuilder::new();
             let rv = b2.opening(0);
@@ -795,14 +587,13 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
             ClaimDefinition {
                 expr: b2.build(rv + gamma * wv),
                 opening_bindings: vec![
-                    crate::OpeningBinding { var_id: 0, polynomial_tag: ptag::RAM_READ_VALUE, sumcheck_tag: 0 },
-                    crate::OpeningBinding { var_id: 1, polynomial_tag: ptag::RAM_WRITE_VALUE, sumcheck_tag: 0 },
+                    OpeningBinding { var_id: 0, polynomial: PolynomialId::RamReadValue },
+                    OpeningBinding { var_id: 1, polynomial: PolynomialId::RamWriteValue },
                 ],
-                challenge_bindings: vec![
-                    crate::ChallengeBinding { var_id: 0, source: crate::ChallengeSource::Derived },
-                ],
+                num_challenges: 1,
             }
         };
+        let input_upstream = filter_claims(s1, &input_def);
         let ordering_deps = deps_from_formula(&input_def, s1);
         let (vid, claims) = add_vertex(
             b, output_def, ordering_deps, pt.clone(),
@@ -835,7 +626,7 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
             ClaimDefinition {
                 expr: eb.build(uni_skip_eval),
                 opening_bindings: vec![],
-                challenge_bindings: vec![],
+                num_challenges: 0,
             }
         };
         let (vid, claims) = add_vertex_comp(
@@ -889,15 +680,11 @@ fn build_s2(b: &mut GraphBuilder, _config: &ProtocolConfig, s1: &StageClaims) ->
             let scale = eb.challenge(0);
             ClaimDefinition {
                 expr: eb.build(scale * ra),
-                opening_bindings: vec![crate::OpeningBinding {
+                opening_bindings: vec![OpeningBinding {
                     var_id: 0,
-                    polynomial_tag: ptag::RAM_ADDRESS,
-                    sumcheck_tag: 0,
+                    polynomial: PolynomialId::RamAddress,
                 }],
-                challenge_bindings: vec![crate::ChallengeBinding {
-                    var_id: 0,
-                    source: crate::ChallengeSource::Derived,
-                }],
+                num_challenges: 1,
             }
         };
         let input_upstream = filter_claims(s1, &input_def);
@@ -967,16 +754,13 @@ fn build_s3(b: &mut GraphBuilder, s1: &StageClaims, s2: &StageClaims) -> StageOu
                         + g4 - g4 * next_noop,
                 ),
                 opening_bindings: vec![
-                    crate::OpeningBinding { var_id: 0, polynomial_tag: ptag::NEXT_UNEXPANDED_PC, sumcheck_tag: 0 },
-                    crate::OpeningBinding { var_id: 1, polynomial_tag: ptag::NEXT_PC, sumcheck_tag: 0 },
-                    crate::OpeningBinding { var_id: 2, polynomial_tag: ptag::NEXT_IS_VIRTUAL, sumcheck_tag: 0 },
-                    crate::OpeningBinding { var_id: 3, polynomial_tag: ptag::NEXT_IS_FIRST_IN_SEQUENCE, sumcheck_tag: 0 },
-                    crate::OpeningBinding { var_id: 4, polynomial_tag: ptag::NEXT_IS_NOOP, sumcheck_tag: 0 },
+                    OpeningBinding { var_id: 0, polynomial: PolynomialId::NextUnexpandedPc },
+                    OpeningBinding { var_id: 1, polynomial: PolynomialId::NextPc },
+                    OpeningBinding { var_id: 2, polynomial: PolynomialId::NextIsVirtual },
+                    OpeningBinding { var_id: 3, polynomial: PolynomialId::NextIsFirstInSequence },
+                    OpeningBinding { var_id: 4, polynomial: PolynomialId::NextIsNoop },
                 ],
-                challenge_bindings: vec![crate::ChallengeBinding {
-                    var_id: 0,
-                    source: crate::ChallengeSource::Derived,
-                }],
+                num_challenges: 1,
             }
         };
         let input_upstream = filter_claims(s1, &input_def);
@@ -1020,13 +804,10 @@ fn build_s3(b: &mut GraphBuilder, s1: &StageClaims, s2: &StageClaims) -> StageOu
             ClaimDefinition {
                 expr: eb.build(right + gamma * left),
                 opening_bindings: vec![
-                    crate::OpeningBinding { var_id: 0, polynomial_tag: ptag::RIGHT_INSTRUCTION_INPUT, sumcheck_tag: 0 },
-                    crate::OpeningBinding { var_id: 1, polynomial_tag: ptag::LEFT_INSTRUCTION_INPUT, sumcheck_tag: 0 },
+                    OpeningBinding { var_id: 0, polynomial: PolynomialId::RightInstructionInput },
+                    OpeningBinding { var_id: 1, polynomial: PolynomialId::LeftInstructionInput },
                 ],
-                challenge_bindings: vec![crate::ChallengeBinding {
-                    var_id: 0,
-                    source: crate::ChallengeSource::Derived,
-                }],
+                num_challenges: 1,
             }
         };
         let input_upstream = filter_claims(s2, &input_def);
@@ -1073,10 +854,9 @@ fn build_s3(b: &mut GraphBuilder, s1: &StageClaims, s2: &StageClaims) -> StageOu
 }
 
 fn deps_from_formula(def: &ClaimDefinition, stage: &StageClaims) -> Vec<ClaimId> {
-    let tag_map = tag_map_from_claims(stage);
     def.opening_bindings
         .iter()
-        .filter_map(|b| tag_map.get(&b.polynomial_tag).copied())
+        .filter_map(|b| stage.get(&b.polynomial).copied())
         .collect()
 }
 
@@ -1092,7 +872,7 @@ fn filter_claims(stage: &StageClaims, def: &ClaimDefinition) -> StageClaims {
     let needed: std::collections::HashSet<PolynomialId> = def
         .opening_bindings
         .iter()
-        .map(|b| poly_id_from_tag(b.polynomial_tag))
+        .map(|b| b.polynomial)
         .collect();
     stage
         .iter()
@@ -1100,10 +880,6 @@ fn filter_claims(stage: &StageClaims, def: &ClaimDefinition) -> StageClaims {
         .map(|(&k, &v)| (k, v))
         .collect()
 }
-
-// ---------------------------------------------------------------------------
-// S4: RegistersRW + RamValCheck + RamRW + RamOutputCheck + RamRafEval
-// ---------------------------------------------------------------------------
 
 fn build_s4(
     b: &mut GraphBuilder,
@@ -1129,14 +905,11 @@ fn build_s4(
             ClaimDefinition {
                 expr: eb.build(rd_wv + g * rs1 + g * g * rs2),
                 opening_bindings: vec![
-                    crate::OpeningBinding { var_id: 0, polynomial_tag: ptag::RD_WRITE_VALUE, sumcheck_tag: 0 },
-                    crate::OpeningBinding { var_id: 1, polynomial_tag: ptag::RS1_VALUE, sumcheck_tag: 0 },
-                    crate::OpeningBinding { var_id: 2, polynomial_tag: ptag::RS2_VALUE, sumcheck_tag: 0 },
+                    OpeningBinding { var_id: 0, polynomial: PolynomialId::RdWriteValue },
+                    OpeningBinding { var_id: 1, polynomial: PolynomialId::Rs1Value },
+                    OpeningBinding { var_id: 2, polynomial: PolynomialId::Rs2Value },
                 ],
-                challenge_bindings: vec![crate::ChallengeBinding {
-                    var_id: 0,
-                    source: crate::ChallengeSource::Derived,
-                }],
+                num_challenges: 1,
             }
         };
         let input_upstream = filter_claims(s3, &input_def);
@@ -1171,21 +944,17 @@ fn build_s4(
         let output_def = claims::ram::ram_val_check();
         let input_def = claims::ram::ram_val_check_input(config.n_advice);
         let upstream = filter_claims(&available, &input_def);
-        let upstream_tag_map = tag_map_from_claims(&upstream);
 
         let vid = b.alloc_vertex();
         let mut produced = StageClaims::new();
         let mut produced_ids = Vec::new();
-        let mut produced_tag_map = HashMap::new();
         for binding in &output_def.opening_bindings {
-            let poly_id = poly_id_from_tag(binding.polynomial_tag);
-            let cid = b.alloc_claim(poly_id, pt.clone());
-            let _ = produced.insert(poly_id, cid);
+            let cid = b.alloc_claim(binding.polynomial, pt.clone());
+            let _ = produced.insert(binding.polynomial, cid);
             produced_ids.push(cid);
-            let _ = produced_tag_map.insert(binding.polynomial_tag, cid);
         }
 
-        let input_formula = if upstream_tag_map.is_empty() {
+        let input_formula = if upstream.is_empty() {
             InputClaim::Constant(0)
         } else {
             // ram_val_check_input uses: challenge(0) = gamma (pre_squeeze),
@@ -1203,11 +972,11 @@ fn build_s4(
                 }));
             }
             InputClaim::Formula {
-                formula: bind_formula(input_def, &upstream_tag_map),
+                formula: bind_formula(input_def, &upstream),
                 challenge_labels,
             }
         };
-        let output_formula = bind_formula(output_def, &produced_tag_map);
+        let output_formula = bind_formula(output_def, &produced);
 
         let deps: Vec<ClaimId> = upstream.values().copied().collect();
         b.push_vertex(Vertex::Sumcheck(Box::new(SumcheckVertex {
@@ -1224,6 +993,7 @@ fn build_s4(
                 num_vars: log_t(),
                 variable_group: VariableGroup::Cycle,
             }],
+            output_challenge_spec: OutputChallengeSpec::None,
         })));
         out.vertex_ids.push(vid);
         out.claims.extend(produced);
@@ -1237,10 +1007,6 @@ fn build_s4(
 fn deps_from_formula_map(claims: &StageClaims) -> Vec<ClaimId> {
     claims.values().copied().collect()
 }
-
-// ---------------------------------------------------------------------------
-// S5: RegistersValEval
-// ---------------------------------------------------------------------------
 
 fn build_s5(
     b: &mut GraphBuilder,
@@ -1265,14 +1031,11 @@ fn build_s5(
             ClaimDefinition {
                 expr: eb.build(rv + g * left_op + g * g * right_op),
                 opening_bindings: vec![
-                    crate::OpeningBinding { var_id: 0, polynomial_tag: ptag::LOOKUP_OUTPUT, sumcheck_tag: 0 },
-                    crate::OpeningBinding { var_id: 1, polynomial_tag: ptag::LEFT_LOOKUP_OPERAND, sumcheck_tag: 0 },
-                    crate::OpeningBinding { var_id: 2, polynomial_tag: ptag::RIGHT_LOOKUP_OPERAND, sumcheck_tag: 0 },
+                    OpeningBinding { var_id: 0, polynomial: PolynomialId::LookupOutput },
+                    OpeningBinding { var_id: 1, polynomial: PolynomialId::LeftLookupOperand },
+                    OpeningBinding { var_id: 2, polynomial: PolynomialId::RightLookupOperand },
                 ],
-                challenge_bindings: vec![crate::ChallengeBinding {
-                    var_id: 0,
-                    source: crate::ChallengeSource::Derived,
-                }],
+                num_challenges: 1,
             }
         };
         let input_upstream = filter_claims(s2, &input_def);
@@ -1331,12 +1094,11 @@ fn build_s5(
             let val = eb.opening(0);
             ClaimDefinition {
                 expr: eb.build(val),
-                opening_bindings: vec![crate::OpeningBinding {
+                opening_bindings: vec![OpeningBinding {
                     var_id: 0,
-                    polynomial_tag: ptag::REGISTERS_VAL,
-                    sumcheck_tag: 0,
+                    polynomial: PolynomialId::RegistersVal,
                 }],
-                challenge_bindings: vec![],
+                num_challenges: 0,
             }
         };
         let input_upstream = filter_claims(s4, &input_def);
@@ -1360,10 +1122,6 @@ fn build_s5(
 
     out
 }
-
-// ---------------------------------------------------------------------------
-// BytecodeReadRaf input claim builder
-// ---------------------------------------------------------------------------
 
 /// Maps a CircuitFlags index (0..14) to the canonical PolynomialId.
 /// Indices 5,6,7,12 map to existing named variants; the rest use OpFlag.
@@ -1414,7 +1172,6 @@ fn build_bytecode_raf_input(
     let mut challenge_id = 0u32;
     let mut opening_claims: HashMap<u32, ClaimId> = HashMap::new();
     let mut opening_bindings = Vec::new();
-    let mut challenge_bindings = Vec::new();
     let mut terms = eb.zero();
 
     /// Collect per-stage (poly_id, stage_claims) pairs into the formula.
@@ -1478,15 +1235,9 @@ fn build_bytecode_raf_input(
         let c = eb.challenge(challenge_id);
         terms = terms + c * o;
         let _ = opening_claims.insert(var_id, *claim_id);
-        let tags = poly_id_to_tags(*poly_id);
-        opening_bindings.push(crate::OpeningBinding {
+        opening_bindings.push(OpeningBinding {
             var_id,
-            polynomial_tag: tags.first().copied().unwrap_or(0),
-            sumcheck_tag: 0,
-        });
-        challenge_bindings.push(crate::ChallengeBinding {
-            var_id: challenge_id,
-            source: crate::ChallengeSource::Derived,
+            polynomial: *poly_id,
         });
         var_id += 1;
         challenge_id += 1;
@@ -1495,17 +1246,13 @@ fn build_bytecode_raf_input(
     // Entry constant term (γ^7, no opening)
     let entry_c = eb.challenge(challenge_id);
     terms = terms + entry_c;
-    challenge_bindings.push(crate::ChallengeBinding {
-        var_id: challenge_id,
-        source: crate::ChallengeSource::Derived,
-    });
 
     let expr = eb.build(terms);
 
     let definition = ClaimDefinition {
         expr,
         opening_bindings,
-        challenge_bindings,
+        num_challenges: challenge_id + 1,
     };
 
     let challenge_labels = (0..=challenge_id)
@@ -1520,10 +1267,6 @@ fn build_bytecode_raf_input(
         challenge_labels,
     }
 }
-
-// ---------------------------------------------------------------------------
-// S6: BytecodeReadRaf + Booleanity + HammingBool + RaVirtuals + IncCR
-// ---------------------------------------------------------------------------
 
 fn build_s6(
     b: &mut GraphBuilder,
@@ -1551,15 +1294,12 @@ fn build_s6(
         let vid = b.alloc_vertex();
         let mut produced = StageClaims::new();
         let mut produced_ids = Vec::new();
-        let mut produced_tag_map = HashMap::new();
         for binding in &output_def.opening_bindings {
-            let poly_id = poly_id_from_tag(binding.polynomial_tag);
-            let cid = b.alloc_claim(poly_id, pt.clone());
-            let _ = produced.insert(poly_id, cid);
+            let cid = b.alloc_claim(binding.polynomial, pt.clone());
+            let _ = produced.insert(binding.polynomial, cid);
             produced_ids.push(cid);
-            let _ = produced_tag_map.insert(binding.polynomial_tag, cid);
         }
-        let output_formula = bind_formula(output_def, &produced_tag_map);
+        let output_formula = bind_formula(output_def, &produced);
 
         // Build input claim: collect claims from specific stages.
         let input = build_bytecode_raf_input(config, s1, s2, s3, s4, s5);
@@ -1585,6 +1325,7 @@ fn build_s6(
                 Phase { num_vars: SymbolicExpr::symbol(Symbol::LOG_K), variable_group: VariableGroup::Address },
                 Phase { num_vars: log_t(), variable_group: VariableGroup::Cycle },
             ],
+            output_challenge_spec: OutputChallengeSpec::None,
         })));
         out.vertex_ids.push(vid);
         out.claims.extend(produced);
@@ -1592,8 +1333,8 @@ fn build_s6(
 
     // (2) V_ra_bool: proves all RA polynomials are boolean (one-hot)
     if config.d_total() > 0 {
-        let tags = config.all_ra_tags();
-        let def = claims::booleanity::ra_booleanity(tags.len(), &tags);
+        let ra_ids = config.all_ra_poly_ids();
+        let def = claims::booleanity::ra_booleanity(ra_ids.len(), &ra_ids);
         let (vid, claims) = add_vertex_comp(
             b,
             def,
@@ -1645,12 +1386,11 @@ fn build_s6(
             let ra = eb.opening(0);
             ClaimDefinition {
                 expr: eb.build(ra),
-                opening_bindings: vec![crate::OpeningBinding {
+                opening_bindings: vec![OpeningBinding {
                     var_id: 0,
-                    polynomial_tag: ptag::RAM_RA,
-                    sumcheck_tag: 0,
+                    polynomial: PolynomialId::RamAddress,
                 }],
-                challenge_bindings: vec![],
+                num_challenges: 0,
             }
         };
         let input_upstream = filter_claims(s5, &input_def);
@@ -1706,27 +1446,19 @@ fn build_s6(
                     sum = sum + gp * virtual_ra_i;
                 }
             }
-            // Build opening bindings — use first committed chunk tag per virtual poly
+            // Opening bindings use first committed chunk per virtual poly
             // as a proxy for the virtual evaluation. The verifier resolves these from
             // the S5 InstrReadRaf output claims.
             let opening_bindings = (0..n_virtual)
-                .map(|i| crate::OpeningBinding {
+                .map(|i| OpeningBinding {
                     var_id: i as u32,
-                    polynomial_tag: ptag::instruction_ra(i * cpv),
-                    sumcheck_tag: 0,
+                    polynomial: PolynomialId::InstructionRa(i * cpv),
                 })
                 .collect();
             ClaimDefinition {
                 expr: eb.build(sum),
                 opening_bindings,
-                challenge_bindings: if n_virtual > 1 {
-                    vec![crate::ChallengeBinding {
-                        var_id: 0,
-                        source: crate::ChallengeSource::Derived,
-                    }]
-                } else {
-                    vec![]
-                },
+                num_challenges: u32::from(n_virtual > 1),
             }
         };
         let input_upstream = filter_claims(s5, &input_def);
@@ -1779,10 +1511,6 @@ fn build_s6(
     out
 }
 
-// ---------------------------------------------------------------------------
-// S7: HammingWeightCR (+ RamRaCR, AdviceCR)
-// ---------------------------------------------------------------------------
-
 fn build_s7(
     b: &mut GraphBuilder,
     config: &ProtocolConfig,
@@ -1795,8 +1523,8 @@ fn build_s7(
 
     // V_hw_cr: hamming weight claim reduction over all RA polynomials
     if config.d_total() > 0 {
-        let tags = config.all_ra_tags();
-        let def = claims::reductions::hamming_weight_claim_reduction(&tags);
+        let ra_ids = config.all_ra_poly_ids();
+        let def = claims::reductions::hamming_weight_claim_reduction(&ra_ids);
         let upstream = filter_claims(&available, &def);
         let (vid, claims) = add_vertex_cr(
             b,
@@ -1834,10 +1562,6 @@ fn build_s7(
 
     out
 }
-
-// ---------------------------------------------------------------------------
-// Point normalization: dense poly claims (r_cycle dim) → unified point dim
-// ---------------------------------------------------------------------------
 
 fn build_normalization(b: &mut GraphBuilder, config: &ProtocolConfig, s6: &StageClaims) -> StageOutput {
     let vid = b.alloc_vertex();
@@ -1884,10 +1608,6 @@ fn build_normalization(b: &mut GraphBuilder, config: &ProtocolConfig, s6: &Stage
     }
 }
 
-// ---------------------------------------------------------------------------
-// Opening stage
-// ---------------------------------------------------------------------------
-
 fn build_opening(
     b: &mut GraphBuilder,
     s7: &StageClaims,
@@ -1921,10 +1641,6 @@ fn build_opening(
 
     (vids, consumed)
 }
-
-// ---------------------------------------------------------------------------
-// Staging construction
-// ---------------------------------------------------------------------------
 
 fn build_staging(
     stages: &[(StageId, &StageOutput, NumVars, Vec<ChallengeSpec>)],
@@ -1965,10 +1681,6 @@ fn build_staging(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Commitment strategy
-// ---------------------------------------------------------------------------
-
 fn build_commitment_strategy(b: &GraphBuilder) -> CommitmentStrategy {
     let mut groups_map: HashMap<CommitmentGroupId, Vec<PolynomialId>> = HashMap::new();
     for poly in &b.polynomials {
@@ -1993,10 +1705,6 @@ fn build_commitment_strategy(b: &GraphBuilder) -> CommitmentStrategy {
         transcript_order: group_ids,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Top-level construction
-// ---------------------------------------------------------------------------
 
 /// Build the complete Jolt protocol graph from configuration.
 pub fn build_jolt_protocol(config: ProtocolConfig) -> ProtocolGraph {
@@ -2115,10 +1823,6 @@ pub fn build_jolt_protocol(config: ProtocolConfig) -> ProtocolGraph {
         commitment,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -2298,22 +2002,6 @@ mod tests {
                 ..
             }
         ));
-    }
-
-    #[test]
-    fn poly_id_tag_roundtrip() {
-        let test_cases = [
-            (ptag::RAM_INC, PolynomialId::RamInc),
-            (ptag::RD_INC, PolynomialId::RdInc),
-            (ptag::instruction_ra(3), PolynomialId::InstructionRa(3)),
-            (ptag::bytecode_ra(2), PolynomialId::BytecodeRa(2)),
-            (ptag::ram_ra_committed(1), PolynomialId::RamRa(1)),
-            (ptag::LOOKUP_OUTPUT, PolynomialId::LookupOutput),
-            (ptag::NEXT_IS_NOOP, PolynomialId::NextIsNoop),
-        ];
-        for (tag, expected) in test_cases {
-            assert_eq!(poly_id_from_tag(tag), expected, "tag={tag}");
-        }
     }
 
     #[test]

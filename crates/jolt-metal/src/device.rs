@@ -10,9 +10,9 @@ use metal::{Device, MTLResourceOptions, MTLSize};
 
 use crate::buffer::MetalBuffer;
 use crate::compiler::{self, CompileMode};
-use crate::field_config::FieldConfig;
-use crate::gpu_config::GpuConfig;
+use crate::field_config::MslFieldParams;
 use crate::kernel::{CachedPipelines, MetalKernel};
+use crate::metal_device_config::MetalDeviceConfig;
 use crate::shaders::{ElementwiseKernels, InterpolationKernels};
 
 /// Apple Metal compute backend for Jolt.
@@ -22,20 +22,20 @@ use crate::shaders::{ElementwiseKernels, InterpolationKernels};
 /// memory architecture), avoiding explicit copies between CPU and Metal
 /// address spaces.
 ///
-/// Parameterized over field size via [`FieldConfig`] and GPU hardware via
-/// [`GpuConfig`]. On little-endian ARM64, the CPU's `[u64; N/2]` and Metal's
-/// `[u32; N]` Montgomery representations have identical byte layout.
+/// Parameterized over field size via [`MslFieldParams`] and hardware via
+/// [`MetalDeviceConfig`]. On little-endian ARM64, the CPU's `[u64; N/2]`
+/// and Metal's `[u32; N]` Montgomery representations have identical byte layout.
 pub struct MetalBackend {
     device: Device,
     queue: metal::CommandQueue,
     elementwise: ElementwiseKernels,
     interpolation: InterpolationKernels,
     compile_mode: CompileMode,
-    field_config: FieldConfig,
-    gpu_config: GpuConfig,
+    field_config: MslFieldParams,
+    device_config: MetalDeviceConfig,
     pipeline_cache: Mutex<HashMap<u64, Arc<CachedPipelines>>>,
     /// Pre-allocated partials buffer for reduce dispatches.
-    /// Sized for worst case: gpu_config.max_reduce_groups × max_evals(32) × field_byte_size.
+    /// Sized for worst case: device_config.max_reduce_groups × max_evals(32) × field_byte_size.
     reduce_partials: metal::Buffer,
     /// Pre-allocated params buffer for reduce dispatches. 16 bytes (4 × u32).
     reduce_params: metal::Buffer,
@@ -68,18 +68,18 @@ impl MetalBackend {
     }
 
     /// Create a backend with an explicit compile mode and field type.
-    pub fn with_compile_mode_and_field<F: jolt_field::GpuFieldConfig>(
+    pub fn with_compile_mode_and_field<F: jolt_field::MontgomeryConstants>(
         compile_mode: CompileMode,
     ) -> Self {
         let device = Device::system_default().expect("no Metal device available");
         let queue = device.new_command_queue();
-        let gpu_config = GpuConfig::detect(&device);
-        let field_config = FieldConfig::from_gpu_field::<F>();
+        let device_config = MetalDeviceConfig::detect(&device);
+        let field_config = MslFieldParams::new::<F>();
         let elementwise = ElementwiseKernels::compile(&device, &field_config);
         let interpolation = InterpolationKernels::compile(&device, &field_config);
 
         let reduce_partials = device.new_buffer(
-            (gpu_config.max_reduce_groups * 32 * field_config.byte_size) as u64,
+            (device_config.max_reduce_groups * 32 * field_config.byte_size) as u64,
             MTLResourceOptions::StorageModeShared,
         );
         let reduce_params = device.new_buffer(16, MTLResourceOptions::StorageModeShared);
@@ -91,7 +91,7 @@ impl MetalBackend {
             interpolation,
             compile_mode,
             field_config,
-            gpu_config,
+            device_config,
             pipeline_cache: Mutex::new(HashMap::new()),
             reduce_partials,
             reduce_params,
@@ -146,7 +146,12 @@ impl MetalBackend {
     /// Get cached pipelines or compile and cache them.
     fn get_or_compile(&self, descriptor: &KernelDescriptor) -> Arc<CachedPipelines> {
         use std::hash::{Hash, Hasher};
-        let msl = compiler::generate_msl(descriptor, self.compile_mode, &self.field_config, &self.gpu_config);
+        let msl = compiler::generate_msl(
+            descriptor,
+            self.compile_mode,
+            &self.field_config,
+            &self.device_config,
+        );
 
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         msl.source.hash(&mut hasher);
@@ -192,8 +197,8 @@ impl MetalBackend {
         }
 
         let num_groups = n_pairs
-            .div_ceil(self.gpu_config.reduce_group_size)
-            .min(self.gpu_config.max_reduce_groups);
+            .div_ceil(self.device_config.reduce_group_size)
+            .min(self.device_config.max_reduce_groups);
 
         // SAFETY: `reduce_params` is a 16-byte shared buffer (4 × u32). `params`
         // has at most 3 entries (n_pairs, inner_log, inner_mask). No Metal commands
@@ -226,7 +231,7 @@ impl MetalBackend {
 
         enc.dispatch_thread_groups(
             MTLSize::new(num_groups as u64, 1, 1),
-            MTLSize::new(self.gpu_config.reduce_group_size as u64, 1, 1),
+            MTLSize::new(self.device_config.reduce_group_size as u64, 1, 1),
         );
         enc.end_encoding();
         cmd.commit();
@@ -311,8 +316,8 @@ impl MetalBackend {
 
         // Elementwise kernels (sum, dot_product) use their own group size
         // matching the hardcoded SUM_GROUP_SIZE in elementwise.metal.
-        let gs = self.gpu_config.elementwise_group_size;
-        let num_groups = n.div_ceil(gs).min(self.gpu_config.max_reduce_groups);
+        let gs = self.device_config.elementwise_group_size;
+        let num_groups = n.div_ceil(gs).min(self.device_config.max_reduce_groups);
 
         // SAFETY: `reduce_params` is a 16-byte shared buffer (4 × u32). We write
         // exactly 2 entries. No Metal commands are in flight — previous command
@@ -349,8 +354,80 @@ impl MetalBackend {
             partials.iter().copied().fold(F::zero(), |acc, x| acc + x)
         }
     }
-}
+    /// Dispatch a fused interpolate+reduce kernel (H2L, weighted).
+    ///
+    /// Buffer binding: `input_0..K-1` (read-write), `weights` (read-write),
+    /// `interp_scalar`, optional `challenges`, `partials`, `params`.
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_fused_reduce<F: Field>(
+        &self,
+        pipeline: &metal::ComputePipelineState,
+        num_evals: usize,
+        inputs: &[&MetalBuffer<F>],
+        weights: &MetalBuffer<F>,
+        interp_scalar_buf: &metal::Buffer,
+        challenges_buf: Option<&metal::Buffer>,
+        n_fused: usize,
+    ) -> Vec<F> {
+        if n_fused == 0 {
+            return vec![F::zero(); num_evals];
+        }
 
+        let num_groups = n_fused
+            .div_ceil(self.device_config.reduce_group_size)
+            .min(self.device_config.max_reduce_groups);
+
+        // SAFETY: No Metal commands in flight — write params before dispatch.
+        unsafe {
+            self.reduce_params
+                .contents()
+                .cast::<u32>()
+                .write(n_fused as u32);
+        }
+
+        let cmd = self.queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(pipeline);
+
+        // Inputs are bound as read-write (`device Fr*`)
+        for (i, buf) in inputs.iter().enumerate() {
+            enc.set_buffer(i as u64, Some(&buf.raw), 0);
+        }
+        let mut idx = inputs.len() as u64;
+        enc.set_buffer(idx, Some(&weights.raw), 0);
+        idx += 1;
+        enc.set_buffer(idx, Some(interp_scalar_buf), 0);
+        idx += 1;
+        if let Some(chal_buf) = challenges_buf {
+            enc.set_buffer(idx, Some(chal_buf), 0);
+            idx += 1;
+        }
+        enc.set_buffer(idx, Some(&self.reduce_partials), 0);
+        enc.set_buffer(idx + 1, Some(&self.reduce_params), 0);
+
+        enc.dispatch_thread_groups(
+            MTLSize::new(num_groups as u64, 1, 1),
+            MTLSize::new(self.device_config.reduce_group_size as u64, 1, 1),
+        );
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+
+        // SAFETY: shared memory is coherent after command buffer completion.
+        let partials: &[F] = unsafe {
+            let ptr = self.reduce_partials.contents().cast::<F>();
+            std::slice::from_raw_parts(ptr, num_groups * num_evals)
+        };
+
+        let mut result = vec![F::zero(); num_evals];
+        for g in 0..num_groups {
+            for d in 0..num_evals {
+                result[d] += partials[g * num_evals + d];
+            }
+        }
+        result
+    }
+}
 
 impl Default for MetalBackend {
     fn default() -> Self {
@@ -483,7 +560,10 @@ impl ComputeBackend for MetalBackend {
                 let scalar_buf = self.upload_scalar(&scalar);
                 // SAFETY: no Metal commands in flight — reuse pre-allocated params.
                 unsafe {
-                    self.reduce_params.contents().cast::<u32>().write(half as u32);
+                    self.reduce_params
+                        .contents()
+                        .cast::<u32>()
+                        .write(half as u32);
                 }
                 self.dispatch_1d(
                     &self.interpolation.interpolate_inplace_high,
@@ -701,7 +781,10 @@ impl ComputeBackend for MetalBackend {
                     // SAFETY: no Metal commands are in flight — previous command
                     // buffer completed before this call.
                     unsafe {
-                        self.reduce_params.contents().cast::<u32>().write(half as u32);
+                        self.reduce_params
+                            .contents()
+                            .cast::<u32>()
+                            .write(half as u32);
                     }
                     for buf in bufs.iter() {
                         let enc = cmd.new_compute_command_encoder();
@@ -815,5 +898,39 @@ impl ComputeBackend for MetalBackend {
             &[n_pairs as u32, inner_log, inner_mask],
             n_pairs,
         )
+    }
+
+    fn fused_interpolate_reduce<F: Field>(
+        &self,
+        inputs: &mut [Self::Buffer<F>],
+        weights: &mut Self::Buffer<F>,
+        interpolation_scalar: F,
+        kernel: &Self::CompiledKernel<F>,
+        _num_evals: usize,
+    ) -> Vec<F> {
+        debug_assert!(!inputs.is_empty());
+        let n = inputs[0].len();
+        debug_assert!(n >= 4 && n.is_power_of_two());
+        let n_fused = n / 4;
+
+        let interp_scalar_buf = self.upload_scalar(&interpolation_scalar);
+        let refs: Vec<&MetalBuffer<F>> = inputs.iter().collect();
+        let result = self.dispatch_fused_reduce(
+            kernel.pipeline_fused_h2l(),
+            kernel.num_evals(),
+            &refs,
+            weights,
+            &interp_scalar_buf,
+            kernel.active_challenges_buf(),
+            n_fused,
+        );
+
+        // Update buffer lengths — the GPU wrote interpolated values to [0, N/2)
+        for buf in inputs.iter_mut() {
+            buf.len /= 2;
+        }
+        weights.len /= 2;
+
+        result
     }
 }

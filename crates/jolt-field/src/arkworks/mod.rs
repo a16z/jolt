@@ -6,5 +6,5 @@
 pub mod bn254;
 #[allow(dead_code)]
 pub(crate) mod bn254_ops;
-pub mod gpu_config;
+pub mod montgomery_impl;
 pub mod wide_accumulator;

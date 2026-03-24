@@ -370,4 +370,27 @@ pub trait ComputeBackend: Send + Sync + 'static {
             self.scale(buf, scalar);
         }
     }
+
+    /// Fused in-place interpolation + weighted composition-reduce (H2L).
+    ///
+    /// Combines [`interpolate_pairs_batch_inplace`](Self::interpolate_pairs_batch_inplace)
+    /// and [`pairwise_reduce`](Self::pairwise_reduce) into a single pass over
+    /// memory. After completion, each input buffer and the weight buffer are
+    /// halved (interpolated in-place). Returns `num_evals` eval sums.
+    ///
+    /// Saves one full read pass over all input buffers compared to separate
+    /// interpolate + reduce dispatches.
+    fn fused_interpolate_reduce<F: Field>(
+        &self,
+        inputs: &mut [Self::Buffer<F>],
+        weights: &mut Self::Buffer<F>,
+        interpolation_scalar: F,
+        kernel: &Self::CompiledKernel<F>,
+        num_evals: usize,
+    ) -> Vec<F> {
+        self.interpolate_pairs_batch_inplace(inputs, interpolation_scalar, BindingOrder::HighToLow);
+        self.interpolate_pairs_inplace(weights, interpolation_scalar, BindingOrder::HighToLow);
+        let refs: Vec<_> = inputs.iter().collect();
+        self.pairwise_reduce(&refs, weights, kernel, num_evals, BindingOrder::HighToLow)
+    }
 }

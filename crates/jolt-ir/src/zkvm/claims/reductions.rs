@@ -5,8 +5,8 @@
 //! pattern: γ-weighted sum of openings at the output point.
 
 use crate::builder::ExprBuilder;
-use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
-use crate::zkvm::tags::{poly, sumcheck};
+use crate::claim::{ClaimDefinition, OpeningBinding};
+use crate::PolynomialId;
 
 // Verified against jolt-core/src/zkvm/claim_reductions/registers.rs
 // Formula: Σ eq(r,j) · (rd_wv(j) + γ·rs1_v(j) + γ²·rs2_v(j))
@@ -35,34 +35,18 @@ pub fn registers_claim_reduction() -> ClaimDefinition {
         opening_bindings: vec![
             OpeningBinding {
                 var_id: 0,
-                polynomial_tag: poly::RD_WRITE_VALUE,
-                sumcheck_tag: sumcheck::REGISTERS_CLAIM_REDUCTION,
+                polynomial: PolynomialId::RdWriteValue,
             },
             OpeningBinding {
                 var_id: 1,
-                polynomial_tag: poly::RS1_VALUE,
-                sumcheck_tag: sumcheck::REGISTERS_CLAIM_REDUCTION,
+                polynomial: PolynomialId::Rs1Value,
             },
             OpeningBinding {
                 var_id: 2,
-                polynomial_tag: poly::RS2_VALUE,
-                sumcheck_tag: sumcheck::REGISTERS_CLAIM_REDUCTION,
+                polynomial: PolynomialId::Rs2Value,
             },
         ],
-        challenge_bindings: vec![
-            ChallengeBinding {
-                var_id: 0,
-                source: ChallengeSource::Derived,
-            },
-            ChallengeBinding {
-                var_id: 1,
-                source: ChallengeSource::Derived,
-            },
-            ChallengeBinding {
-                var_id: 2,
-                source: ChallengeSource::Derived,
-            },
-        ],
+        num_challenges: 3,
     }
 }
 
@@ -99,36 +83,26 @@ pub fn instruction_lookups_claim_reduction() -> ClaimDefinition {
         opening_bindings: vec![
             OpeningBinding {
                 var_id: 0,
-                polynomial_tag: poly::LOOKUP_OUTPUT,
-                sumcheck_tag: sumcheck::INSTRUCTION_CLAIM_REDUCTION,
+                polynomial: PolynomialId::LookupOutput,
             },
             OpeningBinding {
                 var_id: 1,
-                polynomial_tag: poly::LEFT_LOOKUP_OPERAND,
-                sumcheck_tag: sumcheck::INSTRUCTION_CLAIM_REDUCTION,
+                polynomial: PolynomialId::LeftLookupOperand,
             },
             OpeningBinding {
                 var_id: 2,
-                polynomial_tag: poly::RIGHT_LOOKUP_OPERAND,
-                sumcheck_tag: sumcheck::INSTRUCTION_CLAIM_REDUCTION,
+                polynomial: PolynomialId::RightLookupOperand,
             },
             OpeningBinding {
                 var_id: 3,
-                polynomial_tag: poly::LEFT_INSTRUCTION_INPUT,
-                sumcheck_tag: sumcheck::INSTRUCTION_CLAIM_REDUCTION,
+                polynomial: PolynomialId::LeftInstructionInput,
             },
             OpeningBinding {
                 var_id: 4,
-                polynomial_tag: poly::RIGHT_INSTRUCTION_INPUT,
-                sumcheck_tag: sumcheck::INSTRUCTION_CLAIM_REDUCTION,
+                polynomial: PolynomialId::RightInstructionInput,
             },
         ],
-        challenge_bindings: (0..5)
-            .map(|i| ChallengeBinding {
-                var_id: i,
-                source: ChallengeSource::Derived,
-            })
-            .collect(),
+        num_challenges: 5,
     }
 }
 
@@ -154,13 +128,9 @@ pub fn ram_ra_claim_reduction() -> ClaimDefinition {
         expr,
         opening_bindings: vec![OpeningBinding {
             var_id: 0,
-            polynomial_tag: poly::RAM_RA,
-            sumcheck_tag: sumcheck::RAM_RA_CLAIM_REDUCTION,
+            polynomial: PolynomialId::RamAddress,
         }],
-        challenge_bindings: vec![ChallengeBinding {
-            var_id: 0,
-            source: ChallengeSource::Derived,
-        }],
+        num_challenges: 1,
     }
 }
 
@@ -189,25 +159,14 @@ pub fn increment_claim_reduction() -> ClaimDefinition {
         opening_bindings: vec![
             OpeningBinding {
                 var_id: 0,
-                polynomial_tag: poly::RAM_INC,
-                sumcheck_tag: sumcheck::INC_CLAIM_REDUCTION,
+                polynomial: PolynomialId::RamInc,
             },
             OpeningBinding {
                 var_id: 1,
-                polynomial_tag: poly::RD_INC,
-                sumcheck_tag: sumcheck::INC_CLAIM_REDUCTION,
+                polynomial: PolynomialId::RdInc,
             },
         ],
-        challenge_bindings: vec![
-            ChallengeBinding {
-                var_id: 0,
-                source: ChallengeSource::Derived,
-            },
-            ChallengeBinding {
-                var_id: 1,
-                source: ChallengeSource::Derived,
-            },
-        ],
+        num_challenges: 2,
     }
 }
 
@@ -219,8 +178,8 @@ pub fn increment_claim_reduction() -> ClaimDefinition {
 /// Reduces all RA polynomial opening claims from Booleanity, RA virtual, and
 /// Hamming weight sumchecks into a single (address) opening point.
 ///
-/// `poly_tags` maps each polynomial index to its tag (e.g., `instruction_ra(i)`,
-/// `bytecode_ra(j)`, `ram_ra_committed(k)`).
+/// `polynomials` maps each polynomial index to its [`PolynomialId`]
+/// (e.g., `InstructionRa(i)`, `BytecodeRa(j)`, `RamRa(k)`).
 ///
 /// Output claim: `Σ_i c_i · poly_i`
 ///
@@ -229,8 +188,8 @@ pub fn increment_claim_reduction() -> ClaimDefinition {
 /// per RA polynomial, combined into one coefficient).
 ///
 /// Verified against jolt-core/src/zkvm/claim_reductions/hamming_weight.rs.
-pub fn hamming_weight_claim_reduction(poly_tags: &[u64]) -> ClaimDefinition {
-    let n = poly_tags.len();
+pub fn hamming_weight_claim_reduction(polynomials: &[PolynomialId]) -> ClaimDefinition {
+    let n = polynomials.len();
     let b = ExprBuilder::new();
 
     let mut terms = b.zero();
@@ -245,22 +204,14 @@ pub fn hamming_weight_claim_reduction(poly_tags: &[u64]) -> ClaimDefinition {
     let opening_bindings = (0..n)
         .map(|i| OpeningBinding {
             var_id: i as u32,
-            polynomial_tag: poly_tags[i],
-            sumcheck_tag: sumcheck::HAMMING_WEIGHT_CLAIM_REDUCTION,
-        })
-        .collect();
-
-    let challenge_bindings = (0..n)
-        .map(|i| ChallengeBinding {
-            var_id: i as u32,
-            source: ChallengeSource::Derived,
+            polynomial: polynomials[i],
         })
         .collect();
 
     ClaimDefinition {
         expr,
         opening_bindings,
-        challenge_bindings,
+        num_challenges: n as u32,
     }
 }
 
@@ -288,13 +239,9 @@ pub fn advice_claim_reduction_address() -> ClaimDefinition {
         expr,
         opening_bindings: vec![OpeningBinding {
             var_id: 0,
-            polynomial_tag: 0,
-            sumcheck_tag: sumcheck::ADVICE_CLAIM_REDUCTION,
+            polynomial: PolynomialId::TrustedAdvice,
         }],
-        challenge_bindings: vec![ChallengeBinding {
-            var_id: 0,
-            source: ChallengeSource::Derived,
-        }],
+        num_challenges: 1,
     }
 }
 
@@ -358,12 +305,12 @@ mod tests {
 
     #[test]
     fn hamming_weight_reduction_formula() {
-        let tags = vec![
-            poly::instruction_ra(0),
-            poly::bytecode_ra(0),
-            poly::ram_ra_committed(0),
+        let polynomials = vec![
+            PolynomialId::InstructionRa(0),
+            PolynomialId::BytecodeRa(0),
+            PolynomialId::RamRa(0),
         ];
-        let claim = hamming_weight_claim_reduction(&tags);
+        let claim = hamming_weight_claim_reduction(&polynomials);
         let polys: Vec<Fr> = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
         let challenges: Vec<Fr> = vec![Fr::from_u64(7), Fr::from_u64(11), Fr::from_u64(13)];
 
@@ -388,13 +335,13 @@ mod tests {
 
     #[test]
     fn sop_equivalence_hamming_weight_reduction() {
-        let tags = vec![
-            poly::instruction_ra(0),
-            poly::instruction_ra(1),
-            poly::bytecode_ra(0),
-            poly::ram_ra_committed(0),
+        let polynomials = vec![
+            PolynomialId::InstructionRa(0),
+            PolynomialId::InstructionRa(1),
+            PolynomialId::BytecodeRa(0),
+            PolynomialId::RamRa(0),
         ];
-        let claim = hamming_weight_claim_reduction(&tags);
+        let claim = hamming_weight_claim_reduction(&polynomials);
         let openings: Vec<Fr> = (1..=4).map(Fr::from_u64).collect();
         let challenges: Vec<Fr> = (10..=13).map(Fr::from_u64).collect();
 

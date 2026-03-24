@@ -1,19 +1,19 @@
 //! Dynamic MSL source generation for arbitrary Montgomery-form prime fields.
 //!
 //! Generates Metal Shading Language code for field arithmetic, wide accumulators,
-//! and test kernels parameterized by [`GpuFieldConfig`]. The generated MSL is
+//! and test kernels parameterized by [`MontgomeryConstants`]. The generated MSL is
 //! functionally identical to the former static `.metal` shader files when called
 //! with N=8 and BN254 constants.
 
 use std::fmt::Write;
 
-use jolt_field::GpuFieldConfig;
+use jolt_field::MontgomeryConstants;
 
 /// Generate the complete MSL preamble: Fr struct, constants, arithmetic, WideAcc.
 ///
 /// This replaces `bn254_fr.metal`, `wide_accumulator.metal`, and `test_kernels.metal`.
 /// The returned string is suitable for prepending to kernel-specific MSL bodies.
-pub fn generate_full_preamble<F: GpuFieldConfig>() -> String {
+pub fn generate_full_preamble<F: MontgomeryConstants>() -> String {
     let n = F::NUM_U32_LIMBS;
     let acc_n = F::ACC_U32_LIMBS;
     let modulus = F::modulus_u32();
@@ -40,7 +40,7 @@ pub fn generate_full_preamble<F: GpuFieldConfig>() -> String {
 }
 
 /// Generate MSL for the test/benchmark kernels (mul, add, sub, sqr, neg, fmadd, from_u64).
-pub fn generate_test_kernels<F: GpuFieldConfig>() -> String {
+pub fn generate_test_kernels<F: MontgomeryConstants>() -> String {
     let n = F::NUM_U32_LIMBS;
     let mut s = String::with_capacity(4096);
 
@@ -48,7 +48,10 @@ pub fn generate_test_kernels<F: GpuFieldConfig>() -> String {
     let _ = writeln!(s, "    device const Fr* a       [[buffer(0)]],");
     let _ = writeln!(s, "    device const Fr* b       [[buffer(1)]],");
     let _ = writeln!(s, "    device Fr*       result  [[buffer(2)]],");
-    let _ = writeln!(s, "    uint tid                 [[thread_position_in_grid]]");
+    let _ = writeln!(
+        s,
+        "    uint tid                 [[thread_position_in_grid]]"
+    );
     let _ = writeln!(s, ") {{");
     let _ = writeln!(s, "    result[tid] = fr_mul(a[tid], b[tid]);");
     let _ = writeln!(s, "}}");
@@ -58,7 +61,10 @@ pub fn generate_test_kernels<F: GpuFieldConfig>() -> String {
     let _ = writeln!(s, "    device const Fr* a       [[buffer(0)]],");
     let _ = writeln!(s, "    device const Fr* b       [[buffer(1)]],");
     let _ = writeln!(s, "    device Fr*       result  [[buffer(2)]],");
-    let _ = writeln!(s, "    uint tid                 [[thread_position_in_grid]]");
+    let _ = writeln!(
+        s,
+        "    uint tid                 [[thread_position_in_grid]]"
+    );
     let _ = writeln!(s, ") {{");
     let _ = writeln!(s, "    result[tid] = fr_add(a[tid], b[tid]);");
     let _ = writeln!(s, "}}");
@@ -68,7 +74,10 @@ pub fn generate_test_kernels<F: GpuFieldConfig>() -> String {
     let _ = writeln!(s, "    device const Fr* a       [[buffer(0)]],");
     let _ = writeln!(s, "    device const Fr* b       [[buffer(1)]],");
     let _ = writeln!(s, "    device Fr*       result  [[buffer(2)]],");
-    let _ = writeln!(s, "    uint tid                 [[thread_position_in_grid]]");
+    let _ = writeln!(
+        s,
+        "    uint tid                 [[thread_position_in_grid]]"
+    );
     let _ = writeln!(s, ") {{");
     let _ = writeln!(s, "    result[tid] = fr_sub(a[tid], b[tid]);");
     let _ = writeln!(s, "}}");
@@ -77,7 +86,10 @@ pub fn generate_test_kernels<F: GpuFieldConfig>() -> String {
     let _ = writeln!(s, "kernel void fr_sqr_kernel(");
     let _ = writeln!(s, "    device const Fr* a       [[buffer(0)]],");
     let _ = writeln!(s, "    device Fr*       result  [[buffer(1)]],");
-    let _ = writeln!(s, "    uint tid                 [[thread_position_in_grid]]");
+    let _ = writeln!(
+        s,
+        "    uint tid                 [[thread_position_in_grid]]"
+    );
     let _ = writeln!(s, ") {{");
     let _ = writeln!(s, "    result[tid] = fr_sqr(a[tid]);");
     let _ = writeln!(s, "}}");
@@ -86,7 +98,10 @@ pub fn generate_test_kernels<F: GpuFieldConfig>() -> String {
     let _ = writeln!(s, "kernel void fr_neg_kernel(");
     let _ = writeln!(s, "    device const Fr* a       [[buffer(0)]],");
     let _ = writeln!(s, "    device Fr*       result  [[buffer(1)]],");
-    let _ = writeln!(s, "    uint tid                 [[thread_position_in_grid]]");
+    let _ = writeln!(
+        s,
+        "    uint tid                 [[thread_position_in_grid]]"
+    );
     let _ = writeln!(s, ") {{");
     let _ = writeln!(s, "    result[tid] = fr_neg(a[tid]);");
     let _ = writeln!(s, "}}");
@@ -99,7 +114,10 @@ pub fn generate_test_kernels<F: GpuFieldConfig>() -> String {
     let _ = writeln!(s, "    device const Fr* b       [[buffer(1)]],");
     let _ = writeln!(s, "    device Fr*       result  [[buffer(2)]],");
     let _ = writeln!(s, "    device const uint* params [[buffer(3)]],");
-    let _ = writeln!(s, "    uint tid                 [[thread_position_in_grid]]");
+    let _ = writeln!(
+        s,
+        "    uint tid                 [[thread_position_in_grid]]"
+    );
     let _ = writeln!(s, ") {{");
     let _ = writeln!(s, "    uint stride = params[0];");
     let _ = writeln!(s, "    WideAcc acc = acc_zero();");
@@ -119,7 +137,10 @@ pub fn generate_test_kernels<F: GpuFieldConfig>() -> String {
     let _ = writeln!(s, "    device const Fr* b       [[buffer(1)]],");
     let _ = writeln!(s, "    device Fr*       result  [[buffer(2)]],");
     let _ = writeln!(s, "    device const uint* params [[buffer(3)]],");
-    let _ = writeln!(s, "    uint tid                 [[thread_position_in_grid]]");
+    let _ = writeln!(
+        s,
+        "    uint tid                 [[thread_position_in_grid]]"
+    );
     let _ = writeln!(s, ") {{");
     let _ = writeln!(s, "    uint stride = params[0];");
     let _ = writeln!(s, "    uint n_fmadd = params[1];");
@@ -137,7 +158,10 @@ pub fn generate_test_kernels<F: GpuFieldConfig>() -> String {
     let _ = writeln!(s, "kernel void fr_from_u64_kernel(");
     let _ = writeln!(s, "    device const ulong* vals  [[buffer(0)]],");
     let _ = writeln!(s, "    device Fr*          result [[buffer(1)]],");
-    let _ = writeln!(s, "    uint tid                   [[thread_position_in_grid]]");
+    let _ = writeln!(
+        s,
+        "    uint tid                   [[thread_position_in_grid]]"
+    );
     let _ = writeln!(s, ") {{");
     let _ = writeln!(s, "    Fr a;");
     let _ = writeln!(s, "    a.limbs[0] = uint(vals[tid]);");
@@ -203,7 +227,10 @@ fn generate_field_constants(
 
 fn generate_fr_arithmetic(s: &mut String, n: usize) {
     // fr_gte
-    let _ = writeln!(s, "inline bool fr_gte(Fr a, thread const uint (&m)[{n}]) {{");
+    let _ = writeln!(
+        s,
+        "inline bool fr_gte(Fr a, thread const uint (&m)[{n}]) {{"
+    );
     let _ = writeln!(s, "    for (int i = {0}; i >= 0; i--) {{", n - 1);
     let _ = writeln!(s, "        if (a.limbs[i] > m[i]) return true;");
     let _ = writeln!(s, "        if (a.limbs[i] < m[i]) return false;");
@@ -213,10 +240,16 @@ fn generate_fr_arithmetic(s: &mut String, n: usize) {
     s.push('\n');
 
     // fr_select
-    let _ = writeln!(s, "inline Fr fr_select(bool cond, Fr if_true, Fr if_false) {{");
+    let _ = writeln!(
+        s,
+        "inline Fr fr_select(bool cond, Fr if_true, Fr if_false) {{"
+    );
     let _ = writeln!(s, "    Fr r;");
     let _ = writeln!(s, "    for (int i = 0; i < {n}; i++) {{");
-    let _ = writeln!(s, "        r.limbs[i] = cond ? if_true.limbs[i] : if_false.limbs[i];");
+    let _ = writeln!(
+        s,
+        "        r.limbs[i] = cond ? if_true.limbs[i] : if_false.limbs[i];"
+    );
     let _ = writeln!(s, "    }}");
     let _ = writeln!(s, "    return r;");
     let _ = writeln!(s, "}}");
@@ -227,7 +260,10 @@ fn generate_fr_arithmetic(s: &mut String, n: usize) {
     let _ = writeln!(s, "    Fr reduced;");
     let _ = writeln!(s, "    uint borrow = 0;");
     let _ = writeln!(s, "    for (int i = 0; i < {n}; i++) {{");
-    let _ = writeln!(s, "        uint2 r = sbb(a.limbs[i], FR_MODULUS[i], borrow);");
+    let _ = writeln!(
+        s,
+        "        uint2 r = sbb(a.limbs[i], FR_MODULUS[i], borrow);"
+    );
     let _ = writeln!(s, "        reduced.limbs[i] = r.x;");
     let _ = writeln!(s, "        borrow = r.y;");
     let _ = writeln!(s, "    }}");
@@ -247,7 +283,10 @@ fn generate_fr_arithmetic(s: &mut String, n: usize) {
     let _ = writeln!(s, "    Fr reduced;");
     let _ = writeln!(s, "    uint borrow = 0;");
     let _ = writeln!(s, "    for (int i = 0; i < {n}; i++) {{");
-    let _ = writeln!(s, "        uint2 r = sbb(result.limbs[i], FR_MODULUS[i], borrow);");
+    let _ = writeln!(
+        s,
+        "        uint2 r = sbb(result.limbs[i], FR_MODULUS[i], borrow);"
+    );
     let _ = writeln!(s, "        reduced.limbs[i] = r.x;");
     let _ = writeln!(s, "        borrow = r.y;");
     let _ = writeln!(s, "    }}");
@@ -313,7 +352,10 @@ fn generate_cios_macro(s: &mut String, n: usize) {
     let n_minus_1 = n - 1;
     let _ = writeln!(s, "    for (int _i = 1; _i < {n}; _i++) {{ \\");
     let _ = writeln!(s, "        uint _p_lo = _m * (uint)FR_MODULUS[_i]; \\");
-    let _ = writeln!(s, "        uint _p_hi = mulhi(_m, (uint)FR_MODULUS[_i]); \\");
+    let _ = writeln!(
+        s,
+        "        uint _p_hi = mulhi(_m, (uint)FR_MODULUS[_i]); \\"
+    );
     let _ = writeln!(s, "        uint _s1 = T[_i] + _p_lo; \\");
     let _ = writeln!(s, "        uint _c1 = uint(_s1 < T[_i]); \\");
     let _ = writeln!(s, "        uint _s2 = _s1 + _carry; \\");
@@ -348,7 +390,10 @@ fn generate_fr_mul(s: &mut String, n: usize) {
         let _ = writeln!(s, "    FR_CIOS_ROUND(T, a, b.limbs[{j}], T{n});");
     }
     let _ = writeln!(s, "    Fr result;");
-    let _ = writeln!(s, "    for (int i = 0; i < {n}; i++) result.limbs[i] = T[i];");
+    let _ = writeln!(
+        s,
+        "    for (int i = 0; i < {n}; i++) result.limbs[i] = T[i];"
+    );
     let _ = writeln!(s, "    return result;");
     let _ = writeln!(s, "}}");
     s.push('\n');
@@ -376,7 +421,10 @@ fn generate_fr_mul(s: &mut String, n: usize) {
     // fr_one
     let _ = writeln!(s, "inline Fr fr_one() {{");
     let _ = writeln!(s, "    Fr o;");
-    let _ = writeln!(s, "    for (int i = 0; i < {n}; i++) o.limbs[i] = FR_ONE[i];");
+    let _ = writeln!(
+        s,
+        "    for (int i = 0; i < {n}; i++) o.limbs[i] = FR_ONE[i];"
+    );
     let _ = writeln!(s, "    return o;");
     let _ = writeln!(s, "}}");
     s.push('\n');
@@ -384,7 +432,10 @@ fn generate_fr_mul(s: &mut String, n: usize) {
     // fr_to_mont
     let _ = writeln!(s, "FR_FUNC_ATTR Fr fr_to_mont(Fr a) {{");
     let _ = writeln!(s, "    Fr r2;");
-    let _ = writeln!(s, "    for (int i = 0; i < {n}; i++) r2.limbs[i] = FR_R2[i];");
+    let _ = writeln!(
+        s,
+        "    for (int i = 0; i < {n}; i++) r2.limbs[i] = FR_R2[i];"
+    );
     let _ = writeln!(s, "    return fr_mul(a, r2);");
     let _ = writeln!(s, "}}");
     s.push('\n');
@@ -443,7 +494,10 @@ fn generate_wide_acc(s: &mut String, n: usize, acc_n: usize) {
     s.push('\n');
 
     // acc_add_fr
-    let _ = writeln!(s, "FR_FUNC_ATTR void acc_add_fr(thread WideAcc &acc, Fr a) {{");
+    let _ = writeln!(
+        s,
+        "FR_FUNC_ATTR void acc_add_fr(thread WideAcc &acc, Fr a) {{"
+    );
     let _ = writeln!(s, "    uint carry = 0;");
     let _ = writeln!(s, "    for (int i = 0; i < {n}; i++) {{");
     let _ = writeln!(s, "        uint2 r = adc(acc.limbs[i], a.limbs[i], carry);");
@@ -462,11 +516,17 @@ fn generate_wide_acc(s: &mut String, n: usize, acc_n: usize) {
     let _ = writeln!(s, "inline void acc_add_limbs(thread WideAcc &acc, const thread uint *src, int count, int offset) {{");
     let _ = writeln!(s, "    uint carry = 0;");
     let _ = writeln!(s, "    for (int i = 0; i < count; i++) {{");
-    let _ = writeln!(s, "        uint2 r = adc(acc.limbs[offset + i], src[i], carry);");
+    let _ = writeln!(
+        s,
+        "        uint2 r = adc(acc.limbs[offset + i], src[i], carry);"
+    );
     let _ = writeln!(s, "        acc.limbs[offset + i] = r.x;");
     let _ = writeln!(s, "        carry = r.y;");
     let _ = writeln!(s, "    }}");
-    let _ = writeln!(s, "    for (int i = offset + count; carry != 0 && i < ACC_LIMBS; i++) {{");
+    let _ = writeln!(
+        s,
+        "    for (int i = offset + count; carry != 0 && i < ACC_LIMBS; i++) {{"
+    );
     let _ = writeln!(s, "        uint2 r = adc(acc.limbs[i], 0u, carry);");
     let _ = writeln!(s, "        acc.limbs[i] = r.x;");
     let _ = writeln!(s, "        carry = r.y;");
@@ -475,10 +535,16 @@ fn generate_wide_acc(s: &mut String, n: usize, acc_n: usize) {
     s.push('\n');
 
     // acc_merge (thread overload)
-    let _ = writeln!(s, "FR_FUNC_ATTR void acc_merge(thread WideAcc &dst, WideAcc src) {{");
+    let _ = writeln!(
+        s,
+        "FR_FUNC_ATTR void acc_merge(thread WideAcc &dst, WideAcc src) {{"
+    );
     let _ = writeln!(s, "    uint carry = 0;");
     let _ = writeln!(s, "    for (int i = 0; i < ACC_LIMBS; i++) {{");
-    let _ = writeln!(s, "        uint2 r = adc(dst.limbs[i], src.limbs[i], carry);");
+    let _ = writeln!(
+        s,
+        "        uint2 r = adc(dst.limbs[i], src.limbs[i], carry);"
+    );
     let _ = writeln!(s, "        dst.limbs[i] = r.x;");
     let _ = writeln!(s, "        carry = r.y;");
     let _ = writeln!(s, "    }}");
@@ -486,10 +552,16 @@ fn generate_wide_acc(s: &mut String, n: usize, acc_n: usize) {
     s.push('\n');
 
     // acc_merge (threadgroup overload)
-    let _ = writeln!(s, "FR_FUNC_ATTR void acc_merge(threadgroup WideAcc &dst, threadgroup WideAcc &src) {{");
+    let _ = writeln!(
+        s,
+        "FR_FUNC_ATTR void acc_merge(threadgroup WideAcc &dst, threadgroup WideAcc &src) {{"
+    );
     let _ = writeln!(s, "    uint carry = 0;");
     let _ = writeln!(s, "    for (int i = 0; i < ACC_LIMBS; i++) {{");
-    let _ = writeln!(s, "        uint2 r = adc(dst.limbs[i], src.limbs[i], carry);");
+    let _ = writeln!(
+        s,
+        "        uint2 r = adc(dst.limbs[i], src.limbs[i], carry);"
+    );
     let _ = writeln!(s, "        dst.limbs[i] = r.x;");
     let _ = writeln!(s, "        carry = r.y;");
     let _ = writeln!(s, "    }}");
@@ -502,8 +574,14 @@ fn generate_wide_acc(s: &mut String, n: usize, acc_n: usize) {
     let _ = writeln!(s, "    for (int round = 0; round < {n}; round++) {{");
     let _ = writeln!(s, "        uint m = acc.limbs[round] * FR_INV32;");
     let _ = writeln!(s, "        uint m_hi = mulhi(m, (uint)FR_MODULUS[0]);");
-    let _ = writeln!(s, "        uint s0 = acc.limbs[round] + m * (uint)FR_MODULUS[0];");
-    let _ = writeln!(s, "        uint carry = m_hi + uint(s0 < acc.limbs[round]);");
+    let _ = writeln!(
+        s,
+        "        uint s0 = acc.limbs[round] + m * (uint)FR_MODULUS[0];"
+    );
+    let _ = writeln!(
+        s,
+        "        uint carry = m_hi + uint(s0 < acc.limbs[round]);"
+    );
     let _ = writeln!(s, "        for (int i = 1; i < {n}; i++) {{");
     let _ = writeln!(s, "            uint p_lo = m * (uint)FR_MODULUS[i];");
     let _ = writeln!(s, "            uint p_hi = mulhi(m, (uint)FR_MODULUS[i]);");
@@ -527,22 +605,38 @@ fn generate_wide_acc(s: &mut String, n: usize, acc_n: usize) {
 
     // Repeated subtraction to fully reduce
     let _ = writeln!(s, "    while (true) {{");
-    let _ = writeln!(s, "        bool gte = (acc.limbs[{overflow_start}] != 0) || (acc.limbs[{}] != 0);", overflow_start + 1);
+    let _ = writeln!(
+        s,
+        "        bool gte = (acc.limbs[{overflow_start}] != 0) || (acc.limbs[{}] != 0);",
+        overflow_start + 1
+    );
     let _ = writeln!(s, "        if (!gte) {{");
     let _ = writeln!(s, "            gte = true;");
     let _ = writeln!(s, "            for (int i = {}; i >= 0; i--) {{", n - 1);
-    let _ = writeln!(s, "                if (acc.limbs[i + {n}] > FR_MODULUS[i]) break;");
-    let _ = writeln!(s, "                if (acc.limbs[i + {n}] < FR_MODULUS[i]) {{ gte = false; break; }}");
+    let _ = writeln!(
+        s,
+        "                if (acc.limbs[i + {n}] > FR_MODULUS[i]) break;"
+    );
+    let _ = writeln!(
+        s,
+        "                if (acc.limbs[i + {n}] < FR_MODULUS[i]) {{ gte = false; break; }}"
+    );
     let _ = writeln!(s, "            }}");
     let _ = writeln!(s, "        }}");
     let _ = writeln!(s, "        if (!gte) break;");
     let _ = writeln!(s, "        uint borrow = 0;");
     let _ = writeln!(s, "        for (int i = 0; i < {n}; i++) {{");
-    let _ = writeln!(s, "            uint2 d = sbb(acc.limbs[i + {n}], FR_MODULUS[i], borrow);");
+    let _ = writeln!(
+        s,
+        "            uint2 d = sbb(acc.limbs[i + {n}], FR_MODULUS[i], borrow);"
+    );
     let _ = writeln!(s, "            acc.limbs[i + {n}] = d.x;");
     let _ = writeln!(s, "            borrow = d.y;");
     let _ = writeln!(s, "        }}");
-    let _ = writeln!(s, "        for (int i = {overflow_start}; i < ACC_LIMBS; i++) {{");
+    let _ = writeln!(
+        s,
+        "        for (int i = {overflow_start}; i < ACC_LIMBS; i++) {{"
+    );
     let _ = writeln!(s, "            uint2 d = sbb(acc.limbs[i], 0, borrow);");
     let _ = writeln!(s, "            acc.limbs[i] = d.x;");
     let _ = writeln!(s, "            borrow = d.y;");
@@ -559,9 +653,15 @@ fn generate_wide_acc(s: &mut String, n: usize, acc_n: usize) {
     s.push('\n');
 
     // acc_reduce_tg
-    let _ = writeln!(s, "FR_FUNC_ATTR Fr acc_reduce_tg(threadgroup WideAcc &tg_acc) {{");
+    let _ = writeln!(
+        s,
+        "FR_FUNC_ATTR Fr acc_reduce_tg(threadgroup WideAcc &tg_acc) {{"
+    );
     let _ = writeln!(s, "    WideAcc acc;");
-    let _ = writeln!(s, "    for (int i = 0; i < ACC_LIMBS; i++) acc.limbs[i] = tg_acc.limbs[i];");
+    let _ = writeln!(
+        s,
+        "    for (int i = 0; i < ACC_LIMBS; i++) acc.limbs[i] = tg_acc.limbs[i];"
+    );
     let _ = writeln!(s, "    return acc_reduce(acc);");
     let _ = writeln!(s, "}}");
     s.push('\n');
@@ -599,7 +699,10 @@ fn generate_schoolbook_4x4(s: &mut String) {
     let _ = writeln!(s, "            out[idx] = s2;");
     let _ = writeln!(s, "            carry = p_hi + c1 + c2;");
     let _ = writeln!(s, "        }}");
-    let _ = writeln!(s, "        for (int k = j + 4; carry != 0 && k < 8; k++) {{");
+    let _ = writeln!(
+        s,
+        "        for (int k = j + 4; carry != 0 && k < 8; k++) {{"
+    );
     let _ = writeln!(s, "            uint old = out[k];");
     let _ = writeln!(s, "            out[k] = old + carry;");
     let _ = writeln!(s, "            carry = uint(out[k] < old);");
@@ -624,7 +727,10 @@ fn generate_schoolbook_4x4_wide(s: &mut String) {
     let _ = writeln!(s, "            out[idx] = s2;");
     let _ = writeln!(s, "            carry = p_hi + c1 + c2;");
     let _ = writeln!(s, "        }}");
-    let _ = writeln!(s, "        for (int k = j + 4; carry != 0 && k < 9; k++) {{");
+    let _ = writeln!(
+        s,
+        "        for (int k = j + 4; carry != 0 && k < 9; k++) {{"
+    );
     let _ = writeln!(s, "            uint old = out[k];");
     let _ = writeln!(s, "            out[k] = old + carry;");
     let _ = writeln!(s, "            carry = uint(out[k] < old);");
@@ -636,7 +742,10 @@ fn generate_schoolbook_4x4_wide(s: &mut String) {
 
 /// Karatsuba fmadd for N=8: splits into 4-limb halves.
 fn generate_karatsuba_fmadd(s: &mut String, n: usize, half: usize) {
-    let _ = writeln!(s, "FR_FUNC_ATTR void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {{");
+    let _ = writeln!(
+        s,
+        "FR_FUNC_ATTR void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {{"
+    );
 
     // Step 1: aS = aL + aH, bS = bL + bH
     let _ = writeln!(s, "    uint aS[{half}], bS[{half}];");
@@ -644,7 +753,10 @@ fn generate_karatsuba_fmadd(s: &mut String, n: usize, half: usize) {
     let _ = writeln!(s, "    {{");
     let _ = writeln!(s, "        uint carry = 0;");
     let _ = writeln!(s, "        for (int i = 0; i < {half}; i++) {{");
-    let _ = writeln!(s, "            uint2 r = adc(a.limbs[i], a.limbs[i + {half}], carry);");
+    let _ = writeln!(
+        s,
+        "            uint2 r = adc(a.limbs[i], a.limbs[i + {half}], carry);"
+    );
     let _ = writeln!(s, "            aS[i] = r.x;");
     let _ = writeln!(s, "            carry = r.y;");
     let _ = writeln!(s, "        }}");
@@ -653,7 +765,10 @@ fn generate_karatsuba_fmadd(s: &mut String, n: usize, half: usize) {
     let _ = writeln!(s, "    {{");
     let _ = writeln!(s, "        uint carry = 0;");
     let _ = writeln!(s, "        for (int i = 0; i < {half}; i++) {{");
-    let _ = writeln!(s, "            uint2 r = adc(b.limbs[i], b.limbs[i + {half}], carry);");
+    let _ = writeln!(
+        s,
+        "            uint2 r = adc(b.limbs[i], b.limbs[i + {half}], carry);"
+    );
     let _ = writeln!(s, "            bS[i] = r.x;");
     let _ = writeln!(s, "            carry = r.y;");
     let _ = writeln!(s, "        }}");
@@ -671,7 +786,10 @@ fn generate_karatsuba_fmadd(s: &mut String, n: usize, half: usize) {
     let _ = writeln!(s, "        uint mask = uint(-int(aC));");
     let _ = writeln!(s, "        uint carry = 0;");
     let _ = writeln!(s, "        for (int i = 0; i < {half}; i++) {{");
-    let _ = writeln!(s, "            uint2 r = adc(Pm[i + {half}], bS[i] & mask, carry);");
+    let _ = writeln!(
+        s,
+        "            uint2 r = adc(Pm[i + {half}], bS[i] & mask, carry);"
+    );
     let _ = writeln!(s, "            Pm[i + {half}] = r.x;");
     let _ = writeln!(s, "            carry = r.y;");
     let _ = writeln!(s, "        }}");
@@ -683,7 +801,10 @@ fn generate_karatsuba_fmadd(s: &mut String, n: usize, half: usize) {
     let _ = writeln!(s, "        uint mask = uint(-int(bC));");
     let _ = writeln!(s, "        uint carry = 0;");
     let _ = writeln!(s, "        for (int i = 0; i < {half}; i++) {{");
-    let _ = writeln!(s, "            uint2 r = adc(Pm[i + {half}], aS[i] & mask, carry);");
+    let _ = writeln!(
+        s,
+        "            uint2 r = adc(Pm[i + {half}], aS[i] & mask, carry);"
+    );
     let _ = writeln!(s, "            Pm[i + {half}] = r.x;");
     let _ = writeln!(s, "            carry = r.y;");
     let _ = writeln!(s, "        }}");
@@ -694,7 +815,11 @@ fn generate_karatsuba_fmadd(s: &mut String, n: usize, half: usize) {
 
     // Step 3: P0 = aL * bL, Pm -= P0, acc += P0 at offset 0
     let _ = writeln!(s, "    {{");
-    let _ = writeln!(s, "        uint P0[{n}] = {{{}}};", "0, ".repeat(n).trim_end_matches(", "));
+    let _ = writeln!(
+        s,
+        "        uint P0[{n}] = {{{}}};",
+        "0, ".repeat(n).trim_end_matches(", ")
+    );
     let _ = writeln!(s, "        schoolbook_4x4(P0, a.limbs, b.limbs);");
     let _ = writeln!(s, "        uint borrow = 0;");
     let _ = writeln!(s, "        for (int i = 0; i < {n}; i++) {{");
@@ -709,8 +834,15 @@ fn generate_karatsuba_fmadd(s: &mut String, n: usize, half: usize) {
 
     // Step 4: P2 = aH * bH, Pm -= P2, acc += P2 at offset N
     let _ = writeln!(s, "    {{");
-    let _ = writeln!(s, "        uint P2[{n}] = {{{}}};", "0, ".repeat(n).trim_end_matches(", "));
-    let _ = writeln!(s, "        schoolbook_4x4(P2, &a.limbs[{half}], &b.limbs[{half}]);");
+    let _ = writeln!(
+        s,
+        "        uint P2[{n}] = {{{}}};",
+        "0, ".repeat(n).trim_end_matches(", ")
+    );
+    let _ = writeln!(
+        s,
+        "        schoolbook_4x4(P2, &a.limbs[{half}], &b.limbs[{half}]);"
+    );
     let _ = writeln!(s, "        uint borrow = 0;");
     let _ = writeln!(s, "        for (int i = 0; i < {n}; i++) {{");
     let _ = writeln!(s, "            uint2 d = sbb(Pm[i], P2[i], borrow);");
@@ -730,7 +862,10 @@ fn generate_karatsuba_fmadd(s: &mut String, n: usize, half: usize) {
 
 /// Direct 4×4 fmadd for N=4.
 fn generate_direct_4x4_fmadd(s: &mut String) {
-    let _ = writeln!(s, "FR_FUNC_ATTR void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {{");
+    let _ = writeln!(
+        s,
+        "FR_FUNC_ATTR void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {{"
+    );
     let _ = writeln!(s, "    uint prod[8] = {{0, 0, 0, 0, 0, 0, 0, 0}};");
     let _ = writeln!(s, "    schoolbook_4x4(prod, a.limbs, b.limbs);");
     let _ = writeln!(s, "    acc_add_limbs(acc, prod, 8, 0);");
@@ -741,7 +876,10 @@ fn generate_direct_4x4_fmadd(s: &mut String) {
 /// Generic NxN schoolbook fmadd.
 fn generate_generic_schoolbook_fmadd(s: &mut String, n: usize) {
     let prod_limbs = 2 * n;
-    let _ = writeln!(s, "FR_FUNC_ATTR void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {{");
+    let _ = writeln!(
+        s,
+        "FR_FUNC_ATTR void acc_fmadd(thread WideAcc &acc, Fr a, Fr b) {{"
+    );
     let _ = write!(s, "    uint prod[{prod_limbs}] = {{");
     for i in 0..prod_limbs {
         if i > 0 {
@@ -763,7 +901,10 @@ fn generate_generic_schoolbook_fmadd(s: &mut String, n: usize) {
     let _ = writeln!(s, "            prod[idx] = s2;");
     let _ = writeln!(s, "            carry = p_hi + c1 + c2;");
     let _ = writeln!(s, "        }}");
-    let _ = writeln!(s, "        for (int k = j + {n}; carry != 0 && k < {prod_limbs}; k++) {{");
+    let _ = writeln!(
+        s,
+        "        for (int k = j + {n}; carry != 0 && k < {prod_limbs}; k++) {{"
+    );
     let _ = writeln!(s, "            uint old = prod[k];");
     let _ = writeln!(s, "            prod[k] = old + carry;");
     let _ = writeln!(s, "            carry = uint(prod[k] < old);");

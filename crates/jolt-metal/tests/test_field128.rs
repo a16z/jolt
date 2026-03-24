@@ -1,10 +1,10 @@
 //! Test-only 128-bit Montgomery field (p = 2^127 - 1, Mersenne prime M127).
 //!
-//! Provides minimal CPU field arithmetic and [`GpuFieldConfig`] for testing
-//! that the Metal MSL generator works with N=4 limbs. Not intended for
-//! production use — CPU performance is irrelevant.
+//! Provides minimal CPU field arithmetic and [`MontgomeryConstants`] for
+//! testing that the Metal MSL generator works with N=4 limbs. Not intended
+//! for production use -- CPU performance is irrelevant.
 
-use jolt_field::GpuFieldConfig;
+use jolt_field::MontgomeryConstants;
 
 /// p = 2^127 - 1
 const MODULUS: [u32; 4] = [0xFFFF_FFFF, 0xFFFF_FFFF, 0xFFFF_FFFF, 0x7FFF_FFFF];
@@ -21,10 +21,10 @@ pub struct F128 {
     pub limbs: [u32; 4],
 }
 
-/// Marker type for GpuFieldConfig — never instantiated.
+/// Marker type for MontgomeryConstants — never instantiated.
 pub struct F128Config;
 
-impl GpuFieldConfig for F128Config {
+impl MontgomeryConstants for F128Config {
     const NUM_U32_LIMBS: usize = 4;
     const ACC_U32_LIMBS: usize = 10; // 2*4 + 2
     const FIELD_BYTE_SIZE: usize = 16;
@@ -79,7 +79,9 @@ impl F128 {
         let mut result = [0u32; 4];
         let mut borrow: u64 = 0;
         for i in 0..4 {
-            let diff = (a[i] as u64).wrapping_sub(MODULUS[i] as u64).wrapping_sub(borrow);
+            let diff = (a[i] as u64)
+                .wrapping_sub(MODULUS[i] as u64)
+                .wrapping_sub(borrow);
             result[i] = diff as u32;
             borrow = (diff >> 32) & 1;
         }
@@ -207,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn f128_gpu_config_invariants() {
+    fn f128_montgomery_invariants() {
         assert_eq!(F128Config::NUM_U32_LIMBS, 4);
         assert_eq!(F128Config::ACC_U32_LIMBS, 10);
         assert_eq!(F128Config::FIELD_BYTE_SIZE, 16);

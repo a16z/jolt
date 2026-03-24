@@ -6,8 +6,8 @@
 //!   and `tracing-subscriber` (console output) for the host binary.
 //! - **Memory profiling** — tracks memory deltas across proving stages via `memory-stats`.
 //! - **System metrics monitoring** (`monitor` feature) — background thread sampling
-//!   CPU usage, memory, and active cores. Outputs structured counter events compatible
-//!   with the Perfetto postprocessing script.
+//!   CPU usage, memory, active cores, and thread count. Outputs structured counter events
+//!   compatible with the Perfetto postprocessing script.
 //! - **CPU profiling** (`pprof` feature) — scoped `pprof` guards that write `.pb`
 //!   flamegraph files on drop.
 //! - **Heap flamegraphs** (`allocative` feature) — generates SVG flamegraphs from
@@ -42,7 +42,10 @@ mod pprof_guard;
 #[cfg(feature = "allocative")]
 pub mod flamegraph;
 
-pub use setup::{setup_tracing, TracingFormat};
+mod units;
+
+pub use setup::{setup_tracing, TracingFormat, TracingGuards};
+pub use units::{format_memory_size, BYTES_PER_GIB, BYTES_PER_MIB};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use memory::{

@@ -4,8 +4,8 @@
 //! three register files (rd, rs1, rs2) batched via γ-powers.
 
 use crate::builder::ExprBuilder;
-use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
-use crate::zkvm::tags::{poly, sumcheck};
+use crate::claim::{ClaimDefinition, OpeningBinding};
+use crate::PolynomialId;
 
 // Verified against jolt-core/src/zkvm/registers/read_write_checking.rs
 // Formula: Σ eq(r,j) · (rd_wa·(inc+val) + γ·rs1_ra·val + γ²·rs2_ra·val)
@@ -44,44 +44,26 @@ pub fn registers_read_write_checking() -> ClaimDefinition {
         opening_bindings: vec![
             OpeningBinding {
                 var_id: 0,
-                polynomial_tag: poly::REGISTERS_VAL,
-                sumcheck_tag: sumcheck::REGISTERS_READ_WRITE_CHECKING,
+                polynomial: PolynomialId::RegistersVal,
             },
             OpeningBinding {
                 var_id: 1,
-                polynomial_tag: poly::RS1_RA,
-                sumcheck_tag: sumcheck::REGISTERS_READ_WRITE_CHECKING,
+                polynomial: PolynomialId::Rs1Ra,
             },
             OpeningBinding {
                 var_id: 2,
-                polynomial_tag: poly::RS2_RA,
-                sumcheck_tag: sumcheck::REGISTERS_READ_WRITE_CHECKING,
+                polynomial: PolynomialId::Rs2Ra,
             },
             OpeningBinding {
                 var_id: 3,
-                polynomial_tag: poly::RD_WA,
-                sumcheck_tag: sumcheck::REGISTERS_READ_WRITE_CHECKING,
+                polynomial: PolynomialId::RdWa,
             },
             OpeningBinding {
                 var_id: 4,
-                polynomial_tag: poly::RD_INC,
-                sumcheck_tag: sumcheck::REGISTERS_READ_WRITE_CHECKING,
+                polynomial: PolynomialId::RdInc,
             },
         ],
-        challenge_bindings: vec![
-            ChallengeBinding {
-                var_id: 0,
-                source: ChallengeSource::Derived,
-            },
-            ChallengeBinding {
-                var_id: 1,
-                source: ChallengeSource::Derived,
-            },
-            ChallengeBinding {
-                var_id: 2,
-                source: ChallengeSource::Derived,
-            },
-        ],
+        num_challenges: 3,
     }
 }
 
@@ -107,19 +89,14 @@ pub fn registers_val_evaluation() -> ClaimDefinition {
         opening_bindings: vec![
             OpeningBinding {
                 var_id: 0,
-                polynomial_tag: poly::RD_INC,
-                sumcheck_tag: sumcheck::REGISTERS_VAL_EVALUATION,
+                polynomial: PolynomialId::RdInc,
             },
             OpeningBinding {
                 var_id: 1,
-                polynomial_tag: poly::RD_WA,
-                sumcheck_tag: sumcheck::REGISTERS_VAL_EVALUATION,
+                polynomial: PolynomialId::RdWa,
             },
         ],
-        challenge_bindings: vec![ChallengeBinding {
-            var_id: 0,
-            source: ChallengeSource::Derived,
-        }],
+        num_challenges: 1,
     }
 }
 

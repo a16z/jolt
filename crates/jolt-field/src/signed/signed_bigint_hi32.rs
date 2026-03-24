@@ -206,10 +206,18 @@ impl<const N: usize> SignedBigIntHi32<N> {
         );
 
         let limb_a = |i: usize| -> u64 {
-            if i < N { self.magnitude_lo[i] } else { self.magnitude_hi as u64 }
+            if i < N {
+                self.magnitude_lo[i]
+            } else {
+                self.magnitude_hi as u64
+            }
         };
         let limb_b = |j: usize| -> u64 {
-            if j < N { other.magnitude_lo[j] } else { other.magnitude_hi as u64 }
+            if j < N {
+                other.magnitude_lo[j]
+            } else {
+                other.magnitude_hi as u64
+            }
         };
 
         for i in 0..num_limbs {

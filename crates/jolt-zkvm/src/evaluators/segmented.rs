@@ -36,8 +36,7 @@ pub type SegmentTransition<F, B> =
 /// Receives `(round_in_segment, challenge, &mut KernelEvaluator)`. Can
 /// re-parameterize the kernel (via [`update_kernel`](KernelEvaluator::update_kernel)),
 /// update weights, etc.
-pub type RoundHook<F, B> =
-    Box<dyn FnMut(usize, F, &mut KernelEvaluator<F, B>) + Send + Sync>;
+pub type RoundHook<F, B> = Box<dyn FnMut(usize, F, &mut KernelEvaluator<F, B>) + Send + Sync>;
 
 /// Composes multiple [`KernelEvaluator`] instances across phase boundaries.
 ///
@@ -209,8 +208,12 @@ mod tests {
         let desc = catalog::eq_product();
         let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
-        let evaluator =
-            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), Arc::clone(&backend));
+        let evaluator = KernelEvaluator::with_unit_weights(
+            inputs,
+            kernel,
+            desc.num_evals(),
+            Arc::clone(&backend),
+        );
 
         let mut witness = SegmentedEvaluator::new(evaluator, num_vars, backend);
 
@@ -296,12 +299,13 @@ mod tests {
 
         let desc = catalog::eq_product();
         let kernel = jolt_cpu::compile::<Fr>(&desc);
-        let inputs = vec![
-            backend.upload(&eq_full),
-            backend.upload(&a_evals),
-        ];
-        let evaluator =
-            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), Arc::clone(&backend));
+        let inputs = vec![backend.upload(&eq_full), backend.upload(&a_evals)];
+        let evaluator = KernelEvaluator::with_unit_weights(
+            inputs,
+            kernel,
+            desc.num_evals(),
+            Arc::clone(&backend),
+        );
 
         // Wrap in a SegmentedEvaluator with a trivial transition at round M.
         // The transition creates a new KernelEvaluator from the partially-bound
@@ -383,9 +387,7 @@ mod tests {
         let a_evals: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let b_evals: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        let claimed_sum_ab: Fr = (0..n)
-            .map(|i| eq_full[i] * a_evals[i] * b_evals[i])
-            .sum();
+        let claimed_sum_ab: Fr = (0..n).map(|i| eq_full[i] * a_evals[i] * b_evals[i]).sum();
 
         let claim_ab = SumcheckClaim {
             num_vars,
@@ -413,8 +415,12 @@ mod tests {
             backend.upload(&a_evals),
             backend.upload(&b_evals),
         ];
-        let evaluator =
-            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), Arc::clone(&backend));
+        let evaluator = KernelEvaluator::with_unit_weights(
+            inputs,
+            kernel,
+            desc.num_evals(),
+            Arc::clone(&backend),
+        );
 
         // Transition at round M: create a new KernelEvaluator with the same
         // formula on the remaining (partially-bound) buffers.
@@ -465,11 +471,16 @@ mod tests {
                     backend.upload(&a_bound),
                     backend.upload(&b_bound),
                 ];
-                KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), Arc::clone(backend))
+                KernelEvaluator::with_unit_weights(
+                    inputs,
+                    kernel,
+                    desc.num_evals(),
+                    Arc::clone(backend),
+                )
             });
 
-        let mut witness = SegmentedEvaluator::new(evaluator, m, Arc::clone(&backend))
-            .then(k, transition);
+        let mut witness =
+            SegmentedEvaluator::new(evaluator, m, Arc::clone(&backend)).then(k, transition);
 
         let mut pt = Blake2bTranscript::new(b"two_seg_transition");
         let proof = SumcheckProver::prove(&claim_ab, &mut witness, &mut pt);
@@ -513,13 +524,16 @@ mod tests {
         let desc = catalog::eq_product();
         let kernel = jolt_cpu::compile::<Fr>(&desc);
         let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
-        let evaluator =
-            KernelEvaluator::with_unit_weights(inputs, kernel, desc.num_evals(), Arc::clone(&backend));
+        let evaluator = KernelEvaluator::with_unit_weights(
+            inputs,
+            kernel,
+            desc.num_evals(),
+            Arc::clone(&backend),
+        );
 
-        let hook: RoundHook<Fr, CpuBackend> =
-            Box::new(move |_round, _challenge, _eval| {
-                let _ = hook_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            });
+        let hook: RoundHook<Fr, CpuBackend> = Box::new(move |_round, _challenge, _eval| {
+            let _ = hook_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
 
         // Single segment with all rounds + a hook, no actual transitions.
         let mut witness = SegmentedEvaluator::new(evaluator, num_vars, Arc::clone(&backend))
@@ -569,10 +583,7 @@ mod tests {
         // Segment 0: HighToLow binding for M rounds
         let desc = catalog::eq_product();
         let kernel = jolt_cpu::compile::<Fr>(&desc);
-        let inputs = vec![
-            backend.upload(&eq_table),
-            backend.upload(&g_table),
-        ];
+        let inputs = vec![backend.upload(&eq_table), backend.upload(&g_table)];
         let evaluator = KernelEvaluator::with_unit_weights(
             inputs,
             kernel,
@@ -603,10 +614,7 @@ mod tests {
 
                 let desc = catalog::eq_product();
                 let kernel = jolt_cpu::compile::<Fr>(&desc);
-                let inputs = vec![
-                    backend.upload(&eq_bound),
-                    backend.upload(&g_bound),
-                ];
+                let inputs = vec![backend.upload(&eq_bound), backend.upload(&g_bound)];
                 // Segment 1 uses LowToHigh (default)
                 KernelEvaluator::with_unit_weights(
                     inputs,
@@ -616,8 +624,8 @@ mod tests {
                 )
             });
 
-        let mut witness = SegmentedEvaluator::new(evaluator, m, Arc::clone(&backend))
-            .then(k, transition);
+        let mut witness =
+            SegmentedEvaluator::new(evaluator, m, Arc::clone(&backend)).then(k, transition);
 
         let mut pt = Blake2bTranscript::new(b"h2l_then_l2h");
         let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);
@@ -687,10 +695,7 @@ mod tests {
         // Segment 0: eq · full_table, StandardGrid
         let desc = catalog::eq_product();
         let kernel = jolt_cpu::compile::<Fr>(&desc);
-        let inputs = vec![
-            backend.upload(&eq_full),
-            backend.upload(&full_table),
-        ];
+        let inputs = vec![backend.upload(&eq_full), backend.upload(&full_table)];
         let evaluator = KernelEvaluator::with_unit_weights(
             inputs,
             kernel,
@@ -723,10 +728,7 @@ mod tests {
                 let eq_inner = EqPolynomial::new(r_clone[m..].to_vec()).evaluations();
 
                 // Scale the first p poly by g_scalar.
-                let p0_scaled: Vec<Fr> = p_evals_clone[0]
-                    .iter()
-                    .map(|&v| v * g_scalar)
-                    .collect();
+                let p0_scaled: Vec<Fr> = p_evals_clone[0].iter().map(|&v| v * g_scalar).collect();
 
                 // ToomCook with eq_inner as weights.
                 let inner_claimed_sum: Fr = (0..(1 << k))
@@ -756,11 +758,12 @@ mod tests {
                     r_clone[m..].to_vec(),
                     inner_claimed_sum,
                     Arc::clone(backend),
+                    BindingOrder::LowToHigh,
                 )
             });
 
-        let mut witness = SegmentedEvaluator::new(evaluator, m, Arc::clone(&backend))
-            .then(k, transition);
+        let mut witness =
+            SegmentedEvaluator::new(evaluator, m, Arc::clone(&backend)).then(k, transition);
 
         let mut pt = Blake2bTranscript::new(b"sg_to_tc");
         let proof = SumcheckProver::prove(&claim, &mut witness, &mut pt);

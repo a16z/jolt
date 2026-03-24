@@ -15,6 +15,9 @@ pub(crate) struct CachedPipelines {
     pub pipeline_tensor: metal::ComputePipelineState,
     pub pipeline_l2h_unw: metal::ComputePipelineState,
     pub pipeline_h2l_unw: metal::ComputePipelineState,
+    /// Fused interpolate+reduce (H2L, weighted): reads 4 values per input,
+    /// interpolates in-place, and reduces the interpolated pairs in one pass.
+    pub pipeline_fused_h2l: metal::ComputePipelineState,
     pub num_evals: usize,
     pub num_inputs: usize,
     /// Whether the kernel signature includes a `device const Fr* challenges`
@@ -96,6 +99,11 @@ impl<F: Field> MetalKernel<F> {
     #[inline]
     pub(crate) fn pipeline_h2l_unw(&self) -> &metal::ComputePipelineState {
         &self.pipelines.pipeline_h2l_unw
+    }
+
+    #[inline]
+    pub(crate) fn pipeline_fused_h2l(&self) -> &metal::ComputePipelineState {
+        &self.pipelines.pipeline_fused_h2l
     }
 }
 

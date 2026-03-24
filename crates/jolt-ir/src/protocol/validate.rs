@@ -10,10 +10,6 @@ use std::fmt;
 use super::types::*;
 use crate::PolynomialId;
 
-// ---------------------------------------------------------------------------
-// Error types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug)]
 pub enum GraphError {
     /// A produced claim is never referenced by any downstream vertex.
@@ -228,10 +224,6 @@ impl std::error::Error for ChallengeSpecError {}
 impl std::error::Error for ClaimFlowError {}
 impl std::error::Error for EvalOrderingError {}
 
-// ---------------------------------------------------------------------------
-// Claim graph validation (invariant)
-// ---------------------------------------------------------------------------
-
 impl ClaimGraph {
     /// Validate claim completeness and structural integrity.
     ///
@@ -419,10 +411,6 @@ impl ClaimGraph {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Staging validation
-// ---------------------------------------------------------------------------
 
 impl ProtocolGraph {
     /// Validate that the staging is a valid topological layering.
@@ -822,7 +810,7 @@ mod tests {
             definition: ClaimDefinition {
                 expr: dummy_expr.clone(),
                 opening_bindings: vec![],
-                challenge_bindings: vec![],
+                num_challenges: 0,
             },
             opening_claims: HashMap::new(),
         };
@@ -841,6 +829,7 @@ mod tests {
                 num_vars: SymbolicExpr::Concrete(10),
                 variable_group: VariableGroup::Cycle,
             }],
+            output_challenge_spec: OutputChallengeSpec::None,
         }));
         let v1 = Vertex::Sumcheck(Box::new(SumcheckVertex {
             id: VertexId(1),
@@ -856,6 +845,7 @@ mod tests {
                 num_vars: SymbolicExpr::Concrete(10),
                 variable_group: VariableGroup::Cycle,
             }],
+            output_challenge_spec: OutputChallengeSpec::None,
         }));
         // v2 references ClaimId(0) so it's not dangling
         let v2 = Vertex::Opening(OpeningVertex {
@@ -884,7 +874,7 @@ mod tests {
             definition: ClaimDefinition {
                 expr: dummy_expr.clone(),
                 opening_bindings: vec![],
-                challenge_bindings: vec![],
+                num_challenges: 0,
             },
             opening_claims: HashMap::new(),
         };
@@ -905,6 +895,7 @@ mod tests {
             num_vars: SymbolicExpr::Concrete(10),
             weighting: PublicPolynomial::Eq,
             phases: vec![phase()],
+            output_challenge_spec: OutputChallengeSpec::None,
         }));
         let v1 = Vertex::Sumcheck(Box::new(SumcheckVertex {
             id: VertexId(1),
@@ -917,6 +908,7 @@ mod tests {
             num_vars: SymbolicExpr::Concrete(10),
             weighting: PublicPolynomial::Eq,
             phases: vec![phase()],
+            output_challenge_spec: OutputChallengeSpec::None,
         }));
         let v2 = Vertex::Opening(OpeningVertex {
             id: VertexId(2),
@@ -1114,7 +1106,7 @@ mod tests {
             definition: ClaimDefinition {
                 expr: dummy_expr.clone(),
                 opening_bindings: vec![],
-                challenge_bindings: vec![],
+                num_challenges: 0,
             },
             opening_claims: HashMap::new(),
         };
@@ -1135,6 +1127,7 @@ mod tests {
             num_vars: SymbolicExpr::Concrete(10),
             weighting: PublicPolynomial::Eq,
             phases: vec![phase()],
+            output_challenge_spec: OutputChallengeSpec::None,
         }));
         let v1 = Vertex::Sumcheck(Box::new(SumcheckVertex {
             id: VertexId(1),
@@ -1147,6 +1140,7 @@ mod tests {
             num_vars: SymbolicExpr::Concrete(10),
             weighting: PublicPolynomial::Eq,
             phases: vec![phase()],
+            output_challenge_spec: OutputChallengeSpec::None,
         }));
         let v2 = Vertex::Sumcheck(Box::new(SumcheckVertex {
             id: VertexId(2),
@@ -1159,6 +1153,7 @@ mod tests {
             num_vars: SymbolicExpr::Concrete(10),
             weighting: PublicPolynomial::Eq,
             phases: vec![phase()],
+            output_challenge_spec: OutputChallengeSpec::None,
         }));
         let v3 = Vertex::Opening(OpeningVertex {
             id: VertexId(3),
@@ -1284,7 +1279,7 @@ mod tests {
             definition: ClaimDefinition {
                 expr: dummy_expr.clone(),
                 opening_bindings: vec![],
-                challenge_bindings: vec![],
+                num_challenges: 0,
             },
             opening_claims: HashMap::new(),
         };
@@ -1305,6 +1300,7 @@ mod tests {
             num_vars: SymbolicExpr::Concrete(10),
             weighting: PublicPolynomial::Eq,
             phases: vec![phase()],
+            output_challenge_spec: OutputChallengeSpec::None,
         }));
         let v1 = Vertex::Sumcheck(Box::new(SumcheckVertex {
             id: VertexId(1),
@@ -1317,6 +1313,7 @@ mod tests {
             num_vars: SymbolicExpr::Concrete(10),
             weighting: PublicPolynomial::Eq,
             phases: vec![phase()],
+            output_challenge_spec: OutputChallengeSpec::None,
         }));
 
         let graph = ProtocolGraph {

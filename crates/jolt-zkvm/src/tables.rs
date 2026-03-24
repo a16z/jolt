@@ -11,7 +11,7 @@
 
 use jolt_field::Field;
 use jolt_instructions::flags::InstructionFlags;
-use jolt_ir::zkvm::tags::poly;
+use jolt_ir::PolynomialId;
 use jolt_verifier::ProverConfig;
 use tracer::instruction::Cycle;
 
@@ -23,7 +23,7 @@ use crate::witness::store::WitnessStore;
 /// [`from_witness`](Self::from_witness). Stages borrow individual fields
 /// through shared `&PolynomialTables<F>` references.
 pub struct PolynomialTables<F: Field> {
-    // ── Committed (opened via PCS) ──────────────────────────────
+    // Committed (opened via PCS)
     /// Dense increment polynomial for RAM timestamps, length `2^log_T`.
     pub ram_inc: Vec<F>,
     /// Dense increment polynomial for register timestamps, length `2^log_T`.
@@ -36,7 +36,7 @@ pub struct PolynomialTables<F: Field> {
     /// One-hot RA polynomials for RAM address lookups.
     pub ram_ra: Vec<Vec<F>>,
 
-    // ── Virtual (from R1CS witness columns) ─────────────────────
+    // Virtual (from R1CS witness columns)
     /// Register write values from R1CS witness.
     pub rd_write_value: Vec<F>,
     /// RS1 register read values.
@@ -54,7 +54,7 @@ pub struct PolynomialTables<F: Field> {
     /// Instruction lookup output.
     pub lookup_output: Vec<F>,
 
-    // ── Trace-derived: product virtualization factors ────────────
+    // Trace-derived: product virtualization factors
     /// Left operand to the instruction lookup.
     pub left_instruction_input: Vec<F>,
     /// Right operand to the instruction lookup.
@@ -70,7 +70,7 @@ pub struct PolynomialTables<F: Field> {
     /// 1 if the next cycle is a no-op (padding or sequence end).
     pub next_is_noop: Vec<F>,
 
-    // ── Trace-derived: instruction input decomposition ──────────
+    // Trace-derived: instruction input decomposition
     /// 1 if left operand source is RS1 value.
     pub left_is_rs1: Vec<F>,
     /// 1 if left operand source is PC.
@@ -84,7 +84,7 @@ pub struct PolynomialTables<F: Field> {
     /// Immediate value.
     pub imm: Vec<F>,
 
-    // ── Trace-derived: register addresses ───────────────────────
+    // Trace-derived: register addresses
     /// RS1 register address (0 for NoOp).
     pub rs1_ra: Vec<F>,
     /// RS2 register address (0 for NoOp).
@@ -92,7 +92,7 @@ pub struct PolynomialTables<F: Field> {
     /// RD write address (0 for NoOp).
     pub rd_wa: Vec<F>,
 
-    // ── Trace-derived: shift (next-cycle) ───────────────────────
+    // Trace-derived: shift (next-cycle)
     /// Next cycle's unexpanded PC.
     pub next_unexpanded_pc: Vec<F>,
     /// Next cycle's expanded PC.
@@ -101,6 +101,16 @@ pub struct PolynomialTables<F: Field> {
     pub next_is_virtual: Vec<F>,
     /// 1 if the next instruction is the first in a virtual sequence.
     pub next_is_first_in_sequence: Vec<F>,
+
+    // R1CS-derived: additional columns for graph formula evaluation
+    pub expanded_pc: Vec<F>,
+    pub left_lookup_operand: Vec<F>,
+    pub right_lookup_operand: Vec<F>,
+    pub ram_val: Vec<F>,
+    pub ram_val_final: Vec<F>,
+    pub registers_val: Vec<F>,
+    /// Circuit flags indexed by CircuitFlags enum order (14 flags).
+    pub op_flags: Vec<Vec<F>>,
 }
 
 impl<F: Field> PolynomialTables<F> {
@@ -180,11 +190,19 @@ impl<F: Field> PolynomialTables<F> {
             P::NextIsVirtual => &self.next_is_virtual,
             P::NextIsFirstInSequence => &self.next_is_first_in_sequence,
             // These don't have dedicated table storage (derived at runtime)
-            P::SpartanWitness | P::RamVal | P::RamValFinal | P::RegistersVal
-            | P::LeftLookupOperand | P::RightLookupOperand
-            | P::TrustedAdvice | P::UntrustedAdvice
-            | P::BytecodeReadRafVal(_) | P::InstructionReadRafVal(_)
-            | P::OpFlag(_) | P::ExpandedPc | P::InstructionRafFlag
+            P::ExpandedPc => &self.expanded_pc,
+            P::LeftLookupOperand => &self.left_lookup_operand,
+            P::RightLookupOperand => &self.right_lookup_operand,
+            P::RamVal => &self.ram_val,
+            P::RamValFinal => &self.ram_val_final,
+            P::RegistersVal => &self.registers_val,
+            P::OpFlag(i) => &self.op_flags[i],
+            P::SpartanWitness
+            | P::TrustedAdvice
+            | P::UntrustedAdvice
+            | P::BytecodeReadRafVal(_)
+            | P::InstructionReadRafVal(_)
+            | P::InstructionRafFlag
             | P::LookupTableFlag(_) => {
                 panic!("{id:?} has no stored evaluation table")
             }
@@ -205,21 +223,20 @@ impl<F: Field> PolynomialTables<F> {
         let one_hot_params = config.one_hot_params_from_config();
         let padded_len = r1cs_witness.len();
 
-        // ── Committed polynomials from WitnessStore ─────────────
-        let ram_inc = store.get(poly::RAM_INC).to_vec();
-        let rd_inc = store.get(poly::RD_INC).to_vec();
+        let ram_inc = store.get(PolynomialId::RamInc).to_vec();
+        let rd_inc = store.get(PolynomialId::RdInc).to_vec();
 
         let instruction_ra: Vec<Vec<F>> = (0..one_hot_params.instruction_d)
-            .map(|i| store.get(poly::instruction_ra(i)).to_vec())
+            .map(|i| store.get(PolynomialId::InstructionRa(i)).to_vec())
             .collect();
         let bytecode_ra: Vec<Vec<F>> = (0..one_hot_params.bytecode_d)
-            .map(|i| store.get(poly::bytecode_ra(i)).to_vec())
+            .map(|i| store.get(PolynomialId::BytecodeRa(i)).to_vec())
             .collect();
         let ram_ra: Vec<Vec<F>> = (0..one_hot_params.ram_d)
-            .map(|i| store.get(poly::ram_ra_committed(i)).to_vec())
+            .map(|i| store.get(PolynomialId::RamRa(i)).to_vec())
             .collect();
 
-        // ── Virtual polynomials from R1CS witness columns ───────
+        // Virtual polynomials from R1CS witness columns
         let rd_write_value = extract_column(r1cs_witness, crate::r1cs::V_RD_WRITE_VALUE);
         let rs1_value = extract_column(r1cs_witness, crate::r1cs::V_RS1_VALUE);
         let rs2_value = extract_column(r1cs_witness, crate::r1cs::V_RS2_VALUE);
@@ -232,7 +249,7 @@ impl<F: Field> PolynomialTables<F> {
         let ram_write_value = extract_column(r1cs_witness, crate::r1cs::V_RAM_WRITE_VALUE);
         let lookup_output = extract_column(r1cs_witness, crate::r1cs::V_LOOKUP_OUTPUT);
 
-        // ── PV factor polynomials (mix of R1CS columns and trace flags) ─
+        // PV factor polynomials (mix of R1CS columns and trace flags)
         let left_instruction_input =
             extract_column(r1cs_witness, crate::r1cs::V_LEFT_INSTRUCTION_INPUT);
         let right_instruction_input =
@@ -245,7 +262,7 @@ impl<F: Field> PolynomialTables<F> {
         let branch_flag = extract_column(r1cs_witness, crate::r1cs::V_BRANCH);
         let next_is_noop = extract_column(r1cs_witness, crate::r1cs::V_NEXT_IS_NOOP);
 
-        // ── Instruction input decomposition ─────────────────────
+        // Instruction input decomposition
         let left_is_rs1 = extract_flag_poly(
             trace,
             padded_len,
@@ -269,12 +286,11 @@ impl<F: Field> PolynomialTables<F> {
         let unexpanded_pc = extract_column(r1cs_witness, crate::r1cs::V_UNEXPANDED_PC);
         let imm = extract_column(r1cs_witness, crate::r1cs::V_IMM);
 
-        // ── Register addresses (from trace) ─────────────────────
+        // Register addresses (from trace)
         let (rs1_ra, rs2_ra, rd_wa) = extract_register_addresses(trace, padded_len);
 
-        // ── Shift (next-cycle) polynomials ──────────────────────
-        let next_unexpanded_pc =
-            extract_column(r1cs_witness, crate::r1cs::V_NEXT_UNEXPANDED_PC);
+        // Shift (next-cycle) polynomials
+        let next_unexpanded_pc = extract_column(r1cs_witness, crate::r1cs::V_NEXT_UNEXPANDED_PC);
         let next_pc = extract_column(r1cs_witness, crate::r1cs::V_NEXT_PC);
         let next_is_virtual = extract_column(r1cs_witness, crate::r1cs::V_NEXT_IS_VIRTUAL);
         let next_is_first_in_sequence =
@@ -314,6 +330,32 @@ impl<F: Field> PolynomialTables<F> {
             next_pc,
             next_is_virtual,
             next_is_first_in_sequence,
+            // Additional R1CS-derived columns
+            expanded_pc: extract_column(r1cs_witness, crate::r1cs::V_PC),
+            left_lookup_operand: extract_column(r1cs_witness, crate::r1cs::V_LEFT_LOOKUP_OPERAND),
+            right_lookup_operand: extract_column(r1cs_witness, crate::r1cs::V_RIGHT_LOOKUP_OPERAND),
+            ram_val: extract_column(r1cs_witness, crate::r1cs::V_RAM_READ_VALUE),
+            ram_val_final: extract_column(r1cs_witness, crate::r1cs::V_RAM_WRITE_VALUE),
+            registers_val: extract_column(r1cs_witness, crate::r1cs::V_RD_WRITE_VALUE),
+            op_flags: [
+                crate::r1cs::V_FLAG_ADD_OPERANDS,
+                crate::r1cs::V_FLAG_SUBTRACT_OPERANDS,
+                crate::r1cs::V_FLAG_MULTIPLY_OPERANDS,
+                crate::r1cs::V_FLAG_LOAD,
+                crate::r1cs::V_FLAG_STORE,
+                crate::r1cs::V_FLAG_JUMP,
+                crate::r1cs::V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD,
+                crate::r1cs::V_FLAG_VIRTUAL_INSTRUCTION,
+                crate::r1cs::V_FLAG_ASSERT,
+                crate::r1cs::V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC,
+                crate::r1cs::V_FLAG_ADVICE,
+                crate::r1cs::V_FLAG_IS_COMPRESSED,
+                crate::r1cs::V_FLAG_IS_FIRST_IN_SEQUENCE,
+                crate::r1cs::V_FLAG_IS_LAST_IN_SEQUENCE,
+            ]
+            .iter()
+            .map(|&idx| extract_column(r1cs_witness, idx))
+            .collect(),
         }
     }
 }
@@ -440,7 +482,10 @@ mod tests {
         assert_eq!(tables.instruction_ra.len(), params.instruction_d);
         assert_eq!(tables.bytecode_ra.len(), params.bytecode_d);
         assert_eq!(tables.ram_ra.len(), params.ram_d);
-        assert_eq!(tables.total_d(), params.instruction_d + params.bytecode_d + params.ram_d);
+        assert_eq!(
+            tables.total_d(),
+            params.instruction_d + params.bytecode_d + params.ram_d
+        );
 
         // Virtual polys sized to num_cycles
         assert_eq!(tables.rd_write_value.len(), 2);

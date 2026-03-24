@@ -9,8 +9,8 @@
 //! the combined (address || cycle) domain with `log_k_chunk + log_T` rounds.
 
 use crate::builder::ExprBuilder;
-use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
-use crate::zkvm::tags::sumcheck;
+use crate::claim::{ClaimDefinition, OpeningBinding};
+use crate::PolynomialId;
 
 /// RA booleanity output claim (γ-batched zero-check).
 ///
@@ -22,9 +22,10 @@ use crate::zkvm::tags::sumcheck;
 /// where `c_i = eq_eval · γ^i`.
 ///
 /// `n_polys` is `instruction_d + bytecode_d + ram_d` (total RA polynomial count).
-/// `poly_tags` maps each index to its polynomial tag (from `poly::instruction_ra(i)`, etc.).
-pub fn ra_booleanity(n_polys: usize, poly_tags: &[u64]) -> ClaimDefinition {
-    assert_eq!(poly_tags.len(), n_polys);
+/// `polynomials` maps each index to its [`PolynomialId`]
+/// (from `PolynomialId::InstructionRa(i)`, etc.).
+pub fn ra_booleanity(n_polys: usize, polynomials: &[PolynomialId]) -> ClaimDefinition {
+    assert_eq!(polynomials.len(), n_polys);
 
     let b = ExprBuilder::new();
 
@@ -41,36 +42,27 @@ pub fn ra_booleanity(n_polys: usize, poly_tags: &[u64]) -> ClaimDefinition {
     let opening_bindings = (0..n_polys)
         .map(|i| OpeningBinding {
             var_id: i as u32,
-            polynomial_tag: poly_tags[i],
-            sumcheck_tag: sumcheck::BOOLEANITY,
-        })
-        .collect();
-
-    let challenge_bindings = (0..n_polys)
-        .map(|i| ChallengeBinding {
-            var_id: i as u32,
-            source: ChallengeSource::Derived,
+            polynomial: polynomials[i],
         })
         .collect();
 
     ClaimDefinition {
         expr,
         opening_bindings,
-        challenge_bindings,
+        num_challenges: n_polys as u32,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::zkvm::tags::poly;
     use jolt_field::{Field, Fr};
     use num_traits::Zero;
 
     #[test]
     fn booleanity_zero_for_boolean_inputs() {
-        let tags = vec![poly::instruction_ra(0), poly::instruction_ra(1)];
-        let claim = ra_booleanity(2, &tags);
+        let polynomials = vec![PolynomialId::InstructionRa(0), PolynomialId::InstructionRa(1)];
+        let claim = ra_booleanity(2, &polynomials);
 
         let eq = Fr::from_u64(7);
         let gamma = Fr::from_u64(11);
@@ -88,8 +80,8 @@ mod tests {
 
     #[test]
     fn booleanity_nonzero_for_non_boolean() {
-        let tags = vec![poly::instruction_ra(0)];
-        let claim = ra_booleanity(1, &tags);
+        let polynomials = vec![PolynomialId::InstructionRa(0)];
+        let claim = ra_booleanity(1, &polynomials);
 
         let eq = Fr::from_u64(5);
         let ra = Fr::from_u64(3);
@@ -101,8 +93,8 @@ mod tests {
 
     #[test]
     fn booleanity_sop_equivalence() {
-        let tags = vec![poly::instruction_ra(0), poly::bytecode_ra(0)];
-        let claim = ra_booleanity(2, &tags);
+        let polynomials = vec![PolynomialId::InstructionRa(0), PolynomialId::BytecodeRa(0)];
+        let claim = ra_booleanity(2, &polynomials);
         let openings: Vec<Fr> = vec![Fr::from_u64(3), Fr::from_u64(5)];
         let challenges: Vec<Fr> = vec![Fr::from_u64(7), Fr::from_u64(11)];
 

@@ -7,8 +7,8 @@
 //! Verified against jolt-core/src/zkvm/bytecode/read_raf_checking.rs.
 
 use crate::builder::ExprBuilder;
-use crate::claim::{ChallengeBinding, ChallengeSource, ClaimDefinition, OpeningBinding};
-use crate::zkvm::tags::{poly, sumcheck};
+use crate::claim::{ClaimDefinition, OpeningBinding};
+use crate::PolynomialId;
 
 /// Bytecode RA virtual sumcheck output claim.
 ///
@@ -35,18 +35,14 @@ pub fn bytecode_ra_virtual(d: usize) -> ClaimDefinition {
     let opening_bindings = (0..d)
         .map(|idx| OpeningBinding {
             var_id: idx as u32,
-            polynomial_tag: poly::bytecode_ra(idx),
-            sumcheck_tag: sumcheck::BYTECODE_RA_VIRTUAL,
+            polynomial: PolynomialId::BytecodeRa(idx),
         })
         .collect();
 
     ClaimDefinition {
         expr,
         opening_bindings,
-        challenge_bindings: vec![ChallengeBinding {
-            var_id: 0,
-            source: ChallengeSource::Derived,
-        }],
+        num_challenges: 1,
     }
 }
 
@@ -82,22 +78,14 @@ pub fn bytecode_read_raf(n_stages: usize) -> ClaimDefinition {
     let opening_bindings = (0..n_stages)
         .map(|s| OpeningBinding {
             var_id: s as u32,
-            polynomial_tag: poly::bytecode_read_raf_val(s),
-            sumcheck_tag: sumcheck::BYTECODE_READ_RAF,
-        })
-        .collect();
-
-    let challenge_bindings = (0..n_stages)
-        .map(|s| ChallengeBinding {
-            var_id: s as u32,
-            source: ChallengeSource::Derived,
+            polynomial: PolynomialId::BytecodeReadRafVal(s),
         })
         .collect();
 
     ClaimDefinition {
         expr,
         opening_bindings,
-        challenge_bindings,
+        num_challenges: n_stages as u32,
     }
 }
 

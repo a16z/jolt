@@ -24,10 +24,10 @@ pub enum Var {
 /// integers: `0`, `1`, `-1`, register counts, chunk sizes, etc. Actual
 /// field-sized values (gamma powers, eq polynomial evaluations, batching
 /// coefficients) enter the expression as `Var::Challenge` variables, resolved
-/// to `F` at evaluation time via `ChallengeBinding`.
+/// to `F` at evaluation time via challenge value arrays.
 ///
 /// If a future claim formula needs a compile-time field constant larger than
-/// `i128`, model it as a `Var::Challenge` with `ChallengeSource::Derived`.
+/// `i128`, model it as a `Var::Challenge` with a derived challenge value.
 ///
 /// No `Div` or `Inv` variants — claim expressions never require division.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

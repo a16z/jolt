@@ -12,6 +12,6 @@ pub struct JoltProvingKey<F: Field, PCS: CommitmentScheme<Field = F>> {
     pub pcs_verifier_setup: PCS::VerifierSetup,
 }
 pub use jolt_verifier::{
-    verify_from_graph, verify_openings, verify_spartan, JoltError,
-    JoltVerifyingKey, OneHotConfig, OneHotParams, ProverConfig, ReadWriteConfig,
+    verify_from_graph, verify_openings, verify_spartan, JoltError, JoltVerifyingKey, OneHotConfig,
+    OneHotParams, ProverConfig, ReadWriteConfig,
 };

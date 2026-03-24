@@ -21,10 +21,6 @@ use crate::error::JoltError;
 use crate::key::JoltVerifyingKey;
 use crate::proof::JoltProof;
 
-// ---------------------------------------------------------------------------
-// EvalCache — dense storage for polynomial evaluations indexed by ClaimId
-// ---------------------------------------------------------------------------
-
 /// Caches polynomial evaluations produced by each stage, indexed by [`ClaimId`].
 ///
 /// ClaimIds are dense consecutive integers (verified by protocol graph validation),
@@ -55,10 +51,6 @@ impl<F: Clone> EvalCache<F> {
         let _ = self.points.insert(stage, point);
     }
 }
-
-// ---------------------------------------------------------------------------
-// StageChallenges — squeezed challenge values for a single stage
-// ---------------------------------------------------------------------------
 
 /// Challenge values squeezed from the transcript for one stage.
 struct StageChallenges<F> {
@@ -134,10 +126,6 @@ pub fn gamma_powers<F: Field>(gamma: F, count: usize) -> Vec<F> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Formula evaluation
-// ---------------------------------------------------------------------------
-
 /// Evaluate a Formula input claim using the eval cache and stage challenges.
 fn evaluate_formula<F: Field>(
     formula: &jolt_ir::protocol::ClaimFormula,
@@ -165,13 +153,7 @@ fn evaluate_formula<F: Field>(
     }
 
     // Build challenges array: indexed by formula var_id
-    let max_challenge_var = formula
-        .definition
-        .challenge_bindings
-        .iter()
-        .map(|b| b.var_id + 1)
-        .max()
-        .unwrap_or(0) as usize;
+    let max_challenge_var = formula.definition.num_challenges as usize;
 
     let mut challenges = vec![F::zero(); max_challenge_var];
     for (i, label) in challenge_labels.iter().enumerate() {
@@ -189,10 +171,6 @@ fn evaluate_formula<F: Field>(
 
     formula.definition.evaluate(&openings, &challenges)
 }
-
-// ---------------------------------------------------------------------------
-// Main verification function
-// ---------------------------------------------------------------------------
 
 /// Verify a Jolt proof by walking the protocol graph.
 ///
@@ -224,9 +202,7 @@ where
     let num_claims = graph.claim_graph.claims.len();
     let mut cache = EvalCache::new(num_claims);
 
-    // -----------------------------------------------------------------------
     // S1: Spartan (special-cased — opaque internal structure)
-    // -----------------------------------------------------------------------
     let (_r_x, r_y) =
         crate::verifier::verify_spartan(&vk.spartan_key, &proof.spartan_proof, &mut transcript)?;
 
@@ -249,9 +225,7 @@ where
     // Slice(Challenges(S1), 0..log_T) extracts the first log_T elements.
     cache.set_point(s1_stage.id, r_y.iter().rev().copied().collect());
 
-    // -----------------------------------------------------------------------
     // S2..S7: generic graph-driven verification loop
-    // -----------------------------------------------------------------------
     for (stage_proof_idx, stage) in graph.staging.stages.iter().skip(1).enumerate() {
         // Squeeze pre-stage challenges
         let stage_challenges =
@@ -383,9 +357,7 @@ where
         cache.set_point(stage.id, eval_point);
     }
 
-    // -----------------------------------------------------------------------
     // Point normalization
-    // -----------------------------------------------------------------------
     for &vid in &graph.staging.opening.vertices {
         let vertex = graph.claim_graph.vertex(vid);
         if let Vertex::PointNormalization(pn) = vertex {
@@ -401,9 +373,7 @@ where
         }
     }
 
-    // -----------------------------------------------------------------------
     // PCS opening verification
-    // -----------------------------------------------------------------------
     // Collect committed polynomial opening claims from Opening vertices.
     let mut pcs_claims: Vec<VerifierClaim<F, PCS::Output>> = Vec::new();
 
@@ -515,17 +485,16 @@ fn evaluate_output_formula_with_challenges<F: Field>(
     // subsequent challenges get gamma powers from stage pre_squeeze.
     // Common pattern: challenges = [w_eval, w_eval*γ, w_eval*γ², ...]
     // or [w_eval*(1+γ), w_eval*γ] for RamRW-style formulas.
-    let n_challenges = formula.definition.challenge_bindings.iter()
-        .map(|b| b.var_id + 1).max().unwrap_or(0) as usize;
+    let n_challenges = formula.definition.num_challenges as usize;
     let mut challenges = vec![F::zero(); n_challenges];
 
     // Find the gamma base from any stage challenge (heuristic: first available scalar)
     let gamma_base = stage_challenges.scalars.values().next().copied().unwrap_or(F::one());
 
-    // Fill challenges: w_eval × gamma^i for each binding
+    // Fill challenges: w_eval × gamma^i for each challenge variable
     let mut gamma_power = F::one();
-    for binding in &formula.definition.challenge_bindings {
-        challenges[binding.var_id as usize] = w_eval * gamma_power;
+    for c in challenges.iter_mut().take(n_challenges) {
+        *c = w_eval * gamma_power;
         gamma_power *= gamma_base;
     }
 
@@ -628,7 +597,7 @@ mod tests {
     fn formula_evaluation_simple() {
         use jolt_ir::protocol::ClaimFormula;
         use jolt_ir::{
-            ClaimDefinition, ChallengeBinding, ChallengeSource, ExprBuilder, OpeningBinding,
+            ClaimDefinition, ExprBuilder, OpeningBinding, PolynomialId,
         };
 
         // Formula: gamma * opening_0 + gamma^2 * opening_1
@@ -641,12 +610,10 @@ mod tests {
         let def = ClaimDefinition {
             expr,
             opening_bindings: vec![
-                OpeningBinding { var_id: 0, polynomial_tag: 1, sumcheck_tag: 10 },
-                OpeningBinding { var_id: 1, polynomial_tag: 2, sumcheck_tag: 10 },
+                OpeningBinding { var_id: 0, polynomial: PolynomialId::RamInc },
+                OpeningBinding { var_id: 1, polynomial: PolynomialId::RdInc },
             ],
-            challenge_bindings: vec![
-                ChallengeBinding { var_id: 0, source: ChallengeSource::Derived },
-            ],
+            num_challenges: 1,
         };
 
         let mut opening_claims = HashMap::new();

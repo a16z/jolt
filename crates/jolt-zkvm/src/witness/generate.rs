@@ -125,7 +125,7 @@ fn compute_ram_k(trace: &[Cycle]) -> usize {
 mod tests {
     use super::*;
     use jolt_field::Fr;
-    use jolt_ir::zkvm::tags::poly;
+    use jolt_ir::PolynomialId;
     use tracer::instruction::{
         add::ADD,
         format::format_r::{FormatR, RegisterStateFormatR},
@@ -172,8 +172,8 @@ mod tests {
         let output = generate_witnesses::<Fr>(&trace);
 
         // RD_INC and RAM_INC (dense) should always be present
-        assert!(output.witness_store.contains(poly::RD_INC));
-        assert!(output.witness_store.contains(poly::RAM_INC));
+        assert!(output.witness_store.contains(PolynomialId::RdInc));
+        assert!(output.witness_store.contains(PolynomialId::RamInc));
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! graph references polynomials by ID; the prover looks up evaluation tables
 //! by ID; the verifier tracks opening claims by ID.
 //!
-//! This replaces the opaque `u64` tags in `zkvm::tags::poly`.
+//! Each variant maps 1:1 with a polynomial in the protocol graph.
 
 /// Identifies a polynomial in the Jolt protocol.
 ///

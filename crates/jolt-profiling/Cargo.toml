@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Profiling and tracing infrastructure for the Jolt proving system"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/a16z/jolt"
 publish = false
 
 [features]
@@ -45,4 +46,5 @@ workspace = true
 optional = true
 
 [package.metadata.cargo-machete]
+# prost is required by pprof's prost-codec feature but not directly imported
 ignored = ["prost"]
