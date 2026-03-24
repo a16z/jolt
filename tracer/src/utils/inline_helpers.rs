@@ -557,7 +557,6 @@ impl InstrAssembler {
         // rotl(n) == rotr(64 - n)
         self.rotr64(rs1, 64 - amount, rd)
     }
-
 }
 
 #[cfg(test)]
