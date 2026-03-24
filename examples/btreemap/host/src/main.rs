@@ -23,7 +23,7 @@ pub fn btreemap() {
 
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
         let prover_preprocessing = step!("Preprocessing prover", {
-            guest::preprocess_committed_btreemap(&mut program, chunk_count)
+            guest::preprocess_committed_btreemap(&mut program, chunk_count).unwrap()
         });
         let verifier_preprocessing = step!("Preprocessing verifier", {
             guest::verifier_preprocessing_from_prover_btreemap(&prover_preprocessing)
@@ -31,7 +31,7 @@ pub fn btreemap() {
         (prover_preprocessing, verifier_preprocessing)
     } else {
         let shared_preprocessing = step!("Preprocessing shared", {
-            guest::preprocess_shared_btreemap(&mut program)
+            guest::preprocess_shared_btreemap(&mut program).unwrap()
         });
         let prover_preprocessing = step!("Preprocessing prover", {
             guest::preprocess_prover_btreemap(shared_preprocessing.clone())

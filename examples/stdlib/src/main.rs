@@ -16,12 +16,12 @@ pub fn main() {
 
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
         let prover_preprocessing =
-            guest::preprocess_committed_int_to_string(&mut program, chunk_count);
+            guest::preprocess_committed_int_to_string(&mut program, chunk_count).unwrap();
         let verifier_preprocessing =
             guest::verifier_preprocessing_from_prover_int_to_string(&prover_preprocessing);
         (prover_preprocessing, verifier_preprocessing)
     } else {
-        let shared_preprocessing = guest::preprocess_shared_int_to_string(&mut program);
+        let shared_preprocessing = guest::preprocess_shared_int_to_string(&mut program).unwrap();
         let prover_preprocessing =
             guest::preprocess_prover_int_to_string(shared_preprocessing.clone());
         let verifier_preprocessing = guest::preprocess_verifier_int_to_string(
@@ -47,12 +47,12 @@ pub fn main() {
 
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
         let prover_preprocessing =
-            guest::preprocess_committed_string_concat(&mut program, chunk_count);
+            guest::preprocess_committed_string_concat(&mut program, chunk_count).unwrap();
         let verifier_preprocessing =
             guest::verifier_preprocessing_from_prover_string_concat(&prover_preprocessing);
         (prover_preprocessing, verifier_preprocessing)
     } else {
-        let shared_preprocessing = guest::preprocess_shared_string_concat(&mut program);
+        let shared_preprocessing = guest::preprocess_shared_string_concat(&mut program).unwrap();
         let prover_preprocessing =
             guest::preprocess_prover_string_concat(shared_preprocessing.clone());
         let verifier_preprocessing = guest::preprocess_verifier_string_concat(
@@ -82,14 +82,15 @@ pub fn main() {
 
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
         let prover_preprocessing =
-            guest::preprocess_committed_parallel_sum_of_squares(&mut program, chunk_count);
+            guest::preprocess_committed_parallel_sum_of_squares(&mut program, chunk_count).unwrap();
         let verifier_preprocessing =
             guest::verifier_preprocessing_from_prover_parallel_sum_of_squares(
                 &prover_preprocessing,
             );
         (prover_preprocessing, verifier_preprocessing)
     } else {
-        let shared_preprocessing = guest::preprocess_shared_parallel_sum_of_squares(&mut program);
+        let shared_preprocessing =
+            guest::preprocess_shared_parallel_sum_of_squares(&mut program).unwrap();
         let prover_preprocessing =
             guest::preprocess_prover_parallel_sum_of_squares(shared_preprocessing.clone());
         let verifier_preprocessing = guest::preprocess_verifier_parallel_sum_of_squares(

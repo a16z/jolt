@@ -54,7 +54,8 @@ fn run_nostd(target_dir: &str, should_panic: bool, bytecode_chunk: Option<usize>
 
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
         let prover_preprocessing =
-            guest_nostd::preprocess_committed_panic_backtrace_nostd(&mut program, chunk_count);
+            guest_nostd::preprocess_committed_panic_backtrace_nostd(&mut program, chunk_count)
+                .unwrap();
         let verifier_preprocessing =
             guest_nostd::verifier_preprocessing_from_prover_panic_backtrace_nostd(
                 &prover_preprocessing,
@@ -62,7 +63,7 @@ fn run_nostd(target_dir: &str, should_panic: bool, bytecode_chunk: Option<usize>
         (prover_preprocessing, verifier_preprocessing)
     } else {
         let shared_preprocessing =
-            guest_nostd::preprocess_shared_panic_backtrace_nostd(&mut program);
+            guest_nostd::preprocess_shared_panic_backtrace_nostd(&mut program).unwrap();
         let prover_preprocessing =
             guest_nostd::preprocess_prover_panic_backtrace_nostd(shared_preprocessing.clone());
         let verifier_preprocessing = guest_nostd::preprocess_verifier_panic_backtrace_nostd(
@@ -105,14 +106,15 @@ fn run_std(target_dir: &str, should_panic: bool, bytecode_chunk: Option<usize>) 
 
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
         let prover_preprocessing =
-            guest_std::preprocess_committed_panic_backtrace_std(&mut program, chunk_count);
+            guest_std::preprocess_committed_panic_backtrace_std(&mut program, chunk_count).unwrap();
         let verifier_preprocessing =
             guest_std::verifier_preprocessing_from_prover_panic_backtrace_std(
                 &prover_preprocessing,
             );
         (prover_preprocessing, verifier_preprocessing)
     } else {
-        let shared_preprocessing = guest_std::preprocess_shared_panic_backtrace_std(&mut program);
+        let shared_preprocessing =
+            guest_std::preprocess_shared_panic_backtrace_std(&mut program).unwrap();
         let prover_preprocessing =
             guest_std::preprocess_prover_panic_backtrace_std(shared_preprocessing.clone());
         let verifier_preprocessing = guest_std::preprocess_verifier_panic_backtrace_std(

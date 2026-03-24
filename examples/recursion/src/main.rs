@@ -7,7 +7,6 @@ use jolt_sdk::{
 };
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Instant;
 use tracing::{error, info};
 
@@ -63,23 +62,19 @@ fn preprocess_guest_program(
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    let program = Arc::new(ProgramPreprocessing::preprocess(bytecode, memory_init));
+    let program = ProgramPreprocessing::preprocess(bytecode, memory_init).unwrap();
     let shared_preprocessing = if bytecode_config.committed_bytecode {
         JoltSharedPreprocessing::new_committed(
-            program.meta(),
+            program,
             memory_layout,
             max_trace_length,
             bytecode_config.chunk_count(),
         )
     } else {
-        JoltSharedPreprocessing::new(program.meta(), memory_layout, max_trace_length)
+        JoltSharedPreprocessing::new(program, memory_layout, max_trace_length)
     };
 
-    if bytecode_config.committed_bytecode {
-        JoltProverPreprocessing::new_committed(shared_preprocessing, program)
-    } else {
-        JoltProverPreprocessing::new(shared_preprocessing, program)
-    }
+    JoltProverPreprocessing::new(shared_preprocessing)
 }
 
 #[derive(Subcommand)]

@@ -81,7 +81,9 @@ use allocative::Allocative;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::{
@@ -105,8 +107,7 @@ use crate::subprotocols::{
 use crate::transcripts::Transcript;
 use crate::zkvm::{
     config::OneHotParams,
-    program::ProgramPreprocessing,
-    verifier::JoltSharedPreprocessing,
+    prover::JoltProverPreprocessing,
     witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -425,19 +426,22 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
     /// Initialize the prover by computing all G_i polynomials.
     /// Returns (prover, ram_hw_claims) where ram_hw_claims contains the computed H_i for RAM polynomials.
     #[tracing::instrument(skip_all, name = "HammingWeightClaimReductionProver::initialize")]
-    pub fn initialize(
+    pub fn initialize<C, PCS>(
         params: HammingWeightClaimReductionParams<F>,
         trace: &[Cycle],
-        preprocessing: &JoltSharedPreprocessing,
-        program: &ProgramPreprocessing,
+        preprocessing: &JoltProverPreprocessing<F, C, PCS>,
         one_hot_params: &OneHotParams,
-    ) -> Self {
+    ) -> Self
+    where
+        C: JoltCurve<F = F>,
+        PCS: CommitmentScheme<Field = F>,
+    {
         // Compute all G_i polynomials via streaming.
         // `params.r_cycle` is in BIG_ENDIAN (OpeningPoint) convention.
         let G_vecs = compute_all_G::<F>(
             trace,
-            &program.bytecode,
-            &preprocessing.memory_layout,
+            &preprocessing.materialized_program().bytecode,
+            &preprocessing.shared.memory_layout,
             one_hot_params,
             &params.r_cycle,
         );

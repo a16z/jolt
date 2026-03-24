@@ -472,7 +472,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_shared_fn_name(program: &mut jolt::host::Program)
-                -> (jolt::JoltSharedPreprocessing, std::sync::Arc<jolt::ProgramPreprocessing>)
+                -> Result<jolt::JoltSharedPreprocessing, jolt::PreprocessingError>
             {
                 #imports
 
@@ -488,26 +488,30 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                let program_data = std::sync::Arc::new(
-                    jolt::ProgramPreprocessing::preprocess(bytecode, memory_init)
-                );
-                let preprocessing = JoltSharedPreprocessing::new(
-                    program_data.meta(),
+                let program_data = jolt::ProgramPreprocessing::preprocess(bytecode, memory_init)?;
+                Ok(JoltSharedPreprocessing::new(
+                    program_data,
                     memory_layout,
                     #max_trace_length,
-                );
-
-                (preprocessing, program_data)
+                ))
             }
         }
     }
 
     fn make_preprocess_shared_committed_func(&self) -> TokenStream2 {
         let imports = self.make_imports();
+        let attributes = parse_attributes(&self.attr);
+        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
+        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
+        let max_untrusted_advice_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
+        let max_trusted_advice_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
+        let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
+        let heap_size = proc_macro2::Literal::u64_unsuffixed(attributes.heap_size);
+        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
 
         let fn_name = self.get_func_name();
-        let preprocess_shared_fn_name =
-            Ident::new(&format!("preprocess_shared_{fn_name}"), fn_name.span());
         let preprocess_shared_committed_fn_name = Ident::new(
             &format!("preprocess_shared_committed_{fn_name}"),
             fn_name.span(),
@@ -517,19 +521,31 @@ impl MacroBuilder {
             pub fn #preprocess_shared_committed_fn_name(
                 program: &mut jolt::host::Program,
                 bytecode_chunk_count: usize,
-            ) -> (jolt::JoltSharedPreprocessing, std::sync::Arc<jolt::ProgramPreprocessing>)
+            ) -> Result<jolt::JoltSharedPreprocessing, jolt::PreprocessingError>
             {
                 #imports
 
-                let (shared_preprocessing, program_data) = #preprocess_shared_fn_name(program);
+                let (bytecode, memory_init, program_size, _e_entry) = program.decode();
+                let memory_config = MemoryConfig {
+                    max_input_size: #max_input_size,
+                    max_output_size: #max_output_size,
+                    max_untrusted_advice_size: #max_untrusted_advice_size,
+                    max_trusted_advice_size: #max_trusted_advice_size,
+                    stack_size: #stack_size,
+                    heap_size: #heap_size,
+                    program_size: Some(program_size),
+                };
+                let memory_layout = MemoryLayout::new(&memory_config);
+
+                let program_data = jolt::ProgramPreprocessing::preprocess(bytecode, memory_init)?;
                 let shared_preprocessing = JoltSharedPreprocessing::new_committed(
-                    program_data.meta(),
-                    shared_preprocessing.memory_layout,
-                    shared_preprocessing.max_padded_trace_length,
+                    program_data,
+                    memory_layout,
+                    #max_trace_length,
                     bytecode_chunk_count,
                 );
 
-                (shared_preprocessing, program_data)
+                Ok(shared_preprocessing)
             }
         }
     }
@@ -543,16 +559,12 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_prover_fn_name(
-                shared_preprocessing: (jolt::JoltSharedPreprocessing, std::sync::Arc<jolt::ProgramPreprocessing>)
+                shared_preprocessing: jolt::JoltSharedPreprocessing
             )
                 -> jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
             {
                 #imports
-                let (shared_preprocessing, program_data) = shared_preprocessing;
-                let prover_preprocessing = JoltProverPreprocessing::new(
-                    shared_preprocessing,
-                    program_data,
-                );
+                let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
                 prover_preprocessing
             }
@@ -575,12 +587,15 @@ impl MacroBuilder {
                 program: &mut jolt::host::Program,
                 bytecode_chunk_count: usize,
             )
-                -> jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
+                -> Result<
+                    jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>,
+                    jolt::PreprocessingError,
+                >
             {
                 #imports
-                let (shared_preprocessing, program_data) =
-                    #preprocess_shared_committed_fn_name(program, bytecode_chunk_count);
-                JoltProverPreprocessing::new_committed(shared_preprocessing, program_data)
+                let shared_preprocessing =
+                    #preprocess_shared_committed_fn_name(program, bytecode_chunk_count)?;
+                Ok(JoltProverPreprocessing::new(shared_preprocessing))
             }
         }
     }
@@ -593,16 +608,14 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_verifier_fn_name(
-                shared_preprocess: (jolt::JoltSharedPreprocessing, std::sync::Arc<jolt::ProgramPreprocessing>),
+                shared_preprocess: jolt::JoltSharedPreprocessing,
                 generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
                 blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Curve>>,
             ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
             {
-                let (shared_preprocess, program_data) = shared_preprocess;
                 jolt::JoltVerifierPreprocessing::new_full(
                     shared_preprocess,
                     generators,
-                    program_data,
                     blindfold_setup,
                 )
             }
@@ -619,21 +632,12 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_committed_verifier_fn_name(
-                shared_preprocess: (jolt::JoltSharedPreprocessing, std::sync::Arc<jolt::ProgramPreprocessing>),
+                shared_preprocess: jolt::JoltSharedPreprocessing,
                 generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
-                bytecode_commitments: jolt::TrustedBytecodeCommitments<jolt::PCS>,
-                program_commitments: jolt::TrustedProgramCommitments<jolt::PCS>,
                 blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Curve>>,
             ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
             {
-                let (shared_preprocess, _program_data) = shared_preprocess;
-                jolt::JoltVerifierPreprocessing::new_committed(
-                    shared_preprocess,
-                    generators,
-                    bytecode_commitments,
-                    program_commitments,
-                    blindfold_setup,
-                )
+                jolt::JoltVerifierPreprocessing::new_full(shared_preprocess, generators, blindfold_setup)
             }
         }
     }

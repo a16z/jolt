@@ -41,6 +41,8 @@ impl JoltField for ark_bn254::Fr {
 
     type SmallValueLookupTables = [Vec<Self>; 2];
 
+    // Default to the optimized 125-bit challenge path; `challenge-254-bit`
+    // remains an explicit opt-in for the wider representation.
     #[cfg(not(feature = "challenge-254-bit"))]
     type Challenge = MontU128Challenge<ark_bn254::Fr>;
     #[cfg(feature = "challenge-254-bit")]

@@ -11,12 +11,13 @@ pub fn main() {
     let mut program = guest::compile_hashbench(target_dir);
 
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
-        let prover_preprocessing = guest::preprocess_committed_hashbench(&mut program, chunk_count);
+        let prover_preprocessing =
+            guest::preprocess_committed_hashbench(&mut program, chunk_count).unwrap();
         let verifier_preprocessing =
             guest::verifier_preprocessing_from_prover_hashbench(&prover_preprocessing);
         (prover_preprocessing, verifier_preprocessing)
     } else {
-        let shared_preprocessing = guest::preprocess_shared_hashbench(&mut program);
+        let shared_preprocessing = guest::preprocess_shared_hashbench(&mut program).unwrap();
         let prover_preprocessing = guest::preprocess_prover_hashbench(shared_preprocessing.clone());
         let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
         let verifier_preprocessing =

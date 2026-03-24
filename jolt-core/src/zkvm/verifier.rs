@@ -1,9 +1,3 @@
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Read, Write};
-use std::path::Path;
-use std::sync::Arc;
-
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitment};
 #[cfg(feature = "zk")]
@@ -27,12 +21,9 @@ use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
 use crate::zkvm::bytecode::chunks::DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT;
 use crate::zkvm::bytecode::chunks::{committed_lanes, validate_committed_bytecode_chunk_count};
-use crate::zkvm::bytecode::TrustedBytecodeCommitments;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::{OneHotParams, ProgramMode};
-use crate::zkvm::program::{
-    ProgramMetadata, ProgramPreprocessing, TrustedProgramCommitments, VerifierProgram,
-};
+use crate::zkvm::program::{ProgramMetadata, ProgramPreprocessing};
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
 #[cfg(feature = "zk")]
@@ -98,6 +89,10 @@ use crate::{
     zkvm::witness::CommittedPolynomial,
 };
 use common::constants::BYTES_PER_INSTRUCTION;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::Path;
 
 #[cfg(feature = "zk")]
 struct StageVerifyResult<F: JoltField> {
@@ -256,10 +251,10 @@ impl<
     fn main_total_vars(&self) -> usize {
         let trace_log_t = self.proof.trace_length.log_2();
         let log_k_chunk = self.one_hot_params.log_k_chunk;
-        JoltSharedPreprocessing::max_total_vars_from_candidates(
+        JoltSharedPreprocessing::<PCS>::max_total_vars_from_candidates(
             trace_log_t + log_k_chunk,
             self.preprocessing.shared.precommitted_candidate_total_vars(
-                self.preprocessing.program.is_committed(),
+                self.preprocessing.shared.program.is_committed(),
                 self.trusted_advice_commitment.is_some(),
                 self.proof.untrusted_advice_commitment.is_some(),
             ),
@@ -281,7 +276,7 @@ impl<
         {
             opening_candidates.push(("untrusted_advice", point));
         }
-        if self.preprocessing.program.is_committed() {
+        if self.preprocessing.shared.program.is_committed() {
             for chunk_idx in 0..self.preprocessing.shared.bytecode_chunk_count {
                 let (point, _) = self.opening_accumulator.get_committed_polynomial_opening(
                     CommittedPolynomial::BytecodeChunk(chunk_idx),
@@ -290,7 +285,7 @@ impl<
                 opening_candidates.push(("bytecode_chunk", point));
             }
         }
-        if self.preprocessing.program.is_committed() {
+        if self.preprocessing.shared.program.is_committed() {
             let (program_image_point, _) =
                 self.opening_accumulator.get_committed_polynomial_opening(
                     CommittedPolynomial::ProgramImageInit,
@@ -497,14 +492,14 @@ impl<
             self.transcript
                 .append_serializable(b"trusted_advice", trusted_advice_commitment);
         }
-        if let Some(trusted_bytecode) = self.preprocessing.bytecode_commitments.as_ref() {
+        if let Some(trusted_bytecode) = self.preprocessing.shared.program.bytecode_commitments() {
             for commitment in &trusted_bytecode.commitments {
                 self.transcript
                     .append_serializable(b"bytecode_chunk_commit", commitment);
             }
         }
-        if self.preprocessing.program.is_committed() {
-            let trusted = self.preprocessing.program.as_committed()?;
+        if self.preprocessing.shared.program.is_committed() {
+            let trusted = self.preprocessing.shared.program.as_committed()?;
             self.transcript.append_serializable(
                 b"program_image_commitment",
                 &trusted.program_image_commitment,
@@ -920,33 +915,23 @@ impl<
             self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
         );
-        if self.preprocessing.program.is_committed() {
+        if self.preprocessing.shared.program.is_committed() {
             verifier_accumulate_program_image::<F>(self.proof.ram_K, &mut self.opening_accumulator);
         }
         // Domain-separate the batching challenge.
         self.transcript.append_bytes(b"ram_val_check_gamma", &[]);
         let ram_val_check_gamma: F = self.transcript.challenge_scalar::<F>();
-        let initial_ram_state = if self.preprocessing.program.is_full() {
+        let initial_ram_state = if self.preprocessing.shared.program.is_full() {
             crate::zkvm::ram::gen_ram_initial_memory_state::<F>(
                 self.proof.ram_K,
-                &self
-                    .preprocessing
-                    .program
-                    .as_full()
-                    .expect("checked is_full")
-                    .ram,
+                &self.preprocessing.shared.program.as_full()?.ram,
                 &self.program_io,
             )
         } else {
             vec![0u64; self.proof.ram_K]
         };
-        let ram_preprocessing = if self.preprocessing.program.is_full() {
-            self.preprocessing
-                .program
-                .as_full()
-                .expect("checked is_full")
-                .ram
-                .clone()
+        let ram_preprocessing = if self.preprocessing.shared.program.is_full() {
+            self.preprocessing.shared.program.as_full()?.ram.clone()
         } else {
             crate::zkvm::ram::RAMPreprocessing {
                 min_bytecode_address: self.preprocessing.shared.program_meta.min_bytecode_address,
@@ -968,7 +953,7 @@ impl<
             &self.proof.rw_config,
             ram_val_check_gamma,
             &self.opening_accumulator,
-            self.preprocessing.program.is_committed(),
+            self.preprocessing.shared.program.is_committed(),
         );
 
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript>> =
@@ -1109,7 +1094,7 @@ impl<
 
     fn verify_stage6a(&mut self) -> Result<Stage6aVerifyResult<F>, ProofVerifyError> {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let program_preprocessing = self.preprocessing.program.full().map(|p| p.as_ref());
+        let program_preprocessing = Some(&self.preprocessing.shared.program);
         let entry_bytecode_index = self
             .preprocessing
             .shared
@@ -1125,7 +1110,7 @@ impl<
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-            if self.preprocessing.program.is_committed() {
+            if self.preprocessing.shared.program.is_committed() {
                 ProgramMode::Committed
             } else {
                 ProgramMode::Full
@@ -1229,7 +1214,7 @@ impl<
 
         let main_total_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
-            self.preprocessing.program.is_committed(),
+            self.preprocessing.shared.program.is_committed(),
             self.trusted_advice_commitment.is_some(),
             self.proof.untrusted_advice_commitment.is_some(),
         );
@@ -1258,7 +1243,7 @@ impl<
                 &self.opening_accumulator,
             ));
         }
-        if self.preprocessing.program.is_committed() {
+        if self.preprocessing.shared.program.is_committed() {
             let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
             let bytecode_reduction_params = BytecodeClaimReductionParams::new(
                 &bytecode_reduction_seed_params,
@@ -1802,7 +1787,7 @@ impl<
             include_untrusted_advice = true;
         }
 
-        if self.preprocessing.program.is_committed() {
+        if self.preprocessing.shared.program.is_committed() {
             let chunk_count = self.preprocessing.shared.bytecode_chunk_count;
             for chunk_idx in 0..chunk_count {
                 let (chunk_point, chunk_claim) =
@@ -1819,7 +1804,7 @@ impl<
                 scaling_factors.push(lagrange_factor);
             }
         }
-        if self.preprocessing.program.is_committed() {
+        if self.preprocessing.shared.program.is_committed() {
             let (program_point, program_claim) =
                 self.opening_accumulator.get_committed_polynomial_opening(
                     CommittedPolynomial::ProgramImageInit,
@@ -1852,7 +1837,7 @@ impl<
             &self.one_hot_params,
             include_trusted_advice,
             include_untrusted_advice,
-            if self.preprocessing.program.is_committed() {
+            if self.preprocessing.shared.program.is_committed() {
                 ProgramMode::Committed
             } else {
                 ProgramMode::Full
@@ -1907,7 +1892,7 @@ impl<
                 commitments_map.insert(CommittedPolynomial::UntrustedAdvice, commitment.clone());
             }
         }
-        if let Some(trusted_bytecode) = self.preprocessing.bytecode_commitments.as_ref() {
+        if let Some(trusted_bytecode) = self.preprocessing.shared.program.bytecode_commitments() {
             for (chunk_idx, commitment) in trusted_bytecode.commitments.iter().enumerate() {
                 if state
                     .polynomial_claims
@@ -1921,7 +1906,7 @@ impl<
                 }
             }
         }
-        if let Ok(trusted_program) = self.preprocessing.program.as_committed() {
+        if let Ok(trusted_program) = self.preprocessing.shared.program.as_committed() {
             if state
                 .polynomial_claims
                 .iter()
@@ -2008,19 +1993,26 @@ impl<
 }
 
 #[derive(Debug, Clone)]
-pub struct JoltSharedPreprocessing {
+pub struct JoltSharedPreprocessing<
+    PCS: CommitmentScheme = crate::poly::commitment::dory::DoryCommitmentScheme,
+> {
+    pub program: ProgramPreprocessing<PCS>,
     pub program_meta: ProgramMetadata,
     pub memory_layout: MemoryLayout,
     pub max_padded_trace_length: usize,
     pub bytecode_chunk_count: usize,
 }
 
-impl CanonicalSerialize for JoltSharedPreprocessing {
+impl<PCS: CommitmentScheme> CanonicalSerialize for JoltSharedPreprocessing<PCS>
+where
+    PCS::Commitment: CanonicalSerialize,
+{
     fn serialize_with_mode<W: std::io::Write>(
         &self,
         mut writer: W,
         compress: ark_serialize::Compress,
     ) -> Result<(), ark_serialize::SerializationError> {
+        self.program.serialize_with_mode(&mut writer, compress)?;
         self.program_meta
             .serialize_with_mode(&mut writer, compress)?;
         self.memory_layout
@@ -2033,25 +2025,31 @@ impl CanonicalSerialize for JoltSharedPreprocessing {
     }
 
     fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        self.program_meta.serialized_size(compress)
+        self.program.serialized_size(compress)
+            + self.program_meta.serialized_size(compress)
             + self.memory_layout.serialized_size(compress)
             + self.max_padded_trace_length.serialized_size(compress)
             + self.bytecode_chunk_count.serialized_size(compress)
     }
 }
 
-impl CanonicalDeserialize for JoltSharedPreprocessing {
+impl<PCS: CommitmentScheme> CanonicalDeserialize for JoltSharedPreprocessing<PCS>
+where
+    PCS::Commitment: CanonicalDeserialize,
+{
     fn deserialize_with_mode<R: std::io::Read>(
         mut reader: R,
         compress: ark_serialize::Compress,
         validate: ark_serialize::Validate,
     ) -> Result<Self, ark_serialize::SerializationError> {
+        let program = ProgramPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
         let program_meta = ProgramMetadata::deserialize_with_mode(&mut reader, compress, validate)?;
         let memory_layout = MemoryLayout::deserialize_with_mode(&mut reader, compress, validate)?;
         let max_padded_trace_length =
             usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let bytecode_chunk_count = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         Ok(Self {
+            program,
             program_meta,
             memory_layout,
             max_padded_trace_length,
@@ -2060,23 +2058,28 @@ impl CanonicalDeserialize for JoltSharedPreprocessing {
     }
 }
 
-impl ark_serialize::Valid for JoltSharedPreprocessing {
+impl<PCS: CommitmentScheme> ark_serialize::Valid for JoltSharedPreprocessing<PCS>
+where
+    PCS::Commitment: ark_serialize::Valid,
+{
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.program.check()?;
         self.program_meta.check()?;
         self.memory_layout.check()?;
         Ok(())
     }
 }
 
-impl JoltSharedPreprocessing {
+impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS> {
     #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new")]
     pub fn new(
-        program_meta: ProgramMetadata,
+        program: ProgramPreprocessing<PCS>,
         memory_layout: MemoryLayout,
         max_padded_trace_length: usize,
-    ) -> JoltSharedPreprocessing {
+    ) -> JoltSharedPreprocessing<PCS> {
         Self {
-            program_meta,
+            program_meta: program.meta(),
+            program,
             memory_layout,
             max_padded_trace_length,
             bytecode_chunk_count: DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT,
@@ -2085,37 +2088,42 @@ impl JoltSharedPreprocessing {
 
     #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new_committed")]
     pub fn new_committed(
-        program_meta: ProgramMetadata,
+        program: ProgramPreprocessing<PCS>,
         memory_layout: MemoryLayout,
         max_padded_trace_length: usize,
         bytecode_chunk_count: usize,
-    ) -> JoltSharedPreprocessing {
+    ) -> JoltSharedPreprocessing<PCS> {
         validate_committed_bytecode_chunk_count(bytecode_chunk_count);
         assert!(
-            program_meta
-                .bytecode_len
-                .is_multiple_of(bytecode_chunk_count),
+            program.bytecode_len().is_multiple_of(bytecode_chunk_count),
             "bytecode chunk count ({bytecode_chunk_count}) must divide bytecode size ({})",
-            program_meta.bytecode_len
+            program.bytecode_len()
         );
-        Self {
-            program_meta,
+        let mut shared = Self {
+            program_meta: program.meta(),
+            program,
             memory_layout,
             max_padded_trace_length,
             bytecode_chunk_count,
-        }
+        };
+        let (max_total_vars, max_log_k_chunk) = shared.compute_max_total_vars(true);
+        let generators = PCS::setup_prover(max_total_vars);
+        shared.program = shared.program.commit(
+            &shared.memory_layout,
+            &generators,
+            shared.bytecode_chunk_count,
+            max_log_k_chunk,
+        );
+        shared.program_meta = shared.program.meta();
+        shared
+    }
+
+    pub fn is_committed_mode(&self) -> bool {
+        self.program.is_committed()
     }
 
     pub fn bytecode_size(&self) -> usize {
         self.program_meta.bytecode_len
-    }
-
-    pub fn min_bytecode_address(&self) -> u64 {
-        self.program_meta.min_bytecode_address
-    }
-
-    pub fn program_image_len_words(&self) -> usize {
-        self.program_meta.program_image_len_words
     }
 
     #[inline]
@@ -2211,7 +2219,7 @@ impl<C: JoltCurve> From<BlindfoldSetup<C>> for PedersenGenerators<C> {
     }
 }
 
-#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, Clone)]
 pub struct JoltVerifierPreprocessing<F, C, PCS>
 where
     F: JoltField,
@@ -2220,10 +2228,81 @@ where
 {
     _curve: std::marker::PhantomData<C>,
     pub generators: PCS::VerifierSetup,
-    pub shared: JoltSharedPreprocessing,
-    pub bytecode_commitments: Option<TrustedBytecodeCommitments<PCS>>,
-    pub program: VerifierProgram<PCS>,
+    pub shared: JoltSharedPreprocessing<PCS>,
     pub blindfold_setup: Option<BlindfoldSetup<C>>,
+}
+
+impl<F, C, PCS> CanonicalSerialize for JoltVerifierPreprocessing<F, C, PCS>
+where
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: CanonicalSerialize,
+    PCS::Commitment: CanonicalSerialize,
+{
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        self.generators.serialize_with_mode(&mut writer, compress)?;
+        self.shared.serialize_with_mode(&mut writer, compress)?;
+        self.blindfold_setup
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.generators.serialized_size(compress)
+            + self.shared.serialized_size(compress)
+            + self.blindfold_setup.serialized_size(compress)
+    }
+}
+
+impl<F, C, PCS> CanonicalDeserialize for JoltVerifierPreprocessing<F, C, PCS>
+where
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: CanonicalDeserialize,
+    PCS::Commitment: CanonicalDeserialize,
+{
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        Ok(Self {
+            _curve: std::marker::PhantomData,
+            generators: PCS::VerifierSetup::deserialize_with_mode(&mut reader, compress, validate)?,
+            shared: JoltSharedPreprocessing::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+            blindfold_setup: Option::<BlindfoldSetup<C>>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )?,
+        })
+    }
+}
+
+impl<F, C, PCS> ark_serialize::Valid for JoltVerifierPreprocessing<F, C, PCS>
+where
+    F: JoltField,
+    C: JoltCurve<F = F>,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: ark_serialize::Valid,
+    PCS::Commitment: ark_serialize::Valid,
+{
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.generators.check()?;
+        self.shared.check()?;
+        self.blindfold_setup.check()?;
+        Ok(())
+    }
 }
 
 impl<F, C, PCS> Serializable for JoltVerifierPreprocessing<F, C, PCS>
@@ -2231,6 +2310,8 @@ where
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: CanonicalSerialize + CanonicalDeserialize,
+    PCS::Commitment: CanonicalSerialize + CanonicalDeserialize,
 {
 }
 
@@ -2239,6 +2320,8 @@ where
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
+    PCS::VerifierSetup: CanonicalSerialize + CanonicalDeserialize,
+    PCS::Commitment: CanonicalSerialize + CanonicalDeserialize,
 {
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
         let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
@@ -2263,35 +2346,15 @@ impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>>
 {
     #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new_full")]
     pub fn new_full(
-        shared: JoltSharedPreprocessing,
+        mut shared: JoltSharedPreprocessing<PCS>,
         generators: PCS::VerifierSetup,
-        program: Arc<ProgramPreprocessing>,
         blindfold_setup: Option<BlindfoldSetup<C>>,
     ) -> Self {
+        shared.program = shared.program.to_verifier_program();
         Self {
             _curve: std::marker::PhantomData,
             generators,
             shared,
-            bytecode_commitments: None,
-            program: VerifierProgram::Full(program),
-            blindfold_setup,
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new_committed")]
-    pub fn new_committed(
-        shared: JoltSharedPreprocessing,
-        generators: PCS::VerifierSetup,
-        bytecode_commitments: TrustedBytecodeCommitments<PCS>,
-        program_commitments: TrustedProgramCommitments<PCS>,
-        blindfold_setup: Option<BlindfoldSetup<C>>,
-    ) -> Self {
-        Self {
-            _curve: std::marker::PhantomData,
-            generators,
-            shared,
-            bytecode_commitments: Some(bytecode_commitments),
-            program: VerifierProgram::Committed(program_commitments),
             blindfold_setup,
         }
     }
@@ -2326,23 +2389,6 @@ impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F> + ZkEva
         let blindfold_setup = None;
         #[cfg(feature = "zk")]
         let blindfold_setup = Some(prover_preprocessing.blindfold_setup());
-        match (
-            &prover_preprocessing.bytecode_commitments,
-            &prover_preprocessing.program_commitments,
-        ) {
-            (Some(bytecode_commitments), Some(program_commitments)) => Self::new_committed(
-                shared,
-                generators,
-                bytecode_commitments.clone(),
-                program_commitments.clone(),
-                blindfold_setup,
-            ),
-            _ => Self::new_full(
-                shared,
-                generators,
-                Arc::clone(&prover_preprocessing.program),
-                blindfold_setup,
-            ),
-        }
+        Self::new_full(shared, generators, blindfold_setup)
     }
 }

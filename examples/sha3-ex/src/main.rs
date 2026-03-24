@@ -11,12 +11,13 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_sha3(target_dir);
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
-        let prover_preprocessing = guest::preprocess_committed_sha3(&mut program, chunk_count);
+        let prover_preprocessing =
+            guest::preprocess_committed_sha3(&mut program, chunk_count).unwrap();
         let verifier_preprocessing =
             guest::verifier_preprocessing_from_prover_sha3(&prover_preprocessing);
         (prover_preprocessing, verifier_preprocessing)
     } else {
-        let shared_preprocessing = guest::preprocess_shared_sha3(&mut program);
+        let shared_preprocessing = guest::preprocess_shared_sha3(&mut program).unwrap();
         let prover_preprocessing = guest::preprocess_prover_sha3(shared_preprocessing.clone());
         let verifier_preprocessing = guest::preprocess_verifier_sha3(
             shared_preprocessing,

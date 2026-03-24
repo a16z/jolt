@@ -6,11 +6,11 @@ use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::zkvm::config::{OneHotParams, ProgramMode};
 use crate::zkvm::instruction::InstructionFlags;
-use crate::zkvm::program::ProgramPreprocessing;
-use crate::zkvm::verifier::JoltSharedPreprocessing;
+use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::{
     field::JoltField,
     poly::{multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial},
@@ -80,16 +80,15 @@ pub fn all_proof_commitment_polynomials(
 
 impl CommittedPolynomial {
     /// Generate witness data and compute tier 1 commitment for a single row
-    pub fn stream_witness_and_commit_rows<F, PCS>(
+    pub fn stream_witness_and_commit_rows<F, C, PCS>(
         &self,
-        setup: &PCS::ProverSetup,
-        preprocessing: &JoltSharedPreprocessing,
-        program: &ProgramPreprocessing,
+        preprocessing: &JoltProverPreprocessing<F, C, PCS>,
         row_cycles: &[tracer::instruction::Cycle],
         one_hot_params: &OneHotParams,
     ) -> <PCS as StreamingCommitmentScheme>::ChunkState
     where
         F: JoltField,
+        C: JoltCurve<F = F>,
         PCS: StreamingCommitmentScheme<Field = F>,
     {
         match self {
@@ -101,7 +100,7 @@ impl CommittedPolynomial {
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
-                PCS::process_chunk(setup, &row)
+                PCS::process_chunk(&preprocessing.generators, &row)
             }
             CommittedPolynomial::RamInc => {
                 let row: Vec<i128> = row_cycles
@@ -113,7 +112,7 @@ impl CommittedPolynomial {
                         _ => 0,
                     })
                     .collect();
-                PCS::process_chunk(setup, &row)
+                PCS::process_chunk(&preprocessing.generators, &row)
             }
             CommittedPolynomial::InstructionRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -123,17 +122,17 @@ impl CommittedPolynomial {
                         Some(one_hot_params.lookup_index_chunk(lookup_index, *idx) as usize)
                     })
                     .collect();
-                PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
+                PCS::process_chunk_onehot(&preprocessing.generators, one_hot_params.k_chunk, &row)
             }
             CommittedPolynomial::BytecodeRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
                     .iter()
                     .map(|cycle| {
-                        let pc = program.get_pc(cycle);
+                        let pc = preprocessing.materialized_program().get_pc(cycle);
                         Some(one_hot_params.bytecode_pc_chunk(pc, *idx) as usize)
                     })
                     .collect();
-                PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
+                PCS::process_chunk_onehot(&preprocessing.generators, one_hot_params.k_chunk, &row)
             }
             CommittedPolynomial::RamRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -141,12 +140,12 @@ impl CommittedPolynomial {
                     .map(|cycle| {
                         remap_address(
                             cycle.ram_access().address() as u64,
-                            &preprocessing.memory_layout,
+                            &preprocessing.shared.memory_layout,
                         )
                         .map(|address| one_hot_params.ram_address_chunk(address, *idx) as usize)
                     })
                     .collect();
-                PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
+                PCS::process_chunk_onehot(&preprocessing.generators, one_hot_params.k_chunk, &row)
             }
             CommittedPolynomial::TrustedAdvice
             | CommittedPolynomial::UntrustedAdvice

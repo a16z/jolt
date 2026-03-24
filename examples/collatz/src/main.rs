@@ -14,12 +14,13 @@ pub fn main() {
 
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
         let prover_preprocessing =
-            guest::preprocess_committed_collatz_convergence(&mut program, chunk_count);
+            guest::preprocess_committed_collatz_convergence(&mut program, chunk_count).unwrap();
         let verifier_preprocessing =
             guest::verifier_preprocessing_from_prover_collatz_convergence(&prover_preprocessing);
         (prover_preprocessing, verifier_preprocessing)
     } else {
-        let shared_preprocessing = guest::preprocess_shared_collatz_convergence(&mut program);
+        let shared_preprocessing =
+            guest::preprocess_shared_collatz_convergence(&mut program).unwrap();
         let prover_preprocessing =
             guest::preprocess_prover_collatz_convergence(shared_preprocessing.clone());
         let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
@@ -49,14 +50,16 @@ pub fn main() {
 
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
         let prover_preprocessing =
-            guest::preprocess_committed_collatz_convergence_range(&mut program, chunk_count);
+            guest::preprocess_committed_collatz_convergence_range(&mut program, chunk_count)
+                .unwrap();
         let verifier_preprocessing =
             guest::verifier_preprocessing_from_prover_collatz_convergence_range(
                 &prover_preprocessing,
             );
         (prover_preprocessing, verifier_preprocessing)
     } else {
-        let shared_preprocessing = guest::preprocess_shared_collatz_convergence_range(&mut program);
+        let shared_preprocessing =
+            guest::preprocess_shared_collatz_convergence_range(&mut program).unwrap();
         let prover_preprocessing =
             guest::preprocess_prover_collatz_convergence_range(shared_preprocessing.clone());
         let verifier_setup = prover_preprocessing.generators.to_verifier_setup();

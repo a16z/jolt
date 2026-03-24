@@ -16,12 +16,12 @@ pub fn main() {
 
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
         let prover_preprocessing =
-            guest::preprocess_committed_merkle_tree(&mut program, chunk_count);
+            guest::preprocess_committed_merkle_tree(&mut program, chunk_count).unwrap();
         let verifier_preprocessing =
             guest::verifier_preprocessing_from_prover_merkle_tree(&prover_preprocessing);
         (prover_preprocessing, verifier_preprocessing)
     } else {
-        let shared_preprocessing = guest::preprocess_shared_merkle_tree(&mut program);
+        let shared_preprocessing = guest::preprocess_shared_merkle_tree(&mut program).unwrap();
         let prover_preprocessing =
             guest::preprocess_prover_merkle_tree(shared_preprocessing.clone());
         let verifier_preprocessing = guest::preprocess_verifier_merkle_tree(

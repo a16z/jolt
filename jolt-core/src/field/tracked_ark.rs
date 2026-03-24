@@ -331,6 +331,8 @@ impl JoltField for TrackedFr {
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
 
     // Default: Use optimized 125-bit MontChallenge
+    // Default to the optimized 125-bit challenge path; `challenge-254-bit`
+    // remains an explicit opt-in for the wider representation.
     #[cfg(not(feature = "challenge-254-bit"))]
     type Challenge = MontU128Challenge<TrackedFr>;
 

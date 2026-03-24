@@ -103,7 +103,6 @@ path = "./src/main.rs"
 [dependencies]
 clap.workspace = true
 eyre.workspace = true
-mimalloc.workspace = true
 rand.workspace = true
 sysinfo.workspace = true
 syn.workspace = true
@@ -210,7 +209,6 @@ num-traits = { version = "0.2.19", default-features = false }
 # System and Platform
 sysinfo = "0.38"
 memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
-mimalloc = "0.1"
 
 # Parallel Processing
 rayon = { version = "^1.8.0" }

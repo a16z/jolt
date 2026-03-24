@@ -12,12 +12,12 @@ pub fn main() {
     let mut program = guest::compile_sha3_chain(target_dir);
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
         let prover_preprocessing =
-            guest::preprocess_committed_sha3_chain(&mut program, chunk_count);
+            guest::preprocess_committed_sha3_chain(&mut program, chunk_count).unwrap();
         let verifier_preprocessing =
             guest::verifier_preprocessing_from_prover_sha3_chain(&prover_preprocessing);
         (prover_preprocessing, verifier_preprocessing)
     } else {
-        let shared_preprocessing = guest::preprocess_shared_sha3_chain(&mut program);
+        let shared_preprocessing = guest::preprocess_shared_sha3_chain(&mut program).unwrap();
         let prover_preprocessing =
             guest::preprocess_prover_sha3_chain(shared_preprocessing.clone());
         let verifier_preprocessing = guest::preprocess_verifier_sha3_chain(

@@ -10,6 +10,7 @@ use crate::subprotocols::blindfold::{
 };
 use crate::{
     field::JoltField,
+    poly::commitment::commitment_scheme::CommitmentScheme,
     poly::{
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
@@ -921,8 +922,8 @@ pub struct BytecodeReadRafSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeReadRafSumcheckVerifier<F> {
-    pub fn gen(
-        program: &ProgramPreprocessing,
+    pub fn gen<PCS: CommitmentScheme>(
+        program: &ProgramPreprocessing<PCS>,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         use_staged_val_claims: bool,
@@ -1064,8 +1065,8 @@ pub struct BytecodeReadRafAddressSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
-    pub fn new(
-        program: Option<&ProgramPreprocessing>,
+    pub fn new<PCS: CommitmentScheme>(
+        program: Option<&ProgramPreprocessing<PCS>>,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &VerifierOpeningAccumulator<F>,
@@ -1075,7 +1076,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
     ) -> Result<Self, ProofVerifyError> {
         let params = match program_mode {
             ProgramMode::Committed => BytecodeReadRafSumcheckParams::gen(
-                None,
+                None::<&ProgramPreprocessing<PCS>>,
                 n_cycle_vars,
                 one_hot_params,
                 true,
@@ -1442,8 +1443,8 @@ pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
 
 impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckParams::gen")]
-    pub fn gen(
-        program: Option<&ProgramPreprocessing>,
+    pub fn gen<PCS: CommitmentScheme>(
+        program: Option<&ProgramPreprocessing<PCS>>,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         use_staged_val_claims: bool,
@@ -1469,7 +1470,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         let rv_claims = [rv_claim_1, rv_claim_2, rv_claim_3, rv_claim_4, rv_claim_5];
 
         // Fused pass: compute all val polynomials in a single parallel iteration in Full mode.
-        let val_polys = if let Some(program) = program {
+        let val_polys = if let Some(program) = program.and_then(|program| program.as_full().ok()) {
             let r_register_4 = opening_accumulator
                 .get_virtual_polynomial_opening(
                     VirtualPolynomial::RdWa,

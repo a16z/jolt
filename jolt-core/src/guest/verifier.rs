@@ -3,6 +3,7 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
 use crate::utils::errors::ProofVerifyError;
+use crate::zkvm::bytecode::PreprocessingError;
 use crate::zkvm::verifier::BlindfoldSetup;
 
 use crate::guest::program::Program;
@@ -15,30 +16,39 @@ use crate::zkvm::verifier::JoltVerifier;
 use crate::zkvm::verifier::JoltVerifierPreprocessing;
 use common::jolt_device::MemoryConfig;
 use common::jolt_device::MemoryLayout;
-use std::sync::Arc;
 
 pub fn preprocess(
     guest: &Program,
     max_trace_length: usize,
     verifier_setup: <DoryCommitmentScheme as CommitmentScheme>::VerifierSetup,
     blindfold_setup: Option<BlindfoldSetup<Bn254Curve>>,
-) -> JoltVerifierPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme> {
-    let (shared, program) = preprocess_shared(guest, max_trace_length);
-    JoltVerifierPreprocessing::new_full(shared, verifier_setup, program, blindfold_setup)
+) -> Result<
+    JoltVerifierPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme>,
+    PreprocessingError,
+> {
+    let shared = preprocess_shared(guest, max_trace_length)?;
+    Ok(JoltVerifierPreprocessing::new_full(
+        shared,
+        verifier_setup,
+        blindfold_setup,
+    ))
 }
 
 fn preprocess_shared(
     guest: &Program,
     max_trace_length: usize,
-) -> (JoltSharedPreprocessing, Arc<ProgramPreprocessing>) {
+) -> Result<JoltSharedPreprocessing, PreprocessingError> {
     let (bytecode, memory_init, program_size, _e_entry) = guest.decode();
 
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    let program = Arc::new(ProgramPreprocessing::preprocess(bytecode, memory_init));
-    let shared = JoltSharedPreprocessing::new(program.meta(), memory_layout, max_trace_length);
-    (shared, program)
+    let program = ProgramPreprocessing::preprocess(bytecode, memory_init)?;
+    Ok(JoltSharedPreprocessing::new(
+        program,
+        memory_layout,
+        max_trace_length,
+    ))
 }
 
 pub fn verify<

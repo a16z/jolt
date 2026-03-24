@@ -1,9 +1,9 @@
 mod sequence_tests {
-    use crate::sdk::Secp256k1Point;
+    use crate::sdk::{decode_glv_sign_word, Secp256k1Point};
     use crate::{
-        Secp256k1Fq, Secp256k1Fr, INLINE_OPCODE, SECP256K1_DIVQ_FUNCT3, SECP256K1_DIVR_FUNCT3,
-        SECP256K1_FUNCT7, SECP256K1_MULQ_FUNCT3, SECP256K1_MULR_FUNCT3, SECP256K1_SQUAREQ_FUNCT3,
-        SECP256K1_SQUARER_FUNCT3,
+        Secp256k1Error, Secp256k1Fq, Secp256k1Fr, INLINE_OPCODE, SECP256K1_DIVQ_FUNCT3,
+        SECP256K1_DIVR_FUNCT3, SECP256K1_FUNCT7, SECP256K1_MULQ_FUNCT3, SECP256K1_MULR_FUNCT3,
+        SECP256K1_SQUAREQ_FUNCT3, SECP256K1_SQUARER_FUNCT3,
     };
     use ark_ff::{BigInt, Field, PrimeField};
     use ark_secp256k1::{Fq, Fr};
@@ -384,6 +384,16 @@ mod sequence_tests {
         let combined = p1.add(&p2);
         assert_eq!(combined.x().e(), expected.x().e());
         assert_eq!(combined.y().e(), expected.y().e());
+    }
+
+    #[test]
+    fn test_decode_glv_sign_word() {
+        assert!(!decode_glv_sign_word(0).unwrap());
+        assert!(decode_glv_sign_word(1).unwrap());
+        assert!(matches!(
+            decode_glv_sign_word(2),
+            Err(Secp256k1Error::InvalidGlvSignWord(2))
+        ));
     }
 
     #[test]

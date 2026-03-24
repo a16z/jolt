@@ -107,6 +107,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
         let canonical_max_num_vars = canonical_setup_log_n(max_num_vars);
+        #[cfg(test)]
+        DoryGlobals::configure_test_cache_root();
         #[cfg(not(target_arch = "wasm32"))]
         let setup = ArkworksProverSetup::new_from_urs(canonical_max_num_vars);
         #[cfg(target_arch = "wasm32")]

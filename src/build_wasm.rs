@@ -5,7 +5,6 @@ use std::{
     fs::{self, File},
     io::Write,
     path::Path,
-    sync::Arc,
 };
 
 use ark_bn254::Fr;
@@ -52,17 +51,15 @@ fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -
     };
     let memory_layout = MemoryLayout::new(&memory_config);
 
-    let preprocessed_program = Arc::new(ProgramPreprocessing::preprocess(bytecode, memory_init));
+    let preprocessed_program = ProgramPreprocessing::preprocess(bytecode, memory_init)?;
     let shared = JoltSharedPreprocessing::new(
-        preprocessed_program.meta(),
+        preprocessed_program,
         memory_layout,
         attributes.max_trace_length as usize,
     );
 
-    let prover_preprocessing = JoltProverPreprocessing::<Fr, Bn254Curve, DoryCommitmentScheme>::new(
-        shared,
-        preprocessed_program,
-    );
+    let prover_preprocessing =
+        JoltProverPreprocessing::<Fr, Bn254Curve, DoryCommitmentScheme>::new(shared);
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
 
     let verifier_bytes = verifier_preprocessing.serialize_to_bytes()?;

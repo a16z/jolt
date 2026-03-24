@@ -20,12 +20,13 @@ pub fn main() {
     // Compile and preprocess the advice-based version
     let mut program = guest::compile_modinv(target_dir);
     let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
-        let prover_preprocessing = guest::preprocess_committed_modinv(&mut program, chunk_count);
+        let prover_preprocessing =
+            guest::preprocess_committed_modinv(&mut program, chunk_count).unwrap();
         let verifier_preprocessing =
             guest::verifier_preprocessing_from_prover_modinv(&prover_preprocessing);
         (prover_preprocessing, verifier_preprocessing)
     } else {
-        let shared_preprocessing = guest::preprocess_shared_modinv(&mut program);
+        let shared_preprocessing = guest::preprocess_shared_modinv(&mut program).unwrap();
         let prover_preprocessing = guest::preprocess_prover_modinv(shared_preprocessing.clone());
         let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
         let verifier_preprocessing =
