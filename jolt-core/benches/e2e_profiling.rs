@@ -213,7 +213,8 @@ fn prove_example(
             init_memory_state,
             padded_trace_len,
             e_entry,
-        );
+        )
+        .unwrap();
         let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
         let elf_contents_opt = program.get_elf_contents();
@@ -268,7 +269,8 @@ fn prove_example_with_trace(
         init_memory_state,
         trace.len().next_power_of_two(),
         e_entry,
-    );
+    )
+    .unwrap();
     let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
     let elf_contents_opt = program.get_elf_contents();

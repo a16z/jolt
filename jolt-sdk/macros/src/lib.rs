@@ -466,7 +466,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_shared_fn_name(program: &mut jolt::host::Program)
-                -> jolt::JoltSharedPreprocessing
+                -> Result<jolt::JoltSharedPreprocessing, jolt::PreprocessingError>
             {
                 #imports
 
@@ -488,9 +488,9 @@ impl MacroBuilder {
                     memory_init,
                     #max_trace_length,
                     e_entry,
-                );
+                )?;
 
-                preprocessing
+                Ok(preprocessing)
             }
         }
     }

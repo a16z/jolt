@@ -53,6 +53,21 @@ pub enum Secp256k1Error {
     QAtInfinity,      // public key is point at infinity
     ROrSZero,         // one of the signature components is zero
     RxMismatch,       // computed R.x does not match r
+    InvalidGlvSignWord(u64),
+}
+
+#[inline(always)]
+#[cfg(any(
+    all(test, feature = "host"),
+    target_arch = "riscv32",
+    target_arch = "riscv64"
+))]
+pub(crate) fn decode_glv_sign_word(sign: u64) -> Result<bool, Secp256k1Error> {
+    match sign {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(Secp256k1Error::InvalidGlvSignWord(sign)),
+    }
 }
 
 /// secp256k1 base field element
@@ -745,6 +760,8 @@ fn decompose_scalar_impl(k: &Secp256k1Fr) -> [(bool, u128); 2] {
             options(nostack)
         );
     }
+    let k1_sign = decode_glv_sign_word(out[0]).unwrap_or_spoil_proof();
+    let k2_sign = decode_glv_sign_word(out[3]).unwrap_or_spoil_proof();
     let lambda = Secp256k1Fr::from_u64_arr_unchecked(&[
         0xdf02967c1b23bd72,
         0x122e22ea20816678,
@@ -752,11 +769,11 @@ fn decompose_scalar_impl(k: &Secp256k1Fr) -> [(bool, u128); 2] {
         0x5363ad4cc05c30e0,
     ]);
     let mut k1 = Secp256k1Fr::from_u64_arr_unchecked(&[out[1], out[2], 0u64, 0u64]);
-    if out[0] == 1u64 {
+    if k1_sign {
         k1 = k1.neg();
     }
     let mut k2 = Secp256k1Fr::from_u64_arr_unchecked(&[out[4], out[5], 0u64, 0u64]);
-    if out[3] == 1u64 {
+    if k2_sign {
         k2 = k2.neg();
     }
     let recomposed_k = k1.add(&k2.mul(&lambda));
@@ -764,8 +781,8 @@ fn decompose_scalar_impl(k: &Secp256k1Fr) -> [(bool, u128); 2] {
         hcf();
     }
     [
-        (out[0] == 1u64, (out[1] as u128) | ((out[2] as u128) << 64)),
-        (out[3] == 1u64, (out[4] as u128) | ((out[5] as u128) << 64)),
+        (k1_sign, (out[1] as u128) | ((out[2] as u128) << 64)),
+        (k2_sign, (out[4] as u128) | ((out[5] as u128) << 64)),
     ]
 }
 

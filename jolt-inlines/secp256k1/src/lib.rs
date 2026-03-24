@@ -7,7 +7,7 @@
 //! 0x04: scalar field multiplication
 //! 0x05: scalar field squaring
 //! 0x06: scalar field division
-//! 0x07: scalar field GLV decomposition (advice only, no checks)
+//! 0x07: scalar field GLV decomposition (advice only; sign words are validated before use)
 //! These are accessible through a high-level SDK which includes
 //! ECDSA signature verification
 
@@ -46,7 +46,7 @@ pub const SECP256K1_SQUARER_NAME: &str = "SECP256K1_SQUARER";
 pub const SECP256K1_DIVR_FUNCT3: u32 = 0x06;
 pub const SECP256K1_DIVR_NAME: &str = "SECP256K1_DIVR";
 
-// scalar field (r) glv decomposition (pure non-deterministic advice, no checks)
+// scalar field (r) glv decomposition (pure non-deterministic advice; sign words are validated before use)
 // this is, given k in Fr, compute k1, k2 such that k = k1 + k2 * lambda (mod r)
 // and |k1|, |k2| <= 2^128
 // returns (s1, |k1|, s2, |k2|) where s1, s2 are the signs of k1, k2 respectively as 64-bit integers (0 for positive, 1 for negative)
