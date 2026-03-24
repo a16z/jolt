@@ -17,13 +17,14 @@ use jolt_ir::protocol::{
     SymbolicPoint, Vertex,
 };
 use jolt_ir::PolynomialId;
-use jolt_witness::TracePolynomials;
 use jolt_openings::{AdditivelyHomomorphic, OpeningReduction, ProverClaim, RlcReduction};
 use jolt_sumcheck::{BatchedSumcheckProver, CaptureHandler, SumcheckClaim};
 use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_witness::TracePolynomials;
 
 use crate::evaluators::kernel::KernelEvaluator;
 use crate::witness::store::WitnessStore;
+use crate::witness_builder;
 
 #[derive(Debug)]
 pub enum ProveError {
@@ -222,11 +223,23 @@ where
     let log_t = symbols[&Symbol::LOG_T];
     let r_cycle = &r_y_rev[..log_t];
 
-    // S1 claim evaluations: computed lazily from trace via TracePolynomials.
+    // S1 claim evaluations: virtual polys from trace, committed polys from store.
     for &vid in &s1.vertices {
         for &cid in graph.claim_graph.vertex(vid).produced_claims() {
             let poly_id = graph.claim_graph.claim(cid).polynomial;
-            cache.set(cid, trace_polys.eval_at_point(poly_id, r_cycle));
+            let eval = if poly_id.is_committed() && poly_id != PolynomialId::SpartanWitness {
+                let table = committed_store.get(poly_id);
+                let n = table.len().trailing_zeros() as usize;
+                let point = if r_cycle.len() > n {
+                    &r_cycle[r_cycle.len() - n..]
+                } else {
+                    r_cycle
+                };
+                witness_builder::eval_poly(table, point)
+            } else {
+                trace_polys.eval_at_point(poly_id, r_cycle)
+            };
+            cache.set(cid, eval);
         }
     }
     cache.set_point(s1.id, r_y_rev);
@@ -253,8 +266,16 @@ where
                     .map(|&dep_id| graph.claim_graph.claim(dep_id).point.clone())
                     .unwrap_or(SymbolicPoint::Challenges(stage.id));
                 let witness = build_witness(
-                    sv, trace_polys, &cache, symbols, &backend, &graph.claim_graph, &eq_source,
-                    &sc, external,
+                    sv,
+                    trace_polys,
+                    committed_store,
+                    &cache,
+                    symbols,
+                    &backend,
+                    &graph.claim_graph,
+                    &eq_source,
+                    &sc,
+                    external,
                 );
                 claims.push(SumcheckClaim {
                     num_vars,
@@ -285,6 +306,15 @@ where
                 let poly_id = graph.claim_graph.claim(cid).polynomial;
                 let eval = if let Some(&we) = witness_evals.get(&poly_id) {
                     we
+                } else if poly_id.is_committed() && poly_id != PolynomialId::SpartanWitness {
+                    let table = committed_store.get(poly_id);
+                    let n = table.len().trailing_zeros() as usize;
+                    let point = if ep.len() > n {
+                        &ep[ep.len() - n..]
+                    } else {
+                        &ep
+                    };
+                    witness_builder::eval_poly(table, point)
                 } else {
                     trace_polys.eval_at_point(poly_id, &ep)
                 };
@@ -416,6 +446,7 @@ fn commit_committed_polys<PCS: AdditivelyHomomorphic>(
 fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
     sv: &jolt_ir::protocol::SumcheckVertex,
     trace_polys: &TracePolynomials<'_, R>,
+    committed_store: &WitnessStore<F>,
     cache: &EvalCache<F>,
     _symbols: &HashMap<Symbol, usize>,
     backend: &Arc<B>,
@@ -434,19 +465,25 @@ fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
         PP::Derived => vec![F::one(); 1 << eq_point.len()],
     };
 
-    // Materialize polynomial evaluation tables on-demand from trace.
+    // Materialize polynomial evaluation tables: committed from store, virtual from trace.
     let formula = &sv.formula;
     let mut poly_tables: Vec<Vec<F>> = Vec::new();
 
     for binding in &formula.definition.opening_bindings {
         let claim_id = formula.opening_claims[&binding.var_id];
         let poly_id = graph.claim(claim_id).polynomial;
-        poly_tables.push(trace_polys.materialize(poly_id));
+        if poly_id.is_committed() && poly_id != PolynomialId::SpartanWitness {
+            poly_tables.push(committed_store.get(poly_id).to_vec());
+        } else {
+            poly_tables.push(trace_polys.materialize(poly_id));
+        }
     }
 
     // Resolve challenge values for compile_descriptor
     let challenge_labels = match &sv.input {
-        InputClaim::Formula { challenge_labels, .. } => challenge_labels,
+        InputClaim::Formula {
+            challenge_labels, ..
+        } => challenge_labels,
         InputClaim::Constant(_) => &[] as &[_],
     };
     let num_challenges = formula.definition.num_challenges as usize;
@@ -454,9 +491,11 @@ fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
     for (i, label) in challenge_labels.iter().enumerate() {
         if i < num_challenges {
             challenges[i] = match label {
-                ChallengeLabel::PreSqueeze(name) => {
-                    stage_challenges.scalars.get(name).copied().unwrap_or_else(F::zero)
-                }
+                ChallengeLabel::PreSqueeze(name) => stage_challenges
+                    .scalars
+                    .get(name)
+                    .copied()
+                    .unwrap_or_else(F::zero),
                 ChallengeLabel::External(name) => {
                     external.get(name).copied().unwrap_or_else(F::zero)
                 }
@@ -480,20 +519,24 @@ fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
             // Pre-combine: g[i] = Σ_j materialized[j] * poly_tables[j][i]
             let n = w_table.len();
             let mut combined = vec![F::zero(); n];
-            for (j, (table, &weight)) in poly_tables.iter().zip(materialized.iter()).enumerate() {
+            for (table, &weight) in poly_tables.iter().zip(materialized.iter()) {
                 for (i, c) in combined.iter_mut().enumerate() {
                     if i < table.len() {
                         *c += weight * table[i];
                     }
                 }
-                let _ = j;
             }
             let eq_buf = backend.upload(&w_table);
             let g_buf = backend.upload(&combined);
             let kernel = backend.compile_kernel(&desc);
             Box::new(
-                KernelEvaluator::from_descriptor(&desc, vec![eq_buf, g_buf], kernel, backend.clone())
-                    .with_binding_order(order),
+                KernelEvaluator::from_descriptor(
+                    &desc,
+                    vec![eq_buf, g_buf],
+                    kernel,
+                    backend.clone(),
+                )
+                .with_binding_order(order),
             )
         }
         KernelShape::HammingBooleanity => {
@@ -501,15 +544,37 @@ fn build_witness<F: Field, B: ComputeBackend, R: jolt_host::CycleRow>(
             let scale = materialized.first().copied().unwrap_or(F::one());
             let scaled_w: Vec<F> = w_table.iter().map(|&w| w * scale).collect();
             let w_buf = backend.upload(&scaled_w);
-            let h_buf = buffers.into_iter().next().unwrap_or_else(|| backend.upload(&vec![F::zero(); scaled_w.len()]));
+            let h_buf = buffers
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| backend.upload(&vec![F::zero(); scaled_w.len()]));
             let kernel = backend.compile_kernel(&desc);
             Box::new(
-                KernelEvaluator::from_descriptor(&desc, vec![w_buf, h_buf], kernel, backend.clone())
-                    .with_binding_order(order),
+                KernelEvaluator::from_descriptor(
+                    &desc,
+                    vec![w_buf, h_buf],
+                    kernel,
+                    backend.clone(),
+                )
+                .with_binding_order(order),
             )
         }
-        KernelShape::Custom { .. } | KernelShape::ProductSum { .. } => {
-            // General path: compile kernel with baked-in challenge values, use all poly buffers.
+        KernelShape::ProductSum { .. } => {
+            // Toom-Cook path: RA virtual and similar product sumchecks.
+            let kernel = backend.compile_kernel(&desc);
+            let claimed_sum = F::zero(); // Set by set_claim() before first round
+            Box::new(KernelEvaluator::from_descriptor_toom_cook(
+                &desc,
+                buffers,
+                kernel,
+                w_table,
+                claimed_sum,
+                order,
+                backend.clone(),
+            ))
+        }
+        KernelShape::Custom { .. } => {
+            // General path: compile kernel with baked-in challenge values.
             let kernel = backend.compile_kernel(&desc);
             let mut inputs = vec![backend.upload(&w_table)];
             inputs.extend(buffers);

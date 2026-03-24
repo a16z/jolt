@@ -270,8 +270,12 @@ fn polynomial_bincode_round_trip() {
     let nv = 5;
     let poly = Polynomial::<Fr>::random(nv, &mut rng);
 
-    let bytes = bincode::serialize(&poly).expect("serialize");
-    let recovered: Polynomial<Fr> = bincode::deserialize(&bytes).expect("deserialize");
+    let bytes =
+        bincode::serde::encode_to_vec(&poly, bincode::config::standard()).expect("serialize");
+    let recovered: Polynomial<Fr> =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+            .expect("deserialize")
+            .0;
 
     assert_eq!(poly.evaluations(), recovered.evaluations());
     assert_eq!(poly.num_vars(), recovered.num_vars());
@@ -284,8 +288,12 @@ fn univariate_bincode_round_trip() {
     let coeffs: Vec<Fr> = (0..6).map(|_| Fr::random(&mut rng)).collect();
     let poly = UnivariatePoly::new(coeffs);
 
-    let bytes = bincode::serialize(&poly).expect("serialize");
-    let recovered: UnivariatePoly<Fr> = bincode::deserialize(&bytes).expect("deserialize");
+    let bytes =
+        bincode::serde::encode_to_vec(&poly, bincode::config::standard()).expect("serialize");
+    let recovered: UnivariatePoly<Fr> =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+            .expect("deserialize")
+            .0;
 
     for i in 0..10 {
         let x = Fr::from_u64(i);

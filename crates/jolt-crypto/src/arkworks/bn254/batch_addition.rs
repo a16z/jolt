@@ -65,6 +65,10 @@ fn batch_g1_additions_affine(bases: &[G1Affine], indices: &[usize]) -> G1Affine 
 ///
 /// Takes `Bn254G1` bases (converted to affine internally) and index sets.
 /// Returns one `Bn254G1` per index set — the sum of the selected points.
+///
+/// All indices within each set must be in-bounds (`< bases.len()`), and
+/// no two points in the same pair may be equal or inverse (the batch
+/// inversion denominator `p2.x - p1.x` would be zero).
 pub fn batch_g1_additions_multi(bases: &[Bn254G1], indices_sets: &[Vec<usize>]) -> Vec<Bn254G1> {
     if indices_sets.is_empty() {
         return vec![];

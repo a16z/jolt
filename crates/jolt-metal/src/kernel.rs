@@ -18,6 +18,10 @@ pub(crate) struct CachedPipelines {
     /// Fused interpolate+reduce (H2L, weighted): reads 4 values per input,
     /// interpolates in-place, and reduces the interpolated pairs in one pass.
     pub pipeline_fused_h2l: metal::ComputePipelineState,
+    /// Cooperative H2L reduce (8 threads per field element).
+    pub pipeline_coop_h2l: Option<metal::ComputePipelineState>,
+    /// Cooperative fused interpolate+reduce (8 threads per field element).
+    pub pipeline_coop_fused_h2l: Option<metal::ComputePipelineState>,
     pub num_evals: usize,
     pub num_inputs: usize,
     /// Whether the kernel signature includes a `device const Fr* challenges`
@@ -104,6 +108,16 @@ impl<F: Field> MetalKernel<F> {
     #[inline]
     pub(crate) fn pipeline_fused_h2l(&self) -> &metal::ComputePipelineState {
         &self.pipelines.pipeline_fused_h2l
+    }
+
+    #[inline]
+    pub(crate) fn pipeline_coop_h2l(&self) -> Option<&metal::ComputePipelineState> {
+        self.pipelines.pipeline_coop_h2l.as_ref()
+    }
+
+    #[inline]
+    pub(crate) fn pipeline_coop_fused_h2l(&self) -> Option<&metal::ComputePipelineState> {
+        self.pipelines.pipeline_coop_fused_h2l.as_ref()
     }
 }
 

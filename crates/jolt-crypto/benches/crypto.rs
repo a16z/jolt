@@ -141,14 +141,17 @@ fn bench_gt_scalar_mul(c: &mut Criterion) {
 fn bench_g1_serde(c: &mut Criterion) {
     let mut rng = ChaCha20Rng::seed_from_u64(60);
     let g = Bn254::random_g1(&mut rng);
-    let bytes = bincode::serialize(&g).unwrap();
+    let config = bincode::config::standard();
+    let bytes = bincode::serde::encode_to_vec(g, config).unwrap();
 
     c.bench_function("g1_serialize_bincode", |b| {
-        b.iter(|| bincode::serialize(&g).unwrap());
+        b.iter(|| bincode::serde::encode_to_vec(g, config).unwrap());
     });
 
     c.bench_function("g1_deserialize_bincode", |b| {
-        b.iter(|| bincode::deserialize::<Bn254G1>(&bytes).unwrap());
+        b.iter(|| {
+            bincode::serde::decode_from_slice::<Bn254G1, _>(&bytes, config).unwrap();
+        });
     });
 }
 

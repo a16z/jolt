@@ -280,8 +280,8 @@ Severities:
 | jolt-transcript | 1 | 672 | **DONE** | [REVIEW.md](jolt-transcript/REVIEW.md) | 13 (10 resolved, 3 pass) | 2026-03-24 |
 | jolt-ir | 1 | 12389 | PENDING | | | |
 | jolt-instructions | 1 | 10280 | **DONE** | [REVIEW.md](jolt-instructions/REVIEW.md) | 12 (5 resolved, 7 pass/wontfix) | 2026-03-24 |
-| jolt-crypto | 2 | 5070 | PENDING | | | |
-| jolt-poly | 2 | 4841 | PENDING | | | |
+| jolt-crypto | 2 | 4969 | **DONE** | [REVIEW.md](jolt-crypto/REVIEW.md) | 9 (8 resolved, 1 wontfix) | 2026-03-24 |
+| jolt-poly | 2 | 4880 | **DONE** | [REVIEW.md](jolt-poly/REVIEW.md) | 9 (7 resolved, 1 pass, 1 deferred) | 2026-03-24 |
 | jolt-compute | 2 | 1480 | PENDING | | | |
 | jolt-witness | 2 | 1150 | PENDING | | | |
 | jolt-openings | 3 | 1424 | PENDING | | | |

@@ -5,7 +5,7 @@
 //! the Jolt zkVM proving system:
 //!
 //! - [`Polynomial`]: Evaluation table over the Boolean hypercube, generic over
-//!   coefficient type (`Field` for dense, primitives like `u8`/`bool` for compact)
+//!   scalar type (`Field` for dense, primitives like `u8`/`bool` for compact)
 //! - [`EqPolynomial`]: Equality polynomial for sumcheck evaluation
 //! - [`UnivariatePoly`]: Coefficient-form univariate polynomial with Lagrange interpolation
 //! - [`CompressedPoly`]: Compressed univariate with the linear term omitted (for proof size)

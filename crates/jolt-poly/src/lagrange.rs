@@ -9,8 +9,8 @@ use jolt_field::Field;
 /// Evaluates all Lagrange basis polynomials $L_0(r), \ldots, L_{N-1}(r)$ over
 /// the domain $\{s, s+1, \ldots, s+N-1\}$ where $s$ = `domain_start`.
 ///
-/// Uses the barycentric formula with prefix/suffix products for $O(N)$ work
-/// and a single batch inversion.
+/// Uses the barycentric formula with $O(N^2)$ work for weight computation
+/// and $O(N)$ per-element inversions.
 ///
 /// # Panics
 /// Panics if `domain_size` is zero.

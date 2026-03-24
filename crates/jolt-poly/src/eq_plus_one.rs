@@ -20,7 +20,7 @@ use crate::EqPolynomial;
 /// to compute `eq+1(x, y)` at any `y`.
 pub struct EqPlusOnePolynomial<F: Field> {
     /// Fixed point (big-endian: `point[0]` = MSB).
-    pub point: Vec<F>,
+    point: Vec<F>,
 }
 
 impl<F: Field> EqPlusOnePolynomial<F> {

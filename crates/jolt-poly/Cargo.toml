@@ -2,8 +2,12 @@
 name = "jolt-poly"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "MIT OR Apache-2.0"
+authors = ["Jolt Contributors"]
+repository = "https://github.com/a16z/jolt"
 description = "Polynomial types and operations for the Jolt zkVM"
+keywords = ["cryptography", "polynomial", "multilinear", "sumcheck", "zkvm"]
+categories = ["cryptography", "mathematics"]
 
 [lints]
 workspace = true

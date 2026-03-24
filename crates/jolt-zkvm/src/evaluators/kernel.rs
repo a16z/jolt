@@ -546,8 +546,7 @@ impl<F: Field, B: ComputeBackend> SumcheckCompute<F> for KernelEvaluator<F, B> {
                 }
             }
             BindingOrder::HighToLow => {
-                let can_fuse = self.weights.is_some()
-                    && self.backend.len(&self.inputs[0]) >= 4;
+                let can_fuse = self.weights.is_some() && self.backend.len(&self.inputs[0]) >= 4;
                 if can_fuse {
                     let w = self.weights.as_mut().unwrap();
                     let result = self.backend.fused_interpolate_reduce(
@@ -1084,7 +1083,9 @@ mod tests {
         // Scale eq by eq_scale
         let eq_table = EqPolynomial::new(eq_point).evaluations();
         let scaled_eq: Vec<Fr> = eq_table.iter().map(|&e| e * values[0]).collect();
-        let claimed_sum: Fr = (0..n).map(|i| scaled_eq[i] * h[i] * (h[i] - Fr::one())).sum();
+        let claimed_sum: Fr = (0..n)
+            .map(|i| scaled_eq[i] * h[i] * (h[i] - Fr::one()))
+            .sum();
         assert_eq!(claimed_sum, Fr::zero());
 
         let ham_desc = catalog::hamming_booleanity();
@@ -1116,7 +1117,9 @@ mod tests {
         let n = 1usize << num_vars;
         let mut rng = ChaCha20Rng::seed_from_u64(202);
 
-        let polys: Vec<Vec<Fr>> = (0..d).map(|_| (0..n).map(|_| Fr::random(&mut rng)).collect()).collect();
+        let polys: Vec<Vec<Fr>> = (0..d)
+            .map(|_| (0..n).map(|_| Fr::random(&mut rng)).collect())
+            .collect();
         let eq_w: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let eq_table = EqPolynomial::new(eq_w.clone()).evaluations();
 

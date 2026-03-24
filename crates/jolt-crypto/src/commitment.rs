@@ -47,6 +47,7 @@ pub trait JoltCommitment: Clone + Send + Sync + 'static {
         + AppendToTranscript;
 
     /// Maximum number of values this setup can commit to.
+    #[must_use]
     fn capacity(setup: &Self::Setup) -> usize;
 
     /// Commits to `values` with the given `blinding` factor.
@@ -54,9 +55,11 @@ pub trait JoltCommitment: Clone + Send + Sync + 'static {
     /// # Panics
     ///
     /// May panic if `values.len()` exceeds [`Self::capacity()`].
+    #[must_use]
     fn commit<F: Field>(setup: &Self::Setup, values: &[F], blinding: &F) -> Self::Commitment;
 
     /// Returns `true` if `commitment` opens to `(values, blinding)`.
+    #[must_use]
     fn verify<F: Field>(
         setup: &Self::Setup,
         commitment: &Self::Commitment,
@@ -82,6 +85,7 @@ pub trait JoltCommitment: Clone + Send + Sync + 'static {
 /// vectors) can implement this trait directly for their native scalar field.
 pub trait HomomorphicCommitment<F: Field>: Clone {
     /// Computes `c1 + scalar * c2`.
+    #[must_use]
     fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self;
 }
 

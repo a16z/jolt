@@ -3,8 +3,11 @@ name = "jolt-crypto"
 version = "0.1.0"
 authors = ["Jolt Contributors"]
 edition = "2021"
-license = "MIT"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/a16z/jolt"
 description = "Backend-agnostic cryptographic group and commitment primitives for Jolt"
+keywords = ["cryptography", "zero-knowledge", "commitment", "elliptic-curve", "zkvm"]
+categories = ["cryptography"]
 
 [lints]
 workspace = true

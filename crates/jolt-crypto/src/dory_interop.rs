@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn g1_msm_matches_jolt() {
         let bases: Vec<Bn254G1> = (0..4).map(|_| <Bn254G1 as DoryGroup>::random()).collect();
-        let scalars: Vec<Fr> = (1..=4).map(|i| <Fr as DoryField>::from_u64(i)).collect();
+        let scalars: Vec<Fr> = (1..=4).map(<Fr as DoryField>::from_u64).collect();
 
         let via_routines = OptimizedG1Routines::msm(&bases, &scalars);
         let via_jolt = JoltGroup::msm(&bases, &scalars);
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn g1_fixed_base_vector_scalar_mul() {
         let base = <Bn254G1 as DoryGroup>::random();
-        let scalars: Vec<Fr> = (1..=3).map(|i| <Fr as DoryField>::from_u64(i)).collect();
+        let scalars: Vec<Fr> = (1..=3).map(<Fr as DoryField>::from_u64).collect();
         let result = OptimizedG1Routines::fixed_base_vector_scalar_mul(&base, &scalars);
         for (r, s) in result.iter().zip(scalars.iter()) {
             assert_eq!(*r, DoryGroup::scale(&base, s));
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn g2_msm_matches_jolt() {
         let bases: Vec<Bn254G2> = (0..4).map(|_| <Bn254G2 as DoryGroup>::random()).collect();
-        let scalars: Vec<Fr> = (1..=4).map(|i| <Fr as DoryField>::from_u64(i)).collect();
+        let scalars: Vec<Fr> = (1..=4).map(<Fr as DoryField>::from_u64).collect();
 
         let via_routines = OptimizedG2Routines::msm(&bases, &scalars);
         let via_jolt = JoltGroup::msm(&bases, &scalars);
@@ -459,7 +459,7 @@ mod tests {
         assert_eq!(via_mul, via_scale);
 
         // Reference variant
-        let via_mul_ref: Bn254G1 = s * &g;
+        let via_mul_ref: Bn254G1 = s * g;
         assert_eq!(via_mul_ref, via_scale);
     }
 }

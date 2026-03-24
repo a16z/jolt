@@ -17,7 +17,7 @@ const PAR_THRESHOLD: usize = 1024;
 
 /// Multilinear polynomial stored as evaluations over the Boolean hypercube $\{0,1\}^n$.
 ///
-/// Generic over the coefficient type `T`:
+/// Generic over the scalar type `T`:
 /// - When `T` is a [`Field`] type: full polynomial with in-place [`bind`](Polynomial::bind),
 ///   [`evaluate`](Polynomial::evaluate), and arithmetic operators.
 /// - When `T` is a small type (`u8`, `bool`, `i64`, etc.): compact storage with
@@ -25,7 +25,7 @@ const PAR_THRESHOLD: usize = 1024;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "T: Serialize", deserialize = "T: for<'a> Deserialize<'a>",))]
 pub struct Polynomial<T> {
-    coefficients: Vec<T>,
+    evals: Vec<T>,
     num_vars: usize,
 }
 
@@ -33,24 +33,18 @@ impl<T> Polynomial<T> {
     /// Creates a polynomial from its evaluations over the Boolean hypercube.
     ///
     /// # Panics
-    /// Panics if `coefficients.len()` is not a power of two (or zero).
-    pub fn new(coefficients: Vec<T>) -> Self {
-        let len = coefficients.len();
+    /// Panics if `evals.len()` is not a power of two (or zero).
+    pub fn new(evals: Vec<T>) -> Self {
+        let len = evals.len();
         if len == 0 {
-            return Self {
-                coefficients,
-                num_vars: 0,
-            };
+            return Self { evals, num_vars: 0 };
         }
         assert!(
             len.is_power_of_two(),
             "evaluation count must be a power of two, got {len}"
         );
         let num_vars = len.trailing_zeros() as usize;
-        Self {
-            coefficients,
-            num_vars,
-        }
+        Self { evals, num_vars }
     }
 
     /// Number of variables `n`. The polynomial has `2^n` evaluations.
@@ -61,39 +55,39 @@ impl<T> Polynomial<T> {
 
     #[inline]
     pub fn len(&self) -> usize {
-        self.coefficients.len()
+        self.evals.len()
     }
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.coefficients.is_empty()
+        self.evals.is_empty()
     }
 
     /// The raw evaluation table over the Boolean hypercube.
     #[inline]
-    pub fn coefficients(&self) -> &[T] {
-        &self.coefficients
+    pub fn evals(&self) -> &[T] {
+        &self.evals
     }
 }
 
 impl<T: Copy> Polynomial<T> {
-    /// Fixes the first variable to `scalar`, promoting all coefficients to field elements.
+    /// Fixes the first variable to `scalar`, promoting all evaluations to field elements.
     ///
-    /// Produces a `Polynomial<F>` with `n − 1` variables:
+    /// Produces a `Polynomial<F>` with `n - 1` variables:
     /// $$g(x_2, \ldots, x_n) = (1 - s) \cdot f(0, x_2, \ldots) + s \cdot f(1, x_2, \ldots)$$
     ///
     /// When `T = F`, the `From` conversion is the identity and the compiler
     /// eliminates it, making this equivalent to an allocating bind.
     pub fn bind_to_field<F: Field + From<T>>(&self, scalar: F) -> Polynomial<F> {
-        let half = self.coefficients.len() / 2;
+        let half = self.evals.len() / 2;
         let mut result = Vec::with_capacity(half);
         for i in 0..half {
-            let lo: F = self.coefficients[i].into();
-            let hi: F = self.coefficients[i + half].into();
+            let lo: F = self.evals[i].into();
+            let hi: F = self.evals[i + half].into();
             result.push(lo + scalar * (hi - lo));
         }
         Polynomial {
-            coefficients: result,
+            evals: result,
             num_vars: self.num_vars - 1,
         }
     }
@@ -103,18 +97,15 @@ impl<F: Field> Polynomial<F> {
     /// Creates the zero polynomial with $2^n$ evaluations all equal to zero.
     pub fn zeros(num_vars: usize) -> Self {
         Self {
-            coefficients: vec![F::zero(); 1 << num_vars],
+            evals: vec![F::zero(); 1 << num_vars],
             num_vars,
         }
     }
 
     /// Creates a polynomial with random evaluations.
     pub fn random(num_vars: usize, rng: &mut impl RngCore) -> Self {
-        let coefficients = (0..(1 << num_vars)).map(|_| F::random(rng)).collect();
-        Self {
-            coefficients,
-            num_vars,
-        }
+        let evals = (0..(1 << num_vars)).map(|_| F::random(rng)).collect();
+        Self { evals, num_vars }
     }
 
     /// Fixes the first (MSB) variable to `scalar` in place, halving the evaluations.
@@ -133,9 +124,9 @@ impl<F: Field> Polynomial<F> {
     /// Binds with the specified variable ordering.
     ///
     /// - `BindingOrder::HighToLow`: binds the MSB (first variable, index `0`).
-    ///   Pairs `coefficients[i]` with `coefficients[i + half]`.
+    ///   Pairs `evals[i]` with `evals[i + half]`.
     /// - `BindingOrder::LowToHigh`: binds the LSB (last variable, index `n-1`).
-    ///   Pairs `coefficients[2*i]` with `coefficients[2*i + 1]`.
+    ///   Pairs `evals[2*i]` with `evals[2*i + 1]`.
     #[inline]
     pub fn bind_with_order(&mut self, scalar: F, order: crate::BindingOrder) {
         match order {
@@ -146,21 +137,21 @@ impl<F: Field> Polynomial<F> {
 
     #[inline]
     fn bind_high_to_low(&mut self, scalar: F) {
-        let half = self.coefficients.len() / 2;
+        let half = self.evals.len() / 2;
 
         #[cfg(feature = "parallel")]
         {
             if half >= PAR_THRESHOLD {
                 use rayon::prelude::*;
-                let (lo, hi) = self.coefficients.split_at_mut(half);
+                let (lo, hi) = self.evals.split_at_mut(half);
                 lo.par_iter_mut().zip(hi.par_iter()).for_each(|(a, b)| {
                     *a = *a + scalar * (*b - *a);
                 });
             } else {
                 for i in 0..half {
-                    let lo = self.coefficients[i];
-                    let hi = self.coefficients[i + half];
-                    self.coefficients[i] = lo + scalar * (hi - lo);
+                    let lo = self.evals[i];
+                    let hi = self.evals[i + half];
+                    self.evals[i] = lo + scalar * (hi - lo);
                 }
             }
         }
@@ -168,26 +159,26 @@ impl<F: Field> Polynomial<F> {
         #[cfg(not(feature = "parallel"))]
         {
             for i in 0..half {
-                let lo = self.coefficients[i];
-                let hi = self.coefficients[i + half];
-                self.coefficients[i] = lo + scalar * (hi - lo);
+                let lo = self.evals[i];
+                let hi = self.evals[i + half];
+                self.evals[i] = lo + scalar * (hi - lo);
             }
         }
 
-        self.coefficients.truncate(half);
+        self.evals.truncate(half);
         self.num_vars -= 1;
     }
 
     #[inline]
     fn bind_low_to_high(&mut self, scalar: F) {
-        let half = self.coefficients.len() / 2;
+        let half = self.evals.len() / 2;
 
         #[cfg(feature = "parallel")]
         {
             if half >= PAR_THRESHOLD {
                 use rayon::prelude::*;
                 // Parallel: write into a new buffer to avoid aliasing
-                let coeffs = &self.coefficients;
+                let coeffs = &self.evals;
                 let new: Vec<F> = (0..half)
                     .into_par_iter()
                     .map(|i| {
@@ -196,25 +187,25 @@ impl<F: Field> Polynomial<F> {
                         lo + scalar * (hi - lo)
                     })
                     .collect();
-                self.coefficients = new;
+                self.evals = new;
             } else {
                 for i in 0..half {
-                    let lo = self.coefficients[2 * i];
-                    let hi = self.coefficients[2 * i + 1];
-                    self.coefficients[i] = lo + scalar * (hi - lo);
+                    let lo = self.evals[2 * i];
+                    let hi = self.evals[2 * i + 1];
+                    self.evals[i] = lo + scalar * (hi - lo);
                 }
-                self.coefficients.truncate(half);
+                self.evals.truncate(half);
             }
         }
 
         #[cfg(not(feature = "parallel"))]
         {
             for i in 0..half {
-                let lo = self.coefficients[2 * i];
-                let hi = self.coefficients[2 * i + 1];
-                self.coefficients[i] = lo + scalar * (hi - lo);
+                let lo = self.evals[2 * i];
+                let hi = self.evals[2 * i + 1];
+                self.evals[i] = lo + scalar * (hi - lo);
             }
-            self.coefficients.truncate(half);
+            self.evals.truncate(half);
         }
 
         self.num_vars -= 1;
@@ -223,19 +214,16 @@ impl<F: Field> Polynomial<F> {
     /// Returns the `(lo, hi)` pair for the given index and binding order.
     ///
     /// For sumcheck round polynomial evaluation at index `j`:
-    /// - `HighToLow`: `lo = coefficients[j]`, `hi = coefficients[j + half]`
-    /// - `LowToHigh`: `lo = coefficients[2*j]`, `hi = coefficients[2*j + 1]`
+    /// - `HighToLow`: `lo = evals[j]`, `hi = evals[j + half]`
+    /// - `LowToHigh`: `lo = evals[2*j]`, `hi = evals[2*j + 1]`
     #[inline]
     pub fn sumcheck_eval_pair(&self, index: usize, order: crate::BindingOrder) -> (F, F) {
         match order {
             crate::BindingOrder::HighToLow => {
-                let half = self.coefficients.len() / 2;
-                (self.coefficients[index], self.coefficients[index + half])
+                let half = self.evals.len() / 2;
+                (self.evals[index], self.evals[index + half])
             }
-            crate::BindingOrder::LowToHigh => (
-                self.coefficients[2 * index],
-                self.coefficients[2 * index + 1],
-            ),
+            crate::BindingOrder::LowToHigh => (self.evals[2 * index], self.evals[2 * index + 1]),
         }
     }
 
@@ -251,10 +239,10 @@ impl<F: Field> Polynomial<F> {
 
         #[cfg(feature = "parallel")]
         {
-            if self.coefficients.len() >= PAR_THRESHOLD {
+            if self.evals.len() >= PAR_THRESHOLD {
                 use rayon::prelude::*;
                 return self
-                    .coefficients
+                    .evals
                     .par_iter()
                     .zip(eq_evals.par_iter())
                     .map(|(&f, &e)| f * e)
@@ -262,7 +250,7 @@ impl<F: Field> Polynomial<F> {
             }
         }
 
-        self.coefficients
+        self.evals
             .iter()
             .zip(eq_evals.iter())
             .map(|(&f, &e)| f * e)
@@ -282,18 +270,18 @@ impl<F: Field> Polynomial<F> {
         for &r in point {
             self.bind(r);
         }
-        debug_assert_eq!(self.coefficients.len(), 1);
-        self.coefficients[0]
+        debug_assert_eq!(self.evals.len(), 1);
+        self.evals[0]
     }
 
     #[inline]
     pub fn evaluations(&self) -> &[F] {
-        &self.coefficients
+        &self.evals
     }
 
     #[inline]
     pub fn evaluations_mut(&mut self) -> &mut [F] {
-        &mut self.coefficients
+        &mut self.evals
     }
 }
 
@@ -311,7 +299,7 @@ impl<F: Field> crate::MultilinearEvaluation<F> for Polynomial<F> {
 
     #[inline]
     fn len(&self) -> usize {
-        self.coefficients.len()
+        self.evals.len()
     }
 
     fn evaluate(&self, point: &[F]) -> F {
@@ -332,7 +320,7 @@ fn assert_matching_dims<F: Field>(a: &Polynomial<F>, b: &Polynomial<F>) -> (usiz
         "num_vars mismatch: {} vs {}",
         a.num_vars, b.num_vars
     );
-    (a.num_vars, a.coefficients.len())
+    (a.num_vars, a.evals.len())
 }
 
 impl<F: Field> Add for Polynomial<F> {
@@ -367,16 +355,16 @@ impl<F: Field> AddAssign<&Self> for Polynomial<F> {
         {
             if len >= PAR_THRESHOLD {
                 use rayon::prelude::*;
-                self.coefficients
+                self.evals
                     .par_iter_mut()
-                    .zip(rhs.coefficients.par_iter())
+                    .zip(rhs.evals.par_iter())
                     .for_each(|(a, b)| *a += *b);
                 return;
             }
         }
 
         for i in 0..len {
-            self.coefficients[i] += rhs.coefficients[i];
+            self.evals[i] += rhs.evals[i];
         }
     }
 }
@@ -413,16 +401,16 @@ impl<F: Field> SubAssign<&Self> for Polynomial<F> {
         {
             if len >= PAR_THRESHOLD {
                 use rayon::prelude::*;
-                self.coefficients
+                self.evals
                     .par_iter_mut()
-                    .zip(rhs.coefficients.par_iter())
+                    .zip(rhs.evals.par_iter())
                     .for_each(|(a, b)| *a -= *b);
                 return;
             }
         }
 
         for i in 0..len {
-            self.coefficients[i] -= rhs.coefficients[i];
+            self.evals[i] -= rhs.evals[i];
         }
     }
 }
@@ -431,19 +419,19 @@ impl<F: Field> Mul<F> for Polynomial<F> {
     type Output = Self;
 
     fn mul(mut self, rhs: F) -> Self {
-        let len = self.coefficients.len();
+        let len = self.evals.len();
 
         #[cfg(feature = "parallel")]
         {
             if len >= PAR_THRESHOLD {
                 use rayon::prelude::*;
-                self.coefficients.par_iter_mut().for_each(|a| *a *= rhs);
+                self.evals.par_iter_mut().for_each(|a| *a *= rhs);
                 return self;
             }
         }
 
         for i in 0..len {
-            self.coefficients[i] *= rhs;
+            self.evals[i] *= rhs;
         }
         self
     }
@@ -461,19 +449,19 @@ impl<F: Field> Neg for Polynomial<F> {
     type Output = Self;
 
     fn neg(mut self) -> Self {
-        let len = self.coefficients.len();
+        let len = self.evals.len();
 
         #[cfg(feature = "parallel")]
         {
             if len >= PAR_THRESHOLD {
                 use rayon::prelude::*;
-                self.coefficients.par_iter_mut().for_each(|a| *a = -*a);
+                self.evals.par_iter_mut().for_each(|a| *a = -*a);
                 return self;
             }
         }
 
         for i in 0..len {
-            self.coefficients[i] = -self.coefficients[i];
+            self.evals[i] = -self.evals[i];
         }
         self
     }
@@ -565,8 +553,8 @@ mod tests {
         for &r in &point {
             p.bind(r);
         }
-        assert_eq!(p.coefficients.len(), 1);
-        assert_eq!(p.coefficients[0], poly.evaluate(&point));
+        assert_eq!(p.evals.len(), 1);
+        assert_eq!(p.evals[0], poly.evaluate(&point));
     }
 
     #[allow(unused)]
@@ -578,24 +566,33 @@ mod tests {
     fn serde_round_trip() {
         let mut rng = ChaCha20Rng::seed_from_u64(100);
         let poly = Polynomial::<Fr>::random(4, &mut rng);
-        let bytes = bincode::serialize(&poly).unwrap();
-        let recovered: Polynomial<Fr> = bincode::deserialize(&bytes).unwrap();
+        let bytes = bincode::serde::encode_to_vec(&poly, bincode::config::standard()).unwrap();
+        let recovered: Polynomial<Fr> =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .unwrap()
+                .0;
         assert_eq!(poly, recovered);
     }
 
     #[test]
     fn serde_round_trip_empty() {
         let poly = Polynomial::<Fr>::new(vec![]);
-        let bytes = bincode::serialize(&poly).unwrap();
-        let recovered: Polynomial<Fr> = bincode::deserialize(&bytes).unwrap();
+        let bytes = bincode::serde::encode_to_vec(&poly, bincode::config::standard()).unwrap();
+        let recovered: Polynomial<Fr> =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .unwrap()
+                .0;
         assert_eq!(poly, recovered);
     }
 
     #[test]
     fn serde_round_trip_single() {
         let poly = Polynomial::new(vec![Fr::from_u64(99)]);
-        let bytes = bincode::serialize(&poly).unwrap();
-        let recovered: Polynomial<Fr> = bincode::deserialize(&bytes).unwrap();
+        let bytes = bincode::serde::encode_to_vec(&poly, bincode::config::standard()).unwrap();
+        let recovered: Polynomial<Fr> =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .unwrap()
+                .0;
         assert_eq!(poly, recovered);
     }
 
@@ -628,8 +625,8 @@ mod tests {
         for &r in &point {
             p.bind(r);
         }
-        assert_eq!(p.coefficients.len(), 1);
-        assert_eq!(p.coefficients[0], consumed);
+        assert_eq!(p.evals.len(), 1);
+        assert_eq!(p.evals[0], consumed);
     }
 
     #[test]
@@ -830,7 +827,7 @@ mod tests {
         for &r in &point[1..] {
             bound.bind(r);
         }
-        assert_eq!(bound.coefficients[0], dense.evaluate(&point));
+        assert_eq!(bound.evals[0], dense.evaluate(&point));
     }
 
     #[test]
@@ -946,15 +943,18 @@ mod tests {
     fn compact_single_element() {
         let compact = Polynomial::<u64>::new(vec![42]);
         assert_eq!(compact.num_vars(), 0);
-        assert_eq!(compact.coefficients(), &[42u64]);
+        assert_eq!(compact.evals(), &[42u64]);
     }
 
     #[test]
     fn serde_round_trip_compact_u8() {
         let scalars: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
         let compact = Polynomial::new(scalars);
-        let bytes = bincode::serialize(&compact).unwrap();
-        let recovered: Polynomial<u8> = bincode::deserialize(&bytes).unwrap();
+        let bytes = bincode::serde::encode_to_vec(&compact, bincode::config::standard()).unwrap();
+        let recovered: Polynomial<u8> =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .unwrap()
+                .0;
 
         let mut rng = ChaCha20Rng::seed_from_u64(40);
         let scalar = Fr::random(&mut rng);
@@ -968,8 +968,11 @@ mod tests {
     fn serde_round_trip_compact_bool() {
         let scalars: Vec<bool> = vec![true, false, true, false];
         let compact = Polynomial::new(scalars);
-        let bytes = bincode::serialize(&compact).unwrap();
-        let recovered: Polynomial<bool> = bincode::deserialize(&bytes).unwrap();
+        let bytes = bincode::serde::encode_to_vec(&compact, bincode::config::standard()).unwrap();
+        let recovered: Polynomial<bool> =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .unwrap()
+                .0;
 
         let mut rng = ChaCha20Rng::seed_from_u64(41);
         let scalar = Fr::random(&mut rng);
@@ -977,5 +980,31 @@ mod tests {
             compact.bind_to_field::<Fr>(scalar),
             recovered.bind_to_field::<Fr>(scalar)
         );
+    }
+
+    #[test]
+    fn low_to_high_binding_produces_correct_evaluation() {
+        let mut rng = ChaCha20Rng::seed_from_u64(900);
+        let n = 5;
+        let poly = Polynomial::<Fr>::random(n, &mut rng);
+        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+
+        // HighToLow binds point[0] first (MSB), so binding sequentially
+        // with point[0], point[1], ... should yield evaluate(point).
+        let mut hi_to_lo = poly.clone();
+        for &r in &point {
+            hi_to_lo.bind_with_order(r, crate::BindingOrder::HighToLow);
+        }
+        assert_eq!(hi_to_lo.len(), 1);
+        assert_eq!(hi_to_lo.evaluations()[0], poly.evaluate(&point));
+
+        // LowToHigh binds point[n-1] first (LSB), so to get the same
+        // evaluation we must reverse the order of challenges.
+        let mut lo_to_hi = poly.clone();
+        for &r in point.iter().rev() {
+            lo_to_hi.bind_with_order(r, crate::BindingOrder::LowToHigh);
+        }
+        assert_eq!(lo_to_hi.len(), 1);
+        assert_eq!(lo_to_hi.evaluations()[0], poly.evaluate(&point));
     }
 }

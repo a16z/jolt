@@ -9,6 +9,5 @@ pub mod preprocessing;
 pub mod proof;
 pub mod prover;
 pub mod r1cs;
-pub mod tables;
 pub mod witness;
 pub mod witness_builder;

@@ -137,4 +137,43 @@ Per-round breakdown (hybrid):
 
 ---
 
-### EXP-002: (next experiment goes here)
+### EXP-002: Cooperative threading (O0a) — 8 threads per field element
+**Date**: 2026-03-24
+**Branch**: refactor/crates
+**Hardware**: M1 Pro 8c/16GB
+**Framework ref**: O0a
+
+**Hypothesis**: 8 threads cooperating on one field element via `simd_shuffle` reduces register pressure from ~376 to ~47 per thread, enabling ~8x higher GPU occupancy. Parallel prefix Kogge-Stone carry propagation resolves the CIOS carry chain in O(log N) rounds instead of O(N) serial propagation.
+
+**Changes**:
+- `coop_field_gen.rs`: Full cooperative arithmetic preamble (add, sub, mul, reduce) with parallel prefix carry/borrow via `simd_shuffle`. Cooperative reduce kernel generators for H2L and fused variants. Body transformation `cooperativize_body()` via single-pass scanner.
+- `compiler.rs`: Generates cooperative kernel variants alongside standard kernels for ProductSum D=4/D=8.
+- `kernel.rs`: Added `pipeline_coop_h2l` and `pipeline_coop_fused_h2l` fields + accessors.
+- `device.rs`: Added `dispatch_coop_reduce` method with cooperative threadgroup sizing.
+- Bug fixed in `coop_fr_sub`: final_borrow was missing initial borrow at MSB position.
+
+**Results** (cooperative dispatched for H2L reduce + fused):
+
+| Benchmark | Standard (ms) | Cooperative (ms) | Delta |
+|-----------|--------------|------------------|-------|
+| toom_D4_P1/hybrid | 59 | 524 | **+789% (8.9x SLOWER)** |
+| toom_D4_P3/hybrid | 127 | 1015 | **+699% (8.0x SLOWER)** |
+| toom_D8_P1/hybrid | 160 | 978 | **+511% (6.1x SLOWER)** |
+| eq_product/hybrid | 17 | 17 | 0% (no coop kernel) |
+| hamming/hybrid | 33 | 33 | 0% (no coop kernel) |
+
+**Analysis**:
+1. **simd_shuffle throughput is the bottleneck**: Each cooperative fr_mul requires 8 CIOS rounds × (1 MAD + 3 prefix rounds × 3 shuffles) = 8 MADs + 72 shuffles. Standard fr_mul: 64 serial MADs, 0 shuffles.
+2. The GPU shuffle unit has limited throughput (~1 shuffle/cycle/EU). With 72 shuffles per mul × 30 muls per pair = 2160 shuffles per pair, shuffle throughput dominates.
+3. Register savings are real (~47 regs/thread) but irrelevant — the shuffle bottleneck is the binding constraint.
+4. Apple GPU SIMD lanes execute lockstep, so shuffle "latency" is low, but THROUGHPUT is limited.
+5. Cooperative threading is better suited to GPUs with hardware shuffle units (e.g., NVIDIA warp shuffle at 32 ops/cycle).
+
+**Fundamental limit analysis**: BN254 at 8×u32 CIOS requires ~376 registers/thread. Apple GPU has ~8K registers/EU → max ~21 threads/EU → ~2.5% ALU utilization. Achieving 5x requires ~12.5% utilization → ~105 threads/EU → ~76 registers/thread. This is not achievable without changing the field representation (e.g., 128-bit field, RNS decomposition, or polynomial-based multiplication).
+
+**Decision**: DISCARDED — cooperative dispatch disabled, standard kernels restored.
+**Reason**: simd_shuffle throughput limitation makes cooperative arithmetic 6-9x slower than serial CIOS on Apple GPU.
+
+---
+
+### EXP-003: (next experiment goes here)

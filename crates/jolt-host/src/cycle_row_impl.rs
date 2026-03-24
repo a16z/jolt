@@ -7,6 +7,8 @@
 use jolt_instructions::flags::{
     CircuitFlags, Flags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
+use jolt_instructions::traits::Instruction as JoltInstructionTrait;
+use jolt_instructions::LookupTableKind;
 use tracer::instruction::{Cycle, Instruction, NormalizedInstruction, RAMAccess};
 
 use crate::CycleRow;
@@ -129,6 +131,30 @@ impl CycleRow for Cycle {
             0
         } else {
             jolt_instructions::interleave_bits(left, right as u64)
+        }
+    }
+
+    fn lookup_table_index(&self) -> Option<usize> {
+        if self.is_noop() {
+            return None;
+        }
+        let kind = lookup_table_kind_for_instruction(&self.instruction());
+        kind.map(|k| k as usize)
+    }
+
+    fn lookup_output(&self) -> u64 {
+        // For instructions that write to rd: the lookup output = rd post_value.
+        // For branches: the comparison result is encoded in whether the branch is taken.
+        // For stores/noop: zero.
+        let cflags = self.circuit_flags();
+        if cflags[CircuitFlags::WriteLookupOutputToRD as usize] {
+            self.rd_write().map_or(0, |(_, _, post)| post)
+        } else if cflags[CircuitFlags::Jump as usize] {
+            self.rd_write().map_or(0, |(_, _, post)| post)
+        } else {
+            // Branches, stores, noop: lookup output = 0 in the R1CS sense
+            // (the actual comparison result is handled by ShouldBranch constraint)
+            0
         }
     }
 }
@@ -385,6 +411,100 @@ fn static_instruction_flags(instr: &Instruction) -> [bool; NUM_INSTRUCTION_FLAGS
             i.opcode, i.funct3, i.funct7
         ),
         _ => panic!("unsupported instruction: {instr:?}"),
+    }
+}
+
+fn lookup_table_kind_for_instruction(instr: &Instruction) -> Option<LookupTableKind> {
+    use jolt_instructions::rv::{arithmetic, branch, compare, jump, load, logic, store, system};
+    use jolt_instructions::virtual_::{
+        advice, arithmetic as varith, assert as vassert, bitwise, byte, division, extension, shift,
+        xor_rotate,
+    };
+
+    match instr {
+        Instruction::ADD(_) => arithmetic::Add.lookup_table(),
+        Instruction::ADDI(_) => arithmetic::Addi.lookup_table(),
+        Instruction::SUB(_) => arithmetic::Sub.lookup_table(),
+        Instruction::LUI(_) => arithmetic::Lui.lookup_table(),
+        Instruction::AUIPC(_) => arithmetic::Auipc.lookup_table(),
+        Instruction::MUL(_) => arithmetic::Mul.lookup_table(),
+        Instruction::MULHU(_) => arithmetic::MulHU.lookup_table(),
+        Instruction::AND(_) => logic::And.lookup_table(),
+        Instruction::ANDI(_) => logic::AndI.lookup_table(),
+        Instruction::ANDN(_) => logic::Andn.lookup_table(),
+        Instruction::OR(_) => logic::Or.lookup_table(),
+        Instruction::ORI(_) => logic::OrI.lookup_table(),
+        Instruction::XOR(_) => logic::Xor.lookup_table(),
+        Instruction::XORI(_) => logic::XorI.lookup_table(),
+        Instruction::SLT(_) => compare::Slt.lookup_table(),
+        Instruction::SLTI(_) => compare::SltI.lookup_table(),
+        Instruction::SLTIU(_) => compare::SltIU.lookup_table(),
+        Instruction::SLTU(_) => compare::SltU.lookup_table(),
+        Instruction::BEQ(_) => branch::Beq.lookup_table(),
+        Instruction::BGE(_) => branch::Bge.lookup_table(),
+        Instruction::BGEU(_) => branch::BgeU.lookup_table(),
+        Instruction::BLT(_) => branch::Blt.lookup_table(),
+        Instruction::BLTU(_) => branch::BltU.lookup_table(),
+        Instruction::BNE(_) => branch::Bne.lookup_table(),
+        Instruction::JAL(_) => jump::Jal.lookup_table(),
+        Instruction::JALR(_) => jump::Jalr.lookup_table(),
+        Instruction::LD(_) => load::Ld.lookup_table(),
+        Instruction::SD(_) => store::Sd.lookup_table(),
+        Instruction::EBREAK(_) => system::Ebreak.lookup_table(),
+        Instruction::ECALL(_) => system::Ecall.lookup_table(),
+        Instruction::FENCE(_) => system::Fence.lookup_table(),
+        Instruction::VirtualAdvice(_) => advice::VirtualAdvice.lookup_table(),
+        Instruction::VirtualAdviceLen(_) => advice::VirtualAdviceLen.lookup_table(),
+        Instruction::VirtualAdviceLoad(_) => advice::VirtualAdviceLoad.lookup_table(),
+        Instruction::VirtualHostIO(_) => advice::VirtualHostIO.lookup_table(),
+        Instruction::VirtualMULI(_) => varith::MulI.lookup_table(),
+        Instruction::VirtualPow2(_) => varith::Pow2.lookup_table(),
+        Instruction::VirtualPow2I(_) => varith::Pow2I.lookup_table(),
+        Instruction::VirtualPow2W(_) => varith::Pow2W.lookup_table(),
+        Instruction::VirtualPow2IW(_) => varith::Pow2IW.lookup_table(),
+        Instruction::VirtualAssertEQ(_) => vassert::AssertEq.lookup_table(),
+        Instruction::VirtualAssertLTE(_) => vassert::AssertLte.lookup_table(),
+        Instruction::VirtualAssertValidDiv0(_) => vassert::AssertValidDiv0.lookup_table(),
+        Instruction::VirtualAssertValidUnsignedRemainder(_) => {
+            vassert::AssertValidUnsignedRemainder.lookup_table()
+        }
+        Instruction::VirtualAssertMulUNoOverflow(_) => {
+            vassert::AssertMulUNoOverflow.lookup_table()
+        }
+        Instruction::VirtualAssertWordAlignment(_) => {
+            vassert::AssertWordAlignment.lookup_table()
+        }
+        Instruction::VirtualAssertHalfwordAlignment(_) => {
+            vassert::AssertHalfwordAlignment.lookup_table()
+        }
+        Instruction::VirtualMovsign(_) => bitwise::MovSign.lookup_table(),
+        Instruction::VirtualRev8W(_) => byte::VirtualRev8W.lookup_table(),
+        Instruction::VirtualChangeDivisor(_) => division::VirtualChangeDivisor.lookup_table(),
+        Instruction::VirtualChangeDivisorW(_) => division::VirtualChangeDivisorW.lookup_table(),
+        Instruction::VirtualZeroExtendWord(_) => extension::VirtualZeroExtendWord.lookup_table(),
+        Instruction::VirtualSignExtendWord(_) => extension::VirtualSignExtendWord.lookup_table(),
+        Instruction::VirtualSRL(_) => shift::VirtualSrl.lookup_table(),
+        Instruction::VirtualSRLI(_) => shift::VirtualSrli.lookup_table(),
+        Instruction::VirtualSRA(_) => shift::VirtualSra.lookup_table(),
+        Instruction::VirtualSRAI(_) => shift::VirtualSrai.lookup_table(),
+        Instruction::VirtualShiftRightBitmask(_) => {
+            shift::VirtualShiftRightBitmask.lookup_table()
+        }
+        Instruction::VirtualShiftRightBitmaskI(_) => {
+            shift::VirtualShiftRightBitmaski.lookup_table()
+        }
+        Instruction::VirtualROTRI(_) => shift::VirtualRotri.lookup_table(),
+        Instruction::VirtualROTRIW(_) => shift::VirtualRotriw.lookup_table(),
+        Instruction::VirtualXORROT32(_) => xor_rotate::VirtualXorRot32.lookup_table(),
+        Instruction::VirtualXORROT24(_) => xor_rotate::VirtualXorRot24.lookup_table(),
+        Instruction::VirtualXORROT16(_) => xor_rotate::VirtualXorRot16.lookup_table(),
+        Instruction::VirtualXORROT63(_) => xor_rotate::VirtualXorRot63.lookup_table(),
+        Instruction::VirtualXORROTW16(_) => xor_rotate::VirtualXorRotW16.lookup_table(),
+        Instruction::VirtualXORROTW12(_) => xor_rotate::VirtualXorRotW12.lookup_table(),
+        Instruction::VirtualXORROTW8(_) => xor_rotate::VirtualXorRotW8.lookup_table(),
+        Instruction::VirtualXORROTW7(_) => xor_rotate::VirtualXorRotW7.lookup_table(),
+        Instruction::NoOp | Instruction::INLINE(_) => None,
+        _ => None,
     }
 }
 

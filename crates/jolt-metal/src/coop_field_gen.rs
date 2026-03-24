@@ -204,8 +204,10 @@ fn generate_coop_sub(s: &mut String, n: usize) {
     let _ = writeln!(s, "    uint borrow_in_r = (pair_lane > 0u) ? simd_shuffle(g, pair_base + pair_lane - 1u) : 0u;");
     let _ = writeln!(s, "    diff -= borrow_in_r;");
 
-    // g[N-1] after prefix = borrow exits MSB = underflow
-    let _ = writeln!(s, "    uint final_borrow = simd_shuffle(g, pair_base + {n_minus_1}u);");
+    // Overall underflow = initial borrow at MSB OR ripple chain exit past MSB.
+    // Both must be checked: initial borrow alone causes underflow when b[N-1] > a[N-1]
+    // with no cascading borrow from below (g[N-1] would be 0 in that case).
+    let _ = writeln!(s, "    uint final_borrow = simd_shuffle(borrow, pair_base + {n_minus_1}u) | simd_shuffle(g, pair_base + {n_minus_1}u);");
 
     // Step 5: conditional addition of modulus if underflow
     let _ = writeln!(s, "    uint addend = (final_borrow != 0u) ? FR_MODULUS[pair_lane] : 0u;");
@@ -352,6 +354,486 @@ fn generate_coop_mul(s: &mut String, n: usize) {
     let _ = writeln!(s);
 }
 
+/// Transform a standard eval body (using `fr_*` on `Fr` values) into
+/// a cooperative body (using `coop_fr_*` on individual `uint` limbs).
+///
+/// Handles nested calls: `fr_add(fr_mul(a, b), c)` becomes
+/// `coop_fr_add(coop_fr_mul(a, b, pair_lane, pair_base), c, pair_lane, pair_base)`.
+pub fn cooperativize_body(body: &str) -> String {
+    // Pass 1: single-pass rename to avoid double-replacement (e.g., `fr_mul(` inside `coop_fr_mul(`)
+    let bytes = body.as_bytes();
+    let n = bytes.len();
+    let mut s = String::with_capacity(n * 2);
+    let mut i = 0;
+
+    const REPLACEMENTS: &[(&str, &str)] = &[
+        ("fr_mul_unreduced(", "coop_fr_mul("),
+        ("fr_reduce(", "coop_fr_reduce("),
+        ("fr_mul(", "coop_fr_mul("),
+        ("fr_add(", "coop_fr_add("),
+        ("fr_sub(", "coop_fr_sub("),
+        ("fr_neg(", "coop_fr_neg("),
+        ("fr_zero()", "0u"),
+        ("fr_one()", "FR_ONE[pair_lane]"),
+        ("Fr ", "uint "),
+    ];
+
+    while i < n {
+        let mut matched = false;
+        for &(from, to) in REPLACEMENTS {
+            if body[i..].starts_with(from) {
+                s.push_str(to);
+                i += from.len();
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            s.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    // Pass 2: insert `pair_lane, pair_base` before matching `)` of each coop_fr_* call
+    add_coop_args(&s)
+}
+
+const COOP_PREFIXES: &[&str] = &[
+    "coop_fr_mul(",
+    "coop_fr_add(",
+    "coop_fr_sub(",
+    "coop_fr_reduce(",
+    "coop_fr_neg(",
+];
+
+fn add_coop_args(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let n = bytes.len();
+    let mut result = String::with_capacity(n + n / 3);
+    let mut i = 0;
+
+    while i < n {
+        let mut matched = false;
+        for prefix in COOP_PREFIXES {
+            if source[i..].starts_with(prefix) {
+                result.push_str(prefix);
+                i += prefix.len();
+                // Scan to matching close paren
+                let start = i;
+                let mut depth: u32 = 1;
+                while i < n {
+                    match bytes[i] {
+                        b'(' => depth += 1,
+                        b')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                // source[start..i] = inner args, source[i] = ')'
+                let inner = &source[start..i];
+                result.push_str(&add_coop_args(inner));
+                result.push_str(", pair_lane, pair_base)");
+                i += 1;
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// Generate cooperative H2L pairwise reduce kernel.
+///
+/// 8 threads per field element. Each cooperative group reads one pair,
+/// evaluates the Toom-Cook body cooperatively, and accumulates.
+/// Simdgroup reduction merges 4 cooperative groups → 1 via `coop_fr_add`.
+/// Threadgroup reduction uses shared uint limbs.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_coop_reduce_kernel_h2l(
+    num_inputs: usize,
+    num_evals: usize,
+    coop_eval_body: &str,
+    weight_folded: bool,
+    has_challenges: bool,
+    n_limbs: usize,
+    device_config: &crate::metal_device_config::MetalDeviceConfig,
+) -> String {
+    let gs = device_config.reduce_group_size;
+    let num_simdgroups = device_config.num_simdgroups();
+    let elems_per_tg = gs / n_limbs;
+    let elems_per_sg = device_config.simd_size / n_limbs;
+    let needs_weight_mul = !weight_folded;
+
+    let mut s = String::with_capacity(16384);
+
+    // Kernel signature (same buffer layout as standard)
+    let _ = writeln!(s, "kernel void reduce_kernel_coop_h2l(");
+    for k in 0..num_inputs {
+        let _ = writeln!(s, "    device const Fr* input_{k} [[buffer({k})]],");
+    }
+    let mut next_buf = num_inputs;
+    let _ = writeln!(s, "    device const Fr* weights [[buffer({next_buf})]],");
+    next_buf += 1;
+    if has_challenges {
+        let _ = writeln!(
+            s,
+            "    device const Fr* challenges [[buffer({next_buf})]],",
+        );
+        next_buf += 1;
+    }
+    let _ = writeln!(s, "    device Fr* partials [[buffer({next_buf})]],");
+    next_buf += 1;
+    let _ = writeln!(s, "    device const uint* params [[buffer({next_buf})]],",);
+    let _ = writeln!(s, "    uint gid [[threadgroup_position_in_grid]],");
+    let _ = writeln!(s, "    uint lid [[thread_position_in_threadgroup]],");
+    let _ = writeln!(s, "    uint num_groups [[threadgroups_per_grid]],");
+    let _ = writeln!(s, "    uint simd_lane [[thread_index_in_simdgroup]],");
+    let _ = writeln!(s, "    uint simd_id [[simdgroup_index_in_threadgroup]]");
+    let _ = writeln!(s, ") {{");
+
+    let _ = writeln!(s, "    uint n_pairs = params[0];");
+    let _ = writeln!(s);
+
+    // Cooperative lane setup
+    let _ = writeln!(s, "    uint pair_lane = simd_lane % {n_limbs}u;");
+    let _ = writeln!(s, "    uint pair_base = simd_lane - pair_lane;");
+    let _ = writeln!(
+        s,
+        "    uint elem_in_sg = simd_lane / {n_limbs}u;"
+    );
+    let _ = writeln!(s);
+
+    // Accumulators (one limb per eval per thread)
+    for d in 0..num_evals {
+        let _ = writeln!(s, "    uint acc_{d} = 0u;");
+    }
+    let _ = writeln!(s);
+
+    // Grid-stride loop: each thread computes one limb of one element
+    let _ = writeln!(
+        s,
+        "    for (uint elem = gid * {elems_per_tg}u + simd_id * {elems_per_sg}u + elem_in_sg; elem < n_pairs; elem += num_groups * {elems_per_tg}u) {{"
+    );
+
+    // Read pairs (H2L: lo = buf[i], hi = buf[i + n_pairs])
+    for k in 0..num_inputs {
+        let _ = writeln!(
+            s,
+            "        uint lo_{k} = input_{k}[elem].limbs[pair_lane], hi_{k} = input_{k}[elem + n_pairs].limbs[pair_lane];"
+        );
+    }
+    let _ = writeln!(s);
+
+    // Read weight
+    let _ = writeln!(s, "        uint w = weights[elem].limbs[pair_lane];");
+    let _ = writeln!(s);
+
+    // Eval body (already cooperativized): produces eval_0..eval_{D-1}
+    let mut decomposed_body = coop_eval_body.to_string();
+    for d in 0..num_evals {
+        decomposed_body = decomposed_body.replace(&format!("evals[{d}]"), &format!("eval_{d}"));
+    }
+    for d in 0..num_evals {
+        let _ = writeln!(s, "        uint eval_{d};");
+    }
+    let _ = write!(s, "{decomposed_body}");
+    let _ = writeln!(s);
+
+    // Accumulate
+    if needs_weight_mul {
+        for d in 0..num_evals {
+            let _ = writeln!(
+                s,
+                "        acc_{d} = coop_fr_add(acc_{d}, coop_fr_mul(w, eval_{d}, pair_lane, pair_base), pair_lane, pair_base);"
+            );
+        }
+    } else {
+        for d in 0..num_evals {
+            let _ = writeln!(
+                s,
+                "        acc_{d} = coop_fr_add(acc_{d}, coop_fr_reduce(eval_{d}, pair_lane, pair_base), pair_lane, pair_base);"
+            );
+        }
+    }
+    let _ = writeln!(s, "    }}");
+    let _ = writeln!(s);
+
+    // Simdgroup reduction: merge cooperative groups within simdgroup
+    // 4 groups per simdgroup (32/8) → 2 rounds
+    let mut stride_groups = elems_per_sg / 2;
+    while stride_groups > 0 {
+        let stride_lanes = stride_groups * n_limbs;
+        for d in 0..num_evals {
+            let _ = writeln!(
+                s,
+                "    {{ uint _o = simd_shuffle(acc_{d}, pair_base + {stride_lanes}u + pair_lane);"
+            );
+            let _ = writeln!(
+                s,
+                "    acc_{d} = coop_fr_add(acc_{d}, _o, pair_lane, pair_base); }}"
+            );
+        }
+        stride_groups /= 2;
+    }
+    let _ = writeln!(s);
+
+    // Threadgroup reduction via shared uint limbs
+    let sh_total = num_evals * num_simdgroups * n_limbs;
+    let _ = writeln!(s, "    threadgroup uint sh[{sh_total}];");
+    let _ = writeln!(s, "    if (pair_base == 0u) {{");
+    for d in 0..num_evals {
+        let _ = writeln!(
+            s,
+            "        sh[({d}u * {num_simdgroups}u + simd_id) * {n_limbs}u + pair_lane] = acc_{d};"
+        );
+    }
+    let _ = writeln!(s, "    }}");
+    let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
+    let _ = writeln!(s);
+
+    // Simdgroup 0, group 0: reduce across simdgroup partials
+    let _ = writeln!(s, "    if (simd_id == 0u && pair_base == 0u) {{");
+    for sg in 1..num_simdgroups {
+        for d in 0..num_evals {
+            let _ = writeln!(
+                s,
+                "        acc_{d} = coop_fr_add(acc_{d}, sh[({d}u * {num_simdgroups}u + {sg}u) * {n_limbs}u + pair_lane], pair_lane, pair_base);"
+            );
+        }
+    }
+    let _ = writeln!(s, "    }}");
+    let _ = writeln!(s);
+
+    // Write Fr partials (gather limbs into Fr struct)
+    let _ = writeln!(s, "    if (simd_id == 0u && pair_base == 0u) {{");
+    for d in 0..num_evals {
+        let _ = writeln!(
+            s,
+            "        partials[gid * {num_evals}u + {d}u].limbs[pair_lane] = acc_{d};"
+        );
+    }
+    let _ = writeln!(s, "    }}");
+    let _ = writeln!(s, "}}");
+
+    s
+}
+
+/// Generate cooperative fused interpolate+reduce kernel (H2L, weighted).
+///
+/// Reads 4 values per input, interpolates in-place cooperatively, then
+/// evaluates and reduces — all with cooperative field arithmetic.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_coop_fused_reduce_kernel(
+    num_inputs: usize,
+    num_evals: usize,
+    coop_eval_body: &str,
+    weight_folded: bool,
+    has_challenges: bool,
+    n_limbs: usize,
+    device_config: &crate::metal_device_config::MetalDeviceConfig,
+) -> String {
+    let gs = device_config.reduce_group_size;
+    let num_simdgroups = device_config.num_simdgroups();
+    let elems_per_tg = gs / n_limbs;
+    let elems_per_sg = device_config.simd_size / n_limbs;
+    let needs_weight_mul = !weight_folded;
+
+    let mut s = String::with_capacity(16384);
+
+    let _ = writeln!(s, "kernel void reduce_kernel_coop_fused_h2l(");
+    for k in 0..num_inputs {
+        let _ = writeln!(s, "    device Fr* input_{k} [[buffer({k})]],");
+    }
+    let mut next_buf = num_inputs;
+    let _ = writeln!(s, "    device Fr* weights [[buffer({next_buf})]],");
+    next_buf += 1;
+    let _ = writeln!(
+        s,
+        "    device const Fr* interp_scalar [[buffer({next_buf})]],",
+    );
+    next_buf += 1;
+    if has_challenges {
+        let _ = writeln!(
+            s,
+            "    device const Fr* challenges [[buffer({next_buf})]],",
+        );
+        next_buf += 1;
+    }
+    let _ = writeln!(s, "    device Fr* partials [[buffer({next_buf})]],");
+    next_buf += 1;
+    let _ = writeln!(s, "    device const uint* params [[buffer({next_buf})]],",);
+    let _ = writeln!(s, "    uint gid [[threadgroup_position_in_grid]],");
+    let _ = writeln!(s, "    uint lid [[thread_position_in_threadgroup]],");
+    let _ = writeln!(s, "    uint num_groups [[threadgroups_per_grid]],");
+    let _ = writeln!(s, "    uint simd_lane [[thread_index_in_simdgroup]],");
+    let _ = writeln!(s, "    uint simd_id [[simdgroup_index_in_threadgroup]]");
+    let _ = writeln!(s, ") {{");
+
+    let _ = writeln!(s, "    uint n_fused = params[0];");
+    let _ = writeln!(s, "    uint r = interp_scalar[0].limbs[simd_lane % {n_limbs}u];");
+    let _ = writeln!(s);
+
+    // Cooperative lane setup
+    let _ = writeln!(s, "    uint pair_lane = simd_lane % {n_limbs}u;");
+    let _ = writeln!(s, "    uint pair_base = simd_lane - pair_lane;");
+    let _ = writeln!(
+        s,
+        "    uint elem_in_sg = simd_lane / {n_limbs}u;"
+    );
+    let _ = writeln!(s);
+
+    // Accumulators
+    for d in 0..num_evals {
+        let _ = writeln!(s, "    uint acc_{d} = 0u;");
+    }
+    let _ = writeln!(s);
+
+    // Grid-stride loop
+    let _ = writeln!(
+        s,
+        "    for (uint j = gid * {elems_per_tg}u + simd_id * {elems_per_sg}u + elem_in_sg; j < n_fused; j += num_groups * {elems_per_tg}u) {{"
+    );
+
+    // Read 4 values per input, interpolate, write back (cooperative)
+    for k in 0..num_inputs {
+        let _ = writeln!(s, "        uint lo_{k}, hi_{k};");
+        // Scoped reads: (a, c) then (b, d) to reduce register pressure
+        let _ = writeln!(
+            s,
+            "        {{ uint a = input_{k}[j].limbs[pair_lane], c = input_{k}[j + 2u*n_fused].limbs[pair_lane];"
+        );
+        let _ = writeln!(
+            s,
+            "          lo_{k} = coop_fr_add(a, coop_fr_mul(r, coop_fr_sub(c, a, pair_lane, pair_base), pair_lane, pair_base), pair_lane, pair_base); input_{k}[j].limbs[pair_lane] = lo_{k}; }}"
+        );
+        let _ = writeln!(
+            s,
+            "        {{ uint b = input_{k}[j + n_fused].limbs[pair_lane], d = input_{k}[j + 3u*n_fused].limbs[pair_lane];"
+        );
+        let _ = writeln!(
+            s,
+            "          hi_{k} = coop_fr_add(b, coop_fr_mul(r, coop_fr_sub(d, b, pair_lane, pair_base), pair_lane, pair_base), pair_lane, pair_base); input_{k}[j + n_fused].limbs[pair_lane] = hi_{k}; }}"
+        );
+    }
+    let _ = writeln!(s);
+
+    // Weight interpolation
+    let _ = writeln!(s, "        uint w;");
+    let _ = writeln!(
+        s,
+        "        {{ uint wa = weights[j].limbs[pair_lane], wc = weights[j + 2u*n_fused].limbs[pair_lane];"
+    );
+    let _ = writeln!(
+        s,
+        "          w = coop_fr_add(wa, coop_fr_mul(r, coop_fr_sub(wc, wa, pair_lane, pair_base), pair_lane, pair_base), pair_lane, pair_base); weights[j].limbs[pair_lane] = w; }}"
+    );
+    let _ = writeln!(
+        s,
+        "        {{ uint wb = weights[j + n_fused].limbs[pair_lane], wd = weights[j + 3u*n_fused].limbs[pair_lane];"
+    );
+    let _ = writeln!(
+        s,
+        "          uint w_hi = coop_fr_add(wb, coop_fr_mul(r, coop_fr_sub(wd, wb, pair_lane, pair_base), pair_lane, pair_base), pair_lane, pair_base); weights[j + n_fused].limbs[pair_lane] = w_hi; }}"
+    );
+    let _ = writeln!(s);
+
+    // Eval body
+    let mut decomposed_body = coop_eval_body.to_string();
+    for d in 0..num_evals {
+        decomposed_body = decomposed_body.replace(&format!("evals[{d}]"), &format!("eval_{d}"));
+    }
+    for d in 0..num_evals {
+        let _ = writeln!(s, "        uint eval_{d};");
+    }
+    let _ = write!(s, "{decomposed_body}");
+    let _ = writeln!(s);
+
+    // Accumulate
+    if needs_weight_mul {
+        for d in 0..num_evals {
+            let _ = writeln!(
+                s,
+                "        acc_{d} = coop_fr_add(acc_{d}, coop_fr_mul(w, eval_{d}, pair_lane, pair_base), pair_lane, pair_base);"
+            );
+        }
+    } else {
+        for d in 0..num_evals {
+            let _ = writeln!(
+                s,
+                "        acc_{d} = coop_fr_add(acc_{d}, coop_fr_reduce(eval_{d}, pair_lane, pair_base), pair_lane, pair_base);"
+            );
+        }
+    }
+    let _ = writeln!(s, "    }}");
+    let _ = writeln!(s);
+
+    // Simdgroup reduction (same as H2L)
+    let mut stride_groups = elems_per_sg / 2;
+    while stride_groups > 0 {
+        let stride_lanes = stride_groups * n_limbs;
+        for d in 0..num_evals {
+            let _ = writeln!(
+                s,
+                "    {{ uint _o = simd_shuffle(acc_{d}, pair_base + {stride_lanes}u + pair_lane);"
+            );
+            let _ = writeln!(
+                s,
+                "    acc_{d} = coop_fr_add(acc_{d}, _o, pair_lane, pair_base); }}"
+            );
+        }
+        stride_groups /= 2;
+    }
+    let _ = writeln!(s);
+
+    // Threadgroup reduction
+    let sh_total = num_evals * num_simdgroups * n_limbs;
+    let _ = writeln!(s, "    threadgroup uint sh[{sh_total}];");
+    let _ = writeln!(s, "    if (pair_base == 0u) {{");
+    for d in 0..num_evals {
+        let _ = writeln!(
+            s,
+            "        sh[({d}u * {num_simdgroups}u + simd_id) * {n_limbs}u + pair_lane] = acc_{d};"
+        );
+    }
+    let _ = writeln!(s, "    }}");
+    let _ = writeln!(s, "    threadgroup_barrier(mem_flags::mem_threadgroup);");
+    let _ = writeln!(s);
+
+    let _ = writeln!(s, "    if (simd_id == 0u && pair_base == 0u) {{");
+    for sg in 1..num_simdgroups {
+        for d in 0..num_evals {
+            let _ = writeln!(
+                s,
+                "        acc_{d} = coop_fr_add(acc_{d}, sh[({d}u * {num_simdgroups}u + {sg}u) * {n_limbs}u + pair_lane], pair_lane, pair_base);"
+            );
+        }
+    }
+    let _ = writeln!(s, "    }}");
+    let _ = writeln!(s);
+
+    let _ = writeln!(s, "    if (simd_id == 0u && pair_base == 0u) {{");
+    for d in 0..num_evals {
+        let _ = writeln!(
+            s,
+            "        partials[gid * {num_evals}u + {d}u].limbs[pair_lane] = acc_{d};"
+        );
+    }
+    let _ = writeln!(s, "    }}");
+    let _ = writeln!(s, "}}");
+
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,5 +857,43 @@ mod tests {
         assert!(kernel.contains("coop_fr_mul("));
         assert!(kernel.contains("pair_lane"));
         assert!(kernel.contains("pair_base"));
+    }
+
+    #[test]
+    fn cooperativize_simple() {
+        let body = "Fr a = fr_mul(lo_0, hi_0);";
+        let result = cooperativize_body(body);
+        assert_eq!(
+            result,
+            "uint a = coop_fr_mul(lo_0, hi_0, pair_lane, pair_base);"
+        );
+    }
+
+    #[test]
+    fn cooperativize_nested() {
+        let body = "evals[0] = fr_add(fr_mul(a, b), c);";
+        let result = cooperativize_body(body);
+        assert_eq!(
+            result,
+            "evals[0] = coop_fr_add(coop_fr_mul(a, b, pair_lane, pair_base), c, pair_lane, pair_base);"
+        );
+    }
+
+    #[test]
+    fn cooperativize_deeply_nested() {
+        let body = "Fr x = fr_add(fr_mul(a, b), fr_sub(c, d));";
+        let result = cooperativize_body(body);
+        assert_eq!(
+            result,
+            "uint x = coop_fr_add(coop_fr_mul(a, b, pair_lane, pair_base), coop_fr_sub(c, d, pair_lane, pair_base), pair_lane, pair_base);"
+        );
+    }
+
+    #[test]
+    fn cooperativize_zero_and_reduce() {
+        let body = "evals[0] = fr_zero();\nevals[1] = fr_reduce(fr_mul_unreduced(a, b));";
+        let result = cooperativize_body(body);
+        assert!(result.contains("evals[0] = 0u;"));
+        assert!(result.contains("coop_fr_reduce(coop_fr_mul(a, b, pair_lane, pair_base), pair_lane, pair_base)"));
     }
 }

@@ -63,6 +63,21 @@ impl BytecodePreprocessing {
         self.pc_map.len()
     }
 
+    /// Returns the expanded PC for a CycleRow (generic version).
+    pub fn get_pc_for<R: jolt_host::CycleRow>(&self, cycle: &R) -> u64 {
+        if cycle.is_noop() {
+            return 0;
+        }
+        let key = (
+            cycle.unexpanded_pc() as usize,
+            cycle.virtual_sequence_remaining(),
+        );
+        *self
+            .pc_map
+            .get(&key)
+            .unwrap_or_else(|| panic!("unknown PC for address={}, vsr={:?}", key.0, key.1))
+    }
+
     fn normalize_cycle(cycle: &Cycle) -> NormalizedInstruction {
         cycle.instruction().normalize()
     }

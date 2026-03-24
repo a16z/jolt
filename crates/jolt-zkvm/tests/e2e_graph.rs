@@ -46,7 +46,9 @@ fn graph_driven_muldiv_mock_pcs() {
     let config = &witness_output.config;
 
     // 3. Preprocessing
-    let jolt_config = JoltConfig { num_cycles: config.trace_length };
+    let jolt_config = JoltConfig {
+        num_cycles: config.trace_length,
+    };
     let proving_key = preprocess::<Fr, MockPCS>(&jolt_config, |_| ((), ()));
 
     // 4. R1CS witness
@@ -63,7 +65,11 @@ fn graph_driven_muldiv_mock_pcs() {
     let external: HashMap<&str, Fr> = HashMap::new();
 
     // 8. Prove — trace provides virtual poly data on-the-fly via TracePolynomials
-    let trace_polys = jolt_witness::TracePolynomials::new(&trace);
+    let expanded_pcs: Vec<u32> = trace
+        .iter()
+        .map(|c| witness_output.bytecode.get_pc_for(c) as u32)
+        .collect();
+    let trace_polys = jolt_witness::TracePolynomials::new(&trace).with_expanded_pcs(expanded_pcs);
     let backend = Arc::new(jolt_cpu::CpuBackend);
     let input = GraphProverInput {
         graph: &graph,

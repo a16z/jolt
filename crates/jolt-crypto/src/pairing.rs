@@ -19,8 +19,10 @@ pub trait PairingGroup: Clone + Sync + Send + 'static {
     type GT: JoltGroup;
 
     /// Computes the bilinear pairing `e(g1, g2)`.
+    #[must_use]
     fn pairing(g1: &Self::G1, g2: &Self::G2) -> Self::GT;
 
     /// Computes the multi-pairing `Π e(g1s[i], g2s[i])`.
+    #[must_use]
     fn multi_pairing(g1s: &[Self::G1], g2s: &[Self::G2]) -> Self::GT;
 }

@@ -184,8 +184,12 @@ mod tests {
             Fr::from_u64(1),
         ]);
         let compressed = p.compress();
-        let bytes = bincode::serialize(&compressed).unwrap();
-        let recovered: CompressedPoly<Fr> = bincode::deserialize(&bytes).unwrap();
+        let bytes =
+            bincode::serde::encode_to_vec(&compressed, bincode::config::standard()).unwrap();
+        let recovered: CompressedPoly<Fr> =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .unwrap()
+                .0;
         assert_eq!(compressed, recovered);
     }
 

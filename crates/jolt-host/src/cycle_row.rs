@@ -64,4 +64,21 @@ pub trait CycleRow: Copy {
 
     /// Combined lookup index for RA polynomial construction (128-bit).
     fn lookup_index(&self) -> u128;
+
+    /// Lookup table evaluation result.
+    ///
+    /// For arithmetic: the computation result (e.g., rs1 + rs2 for ADD).
+    /// For branches: the comparison result (0 or 1).
+    /// For stores: zero.
+    /// For no-ops: zero.
+    ///
+    /// This is the value of V_LOOKUP_OUTPUT in the R1CS witness.
+    fn lookup_output(&self) -> u64;
+
+    /// Index of the lookup table this instruction uses, or `None` for no-ops.
+    ///
+    /// The index corresponds to `LookupTableFlag(i)` — a per-cycle boolean
+    /// that's 1 iff this cycle uses table `i`. Used by BytecodeReadRaf's
+    /// multi-stage input claim.
+    fn lookup_table_index(&self) -> Option<usize>;
 }

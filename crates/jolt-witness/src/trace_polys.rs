@@ -26,12 +26,28 @@ use jolt_poly::EqPolynomial;
 pub struct TracePolynomials<'a, R> {
     trace: &'a [R],
     padded_len: usize,
+    /// Per-cycle expanded PC values, pre-computed from BytecodePreprocessing.
+    /// `expanded_pcs[j]` = bytecode array index for cycle j.
+    expanded_pcs: Option<Vec<u32>>,
 }
 
 impl<'a, R: CycleRow> TracePolynomials<'a, R> {
     pub fn new(trace: &'a [R]) -> Self {
         let padded_len = trace.len().next_power_of_two();
-        Self { trace, padded_len }
+        Self {
+            trace,
+            padded_len,
+            expanded_pcs: None,
+        }
+    }
+
+    /// Set pre-computed expanded PC values (from `BytecodePreprocessing`).
+    ///
+    /// `pcs[j]` is the bytecode array index for cycle j. Padding cycles
+    /// (j >= pcs.len()) use index 0.
+    pub fn with_expanded_pcs(mut self, pcs: Vec<u32>) -> Self {
+        self.expanded_pcs = Some(pcs);
+        self
     }
 
     /// Padded trace length (next power of 2).
@@ -49,18 +65,19 @@ impl<'a, R: CycleRow> TracePolynomials<'a, R> {
     /// For "next-cycle" polynomials (NextPc, NextIsNoop, etc.), looks ahead
     /// to `trace[cycle + 1]` automatically.
     pub fn eval_at_cycle<F: Field>(&self, poly_id: PolynomialId, cycle: usize) -> F {
-        if is_next_cycle_poly(poly_id) {
-            let next = cycle + 1;
-            if next < self.trace.len() {
-                extract_value::<F, R>(poly_id, &self.trace[next])
-            } else {
-                extract_value::<F, R>(poly_id, &R::noop())
+        let idx = if is_next_cycle_poly(poly_id) { cycle + 1 } else { cycle };
+        let noop = R::noop();
+        let row = if idx < self.trace.len() { &self.trace[idx] } else { &noop };
+
+        // ExpandedPc uses pre-computed bytecode indices
+        if poly_id == PolynomialId::ExpandedPc {
+            if let Some(ref pcs) = self.expanded_pcs {
+                let pc_idx = if idx < pcs.len() { pcs[idx] } else { 0 };
+                return F::from_u64(pc_idx as u64);
             }
-        } else if cycle < self.trace.len() {
-            extract_value::<F, R>(poly_id, &self.trace[cycle])
-        } else {
-            extract_value::<F, R>(poly_id, &R::noop())
         }
+
+        extract_value::<F, R>(poly_id, row)
     }
 
     /// Materialize the full evaluation table for a polynomial.
@@ -68,10 +85,17 @@ impl<'a, R: CycleRow> TracePolynomials<'a, R> {
     /// Returns a dense `Vec<F>` of length `padded_len`. Padding cycles
     /// use `CycleRow::noop()` values. Next-cycle polynomials use lookahead.
     pub fn materialize<F: Field>(&self, poly_id: PolynomialId) -> Vec<F> {
+        let noop = R::noop();
+        let is_next = is_next_cycle_poly(poly_id);
         (0..self.padded_len)
             .map(|j| {
-                let v: F = self.eval_at_cycle(poly_id, j);
-                v
+                let idx = if is_next { j + 1 } else { j };
+                let cycle = if idx < self.trace.len() {
+                    &self.trace[idx]
+                } else {
+                    &noop
+                };
+                extract_value::<F, R>(poly_id, cycle)
             })
             .collect()
     }
@@ -82,9 +106,17 @@ impl<'a, R: CycleRow> TracePolynomials<'a, R> {
     /// extension evaluated at `point`. Next-cycle polynomials use lookahead.
     pub fn eval_at_point<F: Field>(&self, poly_id: PolynomialId, point: &[F]) -> F {
         let eq = EqPolynomial::new(point.to_vec()).evaluations();
+        let noop = R::noop();
+        let is_next = is_next_cycle_poly(poly_id);
         let mut result = F::zero();
         for (j, &eq_val) in eq.iter().enumerate() {
-            result += eq_val * self.eval_at_cycle(poly_id, j);
+            let idx = if is_next { j + 1 } else { j };
+            let cycle = if idx < self.trace.len() {
+                &self.trace[idx]
+            } else {
+                &noop
+            };
+            result += eq_val * extract_value::<F, R>(poly_id, cycle);
         }
         result
     }
@@ -155,6 +187,34 @@ impl<'a, R: CycleRow> TracePolynomials<'a, R> {
     }
 }
 
+/// Left instruction input as a field element.
+fn instruction_left_input<F: Field, R: CycleRow>(
+    cycle: &R,
+    iflags: &[bool; jolt_instructions::flags::NUM_INSTRUCTION_FLAGS],
+) -> F {
+    if iflags[InstructionFlags::LeftOperandIsPC as usize] {
+        F::from_u64(cycle.unexpanded_pc())
+    } else if iflags[InstructionFlags::LeftOperandIsRs1Value as usize] {
+        cycle.rs1_read().map_or_else(F::zero, |(_, v)| F::from_u64(v))
+    } else {
+        F::zero()
+    }
+}
+
+/// Right instruction input as a field element.
+fn instruction_right_input<F: Field, R: CycleRow>(
+    cycle: &R,
+    iflags: &[bool; jolt_instructions::flags::NUM_INSTRUCTION_FLAGS],
+) -> F {
+    if iflags[InstructionFlags::RightOperandIsImm as usize] {
+        F::from_i128(cycle.imm())
+    } else if iflags[InstructionFlags::RightOperandIsRs2Value as usize] {
+        cycle.rs2_read().map_or_else(F::zero, |(_, v)| F::from_u64(v))
+    } else {
+        F::zero()
+    }
+}
+
 /// Returns true for polynomial IDs that represent next-cycle values.
 fn is_next_cycle_poly(poly_id: PolynomialId) -> bool {
     matches!(
@@ -206,7 +266,11 @@ fn extract_value<F: Field, R: CycleRow>(poly_id: PolynomialId, cycle: &R) -> F {
         }
 
         // Program counter and immediate
-        PolynomialId::ExpandedPc | PolynomialId::UnexpandedPc => {
+        PolynomialId::UnexpandedPc => F::from_u64(cycle.unexpanded_pc()),
+        PolynomialId::ExpandedPc => {
+            // ExpandedPc = bytecode array index. Computed by pc_map if available.
+            // This function doesn't have access to pc_map — see TracePolynomials methods
+            // which handle ExpandedPc specially. Fall back to unexpanded.
             F::from_u64(cycle.unexpanded_pc())
         }
         PolynomialId::NextUnexpandedPc | PolynomialId::NextPc => {
@@ -215,33 +279,46 @@ fn extract_value<F: Field, R: CycleRow>(poly_id: PolynomialId, cycle: &R) -> F {
         }
         PolynomialId::Imm => F::from_i128(cycle.imm()),
 
-        // Lookup output
-        PolynomialId::LookupOutput => {
-            cycle.rd_write().map_or_else(F::zero, |(_, _, post)| F::from_u64(post))
+        PolynomialId::LookupOutput => F::from_u64(cycle.lookup_output()),
+        PolynomialId::LeftLookupOperand => {
+            let cflags = cycle.circuit_flags();
+            let iflags = cycle.instruction_flags();
+            let left = instruction_left_input::<F, R>(cycle, &iflags);
+            let right = instruction_right_input::<F, R>(cycle, &iflags);
+            if cflags[CircuitFlags::AddOperands as usize] {
+                left + right
+            } else if cflags[CircuitFlags::SubtractOperands as usize] {
+                left + F::from_u64(u64::MAX) - right + F::one() // two's complement
+            } else if cflags[CircuitFlags::MultiplyOperands as usize] {
+                // Low 64 bits of left * right
+                let l = cycle.rs1_read().map_or(0, |(_, v)| v) as u128;
+                let r = cycle.rs2_read().map_or(0, |(_, v)| v) as u128;
+                F::from_u64((l.wrapping_mul(r)) as u64)
+            } else {
+                left // interleaved: left operand unchanged
+            }
         }
-        PolynomialId::LeftLookupOperand | PolynomialId::RightLookupOperand => {
-            // These are computed from instruction inputs — simplified here.
-            F::zero()
+        PolynomialId::RightLookupOperand => {
+            let cflags = cycle.circuit_flags();
+            let iflags = cycle.instruction_flags();
+            if cflags[CircuitFlags::AddOperands as usize]
+                || cflags[CircuitFlags::SubtractOperands as usize]
+            {
+                F::zero() // combined into left operand
+            } else if cflags[CircuitFlags::MultiplyOperands as usize] {
+                // High 64 bits of left * right
+                let l = cycle.rs1_read().map_or(0, |(_, v)| v) as u128;
+                let r = cycle.rs2_read().map_or(0, |(_, v)| v) as u128;
+                F::from_u64((l.wrapping_mul(r) >> 64) as u64)
+            } else {
+                instruction_right_input::<F, R>(cycle, &iflags) // interleaved: right operand unchanged
+            }
         }
         PolynomialId::LeftInstructionInput => {
-            let iflags = cycle.instruction_flags();
-            if iflags[InstructionFlags::LeftOperandIsPC as usize] {
-                F::from_u64(cycle.unexpanded_pc())
-            } else if iflags[InstructionFlags::LeftOperandIsRs1Value as usize] {
-                cycle.rs1_read().map_or_else(F::zero, |(_, v)| F::from_u64(v))
-            } else {
-                F::zero()
-            }
+            instruction_left_input::<F, R>(cycle, &cycle.instruction_flags())
         }
         PolynomialId::RightInstructionInput => {
-            let iflags = cycle.instruction_flags();
-            if iflags[InstructionFlags::RightOperandIsImm as usize] {
-                F::from_i128(cycle.imm())
-            } else if iflags[InstructionFlags::RightOperandIsRs2Value as usize] {
-                cycle.rs2_read().map_or_else(F::zero, |(_, v)| F::from_u64(v))
-            } else {
-                F::zero()
-            }
+            instruction_right_input::<F, R>(cycle, &cycle.instruction_flags())
         }
 
         // Register addresses
@@ -309,15 +386,29 @@ fn extract_value<F: Field, R: CycleRow>(poly_id: PolynomialId, cycle: &R) -> F {
             bool_to_field(interleaved)
         }
 
-        // Committed polys — not trace-derived (come from WitnessStore)
+        // Committed polys — not trace-derived (come from WitnessStore).
+        // The prover uses committed_store for these; trace_polys returns zero
+        // so that MLE evaluation at the full challenge point gives the correct
+        // contribution (zero) for the virtual-poly component.
         PolynomialId::RamInc
         | PolynomialId::RdInc
         | PolynomialId::InstructionRa(_)
         | PolynomialId::BytecodeRa(_)
         | PolynomialId::RamRa(_) => F::zero(),
 
-        // Remaining (SpartanWitness, advice, RAF vals, LookupTableFlag, etc.)
-        _ => F::zero(),
+        // SpartanWitness: eval comes from spartan_proof, not trace.
+        PolynomialId::SpartanWitness => F::zero(),
+
+        // Advice polys: only present when n_advice > 0 (not in standard mode).
+        PolynomialId::TrustedAdvice | PolynomialId::UntrustedAdvice => F::zero(),
+
+        // BytecodeReadRafVal / InstructionReadRafVal: produced by sumcheck output formulas.
+        PolynomialId::BytecodeReadRafVal(_) | PolynomialId::InstructionReadRafVal(_) => F::zero(),
+
+        // LookupTableFlag(i) = 1 iff this cycle uses lookup table i.
+        PolynomialId::LookupTableFlag(i) => {
+            bool_to_field(cycle.lookup_table_index() == Some(i))
+        }
     }
 }
 

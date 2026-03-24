@@ -566,16 +566,22 @@ mod tests {
     #[test]
     fn serde_round_trip() {
         let p = UnivariatePoly::new(vec![Fr::from_u64(3), Fr::from_u64(2), Fr::from_u64(1)]);
-        let bytes = bincode::serialize(&p).unwrap();
-        let recovered: UnivariatePoly<Fr> = bincode::deserialize(&bytes).unwrap();
+        let bytes = bincode::serde::encode_to_vec(&p, bincode::config::standard()).unwrap();
+        let recovered: UnivariatePoly<Fr> =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .unwrap()
+                .0;
         assert_eq!(p, recovered);
     }
 
     #[test]
     fn serde_round_trip_zero() {
         let p = UnivariatePoly::<Fr>::zero();
-        let bytes = bincode::serialize(&p).unwrap();
-        let recovered: UnivariatePoly<Fr> = bincode::deserialize(&bytes).unwrap();
+        let bytes = bincode::serde::encode_to_vec(&p, bincode::config::standard()).unwrap();
+        let recovered: UnivariatePoly<Fr> =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .unwrap()
+                .0;
         assert_eq!(p, recovered);
     }
 

@@ -63,7 +63,7 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: Field> RaPolyno
             Self::Round1(mle) => mle.get_bound_coeff(j),
             Self::Round2(mle) => mle.get_bound_coeff(j),
             Self::Round3(mle) => mle.get_bound_coeff(j),
-            Self::RoundN(poly) => poly.coefficients()[j],
+            Self::RoundN(poly) => poly.evals()[j],
         }
     }
 
@@ -105,7 +105,7 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: Field> RaPolyno
         match self {
             Self::RoundN(poly) => {
                 debug_assert_eq!(poly.len(), 1);
-                poly.coefficients()[0]
+                poly.evals()[0]
             }
             _ => panic!("final_sumcheck_claim requires RoundN state"),
         }

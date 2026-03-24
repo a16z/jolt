@@ -275,10 +275,36 @@ pub fn generate_msl(
                             device_config,
                         ));
                         msl.push('\n');
+
+                        // Cooperative kernel variants (8 threads per element)
+                        let coop_preamble = crate::coop_field_gen::generate_coop_preamble(n_limbs);
+                        let coop_body = crate::coop_field_gen::cooperativize_body(&fused_body);
+                        let mut coop_kernels = String::new();
+                        coop_kernels.push_str(
+                            &crate::coop_field_gen::generate_coop_reduce_kernel_h2l(
+                                num_inputs, num_evals, &coop_body, true, false,
+                                n_limbs, device_config,
+                            ),
+                        );
+                        coop_kernels.push('\n');
+                        coop_kernels.push_str(
+                            &crate::coop_field_gen::generate_coop_fused_reduce_kernel(
+                                num_inputs, num_evals, &coop_body, true, false,
+                                n_limbs, device_config,
+                            ),
+                        );
+                        coop_kernels.push('\n');
+
                         let source = if matches!(mode, CompileMode::FastCompile) {
-                            build_source_with_preamble_noinline(&field_config.msl_preamble, &[&msl])
+                            build_source_with_preamble_noinline(
+                                &field_config.msl_preamble,
+                                &[&coop_preamble, &msl, &coop_kernels],
+                            )
                         } else {
-                            build_source_with_preamble(&field_config.msl_preamble, &[&msl])
+                            build_source_with_preamble(
+                                &field_config.msl_preamble,
+                                &[&coop_preamble, &msl, &coop_kernels],
+                            )
                         };
                         return GeneratedMsl {
                             source,
@@ -387,11 +413,63 @@ pub fn generate_msl(
         msl.push('\n');
     }
 
+    // Generate cooperative kernel variants for ProductSum shapes.
+    // These use 8 threads per field element for lower register pressure
+    // and parallel CIOS carry propagation.
+    let coop_body = match &descriptor.shape {
+        KernelShape::ProductSum {
+            num_inputs_per_product,
+            num_products,
+        } => {
+            let d = *num_inputs_per_product;
+            let p = *num_products;
+            if d == 4 || d == 8 {
+                let std_body = generate_toom_cook_body_weighted(d, p);
+                Some(crate::coop_field_gen::cooperativize_body(&std_body))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    let coop_preamble = crate::coop_field_gen::generate_coop_preamble(field_config.n_limbs);
+    let mut coop_kernels = String::new();
+    if let Some(ref coop_body) = coop_body {
+        let n_limbs = field_config.n_limbs;
+        coop_kernels.push_str(&crate::coop_field_gen::generate_coop_reduce_kernel_h2l(
+            num_inputs,
+            num_evals,
+            coop_body,
+            true, // weight_folded (Toom-Cook always weight-folds)
+            has_challenges,
+            n_limbs,
+            device_config,
+        ));
+        coop_kernels.push('\n');
+        coop_kernels.push_str(&crate::coop_field_gen::generate_coop_fused_reduce_kernel(
+            num_inputs,
+            num_evals,
+            coop_body,
+            true, // weight_folded
+            has_challenges,
+            n_limbs,
+            device_config,
+        ));
+        coop_kernels.push('\n');
+    }
+
     let noinline = matches!(mode, CompileMode::FastCompile);
     let source = if noinline {
-        build_source_with_preamble_noinline(&field_config.msl_preamble, &[&msl])
+        build_source_with_preamble_noinline(
+            &field_config.msl_preamble,
+            &[&coop_preamble, &msl, &coop_kernels],
+        )
     } else {
-        build_source_with_preamble(&field_config.msl_preamble, &[&msl])
+        build_source_with_preamble(
+            &field_config.msl_preamble,
+            &[&coop_preamble, &msl, &coop_kernels],
+        )
     };
 
     GeneratedMsl {
@@ -409,6 +487,23 @@ pub(crate) fn compile_msl(device: &metal::Device, msl: &GeneratedMsl) -> Arc<Cac
         .new_library_with_source(&msl.source, &options)
         .unwrap_or_else(|e| panic!("reduce kernel MSL compilation failed: {e}"));
 
+    let coop_h2l = library
+        .get_function("reduce_kernel_coop_h2l", None)
+        .ok()
+        .map(|f| {
+            device
+                .new_compute_pipeline_state_with_function(&f)
+                .expect("coop_h2l pipeline failed")
+        });
+    let coop_fused = library
+        .get_function("reduce_kernel_coop_fused_h2l", None)
+        .ok()
+        .map(|f| {
+            device
+                .new_compute_pipeline_state_with_function(&f)
+                .expect("coop_fused_h2l pipeline failed")
+        });
+
     Arc::new(CachedPipelines {
         pipeline_l2h: make_pipeline(device, &library, "reduce_kernel_l2h"),
         pipeline_h2l: make_pipeline(device, &library, "reduce_kernel_h2l"),
@@ -416,6 +511,8 @@ pub(crate) fn compile_msl(device: &metal::Device, msl: &GeneratedMsl) -> Arc<Cac
         pipeline_l2h_unw: make_pipeline(device, &library, "reduce_kernel_l2h_unw"),
         pipeline_h2l_unw: make_pipeline(device, &library, "reduce_kernel_h2l_unw"),
         pipeline_fused_h2l: make_pipeline(device, &library, "reduce_kernel_fused_h2l"),
+        pipeline_coop_h2l: coop_h2l,
+        pipeline_coop_fused_h2l: coop_fused,
         num_evals: msl.num_evals,
         num_inputs: msl.num_inputs,
         has_challenges: msl.has_challenges,
