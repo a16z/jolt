@@ -135,6 +135,10 @@ struct ProcessedConstraint {
     is_const: bool,
     /// Evaluated constant value (if is_const is true)
     const_val: Option<[u64; 4]>,
+    /// Crossval: LHS expression (only for Sub roots in crossval mode)
+    crossval_lhs: Option<String>,
+    /// Crossval: RHS expression (only for Sub roots in crossval mode)
+    crossval_rhs: Option<String>,
 }
 
 /// Assertion type for processed constraints (owned version of Assertion).
@@ -173,11 +177,11 @@ pub(crate) struct GnarkCodeGen<'a> {
     /// Reference counts for each NodeId (computed in first pass)
     ref_counts: HashMap<usize, usize>,
     /// Maps NodeId to CSE variable name (e.g., "cse_0" or "cse_3_0" for constraint 3)
-    generated: HashMap<usize, String>,
+    pub(crate) generated: HashMap<usize, String>,
     /// CSE variable definitions in order
     bindings: Vec<String>,
     /// Next CSE variable index
-    cse_counter: usize,
+    pub(crate) cse_counter: usize,
     /// Maps variable index to input name (e.g., 0 -> "UniSkipCoeff0")
     var_names: &'a HashMap<u16, String>,
     /// Constraint index for per-constraint CSE naming (e.g., constraint 3 uses cse_3_*)
@@ -385,9 +389,17 @@ impl<'a> GnarkCodeGen<'a> {
             // Hoist to CSE variable if referenced more than once OR expression is too large.
             // Large single-use expressions would create massive single-line Go code that
             // overwhelms the Go compiler (e.g., 48MB expression on one line).
+            // In global context, only hoist by ref_count — MAX_INLINE_EXPR_LEN could create
+            // extra gcse[] entries beyond the pre-allocated slice size.
             const MAX_INLINE_EXPR_LEN: usize = 1000;
             let ref_count = self.ref_counts.get(&node_id).copied().unwrap_or(1);
-            if ref_count > 1 || expr.len() > MAX_INLINE_EXPR_LEN {
+            let is_global = self.constraint_idx == usize::MAX;
+            let should_hoist = if is_global {
+                ref_count > 1
+            } else {
+                ref_count > 1 || expr.len() > MAX_INLINE_EXPR_LEN
+            };
+            if should_hoist {
                 let var_name = self.make_cse_name();
                 self.cse_counter += 1;
                 if self.constraint_idx == usize::MAX {
@@ -470,7 +482,7 @@ impl<'a> GnarkCodeGen<'a> {
     }
 
     /// Non-recursive edge_to_gnark that looks up already-generated expressions
-    fn edge_to_gnark_iterative(&mut self, edge: Edge) -> String {
+    pub(crate) fn edge_to_gnark_iterative(&mut self, edge: Edge) -> String {
         match edge {
             Edge::Atom(atom) => self.atom_to_gnark(atom),
             Edge::NodeRef(node_id) => {
@@ -529,7 +541,7 @@ pub fn generate_circuit_from_bundle(
         );
     }
 
-    let (code, stats) = generate_circuit_from_bundle_with_stats(bundle, circuit_name);
+    let (code, stats) = generate_circuit_from_bundle_with_stats(bundle, circuit_name, false);
 
     // Log statistics
     if stats.constant_skipped > 0 || stats.constant_failed > 0 {
@@ -573,6 +585,7 @@ pub fn generate_circuit_from_bundle(
 pub fn generate_circuit_from_bundle_with_stats(
     bundle: &zklean_extractor::mle_ast::AstBundle,
     circuit_name: &str,
+    crossval: bool,
 ) -> (String, ConstantAssertionStats) {
     use zklean_extractor::mle_ast::{Assertion, WitnessType};
 
@@ -620,8 +633,31 @@ pub fn generate_circuit_from_bundle_with_stats(
             &global_node_map,
         );
 
-        // Generate expression for this constraint
-        let expr = codegen.generate_expr(c.root);
+        // Generate expression for this constraint.
+        // In crossval mode, for Sub roots, generate lhs and rhs separately for api.Println hooks.
+        let (expr, crossval_lhs, crossval_rhs) = if crossval {
+            if let Node::Sub(lhs_edge, rhs_edge) = bundle.nodes[c.root].clone() {
+                // Generate subtrees for both edges first
+                if let Edge::NodeRef(id) = lhs_edge {
+                    codegen.generate_expr(id);
+                }
+                if let Edge::NodeRef(id) = rhs_edge {
+                    codegen.generate_expr(id);
+                }
+                // Now resolve edges (subtrees are in codegen.generated)
+                let lhs_expr = codegen.edge_to_gnark_iterative(lhs_edge);
+                let rhs_expr = codegen.edge_to_gnark_iterative(rhs_edge);
+                let full_expr = format!("api.Sub({}, {})", &lhs_expr, &rhs_expr);
+                codegen.generated.insert(c.root, full_expr.clone());
+                (full_expr, Some(lhs_expr), Some(rhs_expr))
+            } else {
+                let expr = codegen.generate_expr(c.root);
+                (expr, None, None)
+            }
+        } else {
+            let expr = codegen.generate_expr(c.root);
+            (expr, None, None)
+        };
 
         // Build the assertion (converting to owned form and generating other_expr if needed)
         let assertion = match &c.assertion {
@@ -665,6 +701,8 @@ pub fn generate_circuit_from_bundle_with_stats(
             assertion,
             is_const,
             const_val,
+            crossval_lhs,
+            crossval_rhs,
         });
     }
 
@@ -694,7 +732,11 @@ pub fn generate_circuit_from_bundle_with_stats(
     let mut output = String::new();
 
     // Package and imports
-    output.push_str("package jolt_verifier\n\n");
+    if crossval {
+        output.push_str("package crossval\n\n");
+    } else {
+        output.push_str("package jolt_verifier\n\n");
+    }
     output.push_str("import (\n");
     output.push_str("\t\"math/big\"\n");
     output.push('\n');
@@ -753,6 +795,12 @@ pub fn generate_circuit_from_bundle_with_stats(
         for &node_id in global_bindings {
             global_codegen.generate_expr(node_id);
         }
+
+        assert_eq!(
+            global_codegen.cse_counter, num_global,
+            "global CSE counter ({}) != global bindings count ({}): index mapping would be inconsistent",
+            global_codegen.cse_counter, num_global
+        );
 
         if global_codegen.uses_poseidon() {
             stats.uses_poseidon = true;
@@ -851,7 +899,9 @@ pub fn generate_circuit_from_bundle_with_stats(
                     pc.name
                 ));
                 stats.constant_skipped += 1;
-                continue;
+                if !crossval {
+                    continue;
+                }
             } else {
                 // Constant != 0 - static failure, emit warning comment but still generate constraint
                 output.push_str(&format!("// {} STATIC FAILURE: constant != 0\n", pc.name));
@@ -892,7 +942,7 @@ pub fn generate_circuit_from_bundle_with_stats(
                 for line in &binding_lines[start..end] {
                     // Rewrite "cse_K_N := expr" to "cse[N] = expr" and
                     // references to "cse_K_M" to "cse[M]" within the expression
-                    let rewritten = rewrite_cse_to_slice(line, idx);
+                    let rewritten = rewrite_cse_names_to_slice(line, idx, true);
                     output.push_str(&rewritten);
                     output.push('\n');
                 }
@@ -917,7 +967,7 @@ pub fn generate_circuit_from_bundle_with_stats(
             }
 
             // Rewrite the final expression to use cse[N] references
-            let rewritten_expr = rewrite_cse_refs_to_slice(&pc.expr, idx);
+            let rewritten_expr = rewrite_cse_names_to_slice(&pc.expr, idx, false);
             output.push_str(&format!("\t{var_name} := {rewritten_expr}\n"));
         } else {
             // Small constraint: emit as a single function with named CSE variables
@@ -933,6 +983,28 @@ pub fn generate_circuit_from_bundle_with_stats(
             output.push_str(&format!("\t{var_name} := {}\n", pc.expr));
         }
 
+        // Crossval: emit api.Println hooks for LHS/RHS before the assertion
+        if crossval {
+            if let (Some(lhs), Some(rhs)) = (&pc.crossval_lhs, &pc.crossval_rhs) {
+                let lhs_rewritten = if needs_splitting {
+                    rewrite_cse_names_to_slice(lhs, idx, false)
+                } else {
+                    lhs.clone()
+                };
+                let rhs_rewritten = if needs_splitting {
+                    rewrite_cse_names_to_slice(rhs, idx, false)
+                } else {
+                    rhs.clone()
+                };
+                output.push_str(&format!("\tcrossval_lhs_{idx} := {lhs_rewritten}\n"));
+                output.push_str(&format!("\tcrossval_rhs_{idx} := {rhs_rewritten}\n"));
+                output.push_str(&format!("\tapi.Println(\"a{idx}_lhs\", crossval_lhs_{idx})\n"));
+                output.push_str(&format!("\tapi.Println(\"a{idx}_rhs\", crossval_rhs_{idx})\n"));
+            } else {
+                output.push_str(&format!("\tapi.Println(\"a{idx}_total\", {var_name})\n"));
+            }
+        }
+
         // Emit assertion
         match &pc.assertion {
             ConstraintAssertion::EqualZero => {
@@ -946,7 +1018,7 @@ pub fn generate_circuit_from_bundle_with_stats(
             }
             ConstraintAssertion::EqualNode { other_expr } => {
                 let rewritten = if needs_splitting {
-                    rewrite_cse_refs_to_slice(other_expr, idx)
+                    rewrite_cse_names_to_slice(other_expr, idx, false)
                 } else {
                     other_expr.clone()
                 };
@@ -979,25 +1051,24 @@ pub fn generate_circuit_from_bundle_with_stats(
     (output, stats)
 }
 
-/// Rewrite a CSE binding line from named variables to slice indexing.
+/// Rewrite CSE named variables (`cse_K_N`) to slice indexing (`cse[N]`).
 ///
-/// Converts `\tcse_18_42 := api.Add(cse_18_3, circuit.X)` to
-/// `\tcse[42] = api.Add(cse[3], circuit.X)`.
-fn rewrite_cse_to_slice(line: &str, constraint_idx: usize) -> String {
+/// If `is_binding` is true, also converts the first `:=` to `=` (slice assignment).
+/// Used for both binding lines and expression references.
+fn rewrite_cse_names_to_slice(text: &str, constraint_idx: usize, is_binding: bool) -> String {
     let prefix = format!("cse_{constraint_idx}_");
-    let mut result = String::with_capacity(line.len());
+    let mut result = String::with_capacity(text.len());
     let mut i = 0;
-    let bytes = line.as_bytes();
+    let bytes = text.as_bytes();
 
     while i < bytes.len() {
-        if line[i..].starts_with(&prefix) {
-            // Found a cse reference, extract the number
+        if text[i..].starts_with(&prefix) {
             let num_start = i + prefix.len();
             let mut num_end = num_start;
             while num_end < bytes.len() && bytes[num_end].is_ascii_digit() {
                 num_end += 1;
             }
-            let num = &line[num_start..num_end];
+            let num = &text[num_start..num_end];
             result.push_str(&format!("cse[{num}]"));
             i = num_end;
         } else {
@@ -1006,36 +1077,11 @@ fn rewrite_cse_to_slice(line: &str, constraint_idx: usize) -> String {
         }
     }
 
-    // Replace first `:=` with `=` (slice assignment, not declaration)
-    result.replacen(":=", "=", 1)
-}
-
-/// Rewrite CSE references in an expression from named variables to slice indexing.
-///
-/// Converts `cse_18_42` to `cse[42]` in expression strings.
-fn rewrite_cse_refs_to_slice(expr: &str, constraint_idx: usize) -> String {
-    let prefix = format!("cse_{constraint_idx}_");
-    let mut result = String::with_capacity(expr.len());
-    let mut i = 0;
-    let bytes = expr.as_bytes();
-
-    while i < bytes.len() {
-        if expr[i..].starts_with(&prefix) {
-            let num_start = i + prefix.len();
-            let mut num_end = num_start;
-            while num_end < bytes.len() && bytes[num_end].is_ascii_digit() {
-                num_end += 1;
-            }
-            let num = &expr[num_start..num_end];
-            result.push_str(&format!("cse[{num}]"));
-            i = num_end;
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
-        }
+    if is_binding {
+        result.replacen(":=", "=", 1)
+    } else {
+        result
     }
-
-    result
 }
 
 /// Sanitize a name for use as a Go identifier (PascalCase with underscores).

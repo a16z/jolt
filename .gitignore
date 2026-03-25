@@ -66,3 +66,10 @@ jolt-sdk/tests/jolt_verifier_preprocessing_bytes.rs
 
 # transpiler test output
 transpiler/go/groth16_results.json
+transpiler/go/*_crossval_values.json
+transpiler/go/*_assertion_components.json
+transpiler/go/crossval/circuit.go
+
+# generated docs and scripts
+docs/
+scripts/ci-local.sh
