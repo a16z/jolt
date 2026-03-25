@@ -2765,6 +2765,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-instructions"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "rand 0.8.5",
+ "serde",
+]
+
+[[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
