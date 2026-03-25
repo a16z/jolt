@@ -12,6 +12,22 @@ pub use tracer::utils::inline_helpers::{InstrAssembler, Value};
 pub use tracer::utils::inline_sequence_writer::AppendMode;
 pub use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
+pub trait InlineAdvice {
+    fn into_values(self) -> Option<VecDeque<u64>>;
+}
+
+impl InlineAdvice for () {
+    fn into_values(self) -> Option<VecDeque<u64>> {
+        None
+    }
+}
+
+impl InlineAdvice for VecDeque<u64> {
+    fn into_values(self) -> Option<VecDeque<u64>> {
+        Some(self)
+    }
+}
+
 /// Trait for declaring an inline operation's metadata and sequence builder.
 ///
 /// Implement this for each sub-inline (e.g. `Sha256Compression`, `Secp256k1MulQ`),
@@ -22,15 +38,11 @@ pub trait InlineOp: Send + Sync {
     const FUNCT7: u32;
     const NAME: &'static str;
 
+    type Advice: InlineAdvice;
+
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction>;
 
-    fn build_advice(
-        _asm: InstrAssembler,
-        _operands: FormatInline,
-        _cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        None
-    }
+    fn build_advice(asm: InstrAssembler, operands: FormatInline, cpu: &mut Cpu) -> Self::Advice;
 }
 
 /// Write the default inline trace for a single `InlineOp` to `file` with the given `mode`.
@@ -201,7 +213,11 @@ macro_rules! __submit_inline_op {
                 funct7: <$op as $crate::host::InlineOp>::FUNCT7,
                 name: <$op as $crate::host::InlineOp>::NAME,
                 build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
-                build_advice: <$op as $crate::host::InlineOp>::build_advice,
+                build_advice: |asm, operands, cpu| {
+                    $crate::host::InlineAdvice::into_values(
+                        <$op as $crate::host::InlineOp>::build_advice(asm, operands, cpu)
+                    )
+                },
             }
         }
     };

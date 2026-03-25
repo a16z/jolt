@@ -584,17 +584,14 @@ impl InlineOp for Secp256k1MulQ {
     const FUNCT3: u32 = crate::SECP256K1_MULQ_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
     const NAME: &'static str = crate::SECP256K1_MULQ_NAME;
+    type Advice = VecDeque<u64>;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         MulqBuilder::new(asm, operands, MulqType::Mul, false).build()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(MulqBuilder::new(asm, operands, MulqType::Mul, false).advice(cpu))
+    fn build_advice(asm: InstrAssembler, operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+        MulqBuilder::new(asm, operands, MulqType::Mul, false).advice(cpu)
     }
 }
 
@@ -605,17 +602,14 @@ impl InlineOp for Secp256k1SquareQ {
     const FUNCT3: u32 = crate::SECP256K1_SQUAREQ_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
     const NAME: &'static str = crate::SECP256K1_SQUAREQ_NAME;
+    type Advice = VecDeque<u64>;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         MulqBuilder::new(asm, operands, MulqType::Square, false).build()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(MulqBuilder::new(asm, operands, MulqType::Square, false).advice(cpu))
+    fn build_advice(asm: InstrAssembler, operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+        MulqBuilder::new(asm, operands, MulqType::Square, false).advice(cpu)
     }
 }
 
@@ -626,17 +620,14 @@ impl InlineOp for Secp256k1DivQ {
     const FUNCT3: u32 = crate::SECP256K1_DIVQ_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
     const NAME: &'static str = crate::SECP256K1_DIVQ_NAME;
+    type Advice = VecDeque<u64>;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         MulqBuilder::new(asm, operands, MulqType::Div, false).build()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(MulqBuilder::new(asm, operands, MulqType::Div, false).advice(cpu))
+    fn build_advice(asm: InstrAssembler, operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+        MulqBuilder::new(asm, operands, MulqType::Div, false).advice(cpu)
     }
 }
 
@@ -647,17 +638,14 @@ impl InlineOp for Secp256k1MulR {
     const FUNCT3: u32 = crate::SECP256K1_MULR_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
     const NAME: &'static str = crate::SECP256K1_MULR_NAME;
+    type Advice = VecDeque<u64>;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         MulqBuilder::new(asm, operands, MulqType::Mul, true).build()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(MulqBuilder::new(asm, operands, MulqType::Mul, true).advice(cpu))
+    fn build_advice(asm: InstrAssembler, operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+        MulqBuilder::new(asm, operands, MulqType::Mul, true).advice(cpu)
     }
 }
 
@@ -668,17 +656,14 @@ impl InlineOp for Secp256k1SquareR {
     const FUNCT3: u32 = crate::SECP256K1_SQUARER_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
     const NAME: &'static str = crate::SECP256K1_SQUARER_NAME;
+    type Advice = VecDeque<u64>;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         MulqBuilder::new(asm, operands, MulqType::Square, true).build()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(MulqBuilder::new(asm, operands, MulqType::Square, true).advice(cpu))
+    fn build_advice(asm: InstrAssembler, operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+        MulqBuilder::new(asm, operands, MulqType::Square, true).advice(cpu)
     }
 }
 
@@ -689,17 +674,14 @@ impl InlineOp for Secp256k1DivR {
     const FUNCT3: u32 = crate::SECP256K1_DIVR_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
     const NAME: &'static str = crate::SECP256K1_DIVR_NAME;
+    type Advice = VecDeque<u64>;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         MulqBuilder::new(asm, operands, MulqType::Div, true).build()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(MulqBuilder::new(asm, operands, MulqType::Div, true).advice(cpu))
+    fn build_advice(asm: InstrAssembler, operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+        MulqBuilder::new(asm, operands, MulqType::Div, true).advice(cpu)
     }
 }
 
@@ -710,16 +692,13 @@ impl InlineOp for Secp256k1GlvrAdv {
     const FUNCT3: u32 = crate::SECP256K1_GLVR_ADV_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
     const NAME: &'static str = crate::SECP256K1_GLVR_ADV_NAME;
+    type Advice = VecDeque<u64>;
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         GlvrAdvBuilder::new(asm, operands).build()
     }
 
-    fn build_advice(
-        asm: InstrAssembler,
-        operands: FormatInline,
-        cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
-        Some(GlvrAdvBuilder::new(asm, operands).advice(cpu))
+    fn build_advice(asm: InstrAssembler, operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+        GlvrAdvBuilder::new(asm, operands).advice(cpu)
     }
 }

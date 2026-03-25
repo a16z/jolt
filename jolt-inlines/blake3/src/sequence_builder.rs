@@ -19,7 +19,7 @@ use jolt_inlines_sdk::host::{
         lw::LW,
         virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
     },
-    FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
+    Cpu, FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
     Value::{Imm, Reg},
     VirtualRegisterGuard,
 };
@@ -402,10 +402,13 @@ impl InlineOp for Blake3Compression {
     const FUNCT3: u32 = crate::BLAKE3_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
     const NAME: &'static str = crate::BLAKE3_NAME;
+    type Advice = ();
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Blake3SequenceBuilder::new(asm, operands).build()
     }
+
+    fn build_advice(_asm: InstrAssembler, _operands: FormatInline, _cpu: &mut Cpu) {}
 }
 
 pub struct Blake3Keyed64Compression;
@@ -415,10 +418,13 @@ impl InlineOp for Blake3Keyed64Compression {
     const FUNCT3: u32 = crate::BLAKE3_KEYED64_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
     const NAME: &'static str = crate::BLAKE3_KEYED64_NAME;
+    type Advice = ();
 
     fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
         Blake3Keyed64SequenceBuilder::new(asm, operands).build()
     }
+
+    fn build_advice(_asm: InstrAssembler, _operands: FormatInline, _cpu: &mut Cpu) {}
 }
 
 #[cfg(test)]
