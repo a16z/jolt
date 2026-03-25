@@ -2886,7 +2886,6 @@ dependencies = [
  "ark-ff 0.5.0",
  "jolt-inlines-sdk",
  "rand 0.8.5",
- "tracer",
 ]
 
 [[package]]
@@ -2897,7 +2896,6 @@ dependencies = [
  "hex-literal",
  "jolt-inlines-sdk",
  "rand 0.8.5",
- "tracer",
 ]
 
 [[package]]
