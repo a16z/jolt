@@ -149,6 +149,58 @@ allocative = { git = "https://github.com/facebookexperimental/allocative", rev =
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
 
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+# Pedantic overrides — suppressed because they're too noisy for math-heavy ZK code
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+module_name_repetitions = "allow"
+struct_excessive_bools = "allow"
+fn_params_excessive_bools = "allow"
+items_after_statements = "allow"
+uninlined_format_args = "allow"
+return_self_not_must_use = "allow"
+default_trait_access = "allow"
+match_same_arms = "allow"
+manual_let_else = "allow"
+used_underscore_binding = "allow"
+no_effect_underscore_binding = "allow"
+needless_pass_by_value = "allow"
+trivially_copy_pass_by_ref = "allow"
+redundant_closure_for_method_calls = "allow"
+unnecessary_wraps = "allow"
+if_not_else = "allow"
+
+# Numeric/math code — ZK cryptography uses these patterns pervasively
+float_cmp = "allow"
+many_single_char_names = "allow"
+wildcard_imports = "allow"
+inline_always = "allow"
+checked_conversions = "allow"
+
+# Cast lints — field arithmetic requires intentional casting
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+
+# Code quality — hard denies to catch AI-generated slop
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+undocumented_unsafe_blocks = "deny"
+
+[workspace.lints.rust]
+unused_results = "warn"
 [workspace.dependencies]
 # Cryptography and Math
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
@@ -165,6 +217,8 @@ sha2 = "0.10"
 sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
+light-poseidon = "0.4"
+digest = "0.10"
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.3.0", features = ["backends", "cache", "disk-persistence"] }
 
@@ -214,7 +268,7 @@ memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
 rayon = { version = "^1.8.0" }
 
 # Tracing and Profiling
-tracing = { version = "0.1.37", default-features = false }
+tracing = { version = "0.1.37", default-features = false, features = ["attributes"] }
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 inferno = { version = "0.12.3" }
