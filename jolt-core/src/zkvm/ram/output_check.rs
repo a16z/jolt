@@ -204,6 +204,10 @@ pub struct OutputSumcheckProver<F: JoltField> {
     /// i.e. io_mask(k) = 1 if k is in the "IO" region of memory,
     /// and 0 otherwise.
     io_mask: MultilinearPolynomial<F>,
+    /// Number of initial address variables where q_constant = q_quadratic = 0,
+    /// allowing us to skip the expensive fold computation.
+    /// Equal to min(v_2(io_start), v_2(io_end)) where v_2 is the 2-adic valuation.
+    num_zero_address_vars: usize,
     #[allocative(skip)]
     pub params: OutputSumcheckParams<F>,
 }
@@ -240,11 +244,21 @@ impl<F: JoltField> OutputSumcheckProver<F> {
 
         let eq_r_address = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
 
+        // io_mask is 1 on [io_start, io_end) and 0 elsewhere. With LowToHigh binding,
+        // round j pairs indices (2g, 2g+1) which differ in bit x_j. The pair cannot
+        // straddle the block boundary as long as 2^(j+1) divides both io_start and io_end.
+        // When io_mask[2g] == io_mask[2g+1] for all g, the fold produces q_constant = 0
+        // (because val_final == val_io on the I/O region) and q_quadratic = 0 (because
+        // io1 - io0 = 0). This lets us skip the expensive par_fold_out_in_unreduced.
+        let num_zero_address_vars =
+            (io_start.trailing_zeros().min(io_end.trailing_zeros()) as usize).min(K.log_2());
+
         Self {
             val_final: final_ram_state.to_vec().into(),
             val_io: val_io.into(),
             eq_r_address,
             io_mask: io_mask.into(),
+            num_zero_address_vars,
             params,
         }
     }
@@ -258,6 +272,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumchec
     #[tracing::instrument(skip_all, name = "OutputSumcheckProver::compute_message")]
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         if self.params.is_internal_cycle_gap_round(round) {
+            let two_inv = F::from_u64(2).inverse().unwrap();
+            return UniPoly::from_coeff(vec![previous_claim * two_inv]);
+        }
+
+        if round < self.num_zero_address_vars {
             let two_inv = F::from_u64(2).inverse().unwrap();
             return UniPoly::from_coeff(vec![previous_claim * two_inv]);
         }
